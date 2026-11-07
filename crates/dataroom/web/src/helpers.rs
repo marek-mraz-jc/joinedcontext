@@ -1431,19 +1431,40 @@ pub struct McpInstallView {
     pub cursor: String,
 }
 
+/// Where an address may break in a narrow card: before each single slash, never inside a word
+/// (`url_parts` in plugin.py `jc_mcp_install`, `(?<=[^/])(?=/(?!/))`).
+pub fn url_parts(url: &str) -> Vec<&str> {
+    let bytes = url.as_bytes();
+    let mut parts = Vec::new();
+    let mut start = 0;
+    for i in 1..bytes.len() {
+        let single_slash = bytes[i] == b'/' && bytes.get(i + 1) != Some(&b'/');
+        if single_slash && bytes[i - 1] != b'/' {
+            parts.push(&url[start..i]);
+            start = i;
+        }
+    }
+    parts.push(&url[start..]);
+    parts
+}
+
 pub fn jc_mcp_install(branding: &BrandingBlock) -> Option<McpInstallView> {
     let domain = branding.domain.trim();
-    if domain.is_empty() || !domain.contains('.') {
+    if !dataroom_core::branding::is_host_name(domain) {
         return None;
     }
     let mut url = format!("https://api.{domain}/api/mcp");
     if let Some(ref own) = branding.mcp_server {
-        if own.starts_with("d/") && own.len() > 2 {
+        if dataroom_core::branding::is_mcp_server(own) {
             url.push('/');
             url.push_str(own);
         }
     }
-    let url_wbr = url.replacen("/api", "<wbr>/api", 1).replacen("/mcp", "<wbr>/mcp", 1);
+    let url_wbr = url_parts(&url)
+        .iter()
+        .map(|part| html_escape(part))
+        .collect::<Vec<_>>()
+        .join("<wbr>");
     let claude = format!("claude mcp add --transport http \\\n  joinedcontext \\\n  {url}");
     let claude_copy = format!("claude mcp add --transport http joinedcontext {url}");
     let json_display = format!(
@@ -2228,4 +2249,36 @@ pub fn publisher_card_info(
     let image = img.unwrap_or_else(|| "/base/images/placeholder-organization.png".into());
     let _ = jc_rows;
     (title, image, desc)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn d6_mcp_address_breaks_before_single_slashes_only() {
+        assert_eq!(
+            url_parts("https://api.dev.joinedcontext.com/api/mcp/d/demo"),
+            vec!["https://api.dev.joinedcontext.com", "/api", "/mcp", "/d", "/demo"]
+        );
+        let mut branding = BrandingBlock::default();
+        branding.apply_override_json(&json!({ "domain": "dev.joinedcontext.com" }));
+        let Some(mcp) = jc_mcp_install(&branding) else {
+            panic!("a valid domain gives the MCP panel");
+        };
+        assert_eq!(mcp.url, "https://api.dev.joinedcontext.com/api/mcp");
+        // live/dev-assistants-claude.html: `https://api.dev.joinedcontext.com<wbr>/api<wbr>/mcp`
+        assert_eq!(
+            mcp.url_wbr,
+            "https://api.dev.joinedcontext.com<wbr>/api<wbr>/mcp"
+        );
+    }
+
+    #[test]
+    fn d6_no_mcp_panel_without_a_valid_domain() {
+        assert!(jc_mcp_install(&BrandingBlock::default()).is_none());
+        let mut branding = BrandingBlock::default();
+        branding.domain = "evil\"><script>.example".into();
+        assert!(jc_mcp_install(&branding).is_none());
+    }
 }

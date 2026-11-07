@@ -364,10 +364,15 @@ impl BrandingBlock {
         if let Some(v) = str_field("organisation").or_else(|| str_field("organization")) {
             self.organisation = v;
         }
-        if let Some(v) = str_field("orgDomain").or_else(|| str_field("org_domain")) {
+        // Host names follow plugin.py `_HOST`; any other value keeps the level above, so a
+        // broken block never puts a stray character into a link, a redirect or the CSP.
+        if let Some(v) = str_field("orgDomain")
+            .or_else(|| str_field("org_domain"))
+            .filter(|v| is_host_name(v))
+        {
             self.org_domain = v;
         }
-        if let Some(v) = str_field("domain") {
+        if let Some(v) = str_field("domain").filter(|v| is_host_name(v)) {
             self.domain = v;
         }
         if let Some(v) = str_field("contactEmail").or_else(|| str_field("contact_email")) {
@@ -526,7 +531,10 @@ impl BrandingBlock {
         if let Some(si) = str_field("siteIssued").or_else(|| str_field("site_issued")) {
             self.site_issued = Some(si);
         }
-        if let Some(mcp) = str_field("mcpServer").or_else(|| str_field("mcp_server")) {
+        if let Some(mcp) = str_field("mcpServer")
+            .or_else(|| str_field("mcp_server"))
+            .filter(|v| is_mcp_server(v))
+        {
             self.mcp_server = Some(mcp);
         }
         if let Some(Value::Object(samp)) = obj.get("samples") {
@@ -823,42 +831,141 @@ fn validate_svg_bytes(bytes: &[u8]) -> Result<()> {
         }
     }
 
-    // Inspect every tag and attribute for `on*=` event handlers and external `href` / `xlink:href` / `src`
-    let mut rest = lower.as_str();
-    while let Some(lt) = rest.find('<') {
-        rest = &rest[lt + 1..];
-        let Some(gt) = rest.find('>') else {
-            break;
-        };
-        let tag_content = &rest[..gt];
-        // Tokenize attributes inside `<...>`
-        for part in tag_content.split(|c: char| c.is_whitespace() || c == '/') {
-            let Some((attr_name, attr_val)) = part.split_once('=') else {
-                continue;
-            };
-            let attr_name = attr_name.trim();
-            if attr_name.starts_with("on") && attr_name.len() > 2 {
-                return Err(DataroomError::field_error(
-                    "logo",
-                    format!("SVG contains forbidden event handler attribute '{attr_name}'"),
-                ));
-            }
-            if matches!(attr_name, "href" | "xlink:href" | "src") {
-                let val_clean = attr_val.trim().trim_matches(['"', '\'']);
-                if val_clean.starts_with("http://")
-                    || val_clean.starts_with("https://")
-                    || val_clean.starts_with("//")
-                {
-                    return Err(DataroomError::field_error(
-                        "logo",
-                        format!("SVG contains forbidden external reference in '{attr_name}'"),
-                    ));
-                }
-            }
+    // Refuse every CSS `url(...)` that is not a local `#fragment` (style attributes and <style>).
+    let mut css = lower.as_str();
+    while let Some(pos) = css.find("url(") {
+        let after = css[pos + 4..].trim_start().trim_start_matches(['"', '\'']);
+        if !after.starts_with('#') {
+            return Err(DataroomError::field_error(
+                "logo",
+                "SVG contains a forbidden external url() reference",
+            ));
         }
-        rest = &rest[gt + 1..];
+        css = &css[pos + 4..];
     }
 
+    for tag in svg_tags(&lower) {
+        for (attr_name, attr_val) in &tag.attributes {
+            check_svg_attribute(attr_name, attr_val)?;
+        }
+    }
+    Ok(())
+}
+
+/// One start or end tag of an SVG document: its name and its attributes (values unquoted).
+struct SvgTag<'a> {
+    attributes: Vec<(&'a str, &'a str)>,
+}
+
+/// Splits `text` into tags with their attributes. Quoted values may hold `>` and `/`;
+/// comments, processing instructions and declarations are skipped.
+fn svg_tags(text: &str) -> Vec<SvgTag<'_>> {
+    let bytes = text.as_bytes();
+    let mut tags = Vec::new();
+    let mut i = 0;
+    while let Some(off) = text[i..].find('<') {
+        i += off + 1;
+        if text[i..].starts_with("!--") {
+            match text[i..].find("-->") {
+                Some(end) => i += end + 3,
+                None => break,
+            }
+            continue;
+        }
+        if text[i..].starts_with('?') || text[i..].starts_with('!') {
+            match text[i..].find('>') {
+                Some(end) => i += end + 1,
+                None => break,
+            }
+            continue;
+        }
+        if bytes.get(i) == Some(&b'/') {
+            i += 1;
+        }
+        // Tag name.
+        while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'/' && bytes[i] != b'>' {
+            i += 1;
+        }
+        let mut attributes = Vec::new();
+        loop {
+            while i < bytes.len() && (bytes[i].is_ascii_whitespace() || bytes[i] == b'/') {
+                i += 1;
+            }
+            if i >= bytes.len() || bytes[i] == b'>' {
+                i += 1;
+                break;
+            }
+            let name_start = i;
+            while i < bytes.len()
+                && !bytes[i].is_ascii_whitespace()
+                && !matches!(bytes[i], b'=' | b'>' | b'/')
+            {
+                i += 1;
+            }
+            let name = &text[name_start..i];
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            let mut value = "";
+            if bytes.get(i) == Some(&b'=') {
+                i += 1;
+                while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                match bytes.get(i) {
+                    Some(&q) if q == b'"' || q == b'\'' => {
+                        let value_start = i + 1;
+                        let value_end = text[value_start..]
+                            .find(q as char)
+                            .map_or(bytes.len(), |e| value_start + e);
+                        value = &text[value_start..value_end];
+                        i = value_end + 1;
+                    }
+                    _ => {
+                        let value_start = i;
+                        while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' {
+                            i += 1;
+                        }
+                        value = &text[value_start..i];
+                    }
+                }
+            }
+            if name.is_empty() {
+                i += 1;
+                continue;
+            }
+            attributes.push((name, value));
+        }
+        tags.push(SvgTag { attributes });
+        if i >= bytes.len() {
+            break;
+        }
+    }
+    tags
+}
+
+/// No event handler, no reference that leaves the document: `href`, `xlink:href` and `src` may
+/// only name a local `#fragment` or an embedded raster image; animation may not retarget them.
+fn check_svg_attribute(name: &str, value: &str) -> Result<()> {
+    let refuse = |why: String| Err(DataroomError::field_error("logo", why));
+    if name.starts_with("on") && name.len() > 2 {
+        return refuse(format!("SVG contains forbidden event handler attribute '{name}'"));
+    }
+    let value = value.trim();
+    if matches!(name, "href" | "src") || name.ends_with(":href") {
+        let local = value.starts_with('#');
+        let embedded_raster = ["data:image/png", "data:image/jpeg", "data:image/gif", "data:image/webp"]
+            .iter()
+            .any(|p| value.starts_with(p));
+        if !local && !embedded_raster {
+            return refuse(format!("SVG contains forbidden external reference in '{name}'"));
+        }
+    }
+    if name == "attributename"
+        && (value == "href" || value.ends_with(":href") || value.starts_with("on"))
+    {
+        return refuse(format!("SVG animation may not set '{value}'"));
+    }
     Ok(())
 }
 
@@ -882,6 +989,34 @@ fn validate_webp_bytes(bytes: &[u8]) -> Result<()> {
         return Err(DataroomError::field_error("logo", "invalid WebP header"));
     }
     Ok(())
+}
+
+/// plugin.py `_HOST`: dot-separated lowercase labels of `[a-z0-9-]`, no label starting or ending
+/// with `-`, at least two labels.
+pub fn is_host_name(v: &str) -> bool {
+    let labels: Vec<&str> = v.split('.').collect();
+    labels.len() >= 2
+        && labels.iter().all(|label| {
+            !label.is_empty()
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+        })
+}
+
+/// plugin.py `MCP_SERVER`: `d/` and a public id of 1..63 `[-a-z0-9]`, not starting or ending with `-`.
+pub fn is_mcp_server(v: &str) -> bool {
+    let Some(id) = v.strip_prefix("d/") else {
+        return false;
+    };
+    (1..=63).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && !id.starts_with('-')
+        && !id.ends_with('-')
 }
 
 #[cfg(test)]
@@ -1029,6 +1164,24 @@ mod tests {
     }
 
     #[test]
+    fn b1_broken_domain_and_mcp_server_fall_back_to_the_level_above() {
+        let mut block = BrandingBlock::default();
+        block.apply_override_json(&json!({ "domain": "dev.joinedcontext.com", "mcpServer": "d/demo-1" }));
+        assert_eq!(block.domain, "dev.joinedcontext.com");
+        assert_eq!(block.mcp_server.as_deref(), Some("d/demo-1"));
+        for bad in ["x; script-src *", "Dev.Example.com", "localhost", "-a.example", "a..example", "evil.example/path"] {
+            let mut b = block.clone();
+            b.apply_override_json(&json!({ "domain": bad, "orgDomain": bad }));
+            assert_eq!(b.domain, "dev.joinedcontext.com", "domain {bad:?} must be ignored");
+        }
+        for bad in ["d/", "d/-x", "d/<script>", "e/demo", "d/a/b"] {
+            let mut b = block.clone();
+            b.apply_override_json(&json!({ "mcpServer": bad }));
+            assert_eq!(b.mcp_server.as_deref(), Some("d/demo-1"), "mcpServer {bad:?} must be ignored");
+        }
+    }
+
+    #[test]
     fn b3_svg_with_script_onload_and_external_image_href_is_refused() {
         // 1. Valid clean SVG passes and gets a content hash URL
         let clean_svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 30"><rect width="100" height="30" fill="#0000bf"/></svg>"##;
@@ -1053,5 +1206,26 @@ mod tests {
 
         let xlink_href_svg = br#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href="http://evil.example/track.png"/></svg>"#;
         assert!(validate_and_sanitise_logo(xlink_href_svg, "image/svg+xml").is_err());
+
+        // 5. Spacing, quoting and CSS do not slip an external reference or a handler past it.
+        for svg in [
+            &br#"<svg xmlns="http://www.w3.org/2000/svg"><image href = 'https://evil.example/t.png'/></svg>"#[..],
+            &br#"<svg xmlns="http://www.w3.org/2000/svg"><image href=//evil.example/t.png /></svg>"#[..],
+            &br#"<svg xmlns="http://www.w3.org/2000/svg"><use href="other.svg#a"/></svg>"#[..],
+            &br#"<svg xmlns="http://www.w3.org/2000/svg"><rect title="a>b" ONLOAD="x()"/></svg>"#[..],
+            &br#"<svg xmlns="http://www.w3.org/2000/svg"><rect style="fill:url(https://evil.example/p)"/></svg>"#[..],
+            &br#"<svg xmlns="http://www.w3.org/2000/svg"><a href="&#106;avascript:x()"><rect/></a></svg>"#[..],
+            &br#"<svg xmlns="http://www.w3.org/2000/svg"><a><set attributeName="href" to="https://evil.example"/></a></svg>"#[..],
+        ] {
+            assert!(
+                validate_and_sanitise_logo(svg, "image/svg+xml").is_err(),
+                "must refuse {}",
+                String::from_utf8_lossy(svg)
+            );
+        }
+
+        // 6. Local references and gradients stay allowed.
+        let local_svg = br##"<svg xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="g"/></defs><rect fill="url(#g)"/><use href="#g"/></svg>"##;
+        assert!(validate_and_sanitise_logo(local_svg, "image/svg+xml").is_ok());
     }
 }
