@@ -72,24 +72,48 @@ pub fn validate_provisioning_path(
     }
 
     if let Some(root) = allowed_root {
+        let canon_root = root.canonicalize().map_err(|e| {
+            CrError::BadRequest(format!("provisioning root cannot be resolved: {e}"))
+        })?;
         let joined = if path.is_absolute() {
             path.to_path_buf()
         } else {
-            root.join(path)
+            canon_root.join(path)
         };
-        if let (Ok(canon_root), Ok(canon_target)) = (root.canonicalize(), joined.canonicalize()) {
-            if !canon_target.starts_with(&canon_root) {
-                return Err(CrError::Forbidden(format!(
-                    "provisioning path '{candidate_path}' escapes allowed root directory"
-                )));
+        // Resolve the deepest part that exists (symlinks included) and keep the rest, which has
+        // no `..`, so a symlink inside the root cannot lead outside it even for a path that
+        // does not exist yet.
+        let mut existing = joined.as_path();
+        let mut rest: Vec<&std::ffi::OsStr> = Vec::new();
+        let resolved = loop {
+            match existing.canonicalize() {
+                Ok(c) => break c,
+                Err(_) => {
+                    let Some(name) = existing.file_name() else {
+                        return Err(CrError::Forbidden(format!(
+                            "provisioning path '{candidate_path}' cannot be resolved"
+                        )));
+                    };
+                    rest.push(name);
+                    let Some(parent) = existing.parent() else {
+                        return Err(CrError::Forbidden(format!(
+                            "provisioning path '{candidate_path}' cannot be resolved"
+                        )));
+                    };
+                    existing = parent;
+                }
             }
-            return Ok(canon_target);
-        } else if path.is_absolute() && !joined.starts_with(root) {
+        };
+        let mut target = resolved;
+        for part in rest.into_iter().rev() {
+            target.push(part);
+        }
+        if !target.starts_with(&canon_root) {
             return Err(CrError::Forbidden(format!(
-                "provisioning path '{candidate_path}' is outside allowed root directory"
+                "provisioning path '{candidate_path}' escapes allowed root directory"
             )));
         }
-        return Ok(joined);
+        return Ok(target);
     }
 
     Ok(path.to_path_buf())
@@ -186,7 +210,7 @@ pub fn parse_dashboard_providers_yaml(
                 CrError::BadRequest("failed to load dashboards, path param is not a string".into())
             })?;
 
-        validate_provisioning_path(raw_path, allowed_root)?;
+        let checked_path = validate_provisioning_path(raw_path, allowed_root)?;
 
         let folders_from_files_structure = options
             .and_then(|o| o.get("foldersFromFilesStructure"))
@@ -209,7 +233,7 @@ pub fn parse_dashboard_providers_yaml(
             disable_deletion,
             update_interval_seconds,
             allow_ui_updates,
-            path: raw_path.to_owned(),
+            path: checked_path.to_string_lossy().into_owned(),
             folders_from_files_structure,
         });
     }
@@ -377,4 +401,53 @@ pub fn parse_datasources_yaml(
         delete_names,
         findings,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "cr-prov-{tag}-{}-{}",
+            std::process::id(),
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn provisioning_path_cannot_leave_the_root_through_dotdot_absolute_or_symlink() {
+        let root = scratch_dir("root");
+        let outside = scratch_dir("outside");
+        std::fs::create_dir_all(root.join("dashboards/team")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("escape")).unwrap();
+
+        assert!(validate_provisioning_path("../etc", Some(&root)).is_err());
+        assert!(validate_provisioning_path("dashboards/../../etc", Some(&root)).is_err());
+        assert!(validate_provisioning_path("/etc/grafana", Some(&root)).is_err());
+        assert!(validate_provisioning_path("/no/such/dir/at/all", Some(&root)).is_err());
+        // Through a symlink, existing target and a not-yet-existing child alike.
+        assert!(validate_provisioning_path("escape", Some(&root)).is_err());
+        assert!(validate_provisioning_path("escape/new/file.json", Some(&root)).is_err());
+        assert!(validate_provisioning_path("", Some(&root)).is_err());
+        assert!(validate_provisioning_path("a\0b", Some(&root)).is_err());
+
+        let ok = validate_provisioning_path("dashboards/team", Some(&root)).unwrap();
+        assert!(ok.starts_with(root.canonicalize().unwrap()));
+        let later = validate_provisioning_path("dashboards/new-team", Some(&root)).unwrap();
+        assert!(later.ends_with("dashboards/new-team"));
+        let abs_inside = root.join("dashboards");
+        assert!(validate_provisioning_path(abs_inside.to_str().unwrap(), Some(&root)).is_ok());
+
+        let yaml = "apiVersion: 1\nproviders:\n  - name: escape\n    type: file\n    options:\n      path: escape/x\n";
+        assert!(parse_dashboard_providers_yaml(yaml, Some(&root)).is_err());
+        let yaml_ok = "apiVersion: 1\nproviders:\n  - name: ok\n    type: file\n    options:\n      path: dashboards/team\n";
+        let providers = parse_dashboard_providers_yaml(yaml_ok, Some(&root)).unwrap();
+        assert!(Path::new(&providers[0].path).starts_with(root.canonicalize().unwrap()));
+
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&outside).ok();
+    }
 }
