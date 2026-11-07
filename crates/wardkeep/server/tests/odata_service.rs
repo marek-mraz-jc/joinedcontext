@@ -584,3 +584,118 @@ async fn self_service_actions_and_honest_not_implemented() {
     assert_eq!(st, StatusCode::BAD_REQUEST);
     assert_eq!(err["error"]["code"], "invalid-request");
 }
+
+#[tokio::test]
+async fn entity_sets_answer_queries_count_export_and_allowed_over_http() {
+    let api = Api::new().await;
+    let admin = api.admin().await;
+
+    // $filter + $count on People.
+    let (st, _, body, raw) = api
+        .call(
+            Method::GET,
+            &format!("{BASE}/People?$filter=username%20eq%20'demo.analyst@hel.fi'&$count=true"),
+            &admin,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{raw}");
+    assert_eq!(body["@odata.count"], 1);
+    assert_eq!(body["value"][0]["id"], ANALYST);
+    assert!(body["value"][0].get("passwordHash").is_none());
+
+    // Entity by key, and a missing key.
+    let (st, _, row, _) = api
+        .call(
+            Method::GET,
+            &format!("{BASE}/People('{ANALYST}')"),
+            &admin,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(row["username"], "demo.analyst@hel.fi");
+    let (st, _, err, _) = api
+        .call(
+            Method::GET,
+            &format!("{BASE}/People('nobody')"),
+            &admin,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    assert_eq!(err["error"]["code"], "not-found");
+
+    // $count and $export agree with the collection.
+    let (_, _, all, _) = api
+        .call(
+            Method::GET,
+            &format!("{BASE}/People?$count=true"),
+            &admin,
+            None,
+        )
+        .await;
+    let total = all["@odata.count"].as_u64().unwrap();
+    assert!(total >= 3);
+    let (st, _, _, text) = api
+        .call(Method::GET, &format!("{BASE}/People/$count"), &admin, None)
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(text.trim().parse::<u64>().unwrap(), total);
+    let (st, _, exported, _) = api
+        .call(Method::GET, &format!("{BASE}/People/$export"), &admin, None)
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(exported.as_array().unwrap().len() as u64, total);
+
+    // $allowed on a visible key.
+    let (st, _, dec, raw) = api
+        .call(
+            Method::GET,
+            &format!("{BASE}/People/$allowed?op=read&key={ANALYST}"),
+            &admin,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{raw}");
+    assert_eq!(dec["allowed"], true);
+    let (st, _, err, _) = api
+        .call(
+            Method::GET,
+            &format!("{BASE}/People/$allowed?op=fly"),
+            &admin,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(err["error"]["code"], "invalid-request");
+
+    // Secret fields can be neither filtered nor ordered.
+    for q in [
+        "People?$filter=passwordHash%20ne%20null",
+        "Credentials?$orderby=secretData",
+    ] {
+        let (st, _, err, raw) = api
+            .call(Method::GET, &format!("{BASE}/{q}"), &admin, None)
+            .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{q}: {raw}");
+        assert_eq!(err["error"]["innererror"]["status"], 400);
+    }
+
+    // An action name is not GET as a function import; an unknown set is not found.
+    let (st, _, _, _) = api
+        .call(Method::GET, &format!("{BASE}/NoSuchSet"), &admin, None)
+        .await;
+    assert!(st == StatusCode::NOT_FOUND || st == StatusCode::BAD_REQUEST);
+
+    // No token: an OData error, not a Keycloak or HTML page.
+    let req = Request::builder()
+        .uri(format!("{BASE}/People"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = api.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let err: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(err["error"]["code"].is_string());
+}
