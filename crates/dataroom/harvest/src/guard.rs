@@ -29,13 +29,29 @@ pub fn is_private_or_internal_ip(ip: IpAddr) -> bool {
             if let Some(mapped) = v6.to_ipv4_mapped() {
                 return is_internal_v4(mapped);
             }
+            let seg = v6.segments();
+            // Addresses that carry an IPv4 address: NAT64 64:ff9b::/96, 6to4 2002::/16 and the
+            // deprecated IPv4-compatible ::/96 reach that IPv4 host, so they are judged by it.
+            let embedded_v4 = |hi: u16, lo: u16| Ipv4Addr::new((hi >> 8) as u8, hi as u8, (lo >> 8) as u8, lo as u8);
+            if seg[0] == 0x0064 && seg[1] == 0xff9b && seg[2..6] == [0, 0, 0, 0] {
+                return is_internal_v4(embedded_v4(seg[6], seg[7]));
+            }
+            if seg[0] == 0x2002 {
+                return is_internal_v4(embedded_v4(seg[1], seg[2]));
+            }
+            if seg[0..6] == [0, 0, 0, 0, 0, 0] && !v6.is_loopback() && !v6.is_unspecified() {
+                return is_internal_v4(embedded_v4(seg[6], seg[7]));
+            }
             v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_multicast()
                 // Unique local fc00::/7
-                || (v6.segments()[0] & 0xfe00) == 0xfc00
-                // Link-local fe80::/10
-                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                || (seg[0] & 0xfe00) == 0xfc00
+                // Link-local fe80::/10 and the deprecated site-local fec0::/10
+                || (seg[0] & 0xffc0) == 0xfe80
+                || (seg[0] & 0xffc0) == 0xfec0
+                // Documentation 2001:db8::/32
+                || (seg[0] == 0x2001 && seg[1] == 0x0db8)
         }
     }
 }
@@ -55,6 +71,12 @@ fn is_internal_v4(v4: Ipv4Addr) -> bool {
         || (octets[0] == 169 && octets[1] == 254)
         // 192.0.0.0/24
         || (octets[0] == 192 && octets[1] == 0 && octets[2] == 0)
+        // 0.0.0.0/8 ("this network", reaches the local host on Linux)
+        || octets[0] == 0
+        // 198.18.0.0/15 (benchmarking)
+        || (octets[0] == 198 && (octets[1] & 0xfe) == 18)
+        // 240.0.0.0/4 (reserved)
+        || octets[0] >= 240
 }
 
 /// Validates an outbound harvest URL:
@@ -213,4 +235,33 @@ pub fn validate_and_pin_url(
         host,
         pinned_addrs,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a2_internal_ranges_include_embedded_ipv4_and_reserved_blocks() {
+        for internal in [
+            "0.1.2.3",
+            "198.18.0.1",
+            "240.0.0.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "::ffff:127.0.0.1",
+            "64:ff9b::a9fe:a9fe",
+            "2002:7f00:1::",
+            "::10.0.0.1",
+            "fec0::1",
+            "2001:db8::1",
+        ] {
+            let ip: IpAddr = internal.parse().unwrap();
+            assert!(is_private_or_internal_ip(ip), "{internal} must be internal");
+        }
+        for public in ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946", "64:ff9b::5db8:d822"] {
+            let ip: IpAddr = public.parse().unwrap();
+            assert!(!is_private_or_internal_ip(ip), "{public} is public");
+        }
+    }
 }

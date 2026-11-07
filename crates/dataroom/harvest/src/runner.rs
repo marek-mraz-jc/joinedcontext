@@ -45,35 +45,6 @@ pub trait OutboundFetcher: Send + Sync {
         max_bytes: usize,
         timeout: Duration,
     ) -> BoxFuture<'a, Result<FetchResponse>>;
-
-    fn fetch<'a>(
-        &'a self,
-        url: &'a str,
-        accept: &'a str,
-    ) -> BoxFuture<'a, Result<(Option<String>, String)>> {
-        Box::pin(async move {
-            let parsed = url::Url::parse(url).map_err(|e| {
-                DataroomError::OutboundRefused(format!("invalid URL '{url}': {e}"))
-            })?;
-            let host = parsed.host_str().unwrap_or("").to_owned();
-            let target = ValidatedTarget {
-                url: parsed,
-                host,
-                pinned_addrs: Vec::new(),
-            };
-            match self
-                .fetch_hop(&target, accept, MAX_HARVEST_BYTES, Duration::from_secs(60))
-                .await?
-            {
-                FetchResponse::Ok { content_type, body } => Ok((content_type, body)),
-                FetchResponse::Redirect { status, location } => Err(
-                    DataroomError::OutboundRefused(format!(
-                        "unexpected redirect HTTP {status} to {location}"
-                    )),
-                ),
-            }
-        })
-    }
 }
 
 /// Production HTTPS fetcher backed by `reqwest` with DNS pinning (`resolve_to_addrs`),
@@ -108,9 +79,15 @@ impl OutboundFetcher for HttpFetcher {
                 .redirect(reqwest::redirect::Policy::none())
                 .user_agent("dataroom-harvest/1.0");
 
-            if !target.pinned_addrs.is_empty() {
-                builder = builder.resolve_to_addrs(&target.host, &target.pinned_addrs);
+            // Only a target whose DNS answer passed the guard is fetched, on exactly that answer
+            // (A2): without pinned addresses reqwest would resolve the name again by itself.
+            if target.pinned_addrs.is_empty() {
+                return Err(DataroomError::OutboundRefused(format!(
+                    "{} has no checked address; refusing an unpinned fetch",
+                    target.host
+                )));
             }
+            builder = builder.resolve_to_addrs(&target.host, &target.pinned_addrs);
 
             let client = builder.build().map_err(|e| {
                 DataroomError::OutboundRefused(format!("build HTTP client: {e}"))
@@ -1013,6 +990,23 @@ mod tests {
             .collect();
         assert_eq!(active.len(), 1);
         assert_eq!(withdrawn.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a2_http_fetcher_refuses_a_target_without_checked_addresses() {
+        let target = ValidatedTarget {
+            url: url::Url::parse("https://allowed.example.org/catalog.ttl").unwrap(),
+            host: "allowed.example.org".into(),
+            pinned_addrs: Vec::new(),
+        };
+        let res = HttpFetcher::new()
+            .fetch_hop(&target, "text/turtle", 1024, Duration::from_secs(1))
+            .await;
+        assert!(
+            matches!(res, Err(DataroomError::OutboundRefused(ref m)) if m.contains("unpinned")),
+            "got {:?}",
+            res.map(|_| ())
+        );
     }
 
     #[tokio::test]
