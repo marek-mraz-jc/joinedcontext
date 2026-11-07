@@ -1,0 +1,8 @@
+[
+  {"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:district-101", "type": "AdministrativeArea", "districtCode": 101, "name": {"fi": "Vironniemi", "sv": "Estnäs"}, "divisionLevel": "district",
+   "location": {"type": "Polygon", "coordinates": [[[24.90, 60.15], [24.96, 60.15], [24.96, 60.18], [24.90, 60.18], [24.90, 60.15]]]}},
+  {"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:district-102", "type": "AdministrativeArea", "districtCode": "102", "name": "Ullanlinna", "divisionLevel": "district",
+   "location": {"type": "Polygon", "coordinates": [[[24.96, 60.15], [25.02, 60.15], [25.02, 60.18], [24.96, 60.18], [24.96, 60.15]]]}},
+  {"id": "urn:ngsi-ld:AdministrativeArea:hel.fi:helsinki:major-1", "type": "AdministrativeArea", "districtCode": "1", "name": "Eteläinen", "divisionLevel": "major",
+   "location": {"type": "Polygon", "coordinates": [[[24.80, 60.10], [25.10, 60.10], [25.10, 60.20], [24.80, 60.20], [24.80, 60.10]]]}}
+]

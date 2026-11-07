@@ -1,0 +1,21 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-zilina-zaznamy
+  namespace: zilina
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    en: Open data about Žilina
+    sk: Otvorené dáta o Žiline
+spec:
+  audience: public
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: zilina-verejne
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - ogc-features
+  slug: ecifgir4dzgl7h45rwvty2ygyb

@@ -1,0 +1,9 @@
+# jc-mapper {"type":"Vehicle","idField":"vehicle","attributes":{"speed":{"field":"speed"}},"expires":{"field":"observedAt","plus":"PT10M"}}
+let domain = env("JC_ORG_DOMAIN")
+root = {}
+root.id = "urn:ngsi-ld:%v:%v:%v:%v".format("Vehicle", $domain, "transport", this.vehicle.string().re_replace_all("[^A-Za-z0-9._~-]", "-"))
+root.type = "Vehicle"
+let a0 = if this.speed != null && this.speed != "" { this.speed.number() } else { null }
+root.speed = if $a0 != null { { "type": "Property", "value": $a0 } } else { deleted() }
+let expires = if this.observedAt != null && this.observedAt != "" { this.observedAt.ts_unix() } else { null }
+root.expiresAt = if $expires != null { ($expires + 600).ts_format("2006-01-02T15:04:05Z", "UTC") } else { deleted() }

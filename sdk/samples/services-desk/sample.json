@@ -1,0 +1,25 @@
+{
+  "name": "services-desk",
+  "title": "Services desk",
+  "purpose": "Let staff work a defect report with the platform services: keep its photos in the App's files, rate it with the platform's model, email it to themselves, watch the App's scheduled jobs, and close it through a function only stewards may call.",
+  "archetype": "services-desk",
+  "audience": "staff",
+  "layout": "desk",
+  "keywords": ["services", "files", "file", "upload", "photo", "photos", "attachment", "attachments", "email", "mail", "notify", "jobs", "job", "schedule", "scheduled", "nightly", "ai", "model", "classify", "rate", "steward", "defect", "defects"],
+  "ready": "Defect desk",
+  "dataNeeds": [
+    {
+      "types": ["DefectReport"],
+      "attrs": ["name", "description", "district", "status", "dateReported"],
+      "operations": ["queryEntity"]
+    },
+    {
+      "roles": ["steward"],
+      "types": ["DefectReport"],
+      "attrs": ["status"],
+      "operations": ["updateAttrs"]
+    }
+  ],
+  "access": "Everyone signed in reads the reports and uses the services the App's layers leave on; only the steward role closes a report, checked in the function, and only its status.",
+  "sdk": ["useEntities", "useClient", "ServiceRefusedError", "ProblemError", "format", "displayName", "Page", "Header", "Split", "Card", "requireRole"]
+}

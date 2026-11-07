@@ -1,0 +1,508 @@
+{
+  "gateway": [
+    {
+      "path": "/ngsi-ld/v1/temporal/entities",
+      "query": {
+        "type": "KeyPerformanceIndicator",
+        "attrs": "currentValue"
+      },
+      "file": "host-test/history.json"
+    }
+  ],
+  "steps": [
+    {
+      "call": "POST /api/forecasts",
+      "body": {
+        "days": 14
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/forecasts",
+      "body": {
+        "days": 30,
+        "kpi": "urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use"
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/forecasts",
+      "body": {
+        "days": 30
+      },
+      "status": 202,
+      "expect": {
+        "/recorded": 0,
+        "/already": false
+      }
+    },
+    {
+      "job": "record-forecasts"
+    },
+    {
+      "call": "POST /api/forecasts",
+      "body": {
+        "days": 30
+      },
+      "status": 200,
+      "expect": {
+        "/recorded": 0,
+        "/already": true
+      }
+    },
+    {
+      "call": "GET /api/forecasts?kpi=urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use&days=30",
+      "status": 200,
+      "expect": {
+        "/0/days": 30,
+        "/0/direction": "up",
+        "/0/step": 86400000.0,
+        "/0/latestV": 130.0
+      },
+      "length": {
+        "": 1
+      }
+    },
+    {
+      "call": "GET /api/forecasts?kpi=urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use&days=7",
+      "status": 200,
+      "length": {
+        "": 1
+      },
+      "expect": {
+        "/0/days": 7
+      }
+    },
+    {
+      "call": "GET /api/forecasts?kpi=urn:ngsi-ld:KeyPerformanceIndicator:helsinki:flat-few",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/forecasts?kpi=urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use&days=14",
+      "status": 400
+    },
+    {
+      "call": "GET /api/forecasts?kpi=urn:ngsi-ld:Vehicle:1",
+      "status": 400
+    },
+    {
+      "call": "POST /api/reports",
+      "body": {
+        "month": "2026-13"
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/reports",
+      "body": {
+        "month": "2020-01"
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/reports",
+      "body": {
+        "month": "2099-01"
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/reports",
+      "body": {},
+      "status": 201,
+      "download": "/url",
+      "downloaded": "kpi,made_on,period_days,for_utc,expected,low_95,high_95,measured,within_95\n"
+    },
+    {
+      "call": "GET /api/forecasts?kpi=urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use",
+      "as": "second",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/me",
+      "caller": "anonymous",
+      "status": 200,
+      "expect": {
+        "": null
+      }
+    },
+    {
+      "call": "GET /api/me",
+      "caller": "viewer",
+      "status": 200,
+      "expect": {
+        "/id": "u-viewer",
+        "/roles/0": "viewer"
+      }
+    },
+    {
+      "call": "GET /api/published?kpi=urn:ngsi-ld:Building:x",
+      "caller": "anonymous",
+      "status": 400
+    },
+    {
+      "call": "GET /api/published?kpi=urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use",
+      "caller": "anonymous",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "POST /api/published",
+      "caller": "anonymous",
+      "body": {
+        "kpi": "urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use",
+        "days": 30,
+        "horizon": 6,
+        "note": "For the board, 6 days ahead"
+      },
+      "status": 401,
+      "rows": {
+        "published": 0,
+        "app_audit": 0
+      }
+    },
+    {
+      "call": "POST /api/published",
+      "caller": "viewer",
+      "body": {
+        "kpi": "urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use",
+        "days": 30,
+        "horizon": 6,
+        "note": "For the board, 6 days ahead"
+      },
+      "status": 403,
+      "rows": {
+        "published": 0,
+        "app_audit": 0
+      }
+    },
+    {
+      "call": "POST /api/published",
+      "caller": "steward+viewer",
+      "body": {
+        "kpi": "urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use",
+        "days": 30,
+        "horizon": 0,
+        "note": "For the board, 6 days ahead"
+      },
+      "status": 400,
+      "rows": {
+        "published": 0
+      }
+    },
+    {
+      "call": "POST /api/published",
+      "caller": "steward+viewer",
+      "body": {
+        "kpi": "urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use",
+        "days": 30,
+        "horizon": 49,
+        "note": "For the board, 6 days ahead"
+      },
+      "status": 400,
+      "rows": {
+        "published": 0
+      }
+    },
+    {
+      "call": "POST /api/published",
+      "caller": "steward+viewer",
+      "body": {
+        "kpi": "urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use",
+        "days": 30,
+        "horizon": 6,
+        "note": "  "
+      },
+      "status": 400,
+      "rows": {
+        "published": 0
+      }
+    },
+    {
+      "call": "POST /api/published",
+      "caller": "steward+viewer",
+      "body": {
+        "kpi": "urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use",
+        "days": 14,
+        "horizon": 6,
+        "note": "For the board, 6 days ahead"
+      },
+      "status": 400,
+      "rows": {
+        "published": 0
+      }
+    },
+    {
+      "call": "POST /api/published",
+      "caller": "steward+viewer",
+      "body": {
+        "kpi": "urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use",
+        "days": 30,
+        "horizon": 6,
+        "note": "For the board, 6 days ahead",
+        "owner_id": "u-viewer"
+      },
+      "status": 400,
+      "rows": {
+        "published": 0,
+        "app_audit": 0
+      }
+    },
+    {
+      "call": "POST /api/published",
+      "caller": "steward+viewer",
+      "body": {
+        "kpi": "urn:ngsi-ld:KeyPerformanceIndicator:helsinki:nothing",
+        "days": 30,
+        "horizon": 6,
+        "note": "For the board, 6 days ahead"
+      },
+      "status": 409,
+      "rows": {
+        "published": 0,
+        "app_audit": 0
+      }
+    },
+    {
+      "call": "POST /api/published",
+      "caller": "steward+viewer",
+      "body": {
+        "kpi": "urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use",
+        "days": 30,
+        "horizon": 6,
+        "note": "  For the board, 6 days ahead  "
+      },
+      "status": 201,
+      "expect": {
+        "/horizon": 6,
+        "/days": 30,
+        "/note": "For the board, 6 days ahead",
+        "/publisherName": "Person u-steward"
+      },
+      "length": {
+        "/points": 6
+      },
+      "save": {
+        "pub": "/id"
+      },
+      "rows": {
+        "published": 1,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "GET /api/published?kpi=urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use",
+      "caller": "anonymous",
+      "status": 200,
+      "length": {
+        "": 1,
+        "/0/points": 6
+      },
+      "expect": {
+        "/0/horizon": 6,
+        "/0/note": "For the board, 6 days ahead",
+        "/0/publisherName": "Person u-steward"
+      }
+    },
+    {
+      "call": "DELETE /api/published/{pub}",
+      "caller": "anonymous",
+      "status": 401,
+      "rows": {
+        "published": 1
+      }
+    },
+    {
+      "call": "DELETE /api/published/{pub}",
+      "caller": "viewer",
+      "status": 403,
+      "rows": {
+        "published": 1,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "DELETE /api/published/x",
+      "caller": "steward+viewer",
+      "status": 404,
+      "rows": {
+        "published": 1
+      }
+    },
+    {
+      "call": "GET /api/follows",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "POST /api/follows",
+      "caller": "anonymous",
+      "body": {
+        "kpi": "urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use"
+      },
+      "status": 401,
+      "rows": {
+        "follows": 0
+      }
+    },
+    {
+      "call": "POST /api/follows",
+      "caller": "viewer",
+      "body": {
+        "kpi": "urn:ngsi-ld:Building:x"
+      },
+      "status": 400,
+      "rows": {
+        "follows": 0
+      }
+    },
+    {
+      "call": "POST /api/follows",
+      "caller": "viewer",
+      "body": {
+        "kpi": "urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use",
+        "owner_id": "u-2"
+      },
+      "status": 400,
+      "rows": {
+        "follows": 0
+      }
+    },
+    {
+      "call": "POST /api/follows",
+      "caller": "viewer",
+      "body": {
+        "kpi": "urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use"
+      },
+      "status": 201,
+      "expect": {
+        "/kpi": "urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use"
+      },
+      "save": {
+        "follow": "/id"
+      },
+      "rows": {
+        "follows": 1,
+        "app_audit": 2
+      }
+    },
+    {
+      "call": "POST /api/follows",
+      "caller": "viewer",
+      "body": {
+        "kpi": "urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use"
+      },
+      "status": 409,
+      "rows": {
+        "follows": 1,
+        "app_audit": 2
+      }
+    },
+    {
+      "call": "GET /api/follows",
+      "caller": "viewer",
+      "status": 200,
+      "length": {
+        "": 1
+      },
+      "expect": {
+        "/0/kpi": "urn:ngsi-ld:KeyPerformanceIndicator:helsinki:bikes-in-use"
+      }
+    },
+    {
+      "call": "GET /api/follows",
+      "caller": "viewer@u-2",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "DELETE /api/follows/{follow}",
+      "caller": "viewer@u-2",
+      "status": 404,
+      "rows": {
+        "follows": 1
+      }
+    },
+    {
+      "call": "DELETE /api/follows/{follow}",
+      "caller": "steward+viewer",
+      "status": 404,
+      "rows": {
+        "follows": 1,
+        "app_audit": 2
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "viewer",
+      "status": 200,
+      "length": {
+        "": 1
+      },
+      "expect": {
+        "/0/summary": "followed an indicator"
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "viewer@u-2",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "DELETE /api/follows/{follow}",
+      "caller": "viewer",
+      "status": 204,
+      "rows": {
+        "follows": 0,
+        "app_audit": 3
+      }
+    },
+    {
+      "call": "DELETE /api/published/{pub}",
+      "caller": "steward+viewer",
+      "status": 204,
+      "rows": {
+        "published": 0,
+        "app_audit": 4
+      }
+    },
+    {
+      "call": "DELETE /api/published/{pub}",
+      "caller": "steward+viewer",
+      "status": 404,
+      "rows": {
+        "app_audit": 4
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "steward+viewer",
+      "status": 200,
+      "length": {
+        "": 4
+      },
+      "expect": {
+        "/0/summary": "withdrew a published forecast",
+        "/0/actorName": "Person u-steward"
+      }
+    }
+  ]
+}

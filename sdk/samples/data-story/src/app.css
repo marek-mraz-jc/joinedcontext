@@ -1,0 +1,61 @@
+/* The story: one readable column, a large lede, figures with captions, the numbers one click away. */
+
+.app-story {
+  max-width: 46rem;
+  font-size: var(--jc-font-size-md, 1.0625rem);
+  line-height: 1.6;
+}
+
+.app-lede {
+  margin: 0 0 var(--jc-space-8, 2.5rem);
+  font-size: var(--jc-font-size-lg, 1.375rem);
+  line-height: 1.45;
+}
+
+.app-story section {
+  margin-block-end: var(--jc-space-8, 2.5rem);
+}
+
+.app-story h2 {
+  margin: 0 0 var(--jc-space-3, 0.75rem);
+  font-size: var(--jc-font-size-xl, 1.625rem);
+  line-height: 1.2;
+}
+
+.app-story figure {
+  margin: var(--jc-space-6, 1.5rem) 0;
+}
+
+.app-story figcaption {
+  margin-block-start: var(--jc-space-2, 0.5rem);
+  color: var(--jc-color-muted, #52525b);
+  font-size: var(--jc-font-size-sm, 0.9375rem);
+}
+
+.app-story details summary {
+  min-height: var(--jc-target, 2.75rem);
+  display: flex;
+  align-items: center;
+  color: var(--jc-color-accent, #7c2d12);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.app-story table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-story caption {
+  text-align: start;
+  font-weight: 600;
+  padding-block: var(--jc-space-2, 0.5rem);
+}
+
+.app-story th,
+.app-story td {
+  padding: var(--jc-space-1, 0.25rem) var(--jc-space-2, 0.5rem);
+  border-bottom: 1px solid var(--jc-color-line, #e4e4e7);
+  text-align: start;
+}

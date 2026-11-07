@@ -1,0 +1,221 @@
+/*
+ * The Portal's design tokens (UI-01, UI-30, OPS-46).
+ *
+ * Three layers, each derived from the one above it, so nothing below the first hard-codes a
+ * colour of any installation:
+ *
+ *   1. Brand sources: `--portal-color-*` and `--portal-font-*`. `applyBranding()` writes these
+ *      onto the root element from `/api/v1/branding`; the values here are only what an
+ *      unbranded instance looks like.
+ *   2. Scales: `--portal-primary-N` and `--portal-neutral-N`, mixed at runtime from the brand
+ *      primary, the page paper and the page ink with `color-mix()`. Light and dark differ only
+ *      in which brand colour is paper and which is ink.
+ *   3. Semantic tokens: `--portal-bg`, `--portal-surface`, `--portal-fg`, `--portal-border`,
+ *      the status colours, the type scale, spacing, radius, elevation and the focus ring. These
+ *      are what `@theme` in index.css hands to Tailwind, and what every component reads.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* 1. Brand sources — set at runtime by branding.tsx, never by a component. */
+  --portal-color-primary: #1d4ed8;
+  --portal-color-primary-fg: #ffffff;
+  --portal-color-secondary: #0f766e;
+  --portal-color-accent: #f59e0b;
+  --portal-color-surface: #ffffff;
+  --portal-color-surface-fg: #0f172a;
+  --portal-color-danger: #b91c1c;
+  --portal-color-danger-fg: #ffffff;
+  --portal-font-heading: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --portal-font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --portal-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Light: the branded background is the paper, the branded text colour the ink. */
+  --portal-paper: var(--portal-color-surface);
+  --portal-ink: var(--portal-color-surface-fg);
+  --portal-brand: var(--portal-color-primary);
+  --portal-brand-fg: var(--portal-color-primary-fg);
+  --portal-danger-base: var(--portal-color-danger);
+  --portal-danger-base-fg: var(--portal-color-danger-fg);
+  /* Dark enough to read on their `-soft` chips at caption size (WCAG AA 4.5:1; the axe run in
+     the e2e suite checks it): green-800 and orange-800, not the 700s. */
+  --portal-success-base: #166534;
+  --portal-warning-base: #9a3412;
+  --portal-info-base: var(--portal-color-secondary);
+
+  /* 2. Scales. `--portal-neutral-0` is the paper itself; 900 is the ink. */
+  --portal-neutral-0: var(--portal-paper);
+  --portal-neutral-50: color-mix(in oklab, var(--portal-ink) 3%, var(--portal-paper));
+  --portal-neutral-100: color-mix(in oklab, var(--portal-ink) 6%, var(--portal-paper));
+  --portal-neutral-200: color-mix(in oklab, var(--portal-ink) 12%, var(--portal-paper));
+  --portal-neutral-300: color-mix(in oklab, var(--portal-ink) 22%, var(--portal-paper));
+  --portal-neutral-400: color-mix(in oklab, var(--portal-ink) 38%, var(--portal-paper));
+  --portal-neutral-500: color-mix(in oklab, var(--portal-ink) 52%, var(--portal-paper));
+  --portal-neutral-600: color-mix(in oklab, var(--portal-ink) 66%, var(--portal-paper));
+  --portal-neutral-700: color-mix(in oklab, var(--portal-ink) 80%, var(--portal-paper));
+  --portal-neutral-800: color-mix(in oklab, var(--portal-ink) 92%, var(--portal-paper));
+  --portal-neutral-900: var(--portal-ink);
+
+  --portal-primary-50: color-mix(in oklab, var(--portal-brand) 6%, var(--portal-paper));
+  --portal-primary-100: color-mix(in oklab, var(--portal-brand) 12%, var(--portal-paper));
+  --portal-primary-200: color-mix(in oklab, var(--portal-brand) 24%, var(--portal-paper));
+  --portal-primary-300: color-mix(in oklab, var(--portal-brand) 42%, var(--portal-paper));
+  --portal-primary-400: color-mix(in oklab, var(--portal-brand) 70%, var(--portal-paper));
+  --portal-primary-500: var(--portal-brand);
+  --portal-primary-600: color-mix(in oklab, var(--portal-brand) 88%, var(--portal-ink));
+  --portal-primary-700: color-mix(in oklab, var(--portal-brand) 76%, var(--portal-ink));
+  --portal-primary-800: color-mix(in oklab, var(--portal-brand) 62%, var(--portal-ink));
+  --portal-primary-900: color-mix(in oklab, var(--portal-brand) 48%, var(--portal-ink));
+
+  /* 3. Semantic colour. */
+  --portal-bg: var(--portal-neutral-50);
+  --portal-surface: var(--portal-neutral-0);
+  --portal-surface-subtle: var(--portal-neutral-50);
+  --portal-surface-muted: var(--portal-neutral-100);
+  --portal-surface-raised: var(--portal-neutral-0);
+  --portal-fg: var(--portal-neutral-900);
+  --portal-fg-muted: var(--portal-neutral-600);
+  /* Between neutral-500 and -600: 500 is 4.2:1 on the paper, below AA for the caption-size
+     text this token carries (ids under titles, metric labels); 60 % ink reads 5.4:1 on the
+     paper and 4.7:1 on neutral-100. The dark theme inherits the formula and stays above 5:1. */
+  --portal-fg-subtle: color-mix(in oklab, var(--portal-ink) 60%, var(--portal-paper));
+  --portal-border: var(--portal-neutral-200);
+  --portal-border-strong: var(--portal-neutral-300);
+  --portal-primary: var(--portal-primary-500);
+  --portal-primary-hover: var(--portal-primary-600);
+  --portal-primary-active: var(--portal-primary-700);
+  --portal-primary-fg: var(--portal-brand-fg);
+  --portal-primary-soft: var(--portal-primary-50);
+  /* Same reason as `--portal-info`, and the same arithmetic: `primary-700` is 76 % brand over
+     the paper, which a pale brand leaves at 2.8:1 on `primary-soft` (T-1493, UI-16). */
+  --portal-primary-soft-fg: color-mix(in oklab, var(--portal-brand) 50%, var(--portal-ink));
+  --portal-danger: var(--portal-danger-base);
+  --portal-danger-fg: var(--portal-danger-base-fg);
+  --portal-danger-hover: color-mix(in oklab, var(--portal-danger-base) 88%, var(--portal-ink));
+  --portal-danger-active: color-mix(in oklab, var(--portal-danger-base) 76%, var(--portal-ink));
+  --portal-danger-soft: color-mix(in oklab, var(--portal-danger-base) 10%, var(--portal-paper));
+  --portal-success: var(--portal-success-base);
+  --portal-success-soft: color-mix(in oklab, var(--portal-success-base) 12%, var(--portal-paper));
+  --portal-warning: var(--portal-warning-base);
+  --portal-warning-soft: color-mix(in oklab, var(--portal-warning-base) 14%, var(--portal-paper));
+  /* The tone is the brand's secondary pulled halfway to the ink, not the raw colour: `text-info`
+     sits on `bg-info-soft`, a 12 % tint of the same colour, and the raw value of a pale brand
+     measured 1.6:1 there (T-1493, UI-16). Mixing towards the ink darkens it in the light theme
+     and lightens it in the dark one, because the ink is the text end of both. */
+  --portal-info: color-mix(in oklab, var(--portal-info-base) 50%, var(--portal-ink));
+  --portal-info-soft: color-mix(in oklab, var(--portal-info-base) 12%, var(--portal-paper));
+  /* The focus ring is the only thing a keyboard user has to see where they are, and WCAG 2.2
+     asks 3:1 of it (1.4.11, 2.4.11). The brand colour raw is 1.56:1 on the page for an
+     installation branded in a pale civic colour, so the ring is the brand pulled towards the
+     ink — darker on paper, lighter on a dark page, the same hue in both (T-2323, UI-30). */
+  --portal-ring: color-mix(in oklab, var(--portal-primary-500) 65%, var(--portal-ink));
+  --portal-overlay: color-mix(in oklab, var(--portal-neutral-900) 45%, transparent);
+
+  /* Density (T-6093): the owner read the Portal best at 80 % browser zoom, so the scales below
+     are what 80 % showed. The Tailwind unit behind every `p-*`, `gap-*`, `h-*` and `w-*` is 80 %
+     of Tailwind's 0.25rem; text keeps its floors instead (body 14 px, caption 12 px), and the
+     control heights below keep a pointer target of 32 px (24 px for `xs`, WCAG 2.5.8). */
+  --portal-spacing: 0.2rem;
+
+  /* Type scale: four sizes, each with its line height. */
+  --portal-text-caption: 0.75rem;
+  --portal-text-caption--line-height: 1rem;
+  --portal-text-body: 0.875rem;
+  --portal-text-body--line-height: 1.25rem;
+  --portal-text-title: 1rem;
+  --portal-text-title--line-height: 1.375rem;
+  --portal-text-display: 1.25rem;
+  --portal-text-display--line-height: 1.75rem;
+
+  /* Control heights: a button, an input or a select of the shared components. */
+  --portal-control-xs: 1.5rem;
+  --portal-control: 2rem;
+  --portal-control-lg: 2.25rem;
+
+  /* Spacing: the page gutter, the gap between sections, the widest content column. */
+  --portal-space-gutter: 1.25rem;
+  --portal-space-section: 1rem;
+  --portal-space-stack: 0.625rem;
+  /* The page takes the window's width (owner 2026-10-30: no empty margin left of the data);
+     prose keeps its own measure (max-w-prose). */
+  --portal-content-max: 100%;
+  /* The SDK grid's text in rem, so it follows the Portal's root size (owner 2026-10-30, 80 %). */
+  --jc-font-size-md: 0.875rem;
+  --jc-font-size-sm: 0.75rem;
+  --portal-sidebar-width: 13rem;
+  /* The preview column of an application: the page IS the application, so the frame takes what
+     the viewport allows and never falls below a phone's screen. The building state uses the
+     same box, so the column does not jump when the preview arrives (AP-63, UI-42). */
+  --portal-preview-height: 82vh;
+  /* What a docked panel fills below the `h-14` header, beside the page (xl and up). */
+  --portal-below-header: calc(100vh - var(--portal-spacing) * 14);
+  /* The SDK grid's popups open below that header, which would cover their title (T-5181). */
+  --jc-grid-sticky-top: calc(var(--portal-spacing) * 14);
+  --portal-preview-min-height: 28rem;
+
+  /* Radius. */
+  --portal-radius-sm: 0.375rem;
+  --portal-radius-md: 0.5rem;
+  --portal-radius-lg: 0.75rem;
+  --portal-radius-xl: 1rem;
+
+  /* Elevation: a card, a popover, a dialog. */
+  --portal-shadow-1:
+    0 1px 2px 0 color-mix(in oklab, var(--portal-neutral-900) 6%, transparent),
+    0 0 0 1px color-mix(in oklab, var(--portal-neutral-900) 4%, transparent);
+  --portal-shadow-2:
+    0 4px 12px -2px color-mix(in oklab, var(--portal-neutral-900) 12%, transparent),
+    0 0 0 1px color-mix(in oklab, var(--portal-neutral-900) 5%, transparent);
+  --portal-shadow-3:
+    0 20px 40px -12px color-mix(in oklab, var(--portal-neutral-900) 30%, transparent),
+    0 0 0 1px color-mix(in oklab, var(--portal-neutral-900) 6%, transparent);
+
+  /* Focus ring. */
+  --portal-ring-width: 2px;
+  --portal-ring-offset: 2px;
+}
+
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Dark: the branded text colour becomes the paper, tinted a little towards the brand,
+       and the branded background the ink. The scales above re-derive themselves. */
+    --portal-paper: color-mix(in oklab, var(--portal-color-surface-fg) 92%, var(--portal-color-primary));
+    --portal-ink: var(--portal-color-surface);
+    /* The API's pair, and the old derivation as its fallback. The lightening used to live in
+       this line and the label in the next one — the branded text pushed towards black, whatever
+       the button ended up being — which is 2.31:1 for an installation branded `#111827` and
+       3.43:1 for one branded `#0000bf`. The API computes the colour and then chooses the text
+       that reads on it, the way it already does for the light theme (T-2324, UI-30).
+
+       The fallback is what this file did before, and it is here for one answer: a branding body
+       cached from a Portal that predates these two fields (`max-age=300`). Without it the two
+       tokens would fall back to a *literal* default and paint another installation's blue on a
+       branded page; with it, an old answer paints exactly what it used to. */
+    --portal-brand: var(
+      --portal-color-primary-dark,
+      color-mix(in oklab, var(--portal-color-primary) 72%, white)
+    );
+    --portal-brand-fg: var(
+      --portal-color-primary-fg-dark,
+      color-mix(in oklab, var(--portal-color-surface-fg) 90%, black)
+    );
+    --portal-danger-base: #f87171;
+    --portal-danger-base-fg: #1c0a0a;
+    --portal-success-base: #4ade80;
+    --portal-warning-base: #fbbf24;
+    --portal-info-base: color-mix(in oklab, var(--portal-color-secondary) 60%, white);
+
+    --portal-bg: var(--portal-neutral-0);
+    --portal-surface: var(--portal-neutral-50);
+    --portal-surface-subtle: var(--portal-neutral-100);
+    --portal-surface-muted: var(--portal-neutral-200);
+    --portal-surface-raised: var(--portal-neutral-100);
+    --portal-primary-soft: var(--portal-primary-100);
+
+    --portal-primary-hover: var(--portal-primary-400);
+    --portal-primary-active: var(--portal-primary-300);
+    --portal-overlay: color-mix(in oklab, black 65%, transparent);
+  }
+}

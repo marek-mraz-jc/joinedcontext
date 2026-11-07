@@ -1,0 +1,438 @@
+# Default form arrangement for AssistantDeployment (UI-02, MF-52, T-3057), in the capabilities a steward decides (T-4282).
+# Where the knowledge assistant answers, from what, and what it may spend; examples are neutral (T-2752).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: assistantdeployment
+spec:
+  for: AssistantDeployment
+  guide: User-Guide/08-working-with-ai-agents
+  about:
+    en: >-
+      An assistant deployment is one place the knowledge assistant answers: its channel, the
+      sources it answers from, the Endpoints it may read live data through, and on a public
+      channel the sites it may be placed on, how often it answers and what it may spend.
+    sk: >-
+      Nasadenie asistenta je jedno miesto, kde asistent znalostí odpovedá: jeho kanál, zdroje, z
+      ktorých odpovedá, endpointy, cez ktoré smie čítať živé dáta, a na verejnom kanáli weby, na
+      ktorých smie byť, ako často odpovedá a koľko smie minúť.
+    cs: >-
+      Nasazení asistenta je jedno místo, kde asistent znalostí odpovídá: jeho kanál, zdroje, ze
+      kterých odpovídá, endpointy, přes které smí číst živá data, a na veřejném kanálu weby, na
+      kterých smí být, jak často odpovídá a kolik smí utratit.
+    de: >-
+      Ein Assistenten-Einsatz ist ein Ort, an dem der Wissensassistent antwortet: sein Kanal, die
+      Quellen, aus denen er antwortet, die Endpoints für Live-Daten und auf einem öffentlichen Kanal
+      die Websites, auf denen er stehen darf, wie oft er antwortet und was er ausgeben darf.
+  order:
+    [
+      name,
+      publicId,
+      channel,
+      enabled,
+      categories,
+      sources,
+      scope,
+      connectors,
+      select,
+      exclude,
+      systemPrompt,
+      sandbox,
+      languages,
+      theme,
+      widget,
+      suggestions,
+      disclaimer,
+      answer,
+      feedback,
+      allowedOrigins,
+      rateLimit,
+      budget,
+      model,
+    ]
+  groups:
+    - title:
+        en: "Deployment"
+        sk: "Nasadenie"
+        cs: "Nasazení"
+        de: "Einsatz"
+      description:
+        en: "What it is called, and who may talk to it."
+        sk: "Ako sa volá a kto sa s ním smie rozprávať."
+        cs: "Jak se jmenuje a kdo s ním smí mluvit."
+        de: "Wie er heißt und wer mit ihm sprechen darf."
+      fields: [name, publicId, channel, enabled, categories]
+    - title:
+        en: "Knowledge"
+        sk: "Znalosti"
+        cs: "Znalosti"
+        de: "Wissen"
+      description:
+        en: "Every answer cites these; a question they do not cover gets the sources' links, not a guess."
+        sk: "Každá odpoveď cituje tieto zdroje; na otázku mimo nich dostane návštevník odkazy, nie odhad."
+        cs: "Každá odpověď cituje tyto zdroje; na otázku mimo ně dostane návštěvník odkazy, ne odhad."
+        de: "Jede Antwort zitiert diese Quellen; eine Frage außerhalb bekommt die Links der Quellen, keine Vermutung."
+      fields: [sources, scope]
+    - title:
+        en: "Live data"
+        sk: "Živé dáta"
+        cs: "Živá data"
+        de: "Live-Daten"
+      description:
+        en: "Endpoints whose tools it may call for current values; none for an assistant that answers from its knowledge alone."
+        sk: "Endpointy, ktorých nástroje smie volať pre aktuálne hodnoty; žiadny pre asistenta, ktorý odpovedá len zo znalostí."
+        cs: "Endpointy, jejichž nástroje smí volat pro aktuální hodnoty; žádný pro asistenta, který odpovídá jen ze znalostí."
+        de: "Endpoints, deren Werkzeuge er für aktuelle Werte rufen darf; keiner für einen Assistenten, der nur aus seinem Wissen antwortet."
+      folded: true
+      fields: [connectors, select, exclude]
+    - title:
+        en: "How it answers"
+        sk: "Ako odpovedá"
+        cs: "Jak odpovídá"
+        de: "Wie er antwortet"
+      description:
+        en: "The tone and the reach of an answer; the platform's own rules always come first."
+        sk: "Tón a dosah odpovede; vlastné pravidlá platformy majú vždy prednosť."
+        cs: "Tón a dosah odpovědi; vlastní pravidla platformy mají vždy přednost."
+        de: "Ton und Reichweite einer Antwort; die eigenen Regeln der Plattform gehen immer vor."
+      folded: true
+      fields: [systemPrompt, sandbox]
+    - title:
+        en: "Language"
+        sk: "Jazyk"
+        cs: "Jazyk"
+        de: "Sprache"
+      description:
+        en: "Each language listed here can get its own suggestions and disclaimer below."
+        sk: "Každý jazyk z tohto zoznamu môže mať nižšie vlastné návrhy a upozornenie."
+        cs: "Každý jazyk z tohoto seznamu může mít níže vlastní návrhy a upozornění."
+        de: "Jede hier genannte Sprache kann unten eigene Vorschläge und einen eigenen Hinweis bekommen."
+      folded: true
+      fields: [languages]
+    - title:
+        en: "Widget"
+        sk: "Widget"
+        cs: "Widget"
+        de: "Widget"
+      description:
+        en: "How the chat looks, greets and picks its language, what it answers from, and the helpful buttons under each answer; a change reaches the chat without a deploy."
+        sk: "Ako chat vyzerá, víta a vyberá jazyk, z čoho odpovedá a tlačidlá užitočnosti pod každou odpoveďou; zmena sa do chatu dostane bez nasadenia."
+        cs: "Jak chat vypadá, vítá a vybírá jazyk, z čeho odpovídá a tlačítka užitečnosti pod každou odpovědí; změna se do chatu dostane bez nasazení."
+        de: "Wie der Chat aussieht, begrüßt und seine Sprache wählt, woraus er antwortet und die Hilfreich-Knöpfe unter jeder Antwort; eine Änderung erreicht den Chat ohne Deployment."
+      folded: true
+      fields: [theme, widget, suggestions, disclaimer, answer, feedback]
+    - title:
+        en: "Where it may appear"
+        sk: "Kde sa môže zobraziť"
+        cs: "Kde se může zobrazit"
+        de: "Wo er erscheinen darf"
+      description:
+        en: "On a page of any other site the chat does not open; the assistant checks the origin of every request against this list."
+        sk: "Na stránke iného webu sa chat neotvorí; asistent overí pôvod každej požiadavky podľa tohto zoznamu."
+        cs: "Na stránce jiného webu se chat neotevře; asistent ověří původ každého požadavku podle tohoto seznamu."
+        de: "Auf der Seite einer anderen Website öffnet sich der Chat nicht; der Assistent prüft die Herkunft jeder Anfrage gegen diese Liste."
+      folded: true
+      fields: [allowedOrigins]
+    - title:
+        en: "Limits and budget"
+        sk: "Limity a rozpočet"
+        cs: "Limity a rozpočet"
+        de: "Grenzen und Budget"
+      description:
+        en: "How often one visitor may ask, what a day may cost and the models it uses; a public channel needs a rate limit and a budget."
+        sk: "Ako často sa smie jeden návštevník pýtať, koľko smie stáť deň a aké modely používa; verejný kanál potrebuje limit aj rozpočet."
+        cs: "Jak často se smí jeden návštěvník ptát, kolik smí stát den a jaké modely používá; veřejný kanál potřebuje limit i rozpočet."
+        de: "Wie oft ein Besucher fragen darf, was ein Tag kosten darf und welche Modelle er nutzt; öffentlich braucht Limit und Budget."
+      folded: true
+      fields: [rateLimit, budget, model]
+  fields:
+    categories:
+      help:
+        en: The EU data themes it is about; the context page and the public chat show them.
+        sk: Témy dát EÚ, o ktorých je; zobrazí ich stránka kontextu aj verejný chat.
+        cs: Témata dat EU, o kterých je; zobrazí je stránka kontextu i veřejný chat.
+        de: Die EU-Datenthemen, um die es geht; die Kontextseite und der öffentliche Chat zeigen sie.
+    select:
+      help:
+        en: "Picks Endpoints by publisher, category, entity type and access, inside this project and the projects of scope.projects; an Endpoint added later that matches joins without a change here. A public channel picks public Endpoints only."
+        sk: "Vyberie endpointy podľa vydavateľa, kategórie, typu entity a prístupu, v tomto projekte a v projektoch zo scope.projects; endpoint pridaný neskôr, ktorý zodpovedá, sa pridá bez zmeny tu. Verejný kanál vyberá len verejné endpointy."
+        cs: "Vybere endpointy podle vydavatele, kategorie, typu entity a přístupu, v tomto projektu a v projektech ze scope.projects; endpoint přidaný později, který odpovídá, se přidá bez změny zde. Veřejný kanál vybírá jen veřejné endpointy."
+        de: "Wählt Endpoints nach Herausgeber, Kategorie, Entitätstyp und Zugriff, in diesem Projekt und den Projekten aus scope.projects; ein später hinzugefügter passender Endpoint kommt ohne Änderung hier dazu. Ein öffentlicher Kanal wählt nur öffentliche Endpoints."
+    select.projects:
+      help:
+        en: The projects whose Endpoints it picks; empty picks this project and those of scope.projects.
+        sk: Projekty, ktorých endpointy vyberie; prázdne vyberie tento projekt a projekty zo scope.projects.
+        cs: Projekty, jejichž endpointy vybere; prázdné vybere tento projekt a projekty ze scope.projects.
+        de: Die Projekte, deren Endpoints er wählt; leer wählt dieses Projekt und die aus scope.projects.
+    select.themes:
+      help:
+        en: The EU data themes an Endpoint must carry to be picked; empty picks any theme.
+        sk: Témy dát EÚ, ktoré endpoint musí niesť, aby bol vybraný; prázdne vyberie akúkoľvek tému.
+        cs: Témata dat EU, která endpoint musí nést, aby byl vybrán; prázdné vybere jakékoli téma.
+        de: Die EU-Datenthemen, die ein Endpoint tragen muss, um gewählt zu werden; leer wählt jedes Thema.
+    select.types:
+      help:
+        en: The entity types an Endpoint must serve to be picked; empty picks any type.
+        sk: Typy entít, ktoré endpoint musí poskytovať, aby bol vybraný; prázdne vyberie akýkoľvek typ.
+        cs: Typy entit, které endpoint musí poskytovat, aby byl vybrán; prázdné vybere jakýkoli typ.
+        de: Die Entitätstypen, die ein Endpoint liefern muss, um gewählt zu werden; leer wählt jeden Typ.
+    select.accessLevel:
+      help:
+        en: Who may read a picked Endpoint; a public channel takes public Endpoints only.
+        sk: Kto smie čítať vybraný endpoint; verejný kanál berie len verejné endpointy.
+        cs: Kdo smí číst vybraný endpoint; veřejný kanál bere jen veřejné endpointy.
+        de: Wer einen gewählten Endpoint lesen darf; ein öffentlicher Kanal nimmt nur öffentliche Endpoints.
+    exclude:
+      help:
+        en: Endpoints it never reads, whatever the connectors or the selector say.
+        sk: Endpointy, ktoré nikdy nečíta, nech konektory či výber hovoria čokoľvek.
+        cs: Endpointy, které nikdy nečte, ať konektory či výběr říkají cokoli.
+        de: Endpoints, die er nie liest, was auch immer Konnektoren oder Auswahl sagen.
+    theme:
+      help:
+        en: Shown in the chat itself, on every page it is placed on.
+        sk: Zobrazuje sa v samotnom chate, na každej stránke, kde je umiestnený.
+        cs: Zobrazuje se v samotném chatu, na každé stránce, kde je umístěn.
+        de: Im Chat selbst zu sehen, auf jeder Seite, auf der er steht.
+    rateLimit:
+      help:
+        en: Each one counts the questions in its own window; the first one reached applies.
+        sk: Každý počíta otázky vo svojom okne; platí ten, ktorý sa dosiahne prvý.
+        cs: Každý počítá otázky ve svém okně; platí ten, který je dosažen první.
+        de: Jede zählt die Fragen in ihrem eigenen Zeitfenster; es gilt die zuerst erreichte.
+    budget:
+      help:
+        en: What it may spend, counted in model tokens and in US dollars.
+        sk: Koľko smie minúť, počítané v tokenoch modelu a v amerických dolároch.
+        cs: Kolik smí utratit, počítáno v tokenech modelu a v amerických dolarech.
+        de: Was er ausgeben darf, gezählt in Modell-Tokens und in US-Dollar.
+    model:
+      help:
+        en: Each answer calls a router model first and an answer model after it.
+        sk: Každá odpoveď volá najprv model smerovača a po ňom model odpovede.
+        cs: Každá odpověď volá nejdřív model směrovače a po něm model odpovědi.
+        de: Jede Antwort ruft zuerst ein Router-Modell und danach ein Antwortmodell.
+    answer.routes:
+      help:
+        en: "Knowledge and live data, knowledge alone (it never calls a tool), or live data alone."
+        sk: "Znalosti aj živé dáta, len znalosti (nikdy nevolá nástroj), alebo len živé dáta."
+        cs: "Znalosti i živá data, jen znalosti (nikdy nevolá nástroj), nebo jen živá data."
+        de: "Wissen und Live-Daten, nur Wissen (er ruft nie ein Werkzeug), oder nur Live-Daten."
+    widget.language:
+      help:
+        en: "The visitor's browser language (the default: no question, the first of its languages this deployment offers), ask on the first open, or always the first of the languages."
+        sk: "Jazyk prehliadača návštevníka (predvolené: bez otázky, prvý z jeho jazykov, ktorý toto nasadenie ponúka), opýtať sa pri prvom otvorení, alebo vždy prvý z jazykov."
+        cs: "Jazyk prohlížeče návštěvníka (výchozí: bez otázky, první z jeho jazyků, který toto nasazení nabízí), zeptat se při prvním otevření, nebo vždy první z jazyků."
+        de: "Die Browsersprache des Besuchers (Standard: ohne Frage, die erste seiner Sprachen, die dieser Einsatz anbietet), beim ersten Öffnen fragen, oder immer die erste der Sprachen."
+    widget.languageToggle:
+      help:
+        en: "On, the chat's header shows SK | EN to switch the language; off, it stays in the one it opened in."
+        sk: "Zapnuté: hlavička chatu zobrazí SK | EN na prepnutie jazyka; vypnuté: zostane v jazyku, v ktorom sa otvoril."
+        cs: "Zapnuto: záhlaví chatu zobrazí SK | EN pro přepnutí jazyka; vypnuto: zůstane v jazyce, ve kterém se otevřel."
+        de: "An: die Kopfzeile des Chats zeigt SK | EN zum Umschalten; aus: er bleibt in der Sprache, in der er öffnete."
+    feedback:
+      help:
+        en: "On, each answer asks the visitor whether it helped; off, no buttons are shown."
+        sk: "Zapnuté: každá odpoveď sa návštevníka spýta, či pomohla; vypnuté: žiadne tlačidlá."
+        cs: "Zapnuto: každá odpověď se návštěvníka zeptá, zda pomohla; vypnuto: žádná tlačítka."
+        de: "An: jede Antwort fragt den Besucher, ob sie half; aus: keine Knöpfe."
+    enabled:
+      help:
+        en: Off, every chat of this deployment answers that the assistant is resting; nothing is spent.
+        sk: "Vypnuté: každý chat tohto nasadenia odpovie, že asistent nie je dostupný; nič sa neminie."
+        cs: "Vypnuto: každý chat tohoto nasazení odpoví, že asistent není dostupný; nic se neutratí."
+        de: "Aus: jeder Chat dieses Einsatzes antwortet, dass der Assistent ruht; nichts wird ausgegeben."
+    scope.projects:
+      help:
+        en: Other projects it may read from, at most 10, never its own; picking another project's source adds that project here.
+        sk: Iné projekty, z ktorých smie čítať, najviac 10, nikdy vlastný; výber zdroja iného projektu ho sem pridá.
+        cs: Jiné projekty, ze kterých smí číst, nejvýše 10, nikdy vlastní; výběr zdroje jiného projektu jej sem přidá.
+        de: Andere Projekte, aus denen er lesen darf, höchstens 10, nie das eigene; eine gewählte Quelle eines anderen Projekts fügt es hier hinzu.
+    model.router:
+      help:
+        en: The model that decides which sources and Endpoints a question reads, as vendor/name; the service's default when empty.
+        sk: Model, ktorý rozhodne, ktoré zdroje a endpointy otázka číta, ako dodávateľ/názov; prázdne je predvolený model služby.
+        cs: Model, který rozhodne, které zdroje a endpointy otázka čte, jako dodavatel/název; prázdné je výchozí model služby.
+        de: Das Modell, das entscheidet, welche Quellen und Endpoints eine Frage liest, als Anbieter/Name; leer ist der Standard des Dienstes.
+    model.answer:
+      help:
+        en: The model that writes the answer, as vendor/name; the service's default when empty.
+        sk: Model, ktorý píše odpoveď, ako dodávateľ/názov; prázdne je predvolený model služby.
+        cs: Model, který píše odpověď, jako dodavatel/název; prázdné je výchozí model služby.
+        de: Das Modell, das die Antwort schreibt, als Anbieter/Name; leer ist der Standard des Dienstes.
+    suggestions:
+      help:
+        en: Questions the chat offers before the first one, per language code of its languages, at most 6 of 120 characters each.
+        sk: Otázky, ktoré chat ponúkne pred prvou, podľa kódu jazyka z jeho jazykov, najviac 6 po 120 znakov.
+        cs: Otázky, které chat nabídne před první, podle kódu jazyka z jeho jazyků, nejvýše 6 po 120 znacích.
+        de: Fragen, die der Chat vor der ersten anbietet, je Sprachcode seiner Sprachen, höchstens 6 mit je 120 Zeichen.
+    disclaimer:
+      help:
+        en: The line under the chat that says the answers are machine-written, per language code, at most 400 characters.
+        sk: Riadok pod chatom, ktorý hovorí, že odpovede píše stroj, podľa kódu jazyka, najviac 400 znakov.
+        cs: Řádek pod chatem, který říká, že odpovědi píše stroj, podle kódu jazyka, nejvýše 400 znaků.
+        de: Die Zeile unter dem Chat, die sagt, dass die Antworten maschinell geschrieben sind, je Sprachcode, höchstens 400 Zeichen.
+    name:
+      help:
+        en: The short name the deployment is filed under in this project.
+        sk: Krátky názov, pod ktorým je nasadenie uložené v tomto projekte.
+        cs: Krátký název, pod nímž je nasazení uloženo v tomto projektu.
+        de: Der kurze Name, unter dem der Einsatz in diesem Projekt abgelegt ist.
+    publicId:
+      placeholder: "residents"
+      help:
+        en: The id in the chat's address; unique in the organization and visible to everyone who uses it.
+        sk: Identifikátor v adrese chatu; jedinečný v organizácii a viditeľný pre každého, kto ho používa.
+        cs: Identifikátor v adrese chatu; jedinečný v organizaci a viditelný pro každého, kdo jej používá.
+        de: Die Kennung in der Adresse des Chats; in der Organisation eindeutig und für alle sichtbar.
+    channel:
+      help:
+        en: Public, catalogue and embedded channels answer anyone; internal answers signed-in staff only.
+        sk: Verejný, katalógový a vložený kanál odpovedajú komukoľvek; interný len prihláseným zamestnancom.
+        cs: Veřejný, katalogový a vložený kanál odpovídají komukoli; interní jen přihlášeným zaměstnancům.
+        de: Öffentlich, Katalog und eingebettet antworten allen; intern nur angemeldeten Mitarbeitenden.
+    sources:
+      help:
+        en: Tick the sources it answers from; each sits under the project it belongs to.
+        sk: Zaškrtnite zdroje, z ktorých odpovedá; každý je pod projektom, ktorému patrí.
+        cs: Zaškrtněte zdroje, ze kterých odpovídá; každý je pod projektem, kterému patří.
+        de: Haken Sie die Quellen an, aus denen er antwortet; jede steht unter ihrem Projekt.
+    connectors:
+      help:
+        en: One entry per Endpoint, with the tools allowed on it and a time limit for each call.
+        sk: Jedna položka na endpoint, s povolenými nástrojmi a časovým limitom každého volania.
+        cs: Jedna položka na endpoint, s povolenými nástroji a časovým limitem každého volání.
+        de: Ein Eintrag je Endpoint, mit den erlaubten Werkzeugen und einer Zeitgrenze je Aufruf.
+    connectors[].endpoint:
+      help:
+        en: An Endpoint of this project whose live data the assistant may read; a public channel reads public Endpoints only.
+        sk: Endpoint tohto projektu, ktorého živé dáta smie asistent čítať; verejný kanál číta len verejné endpointy.
+        cs: Endpoint tohoto projektu, jehož živá data smí asistent číst; veřejný kanál čte jen veřejné endpointy.
+        de: Ein Endpoint dieses Projekts, dessen Live-Daten der Assistent lesen darf; öffentlich nur öffentliche.
+    connectors[].tools:
+      help:
+        en: The tools of that Endpoint the assistant may call; any other is refused before it is called.
+        sk: Nástroje toho endpointu, ktoré smie asistent volať; každý iný sa odmietne skôr, než sa zavolá.
+        cs: Nástroje toho endpointu, které smí asistent volat; každý jiný se odmítne dřív, než se zavolá.
+        de: Die Werkzeuge dieses Endpoints, die der Assistent rufen darf; jedes andere wird abgelehnt.
+    connectors[].timeoutSeconds:
+      help:
+        en: How long one call of the Endpoint may take, in seconds, from 1 to 120; it answers without it after that.
+        sk: Ako dlho smie trvať jedno volanie endpointu, v sekundách, od 1 do 120; potom odpovie bez neho.
+        cs: Jak dlouho smí trvat jedno volání endpointu, v sekundách, od 1 do 120; potom odpoví bez něj.
+        de: Wie lange ein Aufruf des Endpoints dauern darf, in Sekunden, 1 bis 120; danach ohne ihn.
+    allowedOrigins:
+      help:
+        en: The sites a public chat may be placed on, each https://host or https://host:port, no path and no wildcard; a public, catalogue or embedded channel needs at least one.
+        sk: Weby, na ktorých smie byť verejný chat, každý https://hostiteľ alebo s portom, bez cesty a zástupných znakov; verejný, katalógový alebo vložený kanál potrebuje aspoň jeden.
+        cs: Weby, na kterých smí být veřejný chat, každý https://hostitel nebo s portem, bez cesty a zástupných znaků; veřejný, katalogový nebo vložený kanál potřebuje alespoň jeden.
+        de: Websites für einen öffentlichen Chat, jeweils https://Host oder mit Port, ohne Pfad und Platzhalter; ein öffentlicher, Katalog- oder eingebetteter Kanal braucht mindestens eine.
+    rateLimit.requestsPerMinute:
+      help:
+        en: Questions a minute it answers across everyone, up to 600; past it a person is asked to wait.
+        sk: Počet otázok za minútu od všetkých spolu, najviac 600; potom človek dostane výzvu počkať.
+        cs: Počet otázek za minutu od všech dohromady, nejvýše 600; potom člověk dostane výzvu počkat.
+        de: Fragen pro Minute über alle hinweg, bis 600; darüber wird um Geduld gebeten.
+    rateLimit.perClientPerMinute:
+      help:
+        en: Questions a minute from one visitor, up to 120, so one visitor cannot use it up for the others.
+        sk: Počet otázok za minútu od jedného návštevníka, najviac 120, aby ho jeden nevyčerpal ostatným.
+        cs: Počet otázek za minutu od jednoho návštěvníka, nejvýše 120, aby jej jeden nevyčerpal ostatním.
+        de: Fragen pro Minute eines Besuchers, bis 120, damit niemand ihn für andere aufbraucht.
+    budget.tokensPerDay:
+      help:
+        en: A ceiling on model tokens a day for the whole assistant; set it well above what the cost a day buys, so the cost limit is the one that applies. Past it answers are links to the matching pages.
+        sk: Strop tokenov modelu za deň pre celého asistenta; nastavte ho vysoko nad to, čo kúpi denná útrata, aby platil limit útraty. Potom sú odpoveďou odkazy na zodpovedajúce stránky.
+        cs: Strop tokenů modelu za den pro celého asistenta; nastavte jej vysoko nad to, co koupí denní útrata, aby platil limit útraty. Potom jsou odpovědí odkazy na odpovídající stránky.
+        de: Eine Obergrenze für Modell-Tokens pro Tag für den ganzen Assistenten; setzen Sie sie weit über das, was die Tageskosten kaufen, damit die Kostengrenze gilt. Darüber sind Antworten Links zu passenden Seiten.
+    budget.tokensPerConversation:
+      help:
+        en: Model tokens one conversation may spend, no more than a day's; past them the person starts a new one.
+        sk: Tokeny modelu, ktoré smie minúť jeden rozhovor, nie viac ako za deň; potom človek začne nový.
+        cs: Tokeny modelu, které smí utratit jeden rozhovor, ne víc než za den; potom člověk začne nový.
+        de: Modell-Tokens pro Gespräch, nicht mehr als pro Tag; darüber beginnt man ein neues Gespräch.
+    rateLimit.perClientPerHour:
+      help:
+        en: Questions an hour from one visitor, up to 7,200, default 60.
+        sk: Počet otázok za hodinu od jedného návštevníka, najviac 7 200, predvolene 60.
+        cs: Počet otázek za hodinu od jednoho návštěvníka, nejvýše 7 200, výchozí 60.
+        de: Fragen pro Stunde eines Besuchers, bis 7.200, Standard 60.
+    rateLimit.perClientPerDay:
+      help:
+        en: Questions a day from one visitor, up to 100,000, default 200.
+        sk: Počet otázok za deň od jedného návštevníka, najviac 100 000, predvolene 200.
+        cs: Počet otázek za den od jednoho návštěvníka, nejvýše 100 000, výchozí 200.
+        de: Fragen pro Tag eines Besuchers, bis 100.000, Standard 200.
+    rateLimit.perClientPerMonth:
+      help:
+        en: Questions per visitor per calendar month, up to 100,000, default 300; past them that visitor gets links to the matching pages until the 1st, everyone else is answered as before.
+        sk: Otázky jedného návštevníka za kalendárny mesiac, najviac 100 000, predvolene 300; potom tento návštevník dostáva odkazy na zodpovedajúce stránky až do 1. dňa mesiaca, ostatným odpovedá ako predtým.
+        cs: Otázky jednoho návštěvníka za kalendářní měsíc, nejvýše 100 000, výchozí 300; potom tento návštěvník dostává odkazy na odpovídající stránky až do 1. dne měsíce, ostatním odpovídá jako dřív.
+        de: Fragen eines Besuchers pro Kalendermonat, bis 100.000, Standard 300; darüber erhält dieser Besucher bis zum 1. Links zu passenden Seiten, alle anderen werden wie bisher beantwortet.
+    rateLimit.streamsPerClient:
+      help:
+        en: Answers one visitor may have streaming at once, 1 to 10, default 2.
+        sk: Koľko odpovedí smie mať jeden návštevník naraz, 1 až 10, predvolene 2.
+        cs: Kolik odpovědí smí mít jeden návštěvník najednou, 1 až 10, výchozí 2.
+        de: Antworten, die ein Besucher gleichzeitig streamen darf, 1 bis 10, Standard 2.
+    budget.costPerDayUsd:
+      help:
+        en: What its model calls may cost a day for the whole assistant, in US dollars, 0.01 to 1,000, default 3; past it every answer lists the matching links only, until midnight UTC.
+        sk: Koľko smú stáť jeho volania modelu za deň, v amerických dolároch, 0,01 až 1 000, predvolene 3; potom odpoveď uvedie len zodpovedajúce odkazy.
+        cs: Kolik smějí stát jeho volání modelu za den, v amerických dolarech, 0,01 až 1 000, výchozí 3; potom odpověď uvede jen odpovídající odkazy.
+        de: Was seine Modellaufrufe pro Tag kosten dürfen, in US-Dollar, 0,01 bis 1.000, Standard 3; darüber nennt eine Antwort nur passende Links.
+    budget.outputTokensPerAnswer:
+      help:
+        en: The most tokens one answer may have, 100 to 4,000, default 700.
+        sk: Najviac tokenov jednej odpovede, 100 až 4 000, predvolene 700.
+        cs: Nejvíce tokenů jedné odpovědi, 100 až 4 000, výchozí 700.
+        de: Die meisten Tokens einer Antwort, 100 bis 4.000, Standard 700.
+    budget.messagesPerConversation:
+      help:
+        en: The most questions one conversation may ask, 1 to 200, default 30.
+        sk: Najviac otázok v jednom rozhovore, 1 až 200, predvolene 30.
+        cs: Nejvíce otázek v jednom rozhovoru, 1 až 200, výchozí 30.
+        de: Die meisten Fragen eines Gesprächs, 1 bis 200, Standard 30.
+    budget.questionChars:
+      help:
+        en: The longest question, in characters, 100 to 4,000, default 1,000.
+        sk: Najdlhšia otázka v znakoch, 100 až 4 000, predvolene 1 000.
+        cs: Nejdelší otázka ve znacích, 100 až 4 000, výchozí 1 000.
+        de: Die längste Frage in Zeichen, 100 bis 4.000, Standard 1.000.
+    systemPrompt:
+      widget: textarea
+      help:
+        en: What the assistant is told before every conversation, at most 8,000 characters; it never overrides its rules.
+        sk: Čo je asistentovi povedané pred každým rozhovorom, najviac 8 000 znakov; nikdy neprepíše jeho pravidlá.
+        cs: Co je asistentovi řečeno před každým rozhovorem, nejvýše 8 000 znaků; nikdy nepřepíše jeho pravidla.
+        de: Was dem Assistenten vor jedem Gespräch gesagt wird, bis 8.000 Zeichen; es hebt seine Regeln nie auf.
+    theme.title:
+      help:
+        en: The body's name in the chat's header beside its monogram, at most 60 characters.
+        sk: Názov inštitúcie v hlavičke chatu vedľa jej monogramu, najviac 60 znakov.
+        cs: Název instituce v záhlaví chatu vedle jejího monogramu, nejvýše 60 znaků.
+        de: Der Name der Stelle in der Kopfzeile des Chats neben ihrem Monogramm, bis 60 Zeichen.
+    theme.primaryColor:
+      help:
+        en: "The chat's accent colour where it is placed, as #rrggbb, such as #1a5fb4."
+        sk: "Farba zvýraznenia chatu na mieste, kde je umiestnený, ako #rrggbb, napríklad #1a5fb4."
+        cs: "Barva zvýraznění chatu na místě, kde je umístěn, jako #rrggbb, například #1a5fb4."
+        de: "Die Akzentfarbe des Chats dort, wo er steht, als #rrggbb, etwa #1a5fb4."
+    theme.greeting:
+      help:
+        en: The first line the chat shows, at most 500 characters.
+        sk: Prvý riadok, ktorý chat zobrazí, najviac 500 znakov.
+        cs: První řádek, který chat zobrazí, nejvýše 500 znaků.
+        de: Die erste Zeile, die der Chat zeigt, bis 500 Zeichen.
+    languages:
+      help:
+        en: The languages it answers in, as two-letter codes; the chat opens in the first, and answers in the language of the question.
+        sk: Jazyky, v ktorých odpovedá, ako dvojpísmenové kódy; chat sa otvorí v prvom a odpovedá v jazyku otázky.
+        cs: Jazyky, ve kterých odpovídá, jako dvoupísmenné kódy; chat se otevře v prvním a odpovídá v jazyce otázky.
+        de: Die Sprachen, in denen er antwortet, als Zweibuchstaben-Codes; der Chat öffnet in der ersten, er antwortet in der Sprache der Frage.
+    sandbox:
+      help:
+        en: Let it filter a long result with a short script in the sandbox, with no network; off by default.
+        sk: Dovoliť mu filtrovať dlhý výsledok krátkym skriptom v sandboxe bez siete; predvolene vypnuté.
+        cs: Dovolit mu filtrovat dlouhý výsledek krátkým skriptem v sandboxu bez sítě; ve výchozím stavu vypnuto.
+        de: Ein langes Ergebnis mit einem kurzen Skript in der Sandbox ohne Netz filtern; standardmäßig aus.

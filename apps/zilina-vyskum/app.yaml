@@ -1,0 +1,39 @@
+# Otvorený výskum Žilinskej univerzity — the university's openly licensed works (T-3140, AP-07,
+# AP-14). Hand written, so no generated-by annotation.
+#
+# It reads and never writes, so it is `static`: a bundle the Portal static host serves under
+# /apps/zilina-vyskum/. The works are public, read through a public endpoint, so the app never
+# asks anybody to sign in and never holds a token (AP-28). The space carries no author.
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: zilina-vyskum
+  namespace: zilina
+  annotations:
+    # The Portal image ships this bundle (Dockerfile, /srv/apps), so the App names no
+    # repository of its own; the Portal accepts the mark only where the bundle is (AP-87).
+    joinedcontext.com/shipped-with: portal
+  title:
+    sk: "Otvorený výskum Žilinskej univerzity"
+    en: "Open research of the University of Žilina"
+  description:
+    sk: "Práce Digitálneho repozitára UNIZA s otvorenou licenciou podľa roku, druhu a časopisu, s vyhľadávaním a odkazom na každú prácu."
+    en: "The openly licensed works of the UNIZA digital repository by year, kind and journal, with search and a link to each work."
+spec:
+  kind: ui
+  source:
+    path: ./apps/zilina-vyskum
+  build:
+    node: "22"
+  visibility: public
+  lifecycle: published
+  embeddable: true
+  dataNeeds:
+    # The works of the pipeline drepo, read only; the licence is shown in the source line.
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: zilina-uniza
+      types: [Article]
+      attrs: [name, workType, yearPublished, isPartOf, collectionName, license, url, location]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]

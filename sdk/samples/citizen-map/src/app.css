@@ -1,0 +1,153 @@
+/* The citizen map: the map is the page. A bar with the title and the search on top, the map
+   under it filling the window, and the chosen place in a sheet: from the bottom on a phone,
+   beside the map from 48rem. */
+
+.app-map-app {
+  height: 100dvh;
+  min-height: 0;
+}
+
+.app-bar {
+  display: grid;
+  gap: var(--jc-space-2, 0.5rem);
+  padding: var(--jc-space-3, 0.75rem) var(--jc-gutter, 1rem);
+  border-bottom: 1px solid var(--jc-color-line, #e2e8f0);
+}
+
+.app-search .jc-filter {
+  width: 100%;
+}
+
+.app-search input {
+  width: 100%;
+}
+
+.app-map-screen {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.app-map-screen .jc-map {
+  position: absolute;
+  inset: 0;
+  height: auto;
+  border: none;
+  border-radius: 0;
+}
+
+.app-results {
+  position: absolute;
+  z-index: 2;
+  top: var(--jc-space-2, 0.5rem);
+  inset-inline: var(--jc-space-2, 0.5rem);
+  max-height: 45%;
+  overflow-y: auto;
+  background: var(--jc-color-surface, #ffffff);
+  border: 1px solid var(--jc-color-line, #e2e8f0);
+  border-radius: var(--jc-radius-lg, 10px);
+  box-shadow: 0 0.5rem 1.5rem rgb(15 23 42 / 0.15);
+}
+
+.app-results ul {
+  margin: 0;
+  padding: var(--jc-space-1, 0.25rem);
+  list-style: none;
+}
+
+.app-results p {
+  margin: 0;
+  padding: var(--jc-space-3, 0.75rem);
+}
+
+.app-results button {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--jc-space-3, 0.75rem);
+  width: 100%;
+  min-height: var(--jc-target, 2.75rem);
+  border: none;
+  text-align: left;
+}
+
+.app-results button[aria-current="true"] {
+  background: var(--jc-color-card, #f8fafc);
+  color: var(--jc-color-accent, #0f766e);
+}
+
+.app-result-count {
+  color: var(--jc-color-muted, #64748b);
+  white-space: nowrap;
+}
+
+.app-sheet {
+  position: absolute;
+  z-index: 3;
+  inset-inline: 0;
+  bottom: 0;
+  max-height: 60%;
+  overflow-y: auto;
+  padding: var(--jc-space-4, 1rem) var(--jc-gutter, 1rem) var(--jc-space-6, 1.5rem);
+  background: var(--jc-color-surface, #ffffff);
+  border-top-left-radius: var(--jc-radius-lg, 10px);
+  border-top-right-radius: var(--jc-radius-lg, 10px);
+  box-shadow: 0 -0.5rem 1.5rem rgb(15 23 42 / 0.2);
+}
+
+.app-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--jc-space-3, 0.75rem);
+}
+
+.app-sheet-header h2 {
+  margin: 0;
+  font-size: var(--jc-font-size-xl, 1.25rem);
+}
+
+.app-sheet-header h2:focus-visible {
+  outline: 2px solid var(--jc-color-accent, #0f766e);
+  outline-offset: 2px;
+}
+
+.app-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--jc-space-3, 0.75rem);
+  margin: var(--jc-space-4, 1rem) 0 0;
+}
+
+.app-facts dt {
+  color: var(--jc-color-muted, #64748b);
+  font-size: var(--jc-font-size-sm, 0.75rem);
+}
+
+.app-facts dd {
+  margin: 0;
+}
+
+.app-fact-big {
+  font-size: calc(var(--jc-font-size-xl, 1.25rem) * 1.4);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (width >= 48rem) {
+  .app-bar {
+    grid-template-columns: minmax(0, 1fr) minmax(16rem, 24rem);
+    align-items: end;
+  }
+  .app-results {
+    inset-inline: auto var(--jc-space-3, 0.75rem);
+    width: 22rem;
+  }
+  .app-sheet {
+    top: var(--jc-space-3, 0.75rem);
+    bottom: var(--jc-space-3, 0.75rem);
+    inset-inline: var(--jc-space-3, 0.75rem) auto;
+    width: 22rem;
+    max-height: none;
+    border-radius: var(--jc-radius-lg, 10px);
+  }
+}

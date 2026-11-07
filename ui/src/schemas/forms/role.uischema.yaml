@@ -1,0 +1,70 @@
+# Default form arrangement for Role (UI-02, T-2400).
+# A role is verbs on kinds; the examples are what a project steward writes first.
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: role
+spec:
+  for: Role
+  guide: User-Guide/07-users-roles-approvals
+  about:
+    en: >-
+      A role is a set of verbs on a set of kinds: propose a pipeline, approve a change, read a
+      space. Give it a name the bindings will use, then add one rule per group of kinds it covers.
+      You can only grant what you hold here yourself.
+    sk: >-
+      Rola je množina operácií nad množinou druhov: navrhnúť pipeline, schváliť zmenu, čítať
+      priestor. Dajte jej názov, ktorým ju budú volať väzby, a pridajte jedno pravidlo na každú
+      skupinu druhov. Udeliť môžete len to, čo tu držíte sami.
+    cs: >-
+      Role je množina operací nad množinou druhů: navrhnout pipeline, schválit změnu, číst prostor.
+      Dejte jí název, kterým ji budou volat vazby, a přidejte jedno pravidlo na každou skupinu
+      druhů. Udělit můžete jen to, co zde držíte sami.
+    de: >-
+      Eine Rolle ist eine Menge von Verben auf einer Menge von Arten: eine Pipeline vorschlagen,
+      eine Änderung genehmigen, einen Raum lesen. Geben Sie ihr einen Namen für die Bindungen und
+      je Gruppe von Arten eine Regel. Sie gewähren nur, was Sie hier selbst halten.
+  order: [name, rules]
+  groups:
+    - title:
+        en: The role
+        sk: Rola
+        cs: Role
+        de: Die Rolle
+      description:
+        en: The name a binding gives this role by.
+        sk: Názov, ktorým rolu pomenuje väzba.
+        cs: Název, kterým roli pojmenuje vazba.
+        de: Der Name, unter dem eine Bindung diese Rolle gibt.
+      fields: [name]
+    - title:
+        en: What it grants
+        sk: Čo udeľuje
+        cs: Co uděluje
+        de: Was sie gewährt
+      description:
+        en: "One rule per set of kinds: the kinds it covers and the verbs it gives on them."
+        sk: "Jedno pravidlo na množinu druhov: druhy, ktorých sa týka, a operácie, ktoré na nich dáva."
+        cs: "Jedno pravidlo na množinu druhů: druhy, kterých se týká, a operace, které na nich dává."
+        de: "Eine Regel je Gruppe von Arten: die Arten und die Verben, die sie darauf gibt."
+      fields: [rules]
+  fields:
+    name:
+      help:
+        en: The short name bindings give this role by; lowercase letters, digits and hyphens.
+        sk: Krátky názov, pod ktorým rolu udeľujú väzby; malé písmená, číslice a spojovníky.
+        cs: Krátký název, pod nímž roli udělují vazby; malá písmena, číslice a spojovníky.
+        de: Der kurze Name, unter dem Bindungen die Rolle geben; Kleinbuchstaben, Ziffern, Bindestriche.
+    rules[].kinds:
+      placeholder: Pipeline
+      help:
+        en: The manifest kinds this rule covers, written as the manifest writes them.
+        sk: Druhy manifestov, ktorých sa pravidlo týka, písané tak, ako ich píše manifest.
+        cs: Druhy manifestů, kterých se pravidlo týká, psané tak, jak je píše manifest.
+        de: Die Manifest-Arten dieser Regel, geschrieben wie im Manifest selbst.
+    rules[].verbs:
+      help:
+        en: What the role may do on those kinds; proposing a change includes reading it.
+        sk: Čo smie rola s tými druhmi robiť; navrhnutie zmeny zahŕňa aj jej čítanie.
+        cs: Co smí role s těmi druhy dělat; navržení změny zahrnuje i její čtení.
+        de: Was die Rolle mit diesen Arten darf; ein Vorschlag schließt das Lesen ein.

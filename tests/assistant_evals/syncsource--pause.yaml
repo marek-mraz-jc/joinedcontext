@@ -1,0 +1,17 @@
+# T-6533: a SyncSource pauses and resumes through its loop's switch, never a manifest field
+# (live walk T-6490, S-25).
+workflow: syncsource
+as: steward
+says:
+  - "Pause SyncSource regional and later resume it."
+expect:
+  calls:
+    - tool: jc_syncsource_pause
+      input:
+        name: regional
+        paused: true
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: pause SyncSource regional."

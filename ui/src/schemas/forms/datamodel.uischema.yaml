@@ -1,0 +1,89 @@
+# Default form arrangement for DataModel (UI-02, T-2357).
+# What a steward decides about a model version by hand; examples are a neutral air-quality feed (T-2752).
+# The source, version and classes are written in the LinkML editor on the Models page.
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: datamodel
+spec:
+  for: DataModel
+  guide: User-Guide/03-data-models
+  about:
+    en: >-
+      A data model says which entity types a space carries and what their attributes mean. Its
+      source, version and classes come from the Model editor on the Models page; here you decide
+      where this version is in its life and whether its entities may carry undeclared attributes.
+    sk: >-
+      Dátový model hovorí, ktoré typy entít priestor nesie a čo znamenajú ich atribúty. Jeho zdroj,
+      verzia a triedy pochádzajú z editora modelov na stránke Modely; tu rozhodujete, kde je táto
+      verzia vo svojom živote a či jej entity smú niesť nedeklarované atribúty.
+    cs: >-
+      Datový model říká, které typy entit prostor nese a co znamenají jejich atributy. Jeho zdroj,
+      verze a třídy pocházejí z editoru modelů na stránce Modely; zde rozhodujete, kde je tato verze
+      ve svém životě a zda její entity smějí nést nedeklarované atributy.
+    de: >-
+      Ein Datenmodell sagt, welche Entitätstypen ein Raum trägt und was ihre Attribute bedeuten.
+      Quelle, Version und Klassen kommen aus dem Modelleditor auf der Seite Modelle; hier legen Sie
+      Lebensphase und Umgang mit nicht deklarierten Attributen fest.
+  order: [name, contextSpaceRef, version, linkml, lifecycle, openWorld]
+  groups:
+    - title:
+        en: The model version
+        sk: Verzia modelu
+        cs: Verze modelu
+        de: Die Modellversion
+      description:
+        en: Where the version lives and the source it was generated from; the Model editor changes these.
+        sk: Kde verzia žije a zdroj, z ktorého bola vytvorená; mení ich editor modelov.
+        cs: Kde verze žije a zdroj, ze kterého byla vytvořena; mění je editor modelů.
+        de: Wo die Version liegt und aus welcher Quelle sie entstand; der Modelleditor ändert sie.
+      fields: [name, contextSpaceRef, version, linkml]
+    - title:
+        en: Your decisions
+        sk: Vaše rozhodnutia
+        cs: Vaše rozhodnutí
+        de: Ihre Entscheidungen
+      description:
+        en: The two things about this version that a person decides and no generator writes.
+        sk: Dve veci o tejto verzii, o ktorých rozhoduje človek a žiadny generátor ich nepíše.
+        cs: Dvě věci o této verzi, o nichž rozhoduje člověk a žádný generátor je nepíše.
+        de: Die zwei Dinge an dieser Version, die ein Mensch entscheidet und kein Generator schreibt.
+      fields: [lifecycle, openWorld]
+  fields:
+    name:
+      placeholder: "sensor-readings"
+      help:
+        en: The short name this model is filed under; it cannot change once the model exists.
+        sk: Krátky názov, pod ktorým je model uložený; keď model existuje, nemení sa.
+        cs: Krátký název, pod nímž je model uložen; jakmile model existuje, nemění se.
+        de: Der kurze Name des Modells; er ändert sich nicht mehr, sobald das Modell besteht.
+    contextSpaceRef:
+      help:
+        en: The context space that owns the model; with the project it is the model's address.
+        sk: Kontextový priestor, ktorý model vlastní; spolu s projektom je to adresa modelu.
+        cs: Kontextový prostor, který model vlastní; spolu s projektem je to adresa modelu.
+        de: Der Kontextraum, dem das Modell gehört; mit dem Projekt ist er die Adresse des Modells.
+    version:
+      help:
+        en: The semantic version the source was saved as; its major is the served schema version.
+        sk: Sémantická verzia, pod ktorou bol zdroj uložený; hlavné číslo je obsluhovaná verzia schémy.
+        cs: Sémantická verze, pod kterou byl zdroj uložen; hlavní číslo je obsluhovaná verze schématu.
+        de: Die semantische Version der gespeicherten Quelle; die Hauptversion ist die bereitgestellte.
+    linkml:
+      help:
+        en: The model's source file beside the manifest that this version was generated from.
+        sk: Zdrojový súbor modelu vedľa manifestu, z ktorého bola táto verzia vytvorená.
+        cs: Zdrojový soubor modelu vedle manifestu, ze kterého byla tato verze vytvořena.
+        de: Die Quelldatei des Modells neben dem Manifest, aus der diese Version erzeugt wurde.
+    lifecycle:
+      help:
+        en: A draft may change; a published version is fixed; deprecated warns its readers; retired serves no one.
+        sk: Koncept sa smie meniť; zverejnená verzia je pevná; zastaraná varuje čitateľov; vyradená neslúži nikomu.
+        cs: Koncept se smí měnit; zveřejněná verze je pevná; zastaralá varuje čtenáře; vyřazená neslouží nikomu.
+        de: Ein Entwurf darf sich ändern; veröffentlicht ist fest; veraltet warnt Leser; zurückgezogen dient niemandem.
+    openWorld:
+      help:
+        en: When on, an entity may carry attributes the model does not declare; when off, they are refused.
+        sk: Keď je zapnuté, entita smie niesť atribúty, ktoré model nedeklaruje; inak sú odmietnuté.
+        cs: Když je zapnuto, entita smí nést atributy, které model nedeklaruje; jinak jsou odmítnuty.
+        de: Wenn an, darf eine Entität nicht deklarierte Attribute tragen; sonst werden sie abgelehnt.

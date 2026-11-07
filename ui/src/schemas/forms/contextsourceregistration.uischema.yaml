@@ -1,0 +1,167 @@
+# Default form arrangement for ContextSourceRegistration (UI-02, T-2345).
+# A hub space's broker answers with a member's data; the examples are a neutral air hub (T-2752).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: contextsourceregistration
+spec:
+  for: ContextSourceRegistration
+  guide: User-Guide/05-endpoints-and-sharing
+  about:
+    en: >-
+      A registration tells one space's broker that another source holds some of its data, so a
+      query to the space is answered from both. Say where the source is and which entity types it
+      holds; the source's own policies still decide what comes back.
+    sk: >-
+      Registrácia oznámi brokeru jedného priestoru, že časť jeho údajov drží iný zdroj, takže dopyt
+      na priestor sa zodpovie z oboch. Uveďte, kde zdroj je a ktoré typy entít drží; čo sa vráti,
+      stále rozhodujú politiky samotného zdroja.
+    cs: >-
+      Registrace oznámí brokeru jednoho prostoru, že část jeho dat drží jiný zdroj, takže dotaz na
+      prostor je zodpovězen z obou. Uveďte, kde zdroj je a které typy entit drží; co se vrátí,
+      stále rozhodují politiky samotného zdroje.
+    de: >-
+      Eine Registrierung sagt dem Broker eines Raums, dass eine andere Quelle einen Teil seiner
+      Daten hält, sodass eine Anfrage an den Raum aus beiden beantwortet wird. Geben Sie an, wo die
+      Quelle liegt und welche Entitätstypen sie hält; was zurückkommt, entscheiden weiter deren Richtlinien.
+  variants: [endpointRef, endpoint]
+  order:
+    [
+      name,
+      contextSpaceRef,
+      endpointRef,
+      endpoint,
+      federation,
+      information,
+      operations,
+      mode,
+      interval,
+      expiresAt,
+    ]
+  groups:
+    - title:
+        en: Where the data is
+        sk: Kde sú údaje
+        cs: Kde jsou data
+        de: Wo die Daten liegen
+      description:
+        en: The space whose broker learns of the source, the source itself, and who the platform is when it asks.
+        sk: Priestor, ktorého broker sa o zdroji dozvie, samotný zdroj a kým je platforma, keď sa pýta.
+        cs: Prostor, jehož broker se o zdroji dozví, samotný zdroj a kým je platforma, když se ptá.
+        de: Der Raum, dessen Broker von der Quelle erfährt, die Quelle selbst und wer die Plattform beim Fragen ist.
+      fields: [name, contextSpaceRef, endpointRef, endpoint, federation]
+    - title:
+        en: What the source holds
+        sk: Čo zdroj drží
+        cs: Co zdroj drží
+        de: Was die Quelle hält
+      description:
+        en: The entity types a query is sent to the source for, and how its answer joins the broker's own.
+        sk: Typy entít, pre ktoré sa dopyt pošle zdroju, a ako sa jeho odpoveď spojí s odpoveďou brokera.
+        cs: Typy entit, pro které se dotaz pošle zdroji, a jak se jeho odpověď spojí s odpovědí brokeru.
+        de: Die Entitätstypen, für die eine Anfrage an die Quelle geht, und wie ihre Antwort zur eigenen des Brokers kommt.
+      fields: [information, operations, mode]
+    - title:
+        en: Schema mirror and expiry
+        sk: Zrkadlenie schém a platnosť
+        cs: Zrcadlení schémat a platnost
+        de: Schemaspiegelung und Ablauf
+      description:
+        en: How often the source's schemas are copied here, and when the registration stops being used.
+        sk: Ako často sa schémy zdroja kopírujú sem a kedy sa registrácia prestane používať.
+        cs: Jak často se schémata zdroje kopírují sem a kdy se registrace přestane používat.
+        de: Wie oft die Schemas der Quelle hierher kopiert werden und wann die Registrierung endet.
+      folded: true
+      fields: [interval, expiresAt]
+  fields:
+    name:
+      help:
+        en: The short name this registration is filed under; two registrations of a project cannot share one.
+        sk: Krátky názov, pod ktorým je registrácia uložená; dve registrácie projektu ho nemôžu zdieľať.
+        cs: Krátký název, pod nímž je registrace uložena; dvě registrace projektu jej nemohou sdílet.
+        de: Der kurze Name, unter dem die Registrierung abgelegt ist; zwei Registrierungen teilen ihn nicht.
+    contextSpaceRef:
+      help:
+        en: The space whose broker answers with the source's data; the registration is written into this space alone.
+        sk: Priestor, ktorého broker odpovedá údajmi zdroja; registrácia sa zapíše len do tohto priestoru.
+        cs: Prostor, jehož broker odpovídá daty zdroje; registrace se zapíše jen do tohoto prostoru.
+        de: Der Raum, dessen Broker mit den Daten der Quelle antwortet; die Registrierung gilt nur für ihn.
+    endpointRef:
+      help:
+        en: The Endpoint of this project the data is read through; its own policies still apply to every answer.
+        sk: Endpoint tohto projektu, cez ktorý sa údaje čítajú; na každú odpoveď sa stále vzťahujú jeho politiky.
+        cs: Endpoint tohoto projektu, přes který se data čtou; na každou odpověď se stále vztahují jeho politiky.
+        de: Der Endpoint dieses Projekts, über den gelesen wird; seine Richtlinien gelten weiter für jede Antwort.
+    endpoint:
+      placeholder: "https://ngsi.neighbour.example"
+      help:
+        en: The base URL of the other broker's NGSI-LD API, without /ngsi-ld/v1, which the broker adds itself.
+        sk: Základná URL NGSI-LD API iného brokera, bez /ngsi-ld/v1, ktoré broker pridá sám.
+        cs: Základní URL NGSI-LD API jiného brokeru, bez /ngsi-ld/v1, které broker přidá sám.
+        de: Die Basis-URL der NGSI-LD-API des anderen Brokers, ohne /ngsi-ld/v1, das der Broker selbst anhängt.
+    federation.identity:
+      help:
+        en: Forward as a service account of this platform, pass on the caller's own token rewritten for the source, or, for a public https address elsewhere, forward no credential (anonymous).
+        sk: Preposielať ako servisný účet tejto platformy, odovzdať vlastný token volajúceho prepísaný pre zdroj, alebo pre verejnú https adresu inde neposlať žiadne prihlásenie (anonymne).
+        cs: Přeposílat jako servisní účet této platformy, předat vlastní token volajícího přepsaný pro zdroj, nebo pro veřejnou https adresu jinde neposlat žádné přihlášení (anonymně).
+        de: Als Dienstkonto dieser Plattform weiterleiten, das eigene Token des Aufrufers für die Quelle umschreiben oder bei einer öffentlichen https-Adresse anderswo keine Anmeldung mitsenden (anonym).
+    federation.serviceAccountRef:
+      help:
+        en: The service account the platform forwards as; required when forwarding as a service account.
+        sk: Servisný účet, ako ktorý platforma preposiela; povinný pri preposielaní ako servisný účet.
+        cs: Servisní účet, jako který platforma přeposílá; povinný při přeposílání jako servisní účet.
+        de: Das Dienstkonto, als das die Plattform weiterleitet; Pflicht beim Weiterleiten als Dienstkonto.
+    information[].entities[].type:
+      help:
+        en: One entity type the source holds; a query for this type is sent to the source as well.
+        sk: Jeden typ entity, ktorý zdroj drží; dopyt na tento typ sa pošle aj zdroju.
+        cs: Jeden typ entity, který zdroj drží; dotaz na tento typ se pošle i zdroji.
+        de: Ein Entitätstyp, den die Quelle hält; eine Anfrage nach diesem Typ geht auch an die Quelle.
+    information[].entities[].id:
+      help:
+        en: One entity the source holds, when the claim is about a single entity rather than a whole type.
+        sk: Jedna entita, ktorú zdroj drží, ak sa nárok týka jednej entity a nie celého typu.
+        cs: Jedna entita, kterou zdroj drží, pokud se nárok týká jedné entity, a ne celého typu.
+        de: Eine Entität der Quelle, wenn der Anspruch eine einzelne Entität und nicht den ganzen Typ betrifft.
+    information[].entities[].idPattern:
+      help:
+        en: An anchored expression for the identifiers the source holds, narrowing the type to those.
+        sk: Ukotvený výraz pre identifikátory, ktoré zdroj drží, ktorý zužuje typ na ne.
+        cs: Ukotvený výraz pro identifikátory, které zdroj drží, který zužuje typ na ně.
+        de: Ein verankerter Ausdruck für die Kennungen der Quelle, der den Typ auf diese einschränkt.
+    information[].propertyNames:
+      help:
+        en: The properties the source holds for those entities; leaving the list empty claims all of them.
+        sk: Vlastnosti, ktoré zdroj pre tieto entity drží; prázdny zoznam znamená všetky.
+        cs: Vlastnosti, které zdroj pro tyto entity drží; prázdný seznam znamená všechny.
+        de: Die Eigenschaften, die die Quelle für diese Entitäten hält; eine leere Liste bedeutet alle.
+    information[].relationshipNames:
+      help:
+        en: The relationships the source holds for those entities; leaving the list empty claims all of them.
+        sk: Vzťahy, ktoré zdroj pre tieto entity drží; prázdny zoznam znamená všetky.
+        cs: Vztahy, které zdroj pro tyto entity drží; prázdný seznam znamená všechny.
+        de: Die Beziehungen, die die Quelle für diese Entitäten hält; eine leere Liste bedeutet alle.
+    operations:
+      help:
+        en: Which requests go to the source, by the five CIM 009 group names or the operations behind them.
+        sk: Ktoré požiadavky idú zdroju, podľa piatich názvov skupín CIM 009 alebo operácií za nimi.
+        cs: Které požadavky jdou zdroji, podle pěti názvů skupin CIM 009 nebo operací za nimi.
+        de: Welche Anfragen an die Quelle gehen, nach den fünf CIM-009-Gruppennamen oder deren Operationen.
+    mode:
+      help:
+        en: Inclusive merges the source with the broker's data; exclusive makes it the only answer for what it covers.
+        sk: Inkluzívny režim spojí zdroj s údajmi brokera; exkluzívny z neho spraví jedinú odpoveď na to, čo pokrýva.
+        cs: Inkluzivní režim spojí zdroj s daty brokeru; exkluzivní z něj udělá jedinou odpověď na to, co pokrývá.
+        de: Inklusiv verbindet die Quelle mit den Brokerdaten; exklusiv macht sie zur einzigen Antwort für ihren Bereich.
+    interval:
+      help:
+        en: How often the source's schema artifacts are mirrored here; left empty, once a day.
+        sk: Ako často sa artefakty schém zdroja zrkadlia sem; ak je prázdne, raz denne.
+        cs: Jak často se artefakty schémat zdroje zrcadlí sem; pokud je prázdné, jednou denně.
+        de: Wie oft die Schema-Artefakte der Quelle gespiegelt werden; leer gelassen, einmal am Tag.
+    expiresAt:
+      help:
+        en: When the broker stops asking the source, as a date and time with its offset; left empty, it does not expire.
+        sk: Kedy sa broker prestane pýtať zdroja, ako dátum a čas s posunom; ak je prázdne, neuplynie.
+        cs: Kdy se broker přestane ptát zdroje, jako datum a čas s posunem; pokud je prázdné, nevyprší.
+        de: Wann der Broker die Quelle nicht mehr fragt, als Datum und Uhrzeit mit Versatz; leer gelassen, läuft sie nicht ab.

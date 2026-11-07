@@ -1,0 +1,204 @@
+/*
+ * The city map on the SDK's own tokens (SDK-04). Its own look (T-2779): a full-width map with the
+ * list of places beside it on a wide screen and under it on a phone; the picked place opens as a
+ * sheet from the bottom on a phone and as a panel over the list's column on a wide screen. The
+ * three kind colours are `places.ts`'s, the same values the map draws with.
+ */
+main {
+  padding: var(--jc-gutter, 1rem);
+}
+
+.source,
+.note,
+.sub,
+small {
+  color: var(--jc-color-text-muted, #555);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-3, 0.75rem) var(--jc-space-5, 1.5rem);
+  align-items: flex-start;
+  margin-bottom: var(--jc-space-3, 0.75rem);
+}
+
+.search {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-1, 0.25rem);
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.search input {
+  font: inherit;
+  padding: var(--jc-space-2, 0.5rem);
+  border: 1px solid var(--jc-color-border, #8a8a8a);
+  border-radius: var(--jc-radius-sm, 4px);
+}
+
+.layers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-2, 0.5rem) var(--jc-space-4, 1rem);
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.layers legend {
+  font-weight: 600;
+  margin-bottom: var(--jc-space-1, 0.25rem);
+}
+
+.layer {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--jc-space-1, 0.25rem);
+}
+
+.shape {
+  font-size: 1.1em;
+  line-height: 1;
+}
+
+.failed {
+  color: var(--jc-color-danger, #b42318);
+}
+
+.map-screen {
+  display: grid;
+  gap: var(--jc-space-3, 0.75rem);
+  grid-template-columns: minmax(0, 1fr);
+  position: relative;
+}
+
+@media (min-width: 64rem) {
+  .map-screen {
+    grid-template-columns: minmax(0, 2fr) minmax(18rem, 1fr);
+  }
+}
+
+.jc-map {
+  height: clamp(18rem, 62vh, 48rem);
+  position: relative;
+  border: 1px solid var(--jc-color-border, #d0d0d0);
+  border-radius: var(--jc-radius-md, 0.5rem);
+  overflow: hidden;
+}
+
+.jc-map-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.jc-map-notice {
+  position: absolute;
+  z-index: 1;
+  top: var(--jc-space-2, 0.5rem);
+  left: var(--jc-space-2, 0.5rem);
+  margin: 0;
+  padding: var(--jc-space-1, 0.25rem) var(--jc-space-2, 0.5rem);
+  border-radius: var(--jc-radius-sm, 4px);
+  background: var(--jc-color-surface, #fff);
+}
+
+.results h2 {
+  margin-top: 0;
+  font-size: 1.1rem;
+}
+
+.results ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: clamp(18rem, 62vh, 48rem);
+  overflow-y: auto;
+}
+
+.results button {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: var(--jc-space-2, 0.5rem);
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  padding: var(--jc-space-2, 0.5rem);
+  border: 0;
+  border-bottom: 1px solid var(--jc-color-border, #e2e2e2);
+  background: none;
+  cursor: pointer;
+}
+
+.results button[aria-pressed="true"] {
+  background: var(--jc-color-surface-muted, #eef3fa);
+}
+
+.results .name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.results .sub {
+  grid-column: 2;
+  font-size: 0.875rem;
+}
+
+.sheet {
+  background: var(--jc-color-surface, #fff);
+  border: 1px solid var(--jc-color-border, #d0d0d0);
+  border-radius: var(--jc-radius-md, 0.5rem) var(--jc-radius-md, 0.5rem) 0 0;
+  padding: var(--jc-space-3, 0.75rem);
+  box-shadow: 0 -4px 16px rgb(0 0 0 / 12%);
+  position: fixed;
+  inset: auto 0 0 0;
+  max-height: 60vh;
+  overflow-y: auto;
+  z-index: 2;
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-3, 0.75rem);
+  min-width: 0;
+}
+
+/* Beside the map there is room: the sheet is the top of the side column, above the list. */
+@media (min-width: 64rem) {
+  .sheet {
+    position: static;
+    max-height: none;
+    box-shadow: none;
+    border-radius: var(--jc-radius-md, 0.5rem);
+  }
+}
+
+.sheet-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--jc-space-2, 0.5rem);
+}
+
+.sheet-head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  overflow-wrap: anywhere;
+}
+
+.sheet dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--jc-space-1, 0.25rem) var(--jc-space-3, 0.75rem);
+}
+
+.sheet dt {
+  font-weight: 600;
+}
+
+.sheet dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

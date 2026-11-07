@@ -1,0 +1,198 @@
+{
+  "$id": "https://bbsk.sk/models/kraj/statistical-observation",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "Entity": {
+      "additionalProperties": false,
+      "description": "The root every NGSI-LD entity class specialises.",
+      "properties": {
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "Entity",
+      "type": "object"
+    },
+    "KeyPerformanceIndicator": {
+      "additionalProperties": false,
+      "description": "One cell of one published statistical table.",
+      "properties": {
+        "dataSet": {
+          "description": "The publisher's own code for the table this cell comes from, such as `zp3803rs`.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dateObserved": {
+          "description": "When the publisher last updated the table, as the table itself reports it.",
+          "format": "date-time",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dimensionKey": {
+          "description": "The cube's remaining dimensions beyond territory and period, as their codes joined by a hyphen and in the cube's own dimension order, such as `1` for the solid-emissions pollutant. It is the tail of the `{localId}`, repeated here so a query can select a slice without matching on an id pattern. Absent when the table has no further dimension.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "indicator": {
+          "description": "The publisher's own code for the measure, such as `ODPAD_TONY_KM2`.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "kpiValue": {
+          "description": "The number, exactly as published. Its unit varies with the indicator and travels on the Property as `unitCode`, a UN/CEFACT common code, beside `unitText`.",
+          "type": "number",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "refArea": {
+          "description": "The territory the cell describes, as the publisher codes it: a NUTS code for the kraj or an okres (`SK032`, `SK0323`), a LAU code for a municipality (`SK0321508438`).",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "refPeriod": {
+          "description": "The period the cell covers, as the publisher labels it, such as `2023` or `2025Q2`.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The exact URL the row was fetched from, with its query, so the cell can be fetched again.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "stewardNote": {
+          "description": "A note by the person who keeps this data: what was checked, what looks wrong, whom to ask. The one attribute of this model no pipeline writes and no pipeline overwrites, so an application may offer it for editing without the next run silently taking the words back (AP-62, EP-14). Every figure beside it belongs to the publisher and is read-only. At most 500 characters and no angle brackets, because it is a note and not a document.",
+          "pattern": "^[^<>]{0,500}$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "unitText": {
+          "description": "The unit in the publisher's own words, such as `v tis. m3`, kept because a UN/CEFACT code loses the scale factor.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "dataSet",
+        "indicator",
+        "refArea",
+        "refPeriod",
+        "kpiValue",
+        "source",
+        "dateObserved",
+        "id",
+        "type"
+      ],
+      "title": "KeyPerformanceIndicator",
+      "type": "object"
+    }
+  },
+  "metamodel_version": "1.11.0",
+  "title": "statistical-observation",
+  "type": "object",
+  "version": null,
+  "x-generator-version": "linkml-1.11.1"
+}

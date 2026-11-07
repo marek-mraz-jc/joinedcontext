@@ -1,0 +1,21 @@
+# T-6530 (S-12, live walk T-6490): the history the person asks for reaches the new space's draft
+# as its retention rule.
+workflow: space
+as: steward
+says:
+  - "Create a context space Doprava2 with retention 365 days of history for entity type BikeCounter."
+expect:
+  calls:
+    - tool: change_resource
+      input:
+        kind: ContextSpace
+        create: true
+        patch:
+          spec:
+            retention:
+              - { entityType: BikeCounter, history: P365D }
+  outcome: change
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: create a context space Doprava2 with 365 days of history for BikeCounter."

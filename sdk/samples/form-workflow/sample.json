@@ -1,0 +1,19 @@
+{
+  "name": "form-workflow",
+  "title": "Form-first workflow",
+  "purpose": "Let a resident or employee send a report or request in a few short steps, checked against the data model at each step, and follow their own earlier submissions.",
+  "archetype": "form-workflow",
+  "audience": "residents",
+  "layout": "form-with-list",
+  "keywords": ["form", "forms", "report", "reports", "request", "requests", "submit", "submission", "submissions", "feedback", "complaint", "complaints", "wizard", "steps", "survey", "register", "registration", "service-request", "ticket"],
+  "ready": "Report a problem",
+  "dataNeeds": [
+    {
+      "types": ["ServiceRequest"],
+      "attrs": ["category", "title", "description", "address", "district", "contactEmail", "mayContact", "submittedBy", "dateSubmitted", "status"],
+      "operations": ["queryEntity", "createEntity"]
+    }
+  ],
+  "access": "Signed-in people create requests and read their own; nobody updates or deletes through this app.",
+  "sdk": ["useSchema", "fieldOf", "useSave", "useMe", "useAccess", "useEntities", "format", "Page", "Header", "Split", "Card"]
+}

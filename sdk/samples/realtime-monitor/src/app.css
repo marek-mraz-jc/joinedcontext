@@ -1,0 +1,78 @@
+/* The monitor: dark, dense and calm; only a crossing of the level draws the eye. */
+
+.app-value {
+  margin: 0;
+  font-size: var(--jc-font-size-xl, 1.75rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-value[data-state="silent"] {
+  color: var(--jc-color-muted, #9aa7b8);
+}
+
+.app-state {
+  margin: 0 0 var(--jc-space-2, 0.5rem);
+  font-weight: 600;
+  color: var(--jc-color-success, #4ade80);
+}
+
+.app-state[data-state="over"] {
+  color: var(--jc-color-danger, #f87171);
+}
+
+.app-state[data-state="silent"],
+.app-state[data-state="unknown"] {
+  color: var(--jc-color-warning, #fbbf24);
+}
+
+.app-spark {
+  display: block;
+  width: 100%;
+  height: 2.5rem;
+  overflow: visible;
+}
+
+.app-spark polyline {
+  fill: none;
+  stroke: var(--jc-color-accent, #38bdf8);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.app-spark-level {
+  stroke: var(--jc-color-danger, #f87171);
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.app-quiet {
+  margin: var(--jc-space-1, 0.25rem) 0 0;
+  color: var(--jc-color-muted, #9aa7b8);
+  font-size: var(--jc-font-size-sm, 0.8125rem);
+}
+
+.app-alert-slot:empty {
+  display: none;
+}
+
+.app-alert {
+  margin: 0;
+  padding: var(--jc-space-3, 0.75rem) var(--jc-space-4, 1rem);
+  border: 2px solid var(--jc-color-danger, #f87171);
+  border-radius: var(--jc-radius-md, 6px);
+  font-weight: 700;
+}
+
+.app-log {
+  display: grid;
+  gap: var(--jc-space-2, 0.5rem);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-log time {
+  color: var(--jc-color-muted, #9aa7b8);
+}

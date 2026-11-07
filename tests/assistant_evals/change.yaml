@@ -1,0 +1,13 @@
+# T-2733: the change workflow as one conversation (Testing/07 §3, AG-87).
+workflow: change
+as: steward
+says:
+  - "What waits for approval in this project?"
+expect:
+  calls:
+    - tool: jc_change_list
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: what waits for approval in this project?"

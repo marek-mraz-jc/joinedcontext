@@ -1,0 +1,13 @@
+# T-2733: the import workflow as one conversation (Testing/07 §3, AG-87).
+workflow: import
+as: steward
+says:
+  - "Import a project from a Git export for me."
+expect:
+  calls: []
+  outcome: person-only
+  why: "an import creates repositories and a project; a person brings the archive to the Import page"
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: import a project from a Git export for me."

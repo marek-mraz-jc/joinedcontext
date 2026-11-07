@@ -1,0 +1,22 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-praha-data
+  namespace: praha
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    cs: Data Prahy
+    en: Data of Prague
+spec:
+  audience: public
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: praha-mesto
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - csv
+  - ogc-features
+  slug: zd6qa2wmx7kc3nbr5tyhj4pve2

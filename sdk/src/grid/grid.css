@@ -1,0 +1,2669 @@
+.jc-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-2, 8px);
+  font-family: var(--jc-font-body, "Inter", system-ui, sans-serif);
+  font-size: var(--jc-font-size-md, 14px);
+  color: var(--jc-color-ink, #1a1a1a);
+  background: var(--jc-color-surface, #ffffff);
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-md, 4px);
+  overflow: hidden;
+}
+
+.jc-grid[data-density="compact"] {
+  --jc-grid-cell-padding: var(--jc-space-1, 4px) var(--jc-space-2, 8px);
+  --jc-grid-header-padding: var(--jc-space-1, 4px) var(--jc-space-2, 8px);
+}
+
+.jc-grid[data-density="comfortable"] {
+  --jc-grid-cell-padding: var(--jc-space-2, 8px) var(--jc-space-3, 12px);
+  --jc-grid-header-padding: var(--jc-space-2, 8px) var(--jc-space-3, 12px);
+}
+
+.jc-grid-toolbar {
+  padding: var(--jc-space-2, 8px);
+  border-bottom: 1px solid var(--jc-color-line, #e0e0e0);
+}
+
+.jc-grid-scroll {
+  /* The containing block of every absolute child (each empty cell's screen-reader "not set"), so
+     the box clips them: without it they sit at their cell's place outside it and widen the page. */
+  position: relative;
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 100%;
+  /* A shadow at the right edge while columns wait beyond it; the cover scrolls with the table
+     and hides it at the end (T-4242). */
+  background:
+    linear-gradient(to left, var(--jc-color-surface, #ffffff) 40%, transparent) right / 2rem 100% no-repeat local,
+    linear-gradient(to left, rgb(0 0 0 / 18%), transparent) right / 0.75rem 100% no-repeat scroll;
+}
+
+.jc-grid table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+.jc-grid thead {
+  position: sticky;
+  top: 0;
+  /* Above the body's sticky checkbox and id cells (z-index 1-2), which scroll under the head. */
+  z-index: 5;
+  background: var(--jc-color-card, #f5f5f5);
+}
+
+.jc-grid th {
+  padding: var(--jc-grid-header-padding);
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid var(--jc-color-line, #e0e0e0);
+  white-space: nowrap;
+  position: relative;
+}
+
+.jc-grid th.jc-grid-pinned {
+  z-index: 3;
+  background: var(--jc-color-card, #f5f5f5);
+}
+
+.jc-grid td {
+  padding: var(--jc-grid-cell-padding);
+  border-bottom: 1px solid var(--jc-color-line, #e0e0e0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The pinned column is the id (T-6210), shown by its last segment: 128 px, or a quarter of a
+   phone's width, keeps it readable without taking the row from the type and the name beside it. */
+.jc-grid :is(th, td).jc-grid-pinned {
+  min-width: min(8rem, 25vw);
+}
+
+/* The id column scrolls with the others (owner 2026-11-01: a frozen id covered the columns passing
+   under it); only the checkbox column stays at the left edge. */
+.jc-grid td.jc-grid-pinned {
+  z-index: 1;
+  /* A URN is long: the pinned column keeps at most 30% of the grid, the rest scrolls (UI-70). */
+  max-width: min(30vw, 16rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--jc-color-surface, #ffffff);
+}
+
+.jc-grid tr:hover td {
+  background: var(--jc-color-card, #f5f5f5);
+}
+
+/* An inset shadow, not an outline: it paints with the cell, so the frozen columns cover it where the
+   cell scrolls under them (T-6210). */
+.jc-grid td[data-active] {
+  box-shadow: inset 0 0 0 2px var(--jc-color-accent, #0066cc);
+}
+
+/* Positioned (no z-index, so no new stacking context): the active cell's mark passes under the
+   frozen columns (T-6210). */
+.jc-grid td[data-active]:not(.jc-grid-pinned, .jc-grid-rownum) {
+  position: relative;
+}
+
+.jc-grid-meta-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: inherit;
+  color: var(--jc-color-muted, #666);
+  margin-left: 4px;
+}
+
+.jc-grid-meta-btn:hover {
+  color: var(--jc-color-accent, #0066cc);
+}
+
+.jc-grid-meta-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  background: var(--jc-color-card, #f5f5f5);
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-sm, 2px);
+  padding: var(--jc-space-1, 4px);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-1, 4px);
+  min-width: 120px;
+}
+
+.jc-grid-meta-item {
+  display: flex;
+  align-items: center;
+  gap: var(--jc-space-1, 4px);
+  font-size: var(--jc-font-size-sm, 12px);
+  cursor: pointer;
+}
+
+.jc-grid-meta-item input {
+  margin: 0;
+}
+
+.jc-grid-empty,
+.jc-grid-error {
+  text-align: center;
+  padding: var(--jc-space-4, 16px);
+  color: var(--jc-color-muted, #666);
+}
+
+/* Refused for who is asking (T-6376): a panel that says what to do, never an empty grid. */
+.jc-grid-refusal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--jc-space-2, 8px);
+  padding: var(--jc-space-6, 24px) var(--jc-space-4, 16px);
+  text-align: center;
+  border: 1px dashed var(--jc-color-border, #d0d0d0);
+  border-radius: var(--jc-radius-md, 6px);
+}
+
+.jc-grid-refusal__title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.jc-grid-refusal__body {
+  margin: 0;
+  max-width: 36rem;
+  color: var(--jc-color-muted, #666);
+}
+
+.jc-grid-refusal__detail {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--jc-color-muted, #666);
+}
+
+.jc-grid-refusal__action {
+  min-height: 2.25rem;
+  padding: 0 var(--jc-space-4, 16px);
+  border-radius: var(--jc-radius-md, 6px);
+  border: 1px solid var(--jc-color-accent, #0066cc);
+  background: var(--jc-color-accent, #0066cc);
+  color: var(--jc-color-on-primary, #fff);
+  cursor: pointer;
+}
+
+.jc-grid-error {
+  color: var(--jc-color-danger, #cc0000);
+}
+
+/* The retry after a failed read sits under its sentence, a target a thumb can hit (T-5597). */
+.jc-grid-error button {
+  display: block;
+  margin: var(--jc-space-2, 8px) auto 0;
+  min-height: 2.75rem;
+  color: var(--jc-color-text, inherit);
+}
+
+/* It wraps on a phone: centred and on one line it spilled past both edges of the grid. */
+/* The pager closes the table: no gap between the footer row and the count under it (owner 2026-11-01). */
+.jc-grid-scroll + .jc-grid-pager {
+  margin-top: calc(-1 * var(--jc-space-2, 8px));
+}
+
+.jc-grid-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--jc-space-2, 8px);
+  padding: var(--jc-space-1, 4px) var(--jc-space-2, 8px);
+  border-top: 1px solid var(--jc-color-line, #e0e0e0);
+}
+
+.jc-grid-page-size {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--jc-space-1, 4px);
+  margin-inline-start: var(--jc-space-3, 12px);
+  color: var(--jc-color-muted, #666);
+}
+
+.jc-grid-page-size select {
+  font: inherit;
+  padding: 0.125rem 0.25rem;
+  border: 1px solid var(--jc-color-line, #cbd5e1);
+  border-radius: var(--jc-radius-md, 6px);
+  background: var(--jc-color-surface, #fff);
+}
+
+.jc-grid-pager button,
+.jc-grid-error button {
+  padding: var(--jc-space-1, 4px) var(--jc-space-2, 8px);
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-sm, 2px);
+  background: var(--jc-color-card, #f5f5f5);
+  cursor: pointer;
+  font-size: inherit;
+}
+
+.jc-grid-pager button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.jc-grid-rel-btn {
+  background: none;
+  border: none;
+  color: var(--jc-color-accent, #0066cc);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+
+.jc-grid-rel-btn:hover {
+  color: var(--jc-color-accent, #004499);
+}
+
+/* The filter row and the query it asks for (UI-66): controls sit in the header, so a person
+   filters where they read, and the query is under the grid, where it can be copied. */
+.jc-grid-sort-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.jc-grid-filter-cell {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+/* The Portal's own control (T-5192): readable 14px text in normal weight, not the header's bold,
+   the field's border and radius, and the Portal's small chevron, so the list a browser opens from
+   it inherits a readable size as well. */
+.jc-grid-filter-cell select,
+.jc-grid-filter-cell input {
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 400;
+  line-height: 1.25;
+  min-width: 0;
+  /* Narrow: a select is as wide as its longest option, which pushed columns apart (owner 2026-11-01). */
+  width: 100%;
+  max-width: 8rem;
+  min-height: 1.75rem;
+  box-sizing: border-box;
+  padding: 0.125rem 0.375rem;
+  color: var(--jc-color-ink, #1a1a1a);
+  background-color: var(--jc-color-surface, #ffffff);
+  border: 1px solid var(--jc-color-line, #cbd5e1);
+  border-radius: var(--jc-radius-md, 6px);
+}
+
+.jc-grid-filter-cell select:not([multiple]) {
+  appearance: none;
+  padding-right: 1.5rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2364748b' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 8 4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.375rem center;
+  background-size: 0.875rem 0.875rem;
+}
+
+.jc-grid-filter-cell select option {
+  font-size: 0.9375rem;
+  font-weight: 400;
+}
+
+.jc-grid-filter-cell select:focus-visible,
+.jc-grid-filter-cell input:focus-visible {
+  outline: 2px solid var(--jc-color-accent, #1d4ed8);
+  outline-offset: 1px;
+}
+
+.jc-grid-query {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+}
+
+.jc-grid-query-text {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex: 1 1 20rem;
+}
+
+/* The hint of "Edit as text" (T-4949): its own line under the query, in the muted caption size. */
+.jc-grid-query-hint {
+  flex: 1 0 100%;
+  font-size: 0.8125rem;
+  opacity: 0.75;
+}
+
+.jc-grid-query-value,
+.jc-grid-query-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Edit mode (UI-67): a changed cell is marked where the person changed it, a refused row keeps
+   its reason, and the review panel sits between the grid and its pager. */
+.jc-grid-cell-input {
+  font: inherit;
+  width: 100%;
+  min-width: 0;
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+.jc-grid-cell-input:focus {
+  border-color: currentColor;
+}
+
+.jc-grid-cell-changed {
+  font-weight: 600;
+  border-bottom-style: dashed;
+  border-bottom-color: currentColor;
+}
+
+/* A stored value its enum does not list (UI-86): marked by a border and the words in the option,
+   never by colour alone. */
+.jc-grid-cell-invalid {
+  border: 1px dashed currentColor;
+}
+
+/* One dashed frame round the refused row (T-6210), drawn as each cell's background image: it
+   paints with the cell, so a frozen cell carries its part and nothing draws over the frozen columns
+   (an outline did; a collapsed dashed border loses to the solid line of the row above). */
+.jc-grid-tbody tr[data-refused] td {
+  --jc-dash-x: linear-gradient(90deg, currentColor 50%, transparent 0);
+  --jc-dash-y: linear-gradient(180deg, currentColor 50%, transparent 0);
+  background-image: var(--jc-dash-x), var(--jc-dash-x);
+  background-size: 6px 1px;
+  background-position: 0 0, 0 100%;
+  background-repeat: repeat-x;
+}
+.jc-grid-tbody tr[data-refused] td:first-child,
+.jc-grid-tbody tr[data-refused] td:last-child {
+  background-image: var(--jc-dash-x), var(--jc-dash-x), var(--jc-dash-y);
+  background-size: 6px 1px, 6px 1px, 1px 6px;
+  background-repeat: repeat-x, repeat-x, repeat-y;
+}
+.jc-grid-tbody tr[data-refused] td:first-child {
+  background-position: 0 0, 0 100%, 0 0;
+}
+.jc-grid-tbody tr[data-refused] td:last-child {
+  background-position: 0 0, 0 100%, 100% 0;
+}
+
+.jc-grid-pending,
+.jc-grid-review {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+}
+
+/* One line: a wrapping column stretches its items to the widest one's content, not to the grid. */
+.jc-grid-review {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+
+.jc-grid-review table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+/* The changes scroll in their own box, and their cells wrap where the grid's stay on one line:
+   an entity id has no break of its own, and unbroken it pushed the panel and its save button past
+   the grid's edge. */
+.jc-grid-review-rows {
+  overflow-x: auto;
+}
+
+.jc-grid-review :is(th, td) {
+  white-space: normal;
+}
+
+.jc-grid-review td {
+  overflow-wrap: anywhere;
+}
+
+/* A fieldset is as wide as its content by default; the two choices wrap on a phone instead. */
+.jc-grid-review fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  min-inline-size: 0;
+  border: 0;
+  padding: 0;
+}
+
+/* Why the values change (DM-113): the label over a box as wide as the panel, on a phone too. */
+.jc-grid-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.jc-grid-reason input {
+  inline-size: 100%;
+  min-inline-size: 0;
+  box-sizing: border-box;
+  /* A field the eye finds at rest, not only once focused: it is the one thing the panel asks. */
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-sm, 2px);
+  padding: var(--jc-space-1, 4px) var(--jc-space-2, 8px);
+  font: inherit;
+}
+
+/* One attribute's history (T-1431): the panel sits under the grid, the line is drawn in a box the
+   panel's width decides, and the table under it carries the numbers themselves. */
+.jc-grid-history {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.jc-grid-history header {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.jc-grid-history h3 {
+  margin: 0;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.jc-grid-history fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  border: 0;
+  padding: 0;
+}
+
+.jc-grid-history-plot {
+  width: 100%;
+}
+
+.jc-grid-history-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.jc-grid-history-chart text {
+  font-size: 12px;
+  fill: var(--jc-color-muted, #475569);
+}
+
+.jc-grid-history-chart .jc-grid-history-unit {
+  fill: var(--jc-color-ink, #0f172a);
+  font-weight: 600;
+}
+
+.jc-grid-history-grid {
+  stroke: var(--jc-color-line, #e2e8f0);
+}
+
+.jc-grid-history-axis {
+  stroke: var(--jc-color-muted, #475569);
+}
+
+.jc-grid-history table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.jc-grid-history-cut {
+  font-size: 0.875em;
+  opacity: 0.8;
+}
+
+/* What the other side of a comparison does not answer (T-1435): the row it leaves out, and the
+   column it does not carry. The mark is on the side that has more, never a guess about the other. */
+.jc-grid-tr[data-mark="row"] {
+  text-decoration: line-through;
+  opacity: 0.65;
+}
+
+.jc-grid-td[data-mark="column"] {
+  background: repeating-linear-gradient(
+    45deg,
+    rgb(0 0 0 / 4%),
+    rgb(0 0 0 / 4%) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+
+.jc-compare {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1fr 1fr;
+}
+
+.jc-compare-side {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+@media (width <= 900px) {
+  .jc-compare {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* The map beside the rows (UI-72). `right` is a two-column grid on a wide page and one column on a
+   narrow one, so the panel is under the table at 400 px instead of squeezing it to nothing. */
+.jc-grid--map-right {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 22rem);
+  align-items: start;
+}
+
+.jc-grid--map-right > .jc-grid-toolbar,
+.jc-grid--map-right > .jc-grid-pending,
+.jc-grid--map-right > .jc-grid-pager,
+.jc-grid--map-right > .jc-grid-empty,
+.jc-grid--map-right > .jc-grid-loading {
+  grid-column: 1 / -1;
+}
+
+.jc-grid-map {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.jc-grid-map__bar {
+  display: flex;
+  min-height: 2rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.jc-grid-map__title {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.jc-grid-map__hint {
+  font-size: 0.75rem;
+  margin: 0;
+  color: var(--jc-color-muted, #666);
+}
+
+.jc-grid-map__area,
+.jc-grid-map__points,
+.jc-grid-map__picked,
+.jc-grid-map__summary,
+.jc-grid-map__off,
+.jc-grid-map__note {
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+/* The header's actions read as the same chips as the drawing tools. */
+.jc-grid-map__action {
+  font: inherit;
+  font-size: 0.8125rem;
+  min-height: 2rem;
+  padding: 0.125rem 0.625rem;
+  border: 1px solid var(--jc-color-line, #cbd5e1);
+  border-radius: var(--jc-radius-md, 6px);
+  background: var(--jc-color-surface, #ffffff);
+  color: var(--jc-color-ink, #1a1a1a);
+  cursor: pointer;
+}
+
+.jc-grid-map__action[aria-pressed="true"] {
+  border-color: var(--jc-color-accent, #0066cc);
+  background: color-mix(in srgb, var(--jc-color-accent, #0066cc) 10%, var(--jc-color-surface, #ffffff));
+}
+
+/* The area and point counts share one line, separated by a dot. */
+.jc-grid-map__status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--jc-space-2, 8px);
+}
+
+.jc-grid-map__status > p + p::before {
+  content: "· ";
+  color: var(--jc-color-muted, #666);
+}
+
+/* A refused control keeps its place and is visibly refused; the reason is read from the
+   `aria-describedby` span, which is why that span is hidden rather than absent. */
+.jc-grid-map__action[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.jc-grid-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A map with no height is a map nobody can use; `vh` keeps it usable at zoom 1.5, where a fixed
+   pixel height would push the rows off the screen. */
+.jc-grid-map .maplibregl-map,
+.jc-grid-map [data-jc-map] {
+  min-height: 18rem;
+  height: 40vh;
+}
+
+/* Beside the rows the map runs the table's full height, no empty column under it (owner 2026-11-01). */
+@media (width > 900px) {
+  .jc-grid--map-right > .jc-grid-map {
+    align-self: stretch;
+    /* A gutter and a rule between the rows and the map, so the panel reads as its own part. */
+    padding-left: var(--jc-space-3, 12px);
+    border-left: 1px solid var(--jc-color-line, #cbd5e1);
+  }
+
+  .jc-grid--map-right > .jc-grid-map :is(.maplibregl-map, [data-jc-map]) {
+    flex: 1 1 auto;
+    height: auto;
+  }
+
+  /* While drawing, the panel takes the width its one row of tools needs (T-6345). */
+  .jc-grid--map-right:has(.jc-grid-map__draw) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 29rem);
+  }
+}
+
+@media (width <= 900px) {
+  .jc-grid--map-right {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Under the rows the panel keeps the rows' own gutter, not the frame's edge. */
+  .jc-grid-map {
+    padding: var(--jc-space-2, 8px) var(--jc-space-3, 12px);
+  }
+}
+
+/* A relationship end: the picked targets as chips, a search box, its list (UI-84). */
+.jc-rel {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jc-space-1, 4px);
+  min-width: 12rem;
+}
+
+.jc-rel-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 var(--jc-space-1, 4px);
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-md, 4px);
+  background: var(--jc-color-card, #f5f5f5);
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jc-rel-remove {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+  padding: 0 2px;
+}
+
+.jc-rel-input {
+  flex: 1 1 6rem;
+  min-width: 6rem;
+}
+
+.jc-rel-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 5;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 100%;
+  max-height: 16rem;
+  overflow-y: auto;
+  background: var(--jc-color-surface, #ffffff);
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-md, 4px);
+}
+
+.jc-rel-option {
+  padding: var(--jc-space-1, 4px) var(--jc-space-2, 8px);
+  cursor: pointer;
+}
+
+.jc-rel-option[aria-selected="true"] {
+  background: var(--jc-color-card, #f5f5f5);
+  outline: 2px solid var(--jc-color-accent, #0b5fff);
+  outline-offset: -2px;
+}
+
+.jc-rel-option small {
+  color: var(--jc-color-muted, #5c5c5c);
+}
+
+.jc-rel-status:empty {
+  display: none;
+}
+
+.jc-rel-status,
+.jc-grid-rel-more {
+  color: var(--jc-color-muted, #5c5c5c);
+  font-size: var(--jc-font-size-sm, 12px);
+}
+
+.jc-rel-error {
+  flex-basis: 100%;
+  color: var(--jc-color-danger, #b00020);
+  font-size: var(--jc-font-size-sm, 12px);
+}
+
+.jc-grid-rel-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-1, 4px);
+}
+
+/* The identifier opens the row's detail panel (T-3097): a link-like button, focus shown. */
+.jc-grid-open {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--jc-color-link, var(--jc-color-accent, #0066cc));
+  text-decoration: underline;
+  cursor: pointer;
+  text-align: start;
+  overflow-wrap: break-word;
+  /* The row's name wraps inside the pinned column rather than being cut off at a phone's width:
+     the column keeps its 40% and the whole name stays readable (T-2782). */
+  white-space: normal;
+}
+
+.jc-grid-open:focus-visible {
+  outline: 2px solid var(--jc-color-accent, #0066cc);
+  outline-offset: 2px;
+}
+
+/* The row whole, a modal dialog (T-4828): the whole screen on a phone, a centred card from a
+   tablet up; label above value on a phone, side by side from a tablet up. */
+.jc-grid-detail {
+  box-sizing: border-box;
+  /* A host's CSS reset (Tailwind preflight) zeroes the margin the browser centres a modal with. */
+  margin: auto;
+  width: min(56rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
+  padding: 1rem;
+  border: 1px solid var(--jc-color-line, #d0d7de);
+  border-radius: 0.5rem;
+  background: var(--jc-color-surface, #fff);
+  color: inherit;
+}
+
+.jc-grid-detail::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+
+@media (max-width: 639px) {
+  .jc-grid-detail {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+}
+
+.jc-grid-detail-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.75rem;
+  border-bottom: 1px solid var(--jc-color-line, #d0d7de);
+}
+
+.jc-grid-detail-tabs [role="tab"] {
+  min-height: 2.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.jc-grid-detail-tabs [role="tab"][aria-selected="true"] {
+  border-bottom-color: var(--jc-color-primary, #0969da);
+  font-weight: 600;
+}
+
+.jc-grid-detail-tabs [role="tab"]:focus-visible {
+  outline: 2px solid var(--jc-color-focus, #0969da);
+  outline-offset: -2px;
+}
+
+.jc-grid-detail-attr {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.75rem 0;
+}
+
+.jc-grid-detail-head {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.jc-grid-detail-head h3 {
+  margin: 0;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+/* Copy identifier and Close: 44 px targets that wrap under each other on a phone (T-5599). */
+.jc-grid-detail-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.jc-grid-detail-actions button {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.75rem;
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--jc-color-ink, #1a1a1a);
+  background: var(--jc-color-surface, #ffffff);
+  border: 1px solid var(--jc-color-line, #cbd5e1);
+  border-radius: var(--jc-radius-md, 6px);
+  cursor: pointer;
+}
+
+.jc-grid-detail-actions button:hover {
+  background: var(--jc-color-card, #f5f5f5);
+}
+
+/* Close is the dialog's corner cross, a 44 px target with its word as the accessible name. */
+.jc-grid-detail-actions .jc-grid-detail-close {
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+
+.jc-grid-detail-head {
+  align-items: center;
+}
+
+.jc-grid-detail-head h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+/* An attribute with no value says so instead of showing nothing (T-5599). */
+.jc-grid-detail-empty {
+  color: var(--jc-color-muted, #57606a);
+  font-style: italic;
+}
+
+.jc-grid-detail-list {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+}
+
+.jc-grid-detail-item dt {
+  font-size: 0.8125rem;
+  color: var(--jc-color-muted, #57606a);
+}
+
+.jc-grid-detail-item dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 768px) {
+  .jc-grid-detail-item {
+    display: grid;
+    grid-template-columns: minmax(8rem, 1fr) 3fr;
+    gap: 0.75rem;
+  }
+}
+
+/* A scrolling grid (T-3097): the box scrolls, its header stays in sight. */
+/* The last answer's rows while the next question is read (T-5623). */
+.jc-grid-table[aria-busy="true"] tbody {
+  opacity: 0.5;
+  transition: opacity 150ms;
+}
+
+.jc-grid--virtual .jc-grid-scroll {
+  max-height: 70vh;
+}
+
+/* The whole head sticks as one block (thead is sticky above): sticky cells each at top 0 laid the
+   filter row over the header row and left its empty cells transparent over the scrolled rows. */
+.jc-grid--virtual thead :is(th, td, th.jc-grid-pinned, td.jc-grid-rownum) {
+  background: var(--jc-color-surface, #fff);
+}
+
+/* The filter row sits right under the names it filters, no empty line between (owner 2026-11-01). */
+.jc-grid thead .jc-grid-filter-row :is(th, td) {
+  padding-top: var(--jc-space-1, 4px);
+  padding-bottom: var(--jc-space-1, 4px);
+}
+
+/* A collapsed border stays where the row first lay while the sticky head scrolls, a see-through
+   strip under the header row: the head draws its line as a shadow inside its own cells. */
+.jc-grid--virtual thead th {
+  border-bottom: 0;
+  box-shadow: inset 0 -1px 0 var(--jc-color-line, #e0e0e0);
+}
+
+/* A header cell whose metadata menu is open lies above the filter row below it, which is as
+   sticky and would otherwise paint over the menu and take its clicks (T-3170), and above the
+   head's frozen checkbox cells (z-index 4), which cut a phone's filter popover (T-6344). */
+.jc-grid thead th:has(.jc-grid-meta-menu) {
+  z-index: 6;
+}
+
+.jc-grid-spacer td {
+  padding: 0;
+  border: none;
+}
+
+/* A value its model's rule refuses, said beside the input (T-3097). */
+.jc-grid-cell-invalid {
+  border-color: var(--jc-color-danger, #b42318);
+}
+
+.jc-grid-cell-message,
+.jc-grid-to-correct {
+  display: block;
+  font-size: 0.8125rem;
+  color: var(--jc-color-danger, #b42318);
+}
+
+/* A view's colour rule (API/01 §30): a tinted row and a swatch that names the reason. */
+.jc-grid-tone {
+  display: inline-block;
+  width: 0.625rem;
+  height: 0.625rem;
+  margin-inline-end: 0.375rem;
+  border-radius: 999px;
+  vertical-align: middle;
+  background: var(--jc-tone, currentColor);
+}
+.jc-grid-tr--neutral { --jc-tone: var(--jc-color-neutral, #6b7280); }
+.jc-grid-tr--info { --jc-tone: var(--jc-color-info, #2563eb); }
+.jc-grid-tr--success { --jc-tone: var(--jc-color-success, #15803d); }
+.jc-grid-tr--warning { --jc-tone: var(--jc-color-warning, #b45309); }
+.jc-grid-tr--danger { --jc-tone: var(--jc-color-danger, #b42318); }
+.jc-grid-tr--neutral,
+.jc-grid-tr--info,
+.jc-grid-tr--success,
+.jc-grid-tr--warning,
+.jc-grid-tr--danger {
+  background: color-mix(in srgb, var(--jc-tone) 10%, transparent);
+}
+
+/* On a phone the pinned id keeps a floor, so the table never squeezes it to a few letters a line
+   (T-4162 #6); the other columns scroll. */
+@media (width <= 640px) {
+  .jc-grid td.jc-grid-pinned {
+    min-width: min(25vw, 7rem);
+  }
+}
+
+/* What a column holds, as a glyph before its label (T-4827); the glyph comes from data-icon so
+   the header's text is its label alone. */
+.jc-grid-kind {
+  display: inline-block;
+  min-width: 1.5em;
+  margin-right: var(--jc-space-1, 4px);
+  color: var(--jc-color-muted, #666);
+  font-size: var(--jc-font-size-sm, 12px);
+  text-align: center;
+}
+
+.jc-grid-kind::before {
+  content: attr(data-icon);
+}
+
+.jc-grid-th {
+  position: relative;
+}
+
+.jc-grid-th[draggable="true"] {
+  cursor: grab;
+}
+
+.jc-grid-th--drop {
+  box-shadow: inset 3px 0 0 var(--jc-color-accent, #0066cc);
+}
+
+/* The edge a pointer drags to resize; Narrower and Wider in the menu do the same by keyboard. */
+.jc-grid-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.jc-grid-resize:hover {
+  background: var(--jc-color-line, #e0e0e0);
+}
+
+.jc-grid-col-menu {
+  /* Placed by ColumnMenu under its header cell: the grid's overflow would clip it (T-4924). */
+  position: fixed;
+  /* Read by usePlaceAtCell in pixels: a host's sticky header sits above this line (T-5181). */
+  scroll-margin-top: var(--jc-grid-sticky-top, 0px);
+  right: auto;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.12);
+  min-width: 13rem;
+  text-align: left;
+  font-weight: normal;
+}
+
+.jc-grid-col-menu-row {
+  display: flex;
+  gap: var(--jc-space-1, 4px);
+  flex-wrap: wrap;
+}
+
+.jc-grid-col-menu button.jc-grid-meta-item {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--jc-radius-sm, 2px);
+  padding: 2px 6px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+.jc-grid-col-menu button.jc-grid-meta-item:hover:not(:disabled),
+.jc-grid-col-menu button.jc-grid-meta-item[aria-pressed="true"] {
+  border-color: var(--jc-color-line, #e0e0e0);
+  background: var(--jc-color-surface, #fff);
+}
+
+.jc-grid-col-menu button.jc-grid-meta-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.jc-grid-col-menu-field {
+  font-size: var(--jc-font-size-sm, 12px);
+  color: var(--jc-color-muted, #666);
+}
+
+.jc-grid-col-menu-input {
+  font: inherit;
+  padding: 2px 4px;
+}
+
+.jc-grid-col-menu-details summary {
+  cursor: pointer;
+  font-size: var(--jc-font-size-sm, 12px);
+}
+
+/* A relationship's target as a chip (T-4827). */
+.jc-cell-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.jc-cell-chip {
+  display: inline-block;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: 999px;
+  background: var(--jc-color-card, #f5f5f5);
+  font: inherit;
+  font-size: var(--jc-font-size-sm, 12px);
+  color: inherit;
+}
+
+button.jc-cell-chip {
+  cursor: pointer;
+  min-height: 24px;
+  color: var(--jc-color-accent, #0066cc);
+}
+
+/* A target that was deleted or is not readable: its id, plainly, with no way in (EP-59). */
+.jc-cell-chip--plain {
+  border-style: dashed;
+  color: var(--jc-color-muted, #57606a);
+}
+
+/* "+2": the other instances of an attribute (datasetId), listed in the row's detail. */
+.jc-cell-more,
+.jc-cell-lang {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--jc-color-card, #f5f5f5);
+  color: var(--jc-color-muted, #57606a);
+  font-size: var(--jc-font-size-sm, 12px);
+}
+
+/* A value the model does not allow there: as stored, marked. A border inside its own box, since the
+   cell's line clamp (overflow: hidden) cut an underline drawn below the line (T-6304 review). */
+.jc-cell--invalid {
+  display: inline-block;
+  white-space: nowrap;
+  border-bottom: 2px dotted var(--jc-color-warning, #9a6700);
+}
+
+.jc-grid-instances {
+  margin: 0;
+  padding-left: 1rem;
+}
+
+.jc-grid-instance-id {
+  color: var(--jc-color-muted, #57606a);
+}
+
+/* The way back from an opened relationship target (G-R2GRID2-017). */
+.jc-grid-trail {
+  font-family: var(--jc-font-body, "Inter", system-ui, sans-serif);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: var(--jc-space-2, 8px) 0;
+}
+
+.jc-grid-trail ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.jc-grid-trail li + li::before {
+  content: "/";
+  margin-right: 4px;
+  color: var(--jc-color-muted, #57606a);
+}
+
+.jc-grid-trail button {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--jc-color-accent, #0066cc);
+  text-decoration: underline;
+  cursor: pointer;
+  min-height: 24px;
+}
+
+.jc-grid-trail .jc-grid-trail-back {
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: 4px;
+  padding: 2px 8px;
+  text-decoration: none;
+}
+
+.jc-grid-trail [aria-current] {
+  font-weight: 600;
+}
+
+button.jc-cell-chip:hover {
+  border-color: var(--jc-color-accent, #0066cc);
+}
+
+.jc-cell--number {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A web address or an organizer's name, opening in a new tab (T-5134). */
+a.jc-cell--link {
+  color: var(--jc-color-accent, #0066cc);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
+a.jc-cell--link:focus-visible {
+  outline: 2px solid var(--jc-color-accent, #0066cc);
+  outline-offset: 1px;
+}
+
+.jc-grid-col-menu-input {
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-sm, 2px);
+  background: var(--jc-color-surface, #fff);
+  color: inherit;
+}
+
+/* The row number, its checkbox and the expand button (T-4883): frozen at the left edge, and the
+   pinned name column frozen beside it, so both stay while the other columns scroll. */
+.jc-grid {
+  --jc-grid-rownum-width: 2.75rem;
+}
+
+.jc-grid .jc-grid-rownum {
+  text-overflow: clip;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  width: var(--jc-grid-rownum-width);
+  min-width: var(--jc-grid-rownum-width);
+  max-width: var(--jc-grid-rownum-width);
+  background: var(--jc-color-surface, #ffffff);
+  white-space: nowrap;
+  color: var(--jc-color-muted, #666);
+  font-variant-numeric: tabular-nums;
+  /* The frozen column's edge: rows scroll under it behind a line, not into it (owner 2026-11-01). */
+  box-shadow: inset -1px 0 0 var(--jc-color-line, #e0e0e0);
+}
+
+.jc-grid thead .jc-grid-rownum,
+.jc-grid tfoot .jc-grid-rownum {
+  z-index: 4;
+  background: var(--jc-color-card, #f5f5f5);
+}
+
+
+
+.jc-grid[data-row-numbers] td.jc-grid-pinned[data-active] {
+  box-shadow: inset 0 0 0 2px var(--jc-color-accent, #0066cc), 1px 0 0 var(--jc-color-line, #e0e0e0);
+}
+
+.jc-grid-rownum-n {
+  display: inline-block;
+  min-width: 2ch;
+  text-align: end;
+  margin-inline-end: 0.375rem;
+}
+
+.jc-grid-rownum input {
+  vertical-align: middle;
+}
+
+/* A row's checkbox sits in its label: no box of its own under a mouse, the finger's 44 px target on a
+   touch screen (T-5596). The expand button shows only on hover, which a finger has not: there the
+   row's name opens the row, and the column keeps room for the target. */
+.jc-grid-check {
+  display: contents;
+}
+
+@media (pointer: coarse) {
+  .jc-grid-check {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    vertical-align: middle;
+    cursor: pointer;
+  }
+
+  .jc-grid-expand {
+    display: none;
+  }
+
+  /* The target fills the column: the cell's padding would push the frozen name column over it. */
+  .jc-grid .jc-grid-rownum {
+    padding-inline: 0;
+  }
+}
+
+.jc-grid-expand {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 4px;
+  color: var(--jc-color-accent, #0066cc);
+  opacity: 0;
+}
+
+.jc-grid tr:hover .jc-grid-expand,
+.jc-grid-expand:focus-visible {
+  opacity: 1;
+}
+
+.jc-grid tr[aria-selected="true"] td {
+  background: color-mix(in srgb, var(--jc-color-accent, #0066cc) 8%, var(--jc-color-surface, #ffffff));
+}
+
+/* Row size (T-4883): a small row is one line, the name cut with an ellipsis and whole in its
+   tooltip and its detail; medium and large rows show two or four lines of it. */
+.jc-grid[data-row-size] td .jc-grid-open {
+  display: block;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+
+
+
+/* Every row of a size is the same height whatever its text: a cell keeps one line and ends in an
+   ellipsis, the whole value in its tooltip and the detail. Small is tight, medium is the earlier
+   default height, large leaves room; Observed keeps its whole timestamp (owner 2026-11-01). */
+.jc-grid[data-row-size] tbody td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 14rem;
+}
+
+.jc-grid[data-row-size] tbody td[data-kind="datetime"] {
+  max-width: none;
+}
+
+.jc-grid[data-row-size="small"] tbody td {
+  height: 2rem;
+  padding-block: 2px;
+}
+
+.jc-grid[data-row-size="medium"] tbody td {
+  height: 3.75rem;
+}
+
+.jc-grid[data-row-size="large"] tbody td {
+  height: 5.5rem;
+}
+
+.jc-grid td[data-col="id"] {
+  max-width: 8rem;
+  overflow-wrap: anywhere;
+}
+
+.jc-grid td[data-kind="language"] {
+  max-width: 11rem;
+}
+
+.jc-grid td[data-kind="datetime"] {
+  white-space: nowrap;
+}
+
+
+.jc-grid-group th {
+  text-align: start;
+  font-weight: 600;
+  background: var(--jc-color-card, #f5f5f5);
+  border-top: 1px solid var(--jc-color-line, #e0e0e0);
+}
+
+.jc-grid-group-name {
+  color: var(--jc-color-muted, #555);
+  font-weight: 400;
+}
+
+.jc-grid-group-extra {
+  margin-inline-start: 0.5rem;
+  font-weight: 400;
+}
+
+.jc-grid-tfoot td {
+  position: sticky;
+  bottom: 0;
+  padding-block: var(--jc-space-1, 4px);
+  vertical-align: middle;
+  z-index: 2;
+  background: var(--jc-color-card, #f5f5f5);
+  /* A collapsed border stays behind while the sticky footer moves, leaving rows visible under it:
+     the line is a shadow inside the cell (owner 2026-11-01). */
+  border-top: 0;
+  border-bottom: 0;
+  box-shadow: inset 0 2px 0 var(--jc-color-line, #e0e0e0);
+  font-size: 0.85em;
+}
+
+.jc-grid-tfoot td.jc-grid-pinned {
+  z-index: 3;
+  background: var(--jc-color-card, #f5f5f5);
+}
+
+@media (width <= 640px) {
+  /* A phone has no hover: the row's name opens it, so the expand button gives its room back. */
+  .jc-grid {
+    --jc-grid-rownum-width: 2.75rem;
+  }
+
+  .jc-grid-expand,
+  .jc-grid-rownum-n {
+    display: none;
+  }
+
+  .jc-grid[data-row-size] td.jc-grid-pinned {
+    min-width: min(25vw, 7rem);
+  }
+}
+
+/* A row colour also marks the row's left edge, as Baserow does; the swatch in the first cell names it. */
+.jc-grid-tr[class*="jc-grid-tr--"] td.jc-grid-rownum {
+  box-shadow: inset 4px 0 0 var(--jc-tone, transparent);
+}
+
+/* The widest a column grows by its values (T-5192, owner 2026-10-22 "set max width for attributes"):
+   28 characters, the row's name 40, a link 16; a longer value wraps to three lines and ends in "…",
+   whole in the row's detail. A width the person drags replaces the cap. */
+.jc-grid-cell {
+  max-width: 28ch;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  /* A word breaks only when it is longer than the cell: "anywhere" also lowered the column's
+     narrowest width, so a phone split "AirQualityObserved" and "Mannerheimintie" mid-word (T-6210). */
+  overflow-wrap: break-word;
+}
+.jc-grid-pinned > .jc-grid-cell { max-width: 40ch; }
+/* The id and the type are one line each, cut with "…"; the whole value is the cell's title. */
+.jc-grid td:is(.jc-grid-pinned, [data-col="entity:type"]) > .jc-grid-cell,
+.jc-grid td.jc-grid-pinned > .jc-grid-cell > .jc-grid-open {
+  display: block;
+  /* A block button still sizes to its text: without the cap a long id ran past the cell, which cut
+     the button off instead of the button cutting its own text. */
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The cell's own wrapping, not the row's single line; the name's button wraps and clamps with it. */
+.jc-grid-cell, .jc-grid-cell > .jc-grid-open { white-space: normal; text-align: start; }
+.jc-grid-cell > .jc-grid-open { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+.jc-grid-cell[data-format="link"] { max-width: 16ch; }
+/* A web address clamps itself as the name's button does: the cell's clamp alone cuts the link's
+   box off mid-line, out of reach of a pointer. The whole address stays in its title. */
+.jc-grid-cell a.jc-cell--link { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+/* A row size fixes the row's height (owner 2026-11-01): every cell is one line ending in "…",
+   so one long value never makes its row taller than the others. */
+.jc-grid[data-row-size] tbody :is(.jc-grid-cell, .jc-grid-cell > .jc-grid-open, .jc-grid-cell a.jc-cell--link) {
+  display: block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Numbered pages (T-5196): 24 px targets at least, 44 px on a touch screen (WCAG 2.5.8). */
+.jc-grid-pages { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; }
+.jc-grid-pages button { min-width: 2rem; min-height: 2rem; }
+.jc-grid-pages button[aria-current="page"] { font-weight: 600; text-decoration: underline; }
+@media (pointer: coarse) { .jc-grid-pages button { min-width: 44px; min-height: 44px; } }
+
+/* T-5415: the query block as one row of a code line, a real copy button and a checkbox 8 px from its
+   words; the current page in the accent colour; on a phone the pager is one line (‹ 1 2 3 ›) under
+   its count, the filter row folds under a button and the row's name takes the room it needs. */
+.jc-grid-query-label { font-weight: 600; white-space: nowrap; }
+/* A phone puts the label above the query, so the query takes the whole width. */
+@media (width <= 600px) {
+  .jc-grid-query-text { flex-wrap: wrap; }
+  .jc-grid-query-label { flex: 1 0 100%; }
+}
+.jc-grid-query-value { padding: 2px 6px; border-radius: var(--jc-radius-sm, 4px); background: var(--jc-color-card, #f5f5f5); }
+.jc-grid-query-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--jc-space-2, 8px) var(--jc-space-4, 16px); }
+.jc-grid-query-copy,
+.jc-grid-filter-toggle {
+  min-height: 2.75rem;
+  padding: var(--jc-space-1, 4px) var(--jc-space-3, 12px);
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-sm, 4px);
+  background: var(--jc-color-card, #f5f5f5);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.jc-grid-query-switch { display: inline-flex; align-items: center; gap: var(--jc-space-2, 8px); min-height: 2.75rem; }
+.jc-grid-query-switch input { width: 1.25rem; height: 1.25rem; margin: 0; }
+.jc-grid-query-hint code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.jc-grid-pager-step { display: inline-flex; align-items: center; justify-content: center; gap: var(--jc-space-1, 4px); }
+.jc-grid-pages button[aria-current="page"] {
+  background: var(--jc-color-accent, #0066cc);
+  border-color: var(--jc-color-accent, #0066cc);
+  color: var(--jc-color-surface, #ffffff);
+  text-decoration: none;
+}
+.jc-grid-filter-toggle { display: none; }
+/* The order is of the loaded rows only: a view that also reads other brokers is never ordered whole (T-5618). */
+.jc-grid-sort-note { margin: 0; padding: var(--jc-space-1, 4px) var(--jc-space-2, 8px); font-size: 0.8125rem; }
+.jc-grid-error-detail { margin-top: var(--jc-space-2, 8px); font-size: 0.8125rem; color: var(--jc-color-muted, #666); }
+.jc-grid-error-detail summary { cursor: pointer; min-height: 2.75rem; display: inline-flex; align-items: center; }
+
+@media (width <= 640px) {
+  .jc-grid-pager { flex-wrap: wrap; column-gap: var(--jc-space-1, 4px); }
+  .jc-grid-pager .jc-grid-total { order: -1; flex-basis: 100%; text-align: center; }
+  .jc-grid-pager .jc-grid-total::before { content: none; }
+  .jc-grid-pager:has(.jc-grid-pages) .jc-grid-page-info { display: none; }
+  .jc-grid-pager-word {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+  .jc-grid-pager .jc-grid-pager-step { min-width: 44px; min-height: 44px; font-size: 1.25rem; }
+  .jc-grid-pages { flex-wrap: nowrap; }
+  .jc-grid-filter-toggle { display: inline-flex; align-items: center; align-self: flex-start; width: fit-content; min-height: 44px; margin: var(--jc-space-2, 8px); }
+  .jc-grid-filter-toggle::after { content: "\25BE"; margin-inline-start: var(--jc-space-2, 8px); }
+  .jc-grid-filter-toggle[aria-expanded="true"]::after { content: "\25B4"; }
+  .jc-grid-pages button { min-width: 2.75rem; min-height: 2.75rem; }
+  .jc-grid:not([data-filters="open"]) .jc-grid-filter-row { display: none; }
+  .jc-grid :is(th, td).jc-grid-pinned { min-width: min(25vw, 7rem); }
+}
+
+/* T-5530: the review's copy button beside a row's name holds the URN the table no longer prints. */
+.jc-grid-copy {
+  border: 1px solid var(--jc-color-line, #d0d7de);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.75rem;
+  line-height: 1;
+  padding: 0.125rem 0.25rem;
+  vertical-align: middle;
+}
+
+/* The cell inspector (T-5528): what the person may do with one attribute. A panel on the right
+   from 1024 px, a bottom sheet below; the table behind stays usable, so it is not modal. */
+.jc-grid-inspector {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: 40;
+  top: 0;
+  right: 0;
+  width: min(22rem, 100vw);
+  height: 100dvh;
+  overflow: auto;
+  padding: var(--jc-space-4, 1rem);
+  border-left: 1px solid var(--jc-color-line, #d0d7de);
+  background: var(--jc-color-surface, #fff);
+  box-shadow: -4px 0 16px rgb(0 0 0 / 0.12);
+}
+
+@media (max-width: 1023px) {
+  .jc-grid-inspector {
+    top: auto;
+    bottom: 0;
+    width: 100vw;
+    height: auto;
+    max-height: 60dvh;
+    border-left: 0;
+    border-top: 1px solid var(--jc-color-line, #d0d7de);
+    border-radius: var(--jc-radius-md, 0.5rem) var(--jc-radius-md, 0.5rem) 0 0;
+    box-shadow: 0 -4px 16px rgb(0 0 0 / 0.12);
+  }
+}
+
+.jc-grid-inspector-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--jc-space-2, 0.5rem);
+}
+
+.jc-grid-inspector-head h3 {
+  margin: 0;
+  font-size: var(--jc-font-size-md, 1rem);
+}
+
+.jc-grid-inspector-head h3:focus-visible,
+.jc-grid-inspector-close:focus-visible,
+.jc-grid-inspector-ask:focus-visible,
+.jc-grid-info:focus-visible {
+  outline: 2px solid var(--jc-color-accent, #0066cc);
+  outline-offset: 2px;
+}
+
+.jc-grid-detail-section {
+  margin-top: var(--jc-space-3, 12px);
+  padding-top: var(--jc-space-3, 12px);
+  border-top: 1px solid var(--jc-color-line, #e0e0e0);
+}
+
+.jc-grid-area-button {
+  min-height: 1.75rem;
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--jc-color-line, #cbd5e1);
+  border-radius: var(--jc-radius-md, 6px);
+  background: var(--jc-color-surface, #fff);
+  color: var(--jc-color-accent, #0066cc);
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 400;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.jc-grid-area-button[aria-pressed="true"] {
+  background: var(--jc-color-accent-soft, #e8f0fe);
+}
+
+/* A hovered row is one colour across, the frozen checkbox and id cells too: a white strip there
+   read as a gap in the row (owner 2026-11-01). */
+.jc-grid tr:hover td:is(.jc-grid-pinned, .jc-grid-rownum) {
+  background: var(--jc-color-card, #f5f5f5);
+}
+
+.jc-grid-inspector-close {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  border: 0;
+  background: transparent;
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+
+.jc-grid-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-2, 0.5rem);
+  margin: var(--jc-space-3, 0.75rem) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.jc-grid-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font-size: var(--jc-font-size-sm, 0.875rem);
+  color: #fff;
+}
+
+/* Each tone is dark enough for white text (WCAG AA 4.5:1); the word says it too. */
+.jc-grid-chip--read { background: var(--jc-color-success, #15803d); }
+.jc-grid-chip--write { background: var(--jc-color-info, #1d4ed8); }
+.jc-grid-chip--delete { background: var(--jc-color-warning, #b45309); }
+.jc-grid-chip--none {
+  background: var(--jc-color-card, #f3f4f6);
+  color: var(--jc-color-muted, #4b5563);
+  border: 1px solid var(--jc-color-line, #d0d7de);
+}
+
+.jc-grid-inspector-reason { margin: 0 0 var(--jc-space-3, 0.75rem); }
+.jc-grid-inspector-failed { color: var(--jc-color-danger, #b91c1c); }
+.jc-grid-inspector-ask { color: var(--jc-color-accent, #0066cc); }
+
+/* The small "i" beside a cell's value: seen on hover and on the active cell, always clickable. */
+/* The button floats in a padding of its own (T-6210): a float inside the cell narrowed the text
+   below the width the table had sized the column for, so a phone split a word under it. */
+.jc-grid-td:has(> .jc-grid-info) {
+  padding-inline-end: calc(var(--jc-space-3, 12px) + 1.5rem);
+}
+.jc-grid-info {
+  float: right;
+  margin-inline-start: 0.25rem;
+  margin-inline-end: -1.5rem;
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  border: 1px solid var(--jc-color-line, #d0d7de);
+  border-radius: 999px;
+  background: var(--jc-color-surface, #fff);
+  color: var(--jc-color-muted, #4b5563);
+  font: italic 600 0.75rem/1 Georgia, serif;
+  cursor: pointer;
+  opacity: 0;
+}
+/* The glyph is drawn, not text: a cell's text and a copied cell stay the value alone. */
+.jc-grid-info::before { content: "i"; }
+.jc-grid-td:hover .jc-grid-info,
+.jc-grid-td[data-active] .jc-grid-info,
+.jc-grid-info:focus-visible { opacity: 1; }
+@media (hover: none) {
+  .jc-grid-info { opacity: 1; }
+}
+
+/* T-5530: a column the person cannot change wears a lock in its header (the reason is its name and
+   tooltip), and its cells a muted ground, so a value without an editor reads as read-only. */
+.jc-grid-lock {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-inline-start: var(--jc-space-1, 4px);
+  vertical-align: -0.0625rem;
+  background: var(--jc-color-muted, #4b5563);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 7V5a4 4 0 1 1 8 0v2h1v8H3V7h1zm2 0h4V5a2 2 0 1 0-4 0v2z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.jc-grid-td--locked {
+  background: var(--jc-color-card, #f6f7f9);
+  color: var(--jc-color-muted, #4b5563);
+}
+
+/* The Metadata tab (T-5529): a hidden field reads as withheld, never as an empty value. */
+.jc-grid-meta-hidden {
+  color: var(--jc-color-muted, #57606a);
+  font-style: italic;
+}
+
+.jc-grid-meta-absolute {
+  display: block;
+  font-size: 0.8125rem;
+  color: var(--jc-color-muted, #57606a);
+}
+
+.jc-grid-meta-error {
+  color: var(--jc-color-danger, #cf222e);
+}
+
+/* The way back from "Hide field" (T-5620): a count above the rows, and the hidden fields under it. */
+.jc-grid-hidden { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--jc-space-2, 8px); padding: var(--jc-space-2, 8px); }
+.jc-grid .jc-grid-hidden-toggle { display: inline-flex; align-items: center; }
+.jc-grid-hidden-list { display: flex; flex-wrap: wrap; gap: var(--jc-space-2, 8px); margin: 0; padding: 0; list-style: none; }
+.jc-grid-hidden-list li { display: inline-flex; align-items: center; gap: var(--jc-space-2, 8px); padding-inline-start: var(--jc-space-3, 12px); border: 1px solid var(--jc-color-line, #e0e0e0); border-radius: var(--jc-radius-sm, 4px); }
+.jc-grid-hidden-list li:has(> button:only-child) { padding: 0; border: 0; }
+.jc-grid-hidden-list button { min-height: 2.75rem; padding: var(--jc-space-1, 4px) var(--jc-space-3, 12px); border: 0; border-radius: var(--jc-radius-sm, 4px); background: transparent; color: var(--jc-color-accent, #0066cc); font: inherit; text-decoration: underline; cursor: pointer; }
+
+/* On a phone the frozen lead (the checkbox) and the id together keep a quarter of the width, under
+   the 30% the id alone may take (T-6210): the checkbox cell loses its side padding, the id the rest. */
+@media (width <= 640px) {
+  .jc-grid .jc-grid-rownum {
+    padding-inline: 0.25rem;
+    text-align: center;
+  }
+
+  .jc-grid[data-row-numbers] :is(th, td).jc-grid-pinned {
+    box-sizing: border-box;
+    min-width: calc(25vw - var(--jc-grid-rownum-width));
+    max-width: calc(25vw - var(--jc-grid-rownum-width));
+  }
+}
+
+/* The row's Changes (T-6333): one card per change, before and after side by side from a tablet
+   up and stacked on a phone; the filters share one row from a tablet up and two columns on a phone. */
+.jc-grid-changes-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem 0.75rem;
+  align-items: end;
+  margin: 1rem 0 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .jc-grid-changes-filters {
+    grid-template-columns: minmax(10rem, 14rem) minmax(10rem, 14rem) auto;
+    justify-content: start;
+  }
+}
+
+.jc-grid-changes-filters label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.8125rem;
+  color: var(--jc-color-muted, #57606a);
+}
+
+.jc-grid-changes-filters select {
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--jc-color-line, #d0d7de);
+  border-radius: 0.375rem;
+  background: var(--jc-color-surface, #fff);
+  color: var(--jc-color-text, #1f2328);
+  font: inherit;
+  font-size: 0.875rem;
+}
+
+.jc-grid-changes-filters button,
+.jc-grid-changes-failed button {
+  min-height: 2.75rem;
+  padding: 0 1rem;
+  border: 1px solid var(--jc-color-line, #d0d7de);
+  border-radius: 0.375rem;
+  background: var(--jc-color-surface, #fff);
+  color: var(--jc-color-text, #1f2328);
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+@media (max-width: 639px) {
+  .jc-grid-changes-filters button {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+
+.jc-grid-changes-filters button:focus-visible,
+.jc-grid-changes-failed button:focus-visible,
+.jc-grid-changes-filters select:focus-visible {
+  outline: 2px solid var(--jc-color-focus, #0969da);
+  outline-offset: 2px;
+}
+
+.jc-grid-changes-list {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.jc-grid-changes-list li {
+  padding: 0.75rem;
+  border: 1px solid var(--jc-color-line, #d0d7de);
+  border-radius: 0.375rem;
+}
+
+.jc-grid-changes-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.jc-grid-changes-head time {
+  font-size: 0.875rem;
+  color: var(--jc-color-text, #1f2328);
+}
+
+.jc-grid-changes-values dt {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--jc-color-muted, #57606a);
+}
+
+/* Before reads as replaced, after as current: the eye finds the new value first. */
+.jc-grid-changes-values div:first-child dd {
+  color: var(--jc-color-muted, #57606a);
+  text-decoration: line-through;
+}
+
+.jc-grid-changes-values div:last-child dd {
+  font-weight: 600;
+}
+
+.jc-grid-changes-values {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.jc-grid-changes-values dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 640px) {
+  .jc-grid-changes-values {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.jc-grid-changes-who {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.125rem 0;
+  margin: 0.5rem 0 0;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--jc-color-line, #d0d7de);
+  font-size: 0.8125rem;
+  color: var(--jc-color-text, #1f2328);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 639px) {
+  .jc-grid-changes-values {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* A dot between the writer, the organization and the channel; a wrapped line starts clean. */
+.jc-grid-changes-who > span:not(:last-child)::after {
+  content: "·";
+  margin: 0 0.5rem;
+  color: var(--jc-color-muted, #57606a);
+}
+
+.jc-grid-changes-reason {
+  margin: 0.375rem 0 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+/* Loading, nothing kept, nothing matching and a failed read: one designed box, left-aligned. */
+.jc-grid-changes-state {
+  margin: 1rem 0 0;
+  padding: 1rem;
+  border: 1px dashed var(--jc-color-line, #d0d7de);
+  border-radius: 0.375rem;
+  color: var(--jc-color-text, #1f2328);
+}
+
+.jc-grid-changes-failed {
+  border-style: solid;
+  border-color: var(--jc-color-danger, #cf222e);
+}
+
+.jc-grid-changes-state p {
+  margin: 0;
+}
+
+.jc-grid-changes-state button {
+  margin-top: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0 1rem;
+  border: 1px solid var(--jc-color-line, #d0d7de);
+  border-radius: 0.375rem;
+  background: var(--jc-color-surface, #fff);
+  color: var(--jc-color-text, #1f2328);
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.jc-grid-changes-failed p {
+  margin: 0 0 0.75rem;
+  color: var(--jc-color-danger, #cf222e);
+  font-weight: 600;
+}
+
+/* The mark beside a field with kept versions: opens Changes on that field. */
+.jc-grid-changed-mark {
+  margin-left: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  min-height: 2rem;
+  border: 1px solid var(--jc-color-primary, #0969da);
+  border-radius: 999px;
+  background: var(--jc-color-primary-soft, #ddf4ff);
+  color: var(--jc-color-primary-strong, #0550ae);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.jc-grid-changed-mark:focus-visible {
+  outline: 2px solid var(--jc-color-focus, #0969da);
+  outline-offset: 2px;
+}
+
+/* A column's header filter (T-6328): a funnel beside the label, filled where the column is filtered. */
+.jc-grid-funnel {
+  display: inline-block;
+  width: 0.875rem;
+  height: 0.875rem;
+  vertical-align: middle;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1.5 2h13l-5 6v5l-3 1.5V8z' fill='none' stroke='black' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1.5 2h13l-5 6v5l-3 1.5V8z' fill='none' stroke='black' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.jc-grid-filter-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--jc-radius-sm, 2px);
+  padding: 2px 4px;
+  margin-left: 4px;
+  color: var(--jc-color-muted, #666);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.jc-grid-filter-btn:hover,
+.jc-grid-filter-btn:focus-visible {
+  color: var(--jc-color-accent, #0066cc);
+  border-color: var(--jc-color-line, #e0e0e0);
+}
+
+.jc-grid-filter-btn[data-active] {
+  color: var(--jc-color-surface, #fff);
+  background: var(--jc-color-accent, #0066cc);
+}
+
+.jc-grid-filter-btn[data-active] .jc-grid-funnel {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1.5 2h13l-5 6v5l-3 1.5V8z' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1.5 2h13l-5 6v5l-3 1.5V8z' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.jc-grid-th--filtered {
+  box-shadow: inset 0 -2px 0 var(--jc-color-accent, #0066cc);
+}
+
+.jc-grid-menu-icon {
+  display: inline-flex;
+  justify-content: center;
+  width: 1.25rem;
+  color: var(--jc-color-muted, #666);
+}
+
+.jc-grid-menu-sep {
+  border: 0;
+  border-top: 1px solid var(--jc-color-line, #e0e0e0);
+  margin: 2px 0;
+  width: 100%;
+}
+
+.jc-grid-col-menu button.jc-grid-meta-item {
+  padding: 6px 8px;
+  font-size: var(--jc-font-size-md, 14px);
+}
+
+.jc-grid-col-menu-details[open] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-1, 4px);
+}
+
+.jc-grid-col-menu-details summary {
+  padding: 6px 8px;
+  font-size: var(--jc-font-size-md, 14px);
+  /* One icon, the gear, as the other items have; the fold shows as a chevron at the end. */
+  list-style: none;
+  display: flex;
+  align-items: center;
+}
+.jc-grid-col-menu-details summary::-webkit-details-marker {
+  display: none;
+}
+.jc-grid-col-menu-details summary::after {
+  content: "›";
+  margin-inline-start: auto;
+  padding-inline-start: 8px;
+  transition: transform 0.15s;
+}
+.jc-grid-col-menu-details[open] summary::after {
+  transform: rotate(90deg);
+}
+
+/* The popup sits inside its header cell, whose label does not wrap: its own text does. */
+.jc-grid-col-menu {
+  white-space: normal;
+}
+
+.jc-grid-autofilter {
+  width: min(20rem, calc(100vw - 16px));
+  padding: var(--jc-space-2, 8px);
+  gap: var(--jc-space-2, 8px);
+  font-size: var(--jc-font-size-md, 14px);
+}
+
+.jc-grid-autofilter-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.jc-grid-autofilter fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-1, 4px);
+  min-width: 0;
+}
+
+.jc-grid-autofilter legend {
+  padding: 0;
+  margin-bottom: 2px;
+  font-size: var(--jc-font-size-sm, 12px);
+  color: var(--jc-color-muted, #666);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.jc-grid-autofilter select,
+.jc-grid-autofilter input:not([type="checkbox"]) {
+  font: inherit;
+  padding: 4px 6px;
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-sm, 2px);
+  background: var(--jc-color-surface, #fff);
+  color: inherit;
+  min-width: 0;
+}
+
+.jc-grid-autofilter-hint,
+.jc-grid-autofilter-note {
+  margin: 0;
+  font-size: var(--jc-font-size-sm, 12px);
+  color: var(--jc-color-muted, #666);
+}
+
+.jc-grid-autofilter-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 14rem;
+  overflow-y: auto;
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-sm, 2px);
+  background: var(--jc-color-surface, #fff);
+}
+
+.jc-grid-autofilter-list label,
+.jc-grid-autofilter-all {
+  padding: 4px 6px;
+  font-size: var(--jc-font-size-md, 14px);
+  min-height: 1.75rem;
+}
+
+.jc-grid-autofilter-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jc-grid-autofilter-count {
+  color: var(--jc-color-muted, #666);
+  font-size: var(--jc-font-size-sm, 12px);
+  font-variant-numeric: tabular-nums;
+}
+
+.jc-grid-autofilter-actions {
+  justify-content: flex-end;
+}
+
+.jc-grid-autofilter-apply {
+  font: inherit;
+  padding: 4px 14px;
+  border: 1px solid var(--jc-color-accent, #0066cc);
+  border-radius: var(--jc-radius-sm, 2px);
+  background: var(--jc-color-accent, #0066cc);
+  color: var(--jc-color-surface, #fff);
+  cursor: pointer;
+}
+
+.jc-grid-autofilter-apply:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The filters set, as chips above the grid (T-6328). */
+.jc-grid-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-1, 4px);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.jc-grid-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 2px 2px 10px;
+  border: 1px solid var(--jc-color-accent, #0066cc);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--jc-color-accent, #0066cc) 8%, var(--jc-color-surface, #fff));
+  color: var(--jc-color-ink, #1a1a1a);
+  font-size: var(--jc-font-size-sm, 12px);
+}
+
+.jc-grid-chip .jc-grid-funnel {
+  color: var(--jc-color-accent, #0066cc);
+}
+
+.jc-grid-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jc-grid-chip button,
+.jc-grid-chips-clear {
+  font: inherit;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 999px;
+  min-width: 1.75rem;
+  min-height: 1.75rem;
+}
+
+.jc-grid-chip button:hover,
+.jc-grid-chip button:focus-visible {
+  background: var(--jc-color-line, #e0e0e0);
+}
+
+.jc-grid-chips-clear {
+  text-decoration: underline;
+  padding: 0 8px;
+}
+
+.jc-grid-autofilter-list li {
+  display: flex;
+  align-items: center;
+}
+
+.jc-grid-autofilter-list li > label {
+  flex: 1;
+  min-width: 0;
+}
+
+.jc-grid-autofilter-only {
+  font: inherit;
+  font-weight: 600;
+  border: 0;
+  background: none;
+  color: var(--jc-color-accent, #0066cc);
+  cursor: pointer;
+  padding: 4px 8px;
+  min-height: 1.75rem;
+}
+
+/* Always shown: a phone has no hover, and the owner must see the two-click way at once. */
+.jc-grid-autofilter-list li:hover .jc-grid-autofilter-only,
+.jc-grid-autofilter-only:focus-visible {
+  text-decoration: underline;
+}
+
+.jc-grid-autofilter-failed {
+  margin: 0;
+  padding: 6px 8px;
+  border-left: 3px solid var(--jc-color-danger, #b42318);
+  background: color-mix(in srgb, var(--jc-color-danger, #b42318) 8%, var(--jc-color-surface, #fff));
+  color: var(--jc-color-danger, #b42318);
+  font-size: var(--jc-font-size-sm, 12px);
+  text-align: left;
+}
+
+.jc-grid-autofilter-cause {
+  display: block;
+  color: var(--jc-color-muted, #666);
+}
+.jc-grid-autofilter-cause::first-letter {
+  text-transform: uppercase;
+}
+
+.jc-grid-filter-ticked {
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The id cell (T-6328): the head is cut with "…", the tail that tells rows apart (`101.2012`) never is. */
+/* A floor, or a wide table squeezed the column until the tail that tells rows apart was cut (T-6454). */
+.jc-grid-id {
+  display: flex;
+  min-width: min(20ch, 40vw);
+  max-width: 100%;
+}
+.jc-grid-id > span {
+  text-decoration: inherit;
+  white-space: nowrap;
+}
+.jc-grid-id-head {
+  min-width: 1ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.jc-grid-id-tail {
+  flex: none;
+}
+
+/* A text column keeps room for a few words a line (T-6328): without a floor the table squeezed a
+   name to one word a line, and its three-line cut hid the end that tells rows apart. */
+.jc-grid td[data-kind="text"] > .jc-grid-cell {
+  min-width: min(14ch, 35vw);
+}
+
+/* The count follows the pager's page with a separator, not run into it. */
+.jc-grid-total:first-child::before {
+  content: none;
+}
+
+.jc-grid-total::before {
+  content: "·";
+  margin-inline-end: 0.5em;
+  color: var(--jc-color-muted, #666);
+}
+
+/* The frozen column's edge line also in the sticky head and footer, beside their own lines. */
+.jc-grid--virtual thead th.jc-grid-rownum {
+  box-shadow: inset -1px 0 0 var(--jc-color-line, #e0e0e0), inset 0 -1px 0 var(--jc-color-line, #e0e0e0);
+}
+
+.jc-grid-tfoot td.jc-grid-rownum {
+  box-shadow: inset -1px 0 0 var(--jc-color-line, #e0e0e0), inset 0 2px 0 var(--jc-color-line, #e0e0e0);
+}
+
+/* The area filter's drawing tools (owner 2026-11-01): a row of tool buttons over the map; the
+   coordinate table, paste box and file input are the shape editor's, not the area picker's. */
+.jc-grid-map__draw .geo-toolbar {
+  /* One row of tools, never two: a phone scrolls the row sideways instead of pushing the map down
+     (T-6345 judge: density 2 with nine wrapped chips). */
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  gap: var(--jc-space-1, 4px);
+  padding-block: var(--jc-space-1, 4px);
+}
+
+.jc-grid-map__draw .geo-toolbar button {
+  flex: none;
+  white-space: nowrap;
+  font: inherit;
+  font-size: 0.8125rem;
+  min-height: 2rem;
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--jc-color-line, #cbd5e1);
+  border-radius: var(--jc-radius-md, 6px);
+  background: var(--jc-color-surface, #ffffff);
+  color: var(--jc-color-ink, #1a1a1a);
+  cursor: pointer;
+}
+
+/* A phone wraps the tools to a second row: a sideways-scrolled row hid Undo and Redo. */
+@media (width <= 900px) {
+  .jc-grid-map__draw .geo-toolbar {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+}
+
+/* The panel header's "Clear area" already deletes the drawn area and closes the tools, so the
+   editor's last tool, "Delete the shape", is not shown twice here (GeoEditor keeps it last). */
+.jc-grid-map__draw .geo-toolbar button:last-child {
+  display: none;
+}
+
+.jc-grid-map__draw .geo-toolbar button[aria-pressed="true"] {
+  border-color: var(--jc-color-accent, #0066cc);
+  background: color-mix(in srgb, var(--jc-color-accent, #0066cc) 10%, var(--jc-color-surface, #ffffff));
+}
+
+.jc-grid-map__draw .map-wrap {
+  position: relative;
+}
+
+/* The drawing map keeps one height, the canvas included: a 40vh canvas in a 22rem box ran over
+   the notes under it at 400 px (T-6345). */
+.jc-grid-map .jc-grid-map__draw :is(.map, .maplibregl-map) {
+  position: relative;
+  flex: none;
+  min-height: 0;
+  height: 22rem;
+}
+
+/* The map's own notes sit on the map, not under it where they ran into the panel's lines. */
+.jc-grid-map .map-wrap {
+  position: relative;
+}
+
+.jc-grid-map .map-notice,
+.jc-grid-map .map-count {
+  position: absolute;
+  left: 0.5rem;
+  z-index: 1;
+  /* A note never takes a click meant for the map under it. */
+  pointer-events: none;
+  padding: 0.125rem 0.5rem;
+  border-radius: var(--jc-radius-md, 6px);
+  background: var(--jc-color-surface, #ffffff);
+  color: var(--jc-color-muted, #666);
+  font-size: 0.75rem;
+}
+
+.jc-grid-map .map-notice {
+  top: 0.5rem;
+}
+
+.jc-grid-map .map-count {
+  bottom: 0.5rem;
+}
+
+.jc-grid-map__draw .geo-editor > :not(.geo-toolbar, .map-wrap, .geo-findings) {
+  display: none;
+}
+
+/* An attribute's own view (owner 2026-11-01): the value large, its metadata as a compact grid of
+   small labels over values, each part a card, the time window a segmented control. */
+.jc-grid-attr-view {
+  display: grid;
+  /* minmax(0, …): a wide versions table scrolls inside its card, not the dialog off a phone. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--jc-space-3, 12px);
+  margin-top: var(--jc-space-2, 8px);
+}
+
+.jc-grid-attr-value {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.jc-grid-attr-view .jc-grid-detail-section {
+  overflow-x: auto;
+  border: 1px solid var(--jc-color-line, #e0e0e0);
+  border-radius: var(--jc-radius-lg, 8px);
+  padding: var(--jc-space-3, 12px);
+  margin: 0;
+}
+
+.jc-grid-attr-view .jc-grid-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--jc-space-3, 12px);
+  margin: 0;
+}
+
+.jc-grid-attr-view .jc-grid-meta .jc-grid-detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 0;
+  padding: 0;
+}
+
+.jc-grid-attr-view .jc-grid-meta dt {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--jc-color-muted, #666);
+}
+
+.jc-grid-attr-view .jc-grid-meta dd {
+  margin: 0;
+}
+
+.jc-grid-attr-view .jc-grid-meta-absolute {
+  display: block;
+  font-size: 0.8125rem;
+  color: var(--jc-color-muted, #666);
+}
+
+.jc-grid-attr-view .jc-grid-history > header h3 {
+  margin: 0 0 var(--jc-space-2, 8px);
+  font-size: 1rem;
+}
+
+.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type {
+  display: inline-flex;
+  border: 1px solid var(--jc-color-line, #cbd5e1);
+  border-radius: var(--jc-radius-md, 6px);
+  padding: 2px;
+  margin: 0 0 var(--jc-space-2, 8px);
+  gap: 2px;
+}
+
+.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type label {
+  padding: 0.25rem 0.75rem;
+  border-radius: calc(var(--jc-radius-md, 6px) - 2px);
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type label:has(input:checked) {
+  background: var(--jc-color-accent, #0066cc);
+  color: #ffffff;
+}
+
+.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type label:has(input:focus-visible) {
+  outline: 2px solid var(--jc-color-accent, #0066cc);
+  outline-offset: 2px;
+}
+
+.jc-grid-attr-view .jc-grid-history-versions {
+  display: flex;
+  align-items: center;
+  gap: var(--jc-space-2, 8px);
+  font-size: 0.875rem;
+  color: var(--jc-color-muted, #555);
+  margin-bottom: var(--jc-space-2, 8px);
+}
+
+.jc-grid-history-note {
+  margin: 0 0 var(--jc-space-2, 8px);
+  font-size: 0.8125rem;
+  color: var(--jc-color-muted, #666);
+}
+
+.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type {
+  width: fit-content;
+}
+
+/* A boolean or a state over time: a band of segments, the window's ends under it, a legend. */
+.jc-grid-history-states {
+  margin: 0 0 var(--jc-space-3, 12px);
+}
+
+.jc-grid-history-band {
+  position: relative;
+  height: 1.75rem;
+  border-radius: var(--jc-radius-md, 6px);
+  overflow: hidden;
+  background: var(--jc-color-card, #f5f5f5);
+}
+
+.jc-grid-history-band > span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 1px;
+}
+
+.jc-grid-history-band-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--jc-color-muted, #666);
+  margin-top: 2px;
+}
+
+.jc-grid-history-states figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-1, 4px) var(--jc-space-3, 12px);
+  margin-top: var(--jc-space-2, 8px);
+  font-size: 0.875rem;
+}
+
+.jc-grid-history-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.jc-grid-history-legend i {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 2px;
+}
+
+.jc-grid-history-legend small {
+  color: var(--jc-color-muted, #666);
+}
+
+/* A dashboard from its config (T-6402): tiles, the colour rule's legend, the grid, one bar chart. */
+.jc-dashboard { display: grid; gap: 1rem; min-inline-size: 0; }
+.jc-dashboard-title { margin: 0; font-size: var(--jc-font-size-title, 1.25rem); }
+.jc-dashboard-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.75rem; margin: 0; padding: 0; list-style: none; }
+.jc-dashboard-tile { display: grid; gap: 0.25rem; padding: 0.75rem 1rem; border: 1px solid var(--jc-color-border, #d1d5db); border-radius: 0.5rem; }
+.jc-dashboard-tile-value { font-size: 1.75rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.jc-dashboard-tile-label { color: var(--jc-color-muted, #4b5563); }
+.jc-dashboard-legend { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin: 0; padding: 0; list-style: none; }
+.jc-dashboard-chart { margin: 0; }
+.jc-dashboard-chart figcaption { font-weight: 600; margin-block-end: 0.5rem; }
+.jc-dashboard-chart dl { display: grid; gap: 0.375rem; margin: 0; }
+.jc-dashboard-bar { display: grid; grid-template-columns: minmax(6rem, 30%) 1fr; gap: 0.5rem; align-items: center; }
+.jc-dashboard-bar dt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jc-dashboard-bar dd { display: flex; gap: 0.5rem; align-items: center; margin: 0; font-variant-numeric: tabular-nums; }
+.jc-dashboard-bar dd span { block-size: 0.75rem; min-inline-size: 2px; border-radius: 2px; background: var(--jc-color-primary, #2563eb); }

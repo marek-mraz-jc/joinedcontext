@@ -1,0 +1,217 @@
+/* The calendar: warm and editorial, the day number and the event's time are what the eye reads. */
+
+.app-stepper {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--jc-space-2, 0.5rem);
+  margin-block-end: var(--jc-space-3, 0.75rem);
+}
+
+.app-stepper h2 {
+  margin: 0;
+  font-size: var(--jc-font-size-lg, 1.25rem);
+}
+
+.app-stepper-buttons {
+  display: flex;
+  gap: var(--jc-space-1, 0.25rem);
+}
+
+.app-stepper-buttons button {
+  min-width: var(--jc-target, 2.75rem);
+  min-height: var(--jc-target, 2.75rem);
+}
+
+.app-month-box {
+  container-type: inline-size;
+}
+
+.app-month {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.app-month th {
+  padding: var(--jc-space-1, 0.25rem);
+  font-size: var(--jc-font-size-sm, 0.875rem);
+  font-weight: 600;
+  color: var(--jc-color-muted, #5c4a3d);
+  text-align: center;
+}
+
+.app-month td {
+  vertical-align: top;
+  padding: 2px;
+  border: 1px solid var(--jc-color-line, #e4d8cc);
+}
+
+.app-month td[data-outside] {
+  background: var(--jc-color-surface, #faf6f1);
+}
+
+.app-month td[data-outside] .app-day {
+  color: var(--jc-color-muted, #5c4a3d);
+}
+
+/* Two classes: the template styles `.jc-shell button`, which one class would not outweigh. */
+.app-month .app-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: var(--jc-target, 2.75rem);
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--jc-radius-sm, 6px);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.app-day[aria-current="date"] {
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.app-day[aria-pressed="true"] {
+  border-color: var(--jc-color-accent, #9a3412);
+}
+
+.app-day-count {
+  min-width: 1.25rem;
+  border-radius: 999px;
+  background: var(--jc-color-accent, #9a3412);
+  color: var(--jc-color-card, #ffffff);
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+}
+
+/* Titles in the cells only where a cell has room for them; the chosen day lists them below. */
+.app-day-events {
+  display: none;
+}
+
+@container (min-width: 44rem) {
+  .app-month .app-day {
+    align-items: flex-start;
+    padding-inline: var(--jc-space-1, 0.25rem);
+  }
+
+  .app-day-count {
+    display: none;
+  }
+
+  .app-day-events {
+    display: block;
+    margin: 0;
+    padding: 0 var(--jc-space-1, 0.25rem) var(--jc-space-1, 0.25rem);
+    list-style: none;
+    font-size: var(--jc-font-size-sm, 0.875rem);
+  }
+
+  .app-day-events li {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.app-day-detail {
+  margin-block-start: var(--jc-space-4, 1rem);
+}
+
+.app-day-detail h3,
+.app-week h3,
+.app-timeline h4 {
+  margin: 0 0 var(--jc-space-2, 0.5rem);
+  font-size: var(--jc-font-size-md, 1rem);
+}
+
+.app-events {
+  display: grid;
+  gap: var(--jc-space-2, 0.5rem);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-events .app-event {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  min-height: var(--jc-target, 2.75rem);
+  padding: var(--jc-space-2, 0.5rem) var(--jc-space-3, 0.75rem);
+  border: 1px solid var(--jc-color-line, #e4d8cc);
+  border-inline-start: 4px solid var(--jc-color-accent, #9a3412);
+  border-radius: var(--jc-radius-sm, 6px);
+  background: var(--jc-color-card, #ffffff);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.app-event-time {
+  font-size: var(--jc-font-size-sm, 0.875rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--jc-color-accent, #9a3412);
+}
+
+.app-event-name {
+  font-weight: 600;
+}
+
+.app-event-venue,
+.app-quiet {
+  color: var(--jc-color-muted, #5c4a3d);
+  font-size: var(--jc-font-size-sm, 0.875rem);
+}
+
+.app-quiet {
+  margin: 0;
+}
+
+.app-week {
+  container-type: inline-size;
+  display: grid;
+  gap: var(--jc-space-4, 1rem);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-week > li[aria-current="date"] h3 {
+  color: var(--jc-color-accent, #9a3412);
+}
+
+@container (min-width: 60rem) {
+  .app-week {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: var(--jc-space-2, 0.5rem);
+  }
+}
+
+.app-timeline {
+  display: grid;
+  gap: var(--jc-space-4, 1rem);
+  margin: 0 0 var(--jc-space-4, 1rem);
+  padding: 0 0 0 var(--jc-space-4, 1rem);
+  border-inline-start: 2px solid var(--jc-color-line, #e4d8cc);
+  list-style: none;
+}
+
+.app-earlier summary {
+  min-height: var(--jc-target, 2.75rem);
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  cursor: pointer;
+}

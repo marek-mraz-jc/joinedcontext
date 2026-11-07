@@ -1,0 +1,211 @@
+# Default form arrangement for KnowledgeSource (UI-02, MF-51, T-3057).
+# A website or a catalogue the knowledge assistant reads ahead of time; examples are neutral (T-2752).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: knowledgesource
+spec:
+  for: KnowledgeSource
+  guide: User-Guide/08-working-with-ai-agents
+  about:
+    en: >-
+      A knowledge source is a website or a data catalogue the assistant reads ahead of time and
+      answers from, with a link to where each answer came from. Say where it starts, what it may
+      read and who may be answered from it.
+    sk: >-
+      Zdroj znalostí je web alebo dátový katalóg, ktorý asistent prečíta vopred a z ktorého
+      odpovedá, s odkazom na miesto, odkiaľ odpoveď pochádza. Povedzte, kde začína, čo smie
+      čítať a komu sa z neho smie odpovedať.
+    cs: >-
+      Zdroj znalostí je web nebo datový katalog, který asistent přečte předem a ze kterého
+      odpovídá, s odkazem na místo, odkud odpověď pochází. Řekněte, kde začíná, co smí číst a komu
+      se z něj smí odpovídat.
+    de: >-
+      Eine Wissensquelle ist eine Website oder ein Datenkatalog, den der Assistent vorab liest und
+      aus dem er antwortet, mit einem Verweis auf die Herkunft jeder Antwort. Sagen Sie, wo sie
+      beginnt, was gelesen werden darf und wem daraus geantwortet wird.
+  order:
+    [
+      name,
+      source,
+      startUrls,
+      ckanInstanceRef,
+      organizations,
+      upload,
+      visibility,
+      categories,
+      sitemap,
+      wordpressTypes,
+      include,
+      exclude,
+      maxDepth,
+      maxPages,
+      pdf,
+      offDomainDocuments,
+      schedule,
+      languages,
+    ]
+  groups:
+    - title:
+        en: What is read
+        sk: Čo sa číta
+        cs: Co se čte
+        de: Was gelesen wird
+      description:
+        en: The website or the catalogue, and whether a public assistant may answer from it.
+        sk: Web alebo katalóg a či z neho smie odpovedať verejný asistent.
+        cs: Web nebo katalog a zda z něj smí odpovídat veřejný asistent.
+        de: Die Website oder der Katalog, und ob ein öffentlicher Assistent daraus antworten darf.
+      fields: [name, source, startUrls, ckanInstanceRef, organizations, upload, visibility, categories]
+    - title:
+        en: How far it reads
+        sk: Ako ďaleko číta
+        cs: Jak daleko čte
+        de: Wie weit gelesen wird
+      description:
+        en: Which pages and documents of the site are read, and the limits a crawl keeps to.
+        sk: Ktoré stránky a dokumenty webu sa čítajú a aké limity prechádzanie dodržiava.
+        cs: Které stránky a dokumenty webu se čtou a jaké limity procházení dodržuje.
+        de: Welche Seiten und Dokumente gelesen werden, und welche Grenzen ein Durchlauf einhält.
+      folded: true
+      fields: [sitemap, wordpressTypes, include, exclude, maxDepth, maxPages, pdf, offDomainDocuments]
+    - title:
+        en: When and in which language
+        sk: Kedy a v akom jazyku
+        cs: Kdy a v jakém jazyce
+        de: Wann und in welcher Sprache
+      description:
+        en: When the source is read again, and the languages its text is in.
+        sk: Kedy sa zdroj prečíta znova a v akých jazykoch je jeho text.
+        cs: Kdy se zdroj přečte znovu a v jakých jazycích je jeho text.
+        de: Wann die Quelle erneut gelesen wird und in welchen Sprachen ihr Text ist.
+      folded: true
+      fields: [schedule, languages]
+  fields:
+    categories:
+      help:
+        en: The EU data themes its pages are about; the assistant editor shows them beside the source.
+        sk: Témy dát EÚ, o ktorých sú jeho stránky; editor asistenta ich zobrazí pri zdroji.
+        cs: Témata dat EU, o kterých jsou jeho stránky; editor asistenta je zobrazí u zdroje.
+        de: Die EU-Datenthemen seiner Seiten; der Assistenten-Editor zeigt sie bei der Quelle.
+    organizations:
+      help:
+        en: The catalogue's organizations whose datasets are read, by name, at most 10; empty reads every one.
+        sk: Organizácie katalógu, ktorých datasety sa čítajú, podľa názvu, najviac 10; prázdne číta všetky.
+        cs: Organizace katalogu, jejichž datové sady se čtou, podle názvu, nejvýše 10; prázdné čte všechny.
+        de: Die Organisationen des Katalogs, deren Datensätze gelesen werden, höchstens 10; leer liest alle.
+    upload.maxBytes:
+      help:
+        en: The largest file an administrator may upload, in bytes, at most 50 MiB; PDF, DOCX, XLSX, CSV, Markdown or text, checked by content.
+        sk: Najväčší súbor, ktorý smie správca nahrať, v bajtoch, najviac 50 MiB; PDF, DOCX, XLSX, CSV, Markdown alebo text, overené podľa obsahu.
+        cs: Největší soubor, který smí správce nahrát, v bajtech, nejvýše 50 MiB; PDF, DOCX, XLSX, CSV, Markdown nebo text, ověřeno podle obsahu.
+        de: Die größte Datei, die eine Administratorin hochladen darf, in Bytes, höchstens 50 MiB; PDF, DOCX, XLSX, CSV, Markdown oder Text, nach Inhalt geprüft.
+    upload.maxFiles:
+      help:
+        en: The most files the source holds, from 1 to 500.
+        sk: Najviac súborov, ktoré zdroj drží, od 1 do 500.
+        cs: Nejvíce souborů, které zdroj drží, od 1 do 500.
+        de: Die meisten Dateien, die die Quelle hält, 1 bis 500.
+    name:
+      help:
+        en: The short name the source is filed under; a deployment names it in its sources.
+        sk: Krátky názov, pod ktorým je zdroj uložený; nasadenie ho uvádza vo svojich zdrojoch.
+        cs: Krátký název, pod nímž je zdroj uložen; nasazení jej uvádí ve svých zdrojích.
+        de: Der kurze Name der Quelle; ein Einsatz nennt ihn unter seinen Quellen.
+    source:
+      help:
+        en: A website is crawled page by page from its start addresses; a catalogue is read through its API.
+        sk: Web sa prechádza stránku po stránke od začiatočných adries; katalóg sa číta cez jeho API.
+        cs: Web se prochází stránku po stránce od počátečních adres; katalog se čte přes jeho API.
+        de: Eine Website wird ab den Startadressen Seite für Seite gelesen; ein Katalog über seine API.
+    startUrls:
+      help:
+        en: Where a website crawl starts, up to twenty https addresses; it follows links of the same site from there. The address of a PDF or another document is read as that document.
+        sk: Kde prechádzanie webu začína, najviac dvadsať adries https; odtiaľ nasleduje odkazy toho istého webu. Adresa PDF alebo iného dokumentu sa číta ako ten dokument.
+        cs: Kde procházení webu začíná, nejvýše dvacet adres https; odtud následuje odkazy téhož webu. Adresa PDF nebo jiného dokumentu se čte jako ten dokument.
+        de: Wo ein Durchlauf beginnt, bis zu zwanzig https-Adressen; von dort folgt er Verweisen derselben Website. Die Adresse eines PDF oder eines anderen Dokuments wird als dieses Dokument gelesen.
+    ckanInstanceRef:
+      help:
+        en: The catalogue of this project whose public datasets are read, for a source of the catalogue type.
+        sk: Katalóg tohto projektu, ktorého verejné dátové sady sa čítajú, pre zdroj typu katalóg.
+        cs: Katalog tohoto projektu, jehož veřejné datové sady se čtou, pro zdroj typu katalog.
+        de: Der Katalog dieses Projekts, dessen öffentliche Datensätze gelesen werden, für eine Katalogquelle.
+    visibility:
+      help:
+        en: Public lets every channel answer from it; internal keeps it to signed-in staff.
+        sk: Verejný dovolí odpovedať z neho každému kanálu; interný ho nechá prihláseným zamestnancom.
+        cs: Veřejný dovolí odpovídat z něj každému kanálu; interní jej nechá přihlášeným zaměstnancům.
+        de: Öffentlich lässt jeden Kanal daraus antworten; intern nur angemeldete Mitarbeitende.
+    sitemap:
+      help:
+        en: Read the site's sitemap first, so pages no link reaches are read as well.
+        sk: Najprv prečítať mapu webu, aby sa prečítali aj stránky, na ktoré nevedie žiadny odkaz.
+        cs: Nejprve přečíst mapu webu, aby se přečetly i stránky, na které nevede žádný odkaz.
+        de: Zuerst die Sitemap lesen, damit auch Seiten gelesen werden, auf die kein Verweis führt.
+    wordpressTypes:
+      help:
+        en: For a WordPress site, the content types whose pages are read first, newest change first, such as pages or newses. Empty reads none.
+        sk: Pri webe na WordPresse typy obsahu, ktorých stránky sa prečítajú najprv, od najnovšej zmeny, napríklad pages alebo newses. Prázdne nečíta žiadny.
+        cs: U webu na WordPressu typy obsahu, jejichž stránky se přečtou nejdříve, od nejnovější změny, například pages nebo newses. Prázdné nečte žádný.
+        de: Bei einer WordPress-Website die Inhaltstypen, deren Seiten zuerst gelesen werden, neueste Änderung zuerst, etwa pages oder newses. Leer liest keinen.
+    include:
+      help:
+        en: Paths a page must match to be read, each starting with a slash; ** matches any depth. Empty reads all.
+        sk: Cesty, ktorým musí stránka zodpovedať, aby sa prečítala, každá začína lomkou; ** zodpovedá ľubovoľnej hĺbke.
+        cs: Cesty, kterým musí stránka odpovídat, aby se přečetla, každá začíná lomítkem; ** odpovídá libovolné hloubce.
+        de: Pfade, denen eine Seite entsprechen muss, jeder mit Schrägstrich am Anfang; ** passt auf jede Tiefe.
+    exclude:
+      help:
+        en: Paths whose pages are skipped, each starting with a slash, such as print versions of every page.
+        sk: Cesty, ktorých stránky sa preskočia, každá začína lomkou, napríklad verzie stránok na tlač.
+        cs: Cesty, jejichž stránky se přeskočí, každá začíná lomítkem, například verze stránek pro tisk.
+        de: Pfade, deren Seiten übersprungen werden, jeder mit Schrägstrich am Anfang, etwa Druckversionen.
+    maxDepth:
+      help:
+        en: How many links deep a crawl follows from a start address, from 1 to 10.
+        sk: Do akej hĺbky odkazov prechádzanie pokračuje od začiatočnej adresy, od 1 do 10.
+        cs: Do jaké hloubky odkazů procházení pokračuje od počáteční adresy, od 1 do 10.
+        de: Wie viele Verweise tief ein Durchlauf von einer Startadresse folgt, von 1 bis 10.
+    maxPages:
+      help:
+        en: The most pages the source holds, up to 50,000; a crawl stops when it has read them.
+        sk: Najviac stránok, ktoré zdroj obsahuje, do 50 000; prechádzanie skončí, keď ich prečíta.
+        cs: Nejvíce stránek, které zdroj obsahuje, do 50 000; procházení skončí, když je přečte.
+        de: Die meisten Seiten der Quelle, bis 50.000; ein Durchlauf endet, wenn er sie gelesen hat.
+    pdf.policy:
+      help:
+        en: Whether documents the pages link are read too, or left out of the source.
+        sk: Či sa čítajú aj dokumenty, na ktoré stránky odkazujú, alebo sa zo zdroja vynechajú.
+        cs: Zda se čtou i dokumenty, na které stránky odkazují, nebo se ze zdroje vynechají.
+        de: Ob auch Dokumente gelesen werden, auf die die Seiten verweisen, oder ausgelassen werden.
+    pdf.maxBytes:
+      help:
+        en: The largest document read, in bytes, up to 200 MiB; a larger one is listed and not read.
+        sk: Najväčší dokument, ktorý sa prečíta, v bajtoch, do 200 MiB; väčší sa uvedie a neprečíta.
+        cs: Největší dokument, který se přečte, v bajtech, do 200 MiB; větší se uvede a nepřečte.
+        de: Das größte gelesene Dokument in Bytes, bis 200 MiB; ein größeres wird gelistet, nicht gelesen.
+    pdf.maxPages:
+      help:
+        en: The most pages of one document read, up to 2,000; the passages after them are left out.
+        sk: Najviac strán jedného dokumentu, ktoré sa prečítajú, do 2 000; pasáže za nimi sa vynechajú.
+        cs: Nejvíce stran jednoho dokumentu, které se přečtou, do 2 000; pasáže za nimi se vynechají.
+        de: Die meisten gelesenen Seiten eines Dokuments, bis 2.000; Passagen danach bleiben draußen.
+    offDomainDocuments:
+      help:
+        en: Read a document linked from another site too; off, a source never grows into somebody else's site.
+        sk: Čítať aj dokument z iného webu; vypnuté, zdroj nikdy neprerastie do cudzieho webu.
+        cs: Číst i dokument z jiného webu; vypnuto, zdroj nikdy nepřeroste do cizího webu.
+        de: Auch ein Dokument einer anderen Website lesen; aus, wächst die Quelle nie in fremde Websites.
+    schedule:
+      placeholder: "0 3 * * *"
+      help:
+        en: When the source is read again, as five cron fields; 0 3 * * * is every day at 03:00.
+        sk: Kedy sa zdroj prečíta znova, ako päť polí cron; 0 3 * * * je každý deň o 03:00.
+        cs: Kdy se zdroj přečte znovu, jako pět polí cron; 0 3 * * * je každý den ve 03:00.
+        de: Wann die Quelle erneut gelesen wird, als fünf Cron-Felder; 0 3 * * * ist täglich um 03:00.
+    languages:
+      help:
+        en: The languages its text is in, as two-letter codes; they choose how words are matched in search.
+        sk: Jazyky jeho textu ako dvojpísmenové kódy; určujú, ako sa slová vo vyhľadávaní porovnávajú.
+        cs: Jazyky jeho textu jako dvoupísmenné kódy; určují, jak se slova ve vyhledávání porovnávají.
+        de: Die Sprachen des Textes als Zweibuchstaben-Codes; sie bestimmen, wie Wörter verglichen werden.

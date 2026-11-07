@@ -1,0 +1,44 @@
+{
+  "@context": [
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld",
+    "key-performance-indicator.v1.context.jsonld"
+  ],
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:zilina.sk:zilina-kpi:obyvatelstvo-stav-mesto",
+  "type": "KeyPerformanceIndicator",
+  "name": {
+    "type": "Property",
+    "value": "obyvatelstvo-stav-mesto"
+  },
+  "currentValue": {
+    "type": "Property",
+    "value": 79617,
+    "unitCode": "C62",
+    "observedAt": "2026-08-31T00:00:00Z"
+  },
+  "calculationPeriod": {
+    "type": "Property",
+    "value": {
+      "start": "2026-04-01T00:00:00Z",
+      "end": "2026-06-30T23:59:59Z"
+    }
+  },
+  "calculationFormula": {
+    "type": "Property",
+    "value": "the published value of om7101qr/IN010115/SPOLU for the city of Žilina (SK031B517402) and the latest quarter the cube carries"
+  },
+  "derivedFrom": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:Endpoint:zilina.sk:zilina-mesto:zilina-mesto"
+  },
+  "computedBy": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:Pipeline:zilina.sk:zilina-kpi:ukazovatele"
+  },
+  "updatedAt": {
+    "type": "Property",
+    "value": {
+      "@type": "DateTime",
+      "@value": "2026-10-06T19:30:00Z"
+    }
+  }
+}

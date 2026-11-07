@@ -1,0 +1,23 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-praha-mesto
+  namespace: praha
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    cs: Praha teď
+    en: Prague right now
+spec:
+  allowedProjects:
+  - praha
+  audience: project-list
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: praha-mesto
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - ogc-features
+  slug: y2djy25utmugl3a5leg632qee4

@@ -1,0 +1,75 @@
+{
+  "about": "T-6402: dashboard files both sdk parseDashboardConfig (sdk/tests/dashboard.test.ts) and the Portal (src/api/app_dashboard.rs) judge; `refused` lists JSON paths each must name, empty means both accept it.",
+  "known": ["name", "availableBikeNumber", "totalSlotNumber", "freeSlotNumber", "location", "status"],
+  "before": { "grid": { "source": { "kind": "endpoint", "slug": "bikes" }, "type": "BikeHireDockingStation" } },
+  "cases": [
+    {
+      "name": "the bike dashboard",
+      "refused": [],
+      "config": {
+        "title": "Shared bikes",
+        "grid": {
+          "source": { "kind": "endpoint", "slug": "bikes" },
+          "type": "BikeHireDockingStation",
+          "columns": [
+            { "attr": "name", "label": "Station" },
+            { "attr": "availableBikeNumber", "label": "Bikes" },
+            { "attr": "occupancy", "label": "Occupancy %", "formula": "availableBikeNumber / totalSlotNumber * 100", "format": "number" }
+          ],
+          "map": { "enabled": true, "attr": "location", "position": "right" },
+          "pageSize": 200
+        },
+        "filters": [{ "attr": "status", "op": "==", "value": "working" }, { "attr": "totalSlotNumber", "op": ">", "value": 0 }],
+        "colour": { "attr": "occupancy", "bands": [{ "below": 10, "tone": "danger", "label": "Almost empty" }, { "below": 50, "tone": "warning", "label": "Running low" }, { "tone": "success", "label": "Bikes available" }] },
+        "chart": { "x": "name", "y": "availableBikeNumber", "agg": "sum" },
+        "kpis": [{ "label": "Stations", "agg": "count" }, { "label": "Empty stations", "agg": "count", "where": "availableBikeNumber == 0" }, { "label": "Bikes", "agg": "sum", "attr": "availableBikeNumber" }]
+      }
+    },
+    {
+      "name": "a formula calling a function",
+      "refused": ["/grid/columns/0/formula"],
+      "config": { "grid": { "source": { "kind": "endpoint", "slug": "bikes" }, "type": "BikeHireDockingStation", "columns": [{ "attr": "x", "formula": "alert(availableBikeNumber)" }] } }
+    },
+    {
+      "name": "a formula reading an attribute the type lacks",
+      "refused": ["/grid/columns/0/formula"],
+      "config": { "grid": { "source": { "kind": "endpoint", "slug": "bikes" }, "type": "BikeHireDockingStation", "columns": [{ "attr": "x", "formula": "secretCount / 2" }] } }
+    },
+    {
+      "name": "a column, a filter, a band, a chart and a tile on unknown attributes",
+      "refused": ["/grid/columns/0/attr", "/filters/0/attr", "/colour/attr", "/chart/x", "/kpis/0/attr", "/grid/map/attr"],
+      "config": {
+        "grid": { "source": { "kind": "endpoint", "slug": "bikes" }, "type": "BikeHireDockingStation", "columns": [{ "attr": "ownerEmail" }], "map": { "attr": "home" } },
+        "filters": [{ "attr": "ownerEmail", "op": "==", "value": "a" }],
+        "colour": { "attr": "ownerEmail", "bands": [{ "tone": "info", "label": "Any" }] },
+        "chart": { "x": "ownerEmail", "y": "availableBikeNumber", "agg": "sum" },
+        "kpis": [{ "label": "Owners", "agg": "sum", "attr": "ownerEmail" }]
+      }
+    },
+    {
+      "name": "bands out of order, an unknown tone, a band without below before the last",
+      "refused": ["/colour/bands/0/below", "/colour/bands/1/tone", "/colour/bands/2/below"],
+      "config": { "grid": { "source": { "kind": "endpoint", "slug": "bikes" }, "type": "BikeHireDockingStation" }, "colour": { "attr": "availableBikeNumber", "bands": [{ "tone": "danger", "label": "a" }, { "below": 5, "tone": "pink", "label": "b" }, { "below": 3, "tone": "info", "label": "c" }] } }
+    },
+    {
+      "name": "a filter value that would break out of the q, an unknown operator",
+      "refused": ["/filters/0/value", "/filters/1/op"],
+      "config": { "grid": { "source": { "kind": "endpoint", "slug": "bikes" }, "type": "BikeHireDockingStation" }, "filters": [{ "attr": "name", "op": "==", "value": "x\";id==\"y" }, { "attr": "name", "op": "~=", "value": "x" }] }
+    },
+    {
+      "name": "a computed column that is edited, named like a stored attribute or reads itself",
+      "refused": ["/grid/columns/0/editable", "/grid/columns/1/attr", "/grid/columns/2/formula"],
+      "config": { "grid": { "source": { "kind": "endpoint", "slug": "bikes" }, "type": "BikeHireDockingStation", "columns": [{ "attr": "a", "formula": "totalSlotNumber", "editable": true }, { "attr": "name", "formula": "totalSlotNumber" }, { "attr": "b", "formula": "b + 1" }] } }
+    },
+    {
+      "name": "unknown keys and a filter preset beside the filters",
+      "refused": ["/script", "/grid/filters/preset", "/kpis/0/onClick"],
+      "config": { "script": "x", "grid": { "source": { "kind": "endpoint", "slug": "bikes" }, "type": "BikeHireDockingStation", "filters": { "preset": { "q": "a==1" } } }, "kpis": [{ "label": "x", "agg": "count", "onClick": "y" }] }
+    },
+    {
+      "name": "a tile counting where a formula is broken, an unknown aggregate",
+      "refused": ["/kpis/0/where", "/chart/agg"],
+      "config": { "grid": { "source": { "kind": "endpoint", "slug": "bikes" }, "type": "BikeHireDockingStation" }, "kpis": [{ "label": "x", "agg": "count", "where": "availableBikeNumber ==" }], "chart": { "x": "name", "y": "availableBikeNumber", "agg": "median" } }
+    }
+  ]
+}

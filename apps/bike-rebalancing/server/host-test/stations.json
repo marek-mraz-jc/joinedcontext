@@ -1,0 +1,50 @@
+[
+ {
+  "id": "urn:ngsi-ld:BikeHireDockingStation:001",
+  "type": "BikeHireDockingStation",
+  "name": "Kamppi",
+  "location": {
+   "type": "Point",
+   "coordinates": [
+    24.93,
+    60.17
+   ]
+  },
+  "availableBikeNumber": 20,
+  "freeSlotNumber": 0,
+  "totalSlotNumber": 20,
+  "status": "working"
+ },
+ {
+  "id": "urn:ngsi-ld:BikeHireDockingStation:002",
+  "type": "BikeHireDockingStation",
+  "name": "Töölö, Hesperia",
+  "location": {
+   "type": "Point",
+   "coordinates": [
+    24.92,
+    60.17
+   ]
+  },
+  "availableBikeNumber": 0,
+  "freeSlotNumber": 20,
+  "totalSlotNumber": 20,
+  "status": "working"
+ },
+ {
+  "id": "urn:ngsi-ld:BikeHireDockingStation:003",
+  "type": "BikeHireDockingStation",
+  "name": "Kallio",
+  "location": {
+   "type": "Point",
+   "coordinates": [
+    24.95,
+    60.17
+   ]
+  },
+  "availableBikeNumber": 10,
+  "freeSlotNumber": 10,
+  "totalSlotNumber": 20,
+  "status": "working"
+ }
+]

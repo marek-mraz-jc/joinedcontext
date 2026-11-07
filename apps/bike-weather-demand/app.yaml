@@ -1,0 +1,65 @@
+# Helsinki bike and weather demand (T-3337): availability by hour of the week,
+# weather sensitivity, and 6-hour forecast with uncertainty for city-bike stations.
+# Runs in the browser via WebAssembly compiled from wasm/ (AP-142); the server component in server/
+# runs on the shared WASM host (T-3355, AP-148) and keeps each station's daily model in the App's
+# own schema and the data it trained on under its own storage prefix.
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: bike-weather-demand
+  namespace: helsinki
+  title:
+    en: "Bikes and the weather"
+    fi: "Pyörät ja sää"
+  description:
+    en: "Will there be a bike at my station? Availability by hour of the week, weather effects, and an estimate for the next 6 hours with its uncertainty."
+    fi: "Onko asemallani pyörää? Saatavuus viikon tunneittain, sään vaikutus ja arvio seuraaville 6 tunnille epävarmuuksineen."
+spec:
+  kind: wasm
+  source:
+    git:
+      url: https://dev.joinedcontext.com/git/joinedcontext/helsinki_bike-weather-demand.git
+      ref: main
+  build:
+    node: "22"
+    rust: "1.90"
+  # Its own schema, migrated from migrations/ at publish, and its own prefix for the training data.
+  storage:
+    sql:
+      migrations: migrations
+      quotaMiB: 100
+    blob:
+      quotaMiB: 1024
+  visibility: public
+  roles:
+    - name: viewer
+      title: { en: "Viewer", fi: "Katselija" }
+      description: "Reads every station's model, its inputs and its kept history; sees their own changes in History."
+    - name: steward
+      title: { en: "Steward", fi: "Ylläpitäjä" }
+      description: "Tunes a station's model inputs: a weather station instead of the nearest, how far the nearest may be, and how many days it trains on; today's model is trained again on them. Reads the whole history."
+  access:
+    - role: viewer
+      subjects: [{ group: bike-weather-demand-viewer }]
+    - role: steward
+      subjects: [{ group: bike-weather-demand-steward }]
+  lifecycle: published
+  dataNeeds:
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [BikeHireDockingStation]
+      attrs: [name, location, availableBikeNumber, freeSlotNumber, totalSlotNumber, status, dateModified]
+      operations: [queryEntity, retrieveEntity, queryTemporal, retrieveTemporal]
+      temporalQ:
+        window: P7D
+      representations: [ngsi-ld, ogc-features]
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [WeatherObserved]
+      attrs: [name, location, temperature, precipitation, dateObserved]
+      operations: [queryEntity, retrieveEntity, queryTemporal, retrieveTemporal]
+      temporalQ:
+        window: P7D
+      representations: [ngsi-ld]

@@ -1,0 +1,24 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-banskabystrica-zaznamy-2
+  namespace: banskabystrica
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:banskabystrica/app-banskabystrica-zaznamy
+    kind: role
+  assigner: did:web:banskabystrica.sk
+  contextSpaceRef:
+    kind: ContextSpace
+    name: banskabystrica-mesto
+  information:
+  - entities:
+    - type: KeyPerformanceIndicator
+    propertyNames:
+    - stewardNote
+    relationshipNames:
+    - stewardNote
+  operations:
+  - updateAttrs

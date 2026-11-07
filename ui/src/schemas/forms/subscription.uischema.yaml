@@ -1,0 +1,204 @@
+# Default form arrangement for Subscription (UI-02, T-2344).
+# A standing query of one space, reconciled into its broker (CC-72, DS-16); examples are neutral (T-2752).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: subscription
+spec:
+  for: Subscription
+  guide: User-Guide/05-endpoints-and-sharing
+  about:
+    en: >-
+      A subscription asks the broker of one space to tell a receiver when the entities it watches
+      change. Pick the space and what to watch, then the address the notification is posted to and
+      the credential it carries, which is always a reference to a secret and never the secret itself.
+    sk: >-
+      Odber žiada broker jedného priestoru, aby dal príjemcovi vedieť, keď sa sledované entity zmenia.
+      Vyberte priestor a čo sledovať, potom adresu, na ktorú sa notifikácia pošle, a prihlasovací údaj,
+      ktorý je vždy odkazom na tajomstvo, nikdy tajomstvom samotným.
+    cs: >-
+      Odběr žádá broker jednoho prostoru, aby dal příjemci vědět, když se sledované entity změní.
+      Vyberte prostor a co sledovat, potom adresu, na kterou se notifikace pošle, a přihlašovací údaj,
+      který je vždy odkazem na tajemství, nikdy tajemstvím samotným.
+    de: >-
+      Ein Abonnement bittet den Broker eines Raums, einen Empfänger zu benachrichtigen, wenn sich die
+      beobachteten Entitäten ändern. Wählen Sie Raum und Beobachtetes, dann die Adresse und die
+      Zugangsdaten, die immer ein Verweis auf ein Geheimnis sind und nie das Geheimnis selbst.
+  order:
+    [
+      name,
+      contextSpaceRef,
+      subscriptionName,
+      description,
+      entities,
+      watchedAttributes,
+      q,
+      geoQ,
+      notification,
+      throttling,
+      expiresAt,
+      isActive,
+    ]
+  groups:
+    - title:
+        en: Space and receiver
+        sk: Priestor a príjemca
+        cs: Prostor a příjemce
+        de: Raum und Empfänger
+      description:
+        en: Which space's broker holds the subscription, and where its notifications go.
+        sk: Broker ktorého priestoru odber drží a kam idú jeho notifikácie.
+        cs: Broker kterého prostoru odběr drží a kam jdou jeho notifikace.
+        de: Welcher Raum den Broker stellt und wohin die Benachrichtigungen gehen.
+      fields: [name, contextSpaceRef, subscriptionName, notification]
+    - title:
+        en: What is watched
+        sk: Čo sa sleduje
+        cs: Co se sleduje
+        de: Was beobachtet wird
+      description:
+        en: The entities and attributes whose change fires a notification; name at least one of the two.
+        sk: Entity a atribúty, ktorých zmena spustí notifikáciu; uveďte aspoň jedno z dvoch.
+        cs: Entity a atributy, jejichž změna spustí notifikaci; uveďte alespoň jedno z obou.
+        de: Die Entitäten und Attribute, deren Änderung benachrichtigt; nennen Sie mindestens eines davon.
+      fields: [entities, watchedAttributes, description]
+    - title:
+        en: Filters, pace and lifetime
+        sk: Filtre, tempo a platnosť
+        cs: Filtry, tempo a platnost
+        de: Filter, Takt und Laufzeit
+      description:
+        en: Conditions an entity has to meet, how often a receiver may be called, and until when.
+        sk: Podmienky, ktoré musí entita spĺňať, ako často smie byť príjemca volaný a dokedy.
+        cs: Podmínky, které musí entita splnit, jak často smí být příjemce volán a dokdy.
+        de: Bedingungen für eine Entität, wie oft der Empfänger gerufen werden darf und bis wann.
+      folded: true
+      fields: [q, geoQ, throttling, expiresAt, isActive]
+  fields:
+    name:
+      help:
+        en: The short name this subscription is filed under; two subscriptions of a project cannot share one.
+        sk: Krátky názov, pod ktorým je odber uložený; dva odbery projektu ho nemôžu zdieľať.
+        cs: Krátký název, pod nímž je odběr uložen; dva odběry projektu jej nemohou sdílet.
+        de: Der kurze Name, unter dem das Abonnement abgelegt ist; zwei Abonnements teilen ihn nicht.
+    contextSpaceRef:
+      help:
+        en: The context space whose broker holds the subscription; it watches that space and no other.
+        sk: Kontextový priestor, ktorého broker odber drží; sleduje tento priestor a žiadny iný.
+        cs: Kontextový prostor, jehož broker odběr drží; sleduje tento prostor a žádný jiný.
+        de: Der Kontextraum, dessen Broker das Abonnement hält; es beobachtet nur diesen Raum.
+    subscriptionName:
+      help:
+        en: What people call this subscription in the Portal; the manifest name stays as it is.
+        sk: Ako ľudia tento odber volajú v Portáli; názov manifestu zostáva, aký je.
+        cs: Jak lidé tento odběr nazývají v Portálu; název manifestu zůstává, jaký je.
+        de: Wie Menschen das Abonnement im Portal nennen; der Manifestname bleibt, wie er ist.
+    description:
+      help:
+        en: Why the subscription exists, for whoever reads the repository later.
+        sk: Prečo odber existuje, pre toho, kto bude repozitár čítať neskôr.
+        cs: Proč odběr existuje, pro toho, kdo bude repozitář číst později.
+        de: Warum das Abonnement existiert, für alle, die das Repository später lesen.
+    entities[].type:
+      help:
+        en: Every entity of this type is watched, as the data model names the type.
+        sk: Sleduje sa každá entita tohto typu, tak ako typ pomenúva dátový model.
+        cs: Sleduje se každá entita tohoto typu, tak jak typ pojmenovává datový model.
+        de: Jede Entität dieses Typs wird beobachtet, so wie das Datenmodell den Typ nennt.
+    entities[].id:
+      help:
+        en: One entity by its identifier, when a single station or vehicle is all that matters.
+        sk: Jedna entita podľa identifikátora, keď záleží len na jednej stanici alebo vozidle.
+        cs: Jedna entita podle identifikátoru, když záleží jen na jedné stanici nebo vozidle.
+        de: Eine Entität nach Kennung, wenn nur eine Station oder ein Fahrzeug zählt.
+    entities[].idPattern:
+      help:
+        en: Every entity whose identifier matches this anchored regular expression.
+        sk: Každá entita, ktorej identifikátor zodpovedá tomuto ukotvenému regulárnemu výrazu.
+        cs: Každá entita, jejíž identifikátor odpovídá tomuto ukotvenému regulárnímu výrazu.
+        de: Jede Entität, deren Kennung zu diesem verankerten regulären Ausdruck passt.
+    watchedAttributes:
+      help:
+        en: The attributes whose change fires the subscription; empty means a change of any attribute.
+        sk: Atribúty, ktorých zmena odber spustí; prázdny zoznam znamená zmenu ľubovoľného atribútu.
+        cs: Atributy, jejichž změna odběr spustí; prázdný seznam znamená změnu libovolného atributu.
+        de: Die Attribute, deren Änderung auslöst; eine leere Liste bedeutet jede Attributänderung.
+    q:
+      placeholder: pm10>50
+      help:
+        en: A condition the entity has to satisfy, in the NGSI-LD query language of CIM 009.
+        sk: Podmienka, ktorú musí entita spĺňať, v dopytovacom jazyku NGSI-LD podľa CIM 009.
+        cs: Podmínka, kterou musí entita splnit, v dotazovacím jazyce NGSI-LD podle CIM 009.
+        de: Eine Bedingung für die Entität, in der NGSI-LD-Abfragesprache von CIM 009.
+    geoQ:
+      help:
+        en: The area an entity has to be in, as a georel, a geometry and its coordinates.
+        sk: Oblasť, v ktorej musí entita byť, ako georel, geometria a jej súradnice.
+        cs: Oblast, ve které musí entita být, jako georel, geometrie a její souřadnice.
+        de: Das Gebiet, in dem die Entität liegen muss, als georel, Geometrie und Koordinaten.
+    notification.endpoint.uri:
+      help:
+        en: The address the broker posts to; https outside the cluster, and no password or token in it.
+        sk: Adresa, na ktorú broker posiela; mimo klastra https a bez hesla či tokenu v nej.
+        cs: Adresa, na kterou broker posílá; mimo cluster https a bez hesla či tokenu v ní.
+        de: Die Adresse, an die der Broker sendet; außerhalb des Clusters https, ohne Passwort oder Token.
+    notification.endpoint.accept:
+      help:
+        en: The media type the receiver wants; left empty, the broker sends its own default.
+        sk: Typ média, ktorý príjemca chce; ak zostane prázdny, broker pošle svoj predvolený.
+        cs: Typ média, který příjemce chce; zůstane-li prázdný, broker pošle svůj výchozí.
+        de: Der Medientyp, den der Empfänger will; leer sendet der Broker seinen Standard.
+    notification.endpoint.receiverInfo[].key:
+      help:
+        en: A header the receiver needs; Authorization and Cookie belong in the credential below.
+        sk: Hlavička, ktorú príjemca potrebuje; Authorization a Cookie patria do údaja nižšie.
+        cs: Hlavička, kterou příjemce potřebuje; Authorization a Cookie patří do údaje níže.
+        de: Ein Header, den der Empfänger braucht; Authorization und Cookie gehören in die Zugangsdaten.
+    notification.endpoint.receiverInfo[].value:
+      help:
+        en: The value of that header, written into the manifest as it is, so never a secret.
+        sk: Hodnota tej hlavičky, zapísaná do manifestu tak, ako je, preto nikdy tajomstvo.
+        cs: Hodnota té hlavičky, zapsaná do manifestu tak, jak je, proto nikdy tajemství.
+        de: Der Wert dieses Headers, wie er ist im Manifest, daher nie ein Geheimnis.
+    notification.endpoint.secretRef.name:
+      help:
+        en: The secret the credential is read from; the reconciler resolves it and Git never holds it.
+        sk: Tajomstvo, z ktorého sa údaj číta; rekonciliátor ho vyrieši a Git ho nikdy nedrží.
+        cs: Tajemství, ze kterého se údaj čte; rekonciliátor jej vyřeší a Git jej nikdy nedrží.
+        de: Das Geheimnis, aus dem die Zugangsdaten stammen; der Reconciler löst es auf, nie Git.
+    notification.endpoint.secretRef.key:
+      help:
+        en: The key inside that secret that holds the value the receiver checks.
+        sk: Kľúč v tom tajomstve, ktorý drží hodnotu, akú príjemca overuje.
+        cs: Klíč v tom tajemství, který drží hodnotu, kterou příjemce ověřuje.
+        de: Der Schlüssel in diesem Geheimnis, der den vom Empfänger geprüften Wert hält.
+    notification.format:
+      help:
+        en: How each entity is written into the notification; left empty, the broker chooses.
+        sk: Ako sa každá entita zapíše do notifikácie; ak zostane prázdne, rozhodne broker.
+        cs: Jak se každá entita zapíše do notifikace; zůstane-li prázdné, rozhodne broker.
+        de: Wie jede Entität in die Benachrichtigung geschrieben wird; leer entscheidet der Broker.
+    notification.attributes:
+      help:
+        en: The attributes the notification carries; empty sends every attribute the grant allows.
+        sk: Atribúty, ktoré notifikácia nesie; prázdny zoznam pošle všetky, ktoré oprávnenie dovolí.
+        cs: Atributy, které notifikace nese; prázdný seznam pošle všechny, které oprávnění dovolí.
+        de: Die Attribute der Benachrichtigung; leer sendet alle, die die Berechtigung erlaubt.
+    throttling:
+      help:
+        en: The shortest time between two notifications, in seconds; leave it empty for no limit.
+        sk: Najkratší čas medzi dvoma notifikáciami v sekundách; bez obmedzenia nechajte prázdne.
+        cs: Nejkratší doba mezi dvěma notifikacemi v sekundách; bez omezení nechte prázdné.
+        de: Die kürzeste Zeit zwischen zwei Benachrichtigungen in Sekunden; leer für keine Grenze.
+    expiresAt:
+      help:
+        en: When the subscription stops, with its time zone; leave it empty for no end.
+        sk: Kedy odber skončí, aj s časovým pásmom; bez konca nechajte prázdne.
+        cs: Kdy odběr skončí, včetně časového pásma; bez konce nechte prázdné.
+        de: Wann das Abonnement endet, mit Zeitzone; leer für kein Ende.
+    isActive:
+      help:
+        en: Switched off, the subscription stays declared and silent, which parks it without deleting it.
+        sk: Vypnutý odber zostane deklarovaný a tichý, čím ho odstavíte bez zmazania.
+        cs: Vypnutý odběr zůstane deklarovaný a tichý, čímž jej odstavíte bez smazání.
+        de: Ausgeschaltet bleibt das Abonnement deklariert und still, geparkt statt gelöscht.

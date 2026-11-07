@@ -1,0 +1,115 @@
+# Default form arrangement for Environment (UI-02, T-1545).
+# The values one environment renders the repository with; its one example is a placeholder
+# digest (T-2752, T-2882).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: environment
+spec:
+  for: Environment
+  guide: User-Guide/12-managing-organization-and-projects
+  about:
+    en: >-
+      An environment holds the values one installation renders the organization's configuration
+      with: the organization's domain there, the hosts of each component, the image each one runs,
+      where secrets are resolved and which features are on. The installation that names it uses it;
+      the others do not.
+    sk: >-
+      Prostredie drží hodnoty, s ktorými jedna inštalácia vykreslí konfiguráciu organizácie: doménu
+      organizácie tam, hostiteľov každého komponentu, obraz, ktorý každý spúšťa, kde sa rozlišujú
+      tajomstvá a ktoré funkcie sú zapnuté. Použije ho inštalácia, ktorá ho menuje, ostatné nie.
+    cs: >-
+      Prostředí drží hodnoty, se kterými jedna instalace vykreslí konfiguraci organizace: doménu
+      organizace tam, hostitele každé komponenty, obraz, který každá spouští, kde se rozlišují
+      tajemství a které funkce jsou zapnuté. Použije ho instalace, která ho jmenuje, ostatní ne.
+    de: >-
+      Eine Umgebung hält die Werte, mit denen eine Installation die Konfiguration der Organisation
+      rendert: die Domain der Organisation dort, die Hosts jeder Komponente, das Image, das jede
+      ausführt, wo Secrets aufgelöst werden und welche Funktionen an sind. Die Installation, die sie
+      nennt, verwendet sie; die anderen nicht.
+  order: [name, orgDomain, hosts, images, secrets, features]
+  groups:
+    - title:
+        en: Where it runs
+        sk: Kde beží
+        cs: Kde běží
+        de: Wo sie läuft
+      description:
+        en: The environment's name, the organization's domain there and the host of each component.
+        sk: Názov prostredia, doména organizácie v ňom a hostiteľ každého komponentu.
+        cs: Název prostředí, doména organizace v něm a hostitel každé komponenty.
+        de: Der Name der Umgebung, die Domain der Organisation dort und der Host jeder Komponente.
+      fields: [name, orgDomain, hosts]
+    - title:
+        en: What it runs
+        sk: Čo beží
+        cs: Co běží
+        de: Was läuft
+      description:
+        en: The image each component runs, where secrets are resolved, and the feature flags.
+        sk: Obraz, ktorý každý komponent spúšťa, kde sa rozlišujú tajomstvá, a prepínače funkcií.
+        cs: Obraz, který každá komponenta spouští, kde se rozlišují tajemství, a přepínače funkcí.
+        de: Das Image jeder Komponente, wo Secrets aufgelöst werden, und die Feature-Flags.
+      fields: [images, secrets, features]
+  fields:
+    name:
+      help:
+        en: The name an installation selects this environment by; it cannot change once it exists.
+        sk: Názov, podľa ktorého inštalácia toto prostredie vyberá; keď existuje, nemení sa.
+        cs: Název, podle něhož instalace toto prostředí vybírá; jakmile existuje, nemění se.
+        de: Der Name, über den eine Installation diese Umgebung wählt; er ändert sich nicht mehr.
+    orgDomain:
+      help:
+        en: The organization's domain in this environment; every manifest's orgDomain is rendered with it.
+        sk: Doména organizácie v tomto prostredí; každý manifest s ňou vykreslí svoj orgDomain.
+        cs: Doména organizace v tomto prostředí; každý manifest s ní vykreslí svůj orgDomain.
+        de: Die Domain der Organisation in dieser Umgebung; jedes orgDomain eines Manifests wird damit gerendert.
+    hosts[].component:
+      help:
+        en: The component the host belongs to, each once.
+        sk: Komponent, ku ktorému hostiteľ patrí, každý raz.
+        cs: Komponenta, ke které hostitel patří, každá jednou.
+        de: Die Komponente, zu der der Host gehört, jede einmal.
+    hosts[].host:
+      help:
+        en: The host name, without a scheme or a path.
+        sk: Názov hostiteľa bez schémy a cesty.
+        cs: Název hostitele bez schématu a cesty.
+        de: Der Hostname, ohne Schema und Pfad.
+    images[].component:
+      help:
+        en: The component the image is for, each once.
+        sk: Komponent, pre ktorý je obraz, každý raz.
+        cs: Komponenta, pro kterou je obraz, každá jednou.
+        de: Die Komponente, für die das Image ist, jede einmal.
+    images[].digest:
+      placeholder: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      help:
+        en: The image's sha256 digest; a tag is refused, because a tag moves.
+        sk: Odtlačok sha256 obrazu; značka je odmietnutá, lebo sa mení.
+        cs: Otisk sha256 obrazu; značka je odmítnuta, protože se mění.
+        de: Der sha256-Digest des Images; ein Tag wird abgelehnt, weil er sich bewegt.
+    secrets.backend:
+      help:
+        en: The backend that answers a secretRef here, such as openbao or kubernetes; never a secret.
+        sk: Úložisko, ktoré tu odpovedá na secretRef, napríklad openbao alebo kubernetes; nikdy tajomstvo.
+        cs: Úložiště, které zde odpovídá na secretRef, například openbao nebo kubernetes; nikdy tajemství.
+        de: Das Backend, das hier einen secretRef beantwortet, etwa openbao oder kubernetes; nie ein Secret.
+    secrets.mount:
+      help:
+        en: Where inside that backend the secrets of this environment are kept.
+        sk: Kde v tom úložisku sú tajomstvá tohto prostredia.
+        cs: Kde v tom úložišti jsou tajemství tohoto prostředí.
+        de: Wo in diesem Backend die Secrets dieser Umgebung liegen.
+    features[].name:
+      help:
+        en: The feature flag's name, each once.
+        sk: Názov prepínača funkcie, každý raz.
+        cs: Název přepínače funkce, každý jednou.
+        de: Der Name des Feature-Flags, jedes einmal.
+    features[].enabled:
+      help:
+        en: Whether the feature is on in this environment.
+        sk: Či je funkcia v tomto prostredí zapnutá.
+        cs: Zda je funkce v tomto prostředí zapnutá.
+        de: Ob die Funktion in dieser Umgebung an ist.

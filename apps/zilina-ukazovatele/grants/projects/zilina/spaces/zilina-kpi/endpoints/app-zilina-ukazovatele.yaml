@@ -1,0 +1,21 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-zilina-ukazovatele
+  namespace: zilina
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    en: Indicators of the city of Žilina
+    sk: Ukazovatele mesta Žilina
+spec:
+  audience: public
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: zilina-kpi
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - ogc-features
+  slug: xy24v6swzpq2rfphup3gtjihm3

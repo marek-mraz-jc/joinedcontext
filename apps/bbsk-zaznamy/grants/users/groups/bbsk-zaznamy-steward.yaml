@@ -1,0 +1,11 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata:
+  name: bbsk-zaznamy-steward
+  namespace: org
+  annotations:
+    joinedcontext.com/app: bbsk/bbsk-zaznamy
+spec:
+  description: The stewards of bbsk-zaznamy, its default group.
+  members:
+  - user: de300000-0000-4000-8000-000000000001 # demo.steward

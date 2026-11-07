@@ -1,0 +1,79 @@
+/* The desk: quiet lists, so a refusal is the thing that stands out. */
+
+.app-reports,
+.app-files,
+.app-jobs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--jc-space-2, 0.4rem);
+}
+
+.app-reports button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: var(--jc-space-2, 0.4rem);
+  text-align: left;
+}
+
+.app-reports button[aria-pressed="true"] {
+  font-weight: 600;
+  outline: 2px solid var(--jc-color-accent, #334155);
+}
+
+.app-meta {
+  color: var(--jc-color-muted, #4b5563);
+}
+
+.app-actions > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--jc-space-3, 0.6rem);
+  margin-block: var(--jc-space-2, 0.4rem);
+}
+
+.app-actions p,
+.app-upload + p {
+  margin: 0;
+}
+
+.app-upload {
+  display: grid;
+  gap: var(--jc-space-1, 0.2rem);
+  margin-block: var(--jc-space-3, 0.6rem);
+}
+
+.app-upload input {
+  max-width: 100%;
+}
+
+/* A word and a mark, never a colour alone. */
+.app-refused {
+  color: var(--jc-color-danger, #b91c1c);
+}
+
+.app-refused::before {
+  content: "⊘ ";
+}
+
+.app-jobs li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-2, 0.4rem);
+  overflow-wrap: anywhere;
+}
+
+.app-ok {
+  color: var(--jc-color-success, #047857);
+}
+
+.app-failed {
+  color: var(--jc-color-danger, #b91c1c);
+}
+
+.app-failed::before {
+  content: "✕ ";
+}

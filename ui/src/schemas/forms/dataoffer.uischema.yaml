@@ -1,0 +1,89 @@
+# Default form arrangement for DataOffer (UI-02, T-1543).
+# The endpoints of one context space this project offers to the data space, and the ODRL offer
+# they are offered under; examples are neutral (T-2752).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: dataoffer
+spec:
+  for: DataOffer
+  guide: User-Guide/05-endpoints-and-sharing
+  about:
+    en: >-
+      A data offer puts endpoints of one context space in front of the data space under an ODRL
+      offer: what another participant may do with the data, and under which conditions. An
+      agreement another participant negotiates against it grants no more than the offer allows.
+    sk: >-
+      Dátová ponuka vystaví koncové body jedného kontextového priestoru dátovému priestoru podľa
+      ponuky ODRL: čo smie iný účastník s údajmi robiť a za akých podmienok. Dohoda, ktorú k nej iný
+      účastník vyjedná, nedovolí viac, než ponuka.
+    cs: >-
+      Datová nabídka vystaví koncové body jednoho kontextového prostoru datovému prostoru podle
+      nabídky ODRL: co smí jiný účastník s daty dělat a za jakých podmínek. Dohoda, kterou k ní jiný
+      účastník vyjedná, nedovolí víc, než nabídka.
+    de: >-
+      Ein Datenangebot stellt Endpunkte eines Kontextraums dem Datenraum unter einem ODRL-Angebot
+      bereit: was ein anderer Teilnehmer mit den Daten tun darf und unter welchen Bedingungen. Eine
+      Vereinbarung, die ein Teilnehmer dazu aushandelt, erlaubt nicht mehr als das Angebot.
+  order: [name, contextSpaceRef, endpointRefs, policy, containsPersonalData, purpose]
+  groups:
+    - title:
+        en: What is offered
+        sk: Čo sa ponúka
+        cs: Co se nabízí
+        de: Was angeboten wird
+      description:
+        en: The context space and the endpoints of it the offer covers.
+        sk: Kontextový priestor a jeho koncové body, na ktoré sa ponuka vzťahuje.
+        cs: Kontextový prostor a jeho koncové body, na které se nabídka vztahuje.
+        de: Der Kontextraum und seine Endpunkte, die das Angebot umfasst.
+      fields: [name, contextSpaceRef, endpointRefs]
+    - title:
+        en: Terms
+        sk: Podmienky
+        cs: Podmínky
+        de: Bedingungen
+      description:
+        en: The ODRL offer, and whether the data is personal and for which purpose.
+        sk: Ponuka ODRL a či sú údaje osobné a na aký účel.
+        cs: Nabídka ODRL a zda jsou data osobní a k jakému účelu.
+        de: Das ODRL-Angebot und ob die Daten personenbezogen sind und zu welchem Zweck.
+      fields: [policy, containsPersonalData, purpose]
+  fields:
+    name:
+      help:
+        en: The short name the offer is filed under; an agreement names the offer by it.
+        sk: Krátky názov, pod ktorým je ponuka uložená; dohoda ponuku označuje ním.
+        cs: Krátký název, pod nímž je nabídka uložena; dohoda nabídku označuje jím.
+        de: Der kurze Name des Angebots; eine Vereinbarung nennt das Angebot damit.
+    contextSpaceRef:
+      help:
+        en: The context space of this project whose endpoints are offered.
+        sk: Kontextový priestor tohto projektu, ktorého koncové body sa ponúkajú.
+        cs: Kontextový prostor tohoto projektu, jehož koncové body se nabízejí.
+        de: Der Kontextraum dieses Projekts, dessen Endpunkte angeboten werden.
+    endpointRefs:
+      help:
+        en: The endpoints the offer covers, each once; at least one.
+        sk: Koncové body, na ktoré sa ponuka vzťahuje, každý raz; aspoň jeden.
+        cs: Koncové body, na které se nabídka vztahuje, každý jednou; alespoň jeden.
+        de: Die Endpunkte des Angebots, jeder einmal; mindestens einer.
+    policy:
+      placeholder: '{"@type": "Offer", "permission": [{"action": "use"}]}'
+      help:
+        en: An ODRL 2.2 offer as JSON with at least one permission; its constraints narrow what an agreement grants.
+        sk: Ponuka ODRL 2.2 ako JSON s aspoň jedným povolením; jej obmedzenia zužujú, čo dohoda dovolí.
+        cs: Nabídka ODRL 2.2 jako JSON s alespoň jedním povolením; její omezení zužují, co dohoda dovolí.
+        de: Ein ODRL-2.2-Angebot als JSON mit mindestens einer Erlaubnis; seine Einschränkungen begrenzen jede Vereinbarung.
+    containsPersonalData:
+      help:
+        en: Whether the offered data is about people; then a purpose is required.
+        sk: Či sa ponúkané údaje týkajú ľudí; potom je účel povinný.
+        cs: Zda se nabízená data týkají lidí; pak je účel povinný.
+        de: Ob die angebotenen Daten Personen betreffen; dann ist ein Zweck nötig.
+    purpose:
+      help:
+        en: The purpose from the Data Privacy Vocabulary the data may be used for.
+        sk: Účel zo slovníka Data Privacy Vocabulary, na ktorý sa údaje smú použiť.
+        cs: Účel ze slovníku Data Privacy Vocabulary, ke kterému se data smějí použít.
+        de: Der Zweck aus dem Data Privacy Vocabulary, zu dem die Daten genutzt werden dürfen.

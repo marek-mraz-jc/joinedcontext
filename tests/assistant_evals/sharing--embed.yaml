@@ -1,0 +1,16 @@
+# T-6489: a public Endpoint's embed code is answered from its read (live walk T-5962, S-40).
+workflow: sharing
+as: steward
+says:
+  - "Embed the Endpoint bikes-public widget on the city website."
+expect:
+  calls:
+    - tool: jc_resource_get
+      input:
+        kind: Endpoint
+        name: bikes-public
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: embed the Endpoint bikes-public on the city website."

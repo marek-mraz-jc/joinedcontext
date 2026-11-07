@@ -1,0 +1,26 @@
+# The data model this sample reads (SDK-10).
+id: https://example.org/samples/data-story
+name: data-story
+prefixes:
+  linkml: https://w3id.org/linkml/
+  schema: https://schema.org/
+default_range: string
+imports:
+  - linkml:types
+classes:
+  AirQualityObserved:
+    description: One station's reading of the air at one time.
+    attributes:
+      stationName:
+        range: string
+        required: true
+      pm25:
+        description: Fine particles, µg/m³.
+        range: float
+        minimum_value: 0
+      dateObserved:
+        range: datetime
+        required: true
+      location:
+        description: The station as a GeoJSON Point.
+        range: string

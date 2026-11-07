@@ -1,0 +1,42 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-helsinki-kartta-1
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:helsinki/app-helsinki-kartta
+    kind: role
+  assigner: did:web:hel.fi
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki
+  information:
+  - entities:
+    - type: PointOfInterest
+    - type: WaterQualityObserved
+    propertyNames:
+    - name
+    - location
+    - address
+    - url
+    - serviceCategory
+    - openingHours
+    - temperature
+    - dateObserved
+    - refPointOfInterest
+    relationshipNames:
+    - name
+    - location
+    - address
+    - url
+    - serviceCategory
+    - openingHours
+    - temperature
+    - dateObserved
+    - refPointOfInterest
+  operations:
+  - queryEntity
+  - retrieveEntity

@@ -1,0 +1,17 @@
+# T-6533: what an Endpoint shows is answered in words from what was read, the page opened beside
+# it (live walk T-6490, S-07).
+workflow: endpoint
+as: steward
+says:
+  - "What does the public Endpoint t6025-full-counters show now?"
+expect:
+  calls:
+    - tool: jc_ui_navigate
+      input:
+        page: entities
+        endpoint: t6025-full-counters
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: what does the public Endpoint t6025-full-counters show now?"

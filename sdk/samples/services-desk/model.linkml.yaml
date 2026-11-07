@@ -1,0 +1,34 @@
+# The data model this sample reads and, through its close-report function, writes one attribute of (SDK-10).
+id: https://example.org/samples/services-desk
+name: services-desk
+prefixes:
+  linkml: https://w3id.org/linkml/
+  schema: https://schema.org/
+default_range: string
+imports:
+  - linkml:types
+classes:
+  DefectReport:
+    description: A defect in the street someone reported and staff work through.
+    attributes:
+      name:
+        range: string
+        required: true
+        slot_uri: schema:name
+      description:
+        range: string
+      district:
+        range: string
+      status:
+        range: ReportStatus
+        required: true
+      dateReported:
+        range: datetime
+        required: true
+enums:
+  ReportStatus:
+    permissible_values:
+      open:
+        title: Open
+      closed:
+        title: Closed

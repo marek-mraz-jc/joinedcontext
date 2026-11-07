@@ -1,0 +1,11 @@
+{
+  "$comment": [
+    "T-2136: the routes that no mocked Playwright spec opens, and the routes that no live journey",
+    "walks, as measured on 2026-09-20. Every entry says what covers the page today and what is",
+    "owed; an entry names a task where an open one will close it. gate_routes.test.ts fails on a",
+    "route that is missing and not listed here, and on an entry that is covered now or names a",
+    "route the router no longer has. The two lists only ever shrink."
+  ],
+  "mocked": {},
+  "live": {}
+}

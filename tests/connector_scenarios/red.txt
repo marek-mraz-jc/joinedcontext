@@ -1,0 +1,4 @@
+# Connector scenarios the scripted lane cannot pass yet (T-5947 ratchet): `S-nn T-xxxx reason`.
+# The task named turns the scenario green and removes its line in the same branch; a line never comes
+# back. tests/connector_scenarios.rs fails when a listed scenario passes or an unlisted one fails.
+S-49 T-5962 the forged write is refused in the gateway and Antares (T-5955), which the scripted lane mocks; only the live walk on dev proves it

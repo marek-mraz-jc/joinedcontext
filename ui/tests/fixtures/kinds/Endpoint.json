@@ -1,0 +1,2409 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "AggrMethod": {
+      "description": "NGSI-LD's aggregation methods (ETSI GS CIM 009 §4.5.19).",
+      "oneOf": [
+        {
+          "description": "`totalCount`.",
+          "enum": [
+            "totalCount"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "`distinctCount`.",
+          "enum": [
+            "distinctCount"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "`sum`.",
+          "enum": [
+            "sum"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "`avg`.",
+          "enum": [
+            "avg"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "`min`.",
+          "enum": [
+            "min"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "`max`.",
+          "enum": [
+            "max"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "`stddev`.",
+          "enum": [
+            "stddev"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "`sumsq`.",
+          "enum": [
+            "sumsq"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Audience": {
+      "description": "Target audience access control setting for an endpoint (EP-14).",
+      "oneOf": [
+        {
+          "description": "Restricted to explicitly listed projects within the organization.",
+          "enum": [
+            "project-list"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Accessible to any authenticated member or service account of the organization.",
+          "enum": [
+            "organization"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Accessible publicly without authentication under the synthetic public role grant.",
+          "enum": [
+            "public"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Audit": {
+      "description": "Whether an Endpoint keeps an audit trail of the writes through it (ADR-N-054 2.8, DM-136).",
+      "oneOf": [
+        {
+          "description": "The type's history rule alone decides which rows exist (the owner's default).",
+          "enum": [
+            "off"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A write that changes a value is kept as a version row, even where the type records no history; an exact repeat stores nothing.",
+          "enum": [
+            "changes"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Build": {
+      "additionalProperties": false,
+      "description": "The artifact one build of an `App` published, as the build lane writes it back (AP-13a).",
+      "properties": {
+        "builtAt": {
+          "description": "When the build lane published it.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "commit": {
+          "description": "The commit of the source the artifact was built from, 7 to 40 lowercase hexadecimal characters.",
+          "type": "string"
+        },
+        "component": {
+          "description": "The digest of a `wasm` App's server component, taken from the checked bundle and stored by it in the object store; what the WASM host loads and checks (AP-151).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "digest": {
+          "description": "The artifact's digest, `sha256:` and 64 lowercase hexadecimal characters. The reconciler deploys this and nothing else (AP-72).",
+          "type": "string"
+        },
+        "sdkVersion": {
+          "description": "The version of the app SDK the artifact was built against.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "builtAt",
+        "commit",
+        "digest",
+        "sdkVersion"
+      ],
+      "type": "object"
+    },
+    "Caching": {
+      "additionalProperties": false,
+      "description": "HTTP caching configuration for endpoint responses.",
+      "properties": {
+        "maxAgeSeconds": {
+          "description": "Maximum cache age in seconds.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxAgeSeconds"
+      ],
+      "type": "object"
+    },
+    "Catalog": {
+      "additionalProperties": false,
+      "description": "The catalogue description of one Endpoint (EP-78).",
+      "properties": {
+        "applicableLegislation": {
+          "description": "ELI IRIs of the laws that apply: `dcatap:applicableLegislation`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "attribution": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The words the attribution duty asks for, per language: `dct:rights`.",
+          "type": "object"
+        },
+        "contactPoint": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContactPoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where questions about it go: `dcat:contactPoint`, a role address (EP-80)."
+        },
+        "frequency": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Frequency"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How often the data changes, from the EU frequency table: `dct:accrualPeriodicity`."
+        },
+        "harvest": {
+          "description": "Whether the installation's and the project's feeds list the record (EP-139, EP-84, EP-127). `false` for a door over data other datasets already publish, such as a whole space split into one dataset per type: its own record stays, a harvester never takes the same data twice. Unset is `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "keywords": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description": "Keywords per language: `dcat:keyword`.",
+          "type": "object"
+        },
+        "license": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Licence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The licence, from the EU licence table: `dct:license`."
+        },
+        "personalData": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PersonalData"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Whether the data holds personal data, as the publisher states it; never read from the data. Only the national profiles carry it: `leg:personalDataContainmentType` and `pu:osobní-údaje` (API/08 section 5)."
+        },
+        "pipelineRef": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TypedRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Pipeline of this project that fills the space: `prov:wasGeneratedBy`."
+        },
+        "publisher": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Publisher"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Who publishes the dataset: `dct:publisher`."
+        },
+        "source": {
+          "description": "The original open datasets the data comes from: `dct:source`.",
+          "items": {
+            "$ref": "#/definitions/Source"
+          },
+          "type": "array"
+        },
+        "spatial": {
+          "description": "NUTS codes or location IRIs: `dct:spatial`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "temporal": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Temporal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The period the data covers: `dct:temporal`."
+        },
+        "themes": {
+          "description": "EU data themes: `dcat:theme`.",
+          "items": {
+            "$ref": "#/definitions/DataTheme"
+          },
+          "type": "array"
+        },
+        "visualizations": {
+          "description": "Charts on the dataset, Vega-Lite 5 or Vega 5 over the Endpoint's own sources, published as CKAN `jc_visualization` views (ADR-N-053, EP-130); validated by the Endpoint, which knows what it serves.",
+          "items": {
+            "$ref": "#/definitions/Visualization"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "CkanPublication": {
+      "additionalProperties": false,
+      "description": "Publication of one Endpoint as one CKAN dataset (EP-62…EP-65).",
+      "properties": {
+        "instanceRef": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Ref"
+            }
+          ],
+          "description": "The `CkanInstance` this Endpoint publishes to."
+        },
+        "license": {
+          "description": "The CKAN licence id the organization chose, such as `cc-by` for CC-BY 4.0. Used when the Endpoint's DCAT-AP record names no `dct:license`, which is the one term the record does not carry (EP-62, EP-63).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "The CKAN dataset name; the Endpoint's own name when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "organization": {
+          "description": "The CKAN organization slug; the instance's default when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "instanceRef"
+      ],
+      "type": "object"
+    },
+    "Condition": {
+      "additionalProperties": false,
+      "description": "Status condition entry.",
+      "properties": {
+        "lastTransitionTime": {
+          "description": "Last transition timestamp.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Human-readable message.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Machine-readable reason code.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Status value (\"True\", \"False\", \"Unknown\").",
+          "type": "string"
+        },
+        "type": {
+          "description": "Type of condition (e.g. Reconciled, Ready).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ContactPoint": {
+      "additionalProperties": false,
+      "description": "The contact point of a dataset, a `vcard:Kind`.",
+      "properties": {
+        "email": {
+          "description": "A role address, never a person's own (EP-80): `vcard:hasEmail`.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The desk's name: `vcard:fn`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "email",
+        "name"
+      ],
+      "type": "object"
+    },
+    "Creates": {
+      "additionalProperties": false,
+      "description": "How an Endpoint takes new entities from callers who do not choose their ids: a public form (EP-97).",
+      "properties": {
+        "embedOrigins": {
+          "description": "The sites that may frame the form's page `/f/{slug}`, each an `https` origin exactly as a browser names it (`https://www.example.org`, an optional non-default port, no path, no wildcard), at most 20. The Portal sends them in that page's `frame-ancestors` and nowhere else; empty, only the Portal frames the form (EP-101).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mintIds": {
+          "description": "The gateway replaces the id a create names with one it mints, `urn:ngsi-ld:{Type}:{uuid}`, so a caller can neither pick nor overwrite one.",
+          "type": "boolean"
+        },
+        "perDay": {
+          "description": "At most this many creates through the Endpoint per UTC day, 1..=10000; past it the gateway answers 429 with `Retry-After` until midnight UTC.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "DataTheme": {
+      "description": "A theme of the EU data-theme table.",
+      "oneOf": [
+        {
+          "description": "Agriculture, fisheries, forestry and food.",
+          "enum": [
+            "AGRI"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Economy and finance.",
+          "enum": [
+            "ECON"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Education, culture and sport.",
+          "enum": [
+            "EDUC"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Energy.",
+          "enum": [
+            "ENER"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Environment.",
+          "enum": [
+            "ENVI"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Government and public sector.",
+          "enum": [
+            "GOVE"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Health.",
+          "enum": [
+            "HEAL"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "International issues.",
+          "enum": [
+            "INTR"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Justice, legal system and public safety.",
+          "enum": [
+            "JUST"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Regions and cities.",
+          "enum": [
+            "REGI"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Population and society.",
+          "enum": [
+            "SOCI"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Science and technology.",
+          "enum": [
+            "TECH"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Transport.",
+          "enum": [
+            "TRAN"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "DateMode": {
+      "description": "How a date field reads its value.",
+      "oneOf": [
+        {
+          "description": "As the value is: a date stays a date, a date-time a date-time.",
+          "enum": [
+            "auto"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A whole day (`VALUE=DATE`).",
+          "enum": [
+            "date"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A date-time.",
+          "enum": [
+            "datetime"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Deprecation": {
+      "additionalProperties": false,
+      "description": "A breaking change of a public Endpoint, announced ahead (EP-146).",
+      "properties": {
+        "attributes": {
+          "description": "Only these attributes are deprecated.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "link": {
+          "description": "A public `https` page about the change and its replacement.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "representations": {
+          "description": "Only these surfaces are deprecated; empty, the whole Endpoint.",
+          "items": {
+            "$ref": "#/definitions/Representation"
+          },
+          "type": "array"
+        },
+        "since": {
+          "description": "The day the deprecation was announced, `YYYY-MM-DD`.",
+          "format": "date",
+          "type": "string"
+        },
+        "sunset": {
+          "description": "The earliest day the deprecated part may stop answering, at least 90 days after `since`.",
+          "format": "date",
+          "type": "string"
+        }
+      },
+      "required": [
+        "since",
+        "sunset"
+      ],
+      "type": "object"
+    },
+    "Display": {
+      "additionalProperties": false,
+      "description": "An override of the model's display order for one type: an Endpoint's `spec.display` entry or a visualization's `fields` (EP-135). Either list empty leaves that part to the model.",
+      "properties": {
+        "fields": {
+          "description": "The slots shown, in this order; the rest are not shown.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "description": "The key attributes, in place of the model's `summary` annotations.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "EndpointRole": {
+      "additionalProperties": false,
+      "description": "One role an Endpoint gives the callers it admits who match a subject (AP-96, AP-97).",
+      "properties": {
+        "name": {
+          "description": "The role's name, `[a-z][a-z0-9-]{0,31}`; the caller holds [`endpoint_role`] of it.",
+          "type": "string"
+        },
+        "subjects": {
+          "description": "Who holds it: `user` by e-mail, `group` by name, never a wildcard.",
+          "items": {
+            "$ref": "#/definitions/Subject"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "subjects"
+      ],
+      "type": "object"
+    },
+    "EndpointSlug": {
+      "description": "Cryptographically random endpoint slug with at least 128 bits of entropy (lowercase RFC 4648 base32 without padding, >=26 chars, EP-02)",
+      "pattern": "^[a-z2-7]{26,}$",
+      "type": "string"
+    },
+    "EndpointSpec": {
+      "additionalProperties": false,
+      "description": "Desired specification of an [`Endpoint`][crate::kinds::Endpoint] resource (EP-01..EP-28).",
+      "properties": {
+        "allowedProjects": {
+          "description": "Whitelist of project slugs permitted when audience is `project-list` (EP-14, EP-15).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "audience": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Audience"
+            }
+          ],
+          "description": "Audience access scope (EP-14)."
+        },
+        "audit": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Audit"
+            }
+          ],
+          "description": "`changes`: every write through this Endpoint that changes a value is kept as a version with its provenance, whatever the type's history rule (ADR-N-054 2.8, DM-136)."
+        },
+        "caching": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Caching"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional response caching configuration."
+        },
+        "callerRole": {
+          "description": "Every caller this Endpoint admits holds the role [`endpoint_role`] names for it, on requests through this Endpoint alone (AP-96, AP-97). The App reconciler sets it, so an App's grants never reach another surface of the space.",
+          "type": "boolean"
+        },
+        "catalog": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Catalog"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What a DCAT-AP catalogue needs beyond the distributions: publisher, contact, licence, themes, coverage, frequency and provenance (EP-78, EP-79)."
+        },
+        "contextSpaceRef": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Ref"
+            }
+          ],
+          "description": "Reference to the underlying ContextSpace."
+        },
+        "creates": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Creates"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the Endpoint takes new entities: minted ids and a daily cap (EP-97)."
+        },
+        "deprecation": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Deprecation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A breaking change announced ahead: the gateway answers with `Deprecation` and `Sunset` headers until the deprecated part is removed (EP-146, EP-147)."
+        },
+        "disabledRepresentations": {
+          "description": "Representations an Endpoint without `enabledRepresentations` does not serve (EP-104).",
+          "items": {
+            "$ref": "#/definitions/Representation"
+          },
+          "type": "array"
+        },
+        "display": {
+          "additionalProperties": {
+            "$ref": "#/definitions/Display"
+          },
+          "description": "Per entity type, the slots this Endpoint's tables, popups and CKAN columns show and its key attributes, reordering and narrowing the model's display order (EP-135, DM-98).",
+          "type": "object"
+        },
+        "enabledRepresentations": {
+          "description": "The representations this Endpoint serves, listed (EP-05). Omitted: every one but `sta`, less `disabledRepresentations` (EP-104); see [`EndpointSpec::served_representations`].",
+          "items": {
+            "$ref": "#/definitions/Representation"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "fileLimits": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FileLimits"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional ceiling on one `file.*` download (EP-44)."
+        },
+        "mcp": {
+          "description": "`false` turns the Endpoint's MCP instance off. Every Endpoint serves `mcp` without listing it, public or internal, gated by its own Policy (EP-24, T-2901); see [`EndpointSpec::served_representations`].",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "policyRef": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Urn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional NGSI-LD Policy URN attached to this endpoint; means `policyRefs: [it]`. Written `urn:ngsi-ld:Policy:{orgDomain}:{space}:{name}`, where `{space}` is the rendered segment of the space: its `urnSegment`, else `{project}-{name}`, never the bare space name (EP-117)."
+        },
+        "policyRefs": {
+          "description": "The Policies this Endpoint evaluates, each a Policy URN of its space (ADR-N-057 decision 2), written `urn:ngsi-ld:Policy:{orgDomain}:{space}:{name}`, where `{space}` is the rendered segment of the space: its `urnSegment`, else `{project}-{name}`, never the bare space name. Never set beside `policyRef` and never empty; read both through [`EndpointSpec::policy_refs`].",
+          "items": {
+            "$ref": "#/definitions/Urn"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "projection": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Projection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional publication narrowing applied to every representation (EP-61)."
+        },
+        "projectionRef": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TypedRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The named subset of the space's model this Endpoint reads (MP-02): a `ModelProjection` of the same space, intersected with the caller's grants by the gateway, so it narrows and never widens."
+        },
+        "publish": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Publication"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where this Endpoint is published beside its own surface: an open-data catalogue so far (EP-62)."
+        },
+        "rateLimits": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RateLimits"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional rate limiting configuration (EP-20)."
+        },
+        "representations": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Representations"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The mappings of the domain-standard representations, `ical` first (EP-125, API/02 §8b)."
+        },
+        "roles": {
+          "description": "Roles a caller this Endpoint admits holds when a subject matches them, on requests through it alone (AP-96, AP-97).",
+          "items": {
+            "$ref": "#/definitions/EndpointRole"
+          },
+          "type": "array"
+        },
+        "slug": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/EndpointSlug"
+            }
+          ],
+          "description": "Unguessable opaque slug with >= 128 bits of entropy (EP-02)."
+        },
+        "viewMappingRef": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TypedRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A `Mapping` whose target model this Endpoint serves instead of the space's own (EP-54, DM-51).\n\nThe gateway translates every entity through the Mapping's compiled IR and rewrites `attrs`, `q` and `geoQ` back through its inverse. An Endpoint that carries one is read only: a mapping is invertible per slot, not per entity, so a write in the target model has no source entity to reconstruct."
+        }
+      },
+      "required": [
+        "audience",
+        "contextSpaceRef",
+        "slug"
+      ],
+      "type": "object"
+    },
+    "FeedOutput": {
+      "additionalProperties": false,
+      "description": "One output of `spec.representations.feed`.",
+      "properties": {
+        "description": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The feed's description per language.",
+          "type": "object"
+        },
+        "filter": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/OutputFilter"
+            }
+          ],
+          "description": "What narrows the view for this output; it never widens it."
+        },
+        "lang": {
+          "description": "The feed's language when the request names none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "The default page size, 1 to 200 (50 when left out).",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "A slug `[a-z0-9-]`, 1 to 63, unique on the Endpoint: the URL segment after `feed/v1/`.",
+          "type": "string"
+        },
+        "sort": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FeedSort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The order: `updated`, newest first, the only one."
+        },
+        "sources": {
+          "description": "The model classes the feed lists, each with its roles.",
+          "items": {
+            "$ref": "#/definitions/FeedSource"
+          },
+          "type": "array"
+        },
+        "title": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The feed's title per language (`sk`, `en`).",
+          "type": "object"
+        },
+        "version": {
+          "description": "The contract version, 1 when left out.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "sources"
+      ],
+      "type": "object"
+    },
+    "FeedPaths": {
+      "anyOf": [
+        {
+          "description": "One path.",
+          "type": "string"
+        },
+        {
+          "description": "The first of several with a value.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      ],
+      "description": "One attribute path, or a list of them: the first with a value wins."
+    },
+    "FeedPreset": {
+      "description": "A named starting mapping (API/02 §8b, the presets table).",
+      "oneOf": [
+        {
+          "description": "Smart Data Models `Event`.",
+          "enum": [
+            "event"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An article or a notice (schema.org `Article`).",
+          "enum": [
+            "article"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any type with a `name`.",
+          "enum": [
+            "generic"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "FeedSort": {
+      "description": "The order of a feed's entries.",
+      "oneOf": [
+        {
+          "description": "Newest first by the `updated` role.",
+          "enum": [
+            "updated"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "FeedSource": {
+      "additionalProperties": false,
+      "description": "One model class of an output.",
+      "properties": {
+        "mapping": {
+          "additionalProperties": {
+            "$ref": "#/definitions/FeedPaths"
+          },
+          "description": "Roles on top of the preset, or the whole mapping without one.",
+          "type": "object"
+        },
+        "preset": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FeedPreset"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The starting roles."
+        },
+        "type": {
+          "description": "The NGSI-LD type.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "FieldRemap": {
+      "additionalProperties": false,
+      "description": "The object form of a [`FieldSource`] (API/02 §8b): exactly one of `attribute`, `firstOf`, `join` and `constant`, and the remaps the field allows.",
+      "properties": {
+        "attribute": {
+          "description": "An attribute, or a dotted path into its value (`address.addressLocality`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "constant": {
+          "description": "A fixed value.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "date": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DateMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How a date field reads its value."
+        },
+        "default": {
+          "description": "The calendar value of a source value `map` does not name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "endInclusive": {
+          "description": "The source names the last day, so DTEND is the day after.",
+          "type": "boolean"
+        },
+        "firstOf": {
+          "description": "The first of these attributes that has a value.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "join": {
+          "description": "The values of these attributes that have one, joined by `separator`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "language": {
+          "description": "Which text of a LanguageProperty: a two-letter code or `first` (the default).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "map": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Source value to calendar value.",
+          "type": "object"
+        },
+        "separator": {
+          "description": "The `join` separator; default `\", \"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timezone": {
+          "description": "The IANA zone of a floating time; default `Europe/Bratislava`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "truncate": {
+          "description": "At most this many characters.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "FieldSource": {
+      "anyOf": [
+        {
+          "description": "`DTSTART: startDate`.",
+          "type": "string"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/FieldRemap"
+            }
+          ],
+          "description": "`SUMMARY: {attribute: name, language: sk}`."
+        }
+      ],
+      "description": "A field's source: an attribute name, or an object with one source and its remaps."
+    },
+    "FileLimits": {
+      "additionalProperties": false,
+      "description": "How much of a `file.*` representation one download may return (EP-44).\n\nThe gateway pages through the broker and stops at the first row that would cross either bound, so a caller gets a refusal rather than a file that is silently short. An absent field leaves the gateway's own ceiling in charge.",
+      "properties": {
+        "maxFileBytes": {
+          "description": "Bytes a single download may return.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxFileRows": {
+          "description": "Rows a single download may return.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Frequency": {
+      "description": "An update frequency of the EU frequency table.",
+      "oneOf": [
+        {
+          "description": "Continuous.",
+          "enum": [
+            "CONT"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Hourly.",
+          "enum": [
+            "HOURLY"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Daily.",
+          "enum": [
+            "DAILY"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Weekly.",
+          "enum": [
+            "WEEKLY"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Monthly.",
+          "enum": [
+            "MONTHLY"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Quarterly.",
+          "enum": [
+            "QUARTERLY"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Annual.",
+          "enum": [
+            "ANNUAL"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Irregular.",
+          "enum": [
+            "IRREG"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Never updated.",
+          "enum": [
+            "NEVER"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Unknown.",
+          "enum": [
+            "UNKNOWN"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "IcalMapping": {
+      "additionalProperties": false,
+      "description": "One source of an [`IcalOutput`] (`spec.representations.ical[].sources[]`), and the deprecated single mapping object.",
+      "properties": {
+        "mapping": {
+          "additionalProperties": {
+            "$ref": "#/definitions/FieldSource"
+          },
+          "description": "Fields that replace the preset's, or the whole mapping when no preset is named.",
+          "type": "object"
+        },
+        "preset": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Preset"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The preset the mapping starts from; with no `mapping` either, `sdm-event`."
+        },
+        "type": {
+          "default": "Event",
+          "description": "The NGSI-LD type the feed maps.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The contract version (API/11 EP-152); `1` when absent, the one version the broker reads.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "IcalOutput": {
+      "additionalProperties": false,
+      "description": "One named calendar of `spec.representations.ical` (API/11 EP-159), served at `/ical/v1/{name}.ics`.",
+      "properties": {
+        "description": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The calendar's description per language tag.",
+          "type": "object"
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/OutputFilter"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A query that narrows the view for this calendar, never widens it."
+        },
+        "lang": {
+          "description": "The language tag (BCP 47) a LanguageProperty is read in when a field names none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "At most this many Events, 1 to 10000.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "The URL slug: lowercase letters, digits and `-`, 1 to 40, unique on the Endpoint.",
+          "type": "string"
+        },
+        "sort": {
+          "description": "`start` or `-start`: the order the first `limit` Events are kept in.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sources": {
+          "description": "The model classes the calendar maps, each with its preset or mapping; 1 to 10.",
+          "items": {
+            "$ref": "#/definitions/IcalMapping"
+          },
+          "type": "array"
+        },
+        "timezone": {
+          "description": "The IANA zone a time without offset is read in; default `Europe/Bratislava`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The calendar's title per language tag (`NAME`, `X-WR-CALNAME`).",
+          "type": "object"
+        },
+        "version": {
+          "description": "The contract version (API/11 EP-152); `1` when absent.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "sources"
+      ],
+      "type": "object"
+    },
+    "Licence": {
+      "description": "A licence of the EU licence table whose duties are known (EP-79).",
+      "oneOf": [
+        {
+          "description": "Creative Commons Zero 1.0.",
+          "enum": [
+            "CC0"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Creative Commons Attribution 4.0.",
+          "enum": [
+            "CC_BY_4_0"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Creative Commons Attribution-ShareAlike 4.0.",
+          "enum": [
+            "CC_BYSA_4_0"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Open Data Commons Attribution.",
+          "enum": [
+            "ODC_BY"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Open Data Commons Open Database Licence.",
+          "enum": [
+            "ODC_ODBL"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Open Data Commons Public Domain Dedication and Licence.",
+          "enum": [
+            "ODC_PDDL"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "MultiLanguageMap": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Multi-language map keyed by ISO 639-1 two-letter lowercase language codes",
+      "propertyNames": {
+        "pattern": "^[a-z]{2}$",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "ObjectMeta": {
+      "additionalProperties": false,
+      "description": "Metadata envelope attached to every platform resource (MF-02).",
+      "properties": {
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value annotations for provenance and ownership (MF-08).",
+          "type": "object"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable description: one string, or the legacy map per locale (UI-50, PF-24)."
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value labels for filtering (MF-10).",
+          "type": "object"
+        },
+        "name": {
+          "description": "Resource name (DNS-1123 label).",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Resource namespace (\"org\" or project slug).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable title: one string, or the legacy map per locale (UI-50, PF-24)."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "OutputFilter": {
+      "additionalProperties": false,
+      "description": "An output's NGSI-LD query on top of the view (TS 104 175 6.4.3.2): `q` and `scopeQ` are AND-ed with a caller's, and a geo-query here cannot be replaced by one.",
+      "properties": {
+        "coordinates": {
+          "description": "`coordinates`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "geometry": {
+          "description": "`geometry`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "geoproperty": {
+          "description": "`geoproperty`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "georel": {
+          "description": "`georel`; with `geometry` and `coordinates`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "q": {
+          "description": "`q`, such as `eventCategory==\"šport\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scopeQ": {
+          "description": "`scopeQ`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "PersonalData": {
+      "description": "The publisher's statement about personal data in a dataset (API/08 section 5).",
+      "oneOf": [
+        {
+          "description": "The data holds personal data.",
+          "enum": [
+            "contains"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The data holds no personal data.",
+          "enum": [
+            "does-not-contain"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Phase": {
+      "description": "Lifecycle phase enumeration.",
+      "oneOf": [
+        {
+          "description": "Resource manifest is in draft state.",
+          "enum": [
+            "Draft"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is pending review or approval.",
+          "enum": [
+            "Pending"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource deployment is in progress.",
+          "enum": [
+            "Deploying"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is live and active in cluster.",
+          "enum": [
+            "Live"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Reconciliation error.",
+          "enum": [
+            "Error"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The platform holds something the repository does not declare, or no longer holds what it does (CC-21, UI-25). Configuration cannot reach this phase — every component reads it from the repository (CC-72) — so it is a space whose seed entities the broker answers differently, and the two resolutions of UI-26 are what a person does about it.",
+          "enum": [
+            "Drifted"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Preset": {
+      "description": "A named starting mapping.",
+      "oneOf": [
+        {
+          "description": "Smart Data Models `Event` (dataModel.Event), the default.",
+          "enum": [
+            "sdm-event"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "schema.org `Event`.",
+          "enum": [
+            "schema-org"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Projection": {
+      "additionalProperties": false,
+      "description": "What this Endpoint never serves, whatever the Policy set allows (EP-61).\n\nA publication decision, not an authorization one: the gateway intersects this list with the caller's policy projection, so an Endpoint can subtract from a grant and never add to it. The same space can therefore be published twice with different amounts of detail without writing a second Policy, and because the subtraction happens where every representation reads its entities, a hidden attribute is missing from the CSV, the GeoJSON, the MCP tool result and the schema surface alike (EP-06, EP-07, EP-47).",
+      "properties": {
+        "hiddenAttributes": {
+          "description": "Attribute names this endpoint removes from every representation.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Publication": {
+      "additionalProperties": false,
+      "description": "Where an Endpoint is published beside its own surface (EP-62).",
+      "properties": {
+        "ckan": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CkanPublication"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Publication to an open-data catalogue."
+        }
+      },
+      "type": "object"
+    },
+    "Publisher": {
+      "additionalProperties": false,
+      "description": "The publisher of a dataset, a `foaf:Agent`.",
+      "properties": {
+        "name": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The publisher's name per language: `foaf:name`.",
+          "type": "object"
+        },
+        "uri": {
+          "description": "The publisher's own IRI, its web site or registry entry.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "RateLimits": {
+      "additionalProperties": false,
+      "description": "Token-bucket rate limiting configuration per endpoint (EP-20).",
+      "properties": {
+        "burst": {
+          "description": "Optional maximum burst capacity above steady rate.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "requestsPerMinute": {
+          "description": "Maximum allowed requests per minute.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "requestsPerMinute"
+      ],
+      "type": "object"
+    },
+    "Ref": {
+      "anyOf": [
+        {
+          "description": "Bare string resource name.",
+          "type": "string"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TypedRef"
+            }
+          ],
+          "description": "Typed reference with kind, name, and optional namespace."
+        }
+      ],
+      "description": "Reference to another resource, either bare name or typed reference (MF-07)."
+    },
+    "Representation": {
+      "description": "Supported representation formats served under an endpoint (EP-05, Architecture/04).\n\nNote: `schema` (EP-46) and `access` (EP-55) are not variants: they are unconditional surfaces on every endpoint and cannot be toggled off. `file.csv` is the one file an Endpoint publishes; the names of the removed files are refused by name ([`REMOVED_REPRESENTATIONS`]).",
+      "oneOf": [
+        {
+          "description": "Canonical NGSI-LD representation (`/ngsi-ld/v1/`).",
+          "enum": [
+            "ngsi-ld"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Direct Model Context Protocol streamable HTTP interface (`/mcp`).",
+          "enum": [
+            "mcp"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Flat tabular CSV (`/file.csv`), the one file an Endpoint publishes.",
+          "enum": [
+            "csv"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "OGC API - Features Part 1 collections and items (`/ogc/features/`).",
+          "enum": [
+            "ogc-features"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "SensorThings API v1.1 read projection (`/sta/v1.1/`); served only where listed (EP-104), and only on a space whose model has a numeric attribute with a unit (EP-125).",
+          "enum": [
+            "sta"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "OData v4 service of the Endpoint's view (`/odata/v4/`, EP-104).",
+          "enum": [
+            "odata"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Notifications over one WebSocket (`/ws`, EP-106).",
+          "enum": [
+            "websocket"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "iCalendar (RFC 5545) feed of the view's entities (`/ical/v1/`); served only where listed, through the mapping `spec.representations.ical` checked against the space's model (EP-125).",
+          "enum": [
+            "ical"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Atom, RSS 2.0 and JSON Feed of the view's entities (`/feed/v1/{name}/`); served exactly where `spec.representations.feed` lists an output, never through `enabledRepresentations` (EP-150, EP-151).",
+          "enum": [
+            "feed"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Representations": {
+      "additionalProperties": false,
+      "description": "`spec.representations`: the mappings of the domain-standard representations (EP-125).",
+      "properties": {
+        "feed": {
+          "description": "The feed outputs (Atom, RSS 2.0, JSON Feed); none means no feed (EP-150, EP-151).",
+          "items": {
+            "$ref": "#/definitions/FeedOutput"
+          },
+          "type": "array"
+        },
+        "ical": {
+          "description": "The iCalendar outputs (API/11 EP-159); none means no calendar is served. The single mapping object of version 1 loads as one output named `events` (deprecated).",
+          "items": {
+            "$ref": "#/definitions/IcalOutput"
+          },
+          "type": "array"
+        },
+        "widget": {
+          "description": "The catalogue widget's defaults per class: the map's geometry, colour, popup and clustering (API/11 EP-163). Never read by the broker.",
+          "items": {
+            "$ref": "#/definitions/WidgetOutput"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Source": {
+      "additionalProperties": false,
+      "description": "One original dataset the data comes from, itself a `dcat:Dataset`.",
+      "properties": {
+        "description": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Its description per language; DCAT-AP requires one of every dataset it names.",
+          "type": "object"
+        },
+        "title": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Its title per language; DCAT-AP requires one of every dataset it names.",
+          "type": "object"
+        },
+        "url": {
+          "description": "Its IRI, the page or API of the original.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "description",
+        "title",
+        "url"
+      ],
+      "type": "object"
+    },
+    "Status": {
+      "additionalProperties": false,
+      "description": "Server-computed lifecycle and reconciliation status (MF-04). Never stored in Git.",
+      "properties": {
+        "build": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Build"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the build lane published for an `App`, and the only place its artifact is named (AP-13a). Written back by the build lane in the commit that publishes the artifact; an App without it renders no pod, and no other principal may set it (AP-73)."
+        },
+        "conditions": {
+          "description": "Reconciler condition transitions.",
+          "items": {
+            "$ref": "#/definitions/Condition"
+          },
+          "type": "array"
+        },
+        "observedRevision": {
+          "description": "Git commit revision observed during reconciliation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Phase"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Current lifecycle phase."
+        },
+        "shard": {
+          "description": "The shard of the WASM host a `wasm` App runs on, recorded at its first publish and kept; the edge's route to the App's server is rendered from it (AP-149).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Subject": {
+      "additionalProperties": false,
+      "description": "One human or group a binding names; exactly one of `user`, `group` (PF-49).",
+      "properties": {
+        "group": {
+          "description": "A group: a `Group` manifest of the organization unless `source` says otherwise (PF-64).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SubjectSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Who owns `group`'s members: absent for a `Group` manifest, `provider` for a group the identity provider owns, which the reconciler never manages. Only a `RoleBinding` subject carries it, and only with `group` (PF-63, PF-64)."
+        },
+        "user": {
+          "description": "The person's Keycloak user id, the `sub` of their token: a lower-case UUID, never an e-mail or a username (PF-126); or a client's own `service-account-<client>` user.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SubjectSource": {
+      "description": "Who owns the members of a subject's group (PF-64).",
+      "oneOf": [
+        {
+          "description": "A group of the identity provider, such as the realm's default group; no `Group` manifest declares it and the reconciler never creates, edits or prunes it (PF-63).",
+          "enum": [
+            "provider"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Temporal": {
+      "additionalProperties": false,
+      "description": "The period a dataset covers; either end may be open.",
+      "properties": {
+        "end": {
+          "description": "The last day covered: `dcat:endDate`.",
+          "format": "date",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start": {
+          "description": "The first day covered: `dcat:startDate`.",
+          "format": "date",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Text": {
+      "anyOf": [
+        {
+          "description": "The form every new manifest writes.",
+          "type": "string"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/MultiLanguageMap"
+            }
+          ],
+          "description": "The legacy `{locale: text}` map."
+        }
+      ],
+      "description": "A human label or description (UI-50): one plain string in the author's language. The legacy language map is still read, through release `v0.9`, and resolves to one string."
+    },
+    "TypedRef": {
+      "additionalProperties": false,
+      "description": "Structured typed resource reference (MF-07).",
+      "properties": {
+        "kind": {
+          "description": "Target resource kind.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Target resource name.",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Target resource namespace (defaults to caller namespace if omitted).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "type": "object"
+    },
+    "Urn": {
+      "description": "NGSI-LD entity URN (ADR-N-041, PF-43): urn:ngsi-ld:{Type}:{id}; the prefixed shape urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId} is optional",
+      "pattern": "^urn:ngsi-ld:[A-Z][A-Za-z0-9]{1,63}:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2}){0,255}$",
+      "type": "string"
+    },
+    "Visualization": {
+      "additionalProperties": false,
+      "description": "One chart on the dataset (EP-130).",
+      "properties": {
+        "data": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/VisualizationData"
+            }
+          ],
+          "description": "Which of the Endpoint's own sources fills the spec's dataset `source`."
+        },
+        "description": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The view's description per language.",
+          "type": "object"
+        },
+        "name": {
+          "description": "Unique on the Endpoint, a DNS label: the CKAN view is found again by it.",
+          "type": "string"
+        },
+        "spec": {
+          "additionalProperties": true,
+          "description": "The Vega-Lite 5 or Vega 5 specification; it reads `{\"data\": {\"name\": \"source\"}}`.",
+          "type": "object"
+        },
+        "title": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The view's title per language.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "data",
+        "description",
+        "name",
+        "spec",
+        "title"
+      ],
+      "type": "object"
+    },
+    "VisualizationData": {
+      "description": "The Endpoint source a visualization reads, never a URL (ADR-N-053 §2.2).",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The Endpoint's `file.csv` of one entity type.",
+          "properties": {
+            "source": {
+              "enum": [
+                "csv"
+              ],
+              "type": "string"
+            },
+            "type": {
+              "description": "The entity type.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The items of one OGC API Features collection.",
+          "properties": {
+            "collection": {
+              "description": "The collection, the entity type.",
+              "type": "string"
+            },
+            "filter": {
+              "description": "A CQL2 text filter.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "properties": {
+              "description": "The properties to return, comma-separated.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source": {
+              "enum": [
+                "ogc"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "collection",
+            "source"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "One OData entity set.",
+          "properties": {
+            "$apply": {
+              "description": "`$apply`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "$filter": {
+              "description": "`$filter`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "$orderby": {
+              "description": "`$orderby`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "$select": {
+              "description": "`$select`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "entitySet": {
+              "description": "The entity set, the entity type.",
+              "type": "string"
+            },
+            "source": {
+              "enum": [
+                "odata"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "entitySet",
+            "source"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "NGSI-LD Query Temporal Evolution of Entities over the last `last`.",
+          "properties": {
+            "aggrMethod": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/AggrMethod"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The NGSI-LD aggregation method."
+            },
+            "aggrPeriod": {
+              "description": "The NGSI-LD aggregation period, an ISO 8601 duration.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "attrs": {
+              "description": "The attributes whose history is read.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "last": {
+              "description": "An ISO 8601 duration of at most `P31D`.",
+              "type": "string"
+            },
+            "source": {
+              "enum": [
+                "temporal"
+              ],
+              "type": "string"
+            },
+            "type": {
+              "description": "The entity type.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "attrs",
+            "last",
+            "source",
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "WidgetOutput": {
+      "additionalProperties": false,
+      "description": "One named output of `spec.representations.widget`.",
+      "properties": {
+        "description": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The output's description per language tag.",
+          "type": "object"
+        },
+        "name": {
+          "description": "A slug: lowercase letters, digits and `-`, 1 to 40, unique on the Endpoint.",
+          "type": "string"
+        },
+        "sources": {
+          "description": "The model classes it sets defaults for; 1 to 10, each class once.",
+          "items": {
+            "$ref": "#/definitions/WidgetSource"
+          },
+          "type": "array"
+        },
+        "title": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The output's title per language tag.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name",
+        "sources"
+      ],
+      "type": "object"
+    },
+    "WidgetRoles": {
+      "additionalProperties": false,
+      "description": "The map roles of a class; an absent role keeps the widget's default (EP-161).",
+      "properties": {
+        "colour": {
+          "description": "The enum or boolean attribute the markers are coloured and the legend is drawn by.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "geometry": {
+          "description": "The GeoProperty drawn (`location`, `operationSpace` or a model GeoProperty).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "popup": {
+          "description": "The attributes the popup shows, in order; 1 to 10.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "WidgetSource": {
+      "additionalProperties": false,
+      "description": "One class of a [`WidgetOutput`] and its map defaults.",
+      "properties": {
+        "cluster": {
+          "description": "Whether markers cluster; absent: the widget's own rule (above 200 in view, EP-161).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "mapping": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/WidgetRoles"
+            }
+          ],
+          "default": {},
+          "description": "The roles: which attribute the map reads for each."
+        },
+        "table": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WidgetTable"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the table starts; absent: the model's `view_*` annotations (EP-164)."
+        },
+        "type": {
+          "description": "The model class, by its local name (`Event`).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "WidgetTable": {
+      "additionalProperties": false,
+      "description": "The table defaults of a class (EP-164): what the reader sees first and can remove.",
+      "properties": {
+        "columns": {
+          "description": "The columns shown, in order; 1 to 30, each once.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "filter": {
+          "description": "The default filter, an NGSI-LD `q` whose dates may be `today`, `today+7d`, `today-1d`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "orderBy": {
+          "description": "The default order: one attribute, `;desc` for descending (`startDate`, `name;desc`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pageLength": {
+          "description": "Rows per page: 10, 20, 50 or 100.",
+          "format": "uint16",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  "description": "Kubernetes-style resource envelope (MF-01..MF-04).",
+  "properties": {
+    "apiVersion": {
+      "description": "API version: [`API_VERSION`], or a version [`serves`] accepts for this kind.",
+      "type": "string"
+    },
+    "kind": {
+      "description": "Resource kind name (must match [`Kind::KIND`]).",
+      "type": "string"
+    },
+    "metadata": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ObjectMeta"
+        }
+      ],
+      "description": "Metadata identifying and labeling the resource."
+    },
+    "spec": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/EndpointSpec"
+        }
+      ],
+      "description": "Desired spec state."
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Status"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Server-computed status. Stripped during export and serialization."
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "ResourceEnvelope_for_EndpointSpec",
+  "type": "object"
+}

@@ -1,0 +1,38 @@
+# The data model this sample reads: one class, as the endpoint's space declares it (SDK-10).
+id: https://example.org/samples/citizen-map
+name: citizen-map
+prefixes:
+  linkml: https://w3id.org/linkml/
+  schema: https://schema.org/
+default_range: string
+imports:
+  - linkml:types
+classes:
+  BikeHireDockingStation:
+    description: A city bike station, with what it has now.
+    attributes:
+      name:
+        range: string
+        required: true
+        slot_uri: schema:name
+      location:
+        description: GeoJSON Point of the station.
+        range: string
+        required: true
+      availableBikeNumber:
+        description: Bikes a person can take now.
+        range: integer
+        minimum_value: 0
+      freeSlotNumber:
+        description: Docks free to return a bike to.
+        range: integer
+        minimum_value: 0
+      status:
+        range: StationStatus
+enums:
+  StationStatus:
+    permissible_values:
+      working:
+        title: Open
+      outOfService:
+        title: Out of service

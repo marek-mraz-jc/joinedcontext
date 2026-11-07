@@ -1,0 +1,13 @@
+# T-2733: the app workflow as one conversation (Testing/07 §3, AG-87).
+workflow: app
+as: steward
+says:
+  - "Which applications are being built in this project right now?"
+expect:
+  calls:
+    - tool: jc_run_list
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: which applications are being built in this project right now?"

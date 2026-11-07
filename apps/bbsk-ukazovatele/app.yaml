@@ -1,0 +1,66 @@
+# The indicators of the Banskobystrický kraj and of the city of Banská Bystrica, side by side
+# (AP-07, AP-14, AP-18, T-2308). Hand written, so no generated-by annotation.
+#
+# It reads and never writes, so it is `static`: a bundle the Portal static host serves under
+# /apps/bbsk-ukazovatele/, calling the endpoints with the reader's own token (AP-07). Every card
+# comes from a KeyPerformanceIndicator entity computed by the pipelines of T-2307; the
+# application derives nothing but the threshold state, which is its own (Development/11 §2).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: bbsk-ukazovatele
+  namespace: bbsk
+  annotations:
+    # The Portal image ships this bundle (Dockerfile, /srv/apps), so the App names no
+    # repository of its own; the Portal accepts the mark only where the bundle is (AP-87).
+    joinedcontext.com/shipped-with: portal
+  title:
+    sk: "Ukazovatele kraja a mesta"
+    en: "Indicators of the region and the city"
+  description:
+    sk: "Ukazovatele Banskobystrického samosprávneho kraja a mesta Banská Bystrica vedľa seba: hodnota, jednotka, obdobie a čas výpočtu, pri každom je uvedené, koho číslo to je."
+    en: "The indicators of the Banská Bystrica self-governing region and of the city of Banská Bystrica side by side: value, unit, window and when it was computed, each card saying whose number it is."
+spec:
+  kind: ui
+  source:
+    path: ./apps/bbsk-ukazovatele
+  build:
+    node: "22"
+  # Anyone who may open the region's own KPI endpoint; the city's indicators are published by the
+  # city and reached through the SharedSpaceReference `mesto-kpi` the region declares (EP-15,
+  # Development/10 §8), so this app never widens either body's grant.
+  visibility: project
+  lifecycle: published
+  embeddable: true
+  dataNeeds:
+    # Its own space first: the reconciler renders one Endpoint per app from it (AP-04), and the
+    # app's own is on the region's indicators. The city's endpoint arrives in the served
+    # configuration's `endpoints` (SDK-02) and is read with the same reader's token.
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: bbsk-kpi
+      types: [KeyPerformanceIndicator]
+      # PF-54 fixes the attribute set; the app reads all of it and writes none of it.
+      attrs: [name, currentValue, calculationPeriod, calculationFormula, derivedFrom, computedBy, updatedAt, location]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]
+    # The further space (AP-04, T-2933): the district outlines of the region's register, read only
+    # through that space's public Endpoint `bbsk-registre`. Compiled into no grant: that endpoint
+    # already answers anyone, and the map draws each district in the colour of its indicator.
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: bbsk-registre
+      types: [AdministrativeArea]
+      attrs: [name, divisionLevel, location]
+      operations: [queryEntity]
+      representations: [ngsi-ld]
+    # The second further space (AP-04, T-2934): the region's yearly rows, read only through
+    # bbsk-kraj's public Endpoint `bbsk-kraj-verejne`, for the trend line on each region card.
+    # Compiled into no grant: that endpoint answers anyone already, steward's notes left out.
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: bbsk-kraj
+      types: [KeyPerformanceIndicator]
+      attrs: [dataSet, indicator, refArea, refPeriod, dimensionKey, kpiValue]
+      operations: [queryEntity]
+      representations: [ngsi-ld]

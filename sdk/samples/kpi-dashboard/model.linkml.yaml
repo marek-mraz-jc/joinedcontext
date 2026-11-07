@@ -1,0 +1,32 @@
+# One observation of one indicator per row: a month's value beside the target it is held to.
+id: https://example.org/samples/kpi-dashboard
+name: kpi-dashboard
+prefixes:
+  linkml: https://w3id.org/linkml/
+  schema: https://schema.org/
+default_range: string
+imports:
+  - linkml:types
+classes:
+  KeyPerformanceIndicator:
+    description: The value of one indicator for one period.
+    attributes:
+      name:
+        range: string
+        required: true
+        slot_uri: schema:name
+      category:
+        range: string
+      kpiValue:
+        range: float
+        required: true
+      target:
+        range: float
+      unit:
+        range: string
+      higherIsBetter:
+        description: Whether a value above the target is good (a share of recycled waste) or bad (a waiting time).
+        range: boolean
+      dateObserved:
+        range: date
+        required: true

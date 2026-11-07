@@ -1,0 +1,65 @@
+# The hsl-transport reference app (AP-34, AP-38). Hand written, so no generated-by annotation.
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: hsl-transport
+  namespace: helsinki
+  title:
+    fi: "HSL livenä"
+    en: "HSL live"
+  description:
+    fi: "Bussit, raitiovaunut, metrot, junat ja lautat kartalla, pysäkkien lähdöt ja HSL:n häiriötiedotteet."
+    en: "Buses, trams, metros, trains and ferries on a map, the departures of a stop and HSL's service alerts."
+spec:
+  kind: ui-rust
+  source:
+    git:
+      url: https://dev.joinedcontext.com/git/joinedcontext/helsinki_hsl-transport.git
+      ref: main
+  build:
+    rust: "1.90"
+    node: "22"
+  # Public: the endpoint behind it is public and the app never sees a user (AP-28). Widening
+  # the audience is what puts this publication in the yellow lane (AP-20).
+  visibility: public
+  # A reference app ships with the platform, so its publication is the commit that adds it and
+  # its review is the pull request; there is no earlier state for it to sit in (AP-20).
+  lifecycle: published
+  # The Portal frames it in the apps catalogue, which is what `embeddable` is for (AP-12).
+  embeddable: true
+  dataNeeds:
+    # One space, read only. No write anywhere in this app. The `Vehicle` slots the HFP pipeline
+    # fills, and for the departures and alerts beside the map (T-3895): the stops that carry
+    # departures, the headsign of each line and direction, and HSL's service alerts.
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [Vehicle]
+      attrs: [location, heading, speed, route, transportMode]
+      operations: [queryEntity, retrieveEntity]
+      # The positions arrive over the Endpoint's WebSocket (T-3581); REST reads the whole fleet
+      # after a new subscription or a gap.
+      representations: [ngsi-ld, websocket, ogc-features]
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [GtfsStop]
+      attrs: [name, location, departures]
+      operations: [queryEntity]
+      representations: [ngsi-ld]
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [PublicTransportRoute]
+      attrs: [route, directionId, headsign]
+      operations: [queryEntity]
+      representations: [ngsi-ld]
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [Alert]
+      attrs: [name, description, severity, validFrom, validTo, refRoute, refStop, unknownReference, source]
+      operations: [queryEntity]
+      representations: [ngsi-ld]
+  limits:
+    maxFileRows: 5000

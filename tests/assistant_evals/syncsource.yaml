@@ -1,0 +1,13 @@
+# T-2733: the syncsource workflow as one conversation (Testing/07 §3, AG-87).
+workflow: syncsource
+as: steward
+says:
+  - "Is the regional sync source up to date?"
+expect:
+  calls:
+    - tool: jc_syncsource_status
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: is the regional sync source up to date?"

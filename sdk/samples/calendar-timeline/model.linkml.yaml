@@ -1,0 +1,35 @@
+# The data model this sample reads (SDK-10).
+id: https://example.org/samples/calendar-timeline
+name: calendar-timeline
+prefixes:
+  linkml: https://w3id.org/linkml/
+  schema: https://schema.org/
+default_range: string
+imports:
+  - linkml:types
+classes:
+  Event:
+    description: Something that happens at a place and a time.
+    class_uri: schema:Event
+    attributes:
+      name:
+        range: string
+        required: true
+        slot_uri: schema:name
+      description:
+        range: string
+        slot_uri: schema:description
+      category:
+        range: string
+      venue:
+        description: Where it happens, as a person would say it.
+        range: string
+        slot_uri: schema:location
+      startDate:
+        description: When it starts; an event without one is not placed on the calendar yet.
+        range: datetime
+        slot_uri: schema:startDate
+      endDate:
+        description: When it ends; the start when absent or earlier than the start.
+        range: datetime
+        slot_uri: schema:endDate

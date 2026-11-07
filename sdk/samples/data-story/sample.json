@@ -1,0 +1,19 @@
+{
+  "name": "data-story",
+  "title": "Public data story",
+  "purpose": "Tell the public what the data says in a scrolling narrative: a lede with the main number, then sections that each make one claim with a chart or a map, the numbers behind each chart, and how they were computed.",
+  "archetype": "data-story",
+  "audience": "public",
+  "layout": "narrative-column",
+  "keywords": ["story", "stories", "narrative", "article", "explainer", "public", "citizens", "annual", "storytelling", "journalism", "press", "open-data", "insight", "insights", "scroll", "scrollytelling"],
+  "ready": "How clean was the air?",
+  "dataNeeds": [
+    {
+      "types": ["AirQualityObserved"],
+      "attrs": ["stationName", "pm25", "dateObserved", "location"],
+      "operations": ["queryEntity"]
+    }
+  ],
+  "access": "Read-only and public-ready: no sign-in, no write, no personal data.",
+  "sdk": ["useEntities", "format", "currentTokens", "Page", "Header"]
+}

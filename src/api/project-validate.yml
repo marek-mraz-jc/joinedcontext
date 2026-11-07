@@ -1,0 +1,32 @@
+# The check every merge request of this project repository passes, and every push to main
+# (CC-90): the project loads, each manifest against its schema, under this repository's slug.
+# The Portal writes this file in the repository's first commit; the organization render that
+# gates an apply (CC-86) runs in the Portal when the registry entry's ref moves.
+#
+# Runs on the installation's `gitea-runner` (label node-22), whose image carries jcctl. No step
+# fetches an action: the runner reaches the forge by its in-cluster address, JC_FORGE_URL, and
+# the job token reads this repository and nothing else.
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: node-22
+    timeout-minutes: 5
+    steps:
+      - name: jcctl validate --project
+        env:
+          JC_REPOSITORY: ${{ gitea.repository }}
+          JC_REF: ${{ gitea.event_name == 'pull_request' && format('refs/pull/{0}/head', gitea.event.number) || gitea.ref }}
+          JC_FORGE_TOKEN: ${{ gitea.token }}
+        run: |
+          set -eu
+          git init -q "$RUNNER_TEMP/project" && cd "$RUNNER_TEMP/project"
+          git -c "http.extraHeader=Authorization: token $JC_FORGE_TOKEN" \
+            fetch -q --depth 1 "$JC_FORGE_URL/$JC_REPOSITORY.git" "$JC_REF"
+          git checkout -q FETCH_HEAD
+          jcctl validate --project . --slug "${JC_REPOSITORY#*/}"

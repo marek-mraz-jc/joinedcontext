@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>joinedcontext Portal</title>
+    <!-- T-4201: shown only when the app has not drawn itself after 8 s (its entry script did not
+         load); React replaces the contents of #root on its first render. No script: the CSP allows
+         none inline; this style applies by the nonce vite stamps on it (T-5828). -->
+    <style>
+      #boot-failed { opacity: 0; animation: boot-failed-show 0s 8s forwards; max-width: 32rem; margin: 2rem auto; padding: 0 1rem; font-family: system-ui, sans-serif; }
+      @keyframes boot-failed-show { to { opacity: 1; } }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <main id="boot-failed" role="alert">
+        <p lang="sk"><strong>Portál sa nenačítal.</strong> Spojenie vypadlo alebo bol Portál práve aktualizovaný. Načítajte stránku znova.</p>
+        <p lang="en"><strong>The Portal did not load.</strong> The connection dropped or the Portal was just updated. Load the page again.</p>
+      </main>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,157 @@
+/**
+ * The services catalog an AI agent reads to glue an App (T-3585, ADR-N-045, SDK-45): for each
+ * platform service the TypeScript calls with their signatures as API.md declares them, the Rust
+ * calls of `jc-app-sdk`, the `app.yaml` lines it needs and its quotas; every other export of the
+ * SDK under `kit`. Built here from API.md and the real exports, so `services.json` cannot drift:
+ * regenerate it with `JC_WRITE_CATALOG=1 pnpm vitest run tests/services-catalog.test.ts`.
+ */
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import apiMd from "../API.md?raw";
+import * as sdk from "../src/sdk/index";
+
+const CATALOG = join(__dirname, "..", "services.json");
+
+/** Which exports serve which service; an export not named here is the kit's. */
+const SERVICES = [
+  {
+    service: "identity",
+    always: true,
+    what: "who is signed in and what they may do, from the App's Keycloak client (AP-111)",
+    typescript: ["useMe", "useAccess"],
+    rust: [],
+    appYaml: [],
+    quotas: [],
+    examples: ["examples/services/identity.tsx"],
+  },
+  {
+    service: "data",
+    always: true,
+    what: "the entities of the App's Endpoint, compiled from dataNeeds (AP-05)",
+    typescript: ["jc", "JcProvider", "useClient", "useOptionalClient", "useEntities", "useEntity", "useSave", "useSchema", "ProblemError", "jc().features.collections", "jc().features.items", "jc().features.get"],
+    rust: [
+      "jc_app_sdk::gateway::get(path: &str) -> Result<Vec<u8>, Error>",
+      "jc_app_sdk::gateway::get_json<T>(path: &str) -> Result<T, Error>",
+      "jc_app_sdk::gateway::features<T>(collection: &str, query: &[(&str, &str)]) -> Result<T, Error>",
+      "jc_app_sdk::gateway::feature<T>(collection: &str, id: &str) -> Result<T, Error>",
+    ],
+    appYaml: ["dataNeeds: [{ contextSpaceRef, types, attrs, operations }]"],
+    quotas: [],
+    examples: ["examples/services/data.tsx", "template-wasm/server/src/lib.rs"],
+  },
+  {
+    service: "files",
+    always: false,
+    what: "objects under the App's own prefix (AP-170)",
+    typescript: ["jc().files.put", "jc().files.get", "jc().files.list", "jc().files.remove", "jc().files.url"],
+    rust: [
+      "jc_app_sdk::blob::get(key: &str) -> Result<Vec<u8>, Error>",
+      "jc_app_sdk::blob::put(key: &str, data: &[u8], content_type: Option<&str>) -> Result<(), Error>",
+      "jc_app_sdk::blob::list(prefix: &str) -> Result<Vec<String>, Error>",
+      "jc_app_sdk::blob::delete(key: &str) -> Result<(), Error>",
+      "jc_app_sdk::blob::presign(key: &str, method: Method, expires_seconds: u32) -> Result<String, Error>",
+      "jc_app_sdk::blob::presign_put(key: &str, size: u64, expires_seconds: u32) -> Result<String, Error>",
+    ],
+    appYaml: ["services: [files]", "kind: wasm and storage.blob for the Rust calls"],
+    quotas: ["filesMiB"],
+    examples: ["examples/services/files.tsx"],
+  },
+  {
+    service: "email",
+    always: false,
+    what: "a message to people of the organization, never to a typed address (AP-168)",
+    typescript: ["jc().email.send"],
+    rust: ["jc_app_sdk::email::send(message: &Email) -> Result<String, Error>"],
+    appYaml: ["services: [email]"],
+    quotas: ["emailsPerDay"],
+    examples: ["examples/services/email.tsx", "template-wasm/server/src/lib.rs"],
+  },
+  {
+    service: "jobs",
+    always: false,
+    what: "the schedules of a wasm App, five-field cron in UTC (AP-154)",
+    typescript: ["jc().jobs.list"],
+    rust: ["an exported fn() -> Result<(), String> named by spec.server.jobs[].export"],
+    appYaml: ["kind: wasm", "server.jobs: [{ name, schedule, export }]"],
+    quotas: ["at most 10 jobs"],
+    examples: ["examples/services/jobs.tsx"],
+  },
+  {
+    service: "ai",
+    always: false,
+    what: "a completion from a model of the organization's list (AP-169)",
+    typescript: ["jc().ai.complete"],
+    rust: ["jc_app_sdk::ai::complete(request: &Completion) -> Result<Answer, Error>"],
+    appYaml: ["services: [ai]"],
+    quotas: ["aiTokensPerDay"],
+    examples: ["examples/services/ai.tsx", "template-wasm/server/src/lib.rs"],
+  },
+];
+
+/** A call on the client `jc()` returns (`jc().email.send`), not an export of its own. */
+const isClientCall = (name: string) => name.startsWith("jc().");
+
+/** The `ts` line of API.md that declares `name`, or `null` when API.md names it only in prose. */
+function signatureOf(name: string): string | null {
+  for (const block of apiMd.matchAll(/```ts\n([\s\S]*?)```/g)) {
+    for (const line of block[1].split("\n")) {
+      const declared = isClientCall(name)
+        ? line.trim().startsWith(`${name}(`)
+        : new RegExp(`^(?:async\\s+)?(?:function|class|const|interface|type)\\s+${name}\\b`).test(line.trim());
+      if (declared) return line.trim();
+    }
+  }
+  return null;
+}
+
+export function buildCatalog() {
+  const named = new Set(SERVICES.flatMap((s) => s.typescript));
+  return {
+    $comment: "Generated by sdk/tests/services-catalog.test.ts from API.md and the SDK's exports (T-3585); never edit by hand.",
+    package: "@joinedcontext/sdk",
+    services: SERVICES.map((s) => ({
+      ...s,
+      typescript: s.typescript.map((name) => ({ name, signature: signatureOf(name) })),
+    })),
+    kit: Object.keys(sdk)
+      .filter((name) => !named.has(name))
+      .sort(),
+  };
+}
+
+describe("the services catalog", () => {
+  const built = buildCatalog();
+  if (process.env.JC_WRITE_CATALOG) writeFileSync(CATALOG, JSON.stringify(built, null, 2) + "\n");
+
+  it("is services.json as committed", () => {
+    expect(JSON.parse(readFileSync(CATALOG, "utf8"))).toEqual(built);
+  });
+
+  it("names every export of the SDK once, and nothing the SDK does not export", () => {
+    const listed = [...built.services.flatMap((s) => s.typescript.map((f) => f.name)).filter((name) => !isClientCall(name)), ...built.kit];
+    expect(listed.filter((name) => !(name in sdk))).toEqual([]);
+    expect(Object.keys(sdk).filter((name) => !listed.includes(name))).toEqual([]);
+    expect(new Set(listed).size).toBe(listed.length);
+  });
+
+  it("points at examples that exist, one at least for each service the SDK has calls for", () => {
+    const missing = built.services.flatMap((s) => s.examples).filter((path) => !existsSync(join(__dirname, "..", path)));
+    expect(missing).toEqual([]);
+    const without = built.services.filter((s) => s.typescript.length > 0 && s.examples.length === 0).map((s) => s.service);
+    expect(without).toEqual([]);
+  });
+
+  it("gives every service call its signature from API.md", () => {
+    const unsigned = built.services.flatMap((s) => s.typescript.filter((f) => f.signature === null).map((f) => f.name));
+    expect(unsigned).toEqual([]);
+  });
+
+  it("lists the six services of ADR-N-045 and holds no host, token or tenant", () => {
+    expect(built.services.map((s) => s.service)).toEqual(["identity", "data", "files", "email", "jobs", "ai"]);
+    const text = JSON.stringify(built);
+    for (const leak of ["://", "Bearer", "jcr_", "helsinki", "bystrica", "joinedcontext.com"]) {
+      expect(text).not.toContain(leak);
+    }
+  });
+});

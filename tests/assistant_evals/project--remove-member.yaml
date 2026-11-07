@@ -1,0 +1,18 @@
+# T-6533: removing a person from the project removes the RoleBindings that name them, found by
+# name, and the removal dialog opens for the person to propose (live walk T-6490, S-32).
+workflow: project
+as: steward
+says:
+  - "Remove T6025 Admin from the project."
+expect:
+  calls:
+    - tool: jc_member_list
+    - tool: change_resource
+      input:
+        kind: RoleBinding
+        delete: true
+  outcome: form
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: remove T6025 Admin from the project."

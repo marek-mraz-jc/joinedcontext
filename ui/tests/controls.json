@@ -1,0 +1,2499 @@
+{
+  "$comment": [
+    "T-2136: every control a person operates in the Portal, per module, with the tests that name",
+    "that module. gate_controls.test.ts reads the source and fails when a module's controls differ",
+    "from this file: a new button is a red build until it is recorded here and a test names its",
+    "module. A module with controls and no test is allowed only while gate_modules.allow.json",
+    "lists it. Measured 2026-09-20: 87 modules, 292 controls, 1 of them still untested.",
+    "Regenerate the changed entry by hand from the failure message; the file is the record, not an",
+    "output nobody reads."
+  ],
+  "modules": {
+    "src/assistant/AssistantDock.tsx": {
+      "controls": {
+        "button": 1,
+        "Button": 14
+      },
+      "tests": [
+        "agent_run.test.tsx",
+        "app_route.test.tsx",
+        "assistant_capabilities.test.tsx",
+        "assistant_endpoints.test.tsx",
+        "assistant_full_screen.test.tsx",
+        "assistant_layout.test.tsx",
+        "assistant_open.test.tsx",
+        "assistant_picked.test.tsx",
+        "assistant_turns.test.tsx",
+        "form_assistant_dock.test.tsx"
+      ]
+    },
+    "src/assistant/Capabilities.tsx": {
+      "controls": {
+        "Button": 1,
+        "RadioGroup": 1,
+        "Switch": 1
+      },
+      "tests": [
+        "assistant_capabilities.test.tsx",
+        "assistant_open.test.tsx"
+      ]
+    },
+    "src/assistant/ConversationList.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "assistant_full_screen.test.tsx"
+      ]
+    },
+    "src/assistant/EndpointPicker.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "assistant_capabilities.test.tsx",
+        "assistant_endpoints.test.tsx",
+        "assistant_open.test.tsx",
+        "part_endpoint_picker.test.tsx"
+      ]
+    },
+    "src/components/ActivityFeed.tsx": {
+      "controls": {
+        "Button": 1,
+        "Switch": 1
+      },
+      "tests": [
+        "activity_feed.test.tsx",
+        "form_activity_feed.test.tsx"
+      ]
+    },
+    "src/components/AlertDialog.tsx": {
+      "controls": {
+        "Button": 2,
+        "Checkbox": 1,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "alert_dialog.test.tsx"
+      ]
+    },
+    "src/components/DeleteProjectDialog.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "organization_page.test.tsx"
+      ]
+    },
+    "src/components/DeleteResourceDialog.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "form_delete_resource_dialog.test.tsx",
+        "permission_guard.test.tsx"
+      ]
+    },
+    "src/components/DuplicateProjectDialog.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "project_duplicate_import.test.tsx"
+      ]
+    },
+    "src/components/EditResourceDialog.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "edit_prefill.test.tsx",
+        "lazy_dialogs.test.tsx",
+        "permission_guard.test.tsx"
+      ]
+    },
+    "src/components/EditResourceDialogBody.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "form_edit_resource_dialog.test.tsx",
+        "yaml_manifest_view.test.tsx"
+      ]
+    },
+    "src/components/ErrorBoundary.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "browser_security.test.tsx",
+        "error_boundary_chunk.test.tsx",
+        "lazy_dialogs.test.tsx"
+      ]
+    },
+    "src/components/FeedbackButton.tsx": {
+      "controls": {
+        "Button": 3,
+        "Checkbox": 1
+      },
+      "tests": [
+        "feedback_button.test.tsx",
+        "page_help.test.tsx"
+      ]
+    },
+    "src/components/HelpMenu.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "page_help.test.tsx",
+        "whats_new.test.tsx"
+      ]
+    },
+    "src/components/ImportProjectDialog.tsx": {
+      "controls": {
+        "Button": 4,
+        "FilePicker": 1
+      },
+      "tests": [
+        "project_duplicate_import.test.tsx"
+      ]
+    },
+    "src/components/JobsMenu.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "jobs.test.tsx"
+      ]
+    },
+    "src/components/LanguageSwitcher.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "part_language_switcher.test.tsx"
+      ]
+    },
+    "src/components/ProjectRelease.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "project_release.test.tsx"
+      ]
+    },
+    "src/components/ResourceFormDialogBody.tsx": {
+      "controls": {
+        "Button": 1,
+        "Checkbox": 1
+      },
+      "tests": [
+        "draft_form.test.tsx",
+        "form_asks_the_assistant.test.tsx",
+        "form_check_names_the_missing_field.test.tsx",
+        "form_empty_check_marks_the_field.test.tsx",
+        "resource_history.test.tsx"
+      ]
+    },
+    "src/components/ResourceHistory.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "resource_history.test.tsx"
+      ]
+    },
+    "src/components/SaveAsDialog.tsx": {
+      "controls": {
+        "Button": 5,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "form_save_as_dialog.test.tsx",
+        "save_as.test.tsx"
+      ]
+    },
+    "src/components/SessionEndedDialog.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "session_ended.test.tsx"
+      ]
+    },
+    "src/components/StepUpDialog.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "step_up.test.tsx"
+      ]
+    },
+    "src/components/WorkOnCopyDialog.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "form_work_on_copy_dialog.test.tsx",
+        "workspaces_ui.test.tsx"
+      ]
+    },
+    "src/components/dashboards/TemporalChart.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "chart_widgets.test.tsx",
+        "dashboard_pages.test.tsx",
+        "part_failures_are_not_waits.test.tsx"
+      ]
+    },
+    "src/components/drift/DriftResolutionModal.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "drift_modal.test.tsx"
+      ]
+    },
+    "src/components/endpoints/AccessMatrix.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "access_matrix.test.tsx"
+      ]
+    },
+    "src/components/endpoints/QueryCard.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "query_card.test.tsx"
+      ]
+    },
+    "src/components/endpoints/UsageSection.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "endpoint_usage.test.tsx"
+      ]
+    },
+    "src/components/endpoints/links.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "browser_security.test.tsx",
+        "endpoint_reads_name_a_type.test.tsx",
+        "endpoint_representation_summary.test.tsx",
+        "endpoint_representations.test.ts",
+        "part_endpoint_links.test.tsx"
+      ]
+    },
+    "src/components/endpoints/PolicyGrants.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "endpoint_grants_words.test.tsx"
+      ]
+    },
+    "src/components/entities/history/AttributeHistory.tsx": {
+      "controls": {
+        "Button": 6
+      },
+      "tests": [
+        "attribute_history.test.tsx"
+      ]
+    },
+    "src/components/entities/AddFieldDialog.tsx": {
+      "controls": {
+        "Button": 3,
+        "Checkbox": 2
+      },
+      "tests": [
+        "add_field.test.tsx"
+      ]
+    },
+    "src/components/entities/DataToolbar.tsx": {
+      "controls": {
+        "Button": 1,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "data_toolbar.test.tsx"
+      ]
+    },
+    "src/components/entities/EndpointDataView.tsx": {
+      "controls": {
+        "Button": 7
+      },
+      "tests": [
+        "data_toolbar.test.tsx",
+        "endpoint_data_view.test.tsx"
+      ]
+    },
+    "src/components/entities/EntityFilters.tsx": {
+      "controls": {
+        "Button": 2,
+        "Checkbox": 1
+      },
+      "tests": [
+        "form_entity_filters.test.tsx"
+      ]
+    },
+    "src/components/entities/FilterPanel.tsx": {
+      "controls": {
+        "Button": 7
+      },
+      "tests": [
+        "grid_toolbar.test.tsx"
+      ]
+    },
+    "src/components/entities/ViewBar.tsx": {
+      "controls": {
+        "Button": 7,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "view_bar.test.tsx"
+      ]
+    },
+    "src/components/entities/GridToolbar.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "count_scope.test.tsx",
+        "grid_sort_group.test.tsx",
+        "grid_toolbar.test.tsx"
+      ]
+    },
+    "src/components/entities/ViewOptions.tsx": {
+      "controls": {
+        "Button": 4,
+        "Checkbox": 1
+      },
+      "tests": [
+        "count_scope.test.tsx",
+        "grid_toolbar.test.tsx",
+        "view_options.test.tsx"
+      ]
+    },
+    "src/components/export/ExportButton.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "part_endpoint_links.test.tsx"
+      ]
+    },
+    "src/components/export/ExportModal.tsx": {
+      "controls": {
+        "Button": 2,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "export_filename.test.ts",
+        "export_modal.test.tsx"
+      ]
+    },
+    "src/components/forms/FormRoute.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "form_route.test.tsx"
+      ]
+    },
+    "src/components/forms/ResourceFormFooter.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "form_dialog_parts.test.tsx"
+      ]
+    },
+    "src/components/forms/ResourceFormNotes.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "form_dialog_parts.test.tsx"
+      ]
+    },
+    "src/components/forms/ResourceYamlPanel.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "form_dialog_parts.test.tsx"
+      ]
+    },
+    "src/components/forms/theme.tsx": {
+      "controls": {
+        "Button": 3,
+        "Checkbox": 2
+      },
+      "tests": [
+        "part_theme.test.tsx"
+      ]
+    },
+    "src/components/forms/widgets/AccessPresetChoice.tsx": {
+      "controls": {
+        "RadioGroup": 1
+      },
+      "tests": [
+        "access_presets.test.tsx"
+      ]
+    },
+    "src/components/forms/widgets/AttributeCapabilitiesField.tsx": {
+      "controls": {
+        "Button": 1,
+        "Checkbox": 1
+      },
+      "tests": [
+        "policy_attribute_capabilities.test.tsx"
+      ]
+    },
+    "src/components/forms/widgets/KnowledgeSourcesField.tsx": {
+      "controls": {
+        "Checkbox": 1
+      },
+      "tests": [
+        "assistant_deployment_form.test.tsx"
+      ]
+    },
+    "src/components/forms/widgets/ListFailed.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "list_failed_says_why.test.tsx"
+      ]
+    },
+    "src/components/forms/widgets/OperationsPicker.tsx": {
+      "controls": {
+        "Checkbox": 2
+      },
+      "tests": [
+        "operations_picker.test.tsx"
+      ]
+    },
+    "src/components/forms/widgets/ResourcePicker.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "resource_picker.test.tsx"
+      ]
+    },
+    "src/components/grid/ManifestGrid.tsx": {
+      "controls": {
+        "Button": 8,
+        "Checkbox": 3,
+        "Switch": 1
+      },
+      "tests": [
+        "manifest_grid.test.tsx"
+      ]
+    },
+    "src/components/layout/MemberFrame.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "member_catalogue.test.tsx"
+      ]
+    },
+    "src/components/layout/NewProject.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "form_new_project.test.tsx"
+      ]
+    },
+    "src/components/layout/Shell.tsx": {
+      "controls": {
+        "Button": 5
+      },
+      "tests": [
+        "addressItem.test.ts",
+        "otherPageCrumb.test.tsx"
+      ]
+    },
+    "src/components/layout/PublicFrame.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "public_app.test.tsx"
+      ]
+    },
+    "src/components/layout/WorkspaceBar.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "part_workspace_bar.test.tsx",
+        "workspaces_ui.test.tsx"
+      ]
+    },
+    "src/components/pickers/Combobox.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "pickers.test.tsx"
+      ]
+    },
+    "src/components/ui/Button.tsx": {
+      "controls": {
+        "button": 1
+      },
+      "tests": [
+        "browser_security.test.tsx",
+        "contract_alert_badge_button.test.tsx",
+        "contract_card_dialog_menu_table.test.tsx",
+        "contract_field.test.tsx",
+        "contract_widget_describedby.test.tsx",
+        "dialog_focus.test.tsx",
+        "edge_card_dialog_menu_table.test.tsx",
+        "form_contract_self.test.tsx",
+        "glossary_page.test.tsx",
+        "list_page_header.test.tsx",
+        "page_header_route.test.tsx",
+        "part_resource_list.test.tsx",
+        "permission_guard.test.tsx",
+        "picker_describedby.test.tsx",
+        "record_view.test.tsx",
+        "resource_list.test.tsx",
+        "term.test.tsx",
+        "ui_components.test.tsx",
+        "ui_shared_controls.test.tsx",
+        "ui_tabs_checkbox.test.tsx"
+      ]
+    },
+    "src/components/ui/Checkbox.tsx": {
+      "controls": {
+        "input": 1
+      },
+      "tests": [
+        "browser_security.test.tsx",
+        "contract_alert_badge_button.test.tsx",
+        "contract_card_dialog_menu_table.test.tsx",
+        "contract_field.test.tsx",
+        "contract_widget_describedby.test.tsx",
+        "dialog_focus.test.tsx",
+        "edge_card_dialog_menu_table.test.tsx",
+        "glossary_page.test.tsx",
+        "list_page_header.test.tsx",
+        "page_header_route.test.tsx",
+        "part_resource_list.test.tsx",
+        "permission_guard.test.tsx",
+        "picker_describedby.test.tsx",
+        "record_view.test.tsx",
+        "resource_list.test.tsx",
+        "term.test.tsx",
+        "ui_components.test.tsx",
+        "ui_shared_controls.test.tsx",
+        "ui_tabs_checkbox.test.tsx"
+      ]
+    },
+    "src/components/ui/ConfirmDialog.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "browser_security.test.tsx",
+        "contract_alert_badge_button.test.tsx",
+        "contract_card_dialog_menu_table.test.tsx",
+        "contract_field.test.tsx",
+        "contract_widget_describedby.test.tsx",
+        "dialog_focus.test.tsx",
+        "edge_card_dialog_menu_table.test.tsx",
+        "glossary_page.test.tsx",
+        "list_page_header.test.tsx",
+        "page_header_route.test.tsx",
+        "part_resource_list.test.tsx",
+        "permission_guard.test.tsx",
+        "picker_describedby.test.tsx",
+        "record_view.test.tsx",
+        "resource_list.test.tsx",
+        "term.test.tsx",
+        "ui_components.test.tsx",
+        "ui_shared_controls.test.tsx",
+        "ui_tabs_checkbox.test.tsx"
+      ]
+    },
+    "src/components/ui/FileDropZone.tsx": {
+      "controls": {
+        "FilePicker": 1
+      },
+      "tests": [
+        "browser_security.test.tsx",
+        "contract_alert_badge_button.test.tsx",
+        "contract_card_dialog_menu_table.test.tsx",
+        "contract_field.test.tsx",
+        "contract_widget_describedby.test.tsx",
+        "dialog_focus.test.tsx",
+        "edge_card_dialog_menu_table.test.tsx",
+        "glossary_page.test.tsx",
+        "list_page_header.test.tsx",
+        "page_header_route.test.tsx",
+        "part_resource_list.test.tsx",
+        "permission_guard.test.tsx",
+        "picker_describedby.test.tsx",
+        "record_view.test.tsx",
+        "resource_list.test.tsx",
+        "term.test.tsx",
+        "ui_components.test.tsx",
+        "ui_shared_controls.test.tsx",
+        "ui_tabs_checkbox.test.tsx"
+      ]
+    },
+    "src/components/ui/FilePicker.tsx": {
+      "controls": {
+        "input": 1
+      },
+      "tests": [
+        "browser_security.test.tsx",
+        "contract_alert_badge_button.test.tsx",
+        "contract_card_dialog_menu_table.test.tsx",
+        "contract_field.test.tsx",
+        "contract_widget_describedby.test.tsx",
+        "dialog_focus.test.tsx",
+        "edge_card_dialog_menu_table.test.tsx",
+        "glossary_page.test.tsx",
+        "list_page_header.test.tsx",
+        "page_header_route.test.tsx",
+        "part_resource_list.test.tsx",
+        "permission_guard.test.tsx",
+        "picker_describedby.test.tsx",
+        "record_view.test.tsx",
+        "resource_list.test.tsx",
+        "term.test.tsx",
+        "ui_components.test.tsx",
+        "ui_shared_controls.test.tsx",
+        "ui_tabs_checkbox.test.tsx"
+      ]
+    },
+    "src/components/ui/Input.tsx": {
+      "controls": {
+        "input": 1,
+        "select": 1,
+        "textarea": 1
+      },
+      "tests": [
+        "browser_security.test.tsx",
+        "contract_alert_badge_button.test.tsx",
+        "contract_card_dialog_menu_table.test.tsx",
+        "contract_field.test.tsx",
+        "contract_widget_describedby.test.tsx",
+        "dialog_focus.test.tsx",
+        "edge_card_dialog_menu_table.test.tsx",
+        "glossary_page.test.tsx",
+        "list_page_header.test.tsx",
+        "page_header_route.test.tsx",
+        "part_model_picker.test.tsx",
+        "part_resource_list.test.tsx",
+        "permission_guard.test.tsx",
+        "picker_describedby.test.tsx",
+        "record_view.test.tsx",
+        "resource_list.test.tsx",
+        "term.test.tsx",
+        "ui_components.test.tsx",
+        "ui_shared_controls.test.tsx",
+        "ui_tabs_checkbox.test.tsx"
+      ]
+    },
+    "src/components/ui/PageHeader.tsx": {
+      "controls": {
+        "button": 1
+      },
+      "tests": [
+        "browser_security.test.tsx",
+        "contract_alert_badge_button.test.tsx",
+        "contract_card_dialog_menu_table.test.tsx",
+        "contract_field.test.tsx",
+        "contract_widget_describedby.test.tsx",
+        "dialog_focus.test.tsx",
+        "edge_card_dialog_menu_table.test.tsx",
+        "glossary_page.test.tsx",
+        "list_page_header.test.tsx",
+        "page_header_route.test.tsx",
+        "part_resource_list.test.tsx",
+        "permission_guard.test.tsx",
+        "picker_describedby.test.tsx",
+        "record_view.test.tsx",
+        "resource_list.test.tsx",
+        "term.test.tsx",
+        "ui_components.test.tsx",
+        "ui_shared_controls.test.tsx",
+        "ui_tabs_checkbox.test.tsx"
+      ]
+    },
+    "src/components/ui/PageState.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "browser_security.test.tsx",
+        "contract_alert_badge_button.test.tsx",
+        "contract_card_dialog_menu_table.test.tsx",
+        "contract_field.test.tsx",
+        "contract_widget_describedby.test.tsx",
+        "dialog_focus.test.tsx",
+        "edge_card_dialog_menu_table.test.tsx",
+        "glossary_page.test.tsx",
+        "list_page_header.test.tsx",
+        "page_header_route.test.tsx",
+        "page_state.test.tsx",
+        "part_resource_list.test.tsx",
+        "permission_guard.test.tsx",
+        "picker_describedby.test.tsx",
+        "record_view.test.tsx",
+        "resource_list.test.tsx",
+        "term.test.tsx",
+        "ui_components.test.tsx",
+        "ui_shared_controls.test.tsx",
+        "ui_tabs_checkbox.test.tsx"
+      ]
+    },
+    "src/components/ui/RadioGroup.tsx": {
+      "controls": {
+        "input": 1
+      },
+      "tests": [
+        "browser_security.test.tsx",
+        "contract_alert_badge_button.test.tsx",
+        "contract_card_dialog_menu_table.test.tsx",
+        "contract_field.test.tsx",
+        "contract_widget_describedby.test.tsx",
+        "dialog_focus.test.tsx",
+        "edge_card_dialog_menu_table.test.tsx",
+        "glossary_page.test.tsx",
+        "list_page_header.test.tsx",
+        "page_header_route.test.tsx",
+        "part_resource_list.test.tsx",
+        "permission_guard.test.tsx",
+        "picker_describedby.test.tsx",
+        "record_view.test.tsx",
+        "resource_list.test.tsx",
+        "term.test.tsx",
+        "ui_components.test.tsx",
+        "ui_shared_controls.test.tsx",
+        "ui_tabs_checkbox.test.tsx"
+      ]
+    },
+    "src/components/ui/RecordView.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "browser_security.test.tsx",
+        "contract_alert_badge_button.test.tsx",
+        "contract_card_dialog_menu_table.test.tsx",
+        "contract_field.test.tsx",
+        "contract_widget_describedby.test.tsx",
+        "dialog_focus.test.tsx",
+        "edge_card_dialog_menu_table.test.tsx",
+        "glossary_page.test.tsx",
+        "list_page_header.test.tsx",
+        "page_header_route.test.tsx",
+        "part_resource_list.test.tsx",
+        "permission_guard.test.tsx",
+        "picker_describedby.test.tsx",
+        "record_view.test.tsx",
+        "resource_list.test.tsx",
+        "term.test.tsx",
+        "ui_components.test.tsx",
+        "ui_shared_controls.test.tsx",
+        "ui_tabs_checkbox.test.tsx"
+      ]
+    },
+    "src/components/ui/RowActions.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "browser_security.test.tsx",
+        "contract_alert_badge_button.test.tsx",
+        "contract_card_dialog_menu_table.test.tsx",
+        "contract_field.test.tsx",
+        "contract_widget_describedby.test.tsx",
+        "dialog_focus.test.tsx",
+        "edge_card_dialog_menu_table.test.tsx",
+        "glossary_page.test.tsx",
+        "list_page_header.test.tsx",
+        "page_header_route.test.tsx",
+        "part_resource_list.test.tsx",
+        "permission_guard.test.tsx",
+        "picker_describedby.test.tsx",
+        "record_view.test.tsx",
+        "resource_list.test.tsx",
+        "row_actions.test.tsx",
+        "term.test.tsx",
+        "ui_components.test.tsx",
+        "ui_shared_controls.test.tsx",
+        "ui_tabs_checkbox.test.tsx"
+      ]
+    },
+    "src/components/ui/Switch.tsx": {
+      "controls": {
+        "button": 1
+      },
+      "tests": [
+        "browser_security.test.tsx",
+        "contract_alert_badge_button.test.tsx",
+        "contract_card_dialog_menu_table.test.tsx",
+        "contract_field.test.tsx",
+        "contract_widget_describedby.test.tsx",
+        "dialog_focus.test.tsx",
+        "edge_card_dialog_menu_table.test.tsx",
+        "glossary_page.test.tsx",
+        "list_page_header.test.tsx",
+        "page_header_route.test.tsx",
+        "part_resource_list.test.tsx",
+        "permission_guard.test.tsx",
+        "picker_describedby.test.tsx",
+        "record_view.test.tsx",
+        "resource_list.test.tsx",
+        "term.test.tsx",
+        "ui_components.test.tsx",
+        "ui_shared_controls.test.tsx",
+        "ui_tabs_checkbox.test.tsx"
+      ]
+    },
+    "src/components/ui/Tabs.tsx": {
+      "controls": {
+        "button": 1
+      },
+      "tests": [
+        "browser_security.test.tsx",
+        "contract_alert_badge_button.test.tsx",
+        "contract_card_dialog_menu_table.test.tsx",
+        "contract_field.test.tsx",
+        "contract_widget_describedby.test.tsx",
+        "dialog_focus.test.tsx",
+        "edge_card_dialog_menu_table.test.tsx",
+        "glossary_page.test.tsx",
+        "list_page_header.test.tsx",
+        "page_header_route.test.tsx",
+        "part_resource_list.test.tsx",
+        "permission_guard.test.tsx",
+        "picker_describedby.test.tsx",
+        "record_view.test.tsx",
+        "resource_list.test.tsx",
+        "term.test.tsx",
+        "ui_components.test.tsx",
+        "ui_shared_controls.test.tsx",
+        "ui_tabs_checkbox.test.tsx"
+      ]
+    },
+    "src/navigation/PageTools.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "navigation_ease.test.tsx"
+      ]
+    },
+    "src/pages/access/AccessExplorer.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "access_explorer.test.tsx"
+      ]
+    },
+    "src/pages/access/GroupPage.tsx": {
+      "controls": {
+        "Button": 6
+      },
+      "tests": [
+        "data_access.test.tsx",
+        "group_page.test.tsx"
+      ]
+    },
+    "src/pages/access/Groups.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "access_forms.test.tsx",
+        "edit_keeps_stored_metadata.test.ts"
+      ]
+    },
+    "src/pages/access/OrganizationDomain.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "access_domain.test.tsx"
+      ]
+    },
+    "src/pages/access/RoleBindings.tsx": {
+      "controls": {
+        "Button": 5
+      },
+      "tests": [
+        "form_role_bindings.test.tsx",
+        "project_organization.test.tsx"
+      ]
+    },
+    "src/pages/access/Roles.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "access_forms.test.tsx",
+        "edit_keeps_stored_metadata.test.ts",
+        "project_settings.test.tsx"
+      ]
+    },
+    "src/pages/access/ServiceAccounts.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "agent_access_matrix.test.tsx",
+        "mqtt_broker_access.test.tsx",
+        "organization_agents.test.tsx",
+        "service_accounts_view.test.tsx",
+        "serviceaccount_form.test.tsx"
+      ]
+    },
+    "src/pages/apps/ActionStep.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "action_inspector.test.tsx",
+        "assistant_step_states.test.tsx"
+      ]
+    },
+    "src/pages/apps/AgentRunPage.tsx": {
+      "controls": {
+        "Button": 6
+      },
+      "tests": [
+        "agent_run.test.tsx",
+        "page_agent_run_page.test.tsx"
+      ]
+    },
+    "src/pages/apps/AppBuildCard.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "app_build_card.test.tsx"
+      ]
+    },
+    "src/pages/apps/AppBuildPanel.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "app_build_panel.test.tsx"
+      ]
+    },
+    "src/pages/apps/DashboardEditor.tsx": {
+      "controls": {
+        "Button": 10
+      },
+      "tests": [
+        "dashboard_editor.test.tsx"
+      ]
+    },
+    "src/pages/apps/AppGenerator.tsx": {
+      "controls": {
+        "Button": 4,
+        "Checkbox": 2
+      },
+      "tests": [
+        "app_build_card.test.tsx",
+        "app_generator.test.tsx",
+        "app_templates.test.tsx",
+        "form_app_generator.test.tsx",
+        "generator_types.test.ts"
+      ]
+    },
+    "src/pages/apps/AppOpenPage.tsx": {
+      "controls": {
+        "Button": 8
+      },
+      "tests": [
+        "app_open_page.test.tsx",
+        "browser_security.test.tsx"
+      ]
+    },
+    "src/pages/apps/AppPage.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "app_route.test.tsx",
+        "page_app_page.test.tsx"
+      ]
+    },
+    "src/pages/apps/AppServices.tsx": {
+      "controls": {
+        "Button": 1,
+        "Checkbox": 1
+      },
+      "tests": [
+        "app_services.test.tsx"
+      ]
+    },
+    "src/pages/apps/AppTemplates.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "app_templates.test.tsx",
+        "use_template.test.tsx"
+      ]
+    },
+    "src/pages/apps/QueryResultCard.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "assistant_endpoints.test.tsx",
+        "assistant_step_states.test.tsx",
+        "model_links.test.tsx",
+        "part_query_result_card.test.tsx"
+      ]
+    },
+    "src/pages/apps/UseTemplate.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "use_template.test.tsx"
+      ]
+    },
+    "src/pages/apps/AppsCatalog.tsx": {
+      "controls": {
+        "Button": 5
+      },
+      "tests": [
+        "apps_catalog.test.tsx"
+      ]
+    },
+    "src/pages/apps/CatalogCards.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "catalog_cards.test.tsx",
+        "model_links.test.tsx",
+        "part_run_cards.test.tsx"
+      ]
+    },
+    "src/pages/apps/ChangeFollowCard.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "change_follow_card.test.tsx"
+      ]
+    },
+    "src/pages/apps/ConversationPanel.tsx": {
+      "controls": {
+        "Button": 5
+      },
+      "tests": [
+        "action_inspector.test.tsx",
+        "assistant_step_states.test.tsx",
+        "assistant_turns.test.tsx",
+        "conversation_panel.test.tsx",
+        "conversation_repeats.test.tsx",
+        "form_conversation_panel.test.tsx"
+      ]
+    },
+    "src/pages/apps/EndpointProposalCard.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "endpoint_proposal_card.test.tsx",
+        "model_links.test.tsx"
+      ]
+    },
+    "src/pages/apps/EntityWriteCard.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "entity_write_card.test.tsx",
+        "part_run_cards.test.tsx"
+      ]
+    },
+    "src/pages/apps/KpiCard.tsx": {
+      "controls": {
+        "Button": 3,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "form_kpi_card.test.tsx",
+        "kpi_card.test.tsx"
+      ]
+    },
+    "src/pages/apps/KpiPipelineCard.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "kpi_pipeline_card.test.tsx",
+        "part_kpi_pipeline_card.test.tsx"
+      ]
+    },
+    "src/pages/apps/NewEndpointPanel.tsx": {
+      "controls": {
+        "Button": 3,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "new_endpoint_panel.test.tsx"
+      ]
+    },
+    "src/pages/apps/Prose.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "prose.test.tsx"
+      ]
+    },
+    "src/pages/apps/QuestionData.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "question_data.test.tsx"
+      ]
+    },
+    "src/pages/apps/QuestionOptions.tsx": {
+      "controls": {
+        "button": 1,
+        "Button": 2
+      },
+      "tests": [
+        "part_question_options.test.tsx",
+        "question_data.test.tsx",
+        "question_options.test.tsx"
+      ]
+    },
+    "src/pages/apps/RenameShapesNotice.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "rename_shapes_notice.test.tsx"
+      ]
+    },
+    "src/pages/apps/RolesAndMembers.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "app_roles_members.test.tsx"
+      ]
+    },
+    "src/pages/apps/RunPublication.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "part_run_publication.test.tsx"
+      ]
+    },
+    "src/pages/apps/ShareDialog.tsx": {
+      "controls": {
+        "Button": 4,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "app_share.test.tsx"
+      ]
+    },
+    "src/pages/assistant/AgentAccess.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "assistant_access_view.test.tsx"
+      ]
+    },
+    "src/pages/assistant/AssistantPage.tsx": {
+      "controls": {
+        "Button": 5,
+        "Checkbox": 2
+      },
+      "tests": [
+        "assistant_page.test.tsx"
+      ]
+    },
+    "src/pages/catalogue/CataloguePage.tsx": {
+      "controls": {
+        "Button": 8,
+        "Checkbox": 1
+      },
+      "tests": [
+        "catalogue_page.test.tsx"
+      ]
+    },
+    "src/pages/catalogue/DatasetMap.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "catalogue_page.test.tsx"
+      ]
+    },
+    "src/pages/catalogue/DatasetPage.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "catalogue_page.test.tsx"
+      ]
+    },
+    "src/pages/catalogue/SubscribeMenu.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "catalogue_subscribe.test.tsx"
+      ]
+    },
+    "src/pages/catalogue/PublishDataset.tsx": {
+      "controls": {
+        "Button": 6,
+        "Checkbox": 2
+      },
+      "tests": [
+        "catalogue_publish.test.tsx"
+      ]
+    },
+    "src/pages/ckan/CkanAccessPanel.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "ckan_access_panel.test.tsx"
+      ]
+    },
+    "src/pages/ckan/CkanPage.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "form_ckan_page.test.tsx"
+      ]
+    },
+    "src/pages/connect/ConnectPage.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "connect_page.test.tsx"
+      ]
+    },
+    "src/pages/datasources/ConnectionTest.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "context_sources_ui.test.tsx"
+      ]
+    },
+    "src/pages/datasources/DataSourcesPage.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "datasources_view.test.tsx",
+        "mqtt_broker_picker.test.tsx",
+        "page_data_sources_page.test.tsx",
+        "raw_values_on_pages.test.tsx",
+        "runner_input_schema.test.ts"
+      ]
+    },
+    "src/pages/datasources/TemplateGallery.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "datasource_templates.test.tsx"
+      ]
+    },
+    "src/pages/endpoints/AccessRequest.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "endpoint_access_request.test.tsx"
+      ]
+    },
+    "src/pages/endpoints/CatalogSection.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "endpoint_catalog.test.tsx"
+      ]
+    },
+    "src/pages/endpoints/DeveloperPanel.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "endpoint_developer_page.test.tsx"
+      ]
+    },
+    "src/pages/endpoints/EndpointPage.tsx": {
+      "controls": {
+        "Button": 6,
+        "Checkbox": 2
+      },
+      "tests": [
+        "endpoint_geo_property.test.ts",
+        "part_endpoint_links.test.tsx",
+        "part_operation_groups.test.tsx"
+      ]
+    },
+    "src/pages/endpoints/FilterProof.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "endpoint_filter_proof.test.tsx"
+      ]
+    },
+    "src/pages/endpoints/ModelPicker.tsx": {
+      "controls": {
+        "Button": 2,
+        "Checkbox": 4
+      },
+      "tests": [
+        "endpoint_picker_example.test.tsx",
+        "part_model_picker.test.tsx"
+      ]
+    },
+    "src/pages/endpoints/SchemaProjectionPanel.tsx": {
+      "controls": {
+        "Button": 4,
+        "Checkbox": 1
+      },
+      "tests": [
+        "endpoint_projection_ui.test.tsx",
+        "form_schema_projection.test.tsx"
+      ]
+    },
+    "src/pages/endpoints/ShareFlow.tsx": {
+      "controls": {
+        "Button": 2,
+        "Checkbox": 1
+      },
+      "tests": [
+        "share_flow.test.tsx"
+      ]
+    },
+    "src/pages/grafana/GrafanaPage.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "grafana_page.test.tsx"
+      ]
+    },
+    "src/pages/endpoints/VisualizationsSection.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "endpoint_visualizations.test.tsx"
+      ]
+    },
+    "src/pages/explore/ChartFromView.tsx": {
+      "controls": {
+        "Button": 2,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "explore_chart.test.tsx"
+      ]
+    },
+    "src/pages/explore/ExplorePage.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "explore_controls.test.tsx",
+        "explore_enum_pick.test.tsx",
+        "explore_new_user.test.tsx",
+        "explore_page.test.tsx",
+        "explore_quality.test.tsx",
+        "form_explore_page.test.tsx",
+        "list_failed_says_why.test.tsx"
+      ]
+    },
+    "src/pages/explore/ExploreRowActions.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "explore_row_actions.test.tsx"
+      ]
+    },
+    "src/pages/explore/UseThisData.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "explore_use_data.test.tsx"
+      ]
+    },
+    "src/pages/flows/Gallery.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "part_gallery.test.tsx"
+      ]
+    },
+    "src/pages/flows/Instantiate.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "part_instantiate.test.tsx"
+      ]
+    },
+    "src/pages/gallery/Gallery.tsx": {
+      "controls": {
+        "Button": 19,
+        "Checkbox": 2,
+        "FilePicker": 1,
+        "RadioGroup": 1,
+        "Switch": 1
+      },
+      "tests": [
+        "gallery_axe.test.tsx"
+      ]
+    },
+    "src/pages/home/HomePage.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "home_page.test.tsx"
+      ]
+    },
+    "src/pages/import/ImportPage.tsx": {
+      "controls": {
+        "Button": 2,
+        "Checkbox": 1
+      },
+      "tests": [
+        "import_wizard.test.tsx"
+      ]
+    },
+    "src/pages/inbox/InboxPage.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "inbox_page.test.tsx"
+      ]
+    },
+    "src/pages/knowledge/AssistantChat.tsx": {
+      "controls": {
+        "Button": 3,
+        "Checkbox": 1
+      },
+      "tests": [
+        "knowledge_pages.test.tsx"
+      ]
+    },
+    "src/pages/knowledge/ConversationsPage.tsx": {
+      "controls": {
+        "Button": 8,
+        "Switch": 2
+      },
+      "tests": [
+        "assistant_conversations.test.tsx"
+      ]
+    },
+    "src/pages/knowledge/IndexStatus.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "knowledge_pages.test.tsx"
+      ]
+    },
+    "src/pages/knowledge/KnowledgePage.tsx": {
+      "controls": {
+        "Button": 7
+      },
+      "tests": [
+        "knowledge_pages.test.tsx"
+      ]
+    },
+    "src/pages/knowledge/SourcePage.tsx": {
+      "controls": {
+        "Button": 7,
+        "Checkbox": 3
+      },
+      "tests": [
+        "knowledge_pages.test.tsx"
+      ]
+    },
+    "src/pages/knowledge/UploadedFiles.tsx": {
+      "controls": {
+        "Button": 2,
+        "FilePicker": 1
+      },
+      "tests": [
+        "knowledge_pages.test.tsx"
+      ]
+    },
+    "src/pages/knowledge/UsageSummary.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "assistant_conversations.test.tsx"
+      ]
+    },
+    "src/connectors/PairedTabBar.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "paired_tab.test.tsx"
+      ]
+    },
+    "src/pages/mcp/AiConnectorsPage.tsx": {
+      "controls": {
+        "Button": 12,
+        "Checkbox": 6
+      },
+      "tests": [
+        "ai_connectors.test.tsx"
+      ]
+    },
+    "src/pages/mcp/McpServerDialog.tsx": {
+      "controls": {
+        "Button": 3,
+        "Checkbox": 2
+      },
+      "tests": [
+        "mcp_servers.test.tsx"
+      ]
+    },
+    "src/pages/mcp/McpServerPanels.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "mcp_servers.test.tsx"
+      ]
+    },
+    "src/pages/mcp/McpServersPage.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "mcp_servers.test.tsx",
+        "organization_agents.test.tsx"
+      ]
+    },
+    "src/pages/models/DiagramEditing.tsx": {
+      "controls": {
+        "Button": 5
+      },
+      "tests": [
+        "diagram_editing.test.tsx"
+      ]
+    },
+    "src/pages/models/EnumValues.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "linkml_enum_values.test.tsx"
+      ]
+    },
+    "src/pages/models/LinkmlGraphView.tsx": {
+      "controls": {
+        "Button": 8
+      },
+      "tests": [
+        "diagram_editing.test.tsx",
+        "diagram_layout.test.ts",
+        "diagram_notation.test.tsx",
+        "diagram_reading.test.tsx",
+        "linkml_editor.test.tsx",
+        "linkml_er_diagram.test.tsx",
+        "linkml_imports_enums.test.tsx",
+        "model_canvas.test.tsx",
+        "part_linkml_graph_view.test.tsx"
+      ]
+    },
+    "src/pages/models/LinkmlPreviewPanel.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "linkml_preview.test.tsx",
+        "part_linkml_preview_panel.test.tsx"
+      ]
+    },
+    "src/pages/models/LinkmlSourceEditor.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "linkml_source_editor.test.tsx"
+      ]
+    },
+    "src/pages/models/LinkmlVisualEditor.tsx": {
+      "controls": {
+        "Button": 13,
+        "Checkbox": 3,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "linkml_enum_values.test.tsx",
+        "linkml_imports_enums.test.tsx",
+        "linkml_source_editor.test.tsx",
+        "linkml_visual_editor.test.tsx",
+        "relationship_editor.test.tsx"
+      ]
+    },
+    "src/pages/models/MappingsEditor.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "mappings_editor.test.tsx"
+      ]
+    },
+    "src/pages/models/ModelCanvas.tsx": {
+      "controls": {
+        "Button": 6
+      },
+      "tests": [
+        "model_canvas.test.tsx"
+      ]
+    },
+    "src/pages/models/ModelFileDrop.tsx": {
+      "controls": {
+        "Button": 3,
+        "FilePicker": 2
+      },
+      "tests": [
+        "model_file_drop.test.tsx",
+        "part_model_file_drop.test.tsx"
+      ]
+    },
+    "src/pages/models/ModelIdentity.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "model_identity.test.tsx"
+      ]
+    },
+    "src/pages/models/ModelPage.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "models_list_page.test.tsx"
+      ]
+    },
+    "src/pages/models/ModelSubsetPicker.tsx": {
+      "controls": {
+        "Checkbox": 2
+      },
+      "tests": [
+        "model_subset.test.tsx",
+        "part_model_subset_picker.test.tsx"
+      ]
+    },
+    "src/pages/models/ModelViews.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "models_list_page.test.tsx"
+      ]
+    },
+    "src/pages/models/ModelsList.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "models_list_page.test.tsx"
+      ]
+    },
+    "src/pages/models/ModelsPage.tsx": {
+      "controls": {
+        "Button": 3,
+        "Checkbox": 1
+      },
+      "tests": [
+        "diagram_editing.test.tsx",
+        "models_page_save.test.tsx"
+      ]
+    },
+    "src/pages/models/RelationshipEditor.tsx": {
+      "controls": {
+        "Button": 3,
+        "Checkbox": 2,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "relationship_editor.test.tsx"
+      ]
+    },
+    "src/pages/models/ShareModel.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "model_share.test.tsx"
+      ]
+    },
+    "src/pages/models/SmartDataModelsImport.tsx": {
+      "controls": {
+        "button": 1,
+        "Button": 11,
+        "Checkbox": 1,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "sdm_import.test.tsx"
+      ]
+    },
+    "src/pages/mqttbrokers/BrokerTopics.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "mqtt_broker_topics.test.tsx"
+      ]
+    },
+    "src/pages/organization/AgentActivity.tsx": {
+      "controls": {
+        "Button": 5
+      },
+      "tests": [
+        "organization_agent_activity.test.tsx"
+      ]
+    },
+    "src/pages/organization/Agents.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "organization_agents.test.tsx"
+      ]
+    },
+    "src/pages/organization/Costs.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "organization_costs.test.tsx"
+      ]
+    },
+    "src/pages/organization/OrganizationApplications.tsx": {
+      "controls": {
+        "Button": 6,
+        "FilePicker": 1
+      },
+      "tests": [
+        "organization_page.test.tsx"
+      ]
+    },
+    "src/pages/organization/OrganizationConnectors.tsx": {
+      "controls": {
+        "Button": 1,
+        "Checkbox": 1
+      },
+      "tests": [
+        "organization_connectors.test.tsx"
+      ]
+    },
+    "src/pages/organization/OrganizationPage.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "data_access.test.tsx",
+        "organization_brokers.test.tsx",
+        "organization_connectors.test.tsx",
+        "organization_costs.test.tsx",
+        "organization_health.test.tsx",
+        "organization_limits.test.tsx",
+        "organization_page.test.tsx",
+        "organization_route.test.tsx",
+        "organization_setup.test.tsx",
+        "page_all_endpoints_page.test.tsx"
+      ]
+    },
+    "src/pages/organization/People.tsx": {
+      "controls": {
+        "Button": 17,
+        "Checkbox": 2,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "data_access.test.tsx",
+        "people_invite.test.tsx",
+        "people_page.test.tsx"
+      ]
+    },
+    "src/pages/organization/NameById.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "name_by_id.test.tsx"
+      ]
+    },
+    "src/pages/organization/ProjectMqtt.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "mqtt_allowance_ui.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/AccessRequests.tsx": {
+      "controls": {
+        "Button": 8,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "access_requests.test.tsx",
+        "endpoint_access_request.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/DebugPanel.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "pipeline_debug_view.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/KpiEditor.tsx": {
+      "controls": {
+        "Button": 5,
+        "Switch": 1
+      },
+      "tests": [
+        "kpi_editor.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/LifetimeChoice.tsx": {
+      "controls": {
+        "Button": 2,
+        "RadioGroup": 2
+      },
+      "tests": [
+        "lifetime_choice.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/FlowMapView.tsx": {
+      "controls": {
+        "Button": 11
+      },
+      "tests": [
+        "flow_map.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/OutputMapper.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "output_mapper_ui.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/PipelineFlow.tsx": {
+      "controls": {
+        "Button": 23
+      },
+      "tests": [
+        "part_pipeline_flow.test.tsx",
+        "pipeline_debug.test.ts",
+        "pipeline_debug_view.test.tsx",
+        "pipeline_flow.test.tsx",
+        "pipeline_flow_graph.test.tsx",
+        "pipeline_flow_live.test.tsx",
+        "pipeline_flow_outputs.test.tsx",
+        "pipeline_flow_routes.test.tsx",
+        "pipeline_flow_stats.test.tsx",
+        "pipeline_flow_steps.test.tsx",
+        "pipeline_graph.test.ts",
+        "pipeline_last_samples.test.tsx",
+        "pipeline_step_form.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/PipelineOverview.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "pipeline_overview.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/PipelineRejected.tsx": {
+      "controls": {
+        "Button": 4,
+        "Checkbox": 2
+      },
+      "tests": [
+        "pipeline_rejected.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/PipelineHealth.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "page_pipeline_health.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/PipelineRuns.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "pipeline_runs.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/PipelineSourceReport.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "pipeline_source_report.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/PipelineStudio.tsx": {
+      "controls": {
+        "Button": 6,
+        "Checkbox": 1
+      },
+      "tests": [
+        "pipeline_editor.test.tsx",
+        "pipeline_flow.test.tsx",
+        "pipeline_flow_first_nodes.test.tsx",
+        "pipeline_flow_outputs.test.tsx",
+        "pipeline_flow_routes.test.tsx",
+        "pipeline_flow_stats.test.tsx",
+        "pipeline_flow_steps.test.tsx",
+        "pipeline_kpi_preset.test.tsx",
+        "pipeline_studio_debug.test.tsx",
+        "pipeline_studio_functions.test.ts",
+        "pipeline_workbench.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/PipelineTemplates.tsx": {
+      "controls": {
+        "Button": 5
+      },
+      "tests": [
+        "pipeline_templates.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/PipelineTest.tsx": {
+      "controls": {
+        "Button": 4,
+        "Checkbox": 1,
+        "FilePicker": 1
+      },
+      "tests": [
+        "part_pipeline_flow.test.tsx",
+        "part_pipeline_test.test.tsx",
+        "pipeline_debug_view.test.tsx",
+        "pipeline_flow.test.tsx",
+        "pipeline_flow_live.test.tsx",
+        "pipeline_flow_outputs.test.tsx",
+        "pipeline_flow_steps.test.tsx",
+        "pipeline_studio_debug.test.tsx",
+        "pipeline_test_functions.test.ts"
+      ]
+    },
+    "src/pages/pipelines/PipelineWorkbench.tsx": {
+      "controls": {
+        "Button": 2,
+        "Checkbox": 1,
+        "FilePicker": 1,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "pipeline_workbench.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/RecipeGallery.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "pipeline_recipes.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/SlotUnit.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "slot_unit.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/SpaceChanges.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "space_changes.test.tsx"
+      ]
+    },
+    "src/pages/policies/TryAPerson.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "policies_try_a_person.test.tsx"
+      ]
+    },
+    "src/pages/spaces/Comments.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "comments.test.tsx"
+      ]
+    },
+    "src/pages/spaces/DataViews.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "data_views.test.tsx"
+      ]
+    },
+    "src/pages/spaces/FormView.tsx": {
+      "controls": {
+        "Button": 1,
+        "Checkbox": 1
+      },
+      "tests": [
+        "form_view.test.tsx"
+      ]
+    },
+    "src/pages/spaces/ImportRows.tsx": {
+      "controls": {
+        "Button": 4,
+        "FilePicker": 1,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "import_rows.test.tsx"
+      ]
+    },
+    "src/pages/spaces/LoadRows.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "upload_csv.test.tsx"
+      ]
+    },
+    "src/pages/spaces/PublicView.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "public_view.test.tsx"
+      ]
+    },
+    "src/pages/spaces/SharePanel.tsx": {
+      "controls": {
+        "Button": 1,
+        "Checkbox": 1
+      },
+      "tests": [
+        "public_view.test.tsx"
+      ]
+    },
+    "src/pages/spaces/SpaceComplete.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "space_complete.test.tsx"
+      ]
+    },
+    "src/pages/spaces/SpaceDrift.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "space_drift.test.tsx"
+      ]
+    },
+    "src/pages/spaces/SpaceInside.tsx": {
+      "controls": {
+        "Button": 19
+      },
+      "tests": [
+        "bulk_bar_loaded.test.tsx",
+        "grid_toolbar.test.tsx",
+        "part_space_inside.test.tsx",
+        "space_inside.test.tsx"
+      ]
+    },
+    "src/pages/spaces/SpacePersonalData.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "space_personal_data.test.tsx"
+      ]
+    },
+    "src/pages/spaces/SpaceRetention.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "space_retention_panel.test.tsx"
+      ]
+    },
+    "src/pages/spaces/TypeApi.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "type_api.test.tsx"
+      ]
+    },
+    "src/pages/spaces/UploadCsv.tsx": {
+      "controls": {
+        "Button": 1,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "upload_csv.test.tsx"
+      ]
+    },
+    "src/pages/sync/SyncSourcesPage.tsx": {
+      "controls": {
+        "Button": 5
+      },
+      "tests": [
+        "form_errors_after_touch.test.tsx",
+        "page_sync_sources_page.test.tsx",
+        "sync_source_round_trip.test.ts"
+      ]
+    },
+    "src/pages/mcp/McpElicitationPage.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "mcp_elicitation.test.tsx"
+      ]
+    },
+    "src/pages/workspaces/BringBackPage.tsx": {
+      "controls": {
+        "Button": 2,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "page_bring_back_page.test.tsx",
+        "workspaces_ui.test.tsx"
+      ]
+    },
+    "src/pages/secrets/SecretFormPage.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "secret_form.test.tsx"
+      ]
+    },
+    "src/pages/workspaces/TryItPage.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "page_try_it_page.test.tsx",
+        "try_it.test.tsx"
+      ]
+    },
+    "src/routes/AllEndpointsPage.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "page_all_endpoints_page.test.tsx"
+      ]
+    },
+    "src/routes/ApprovalDetailPage.tsx": {
+      "controls": {
+        "Button": 5
+      },
+      "tests": [
+        "approval_actions.test.tsx"
+      ]
+    },
+    "src/routes/ApprovalsHistory.tsx": {
+      "controls": {
+        "Button": 7
+      },
+      "tests": [
+        "approvals_history.test.tsx"
+      ]
+    },
+    "src/routes/ApprovalsPage.tsx": {
+      "controls": {
+        "Checkbox": 1
+      },
+      "tests": [
+        "approvals_list.test.tsx"
+      ]
+    },
+    "src/routes/DashboardsPage.tsx": {
+      "controls": {
+        "Button": 4,
+        "Checkbox": 1
+      },
+      "tests": [
+        "dashboard_editors.test.tsx"
+      ]
+    },
+    "src/routes/EndpointsPage.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "edit_prefill.test.tsx",
+        "editor_round_trip.test.ts",
+        "endpoint_catalog.test.tsx",
+        "endpoint_open_data.test.tsx",
+        "endpoint_representations.test.ts",
+        "endpoint_rows_grid.test.tsx",
+        "endpoint_write_policy.test.ts",
+        "representation_outputs_field.test.tsx"
+      ]
+    },
+    "src/routes/LoginPage.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "api_client.test.ts",
+        "page_login_page.test.tsx"
+      ]
+    },
+    "src/routes/PipelinesPage.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "assistant_ui_actions.test.tsx",
+        "pipeline_overview.test.tsx",
+        "pipelines_view.test.tsx"
+      ]
+    },
+    "src/routes/PoliciesPage.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "edit_keeps_stored_metadata.test.ts",
+        "edit_prefill.test.tsx",
+        "form_required_reference_check.test.tsx",
+        "policy_attribute_capabilities.test.tsx",
+        "policy_form.test.tsx"
+      ]
+    },
+    "src/routes/RegistrationPage.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "context_sources_ui.test.tsx"
+      ]
+    },
+    "src/routes/RegistrationsPage.tsx": {
+      "controls": {
+        "Button": 1,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "contextsourceregistration_form.test.tsx"
+      ]
+    },
+    "src/routes/ResourceListPage.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "agentprofile_form.test.tsx",
+        "blueprint_form.test.tsx",
+        "dataagreement_form.test.tsx",
+        "datamodel_form.test.tsx",
+        "dataoffer_form.test.tsx",
+        "dataspaceparticipant_form.test.tsx",
+        "environment_form.test.tsx",
+        "mapping_form.test.tsx",
+        "modelprojection_form.test.tsx",
+        "resource_list_page.test.tsx",
+        "scopedefinition_form.test.tsx"
+      ]
+    },
+    "src/routes/SpacesPage.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "edit_keeps_stored_metadata.test.ts",
+        "edit_prefill.test.tsx",
+        "space_segment.test.tsx"
+      ]
+    },
+    "src/routes/SubscriptionsPage.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "form_required_reference_check.test.tsx",
+        "subscription_deliveries.test.tsx",
+        "subscription_form.test.tsx"
+      ]
+    },
+    "src/routes/WorkspacesPage.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "workspaces_ui.test.tsx"
+      ]
+    },
+    "src/pages/access/AccountAccess.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "agent_access_matrix.test.tsx"
+      ]
+    },
+    "src/pages/access/AccountSecret.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "account_secret.test.tsx"
+      ]
+    },
+    "src/components/forms/widgets/RepresentationOutputsField.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "representation_outputs_field.test.tsx"
+      ]
+    },
+    "src/components/forms/widgets/OutputSourceEditors.tsx": {
+      "controls": {
+        "Checkbox": 2
+      },
+      "tests": [
+        "representation_outputs_field.test.tsx"
+      ]
+    },
+    "src/pages/mqttbrokers/AddDevice.tsx": {
+      "controls": {
+        "Button": 5,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "mqtt_devices.test.tsx"
+      ]
+    },
+    "src/pages/mqttbrokers/BrokerEditor.tsx": {
+      "controls": {
+        "Button": 6,
+        "Checkbox": 2
+      },
+      "tests": [
+        "mqtt_broker_draft.test.ts",
+        "mqtt_broker_parts.test.tsx"
+      ]
+    },
+    "src/pages/mqttbrokers/MqttBrokerPage.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "mqtt_allowance_ui.test.tsx",
+        "mqtt_broker_access.test.tsx",
+        "mqtt_broker_topics.test.tsx",
+        "mqtt_brokers_page.test.tsx",
+        "mqtt_test_publish.test.tsx"
+      ]
+    },
+    "src/pages/mqttbrokers/TestPublish.tsx": {
+      "controls": {
+        "Button": 1,
+        "Switch": 1
+      },
+      "tests": [
+        "mqtt_test_publish.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/WorkbenchTarget.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "access_requests.test.tsx",
+        "pipeline_history.test.tsx",
+        "workbench_target.test.tsx"
+      ]
+    },
+    "src/components/SpaceUsageInfo.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "space_usage_info.test.tsx"
+      ]
+    },
+    "src/components/ChangeNotice.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "part_change_notice.test.tsx"
+      ]
+    }
+  }
+}

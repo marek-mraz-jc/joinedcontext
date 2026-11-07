@@ -1,0 +1,27 @@
+# The data model this sample reads (SDK-10).
+id: https://example.org/samples/realtime-monitor
+name: realtime-monitor
+prefixes:
+  linkml: https://w3id.org/linkml/
+  schema: https://schema.org/
+default_range: string
+imports:
+  - linkml:types
+classes:
+  AirQualityObserved:
+    description: One station's current reading, updated in place; its history is the temporal record.
+    attributes:
+      stationName:
+        range: string
+        required: true
+      pm25:
+        description: Fine particles, µg/m³.
+        range: float
+        minimum_value: 0
+      no2:
+        description: Nitrogen dioxide, µg/m³.
+        range: float
+        minimum_value: 0
+      dateObserved:
+        range: datetime
+        required: true

@@ -1,0 +1,55 @@
+{
+  "color": {
+    "accent": "#0f5f5c",
+    "ink": "#102a2a",
+    "muted": "#48605f",
+    "surface": "#f6f8f7",
+    "card": "#ffffff",
+    "line": "#cfdad8",
+    "danger": "#a3261b",
+    "success": "#1f6f3a",
+    "warning": "#8a5300"
+  },
+  "font": {
+    "body": "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif",
+    "mono": "ui-monospace, monospace",
+    "size": {
+      "sm": "0.875rem",
+      "md": "1rem",
+      "lg": "1.25rem",
+      "xl": "1.75rem"
+    }
+  },
+  "space": {
+    "1": "0.25rem",
+    "2": "0.5rem",
+    "3": "0.875rem",
+    "4": "1.125rem",
+    "6": "1.75rem",
+    "8": "2.5rem"
+  },
+  "radius": {
+    "sm": "6px",
+    "md": "12px",
+    "lg": "18px"
+  },
+  "chart": {
+    "palette": [
+      "#0f5f5c",
+      "#c0561b",
+      "#4b5fa8",
+      "#6b7d1d",
+      "#8e3b76",
+      "#2a7fa0",
+      "#a3261b",
+      "#5d4b30"
+    ]
+  },
+  "map": {
+    "point": "#0f5f5c",
+    "selected": "#c0561b",
+    "low": "#2a7fa0",
+    "high": "#c0561b",
+    "stroke": "#ffffff"
+  }
+}

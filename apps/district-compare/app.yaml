@@ -1,0 +1,62 @@
+# Compare Helsinki districts side by side (T-3335): events, bike stations, alerts and air
+# quality, as counts and per km², with rankings across all districts. The spatial analysis
+# runs in the visitor's browser as WebAssembly compiled from the Rust crate in wasm/ (AP-142).
+# The server component in server/ runs on the shared WASM host (T-3353, AP-148): it keeps every
+# district's figures per day in the App's own schema, and the boundaries with their licence under
+# its own storage prefix. No pod of its own. Hand written, so no generated-by annotation (AP-35).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: district-compare
+  namespace: helsinki
+  title:
+    en: "Compare districts"
+    fi: "Vertaa kaupunginosia"
+  description:
+    en: "Compare Helsinki districts side by side: events, bike stations, alerts and air quality as totals and per square kilometre, with rankings across all districts."
+    fi: "Vertaa Helsingin kaupunginosia rinnakkain: tapahtumat, kaupunkipyöräasemat, tiedotteet ja ilmanlaatu kokonaisina ja neliökilometriä kohti sekä sijoitukset."
+spec:
+  kind: wasm
+  source:
+    git:
+      url: https://dev.joinedcontext.com/git/joinedcontext/helsinki_district-compare.git
+      ref: main
+  build:
+    node: "22"
+    rust: "1.90"
+  # Its own schema, migrated from migrations/ at publish, and its own prefix for the boundaries.
+  storage:
+    sql:
+      migrations: migrations
+      quotaMiB: 50
+    blob:
+      quotaMiB: 64
+  # Today's figures of every district, whether or not anybody opens the page, as the App's own job
+  # principal through its own Endpoint (AP-154, AP-159): each hour until a run has kept them.
+  server:
+    jobs:
+      - name: hourly-metrics
+        schedule: "15 * * * *"
+        export: keep-metrics
+  visibility: public
+  roles:
+    - name: viewer
+      title: { en: "Viewer", fi: "Katselija" }
+      description: "Keeps comparisons of their own (a name, up to six districts and a measure), changes and deletes their own, and shares one by its link, which any signed-in reader opens read-only."
+    - name: steward
+      title: { en: "Steward", fi: "Ylläpitäjä" }
+      description: "What a viewer does, and pins the comparison everyone opens first, or takes the pin back. Reads the whole history."
+  access:
+    - role: viewer
+      subjects: [{ group: district-compare-viewer }]
+    - role: steward
+      subjects: [{ group: district-compare-steward }]
+  lifecycle: published
+  dataNeeds:
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [AdministrativeArea, Event, BikeHireDockingStation, Alert, AirQualityObserved]
+      attrs: [name, districtCode, divisionLevel, location, startDate, totalSlotNumber, validFrom, pm25, airQualityIndex, dateObserved]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]

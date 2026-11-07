@@ -1,0 +1,13 @@
+# T-3057: the knowledge workflow as one conversation (Testing/07 §3.24, AG-87, AG-113, AG-115).
+workflow: knowledge
+as: steward
+says:
+  - "Leave the page about parking fees out of the assistant's answers and crawl the city's site again now."
+expect:
+  calls: []
+  outcome: person-only
+  why: "leaving a page out of every answer and crawling a site ahead of its schedule are an administrator's choices on the Knowledge page; the assistant has no tool for either and never asks the knowledge assistant on a person's behalf (AG-113, AG-115)"
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: leave the page about parking fees out of the assistant's answers."

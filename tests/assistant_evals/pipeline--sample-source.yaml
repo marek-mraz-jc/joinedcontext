@@ -1,0 +1,15 @@
+# T-6489: sample rows are read, not a page opened (live walk T-5962, S-18, AG-89).
+workflow: pipeline
+as: steward
+says:
+  - "Show me 5 sample rows of DataSource counters-csv."
+expect:
+  calls:
+    - tool: jc_pipeline_sample_source
+      input:
+        dataSource: counters-csv
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: show me 5 sample rows of DataSource counters-csv."

@@ -1,0 +1,168 @@
+# Default form arrangement for MqttBroker (UI-02, T-3839, MF-54, ADR-N-048).
+# A broker is roles over ServiceAccounts; the examples are a camera publishing under its own id.
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: mqttbroker
+spec:
+  for: MqttBroker
+  guide: User-Guide/04-pipelines
+  about:
+    en: >-
+      An MQTT broker of this project. Devices sign in as their own ServiceAccount with a short-lived
+      token, and each role says which topics its accounts may publish or subscribe to. A pipeline
+      reads the broker inside the platform; the broker holds no password of its own.
+    sk: >-
+      MQTT broker tohto projektu. Zariadenia sa prihlasujú ako vlastný ServiceAccount krátkodobým
+      tokenom a každá rola určuje, do ktorých tém smú jej účty publikovať alebo ich odoberať.
+      Pipeline číta broker vnútri platformy; broker nemá žiadne vlastné heslo.
+    cs: >-
+      MQTT broker tohoto projektu. Zařízení se přihlašují jako vlastní ServiceAccount krátkodobým
+      tokenem a každá role určuje, do kterých témat smějí její účty publikovat nebo je odebírat.
+      Pipeline čte broker uvnitř platformy; broker nemá žádné vlastní heslo.
+    de: >-
+      Ein MQTT-Broker dieses Projekts. Geräte melden sich als eigener ServiceAccount mit einem
+      kurzlebigen Token an, und jede Rolle sagt, in welche Topics ihre Accounts veröffentlichen oder
+      welche sie abonnieren dürfen. Eine Pipeline liest den Broker innerhalb der Plattform; der
+      Broker hat kein eigenes Passwort.
+  order: [name, mode, capture, roles, allowedSources, limits, port]
+  groups:
+    - title:
+        en: The broker
+        sk: Broker
+        cs: Broker
+        de: Der Broker
+      description:
+        en: Its name, which is part of the address devices connect to.
+        sk: Jeho názov, ktorý je súčasťou adresy, na ktorú sa zariadenia pripájajú.
+        cs: Jeho název, který je součástí adresy, na niž se zařízení připojují.
+        de: Sein Name, der Teil der Adresse ist, mit der sich Geräte verbinden.
+      fields: [name, mode, capture]
+    - title:
+        en: Who may do what
+        sk: Kto smie čo
+        cs: Kdo smí co
+        de: Wer was darf
+      description:
+        en: "One role per group of devices: the accounts that hold it and the topics they may use, and the networks devices may connect from."
+        sk: "Jedna rola na skupinu zariadení: účty, ktoré ju majú, a témy, ktoré smú používať, a siete, z ktorých sa zariadenia smú pripojiť."
+        cs: "Jedna role na skupinu zařízení: účty, které ji mají, a témata, která smějí používat, a sítě, ze kterých se zařízení smějí připojit."
+        de: "Eine Rolle je Gerätegruppe: die Accounts mit dieser Rolle, die Topics, die sie nutzen dürfen, und die Netze, aus denen sich Geräte verbinden dürfen."
+      fields: [roles, allowedSources]
+    - title:
+        en: Limits and port
+        sk: Limity a port
+        cs: Limity a port
+        de: Grenzen und Port
+      description:
+        en: Bounds against a flood, and a port of its own where a device cannot send a host name.
+        sk: Hranice proti záplave a vlastný port, kde zariadenie nevie poslať názov hostiteľa.
+        cs: Hranice proti záplavě a vlastní port, kde zařízení neumí poslat název hostitele.
+        de: Grenzen gegen eine Flut und ein eigener Port, wo ein Gerät keinen Hostnamen senden kann.
+      folded: true
+      fields: [limits, port]
+  fields:
+    name:
+      help:
+        en: The broker's name in this project; lowercase letters, digits and hyphens. It is part of its address. E.g. sensors.
+        sk: Názov brokera v tomto projekte; malé písmená, číslice a spojovníky. Je súčasťou jeho adresy. Napr. sensors.
+        cs: Název brokeru v tomto projektu; malá písmena, číslice a spojovníky. Je součástí jeho adresy. Např. sensors.
+        de: Der Name des Brokers in diesem Projekt; Kleinbuchstaben, Ziffern, Bindestriche. Er ist Teil seiner Adresse. Z. B. sensors.
+    mode:
+      help:
+        en: What the broker does; only the modes the project's MQTT allowance names are accepted. E.g. Devices send data in.
+        sk: Čo broker robí; prijaté sú len režimy, ktoré povoľuje MQTT povolenie projektu. Napr. Zariadenia posielajú dáta.
+        cs: Co broker dělá; přijaty jsou jen režimy, které povoluje MQTT povolení projektu. Např. Zařízení posílají data.
+        de: Was der Broker tut; nur die Modi, die das MQTT-Kontingent des Projekts nennt, werden angenommen. Z. B. Geräte senden Daten.
+    capture:
+      help:
+        en: Only with "…and keep the last messages"; the messages are kept so a steward can build the mapping, then dropped. E.g. 50 messages for 2 hours.
+        sk: Len s „…a uchová posledné správy“; správy sa uchovajú, aby správca zostavil mapovanie, potom sa zahodia. Napr. 50 správ na 2 hodiny.
+        cs: Jen s „…a uchová poslední zprávy“; zprávy se uchovají, aby správce sestavil mapování, pak se zahodí. Např. 50 zpráv na 2 hodiny.
+        de: Nur mit „…und die letzten Nachrichten behalten“; die Nachrichten bleiben, bis das Mapping gebaut ist, dann werden sie verworfen. Z. B. 50 Nachrichten für 2 Stunden.
+    capture.messagesPerTopic:
+      help:
+        en: How many of the newest messages are kept per topic; at most 1000. E.g. 50.
+        sk: Koľko najnovších správ sa uchová na tému; najviac 1000. Napr. 50.
+        cs: Kolik nejnovějších zpráv se uchová na téma; nejvýše 1000. Např. 50.
+        de: Wie viele der neuesten Nachrichten je Topic bleiben; höchstens 1000. Z. B. 50.
+    capture.window:
+      help:
+        en: How long a message is kept from its arrival; at most a day. E.g. 2 hours.
+        sk: Ako dlho sa správa uchová od príchodu; najviac deň. Napr. 2 hodiny.
+        cs: Jak dlouho se zpráva uchová od příchodu; nejvýše den. Např. 2 hodiny.
+        de: Wie lange eine Nachricht ab Eingang bleibt; höchstens einen Tag. Z. B. 2 Stunden.
+    roles:
+      help:
+        en: One role per group of devices that may do the same; at least one. E.g. one role sensors for every thermometer.
+        sk: Jedna rola na skupinu zariadení, ktoré smú to isté; aspoň jedna. Napr. jedna rola sensors pre všetky teplomery.
+        cs: Jedna role na skupinu zařízení, která smějí totéž; alespoň jedna. Např. jedna role sensors pro všechny teploměry.
+        de: Eine Rolle je Gruppe von Geräten, die dasselbe dürfen; mindestens eine. Z. B. eine Rolle sensors für alle Thermometer.
+    roles[].name:
+      help:
+        en: The role's name; lowercase letters, digits and hyphens. E.g. sensors.
+        sk: Názov roly; malé písmená, číslice a spojovníky. Napr. sensors.
+        cs: Název role; malá písmena, číslice a spojovníky. Např. sensors.
+        de: Der Name der Rolle; Kleinbuchstaben, Ziffern, Bindestriche. Z. B. sensors.
+    roles[].serviceAccounts:
+      help:
+        en: The ServiceAccounts of this project that hold the role; removing one revokes that device alone. E.g. vent-1.
+        sk: ServiceAccounty tohto projektu, ktoré majú rolu; odobratím jedného odvoláte len to zariadenie. Napr. vent-1.
+        cs: ServiceAccounty tohoto projektu, které mají roli; odebráním jednoho odvoláte jen to zařízení. Např. vent-1.
+        de: Die ServiceAccounts dieses Projekts mit dieser Rolle; einen zu entfernen sperrt nur dieses Gerät. Z. B. vent-1.
+    roles[].publish:
+      placeholder: cameras/${clientid}/frames
+      help:
+        en: "Topics the role may publish to; ${clientid} stands for the device's own id, + for one level, # for every level below. E.g. sensors/${clientid}/#."
+        sk: "Témy, do ktorých smie rola publikovať; ${clientid} je vlastné id zariadenia, + jedna úroveň, # všetky úrovne pod ňou. Napr. sensors/${clientid}/#."
+        cs: "Témata, do kterých smí role publikovat; ${clientid} je vlastní id zařízení, + jedna úroveň, # všechny úrovně pod ní. Např. sensors/${clientid}/#."
+        de: "Topics, in die die Rolle veröffentlichen darf; ${clientid} ist die eigene ID des Geräts, + eine Ebene, # alle Ebenen darunter. Z. B. sensors/${clientid}/#."
+    roles[].subscribe:
+      help:
+        en: Topics the role may subscribe to, only under the device's own ${clientid}. E.g. sensors/${clientid}/commands.
+        sk: Témy, ktoré smie rola odoberať, len pod vlastným ${clientid} zariadenia. Napr. sensors/${clientid}/commands.
+        cs: Témata, která smí role odebírat, jen pod vlastním ${clientid} zařízení. Např. sensors/${clientid}/commands.
+        de: Topics, die die Rolle abonnieren darf, nur unter der eigenen ${clientid} des Geräts. Z. B. sensors/${clientid}/commands.
+    limits:
+      help:
+        en: Bounds that protect the broker from a flood; left empty, the platform's defaults hold. E.g. 500 connections.
+        sk: Hranice, ktoré chránia broker pred záplavou; prázdne ponechajú predvoľby platformy. Napr. 500 pripojení.
+        cs: Hranice, které chrání broker před záplavou; prázdné ponechají výchozí hodnoty platformy. Např. 500 připojení.
+        de: Grenzen, die den Broker vor einer Flut schützen; leer gelten die Vorgaben der Plattform. Z. B. 500 Verbindungen.
+    limits.maxMessageBytes:
+      help:
+        en: The largest message a device may send, in bytes; at most 1 MiB. E.g. 4096.
+        sk: Najväčšia správa, ktorú smie zariadenie poslať, v bajtoch; najviac 1 MiB. Napr. 4096.
+        cs: Největší zpráva, kterou smí zařízení poslat, v bajtech; nejvýše 1 MiB. Např. 4096.
+        de: Die größte Nachricht eines Geräts in Bytes; höchstens 1 MiB. Z. B. 4096.
+    limits.messagesPerSecond:
+      help:
+        en: Messages each device may send per second; at most 1000. E.g. 10.
+        sk: Počet správ za sekundu na jedno zariadenie; najviac 1000. Napr. 10.
+        cs: Počet zpráv za sekundu na jedno zařízení; nejvýše 1000. Např. 10.
+        de: Nachrichten je Gerät und Sekunde; höchstens 1000. Z. B. 10.
+    limits.maxConnections:
+      help:
+        en: How many devices may be connected at once; at most 10000. E.g. 500.
+        sk: Koľko zariadení smie byť pripojených naraz; najviac 10000. Napr. 500.
+        cs: Kolik zařízení smí být připojeno najednou; nejvýše 10000. Např. 500.
+        de: Wie viele Geräte gleichzeitig verbunden sein dürfen; höchstens 10000. Z. B. 500.
+    limits.connectionsPerAddress:
+      help:
+        en: How many connections one source address may hold at once, at most the connections above; raise it for devices behind one NAT address. Empty is 20. E.g. 50.
+        sk: Koľko spojení smie jedna zdrojová adresa držať naraz, najviac počet spojení vyššie; zvýšte ho pre zariadenia za jednou NAT adresou. Prázdne je 20. Napr. 50.
+        cs: Kolik spojení smí jedna zdrojová adresa držet najednou, nejvýše počet spojení výše; zvyšte ho pro zařízení za jednou NAT adresou. Prázdné je 20. Např. 50.
+        de: Wie viele Verbindungen eine Quelladresse gleichzeitig halten darf, höchstens die Verbindungen oben; erhöhen Sie ihn für Geräte hinter einer NAT-Adresse. Leer ist 20. Z. B. 50.
+    port:
+      help:
+        en: A port of its own from 18830 to 18849, for devices that cannot send a host name; empty uses 8883 by name. E.g. 18830.
+        sk: Vlastný port od 18830 do 18849 pre zariadenia, ktoré nevedia poslať názov hostiteľa; prázdne použije 8883 podľa názvu. Napr. 18830.
+        cs: Vlastní port od 18830 do 18849 pro zařízení, která neumějí poslat název hostitele; prázdné použije 8883 podle názvu. Např. 18830.
+        de: Ein eigener Port von 18830 bis 18849 für Geräte, die keinen Hostnamen senden können; leer gilt 8883 nach Namen. Z. B. 18830.
+    allowedSources:
+      placeholder: 203.0.113.0/24
+      help:
+        en: "Networks devices may connect from, one CIDR range each, at most 32; empty lets any address connect with a valid token. Others are cut off before TLS. E.g. 203.0.113.0/24 or 2001:db8::/48."
+        sk: "Siete, z ktorých sa zariadenia smú pripojiť, jeden rozsah CIDR v každom poli, najviac 32; prázdne pripustí akúkoľvek adresu s platným tokenom. Ostatné sa odpoja pred TLS. Napr. 203.0.113.0/24 alebo 2001:db8::/48."
+        cs: "Sítě, ze kterých se zařízení smějí připojit, jeden rozsah CIDR v každém poli, nejvýše 32; prázdné připustí jakoukoli adresu s platným tokenem. Ostatní se odpojí před TLS. Např. 203.0.113.0/24 nebo 2001:db8::/48."
+        de: "Netze, aus denen sich Geräte verbinden dürfen, ein CIDR-Bereich je Eintrag, höchstens 32; leer lässt jede Adresse mit gültigem Token zu. Andere werden vor TLS getrennt. Z. B. 203.0.113.0/24 oder 2001:db8::/48."

@@ -1,0 +1,13 @@
+# T-2733: the session workflow as one conversation (Testing/07 §3, AG-87).
+workflow: session
+as: steward
+says:
+  - "Sign me out of the Portal, please."
+expect:
+  calls: []
+  outcome: person-only
+  why: "signing in and out is the person's own act at the Portal; the assistant has no tool for it"
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: sign me out of the Portal, please."

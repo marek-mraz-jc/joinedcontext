@@ -1,0 +1,13 @@
+# T-2733: the organization workflow as one conversation (Testing/07 §3, AG-87).
+workflow: organization
+as: steward
+says:
+  - "Which languages does our organization offer, and which one does a new person start in?"
+expect:
+  calls:
+    - tool: jc_resource_get
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: which languages does our organization offer, and which one does a new person start in?"

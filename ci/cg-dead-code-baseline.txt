@@ -1,0 +1,6 @@
+# package | rows no production entry point reaches (dev/cg-dead-code.py); only ever lowered.
+# What is left (T-4454): the test API (for_tests, with_*, reset*, test oracles and metrics the
+# tests call), len/is_empty pairs, routeTree (passed by shorthand, no edge), and two findings in
+# /workspace/chyby.md (RunnerInputForm never mounted; ActivityStore::trim is scheduled since T-5517).
+joinedcontext-portal | 25
+portal-ui | 15

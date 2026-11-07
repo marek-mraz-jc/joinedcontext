@@ -1,0 +1,97 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-helsinki-data-1
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:helsinki/app-helsinki-data
+    kind: role
+  assigner: did:web:hel.fi
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki
+  information:
+  - entities:
+    - type: PointOfInterest
+    - type: CityWork
+    - type: Event
+    - type: Alert
+    - type: OnStreetParking
+    - type: AdministrativeArea
+    - type: WaterQualityObserved
+    - type: AirQualityObserved
+    - type: WeatherObserved
+    propertyNames:
+    - name
+    - serviceCategory
+    - address
+    - openingHours
+    - url
+    - dateModified
+    - permitKind
+    - permitStatus
+    - permitNumber
+    - permitStart
+    - permitEnd
+    - startDate
+    - endDate
+    - eventStatus
+    - category
+    - subCategory
+    - dateIssued
+    - validFrom
+    - validTo
+    - zoneCode
+    - districtCode
+    - divisionLevel
+    - temperature
+    - dateObserved
+    - pm10
+    - pm25
+    - airQualityIndex
+    - roadSurfaceTemperature
+    - relativeHumidity
+    - windSpeed
+    - windDirection
+    - precipitation
+    - location
+    relationshipNames:
+    - name
+    - serviceCategory
+    - address
+    - openingHours
+    - url
+    - dateModified
+    - permitKind
+    - permitStatus
+    - permitNumber
+    - permitStart
+    - permitEnd
+    - startDate
+    - endDate
+    - eventStatus
+    - category
+    - subCategory
+    - dateIssued
+    - validFrom
+    - validTo
+    - zoneCode
+    - districtCode
+    - divisionLevel
+    - temperature
+    - dateObserved
+    - pm10
+    - pm25
+    - airQualityIndex
+    - roadSurfaceTemperature
+    - relativeHumidity
+    - windSpeed
+    - windDirection
+    - precipitation
+    - location
+  operations:
+  - queryEntity
+  - retrieveEntity

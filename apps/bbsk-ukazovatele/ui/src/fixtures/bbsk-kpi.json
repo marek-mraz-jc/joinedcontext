@@ -1,0 +1,1122 @@
+[
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of om7102rr/IN010115/SPOLU for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2025-12-31T23:59:59Z",
+    "start": "2025-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-03-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "C62",
+   "value": 607581
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:obyvatelstvo-stav-kraj",
+  "name": {
+   "type": "Property",
+   "value": "obyvatelstvo-stav-kraj"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of om7102rr/IN010115/SPOLU for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2025-12-31T23:59:59Z",
+    "start": "2025-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-03-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "C62",
+   "value": 106000
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:obyvatelstvo-stav-okres-banska-bystrica",
+  "name": {
+   "type": "Property",
+   "value": "obyvatelstvo-stav-okres-banska-bystrica"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of om7102rr/IN010115/SPOLU for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2025-12-31T23:59:59Z",
+    "start": "2025-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-03-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "C62",
+   "value": 15258
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:obyvatelstvo-stav-okres-banska-stiavnica",
+  "name": {
+   "type": "Property",
+   "value": "obyvatelstvo-stav-okres-banska-stiavnica"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of om7102rr/IN010115/SPOLU for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2025-12-31T23:59:59Z",
+    "start": "2025-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-03-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "C62",
+   "value": 57517
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:obyvatelstvo-stav-okres-brezno",
+  "name": {
+   "type": "Property",
+   "value": "obyvatelstvo-stav-okres-brezno"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of om7102rr/IN010115/SPOLU for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2025-12-31T23:59:59Z",
+    "start": "2025-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-03-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "C62",
+   "value": 30199
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:obyvatelstvo-stav-okres-detva",
+  "name": {
+   "type": "Property",
+   "value": "obyvatelstvo-stav-okres-detva"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of om7102rr/IN010115/SPOLU for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2025-12-31T23:59:59Z",
+    "start": "2025-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-03-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "C62",
+   "value": 21129
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:obyvatelstvo-stav-okres-krupina",
+  "name": {
+   "type": "Property",
+   "value": "obyvatelstvo-stav-okres-krupina"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of om7102rr/IN010115/SPOLU for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2025-12-31T23:59:59Z",
+    "start": "2025-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-03-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "C62",
+   "value": 68259
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:obyvatelstvo-stav-okres-lucenec",
+  "name": {
+   "type": "Property",
+   "value": "obyvatelstvo-stav-okres-lucenec"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of om7102rr/IN010115/SPOLU for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2025-12-31T23:59:59Z",
+    "start": "2025-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-03-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "C62",
+   "value": 19951
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:obyvatelstvo-stav-okres-poltar",
+  "name": {
+   "type": "Property",
+   "value": "obyvatelstvo-stav-okres-poltar"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of om7102rr/IN010115/SPOLU for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2025-12-31T23:59:59Z",
+    "start": "2025-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-03-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "C62",
+   "value": 37528
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:obyvatelstvo-stav-okres-revuca",
+  "name": {
+   "type": "Property",
+   "value": "obyvatelstvo-stav-okres-revuca"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of om7102rr/IN010115/SPOLU for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2025-12-31T23:59:59Z",
+    "start": "2025-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-03-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "C62",
+   "value": 79222
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:obyvatelstvo-stav-okres-rimavska-sobota",
+  "name": {
+   "type": "Property",
+   "value": "obyvatelstvo-stav-okres-rimavska-sobota"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of om7102rr/IN010115/SPOLU for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2025-12-31T23:59:59Z",
+    "start": "2025-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-03-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "C62",
+   "value": 40235
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:obyvatelstvo-stav-okres-velky-krtis",
+  "name": {
+   "type": "Property",
+   "value": "obyvatelstvo-stav-okres-velky-krtis"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of om7102rr/IN010115/SPOLU for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2025-12-31T23:59:59Z",
+    "start": "2025-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-03-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "C62",
+   "value": 65001
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:obyvatelstvo-stav-okres-zvolen",
+  "name": {
+   "type": "Property",
+   "value": "obyvatelstvo-stav-okres-zvolen"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of om7102rr/IN010115/SPOLU for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2025-12-31T23:59:59Z",
+    "start": "2025-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-03-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "C62",
+   "value": 24327
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:obyvatelstvo-stav-okres-zarnovica",
+  "name": {
+   "type": "Property",
+   "value": "obyvatelstvo-stav-okres-zarnovica"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of om7102rr/IN010115/SPOLU for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2025-12-31T23:59:59Z",
+    "start": "2025-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-03-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "C62",
+   "value": 42955
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:obyvatelstvo-stav-okres-ziar-nad-hronom",
+  "name": {
+   "type": "Property",
+   "value": "obyvatelstvo-stav-okres-ziar-nad-hronom"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of zp3803rs/ODPAD_TONY_KM2, pollutant 1, in tonnes per km2, for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2023-12-31T23:59:59Z",
+    "start": "2023-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2025-10-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "TNE",
+   "value": 0.4
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:emisie-tuhe-km2-kraj",
+  "name": {
+   "type": "Property",
+   "value": "emisie-tuhe-km2-kraj"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of zp3803rs/ODPAD_TONY_KM2, pollutant 1, in tonnes per km2, for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2023-12-31T23:59:59Z",
+    "start": "2023-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2025-10-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "TNE",
+   "value": 0.4
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:emisie-tuhe-km2-okres-banska-bystrica",
+  "name": {
+   "type": "Property",
+   "value": "emisie-tuhe-km2-okres-banska-bystrica"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of zp3803rs/ODPAD_TONY_KM2, pollutant 1, in tonnes per km2, for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2023-12-31T23:59:59Z",
+    "start": "2023-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2025-10-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "TNE",
+   "value": 0.5
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:emisie-tuhe-km2-okres-banska-stiavnica",
+  "name": {
+   "type": "Property",
+   "value": "emisie-tuhe-km2-okres-banska-stiavnica"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of zp3803rs/ODPAD_TONY_KM2, pollutant 1, in tonnes per km2, for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2023-12-31T23:59:59Z",
+    "start": "2023-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2025-10-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "TNE",
+   "value": 0.3
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:emisie-tuhe-km2-okres-brezno",
+  "name": {
+   "type": "Property",
+   "value": "emisie-tuhe-km2-okres-brezno"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of zp3803rs/ODPAD_TONY_KM2, pollutant 1, in tonnes per km2, for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2023-12-31T23:59:59Z",
+    "start": "2023-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2025-10-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "TNE",
+   "value": 0.6
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:emisie-tuhe-km2-okres-detva",
+  "name": {
+   "type": "Property",
+   "value": "emisie-tuhe-km2-okres-detva"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of zp3803rs/ODPAD_TONY_KM2, pollutant 1, in tonnes per km2, for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2023-12-31T23:59:59Z",
+    "start": "2023-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2025-10-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "TNE",
+   "value": 0.4
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:emisie-tuhe-km2-okres-krupina",
+  "name": {
+   "type": "Property",
+   "value": "emisie-tuhe-km2-okres-krupina"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of zp3803rs/ODPAD_TONY_KM2, pollutant 1, in tonnes per km2, for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2023-12-31T23:59:59Z",
+    "start": "2023-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2025-10-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "TNE",
+   "value": 0.4
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:emisie-tuhe-km2-okres-lucenec",
+  "name": {
+   "type": "Property",
+   "value": "emisie-tuhe-km2-okres-lucenec"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of zp3803rs/ODPAD_TONY_KM2, pollutant 1, in tonnes per km2, for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2023-12-31T23:59:59Z",
+    "start": "2023-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2025-10-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "TNE",
+   "value": 0.3
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:emisie-tuhe-km2-okres-poltar",
+  "name": {
+   "type": "Property",
+   "value": "emisie-tuhe-km2-okres-poltar"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of zp3803rs/ODPAD_TONY_KM2, pollutant 1, in tonnes per km2, for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2023-12-31T23:59:59Z",
+    "start": "2023-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2025-10-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "TNE",
+   "value": 0.4
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:emisie-tuhe-km2-okres-revuca",
+  "name": {
+   "type": "Property",
+   "value": "emisie-tuhe-km2-okres-revuca"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of zp3803rs/ODPAD_TONY_KM2, pollutant 1, in tonnes per km2, for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2023-12-31T23:59:59Z",
+    "start": "2023-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2025-10-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "TNE",
+   "value": 0.4
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:emisie-tuhe-km2-okres-rimavska-sobota",
+  "name": {
+   "type": "Property",
+   "value": "emisie-tuhe-km2-okres-rimavska-sobota"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of zp3803rs/ODPAD_TONY_KM2, pollutant 1, in tonnes per km2, for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2023-12-31T23:59:59Z",
+    "start": "2023-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2025-10-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "TNE",
+   "value": 0.4
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:emisie-tuhe-km2-okres-velky-krtis",
+  "name": {
+   "type": "Property",
+   "value": "emisie-tuhe-km2-okres-velky-krtis"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of zp3803rs/ODPAD_TONY_KM2, pollutant 1, in tonnes per km2, for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2023-12-31T23:59:59Z",
+    "start": "2023-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2025-10-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "TNE",
+   "value": 0.4
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:emisie-tuhe-km2-okres-zvolen",
+  "name": {
+   "type": "Property",
+   "value": "emisie-tuhe-km2-okres-zvolen"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of zp3803rs/ODPAD_TONY_KM2, pollutant 1, in tonnes per km2, for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2023-12-31T23:59:59Z",
+    "start": "2023-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2025-10-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "TNE",
+   "value": 0.7
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:emisie-tuhe-km2-okres-zarnovica",
+  "name": {
+   "type": "Property",
+   "value": "emisie-tuhe-km2-okres-zarnovica"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "the published value of zp3803rs/ODPAD_TONY_KM2, pollutant 1, in tonnes per km2, for the territory and the latest year the cube carries"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2023-12-31T23:59:59Z",
+    "start": "2023-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:bbsk.sk:bbsk-kpi:ukazovatele",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2025-10-31T00:00:00Z",
+   "type": "Property",
+   "unitCode": "TNE",
+   "value": 0.5
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:bbsk.sk:bbsk-kraj:bbsk-kraj",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:bbsk.sk:bbsk-kpi:emisie-tuhe-km2-okres-ziar-nad-hronom",
+  "name": {
+   "type": "Property",
+   "value": "emisie-tuhe-km2-okres-ziar-nad-hronom"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:35Z"
+   }
+  }
+ }
+]

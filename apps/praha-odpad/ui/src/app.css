@@ -1,0 +1,138 @@
+/*
+ * The waste desk on the SDK's own tokens (SDK-04). Its own look (T-2779): a band of figures over a
+ * dense, sortable table; a flagged cell carries its words, never only a colour.
+ */
+main {
+  padding: var(--jc-gutter, 1rem);
+}
+
+.note,
+.source,
+.address {
+  color: var(--jc-color-text-muted, #555);
+}
+
+.failed {
+  color: var(--jc-color-danger, #b42318);
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--jc-space-3, 0.75rem);
+  margin: 0 0 var(--jc-space-4, 1rem);
+}
+
+.tile {
+  border: 1px solid var(--jc-color-border, #d0d0d0);
+  border-radius: var(--jc-radius-md, 0.5rem);
+  padding: var(--jc-space-3, 0.75rem);
+}
+
+.tile dt {
+  font-size: 0.875rem;
+  color: var(--jc-color-text-muted, #555);
+}
+
+.tile dd {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-3, 0.75rem);
+  align-items: flex-end;
+}
+
+.search {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.search input {
+  font: inherit;
+  padding: var(--jc-space-2, 0.5rem);
+}
+
+.pick {
+  display: flex;
+  flex-direction: column;
+}
+
+.pick select {
+  font: inherit;
+  padding: var(--jc-space-2, 0.5rem);
+}
+
+td.text {
+  text-align: left;
+}
+
+.check {
+  display: inline-flex;
+  gap: var(--jc-space-1, 0.25rem);
+  align-items: center;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 40rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: var(--jc-space-2, 0.5rem);
+  border-bottom: 1px solid var(--jc-color-border, #e2e2e2);
+  vertical-align: top;
+}
+
+td {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+thead button {
+  font: inherit;
+  font-weight: 600;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: inherit;
+}
+
+.address,
+.mark {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.flag {
+  background: var(--jc-color-warning-surface, #fff4e0);
+}
+
+/* A container's code opens it in the entity panel (SDK-40): it reads as the code, and is a button. */
+.opens {
+  font: inherit;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}

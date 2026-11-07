@@ -1,0 +1,97 @@
+# Default form arrangement for ContextSpace (UI-02).
+# Configures storage for entities; examples match the Helsinki city context space.
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: contextspace
+spec:
+  for: ContextSpace
+  guide: User-Guide/02-organizations-projects-spaces
+  about:
+    en: >-
+      A context space is where this project's entities live: the stations, sensors, vehicles or
+      buildings themselves, all of one data model. Give it a short name and pick the model its
+      entities follow; what goes in comes from a pipeline, and what comes out goes through an
+      endpoint.
+    sk: >-
+      Kontextový priestor je miesto, kde žijú entity tohto projektu: samotné stanice, senzory,
+      vozidlá či budovy, všetky podľa jedného dátového modelu. Dajte mu krátky názov a vyberte
+      model, ktorý jeho entity dodržiavajú; dovnútra sa dostanú cez pipeline, von cez endpoint.
+    cs: >-
+      Kontextový prostor je místo, kde žijí entity tohoto projektu: samotné stanice, senzory,
+      vozidla či budovy, všechny podle jednoho datového modelu. Dejte mu krátký název a vyberte
+      model, který jeho entity dodržují; dovnitř se dostanou přes pipeline, ven přes endpoint.
+    de: >-
+      Ein Kontextraum ist der Ort, an dem die Entitäten dieses Projekts leben: die Stationen,
+      Sensoren, Fahrzeuge oder Gebäude selbst, alle nach einem Datenmodell. Geben Sie ihm einen
+      kurzen Namen und wählen Sie das Modell; hinein kommt es über eine Pipeline, hinaus über
+      einen Endpunkt.
+  order: [name, title, dataModelRef, defaultLocale, missingUnitCode, isSandbox, ttlDays]
+  groups:
+    - title:
+        en: Basics
+        sk: Základné údaje
+        cs: Základní údaje
+        de: Basisdaten
+      description:
+        en: Name, title and data model for this context space.
+        sk: Názov, popisný titulok a dátový model pre tento kontextový priestor.
+        cs: Název, popisný titulek a datový model pro tento kontextový prostor.
+        de: Name, Titel und Datenmodell für diesen Kontextraum.
+      fields: [name, title, dataModelRef, defaultLocale, missingUnitCode]
+    - title:
+        en: Sandbox settings
+        sk: Nastavenia pieskoviska
+        cs: Nastavení pískoviště
+        de: Sandbox-Einstellungen
+      description:
+        en: Temporary testing space that expires automatically.
+        sk: Dočasný testovací priestor s automatickým vypršaním platnosti.
+        cs: Dočasný testovací prostor s automatickým vypršením platnosti.
+        de: Kurzlebiger Testraum mit automatischem Ablauf.
+      folded: true
+      fields: [isSandbox, ttlDays]
+  fields:
+    name:
+      placeholder: "air-quality"
+      help:
+        en: The short name of the space. It becomes part of every entity kept here, so it stays as it is.
+        sk: Krátky názov priestoru. Stane sa časťou označenia každej entity v ňom, preto sa už nemení.
+        cs: Krátký název prostoru. Stane se částí označení každé entity v něm, proto se už nemění.
+        de: Der kurze Name des Raums. Er wird Teil der Kennung jeder Entität darin und bleibt daher so.
+    title:
+      help:
+        en: The name people read in menus and lists, in your own language.
+        sk: Názov, ktorý ľudia čítajú v menu a zoznamoch, vo vašom jazyku.
+        cs: Název, který lidé čtou v menu a seznamech, ve vašem jazyce.
+        de: Der Name, den Menschen in Menüs und Listen lesen, in Ihrer Sprache.
+    dataModelRef:
+      help:
+        en: The data model that defines entity types and attributes allowed in this space.
+        sk: Dátový model, ktorý určuje povolené typy entít a atribúty v tomto priestore.
+        cs: Datový model, který určuje povolené typy entit a atributy v tomto prostoru.
+        de: Das Datenmodell, das die erlaubten Entitätstypen und Attribute in diesem Raum definiert.
+    defaultLocale:
+      help:
+        en: Primary language used for multilingual entity properties when no specific locale is requested.
+        sk: Hlavný jazyk viacjazyčných vlastností entít, ak nie je vyžiadaný konkrétny jazyk.
+        cs: Hlavní jazyk vícejazyčných vlastností entit, pokud není vyžádán konkrétní jazyk.
+        de: Standardsprache für mehrsprachige Entitätseigenschaften, wenn keine bestimmte Sprache angefragt wird.
+    missingUnitCode:
+      help:
+        en: What a write without the unit of a measured value gets. Fill writes the model's unit (µg/m³ for PM10); refuse turns the write away so the sender fixes it.
+        sk: Čo dostane zápis nameranej hodnoty bez jednotky. Doplniť zapíše jednotku z modelu (µg/m³ pre PM10); odmietnuť zápis vráti, aby ho odosielateľ opravil.
+        cs: Co dostane zápis naměřené hodnoty bez jednotky. Doplnit zapíše jednotku z modelu (µg/m³ pro PM10); odmítnout zápis vrátí, aby ho odesílatel opravil.
+        de: Was ein Schreibvorgang ohne die Einheit eines Messwerts bekommt. Ergänzen schreibt die Einheit des Modells (µg/m³ für PM10); ablehnen weist ihn zurück, damit der Absender ihn korrigiert.
+    isSandbox:
+      help:
+        en: Mark as a temporary environment used for experiments and app previews.
+        sk: Označte ako dočasné prostredie určené na experimenty a náhľady aplikácií.
+        cs: Označte jako dočasné prostředí určené pro experimenty a náhledy aplikací.
+        de: Als temporäre Umgebung für Experimente und App-Vorschauen markieren.
+    ttlDays:
+      help:
+        en: Number of days before the sandbox and all its entities are automatically deleted.
+        sk: Počet dní, po ktorých sa pieskovisko a všetky jeho entity automaticky vymažú.
+        cs: Počet dní, po kterých se pískoviště a všechny jeho entity automaticky smažou.
+        de: Anzahl der Tage, nach denen die Sandbox und alle ihre Entitäten automatisch gelöscht werden.

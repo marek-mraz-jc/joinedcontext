@@ -1,0 +1,372 @@
+[
+  {
+    "name": "archive",
+    "category": "Parsing",
+    "summary": "Archives all the messages of a batch into a single message according to the selected archive format."
+  },
+  {
+    "name": "avro",
+    "category": "Parsing",
+    "summary": "Performs Avro based operations on messages based on a schema."
+  },
+  {
+    "name": "awk",
+    "category": "Mapping",
+    "summary": "Executes an AWK program on messages. This processor is very powerful as it offers a range of [custom functions](#awk-functions) for querying and mutating message contents and metadata."
+  },
+  {
+    "name": "aws_bedrock_invoke",
+    "category": "AI",
+    "summary": "Invokes an Amazon Bedrock model for each message, replacing the message contents with the raw model response."
+  },
+  {
+    "name": "aws_dynamodb_partiql",
+    "category": "Integration",
+    "summary": "Executes a PartiQL expression against a DynamoDB table for each message."
+  },
+  {
+    "name": "aws_lambda",
+    "category": "Integration",
+    "summary": "Invokes an AWS lambda for each message. The contents of the message is the payload of the request, and the result of the invocation will become the new contents of the message."
+  },
+  {
+    "name": "aws_s3",
+    "category": "Services",
+    "summary": "Performs an S3 GetObject operation using the `bucket` + `key` provided in the config and replaces the original message parts with the content retrieved from S3."
+  },
+  {
+    "name": "azure_cosmosdb",
+    "category": "Azure",
+    "summary": "Creates or updates messages as JSON documents in [Azure CosmosDB](https://learn.microsoft.com/en-us/azure/cosmos-db/introduction)."
+  },
+  {
+    "name": "bloblang",
+    "category": "Mapping",
+    "summary": "Executes a [Bloblang](/docs/guides/bloblang/about) mapping on messages."
+  },
+  {
+    "name": "bounds_check",
+    "category": "Utility",
+    "summary": "Removes messages (and batches) that do not fit within certain size boundaries."
+  },
+  {
+    "name": "branch",
+    "category": "Composition",
+    "summary": "The `branch` processor allows you to create a new request message via a [Bloblang mapping](/docs/guides/bloblang/about), execute a list of processors on the request messages, and, finally, map the result back into the source message using another mapping."
+  },
+  {
+    "name": "cache",
+    "category": "Integration",
+    "summary": "Performs operations against a [cache resource](/docs/components/caches/about) for each message, allowing you to store or retrieve data within message payloads."
+  },
+  {
+    "name": "cached",
+    "category": "Utility",
+    "summary": "Cache the result of applying one or more processors to messages identified by a key. If the key already exists within the cache the contents of the message will be replaced with the cached result instead of applying the processors."
+  },
+  {
+    "name": "catch",
+    "category": "Composition",
+    "summary": "Applies a list of child processors _only_ when a previous processing step has failed."
+  },
+  {
+    "name": "compress",
+    "category": "Parsing",
+    "summary": "Compresses messages according to the selected algorithm. Supported compression algorithms are: [flate gzip lz4 pgzip snappy zlib]"
+  },
+  {
+    "name": "couchbase",
+    "category": "Integration",
+    "summary": "Performs operations against Couchbase for each message, allowing you to store or retrieve data within message payloads."
+  },
+  {
+    "name": "decompress",
+    "category": "Parsing",
+    "summary": "Decompresses messages according to the selected algorithm. Supported decompression algorithms are: [bzip2 flate gzip lz4 pgzip snappy zlib]"
+  },
+  {
+    "name": "dedupe",
+    "category": "Utility",
+    "summary": "Deduplicates messages by storing a key value in a cache using the `add` operator. If the key already exists within the cache it is dropped."
+  },
+  {
+    "name": "elasticsearch",
+    "category": "Integration",
+    "summary": "Queries Elasticsearch and replaces messages with the result."
+  },
+  {
+    "name": "for_each",
+    "category": "Composition",
+    "summary": "A processor that applies a list of child processors to messages of a batch as though they were each a batch of one message."
+  },
+  {
+    "name": "gcp_bigquery_select",
+    "category": "Integration",
+    "summary": "Executes a `SELECT` query against BigQuery and replaces messages with the rows returned."
+  },
+  {
+    "name": "grok",
+    "category": "Parsing",
+    "summary": "Parses messages into a structured format by attempting to apply a list of Grok expressions, the first expression to result in at least one value replaces the original message with a JSON object containing the values."
+  },
+  {
+    "name": "group_by",
+    "category": "Composition",
+    "summary": "Splits a [batch of messages](/docs/configuration/batching) into N batches, where each resulting batch contains a group of messages determined by a [Bloblang query](/docs/guides/bloblang/about)."
+  },
+  {
+    "name": "group_by_value",
+    "category": "Composition",
+    "summary": "Splits a batch of messages into N batches, where each resulting batch contains a group of messages determined by a [function interpolated string](/docs/configuration/interpolation#bloblang-queries) evaluated per message."
+  },
+  {
+    "name": "http",
+    "category": "Integration",
+    "summary": "Performs an HTTP request using a message batch as the request body, and replaces the original message parts with the body of the response."
+  },
+  {
+    "name": "insert_part",
+    "category": "Composition",
+    "summary": "Insert a new message into a batch at an index. If the specified index is greater than the length of the existing batch it will be appended to the end."
+  },
+  {
+    "name": "javascript",
+    "category": "Mapping",
+    "summary": "Executes a provided JavaScript code block or file for each message."
+  },
+  {
+    "name": "jmespath",
+    "category": "Mapping",
+    "summary": "Executes a [JMESPath query](http://jmespath.org/) on JSON documents and replaces the message with the resulting document."
+  },
+  {
+    "name": "jq",
+    "category": "Mapping",
+    "summary": "Transforms and filters messages using jq queries."
+  },
+  {
+    "name": "json_schema",
+    "category": "Mapping",
+    "summary": "Checks messages against a provided JSONSchema definition but does not change the payload under any circumstances."
+  },
+  {
+    "name": "log",
+    "category": "Utility",
+    "summary": "Prints a log event for each message. Messages always remain unchanged."
+  },
+  {
+    "name": "mapping",
+    "category": "Mapping",
+    "summary": "Executes a [Bloblang](/docs/guides/bloblang/about) mapping on messages, creating a new document that replaces (or filters) the original message."
+  },
+  {
+    "name": "metric",
+    "category": "Utility",
+    "summary": "Emit custom metrics by extracting values from messages."
+  },
+  {
+    "name": "mongodb",
+    "category": "Services",
+    "summary": "Performs operations against MongoDB for each message, allowing you to store or retrieve data within message payloads."
+  },
+  {
+    "name": "msgpack",
+    "category": "Parsing",
+    "summary": "Converts messages to or from the [MessagePack](https://msgpack.org/) format."
+  },
+  {
+    "name": "mutation",
+    "category": "Mapping",
+    "summary": "Executes a [Bloblang](/docs/guides/bloblang/about) mapping and directly transforms the contents of messages, mutating (or deleting) them."
+  },
+  {
+    "name": "nats_kv",
+    "category": "Services",
+    "summary": "Perform operations on a NATS key-value bucket."
+  },
+  {
+    "name": "nats_object_store",
+    "category": "Services",
+    "summary": "Perform operations on a NATS object store bucket."
+  },
+  {
+    "name": "nats_request_reply",
+    "category": "Services",
+    "summary": "Sends a message to a NATS subject and expects a reply, from a NATS subscriber acting as a responder, back."
+  },
+  {
+    "name": "nlp_classify_text",
+    "category": "Machine Learning",
+    "summary": "Performs text classification using a Hugging Face 🤗 NLP pipeline with an ONNX Runtime model."
+  },
+  {
+    "name": "nlp_classify_tokens",
+    "category": "Machine Learning",
+    "summary": "Performs token classification using a Hugging Face 🤗 NLP pipeline with an ONNX Runtime model."
+  },
+  {
+    "name": "nlp_extract_features",
+    "category": "Machine Learning",
+    "summary": "Performs feature extraction using a Hugging Face 🤗 NLP pipeline with an ONNX Runtime model."
+  },
+  {
+    "name": "nlp_zero_shot_classify",
+    "category": "Machine Learning",
+    "summary": "Performs zero-shot text classification using a Hugging Face 🤗 NLP pipeline with an ONNX Runtime model."
+  },
+  {
+    "name": "noop",
+    "category": "Utility",
+    "summary": "Noop is a processor that does nothing, the message passes through unchanged. Why? Sometimes doing nothing is the braver option."
+  },
+  {
+    "name": "opensnowcat",
+    "category": "Parsing",
+    "summary": "Processes [OpenSnowcat](https://opensnowcat.io/)/[Snowplow enriched TSV](https://docs.snowplow.io/docs/fundamentals/canonical-event/understanding-the-enriched-tsv-format/) events."
+  },
+  {
+    "name": "parallel",
+    "category": "Composition",
+    "summary": "A processor that applies a list of child processors to messages of a batch as though they were each a batch of one message (similar to the [`for_each`](/docs/components/processors/for_each) processor), but where each message is processed in parallel."
+  },
+  {
+    "name": "parquet_decode",
+    "category": "Parsing",
+    "summary": "Decodes [Parquet files](https://parquet.apache.org/docs/) into a batch of structured messages."
+  },
+  {
+    "name": "parquet_encode",
+    "category": "Parsing",
+    "summary": "Encodes [Parquet files](https://parquet.apache.org/docs/) from a batch of structured messages."
+  },
+  {
+    "name": "parse_log",
+    "category": "Parsing",
+    "summary": "Parses common log [formats](#formats) into [structured data](#codecs). This is easier and often much faster than [`grok`](/docs/components/processors/grok)."
+  },
+  {
+    "name": "processors",
+    "category": "Composition",
+    "summary": "A processor grouping several sub-processors."
+  },
+  {
+    "name": "protobuf",
+    "category": "Parsing",
+    "summary": ""
+  },
+  {
+    "name": "python",
+    "category": "Mapping",
+    "summary": ""
+  },
+  {
+    "name": "rate_limit",
+    "category": "Utility",
+    "summary": "Throttles the throughput of a pipeline according to a specified [`rate_limit`](/docs/components/rate_limits/about) resource. Rate limits are shared across components and therefore apply globally to all processing pipelines."
+  },
+  {
+    "name": "redis",
+    "category": "Integration",
+    "summary": "Performs actions against Redis that aren't possible using a [`cache`](/docs/components/processors/cache) processor. Actions are"
+  },
+  {
+    "name": "redis_script",
+    "category": "Integration",
+    "summary": "Performs actions against Redis using [LUA scripts](https://redis.io/docs/manual/programmability/eval-intro/)."
+  },
+  {
+    "name": "resource",
+    "category": "Utility",
+    "summary": "Resource is a processor type that runs a processor resource identified by its label."
+  },
+  {
+    "name": "retry",
+    "category": "Composition",
+    "summary": "Attempts to execute a series of child processors until success."
+  },
+  {
+    "name": "schema_registry_decode",
+    "category": "Parsing",
+    "summary": "Automatically decodes and validates messages with schemas from a Confluent Schema Registry service."
+  },
+  {
+    "name": "schema_registry_encode",
+    "category": "Parsing",
+    "summary": "Automatically encodes and validates messages with schemas from a Confluent Schema Registry service."
+  },
+  {
+    "name": "select_parts",
+    "category": "Utility",
+    "summary": "Cherry pick a set of messages from a batch by their index. Indexes larger than the number of messages are simply ignored."
+  },
+  {
+    "name": "sentry_capture",
+    "category": "Utility",
+    "summary": "Captures log events from messages and submits them to [Sentry](https://sentry.io/)."
+  },
+  {
+    "name": "sleep",
+    "category": "Utility",
+    "summary": "Sleep for a period of time specified as a duration string for each message. This processor will interpolate functions within the `duration` field, you can find a list of functions [here](/docs/configuration/interpolation#bloblang-queries)."
+  },
+  {
+    "name": "split",
+    "category": "Utility",
+    "summary": "Breaks message batches (synonymous with multiple part messages) into smaller batches."
+  },
+  {
+    "name": "sql_insert",
+    "category": "Integration",
+    "summary": "Inserts rows into an SQL database for each message, and leaves the message unchanged."
+  },
+  {
+    "name": "sql_raw",
+    "category": "Integration",
+    "summary": "Runs an arbitrary SQL query against a database and (optionally) returns the result as an array of objects, one for each row returned."
+  },
+  {
+    "name": "sql_select",
+    "category": "Integration",
+    "summary": "Runs an SQL select query against a database and returns the result as an array of objects, one for each row returned, containing a key for each column queried and its value."
+  },
+  {
+    "name": "switch",
+    "category": "Composition",
+    "summary": "Conditionally processes messages based on their contents."
+  },
+  {
+    "name": "sync_response",
+    "category": "Utility",
+    "summary": "Adds the payload in its current state as a synchronous response to the input source, where it is dealt with according to that specific input type."
+  },
+  {
+    "name": "template",
+    "category": "Mapping",
+    "summary": "Transforms messages using Go template syntax."
+  },
+  {
+    "name": "try",
+    "category": "Composition",
+    "summary": "Executes a list of child processors on messages only if no prior processors have failed (or the errors have been cleared)."
+  },
+  {
+    "name": "unarchive",
+    "category": "Parsing",
+    "summary": "Unarchives messages according to the selected archive format into multiple messages within a [batch](/docs/configuration/batching)."
+  },
+  {
+    "name": "while",
+    "category": "Composition",
+    "summary": "A processor that checks a [Bloblang query](/docs/guides/bloblang/about/) against each batch of messages and executes child processors on them for as long as the query resolves to true."
+  },
+  {
+    "name": "workflow",
+    "category": "Composition",
+    "summary": "Executes a topology of [`branch` processors][processors.branch], performing them in parallel where possible."
+  },
+  {
+    "name": "xml",
+    "category": "Parsing",
+    "summary": "Parses messages as an XML document, performs a mutation on the data, and then overwrites the previous contents with the new value."
+  }
+]

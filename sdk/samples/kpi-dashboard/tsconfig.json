@@ -1,0 +1,7 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDirs": ["../../template/src", "./src"]
+  },
+  "include": ["src", "../../template/src", "../../tests/setup.ts"]
+}

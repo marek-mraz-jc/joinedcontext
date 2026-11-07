@@ -1,0 +1,47 @@
+# Tříděný odpad Prahy — the waste-collection desk for Prague's staff (T-2786, AP-07, AP-14,
+# AP-118). Hand written, so no generated-by annotation.
+#
+# It reads and never writes, so it is `static`: a bundle the Portal static host serves under
+# /apps/praha-odpad/. It is a staff desk, so it is opened by its role, never anonymously: the viewer
+# role is held by its default group (T-2686), and the bundle holds no token of its own.
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: praha-odpad
+  namespace: praha
+  annotations:
+    # The Portal image ships this bundle (Dockerfile, /srv/apps), so the App names no
+    # repository of its own; the Portal accepts the mark only where the bundle is (AP-87).
+    joinedcontext.com/shipped-with: portal
+  title:
+    cs: "Tříděný odpad Prahy"
+    en: "Prague recycling"
+  description:
+    cs: "Pracoviště svozu: zaplněnost kontejnerů se senzorem, stáří posledního měření a stanoviště, nejplnější a nejdéle neměřená desetina ve městě a tabulka ke stažení."
+    en: "A collection desk: how full the sensor containers are, how old their last reading is and where they stand, the fullest and longest-unread tenth of the city, and the table as a download."
+spec:
+  kind: ui
+  source:
+    path: ./apps/praha-odpad
+  build:
+    node: "22"
+  visibility: roles
+  lifecycle: published
+  roles:
+    - name: viewer
+      title: { cs: "Čtenář", en: "Viewer" }
+      description: "Reads every container's fill level and downloads the table."
+  # grants/users/groups/ (AP-118, ADR-N-031): who holds a role is that group's members.
+  access:
+    - role: viewer
+      subjects: [{ group: praha-odpad-viewer }]
+  dataNeeds:
+    # The sensor containers of waste-fill and the names of the isles they stand at (T-2785).
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: praha-mesto
+      types: [WasteContainer, WasteContainerIsle]
+      attrs: [containerCode, wasteKind, fillingLevel, dateModified, refWasteContainerIsle, name, location]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]
+      roles: [viewer]

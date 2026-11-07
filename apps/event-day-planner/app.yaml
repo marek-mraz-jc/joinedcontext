@@ -1,0 +1,63 @@
+# My day of events (T-3329): a visitor picks Helsinki's events they like and gets a plan for the
+# day: the order that fits most, when to be where, the walk between, what clashes, and the day as
+# a calendar file. Hand written, so no generated-by annotation (AP-35).
+#
+# A server WASM App (`kind: wasm`, ADR-N-044, T-3347): React on the App SDK with its Rust compiled
+# to WebAssembly and run in the reader's browser while they click (wasm/), and a server component
+# on the shared host (server/) that plans a day again from the gateway's events when a visitor
+# shares it, and keeps it under a short code with its calendar file. Its own schema (migrations/)
+# and its own files under its prefix are the App's alone. Its source is its own repository on the
+# forge, which the build lane builds at `ref` (AP-75, AP-80, AP-151); this folder of the portal
+# repository is where CI tests the same tree before it is pushed there (T-2599).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: event-day-planner
+  namespace: helsinki
+  title:
+    en: "My day of events"
+    fi: "Tapahtumapäiväni"
+  description:
+    en: "Pick the events you like in Helsinki and get a plan for the day: the best order, walking times between them, what clashes, and a calendar file."
+    fi: "Valitse Helsingin tapahtumat, jotka kiinnostavat, ja saat päivän suunnitelman: paras järjestys, kävelyajat, päällekkäisyydet ja kalenteritiedosto."
+spec:
+  kind: wasm
+  source:
+    git:
+      url: https://dev.joinedcontext.com/git/joinedcontext/helsinki_event-day-planner.git
+      ref: main
+  build:
+    node: "22"
+    rust: "1.90"
+  storage:
+    sql: { migrations: migrations, quotaMiB: 100 }
+    blob: { quotaMiB: 256 }
+  # The events endpoint of Helsinki is public (GW22): an anonymous reader gets what the public
+  # role is granted and nothing more.
+  visibility: public
+  lifecycle: published
+  # Roles (T-3826): anyone plans and shares a day; a signed-in viewer keeps the days they shared;
+  # a steward also curates the featured events every visitor sees. The server decides from the
+  # caller the platform names, never from the request.
+  roles:
+    - name: viewer
+      title: { en: "Viewer", fi: "Katselija" }
+      description: "Plans a day, shares it and keeps the days they shared under My days, deleting their own."
+    - name: steward
+      title: { en: "Steward", fi: "Ylläpitäjä" }
+      description: "What a viewer does, and curates the featured events: adds, notes and removes them. Reads the whole history. The city's data is only read."
+  access:
+    - role: viewer
+      subjects: [{ group: event-day-planner-viewer }]
+    - role: steward
+      subjects: [{ group: event-day-planner-steward }]
+  dataNeeds:
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [Event]
+      # The attributes the Event entities carry on dev (read 2026-10-08 on the helsinki-events
+      # endpoint): name and description in fi, sv and en, the times, status, place and source.
+      attrs: [name, description, startDate, endDate, eventStatus, address, location, source]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]

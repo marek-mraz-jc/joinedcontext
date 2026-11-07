@@ -1,0 +1,51 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-banskabystrica-mapa-1
+  namespace: banskabystrica
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:banskabystrica/app-banskabystrica-mapa
+    kind: role
+  assigner: did:web:banskabystrica.sk
+  contextSpaceRef:
+    kind: ContextSpace
+    name: banskabystrica-verejne
+  information:
+  - entities:
+    - type: Event
+    - type: Organization
+    - type: AirQualityObserved
+    propertyNames:
+    - name
+    - location
+    - address
+    - url
+    - startDate
+    - endDate
+    - startTime
+    - eventCategory
+    - pupilCount
+    - teachingLanguage
+    - dateObserved
+    - pm10
+    - pm25
+    relationshipNames:
+    - name
+    - location
+    - address
+    - url
+    - startDate
+    - endDate
+    - startTime
+    - eventCategory
+    - pupilCount
+    - teachingLanguage
+    - dateObserved
+    - pm10
+    - pm25
+  operations:
+  - queryEntity
+  - retrieveEntity

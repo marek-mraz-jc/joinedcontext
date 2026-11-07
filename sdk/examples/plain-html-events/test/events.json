@@ -1,0 +1,170 @@
+[
+  {
+    "id": "urn:ngsi-ld:Event:hel.fi:helsinki:espoo_le-agn5nkl76q",
+    "type": "Event",
+    "name": {
+      "type": "LanguageProperty",
+      "languageMap": {
+        "en": "Workshop for Families",
+        "fi": "Perhepaja",
+        "sv": "Workshop for Families"
+      }
+    },
+    "description": {
+      "type": "LanguageProperty",
+      "languageMap": {
+        "en": "No need to register in advance.",
+        "fi": "Toimintaan ei tarvitse ilmoittautua.",
+        "sv": "No need to register in advance."
+      }
+    },
+    "startDate": {
+      "type": "Property",
+      "value": "2026-10-20T14:00:00Z"
+    },
+    "endDate": {
+      "type": "Property",
+      "value": "2026-10-20T16:00:00Z"
+    },
+    "eventStatus": {
+      "type": "Property",
+      "value": "EventScheduled"
+    },
+    "address": {
+      "type": "Property",
+      "value": "Siltakatu 11, Helsinki"
+    },
+    "location": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "Point",
+        "coordinates": [
+          24.657864,
+          60.203636
+        ]
+      }
+    },
+    "source": {
+      "type": "Property",
+      "value": "https://api.hel.fi/linkedevents/v1/"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:Event:hel.fi:helsinki:elo-video",
+    "type": "Event",
+    "name": {
+      "type": "LanguageProperty",
+      "languageMap": {
+        "en": "Business plan calculations video",
+        "fi": "Liiketoimintasuunnitelman laskelmat -video",
+        "sv": "Business plan calculations video"
+      }
+    },
+    "startDate": {
+      "type": "Property",
+      "value": "2024-12-23T10:00:00Z"
+    },
+    "endDate": {
+      "type": "Property",
+      "value": "2026-12-31T19:00:00Z"
+    },
+    "eventStatus": {
+      "type": "Property",
+      "value": "EventScheduled"
+    },
+    "location": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "Point",
+        "coordinates": [
+          24.941486,
+          60.170576
+        ]
+      }
+    },
+    "source": {
+      "type": "Property",
+      "value": "https://api.hel.fi/linkedevents/v1/"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:Event:hel.fi:helsinki:concert",
+    "type": "Event",
+    "name": {
+      "type": "LanguageProperty",
+      "languageMap": {
+        "en": "Café concert",
+        "fi": "Kahvilakonsertti",
+        "sv": "Café concert"
+      }
+    },
+    "startDate": {
+      "type": "Property",
+      "value": "2026-11-05T17:00:00Z"
+    },
+    "endDate": {
+      "type": "Property",
+      "value": "2026-11-05T19:00:00Z"
+    },
+    "address": {
+      "type": "Property",
+      "value": "Töölönlahdenkatu 4, Helsinki"
+    },
+    "location": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "Point",
+        "coordinates": [
+          24.9384,
+          60.1741
+        ]
+      }
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:Event:hel.fi:helsinki:past",
+    "type": "Event",
+    "name": {
+      "type": "LanguageProperty",
+      "languageMap": {
+        "en": "Summer market",
+        "fi": "Kesätori",
+        "sv": "Summer market"
+      }
+    },
+    "startDate": {
+      "type": "Property",
+      "value": "2026-06-01T08:00:00Z"
+    },
+    "endDate": {
+      "type": "Property",
+      "value": "2026-06-01T14:00:00Z"
+    },
+    "location": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "Point",
+        "coordinates": [
+          25,
+          60.2
+        ]
+      }
+    },
+    "source": {
+      "type": "Property",
+      "value": "javascript:alert(1)"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:Event:hel.fi:helsinki:undated",
+    "type": "Event",
+    "name": {
+      "type": "LanguageProperty",
+      "languageMap": {
+        "en": "Open studio",
+        "fi": "Avoin studio",
+        "sv": "Open studio"
+      }
+    }
+  }
+]

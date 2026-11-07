@@ -1,0 +1,1270 @@
+# The authorization matrix (T-2797, PF-52, AC-01): every route the Portal serves and what each
+# role of the taxonomy gets from it. tests/authz_matrix_tests.rs holds every cell on every push
+# against a mocked forge; joinedcontext-conformance tests/authz sends the cells dev can answer
+# nightly. A new route without a row fails the gate.
+#
+# Cells: `allow` (the caller passes the check: never 401 or 403, and no 404 on a row where
+# somebody else's refusal is 404), or the status the caller gets instead. Anonymous writes answer
+# 403: the CSRF check runs before anyone is asked who they are. A 404 for a role the rule
+# allows, a 409, 422 or 503 is the fixture's (an object, a body or a service it lacks); the note
+# says which.
+roles: [anonymous, viewer, editor, steward, approver, org-admin, other-member, service-account]
+routes:
+  - route: GET /
+    rule: "public"
+    note: "the front door: the Portal shell for a signed-in person, 302 to /catalogue for anyone else, no data (T-5627)"
+    expect: [allow, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /.well-known/oauth-protected-resource
+    rule: "public"
+    expect: [allow, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /.well-known/oauth-protected-resource/api/v1/mcp
+    rule: "public"
+    expect: [allow, allow, allow, allow, allow, allow, allow, allow]
+  - route: POST /activity
+    rule: "workload:activity-ingest"
+    expect: [403, 403, 403, 403, 403, 403, 403, 403]
+  - route: GET /apps/{name}/
+    rule: "app-edge"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+  - route: GET /apps/{name}/{*path}
+    rule: "app-edge"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+  - route: GET /edge/apps/{name}/admit
+    rule: "app-edge"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the edge's forward-auth before a pod or wasm App: the static host's own check and refusal (T-4922)"
+  - route: GET /templates/{name}
+    rule: "public"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+  - route: GET /templates/{name}/
+    rule: "public"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+  - route: GET /templates/assets/{file}
+    rule: "public"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+  - route: GET /assistant-preview/{public_id}
+    rule: "public"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the embed dialog's launcher preview: a public id's launcher line, no data; 404 here, where the test Portal has no domain (T-5328)"
+  - route: POST /apps/{name}/api/functions/{fn}
+    rule: "app-edge"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+  - route: POST /apps/{name}/api/services/email/send
+    rule: "app-edge"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the App's own token is the credential and the fixture has no published App (AP-168)"
+  - route: POST /apps/{name}/api/services/ai/complete
+    rule: "app-edge"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the App's own token is the credential and the fixture has no published App (AP-169)"
+  - route: GET /apps/{name}/api/services/jobs
+    rule: "app-edge"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the App's own token is the credential and the fixture has no published App (AP-162)"
+  - route: GET /apps/{name}/api/services/files
+    rule: "app-edge"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the App's own token is the credential and the fixture has no published App (AP-170)"
+  - route: GET /apps/{name}/api/services/files/{*path}
+    rule: "app-edge"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the App's own token is the credential and the fixture has no published App (AP-170)"
+  - route: PUT /apps/{name}/api/services/files/{*path}
+    rule: "app-edge"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the App's own token is the credential and the fixture has no published App (AP-170)"
+  - route: DELETE /apps/{name}/api/services/files/{*path}
+    rule: "app-edge"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the App's own token is the credential and the fixture has no published App (AP-170)"
+  - route: POST /apps/{name}/api/services/files/{*path}
+    rule: "app-edge"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the App's own token is the credential and the fixture has no published App (AP-170)"
+  - route: POST /auth/backchannel-logout
+    rule: "signature:keycloak-backchannel"
+    expect: [503, 503, 503, 503, 503, 503, 503, 503]
+    form: "logout_token=not-a-signed-token"
+    note: "the route answers 503 before it asks about the caller"
+  - route: GET /auth/callback
+    rule: "public"
+    expect: [allow, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /auth/login
+    rule: "public"
+    expect: [allow, allow, allow, allow, allow, allow, allow, allow]
+  - route: POST /auth/logout
+    rule: "public"
+    expect: [403, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /auth/me
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /auth/sso-check
+    rule: "public"
+    expect: [allow, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /auth/sso-check/done
+    rule: "public"
+    expect: [allow, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /blueprints
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /branding
+    rule: "public"
+    expect: [allow, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /branding/{asset}
+    rule: "public"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "public; the fixture configures no basemap or branding asset"
+  - route: GET /forms
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /kinds/{kind}/schema
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /health
+    rule: "public"
+    expect: [allow, allow, allow, allow, allow, allow, allow, allow]
+  - route: POST /internal/agent-runs/events
+    rule: "workload:agent-proxy"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: GET /internal/connectors/{sub}
+    rule: "workload:gateway"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: POST /internal/usage
+    rule: "workload:gateway"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: GET /internal/agent-runs/{id}
+    rule: "workload:agent-proxy"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: GET /internal/agent-runs/{id}/diagnostics/{component}/{name}
+    rule: "workload:agent-proxy"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: POST /internal/model-key
+    rule: "workload:agent-proxy"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: POST /internal/pipelines/{project}/{name}/outcomes
+    rule: "workload:pipeline-runner"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: POST /internal/pipelines/{project}/{name}/samples
+    rule: "workload:pipeline-runner"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: POST /internal/pipelines/{project}/{name}/rejected
+    rule: "workload:pipeline-runner"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: POST /internal/pipelines/{project}/{name}/source-deletes
+    rule: "workload:pipeline-runner"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: POST /internal/pipelines/{project}/{name}/source-events
+    rule: "workload:pipeline-runner"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: GET /internal/agent-runs/{id}/inbox
+    rule: "workload:agent-proxy"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: POST /internal/agent-runs/{id}/mcp
+    rule: "workload:agent-proxy"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: POST /internal/pipeline-tests/{id}
+    rule: "workload:pipeline-runner"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: GET /internal/domain-verifications
+    rule: "workload:gateway"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: GET /internal/previews
+    rule: "workload:gateway"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: GET /internal/revocations
+    rule: "workload:gateway"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: GET /mcp
+    rule: "public"
+    expect: [405, 405, 405, 405, 405, 405, 405, 405]
+  - route: POST /mcp
+    rule: "mcp-dispatch"
+    expect: [401, 401, 401, 401, 401, 401, 401, allow]
+  - route: POST /live-notify/{key}
+    rule: "public"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    body: {"data": []}
+    note: "the gateway's delivery: the key is the credential, and the fixture's key is none this Portal made (API/01 §32)"
+  - route: GET /mail/unsubscribe
+    rule: "signature:unsubscribe-link"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the signed link in an App message is the credential; the fixture's query is none this Portal signed (T-3583)"
+  - route: POST /mail/unsubscribe
+    rule: "signature:unsubscribe-link"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "a mail client's one-click (RFC 8058) carries no session or CSRF token; the signature is the credential (T-3583)"
+  - route: GET /metrics
+    rule: "public"
+    expect: [allow, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /docs/{chapter}/{page}
+    rule: "public"
+    expect: [allow, allow, allow, allow, allow, allow, allow, allow]
+    note: "the public API and User Guide pages, signed in or not (T-4063)"
+  - route: GET /openapi.json
+    rule: "public"
+    expect: [allow, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /catalogue
+    rule: "public"
+    expect: [allow, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /catalogue/readable
+    rule: "public"
+    expect: [allow, allow, allow, allow, allow, allow, allow, allow]
+    note: "public Endpoints for anyone; a signed-in caller also gets what the gateway grants them, so the fixture's (no gateway) answers the public list (T-6411)"
+  - route: GET /catalogue/datasets/{name}
+    rule: "public"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "public: the fixture configures no catalogue, so no dataset is found by anybody"
+  - route: GET /catalogue/datasets/{name}/sample
+    rule: "public"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "public: the fixture configures no catalogue, so no dataset is found by anybody"
+  - route: GET /catalogue/datasets/{name}/map
+    rule: "public"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "public: the fixture configures no catalogue, so no dataset is found by anybody"
+  - route: GET /catalogue/endpoints/{slug}/standards
+    rule: "public"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "public: the fixture holds no public Endpoint, so nobody finds one"
+  - route: POST /projects/{project}/catalogue/drafts
+    rule: "project-verb:propose:Endpoint"
+    expect: [403, 403, allow, allow, 403, allow, 404, 403]
+    body: {"endpoint": "existing"}
+  - route: POST /feedback
+    rule: "signed-in"
+    expect: [403, allow, allow, allow, allow, allow, allow, allow]
+    body: {"text": "The Approve button stays grey", "page": "/projects/helsinki/approvals"}
+  - route: GET /organization/feedback
+    rule: "org-admin"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+  - route: GET /organization/feedback/{id}/screenshot
+    rule: "org-admin"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "the fixture holds no feedback 0, so an administrator meets its 404"
+  - route: GET /organization/health
+    rule: "org-admin"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+  - route: GET /organization/health-checks
+    rule: "org-admin"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+  - route: GET /organization/agents
+    rule: "signed-in, filtered per namespace by read on each agent kind; 403 for a caller who reads none (AG-126)"
+    expect: [401, allow, allow, allow, allow, allow, 403, allow]
+    note: "every agent identity the caller may read, nothing counted that they may not; the other member reads no agent kind of the fixture, so 403 (API/01 §48, T-4849)"
+  - route: GET /organization/agents/activity
+    rule: "signed-in, the runs of each project the caller reads: their own, every person's where they approve; 403 for a caller who reads no project (AG-134)"
+    expect: [401, allow, allow, allow, allow, allow, 403, allow]
+    note: "the other member reads no project of the fixture, so 403; never a step's arguments or output; Stop is the existing cancel route (API/01 §49, T-4851)"
+  - route: GET /organization/brokers
+    rule: "org-admin (approve and delete on RoleBinding, PF-03)"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "each broker's health and load, asked by the Portal; the browser never reaches a broker (API/01 §43, PF-116)"
+  - route: GET /organization/costs
+    rule: "org-admin (approve and delete on RoleBinding, PF-03)"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "every project's month cost; the fixture sets no price table, so the administrator gets 503 (T-5126)"
+  - route: GET /organization/costs/export
+    rule: "org-admin (approve and delete on RoleBinding, PF-03)"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "the same month as CSV; 503 without a price table in the fixture (T-5126)"
+  - route: GET /organization/limits
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+    note: "the catalog and the operator's bounds are the installation's; a project the caller may not read is left out of the answer (API/01 §28, R20)"
+  - route: GET /organization/setup
+    rule: "org-admin (approve and delete on RoleBinding, PF-03)"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+  - route: GET /projects/{project}/endpoints/{name}/access/attributes
+    rule: "project-read, then read of the Endpoint in its space"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "the Policy behind a refused attribute, about the caller alone (API/01 §56, T-5528); the fixture has no such Endpoint, so readers meet 404; tests/access_attributes_tests.rs holds the 200, 403 and Policy-name paths"
+  - route: POST /projects/{project}/endpoints/{name}/access/simulate
+    rule: "org-admin"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    body: {"subject": {"kind": "public"}, "action": "retrieveEntity"}
+    note: "it reveals what another person may do (EP-103); an administrator meets the fixture's 404 (no such Endpoint) or 503 (no gateway)"
+  - route: GET /projects/{project}/endpoints/{name}/access/matrix
+    rule: "org-admin, or read on Policy in the Endpoint's space"
+    expect: [401, allow, allow, allow, allow, allow, 403, allow]
+    note: "who may do what on one Endpoint (API/01 §57, EP-103): a Policy reader and an administrator meet the fixture's 404 (no such Endpoint); the 200 path is tests/access_matrix_tests.rs"
+  - route: POST /projects/{project}/access/explore
+    rule: "org-admin"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    body: {"subject": {"kind": "public"}}
+    note: "it reveals what another principal reaches (API/01 §41, EP-103); an administrator meets the fixture's 503 (no gateway) or an empty list"
+  - route: GET /projects/{project}/serviceaccounts/{name}/access
+    rule: "read on ServiceAccount"
+    expect: [401, allow, allow, allow, allow, allow, 403, allow]
+    note: "an agent account's grants (API/01 §52, AG-130); a reader meets the fixture's 409 (its account has an empty spec); the 200 allow path is tests/agent_access_tests.rs a_reader_sees_each_grant_with_its_state_and_may_not_revoke"
+  - route: POST /projects/{project}/serviceaccounts/{name}/revoke
+    rule: "propose and approve on ServiceAccount, from a person's session"
+    expect: [403, 403, 403, allow, 403, allow, 403, 403]
+    body: {"index": 0, "role": "space-reader"}
+    note: "removes one grant at once (API/01 §52, AG-132); a steward or an administrator meets the fixture's 409 (its account has an empty spec), the 202 allow path is tests/agent_access_tests.rs an_administrators_revoke_proposes_the_account_without_the_grant; a bearer token is 403"
+  - route: GET /projects/{project}/endpoints/{name}/access-requests
+    rule: "project-read and read on the Endpoint in its space; the caller's own requests only (EP-55)"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "a reader's 404 is the fixture's: its Endpoint names no Context Space, so no grant could be asked for on it; the 200 path and the 404 of a person who cannot read the Endpoint are tests/access_requests_tests.rs"
+  - route: POST /projects/{project}/endpoints/{name}/access-requests
+    rule: "a person's session, then project-read and read on the Endpoint in its space (EP-55, PF-58)"
+    expect: [403, 404, 404, 404, 404, 404, 404, 403]
+    body: {"types": ["AirQualityObserved"], "reason": "weekly air report"}
+    note: "a reader's 404 is the fixture's: its Endpoint names no Context Space; the 201 path and every field's 422 are tests/access_requests_tests.rs, the token's 403 tests/attack_person_only_operations_tests.rs"
+  - route: POST /projects/{project}/serviceaccounts/{name}/secret
+    rule: "approve on ServiceAccount, from a person's session"
+    expect: [403, 403, 403, allow, allow, allow, 403, 403]
+    note: "issues the account's client secret once (PF-37, T-5626); an allowed caller meets the fixture's 409 (its account has an empty spec), the 200 allow path is tests/account_secret_tests.rs an_approver_gets_the_secret_once_and_no_read_shows_it_again; a bearer token is 403"
+  - route: GET /projects/{project}/secrets
+    rule: "propose on DataSource, from a person's session"
+    expect: [401, 403, allow, allow, 403, allow, 403, 403]
+    note: "names and keys of the repository's encrypted files, never a value (T-5971); an allowed caller meets the fixture forge's answer"
+  - route: POST /projects/{project}/secrets
+    rule: "propose on DataSource, from a person's session"
+    expect: [403, 403, allow, allow, 403, allow, 403, 403]
+    body: {"name": "counters-api", "values": {"apiKey": "typed-in-the-form"}}
+    note: "the secret form (T-5971): an allowed caller meets the fixture's 503 (no age identity); the 202 path is tests/secret_form_tests.rs; a bearer token is 403"
+  - route: GET /projects/{project}/endpoints/{name}/quality
+    rule: "project-read and read on the Endpoint in its space; the fixes for space-read (T-5112)"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "a binding scoped to another Context Space gets 404 (tests/endpoint_quality_route_tests.rs)"
+  - route: POST /projects/{project}/endpoints/{name}/preview
+    rule: "space-read of the Endpoint's space, then a person"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    body: {"type": "Car"}
+    note: "the fixture's Endpoint names no Context Space, the 404 a non-member gets too (EP-85); a member meets 503 without a broker, a workload token 403 (tests/endpoint_preview_tests.rs)"
+  - route: GET /organization/people
+    rule: "people-admin"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+  - route: POST /organization/people
+    rule: "people-admin"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+  - route: GET /organization/data-access
+    rule: "people-admin"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "the Organization's Data access matrix (ADR-N-067 §2.5, T-6412): org-admin and people-admin read it; the fixture has no gateway, so its cells answer unanswered"
+  - route: GET /organization/people/{id}/readable
+    rule: "people-admin"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "what one person can read, by Endpoint name only (ADR-N-067 §2.5, T-6412)"
+  - route: GET /organization/people/{id}
+    rule: "people-admin"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+  - route: PATCH /organization/people/{id}
+    rule: "people-admin"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+  - route: DELETE /organization/people/{id}
+    rule: "people-admin"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+  - route: POST /organization/people/remove
+    rule: "people-admin"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+  - route: GET /organization/people/names
+    rule: "people-admin or group-approver"
+    note: "update on Person or approve on Group at the organization reads the names behind a manifest's person ids (ADR-N-061); the approver role approves in projects only"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+  - route: POST /organization/people/name-by-id
+    rule: "people-admin"
+    note: "a person's session only: a workload token is refused (ADR-N-061)"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+  - route: POST /organization/people/{id}/disable
+    rule: "people-admin"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+  - route: POST /organization/people/{id}/enable
+    rule: "people-admin"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+  - route: POST /organization/people/{id}/remove-second-factor
+    rule: "people-admin"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+  - route: POST /organization/people/{id}/reset-password
+    rule: "people-admin"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+  - route: POST /organization/people/{id}/resend-invitation
+    rule: "people-admin"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+  - route: POST /organization/people/{id}/sign-out
+    rule: "people-admin"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+  - route: DELETE /organization/people/{id}/consents/{client}
+    rule: "people-admin"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "revokes a person's consent to one client, as sign-out ends their sessions; no grant changes (API/01 §41)"
+  - route: GET /connectors
+    rule: "signed-in, own connectors only"
+    expect: [401, allow, allow, allow, allow, allow, allow, 403]
+  - route: POST /connectors
+    rule: "signed-in, own connectors only; scope within the caller's rights and the ceiling"
+    expect: [403, 400, 400, 400, 400, 400, 400, 403]
+    note: "the fixture sends no body, so every person's 400 is the missing connector; tests/connector_scenarios.rs creates real ones"
+  - route: GET /connectors/options
+    rule: "signed-in; lists only the projects, spaces, Endpoints and pipelines the caller reads"
+    expect: [401, allow, allow, allow, allow, allow, allow, 403]
+  - route: GET /connectors/{id}
+    rule: "signed-in, own connectors only"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "the fixture holds no connector: every person's 404 is the unknown id, the same answer as another person's connector"
+  - route: PATCH /connectors/{id}
+    rule: "signed-in, own connectors only; the edited grant within the caller's rights and the ceiling"
+    expect: [403, 404, 404, 404, 404, 404, 404, 403]
+    note: "the fixture holds no connector: every person's 404 is the unknown id; a workload holds none (403)"
+  - route: DELETE /connectors/{id}
+    rule: "signed-in person in the Portal, own connectors only (AG-151)"
+    expect: [403, 404, 404, 404, 404, 404, 404, 403]
+    note: "the fixture holds no connector: every person's 404 is the unknown id; a client's token revokes none (403, T-6226)"
+  - route: GET /connectors/{id}/activity
+    rule: "signed-in, own connectors only"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "the fixture holds no connector: every person's 404 is the unknown id"
+  - route: GET /connectors/pending
+    rule: "an administrator of the connector ceiling: approve on DelegationPolicy, a person, no AI client's token"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+  - route: POST /connectors/{id}/approve
+    rule: "an administrator of the connector ceiling, not the owner, within their own rights (AG-150, PF-51)"
+    expect: [403, 403, 403, 403, 403, 404, 403, 403]
+    note: "the fixture holds no pending connector: the administrator's 404 is the unknown id; tests/connector_scenarios.rs S-31 approves a real one"
+  - route: POST /connectors/{id}/tab
+    rule: "signed-in person in a browser, own connectors only (T-5967)"
+    expect: [403, 404, 404, 404, 404, 404, 404, 403]
+    note: "the fixture holds no connector: every person's 404 is the unknown id; a workload pairs no tab (403)"
+  - route: DELETE /connectors/{id}/tab
+    rule: "signed-in person in a browser, own connectors only (T-5967)"
+    expect: [403, 404, 404, 404, 404, 404, 404, 403]
+    note: "the fixture holds no connector: every person's 404 is the unknown id; a workload pairs no tab (403)"
+  - route: GET /connectors/{id}/tab/{tab}/events
+    rule: "signed-in person in a browser, own connectors only, the session that paired the tab (T-5967)"
+    expect: [401, 404, 404, 404, 404, 404, 404, 403]
+    note: "the fixture holds no connector: every person's 404 is the unknown id; a workload pairs no tab (403)"
+  - route: GET /organization/connectors
+    rule: "org-admin"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+  - route: DELETE /organization/connectors/{id}
+    rule: "org-admin"
+    expect: [403, 403, 403, 403, 403, 404, 403, 403]
+    note: "the fixture holds no connector: the administrator's 404 is the unknown id"
+  - route: GET /c/{id}
+    rule: "public"
+    expect: [405, 405, 405, 405, 405, 405, 405, 405]
+  - route: POST /c/{id}
+    rule: "connector-owner"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+    note: "only a token whose audience is the connector's own address passes; tests/connector_scenarios.rs plays the owner, another person and a revoked connector"
+  - route: GET /c/{id}/.well-known/oauth-protected-resource
+    rule: "public"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "the fixture's id is no connector id, so 404; a real id answers the metadata"
+  - route: GET /preferences
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /app-templates
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /app-templates/{name}/screenshot/{width}
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /visualization-templates/{name}
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: PUT /preferences
+    rule: "signed-in"
+    expect: [403, allow, allow, allow, allow, allow, allow, allow]
+  - route: POST /preferences/recent
+    rule: "signed-in"
+    expect: [403, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /shared-apps
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /endpoints
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /projects
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: POST /projects
+    rule: "org-setting:projects.creation"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    body: {"name": "helsinki"}
+  - route: GET /projects/{project}
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: DELETE /projects/{project}
+    rule: "project-verb:delete:Project"
+    expect: [403, 403, 403, 403, 403, 404, 404, 403]
+    note: "a 404 where the rule allows is an object the fixture does not hold; the check before it passed"
+  - route: POST /projects/{project}/duplicate
+    rule: "org-setting:projects.creation"
+    expect: [403, 403, 403, 403, 403, allow, 404, 403]
+    body: {"name": "helsinki-copy"}
+    note: "a 404 where the rule allows is an object the fixture does not hold; the check before it passed"
+  - route: GET /projects/{project}/flow-map
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/registry
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "the fixture's organization is of layout 1, which has no registry entry: `allow` answers 409 (tests/project_registry_tests.rs runs layout 2)"
+  - route: PUT /projects/{project}/registry
+    rule: "project-read, then org-verb:propose:Project"
+    expect: [403, allow, allow, allow, allow, allow, 404, allow]
+    body: {"ref": "v0.2.0"}
+    note: "the fixture's organization is of layout 1, which has no registry entry: `allow` answers 409; who may propose a repoint is tests/project_registry_tests.rs's"
+  - route: GET /projects/{project}/grafana
+    rule: "project-read, each row filtered by read on its Endpoint"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/grafana/options
+    rule: "project-read, the Endpoints filtered by read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/grafana
+    rule: "propose on Dashboard and read on the Endpoint"
+    note: "a body the fixture lacks answers 400 for those the rule allows"
+    expect: [403, 403, 403, allow, 403, allow, 404, 403]
+  - route: DELETE /projects/{project}/grafana/{id}
+    rule: "propose on Dashboard"
+    note: "no such row in the fixture"
+    expect: [403, 403, 403, allow, 403, allow, 404, 403]
+  - route: GET /projects/{project}/activity
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/activity/stream
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/drift
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/drift/{space}/{id}/revert
+    rule: "project-verb:propose:Entity"
+    expect: [403, 403, 403, 404, 403, 404, 404, 403]
+    note: "a 404 where the rule allows is an object the fixture does not hold; the check before it passed"
+  - route: POST /projects/{project}/drift/{space}/{id}/adopt
+    rule: "project-verb:propose:Entity"
+    expect: [403, 403, 403, 404, 403, 404, 404, 403]
+    note: "a 404 where the rule allows is an object the fixture does not hold; the check before it passed"
+  - route: GET /projects/{project}/app-checks
+    rule: "project-verb:read:App"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/health-checks
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/endpoints/{name}/usage
+    rule: "project-read, then read of the Endpoint in its space"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/usage/endpoints
+    rule: "project-read; lists the Endpoints the caller may read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/usage/endpoints/export
+    rule: "project-read; exports the Endpoints the caller may read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    query: "month=2026-10"
+  - route: GET /projects/{project}/spaces/{space}/quality
+    rule: "space-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/spaces/{space}/move
+    rule: "org-admin (approve and delete on RoleBinding, PF-03)"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "the last move of the space; an administrator who started none is answered 404 (API/01 §45)"
+  - route: POST /projects/{project}/spaces/{space}/move
+    rule: "org-admin (approve and delete on RoleBinding, PF-03)"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    body: {"to": "canary"}
+    note: "the job commits to the repository as the Portal and holds the space for everyone (API/01 §45, PF-115)"
+  - route: GET /projects/{project}/spaces/{space}/quality/checks
+    rule: "space-read (DM-94)"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/spaces/{space}/retention/preview
+    rule: "space-read, then approve on ContextSpace in the space (DM-85)"
+    expect: [403, 403, allow, allow, allow, allow, 404, 403]
+    body: {"retention": [{"entityType": "Station", "history": "PT8H"}]}
+    note: "an owner's 503 is the fixture's: it has no broker"
+  - route: POST /projects/{project}/spaces/{space}/subjects/export
+    rule: "space-read, then approve on ContextSpace in the space (DM-124)"
+    expect: [403, 403, allow, allow, allow, allow, 404, 403]
+    body: {"subject": "r-42", "reason": "Art. 15 request 7"}
+    note: "an owner's 503 is the fixture's: it holds no key to hash a subject with"
+  - route: GET /projects/{project}/access-requests
+    rule: "project-read; the list holds the requests of spaces the caller approves (PL-91)"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "a reader's 503 is the fixture's: it has no database"
+  - route: POST /projects/{project}/access-requests/{id}/approve
+    rule: "project-read, then approve on the request's ContextSpace (PL-91, PL-93)"
+    expect: [403, allow, allow, allow, allow, allow, 404, allow]
+    values: {"id": "ar-0a1b2c3d4e5f"}
+    note: "a reader's 503 is the fixture's: without a database the request's space is unknown, so the owner check (tests/access_requests_tests.rs) comes after it"
+  - route: POST /projects/{project}/access-requests/{id}/decline
+    rule: "a person's session (AG-133), then project-read, then approve on the request's ContextSpace (PL-91, PL-93)"
+    expect: [403, allow, allow, allow, allow, allow, 404, 403]
+    values: {"id": "ar-0a1b2c3d4e5f"}
+    body: {"reason": "moved"}
+    note: "a reader's 503 is the fixture's: without a database the request's space is unknown, so the owner check (tests/access_requests_tests.rs) comes after it"
+  - route: POST /projects/{project}/access-requests/{id}/revoke
+    rule: "project-read, then approve on the request's ContextSpace (PL-91, PL-93)"
+    expect: [403, allow, allow, allow, allow, allow, 404, allow]
+    values: {"id": "ar-0a1b2c3d4e5f"}
+    body: {"reason": "moved"}
+    note: "a reader's 503 is the fixture's: without a database the request's space is unknown, so the owner check (tests/access_requests_tests.rs) comes after it"
+  - route: GET /projects/{project}/mcp-elicitations/{id}
+    rule: "the asking person's own session: the question's subject and project (AG-63, T-5699)"
+    expect: [401, 404, 404, 404, 404, 404, 404, 403]
+    values: {"id": "eli-0a1b2c3d4e5f6a7b"}
+    note: "the fixture holds no question, so every person's 404 is the unknown id; a bearer token is refused before the lookup; tests/mcp_portal_tests.rs plays the real question"
+  - route: POST /projects/{project}/mcp-elicitations/{id}/decision
+    rule: "the asking person's own session: the question's subject and project (AG-63, T-5699)"
+    expect: [403, 404, 404, 404, 404, 404, 404, 403]
+    values: {"id": "eli-0a1b2c3d4e5f6a7b"}
+    body: {"decision": "accept"}
+    note: "the fixture holds no question, so every person's 404 is the unknown id; a bearer token is refused before the lookup; tests/mcp_portal_tests.rs plays the real question"
+  - route: GET /mcp-confirmations/{id}
+    rule: "the asking person's own session: the broker question's x-jc-subject (T-5829)"
+    expect: [401, 404, 404, 404, 404, 404, 404, 403]
+    values: {"id": "0a1b2c3d4e5f60718293a4b5c6d7e8f9"}
+    note: "the fixture reaches no broker holding a question, so every person's 404 is the unknown id; a bearer token is refused before the broker is asked; tests/mcp_confirmations_tests.rs plays the real question"
+  - route: POST /mcp-confirmations/{id}/decision
+    rule: "the asking person's own session: the broker question's x-jc-subject (T-5829)"
+    expect: [403, 404, 404, 404, 404, 404, 404, 403]
+    values: {"id": "0a1b2c3d4e5f60718293a4b5c6d7e8f9"}
+    body: {"decision": "accept"}
+    note: "the fixture reaches no broker holding a question, so every person's 404 is the unknown id; a bearer token is refused before the broker is asked; tests/mcp_confirmations_tests.rs plays the real question"
+  - route: POST /projects/{project}/spaces/{space}/erasures
+    rule: "space-read, then approve on ContextSpace in the space (DM-126)"
+    expect: [403, 403, allow, allow, allow, allow, 404, 403]
+    body: {"subject": "r-42", "reason": "Art. 17 request 7"}
+    note: "an owner's 503 is the fixture's: it has no database"
+  - route: GET /projects/{project}/spaces/{space}/erasures/{id}
+    rule: "space-read, then approve on ContextSpace in the space (DM-127)"
+    expect: [401, 403, allow, allow, allow, allow, 404, 403]
+    note: "an owner's 503 is the fixture's: it has no database"
+  - route: GET /projects/{project}/spaces/{space}/erasures
+    rule: "space-read, then approve on ContextSpace in the space (DM-142)"
+    expect: [401, 403, allow, allow, allow, allow, 404, 403]
+    note: "an owner's 503 is the fixture's: it has no database"
+  - route: POST /projects/{project}/spaces/{space}/erasures/{id}/approve
+    rule: "space-read, then approve on ContextSpace in the space, a person's session, not the proposer (DM-142)"
+    expect: [403, 403, allow, allow, allow, allow, 404, 403]
+    values: {"id": "er-20261019-0a1b2c3d4e5f"}
+    body: {"subject": "r-42"}
+    note: "an owner's 503 is the fixture's: it has no database; self-approval is in tests/erasure_api_tests.rs, the bearer refusal in src/api/erasures.rs"
+  - route: POST /projects/{project}/spaces/{space}/erasures/{id}/decline
+    rule: "space-read, then approve on ContextSpace in the space, a person's session (DM-142)"
+    expect: [403, 403, allow, allow, allow, allow, 404, 403]
+    values: {"id": "er-20261019-0a1b2c3d4e5f"}
+    body: {"reason": "the person withdrew the request"}
+    note: "an owner's 503 is the fixture's: it has no database"
+  - route: GET /projects/{project}/spaces/{space}/retention/deleted
+    rule: "space-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "a reader's 503 is the fixture's: it has no broker"
+  - route: GET /projects/{project}/spaces/{space}/usage
+    rule: "space-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/spaces/{space}/usage/recalculate
+    rule: "space-read"
+    expect: [403, allow, allow, allow, allow, allow, 404, allow]
+    note: "a reader's 503 is the fixture's: it has no broker"
+  - route: GET /projects/{project}/spaces/{space}/views
+    rule: "space-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/spaces/{space}/views
+    rule: "space-read"
+    expect: [403, allow, allow, allow, allow, allow, 404, allow]
+    body: {"type": "Station", "kind": "grid", "mode": "personal", "title": "x"}
+  - route: PUT /projects/{project}/spaces/{space}/views/{id}
+    rule: "space-read, then the view's mode"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    body: {"kind": "grid", "mode": "personal", "title": "x"}
+    note: "the fixture holds no view 0000000000000000; who sees and changes a view is its mode's (tests/data_views_api_tests.rs)"
+  - route: DELETE /projects/{project}/spaces/{space}/views/{id}
+    rule: "space-read, then the view's mode"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    note: "the fixture holds no view 0000000000000000; who sees and changes a view is its mode's (tests/data_views_api_tests.rs)"
+  - route: GET /projects/{project}/spaces/{space}/temporal-audit
+    rule: "space-read, then pipeline-read per row"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/spaces/{space}/surface-fit
+    rule: "space-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/spaces/{space}/types/{type}/attributes
+    rule: "space-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/spaces/{space}/live
+    rule: "space-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    query: "type=AirQualityObserved"
+  - route: GET /projects/{project}/spaces/{space}/trash
+    rule: "space-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/spaces/{space}/source-removals
+    rule: "space-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/spaces/{space}/trash
+    rule: "space-read"
+    expect: [403, allow, allow, allow, allow, allow, 404, allow]
+    body: {"entity": {"id": "urn:ngsi-ld:AirQualityObserved:x:1", "type": "AirQualityObserved"}}
+  - route: DELETE /projects/{project}/spaces/{space}/trash/{id}
+    rule: "space-read"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    note: "the caller's own copy only; the fixture holds none, so a caller the rule allows meets 404 after the space check passed"
+  - route: GET /projects/{project}/spaces/{space}/comments
+    rule: "space-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    query: "urn=urn:ngsi-ld:AirQualityObserved:x:1"
+  - route: POST /projects/{project}/spaces/{space}/comments
+    rule: "space-read"
+    expect: [403, allow, allow, allow, allow, allow, 404, allow]
+    body: {"urn": "urn:ngsi-ld:AirQualityObserved:x:1", "text": "a note"}
+  - route: DELETE /projects/{project}/spaces/{space}/comments/{id}
+    rule: "space-read"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    note: "the caller's own comment only; the fixture holds none, so a caller the rule allows meets 404 after the space check passed"
+  - route: GET /notifications
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: POST /notifications/{id}/read
+    rule: "signed-in"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    note: "the caller's own notification only; the fixture holds none, so every signed-in caller meets 404"
+  - route: GET /alerts
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: PUT /alerts
+    rule: "project-verb:read:Pipeline"
+    expect: [403, allow, allow, allow, allow, allow, 404, allow]
+    body: {"project": "helsinki", "scope": "pipeline", "target": "existing", "events": ["failure"], "delivery": "portal"}
+    note: "subscribing to a pipeline needs read on it (API/01 §37); a caller without it is told it is not there"
+  - route: DELETE /alerts/{id}
+    rule: "signed-in"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    note: "the caller's own subscription only; the fixture holds none, so every signed-in caller meets 404"
+  - route: POST /alerts/{id}/mute
+    rule: "signed-in"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    body: {"for": "1h"}
+    note: "the caller's own subscription only; the fixture holds none, so every signed-in caller meets 404"
+  - route: GET /alerts/notices
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: POST /alerts/notices/{id}/read
+    rule: "signed-in"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    note: "the caller's own notice only; the fixture holds none, so every signed-in caller meets 404"
+  - route: GET /projects/{project}/knowledge/sources
+    rule: "project-verb:read:KnowledgeSource"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "a caller the rule admits meets 503: the fixture configures no knowledge assistant (JC_PORTAL_KNOWLEDGE_URL)"
+  - route: GET /projects/{project}/knowledge/sources/{source}/pages
+    rule: "project-verb:read:KnowledgeSource"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "503 after the check: no knowledge assistant in the fixture"
+  - route: GET /projects/{project}/knowledge/sources/{source}/documents
+    rule: "project-verb:read:KnowledgeSource"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "503 after the check: no knowledge assistant in the fixture"
+  - route: GET /projects/{project}/knowledge/sources/{source}/search
+    rule: "project-verb:read:KnowledgeSource"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    query: "q=parkovanie"
+    note: "503 after the check: no knowledge assistant in the fixture"
+  - route: GET /projects/{project}/knowledge/sources/{source}/pages/{page}/links
+    rule: "project-verb:read:KnowledgeSource"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "503 after the check: no knowledge assistant in the fixture"
+  - route: GET /projects/{project}/knowledge/sources/{source}/passages
+    rule: "project-verb:read:KnowledgeSource"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    query: "page=1"
+    note: "503 after the check: no knowledge assistant in the fixture"
+  - route: GET /projects/{project}/knowledge/sources/{source}/errors
+    rule: "project-verb:propose:KnowledgeSource"
+    expect: [401, 403, 403, 403, 403, allow, 404, 403]
+    note: "503 after the check: no knowledge assistant in the fixture"
+  - route: POST /projects/{project}/knowledge/sources/{source}/inclusion
+    rule: "project-verb:propose:KnowledgeSource"
+    expect: [403, 403, 403, 403, 403, allow, 404, 403]
+    body: {"pages": [1], "included": false}
+    note: "503 after the check: no knowledge assistant in the fixture"
+  - route: POST /projects/{project}/knowledge/sources/{source}/recrawl
+    rule: "project-verb:propose:KnowledgeSource"
+    expect: [403, 403, 403, 403, 403, allow, 404, 403]
+    note: "503 after the check: no knowledge assistant in the fixture"
+  - route: GET /projects/{project}/knowledge/sources/{source}/files
+    rule: "project-verb:read:KnowledgeSource"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "503 after the check: no knowledge assistant in the fixture"
+  - route: POST /projects/{project}/knowledge/sources/{source}/files
+    rule: "project-verb:propose:KnowledgeSource"
+    expect: [403, 403, 403, 403, 403, allow, 404, 403]
+    query: "name=bb.csv"
+    note: "503 after the check: no knowledge assistant in the fixture"
+  - route: DELETE /projects/{project}/knowledge/sources/{source}/files/{id}
+    rule: "project-verb:propose:KnowledgeSource"
+    expect: [403, 403, 403, 403, 403, allow, 404, 403]
+    note: "503 after the check: no knowledge assistant in the fixture"
+  - route: GET /projects/{project}/knowledge/deployments/{deployment}/usage
+    rule: "project-verb:read:AssistantDeployment"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "the fixture holds no AssistantDeployment, so a caller the rule admits meets 404 after the check passed"
+  - route: GET /projects/{project}/knowledge/deployments/{deployment}/context
+    rule: "project-verb:read:AssistantDeployment"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "the fixture holds no AssistantDeployment, so a caller the rule admits meets 404 after the check passed; assistant_context_tests holds the rule with one (T-4693)"
+  - route: POST /projects/{project}/knowledge/deployments/context
+    rule: "project-verb:read:AssistantDeployment"
+    expect: [403, allow, allow, allow, allow, allow, 404, allow]
+    body: {"apiVersion": "joinedcontext.com/v1alpha1", "kind": "AssistantDeployment", "metadata": {"name": "doprava"}, "spec": {"publicId": "doprava", "channel": "internal"}}
+    note: "400 after the check: the row sends no dryRun=All; assistant_context_tests holds the preview itself (T-4693)"
+  - route: DELETE /projects/{project}/knowledge/deployments/{deployment}/answers
+    rule: "project-verb:approve:AssistantDeployment"
+    expect: [403, 403, 403, 403, 403, 404, 403, 403]
+    note: "the fixture holds no AssistantDeployment, so an approver meets 404 after the check passed; knowledge_api_tests holds the purge with one (T-4731)"
+  - route: POST /projects/{project}/knowledge/deployments/{deployment}/chat
+    rule: "project-verb:read:AssistantDeployment"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    body: {"message": "Ahoj"}
+    note: "the fixture holds no AssistantDeployment, so a caller the rule admits meets 404 after the check passed; knowledge_api_tests holds the rule with one"
+  - route: GET /projects/{project}/knowledge/conversations
+    rule: "project-verb:approve:AssistantDeployment"
+    expect: [401, 403, 403, 403, 403, 503, 403, 403]
+    note: "503 after the check: no knowledge assistant in the fixture; assistant_conversations holds the rule with one (T-4670)"
+  - route: GET /projects/{project}/knowledge/conversations/usage
+    rule: "project-verb:approve:AssistantDeployment"
+    expect: [401, 403, 403, 403, 403, 503, 403, 403]
+    note: "503 after the check: no knowledge assistant in the fixture; assistant_conversations holds the rule with one (T-4728)"
+  - route: GET /projects/{project}/knowledge/conversations/export
+    rule: "project-verb:approve:AssistantDeployment"
+    expect: [401, 403, 403, 403, 403, 503, 403, 403]
+    note: "503 after the check: no knowledge assistant in the fixture; assistant_conversations holds the rule with one (T-4728)"
+  - route: GET /projects/{project}/knowledge/conversations/{conversation}
+    rule: "project-verb:approve:AssistantDeployment"
+    expect: [401, 403, 403, 403, 403, 404, 403, 403]
+    note: "the fixture's conversation id is no UUID, so a caller the rule admits meets 404 after the check passed"
+  - route: DELETE /projects/{project}/knowledge/conversations/{conversation}
+    rule: "project-verb:delete:AssistantDeployment"
+    expect: [403, 403, 403, 403, 403, 404, 403, 403]
+    note: "the fixture's conversation id is no UUID, so a caller the rule admits meets 404 after the check passed"
+  - route: GET /projects/{project}/knowledge/conversations/{conversation}/turns/{turn}/same
+    rule: "project-verb:approve:AssistantDeployment"
+    expect: [401, 403, 403, 403, 403, 404, 403, 403]
+    note: "the fixture's conversation id is no UUID, so a caller the rule admits meets 404 after the check passed (T-4681)"
+  - route: GET /projects/{project}/agent-runs
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/agent-runs
+    rule: "project-verb:propose:App"
+    expect: [403, 403, 403, allow, 403, allow, 403, 403]
+    body: {"appName": "a", "appClass": "ui", "prompt": "x", "dataNeeds": []}
+  - route: POST /projects/{project}/app-templates/{name}/apps
+    rule: "project-verb:propose:App"
+    expect: [403, 403, 403, allow, 403, allow, 403, 403]
+    body: {"name": "a", "endpointName": "e"}
+    note: "the fixture holds no such template: an allowed caller gets 404 (T-5617)"
+  - route: GET /projects/{project}/agent-runs/{id}
+    rule: "run-owner"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "no agent run in the fixture: the owner rule is held by agent_runs_tests"
+  - route: POST /projects/{project}/agent-runs/{id}/answers
+    rule: "run-owner"
+    expect: [403, 403, 404, 404, 403, 404, 403, 403]
+    body: {"questionId": "q", "answers": {}}
+    note: "no agent run in the fixture: the owner rule is held by agent_runs_tests"
+  - route: POST /projects/{project}/agent-runs/{id}/cancel
+    rule: "run-owner"
+    expect: [403, 403, 404, 404, 403, 404, 403, 403]
+    note: "no agent run in the fixture: the owner rule is held by agent_runs_tests"
+  - route: GET /projects/{project}/agent-runs/{id}/events
+    rule: "run-owner"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "no agent run in the fixture: the owner rule is held by agent_runs_tests"
+  - route: POST /projects/{project}/agent-runs/{id}/functions/{fn}
+    rule: "run-owner"
+    expect: [403, 403, 404, 404, 403, 404, 403, 403]
+    note: "no agent run in the fixture: the owner rule is held by agent_runs_tests"
+  - route: POST /projects/{project}/agent-runs/{id}/messages
+    rule: "run-owner"
+    expect: [403, 403, 404, 404, 403, 404, 403, 403]
+    body: {"text": "x"}
+    note: "no agent run in the fixture: the owner rule is held by agent_runs_tests"
+  - route: GET /projects/{project}/agent-runs/{id}/preview
+    rule: "run-owner"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "no agent run in the fixture: the owner rule is held by agent_runs_tests"
+  - route: POST /projects/{project}/agent-runs/{id}/preview-errors
+    rule: "run-owner"
+    expect: [403, 403, 404, 404, 403, 404, 403, 403]
+    body: {"message": "x"}
+    note: "no agent run in the fixture: the owner rule is held by agent_runs_tests"
+  - route: POST /projects/{project}/agent-runs/{id}/preview-observations
+    rule: "run-owner"
+    expect: [403, 403, 404, 404, 403, 404, 403, 403]
+    body: {"version": 0, "pages": []}
+    note: "no agent run in the fixture: the owner rule is held by agent_runs_tests"
+  - route: POST /projects/{project}/agent-runs/{id}/publish
+    rule: "run-owner"
+    expect: [403, 403, 404, 404, 403, 404, 403, 403]
+    note: "no agent run in the fixture: the owner rule is held by agent_runs_tests"
+  - route: GET /projects/{project}/apps/{name}/build
+    rule: "project-verb:read:App"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/apps/{name}/me
+    rule: "app-edge"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: GET /projects/{project}/apps/{name}/audience
+    rule: "project-verb:read:App"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "a person who may not read the App gets the 404 of a name never created (AP-173)"
+  - route: POST /projects/{project}/apps/rename-shapes
+    rule: "project-verb:propose:App"
+    expect: [403, 403, 403, allow, 403, allow, 404, 403]
+    note: "the fixture's App carries no old shape name, so a caller the rule admits gets 409: nothing to rename"
+  - route: POST /projects/{project}/apps/{name}/rebuild
+    rule: "project-verb:propose:App"
+    expect: [403, 403, 403, allow, 403, allow, 404, 403]
+  - route: GET /projects/{project}/apps/{name}/builds
+    rule: "project-verb:read:App"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/apps/{name}/restore
+    rule: "project-verb:propose:App, the right of Rebuild (AP-171)"
+    body: { commit: "9a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b" }
+    expect: [403, 403, 403, allow, 403, allow, 404, 403]
+  - route: GET /projects/{project}/apps/{name}/dashboard
+    rule: "project-verb:read:App"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/apps/{name}/dashboard
+    rule: "project-verb:propose:App, and the App's type read in its space (T-6402)"
+    body: { config: {}, dryRun: true }
+    expect: [403, 403, 403, allow, 403, allow, 404, 403]
+  - route: GET /projects/{project}/assistant/access
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: POST /projects/{project}/assistant/conversations
+    rule: "project-verb:propose:*"
+    expect: [403, 403, allow, allow, 403, allow, 403, 403]
+  - route: POST /projects/{project}/assistant/propose-endpoint
+    rule: "project-verb:propose:Endpoint"
+    expect: [403, 400, allow, allow, 400, allow, 400, 400]
+    note: "the route answers 400 before it asks about the caller"
+  - route: GET /projects/{project}/basemap/{style}/style.json
+    rule: "public"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "public; the fixture configures no basemap or branding asset"
+  - route: GET /projects/{project}/basemap/{style}/{z}/{x}/{tile}
+    rule: "public"
+    expect: [404, 404, 404, 404, 404, 404, 404, 404]
+    note: "public; the fixture configures no basemap or branding asset"
+  - route: GET /projects/{project}/changes
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/changes/history
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/changes/history/export
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/changes/{id}
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/changes/{id}/manifests
+    rule: "project-read, then project-verb:read:<manifest kind>"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "the fixture's forge holds no change chg-00000000, so a caller who passes the check meets its 404"
+  - route: GET /projects/{project}/pipelinetemplates
+    rule: "project-verb:read:Pipeline"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/pipelinetemplates
+    rule: "project-verb:propose:Pipeline"
+    expect: [403, 403, allow, allow, 403, allow, 404, 403]
+  - route: DELETE /projects/{project}/pipelinetemplates/{id}
+    rule: "project-verb:propose:Pipeline"
+    expect: [403, 403, 404, 404, 403, 404, 404, 403]
+    note: "the fixture holds no template, so a caller who passes the check meets its 404"
+  - route: POST /projects/{project}/changes/{id}/approve
+    rule: "project-verb:approve:<change kind>"
+    expect: [403, 403, allow, allow, allow, allow, 403, 403]
+    live: true
+    note: "live on dev against an id that does not exist, so a loose check changes nothing"
+  - route: POST /projects/{project}/changes/{id}/reject
+    rule: "project-verb:approve:<change kind>"
+    expect: [403, 403, allow, allow, allow, allow, 403, 403]
+    live: true
+    note: "live on dev against an id that does not exist, so a loose check changes nothing"
+  - route: POST /projects/{project}/changes/{id}/restore
+    rule: "project-read, then project-verb:propose:<restored kind>"
+    expect: [403, allow, allow, allow, allow, allow, 404, allow]
+    note: "the fixture's forge holds no change chg-00000000, so a caller who passes the check meets its 404"
+  - route: POST /projects/{project}/changes/{id}/undo
+    rule: "project-read, then project-verb:propose:<kind put back>"
+    expect: [403, allow, allow, allow, allow, allow, 404, allow]
+    note: "the fixture's forge holds no change chg-00000000, so a caller who passes the check meets its 404"
+  - route: GET /projects/{project}/ckan/status
+    rule: "project-verb:read:CkanInstance"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /organization/datamodels
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /projects/{project}/datamodels/{name}/source
+    rule: "project-verb:read:DataModel"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: PUT /projects/{project}/datamodels/{name}/source
+    rule: "project-verb:propose:DataModel"
+    expect: [403, 403, allow, allow, 403, allow, 403, 403]
+  - route: POST /projects/{project}/datamodels/{name}/share
+    rule: "project-verb:propose:DataModel"
+    expect: [403, 403, allow, allow, 403, allow, 404, 403]
+  - route: GET /projects/{project}/drafts
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/drafts/events
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/drafts/{kind}/{name}
+    rule: "project-read"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "a 404 where the rule allows is an object the fixture does not hold; the check before it passed"
+  - route: PUT /projects/{project}/drafts/{kind}/{name}
+    rule: "project-verb:propose:<kind>"
+    expect: [403, 403, allow, allow, 403, allow, 403, 403]
+    body: {"manifest": {"apiVersion": "joinedcontext.com/v1alpha1", "kind": "Endpoint", "metadata": {"name": "existing"}, "spec": {}}}
+  - route: DELETE /projects/{project}/drafts/{kind}/{name}
+    rule: "project-verb:propose:<kind>"
+    expect: [403, 403, allow, allow, 403, allow, 403, 403]
+  - route: GET /projects/{project}/export
+    rule: "project-read, and org-admin (PF-03) for a whole project (UI-87)"
+    expect: [401, 403, 403, 403, 403, 404, 404, 403]
+    note: "the row asks for the whole project, which is an organization administrator's (UI-87); the administrator's 404 is the project the fixture does not hold, and a reader who names manifests passes (export_api_tests)"
+  - route: GET /projects/{project}/apps/{name}/export
+    rule: "project-read, and org-admin (PF-03) (UI-87)"
+    expect: [401, 403, 403, 403, 403, allow, 404, 403]
+    note: "one App is an organization administrator's to export (UI-87); the administrator passes the checks, and the fixture's App names no source.git repository to bundle, which is 409 (app_transfer_tests)"
+  - route: POST /projects/{project}/flows
+    rule: "project-verb:propose:*"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    body: {"blueprint": "existing", "version": "1.0.0", "parameters": {}}
+    note: "a 404 where the rule allows is an object the fixture does not hold; the check before it passed"
+  - route: POST /projects/{project}/import
+    rule: "project-verb:propose:*"
+    expect: [403, 400, allow, allow, 400, allow, 400, 400]
+    note: "the route answers 400 before it asks about the caller"
+  - route: GET /projects/{project}/ops
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: POST /projects/{project}/ops/{name}
+    rule: "mcp-dispatch"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    values: {"name": "jc_endpoint_list"}
+    note: "a 404 where the rule allows is an object the fixture does not hold; the check before it passed"
+  - route: GET /projects/{project}/permissions/me
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/mqtt/allowance
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "the project's MQTT allowance and the broker modes it may use (T-4859)"
+  - route: POST /projects/{project}/kpis/check
+    rule: "project-verb:propose:Pipeline, then a person"
+    expect: [403, 403, allow, allow, 403, allow, 403, 403]
+    body: {"pipeline": {"apiVersion": "joinedcontext.com/v1alpha2", "kind": "Pipeline", "metadata": {"name": "kpi"}, "spec": {"class": "scheduled", "schedule": "0 * * * *"}}}
+    note: "the problems come back as 200 (PL-105); a workload token is 403 (tests/kpi_check_tests.rs)"
+  - route: POST /projects/{project}/pipelines/test
+    rule: "project-verb:propose:Pipeline"
+    expect: [403, 403, allow, allow, 403, allow, 403, 403]
+    body: {"pipeline": {"apiVersion": "joinedcontext.com/v1alpha1", "kind": "Pipeline", "metadata": {"name": "existing"}, "spec": {"class": "auto", "source": {"endpointRef": "existing"}, "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:existing"}}, "sample": {}}
+  - route: POST /projects/{project}/datasources/{name}/test
+    rule: "project-verb:propose:DataSource"
+    expect: [403, 403, allow, allow, 403, allow, 404, 403]
+    note: "a saved source read once on the runner (T-4819); the fixture runs no runner, so an allowed caller gets its 503; a caller who may not read the project gets 404, as for every named resource"
+  - route: GET /projects/{project}/mqttbrokers/{name}/measured
+    rule: "project-verb:read:MqttBroker"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "what the broker measures, read by the Portal from the broker's own HTTP API; the browser never reaches a broker (API/01 §44, T-4043)"
+  - route: GET /projects/{project}/mqttbrokers/{name}/devices
+    rule: "project-verb:read:MqttBroker"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "the Add device form's options: roles only for a person who may propose ServiceAccount and the broker (T-5532)"
+  - route: POST /projects/{project}/mqttbrokers/{name}/devices
+    rule: "project-verb:propose:ServiceAccount+MqttBroker, person only"
+    expect: [403, 403, 403, allow, 403, allow, 404, 403]
+    body: {"name": "dev1", "role": "camera", "topic": "cameras/#", "jwks": {"keys": [{"kty": "EC", "crv": "P-256", "kid": "k1", "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU", "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"}]}}
+    note: "one Change of the device's ServiceAccount (public keys only) and the broker role; a workload token is 403 (tests/mqtt_devices_tests.rs)"
+  - route: GET /projects/{project}/mqttbrokers/{name}/access
+    rule: "project-verb:read:MqttBroker"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "which roles of the broker one ServiceAccount holds now (jc_core::mqtt::roles_held); the matrix names no account, so an allowed caller gets 400; a project member who may not read brokers gets 403 (tests/mqtt_access_tests.rs, T-5876)"
+  - route: GET /projects/{project}/mqttbrokers/{name}/bindings
+    rule: "project-verb:read:MqttBroker"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "which topic fills which attribute, joined from the manifests; each hop the caller may not read is hidden without its name (API/01 §47, T-5533)"
+  - route: POST /projects/{project}/mqttbrokers/{name}/test-publish
+    rule: "project-verb:read:MqttBroker"
+    expect: [403, 422, 422, 422, 422, 422, 422, 422]
+    note: "a dry run that publishes and writes nothing; the matrix sends an empty body, which the JSON reader refuses with 422 before anyone is asked, and it names no broker; a caller who may not read the project gets 404 with a whole body (tests/mqtt_test_publish_tests.rs, API/01 §44a, T-5534)"
+  - route: GET /projects/{project}/mqttbrokers/{name}/watch
+    rule: "project-verb:read:MqttBroker"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "the gateway's kept refusals of a broker and what it measures now; the fixture names no gateway, so the answer says why it read none (API/01 §44a, T-5534)"
+  - route: GET /projects/{project}/mqttbrokers/{name}/captured
+    rule: "project-verb:approve:MqttBroker (PL-87)"
+    expect: [401, 404, 404, allow, allow, allow, 404, 404]
+    note: "what a capture broker kept; a caller who may not approve MqttBrokers gets the 404 of a broker that does not exist (API/01 §47, T-4880)"
+  - route: DELETE /projects/{project}/mqttbrokers/{name}/captured
+    rule: "project-verb:approve:MqttBroker (PL-87)"
+    expect: [403, 404, 404, allow, allow, allow, 404, 404]
+    note: "deletes what a capture broker kept, recorded without payloads (API/01 §47, T-4880)"
+  - route: GET /projects/{project}/pipelines/{name}/bento
+    rule: "project-verb:read:Pipeline"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "the fixture's forge holds no bento.yaml, so a caller the rule admits meets 404 after the check passed; pipeline_bento_tests holds the rule with one (T-4818)"
+  - route: GET /projects/{project}/pipelines/{name}/metrics
+    rule: "project-verb:read:Pipeline"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/pipelines/{name}/samples
+    rule: "project-verb:read:Pipeline"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/pipelines/{name}/stats
+    rule: "project-verb:read:Pipeline"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/pipelines/{name}/access-requests
+    rule: "project-verb:propose:Pipeline (PL-90)"
+    expect: [403, 403, allow, allow, 403, allow, 404, 403]
+    body: {"endpoint": {"project": "other", "name": "air"}, "operations": "read", "types": [{"type": "AirQualityObserved", "attrs": ["pm10"]}], "reason": "kpi"}
+    note: "a 409 is the fixture's: it runs streams under the project's shared account (PL-19)"
+  - route: GET /projects/{project}/pipelines/{name}/access-requests
+    rule: "project-verb:read:Pipeline (PL-90)"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "a reader's 503 is the fixture's: it has no database"
+  - route: GET /projects/{project}/pipelines/{name}/access-requests/endpoints
+    rule: "project-verb:propose:Pipeline (PL-90): the request form's choices, by the rule the request door applies (T-4946)"
+    expect: [401, 403, allow, allow, 403, allow, 404, 403]
+  - route: GET /projects/{project}/pipelines/{name}/rejected
+    rule: "project-verb:read:Pipeline"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/pipelines/{name}/rejected/retry
+    rule: "project-verb:propose:Pipeline"
+    expect: [403, 403, allow, allow, 403, allow, 404, 403]
+    body: {"ids": []}
+  - route: GET /projects/{project}/pipelines/{name}/source-deletes
+    rule: "project-verb:read:Pipeline"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/pipelines/{name}/source-deletes
+    rule: "project-verb:approve:Pipeline"
+    expect: [403, 403, allow, allow, allow, allow, 404, 403]
+    body: {"decision": "keep"}
+    note: "409 after the check: the fixture's pipeline has no snapshot rule; pipeline_source_deletes_tests holds the rule with one"
+  - route: GET /projects/{project}/pipelines/{name}/runs
+    rule: "project-verb:read:Pipeline"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/pipelines/{name}/runs
+    rule: "project-verb:propose:Pipeline, project-verb:approve:Pipeline"
+    expect: [403, 403, 503, 503, 403, 503, 404, 403]
+    note: "the fixture runs no pipeline runner (T-4349): 503 once the caller is let through"
+  - route: GET /projects/{project}/pipelines/{name}/runs/{run}/log
+    rule: "project-verb:read:Pipeline"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/pipeline-runs
+    rule: "project-verb:read:Pipeline"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/pipeline-health
+    rule: "project-verb:approve:Pipeline"
+    expect: [401, 403, allow, allow, allow, allow, 404, 403]
+  - route: GET /projects/{project}/revisions
+    rule: "project-read"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "a 404 where the rule allows is an object the fixture does not hold; the check before it passed"
+  - route: POST /projects/{project}/syncsources/{name}/detach
+    rule: "project-verb:delete:SyncSource"
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+  - route: POST /projects/{project}/syncsources/{name}/pause
+    rule: "project-verb:propose:SyncSource"
+    expect: [403, 403, 403, allow, 403, allow, 403, 403]
+    body: {"paused": true}
+  - route: GET /projects/{project}/syncsources/{name}/status
+    rule: "project-verb:read:SyncSource"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/syncsources/{name}/sync
+    rule: "project-verb:propose:SyncSource"
+    expect: [403, 403, 403, allow, 403, allow, 403, 403]
+  - route: GET /projects/{project}/workspaces
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/workspaces
+    rule: "project-verb:propose:*"
+    expect: [403, 403, 404, 404, 403, 404, 404, 403]
+    body: {"name": "x"}
+    note: "no workspace in the fixture: the owner rule is held by workspace_security_tests"
+  - route: GET /projects/{project}/workspaces/{name}
+    rule: "project-read"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "no workspace in the fixture: the owner rule is held by workspace_security_tests"
+  - route: DELETE /projects/{project}/workspaces/{name}
+    rule: "run-owner"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    note: "no workspace in the fixture: the owner rule is held by workspace_security_tests"
+  - route: GET /projects/{project}/workspaces/{name}/compare
+    rule: "project-read"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "no workspace in the fixture: the owner rule is held by workspace_security_tests"
+  - route: POST /projects/{project}/workspaces/{name}/update
+    rule: "run-owner"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    note: "no workspace in the fixture: the owner rule is held by workspace_security_tests"
+  - route: POST /projects/{project}/workspaces/{name}/propose
+    rule: "run-owner"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    note: "no workspace in the fixture: the owner rule is held by workspace_security_tests"
+  - route: POST /projects/{project}/workspaces/{name}/preview
+    rule: "run-owner"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    note: "no workspace in the fixture: the owner rule is held by workspace_security_tests"
+  - route: GET /projects/{project}/workspaces/{name}/preview
+    rule: "project-read"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "no workspace in the fixture: the owner rule is held by workspace_security_tests"
+  - route: DELETE /projects/{project}/workspaces/{name}/preview
+    rule: "run-owner"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    note: "no workspace in the fixture: the owner rule is held by workspace_security_tests"
+  - route: GET /projects/{project}/{plural}
+    rule: "project-verb:read:<kind of plural>"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: POST /projects/{project}/{plural}
+    rule: "project-verb:propose:<kind of plural>"
+    expect: [403, 403, allow, allow, 403, allow, 403, 403]
+    live: true
+  - route: GET /projects/{project}/{plural}/{name}
+    rule: "project-verb:read:<kind of plural>"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: PUT /projects/{project}/{plural}/{name}
+    rule: "project-verb:propose:<kind of plural>"
+    expect: [403, 403, allow, allow, 403, allow, 403, 403]
+    live: true
+  - route: PATCH /projects/{project}/{plural}/{name}
+    rule: "project-verb:propose:<kind of plural>"
+    expect: [403, 403, allow, allow, 403, allow, 404, 403]
+    live: true
+    note: "a member of another project cannot read the manifest, so the patch answers as for an absent one (F-POR2-006)"
+  - route: DELETE /projects/{project}/{plural}/{name}
+    rule: "project-verb:delete:<kind of plural>"
+    expect: [403, 403, 403, 403, 403, 404, 404, 403]
+    live: true
+    note: "a 404 where the rule allows is an object the fixture does not hold; the check before it passed"
+  - route: GET /ready
+    rule: "public"
+    expect: [allow, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /version
+    rule: "public"
+    expect: [allow, allow, allow, allow, allow, allow, allow, allow]
+    note: "two commits and two OpenAPI hashes, nothing of a project (T-2485)"
+  - route: POST /tools/generate
+    rule: "signed-in"
+    expect: [403, allow, allow, allow, allow, allow, allow, allow]
+    body: {"source": ""}
+  - route: POST /tools/import-sdm
+    rule: "signed-in"
+    expect: [403, allow, allow, allow, allow, allow, allow, allow]
+    body: {"model": "dataModel.Environment/AirQualityObserved"}
+  - route: POST /tools/infer-schema
+    rule: "signed-in"
+    expect: [403, allow, allow, allow, allow, allow, allow, allow]
+  - route: GET /tools/sdm-catalog
+    rule: "signed-in"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+  - route: POST /webhooks/gitea
+    rule: "signature:gitea-webhook"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]
+  - route: POST /webhooks/sync/{project}/{name}
+    rule: "signature:sync-source-webhook"
+    expect: [401, 401, 401, 401, 401, 401, 401, 401]

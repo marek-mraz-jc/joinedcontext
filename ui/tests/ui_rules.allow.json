@@ -1,0 +1,118 @@
+{
+  "check_is_not_suppressed": {
+    "_max": 5,
+    "src/assistant/state.ts": {
+      "lines": 1,
+      "group": "ui-parts"
+    },
+    "src/components/dashboards/MapLibreView.tsx": {
+      "lines": 1,
+      "group": "ui-parts"
+    },
+    "src/pages/apps/useAgentRun.ts": {
+      "lines": 1,
+      "group": "ui-parts"
+    },
+    "src/pages/spaces/SpaceComplete.tsx": {
+      "lines": 1,
+      "group": "ui-forms"
+    },
+    "src/routes/EndpointsPage.tsx": {
+      "lines": 1,
+      "group": "ui-parts"
+    }
+  },
+  "colour_is_a_token": {
+    "_max": 5,
+    "src/api/schema.d.ts": {
+      "lines": 15,
+      "group": "ui-parts"
+    },
+    "src/branding.tsx": {
+      "lines": 8,
+      "group": "ui-parts",
+      "reason": "the default branding an installation without a ConfigMap gets: the eight values mirror the API's own defaults and are written into the colour tokens, so they are data the API answers in hex, not a colour chosen here"
+    },
+    "src/components/dashboards/mapColours.ts": {
+      "lines": 10,
+      "group": "ui-parts",
+      "reason": "The map's palette, and the only colour values left in the dashboards folder. Four of the eight are the YlOrRd ramp the Layer manifests name - a data scale that must read the same in both themes and must not move when an installation changes its primary. The other four are what a renderer with no stylesheet falls back to; a browser resolves the token every time. Two more turn a token written in CSS a map style cannot parse (color-mix, oklab) into the plain rgb the style can (T-3256): computed from the token, not a colour chosen here."
+    }
+  },
+  "focus_is_not_stolen": {
+    "_max": 1
+  },
+  "hand_made_control": {
+    "_max": 23,
+    "src/assistant/AssistantDock.tsx": {
+      "lines": 1,
+      "group": "ui-forms",
+      "reason": "the closed dock is a 56 px round floating button; the shared Button fixes h-6..h-11 and a rounded-md, and a class passed to override them wins or loses by CSS source order. It carries the Portal focus-ring and a shadow token, and says so on the line."
+    },
+    "src/pages/apps/QuestionOptions.tsx": {
+      "lines": 1,
+      "group": "ui-parts",
+      "reason": "T-1839: the choice chip is a roving-tabindex radio (single answer) or toggle (several) whose body is a title over a description. The shared Button fixes a height (h-6..h-11) and centres one line of content; a class passed to override that would win or lose by CSS source order rather than by being written last, so the chip stays hand-made and keeps the Portal ring from the global :focus-visible rule."
+    },
+    "src/pages/models/SmartDataModelsImport.tsx": {
+      "lines": 1,
+      "group": "ui-parts",
+      "reason": "a model in the import list is a two-line option (its title over its id) with aria-current; the shared Button is one line of fixed height, so this stays a plain button with the Portal focus ring (T-3281)."
+    }
+  },
+  "size_is_on_the_scale": {
+    "_max": 12,
+    "src/assistant/AssistantDock.tsx": {
+      "lines": 2,
+      "group": "ui-forms",
+      "reason": "two computed sizes, each commented on the line: the floating panel is min(40rem, the viewport less the gaps) tall and the viewport less two 1 rem gaps wide, and the side panel is the viewport's height less the 14 header it sticks under."
+    },
+    "src/components/ProjectQuota.tsx": {
+      "lines": 1,
+      "group": "ui-parts",
+      "reason": "the filled part of the quota bar is used/limit as a percentage: a computed size, and the line says so"
+    },
+    "src/components/layout/Shell.tsx": {
+      "lines": 1,
+      "group": "ui-parts",
+      "reason": "a computed size: the project menu takes the trigger's own width, which Radix measures and publishes, and says so on the line"
+    },
+    "src/pages/apps/ConversationPanel.tsx": {
+      "lines": 1,
+      "group": "ui-forms",
+      "reason": "the width of a chat bubble is a share of the column it sits in, so the person sees at a glance which side said it; a percentage is on no spacing scale and the line says so"
+    },
+    "src/pages/assistant/AssistantPage.tsx": {
+      "lines": 1,
+      "group": "ui-forms"
+    },
+    "src/routes/DashboardsPage.tsx": {
+      "lines": 2,
+      "group": "ui-pages",
+      "reason": "`h-[60vh]` sizes the map against the window and the spacing scale has no viewport step; the colour-ramp swatch takes its fill from the layer's own scale, which is a value, not a token."
+    },
+    "src/pages/models/ModelViews.tsx": {
+      "lines": 1,
+      "group": "ui-parts",
+      "reason": "the LinkML source runs down to near the page bottom, the viewport less the header and tabs above it: a computed size, commented on the line (owner 2026-10-31)."
+    }
+  },
+  "panel_is_a_card": {
+    "_max": 3,
+    "src/pages/apps/AppsCatalog.tsx": {
+      "lines": 2,
+      "group": "ui-parts",
+      "reason": "T-4888: an app tile is one Link whose whole surface is the target, with a hover tone; Card renders a non-interactive element, so the link keeps the card's border, radius and surface tokens itself."
+    },
+    "src/pages/home/HomePage.tsx": {
+      "lines": 1,
+      "group": "ui-parts",
+      "reason": "T-4888: a next-step tile is one Link whose whole surface is the target, with a hover tone; Card renders a non-interactive element, so the link keeps the card's tokens itself."
+    },
+    "src/pages/gallery/Gallery.tsx": {
+      "lines": 1,
+      "group": "ui-pages",
+      "reason": "T-4888: the development gallery frames each specimen without a shadow so the specimen's own shadow reads; it ships in no production build."
+    }
+  }
+}

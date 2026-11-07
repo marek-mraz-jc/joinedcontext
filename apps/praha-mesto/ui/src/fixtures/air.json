@@ -1,0 +1,96 @@
+[
+  {
+    "dataProvider": {
+      "type": "Property",
+      "value": "Český hydrometeorologický ústav (CC BY 4.0)"
+    },
+    "dateObserved": {
+      "type": "Property",
+      "value": "2026-09-25T03:00:00Z"
+    },
+    "id": "urn:ngsi-ld:AirQualityObserved:praha.cz:praha-mesto:chmi-alib",
+    "location": {
+      "type": "GeoProperty",
+      "value": {
+        "coordinates": [
+          14.44593,
+          50.00731
+        ],
+        "type": "Point"
+      }
+    },
+    "name": {
+      "languageMap": {
+        "cs": "Praha 4-Libuš"
+      },
+      "type": "LanguageProperty"
+    },
+    "no2": {
+      "observedAt": "2026-09-25T03:00:00Z",
+      "type": "Property",
+      "unitCode": "GQ",
+      "value": 9
+    },
+    "o3": {
+      "observedAt": "2026-09-25T03:00:00Z",
+      "type": "Property",
+      "unitCode": "GQ",
+      "value": 30.9
+    },
+    "pm10": {
+      "observedAt": "2026-09-25T03:00:00Z",
+      "type": "Property",
+      "unitCode": "GQ",
+      "value": 4.9
+    },
+    "pm25": {
+      "observedAt": "2026-09-25T03:00:00Z",
+      "type": "Property",
+      "unitCode": "GQ",
+      "value": 3.8
+    },
+    "source": {
+      "type": "Property",
+      "value": "https://opendata.chmi.cz/air_quality/now/data/airquality_1h_avg_CZ.csv"
+    },
+    "type": "AirQualityObserved"
+  },
+  {
+    "dataProvider": {
+      "type": "Property",
+      "value": "Český hydrometeorologický ústav (CC BY 4.0)"
+    },
+    "dateObserved": {
+      "type": "Property",
+      "value": "2026-09-25T03:00:00Z"
+    },
+    "id": "urn:ngsi-ld:AirQualityObserved:praha.cz:praha-mesto:chmi-aleg",
+    "location": {
+      "type": "GeoProperty",
+      "value": {
+        "coordinates": [
+          14.43067,
+          50.07239
+        ],
+        "type": "Point"
+      }
+    },
+    "name": {
+      "languageMap": {
+        "cs": "Praha 2-Legerova (hot spot)"
+      },
+      "type": "LanguageProperty"
+    },
+    "no2": {
+      "observedAt": "2026-09-25T03:00:00Z",
+      "type": "Property",
+      "unitCode": "GQ",
+      "value": 23.7
+    },
+    "source": {
+      "type": "Property",
+      "value": "https://opendata.chmi.cz/air_quality/now/data/airquality_1h_avg_CZ.csv"
+    },
+    "type": "AirQualityObserved"
+  }
+]

@@ -1,0 +1,1 @@
+[{"id": "urn:ngsi-ld:BikeHireDockingStation:s1", "type": "BikeHireDockingStation", "totalSlotNumber": 20, "location": {"type": "Point", "coordinates": [24.941, 60.171]}}]

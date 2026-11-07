@@ -1,0 +1,71 @@
+# Default form arrangement for Group (UI-02, T-2400).
+# A group is a name for several people; the examples are neutral (T-2752).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: group
+spec:
+  for: Group
+  guide: User-Guide/07-users-roles-approvals
+  about:
+    en: >-
+      A group is one name for several people, so a role is given once instead of person by person.
+      Members are the organization's people, picked by name; the manifest keeps each person's
+      Keycloak id, never their e-mail. Invite a person on the People page before naming them.
+    sk: >-
+      Skupina je jeden názov pre viac ľudí, takže rola sa udelí raz namiesto osoby po osobe.
+      Členovia sú ľudia organizácie vybraní podľa mena; manifest si zapíše identifikátor osoby
+      v Keycloaku, nikdy jej e-mail. Osobu najprv pozvite na stránke Ľudia.
+    cs: >-
+      Skupina je jeden název pro více lidí, takže role se udělí jednou místo osoby po osobě.
+      Členové jsou lidé organizace vybraní podle jména; manifest si zapíše identifikátor osoby
+      v Keycloaku, nikdy její e-mail. Osobu nejprve pozvěte na stránce Lidé.
+    de: >-
+      Eine Gruppe ist ein Name für mehrere Personen, damit eine Rolle einmal statt pro Person
+      gegeben wird. Mitglieder sind die Personen der Organisation, nach Namen gewählt; das Manifest
+      speichert die Keycloak-Kennung, nie die E-Mail. Laden Sie eine Person zuerst auf der Seite
+      Personen ein.
+  order: [name, description, members]
+  groups:
+    - title:
+        en: The group
+        sk: Skupina
+        cs: Skupina
+        de: Die Gruppe
+      description:
+        en: The name a binding gives a role to, and what the group is for whoever reviews it.
+        sk: Názov, ktorému väzba udeľuje rolu, a čo je skupina pre toho, kto ju posudzuje.
+        cs: Název, kterému vazba uděluje roli, a co je skupina pro toho, kdo ji posuzuje.
+        de: Der Name, dem eine Bindung eine Rolle gibt, und was die Gruppe für Prüfende ist.
+      fields: [name, description]
+    - title:
+        en: Who is in it
+        sk: Kto je v nej
+        cs: Kdo je v ní
+        de: Wer dazugehört
+      description:
+        en: One entry per person; the reconciler writes exactly this list into Keycloak.
+        sk: Jeden záznam na osobu; rekonciliátor zapíše presne tento zoznam do Keycloaku.
+        cs: Jeden záznam na osobu; rekonciliátor zapíše přesně tento seznam do Keycloaku.
+        de: Ein Eintrag je Person; der Reconciler schreibt genau diese Liste nach Keycloak.
+      fields: [members]
+  fields:
+    name:
+      help:
+        en: The short name a role binding gives this group by; it cannot be renamed later.
+        sk: Krátky názov, ktorým skupinu pomenuje väzba roly; neskôr sa nedá premenovať.
+        cs: Krátký název, kterým skupinu pojmenuje vazba role; později jej nelze přejmenovat.
+        de: Der kurze Name, unter dem eine Rollenbindung die Gruppe gibt; später unveränderlich.
+    description:
+      help:
+        en: What this group is, for whoever reviews a binding that names it.
+        sk: Čo je táto skupina, pre toho, kto posudzuje väzbu, ktorá ju menuje.
+        cs: Co je tato skupina, pro toho, kdo posuzuje vazbu, jež ji jmenuje.
+        de: Was diese Gruppe ist, für alle, die eine Bindung darauf prüfen.
+    members[].user:
+      placeholder: "2f1c6b1e-7a4d-4c55-9e0e-3b8f1a2d4c6e"
+      help:
+        en: Search by name or e-mail, e.g. Jana Nováková; the person's id is written, nobody twice.
+        sk: Hľadajte podľa mena alebo e-mailu, napr. Jana Nováková; zapíše sa identifikátor osoby, nikto dvakrát.
+        cs: Hledejte podle jména nebo e-mailu, např. Jana Nováková; zapíše se identifikátor osoby, nikdo dvakrát.
+        de: Suchen Sie nach Name oder E-Mail, z. B. Jana Nováková; die Kennung wird gespeichert, niemand doppelt.

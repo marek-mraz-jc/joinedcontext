@@ -1,0 +1,14 @@
+# T-2733: the subscription workflow as one conversation (Testing/07 §3, AG-87).
+workflow: subscription
+as: steward
+says:
+  - "Notify https://alerts.example.fi/hooks/air when AirQualityObserved changes in the air quality space."
+expect:
+  calls:
+    - tool: jc_ui_navigate
+      input: { page: new, plural: subscriptions }
+  outcome: form
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: notify https://alerts.example.fi/hooks/air when AirQualityObserved changes in the air quality space."

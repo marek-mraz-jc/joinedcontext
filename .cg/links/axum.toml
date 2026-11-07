@@ -1,0 +1,43 @@
+# Portal API routes: every module under src/api (and the OIDC and Model Tools routers) registers
+# `.route("/path", get(a).put(b))` on a Router that src/api/mod.rs merges and src/server.rs nests
+# under /api/v1. -> provides "GET /api/v1/projects/{}/drafts" on handler `list_drafts`.
+# The body is the rest of a one-line call, or runs to the `)` alone on its line that rustfmt gives
+# a call it breaks, so a method chain on the lines between is read whole.
+[[link]]
+name = "api-routes"
+channel = "http"
+role = "provides"
+files = ["src/api/*.rs", "src/auth/oidc.rs", "src/tools/model_tools.rs"]
+pattern = '(?s)\.route\(\s*"(?P<key>/[^"]+)"\s*,(?P<body>[^\n]*\)|.*?\n[ \t]*\))[ \t]*,?[ \t]*\r?\n'
+each = '(?P<verb>get|post|put|patch|delete|head|options)\(\s*(?P<symbol>[\w:]+)'
+key = "{verb} {key}"
+prefix = "/api/v1"
+# a route of these files written with its full path is outside the nest; pinned below
+skip = ['^/api/v1/']
+
+# Routes registered with their full path outside the /api/v1 nest: the static and template hosts,
+# the MCP server, metrics, the OpenAPI document, the live-notify hook, and the internal listener
+# the credential proxy calls (src/server.rs internal_app, its own port).
+[[link]]
+name = "root-routes"
+channel = "http"
+role = "provides"
+files = ["src/server.rs", "src/telemetry.rs", "src/openapi.rs", "src/mcp/mod.rs", "src/apps/*.rs", "src/api/internal/*.rs"]
+pattern = '(?s)\.route\(\s*"(?P<key>/[^"]+)"\s*,(?P<body>[^\n]*\)|.*?\n[ \t]*\))[ \t]*,?[ \t]*\r?\n'
+each = '(?P<verb>get|post|put|patch|delete|head|options)\(\s*(?P<symbol>[\w:]+)'
+key = "{verb} {key}"
+
+# The kit preview (src/server.rs merges api::agent_runs::preview_router outside /api/v1, with its
+# own CSP) names its full path inside src/api, which the api-routes prefix would double.
+[[endpoint]]
+channel = "http"
+role = "provides"
+key = "GET /api/v1/projects/{project}/agent-runs/{id}/preview"
+symbol = "joinedcontext_portal::api::agent_runs::preview"
+
+# `GET /api/v1/mcp` answers 405 from a closure inside mcp::router, which no `each` keys.
+[[endpoint]]
+channel = "http"
+role = "provides"
+key = "GET /api/v1/mcp"
+symbol = "joinedcontext_portal::mcp::router"

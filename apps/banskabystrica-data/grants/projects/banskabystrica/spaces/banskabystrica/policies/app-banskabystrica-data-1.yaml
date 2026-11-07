@@ -1,0 +1,63 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-banskabystrica-data-1
+  namespace: banskabystrica
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:banskabystrica/app-banskabystrica-data
+    kind: role
+  assigner: did:web:banskabystrica.sk
+  contextSpaceRef:
+    kind: ContextSpace
+    name: banskabystrica-verejne
+  information:
+  - entities:
+    - type: Event
+    - type: Organization
+    - type: AirQualityObserved
+    propertyNames:
+    - name
+    - startDate
+    - endDate
+    - startTime
+    - eventCategory
+    - address
+    - url
+    - schoolCode
+    - teachingLanguage
+    - pupilCount
+    - teachingStaff
+    - nonTeachingStaff
+    - annualBudget
+    - budgetYear
+    - stationCode
+    - dateObserved
+    - pm10
+    - pm25
+    - location
+    relationshipNames:
+    - name
+    - startDate
+    - endDate
+    - startTime
+    - eventCategory
+    - address
+    - url
+    - schoolCode
+    - teachingLanguage
+    - pupilCount
+    - teachingStaff
+    - nonTeachingStaff
+    - annualBudget
+    - budgetYear
+    - stationCode
+    - dateObserved
+    - pm10
+    - pm25
+    - location
+  operations:
+  - queryEntity
+  - retrieveEntity

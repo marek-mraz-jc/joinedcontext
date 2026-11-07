@@ -1,0 +1,19 @@
+{
+  "name": "realtime-monitor",
+  "title": "Real-time monitor",
+  "purpose": "Watch sensors as they report: every station's latest value, its last hour as a sparkline, a station gone silent, and each crossing of an alert level announced as it happens.",
+  "archetype": "realtime-monitor",
+  "audience": "operators",
+  "layout": "tile-grid-with-log",
+  "keywords": ["realtime", "real-time", "live", "monitor", "monitoring", "sensor", "sensors", "alert", "alerts", "alarm", "alarms", "threshold", "sparkline", "sparklines", "control-room", "iot", "feed", "stream"],
+  "ready": "Air quality now",
+  "dataNeeds": [
+    {
+      "types": ["AirQualityObserved"],
+      "attrs": ["stationName", "pm25", "no2", "dateObserved"],
+      "operations": ["queryEntity", "queryTemporal"]
+    }
+  ],
+  "access": "Read-only: the current readings and their last hour.",
+  "sdk": ["useEntities (refreshMs)", "useClient().temporal.list", "format", "Page", "Header", "Split", "Grid", "Card"]
+}

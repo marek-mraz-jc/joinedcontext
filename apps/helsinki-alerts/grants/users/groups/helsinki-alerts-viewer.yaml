@@ -1,0 +1,11 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata:
+  name: helsinki-alerts-viewer
+  namespace: org
+  annotations:
+    joinedcontext.com/app: helsinki/helsinki-alerts
+spec:
+  description: The viewers of helsinki-alerts, its default group.
+  members:
+  - user: de300000-0000-4000-8000-000000000002 # demo.viewer

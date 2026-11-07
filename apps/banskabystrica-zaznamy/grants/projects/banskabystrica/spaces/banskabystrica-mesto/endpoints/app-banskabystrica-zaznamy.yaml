@@ -1,0 +1,23 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-banskabystrica-zaznamy
+  namespace: banskabystrica
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    en: Records of the city of Banská Bystrica
+    sk: Záznamy mesta Banská Bystrica
+spec:
+  allowedProjects:
+  - banskabystrica
+  audience: project-list
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: banskabystrica-mesto
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - ogc-features
+  slug: i4sngyhtq6ifgjt4nwv5eacvhw

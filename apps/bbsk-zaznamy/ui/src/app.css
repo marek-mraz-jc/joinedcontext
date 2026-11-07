@@ -1,0 +1,235 @@
+/*
+ * The page around the grid. The table brings its own stylesheet from the SDK (`grid.css`), so
+ * nothing here touches it: what is left is the heading, the two sentences that say what may be
+ * edited and why, and the source line. The column and the heading are the SDK's Page and Header
+ * (T-2825).
+ */
+.jc-main {
+  padding: var(--jc-gutter, 1rem);
+}
+
+.note,
+.source {
+  color: var(--jc-color-text-muted, #555);
+  margin: 0 0 var(--jc-space-3, 0.75rem);
+  max-width: 60rem;
+}
+
+.notes .note:last-child,
+.source {
+  margin-bottom: 0;
+}
+
+/* The charts above the table (T-2966, AP-123). Every colour is a design token: the surface and
+   ink tokens, and `--series`, the chart palette colour the component hands each card and button. */
+.overview {
+  margin-block: var(--jc-space-6, 1.5rem);
+}
+
+.overview h2,
+.records h2 {
+  margin: 0 0 var(--jc-space-3, 0.75rem);
+  padding: var(--jc-space-2, 0.5rem) var(--jc-space-3, 0.75rem);
+  border-inline-start: 6px solid var(--jc-color-accent, #0f766e);
+  background: color-mix(in srgb, var(--jc-color-accent, #0f766e) 10%, var(--jc-color-surface, #fff));
+  border-radius: var(--jc-radius-sm, 4px);
+}
+
+.datasets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-2, 0.5rem);
+  margin-bottom: var(--jc-space-4, 1rem);
+}
+
+.dataset {
+  font: inherit;
+  min-height: 44px;
+  padding: var(--jc-space-2, 0.5rem) var(--jc-space-3, 0.75rem);
+  border: 2px solid var(--series);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--series) 8%, var(--jc-color-surface, #fff));
+  color: var(--jc-color-ink, #0f172a);
+  cursor: pointer;
+  text-align: start;
+}
+
+.dataset[aria-pressed="true"] {
+  background: var(--series);
+  color: var(--jc-color-surface, #fff);
+}
+
+.dataset:focus-visible {
+  outline: 3px solid var(--jc-color-ink, #0f172a);
+  outline-offset: 2px;
+}
+
+.series-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
+  gap: var(--jc-space-4, 1rem);
+}
+
+.series-card {
+  margin: 0;
+  min-width: 0;
+  padding: var(--jc-space-3, 0.75rem);
+  border: 1px solid var(--jc-color-line, #e2e8f0);
+  border-top: 6px solid var(--series);
+  border-radius: var(--jc-radius-md, 8px);
+  background: var(--jc-color-card, #f8fafc);
+}
+
+.series-card figcaption {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-1, 0.25rem);
+  overflow-wrap: anywhere;
+}
+
+.series-title {
+  font-weight: 600;
+  color: color-mix(in srgb, var(--series) 70%, var(--jc-color-ink, #0f172a));
+}
+
+.series-subtitle,
+.series-when {
+  color: var(--jc-color-muted, #64748b);
+  font-size: var(--jc-font-size-sm, 0.875rem);
+}
+
+.series-latest {
+  margin: var(--jc-space-2, 0.5rem) 0;
+}
+
+.series-number {
+  font-size: var(--jc-font-size-xl, 1.5rem);
+  font-weight: 700;
+  color: color-mix(in srgb, var(--series) 80%, var(--jc-color-ink, #0f172a));
+}
+
+.series-plot {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-block: var(--jc-space-2, 0.5rem);
+}
+
+.series-plot .axis {
+  stroke: var(--jc-color-line, #e2e8f0);
+}
+
+.series-plot .line {
+  fill: none;
+  stroke: var(--series);
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+}
+
+.series-plot .dot,
+.series-plot .column {
+  fill: var(--series);
+}
+
+.series-plot .tick {
+  fill: var(--jc-color-muted, #64748b);
+  font-size: 10px;
+}
+
+.series-bars {
+  list-style: none;
+  margin: var(--jc-space-2, 0.5rem) 0;
+  padding: 0;
+  display: grid;
+  gap: var(--jc-space-1, 0.25rem);
+}
+
+.series-bars li {
+  display: grid;
+  grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) auto;
+  gap: var(--jc-space-2, 0.5rem);
+  align-items: center;
+  font-size: var(--jc-font-size-sm, 0.875rem);
+}
+
+.series-bars .bar-label {
+  overflow-wrap: anywhere;
+}
+
+.series-bars .bar-track {
+  height: 0.75rem;
+  background: color-mix(in srgb, var(--series) 12%, var(--jc-color-surface, #fff));
+  border-radius: 999px;
+}
+
+.series-bars .bar {
+  display: block;
+  height: 100%;
+  width: calc(var(--share) * 100%);
+  background: var(--series);
+  border-radius: 999px;
+}
+
+.series-values summary {
+  cursor: pointer;
+  color: var(--jc-color-muted, #64748b);
+  font-size: var(--jc-font-size-sm, 0.875rem);
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.series-values table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--jc-font-size-sm, 0.875rem);
+}
+
+.series-values th,
+.series-values td {
+  padding: var(--jc-space-1, 0.25rem) var(--jc-space-2, 0.5rem);
+  border-bottom: 1px solid var(--jc-color-line, #e2e8f0);
+  text-align: start;
+}
+
+.series-values td {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.records {
+  margin-block-start: var(--jc-space-6, 1.5rem);
+}
+
+/* The table's cells (cells.tsx): a name with its code, the number with its unit, the URN folded. */
+.coded .code,
+.figure .unit {
+  color: var(--jc-color-muted, #64748b);
+  font-size: var(--jc-font-size-sm, 0.875rem);
+}
+
+.coded .code {
+  font-family: var(--jc-font-mono, monospace);
+}
+
+/* A record opens in the entity panel by this button, above its URN's disclosure. */
+.row-open {
+  font: inherit;
+  color: var(--jc-color-primary, #1f5fa8);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.urn summary {
+  cursor: pointer;
+  color: var(--jc-color-muted, #64748b);
+}
+
+.urn code {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: var(--jc-font-size-sm, 0.875rem);
+}

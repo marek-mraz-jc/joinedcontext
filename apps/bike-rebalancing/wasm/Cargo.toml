@@ -1,0 +1,32 @@
+# The planner of bike-rebalancing, compiled to WebAssembly and run in the browser's worker
+# (T-3328), and by the server component in server/ when a plan is saved (T-3346). Its own
+# workspace, so the Portal's does not load it.
+[package]
+name = "bike-rebalancing"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The version the build lane binds with (builder/build-wasm.sh, AP-142). Only for the page: the
+# server component (server/, T-3346) plans with the same code, without the browser's bindings.
+wasm-bindgen = { version = "=0.2.129", optional = true }
+
+[features]
+default = ["web"]
+web = ["dep:wasm-bindgen"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[workspace]

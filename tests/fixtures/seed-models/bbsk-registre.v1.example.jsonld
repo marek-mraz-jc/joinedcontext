@@ -1,0 +1,21 @@
+{
+  "areaCode": "SK0321508438",
+  "dataProvider": "dataProvider",
+  "divisionLevel": "district",
+  "id": "urn:ngsi-ld:AdministrativeArea:joinedcontext.com:example:1",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "name": {
+    "en": "name"
+  },
+  "observedAt": "2026-01-01T00:00:00Z",
+  "refParentArea": "urn:ngsi-ld:AdministrativeArea:joinedcontext.com:example:1",
+  "source": "source",
+  "surfaceArea": 0.0,
+  "type": "AdministrativeArea"
+}

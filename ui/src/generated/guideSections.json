@@ -1,0 +1,869 @@
+{
+ "docsCommit": "217cbda06aa8b91e35978667326e21fbc346109b",
+ "sections": {
+  "home": {
+   "source": "User-Guide/01-getting-started.md",
+   "number": 1,
+   "heading": "Sign in and find your way around",
+   "blocks": [
+    [
+     "ol",
+     [
+      "Open the Portal. The sign-in page is your organization's own; enter the user name and password you were given. Once you are in, the Portal opens on a project.",
+      "The bar at the top names the project you are looking at. If you belong to more than one, use it to switch: everything below it, every page and every list, belongs to the project named there.",
+      "The left navigation is the whole Portal: Context Spaces, Endpoints, Data sources, Pipelines, Dashboards, Applications, Approvals, Access, Explore data, Data models, Flows, Copies, Open data and Activity.",
+      "The assistant sits in the corner behind Open the assistant. It can read the pages you can read and fill in the forms you can fill in, and it can propose a change, exactly like you; it cannot approve one."
+     ]
+    ],
+    [
+     "p",
+     "If a page says you may not see something, that is your role talking, not a fault. Access shows what your roles let you do here."
+    ]
+   ]
+  },
+  "organization": {
+   "source": "User-Guide/12-managing-organization-and-projects.md",
+   "number": 1,
+   "heading": "The Organization page",
+   "blocks": [
+    [
+     "p",
+     "Open Organization in the top bar. You see it whatever project you are in, because nothing on it belongs to a project."
+    ]
+   ]
+  },
+  "spaces": {
+   "source": "User-Guide/02-organizations-projects-spaces.md",
+   "number": 3,
+   "heading": "Creating and Inspecting Context Spaces",
+   "blocks": [
+    [
+     "h",
+     "Create a Context Space"
+    ],
+    [
+     "h",
+     "By hand"
+    ],
+    [
+     "ol",
+     [
+      "Navigate to Context Spaces at /projects/helsinki/spaces.",
+      "Click New Context Space.",
+      "In the dialog, enter air-quality into Name.",
+      "In Title, enter Air Quality & Weather.",
+      "In Data model, enter the model reference helsinki.",
+      "Click Check. You should see the draft verdict chip display Checked.",
+      "Click Propose change.",
+      "Navigate to /projects/helsinki/approvals where an approver selects the proposal and clicks Approve.",
+      "The space state transitions to Live."
+     ]
+    ],
+    [
+     "p",
+     "The live journey verdict-gate.spec.ts replays these steps."
+    ],
+    [
+     "h",
+     "By asking the assistant"
+    ],
+    [
+     "p",
+     "Type into the assistant composer: Create a context space called air-quality in the helsinki project"
+    ],
+    [
+     "p",
+     "The assistant navigates to /projects/helsinki/spaces and opens the dialog with Name filled. You click Check, verify the green chip, and click Propose change. An approver merges the proposal in Approvals."
+    ],
+    [
+     "p",
+     "The live journey assistant-creates.spec.ts replays these steps."
+    ],
+    [
+     "h",
+     "Inspect What a Space Holds"
+    ],
+    [
+     "h",
+     "By hand"
+    ],
+    [
+     "ol",
+     [
+      "Navigate to /projects/helsinki/spaces.",
+      "Locate the row for helsinki and click Look inside.",
+      "You are taken to /projects/helsinki/spaces/helsinki.",
+      "Under Entity types, you should see the defined types (BikeHireDockingStation, Vehicle, Event), the live entity count, and sample records.",
+      "Under Data, select an entity type from Entity type to browse records in the data grid.",
+      "Under Endpoints and Policies, review the public and organizational views configured over this space."
+     ]
+    ],
+    [
+     "h",
+     "By asking the assistant"
+    ],
+    [
+     "p",
+     "Type into the assistant composer: What entity types and how many entities are inside the helsinki space?"
+    ],
+    [
+     "p",
+     "The assistant inspects the space surface and answers with the active types and live record counts."
+    ]
+   ]
+  },
+  "models": {
+   "source": "User-Guide/03-data-models.md",
+   "number": 3,
+   "heading": "Editing Classes and Slots",
+   "blocks": [
+    [
+     "h",
+     "Author Attributes in the Visual Editor"
+    ],
+    [
+     "h",
+     "By hand"
+    ],
+    [
+     "ol",
+     [
+      "On /projects/helsinki/models, select the Editor tab and switch to the Structure view.",
+      "Under Classes, select WeatherObserved or type a name into New class and click Add.",
+      "Under Slots, click a slot to edit, or enter a name in New slot and click Add.",
+      "In the slot detail panel, configure:"
+     ]
+    ],
+    [
+     "ul",
+     [
+      "Range: Choose float, string, integer, or an enum.",
+      "NGSI-LD kind: Choose Property, Relationship, or GeoProperty.",
+      "Unit: Select a UN/CEFACT unit code (such as CEL for Celsius or MTS for meters per second).",
+      "Required: Check if payloads must include this attribute."
+     ]
+    ],
+    [
+     "ol",
+     [
+      "Switch to the Source view to read and edit the model's own YAML, with its problems marked as you type.",
+      "Switch to the Preview view and select tabs to inspect generated JSON Schema, @context, documentation, and sample normalized entities.",
+      "Click Check, then click Save model. An approver merges the change."
+     ]
+    ],
+    [
+     "h",
+     "By asking the assistant"
+    ],
+    [
+     "p",
+     "Type into the assistant composer: Add an optional float slot called airQualityIndex to the WeatherObserved class"
+    ],
+    [
+     "p",
+     "The assistant applies the operation to the model draft and refreshes the editor view. You click Check and Save model to propose the change."
+    ]
+   ]
+  },
+  "datasources": {
+   "source": "User-Guide/04-pipelines.md",
+   "number": 2,
+   "heading": "Connecting an External Data Source",
+   "blocks": [
+    [
+     "h",
+     "Add a Data Source Connection"
+    ],
+    [
+     "h",
+     "By hand"
+    ],
+    [
+     "ol",
+     [
+      "Navigate to Data sources at /projects/helsinki/datasources.",
+      "In Type, choose the connection type (such as HTTP endpoint or MQTT broker).",
+      "Click New data source.",
+      "In Name, enter hsl-citybikes-free.",
+      "In URL, enter https://gbfs.theta.fifteen.eu/gbfs/2.2/helsinki/en/free_bike_status.json.",
+      "Set Timeout to 15s. If authentication is required, select credential references in Credentials (secret references take a secret name and key; raw values are never stored).",
+      "Click Check. You should see Planned change and the probe results displaying fetched records and byte counts.",
+      "Click Propose change.",
+      "In /projects/helsinki/approvals, an approver clicks Approve."
+     ]
+    ],
+    [
+     "p",
+     "The live journey load.spec.ts replays these steps."
+    ],
+    [
+     "h",
+     "By asking the assistant"
+    ],
+    [
+     "p",
+     "Type into the assistant composer: Add an HTTP data source called hsl-citybikes-free that reads https://gbfs.theta.fifteen.eu/gbfs/2.2/helsinki/en/free_bike_status.json"
+    ],
+    [
+     "p",
+     "The assistant opens the creation dialog on /projects/helsinki/datasources with the URL pre-filled. You click Check, verify the probe report, and click Propose change. An approver merges the proposal."
+    ],
+    [
+     "p",
+     "The live journey assistant-creates.spec.ts replays these steps."
+    ]
+   ]
+  },
+  "pipelines": {
+   "source": "User-Guide/04-pipelines.md",
+   "number": 3,
+   "heading": "Building and Testing Pipelines in the Studio",
+   "blocks": [
+    [
+     "h",
+     "Build and Test an Ingestion Pipeline"
+    ],
+    [
+     "h",
+     "By hand"
+    ],
+    [
+     "ol",
+     [
+      "Navigate to Pipelines at /projects/helsinki/pipelines.",
+      "Click New pipeline.",
+      "Under 1. Source, choose Read from as A data source of this project (external feed) and pick hsl-citybikes-free.",
+      "In Pipeline, enter citybikes-free and set Period to 60s.",
+      "Set Target endpoint to helsinki-all.",
+      "In Compute, choose Kind as Bloblang mapping.",
+      "Enter the Bloblang mapping expression that maps input records to NGSI-LD entities, or drop a sample file to auto-draft the mapping.",
+      "In Output, enter Entity type as Vehicle and set Write mode to upsert.",
+      "Under Try it on a sample, click Test on the source's URL and click Test mapping.",
+      "You should see All messages map to entities, and Propose change becomes enabled.",
+      "Click Propose change.",
+      "In /projects/helsinki/approvals, an approver merges the proposal."
+     ]
+    ],
+    [
+     "p",
+     "The live journey load.spec.ts replays these steps."
+    ],
+    [
+     "h",
+     "By asking the assistant"
+    ],
+    [
+     "p",
+     "Type into the assistant composer: Create a pipeline called citybikes-free that reads the hsl-citybikes-free data source every 60s and writes into the helsinki space through the helsinki-all endpoint"
+    ],
+    [
+     "p",
+     "The assistant opens the studio dialog at /projects/helsinki/pipelines with the parameters configured. You verify the mapping test and click Propose change."
+    ],
+    [
+     "p",
+     "The live journey assistant-creates.spec.ts replays these steps."
+    ]
+   ]
+  },
+  "endpoints": {
+   "source": "User-Guide/05-endpoints-and-sharing.md",
+   "number": 2,
+   "heading": "Publishing an Endpoint",
+   "blocks": [
+    [
+     "h",
+     "Create a New Endpoint"
+    ],
+    [
+     "h",
+     "By hand"
+    ],
+    [
+     "ol",
+     [
+      "Navigate to Endpoints at /projects/helsinki/endpoints.",
+      "Click New endpoint.",
+      "In Name, enter helsinki-bikes. In Title, enter City bikes live feed.",
+      "In Context Space, select helsinki.",
+      "Click Generate slug to mint a random address.",
+      "Under Audience, select Public: anyone with the address (or Organization).",
+      "Under Representations, check the needed formats: NGSI-LD API, GeoJSON, CSV, Excel (xlsx), and MCP for AI assistants.",
+      "Leave Traffic and caching empty for an endpoint without a rate limit, the default. Set Requests per minute only to protect a public endpoint from one heavy caller.",
+      "Under Model projection, tick the classes (e.g. BikeHireDockingStation) and slots to expose. Identity slots id and type remain locked.",
+      "Click Check. You should see the verdict chip display Checked.",
+      "Click Propose change.",
+      "In /projects/helsinki/approvals, an approver enters helsinki-bikes into Resource name confirmation and clicks Approve."
+     ]
+    ],
+    [
+     "p",
+     "The live journey share.spec.ts replays these steps."
+    ],
+    [
+     "h",
+     "By asking the assistant"
+    ],
+    [
+     "p",
+     "Type into the assistant composer: Set the helsinki-bikes endpoint's rate limit to 300 requests per minute"
+    ],
+    [
+     "p",
+     "The assistant opens /projects/helsinki/endpoints with the form open and the rate limit updated. You run Check and click Propose change. An approver confirms it in Approvals."
+    ],
+    [
+     "p",
+     "The live journey change.spec.ts replays these steps."
+    ]
+   ]
+  },
+  "policies": {
+   "source": "User-Guide/05-endpoints-and-sharing.md",
+   "number": 6,
+   "heading": "Deciding Who May Read and Write: Policies",
+   "blocks": [
+    [
+     "p",
+     "An endpoint says where the data is served; a Policy says who may do what with it. Each policy covers one Context Space and grants (or refuses) a set of operations to one grantee. Like every other change, a new policy takes effect only once its proposal is approved."
+    ],
+    [
+     "h",
+     "Write a Policy with the Form"
+    ],
+    [
+     "p",
+     "The example below is the policy that lets anyone read the air quality measurements of Banská Bystrica, public-read in project banskabystrica."
+    ],
+    [
+     "ol",
+     [
+      "Open Policies in the sidebar, at /projects/banskabystrica/policies. Each row says what the policy grants, to whom, on which space, and how many operations that covers. A refusal carries a red Refusal badge.",
+      "Click New Policy. The form opens in three groups; the first one is open.",
+      "Who and what:"
+     ]
+    ],
+    [
+     "ul",
+     [
+      "Name: the short name the policy is filed under, for example public-read. Two policies of one project cannot share a name.",
+      "Context Space: the space whose data the policy decides about, here ovzdusie. A policy covers exactly one space.",
+      "Effect: Grant gives what the policy lists. Refusal takes it away, and the platform reads every refusal before any grant, so choose it only to close something another policy opens.",
+      "Kind of grantee: a role, a group, one person, a service account or a DID. For anonymous callers choose role.",
+      "Grantee: the name of that role, group, person or account as the identity provider spells it, here public.",
+      "Operations: tick one of the five named groups. Beside each group the form lists the operations it covers, and the two groups that change data carry a changes data mark. For read access tick retrieveOps. The single operations sit under Individual operations; a grant normally names a group instead. Nothing is granted until at least one box is ticked."
+     ]
+    ],
+    [
+     "ol",
+     [
+      "Entities and attributes (open the group):"
+     ]
+    ],
+    [
+     "ul",
+     [
+      "Under Entity selectors, add one and enter Entity type AirQualityObserved. A selector with no type covers nothing, and the form refuses it at the field.",
+      "Identifier pattern is optional and narrows the grant to identifiers that match it, for example ^urn:ngsi-ld:AirQualityObserved:banskabystrica\\.sk:ovzdusie:.*$.",
+      "Properties: list the properties the grantee may reach, here dateObserved, location, observedAt, pm10, pm25. An attribute you leave out is not served, so the station's reliability and refDevice stay private. An empty list reaches every property.",
+      "Relationships: the same for relationships, for example refDistrict. An empty list reaches all of them."
+     ]
+    ],
+    [
+     "ol",
+     [
+      "Residual filters and validity (optional, open the group):"
+     ]
+    ],
+    [
+     "ul",
+     [
+      "q: a condition on the attributes, for example pm10>=0. An entity that fails it is outside the grant.",
+      "scopeQ: the branch of the scope tree the grant covers, for example /geo/SK/BB, and everything under it.",
+      "geoQ: the area the grant covers; an entity outside it is neither read nor written.",
+      "temporalQ: the window of history the grant covers, for example timerel=after&timeAt=2026-01-01T00:00:00Z.",
+      "Valid from and Valid to: the instants the grant starts and stops applying. Leave both empty for a grant with no end."
+     ]
+    ],
+    [
+     "ol",
+     [
+      "Click Check. The verdict chip shows Checked when the policy is complete.",
+      "Click Propose change. The form will not propose a grant wider than you may propose yourself; when it is refused, the reason stands next to the button.",
+      "In /projects/banskabystrica/approvals, an approver reviews the grant and approves it. From then on the endpoints on ovzdusie answer anonymous readers with the five listed properties."
+     ]
+    ],
+    [
+     "p",
+     "To change an existing policy, open its row menu and choose Edit. The same form opens with the stored values. The YAML view shows the same manifest, and a change in either view appears in the other."
+    ]
+   ]
+  },
+  "ckan": {
+   "source": "User-Guide/09-export-import.md",
+   "number": 4,
+   "heading": "Publishing Open Data to CKAN",
+   "blocks": [
+    [
+     "p",
+     "Public endpoints can be published directly to an open-data portal using native DCAT-AP metadata."
+    ],
+    [
+     "h",
+     "Registering a Catalogue and Publishing Datasets"
+    ],
+    [
+     "h",
+     "By hand"
+    ],
+    [
+     "ol",
+     [
+      "Navigate to /projects/helsinki/ckan.",
+      "Under Catalogues, enter Name as helsinki-ckan, URL as https://data.example.org, and Default organization as helsinki-region-context.",
+      "In API token secret, enter the name of the secret holding your credentials, such as ckan-token.",
+      "Click Propose catalogue.",
+      "Once merged, open /projects/helsinki/endpoints and edit your public endpoint, such as helsinki-bikes.",
+      "In the endpoint configuration, select helsinki-ckan as the target open-data catalogue."
+     ]
+    ],
+    [
+     "p",
+     "You should see the dataset listed under Published endpoints with direct links to DCAT-AP records and DataStore mirrors."
+    ],
+    [
+     "h",
+     "By asking the assistant"
+    ],
+    [
+     "p",
+     "Type into the assistant composer: Publish the helsinki-bikes endpoint to the open data catalogue. The assistant opens the endpoint configuration dialog with catalogue fields pre-filled."
+    ]
+   ]
+  },
+  "dashboards": {
+   "source": "User-Guide/06-dashboards.md",
+   "number": 2,
+   "heading": "Building a Map Dashboard",
+   "blocks": [
+    [
+     "h",
+     "Create a Dashboard and Styled Layers"
+    ],
+    [
+     "h",
+     "By hand"
+    ],
+    [
+     "ol",
+     [
+      "Navigate to Dashboards at /projects/helsinki/dashboards.",
+      "Click New dashboard.",
+      "In Name, enter city-bikes-overview. In Title, enter City Bikes Overview. Set Visibility to project (or public). Click Propose change.",
+      "Click New layer.",
+      "In Name, enter bike-stations-layer.",
+      "Select Endpoint helsinki-bikes and Entity type BikeHireDockingStation.",
+      "Choose Style: circle, line, fill, heatmap, hexagon or icon.",
+      "Under Colour by, pick the numeric property availableBikeNumber, a Palette, and the Domain [min, max] the colours run between (such as 0 and 30).",
+      "Under Popup properties, choose attributes to show when a map point is selected.",
+      "Click Propose change.",
+      "In /projects/helsinki/approvals, an approver approves the dashboard and layer proposals.",
+      "You should see the interactive map render the vector points with live color scaling, and the Layers legend allows toggling layer visibility."
+     ]
+    ],
+    [
+     "p",
+     "The live journey assistant-creates.spec.ts replays these steps."
+    ],
+    [
+     "h",
+     "By asking the assistant"
+    ],
+    [
+     "p",
+     "Type into the assistant composer: Make a dashboard called city-bikes-overview showing the bikes of the helsinki space"
+    ],
+    [
+     "p",
+     "The assistant opens /projects/helsinki/dashboards with the dashboard and layers drafted. You review the planned changes and click Propose change. An approver merges the proposal."
+    ],
+    [
+     "p",
+     "The live journey assistant-creates.spec.ts replays these steps."
+    ]
+   ]
+  },
+  "explore": {
+   "source": "User-Guide/06-dashboards.md",
+   "number": 4,
+   "heading": "Exploring Data in the Entity Explorer",
+   "blocks": [
+    [
+     "h",
+     "Search, Inspect, and Export Entities"
+    ],
+    [
+     "h",
+     "By hand"
+    ],
+    [
+     "ol",
+     [
+      "Navigate to Explore data at /projects/helsinki/explore.",
+      "In Context space, select helsinki.",
+      "In Read through endpoint, choose helsinki-all (or any endpoint publishing the space).",
+      "In Entity type, select BikeHireDockingStation.",
+      "You should see the entity grid populate with live records, pagination controls, and attribute values.",
+      "Use column filter inputs to narrow records by attribute, or click Draw area on the map panel to draw a bounding area and filter geographically.",
+      "Click any entity row ID to open the full JSON-LD entity document in a detail panel.",
+      "Click Export this page to download the active page of records as a JSON file."
+     ]
+    ],
+    [
+     "p",
+     "The live journey load.spec.ts replays these steps."
+    ],
+    [
+     "h",
+     "By asking the assistant"
+    ],
+    [
+     "p",
+     "Type into the assistant composer: Show me bike stations with available bikes in the helsinki space"
+    ],
+    [
+     "p",
+     "The assistant executes the query and navigates to /projects/helsinki/explore?space=helsinki&endpoint=helsinki-bikes&type=BikeHireDockingStation&q=availableBikeNumber>0 with the grid filtered to matching records."
+    ]
+   ]
+  },
+  "approvals": {
+   "source": "User-Guide/07-users-roles-approvals.md",
+   "number": 3,
+   "heading": "Reviewing and Deciding Change Proposals",
+   "blocks": [
+    [
+     "p",
+     "Every change waits in Approvals until somebody decides it. A green-lane change is approved for you by the platform itself and still lands as a change you can read and revert; a yellow-lane change needs one approver; a red-lane change (anything public, anything across projects, any deletion) needs the full chain."
+    ],
+    [
+     "h",
+     "Reviewing and Deciding a Proposal"
+    ],
+    [
+     "h",
+     "By hand"
+    ],
+    [
+     "ol",
+     [
+      "In the sidebar navigation, click Approvals to open /projects/helsinki/approvals.",
+      "Locate the pending proposal row and click View or click the summary title.",
+      "On /projects/helsinki/approvals/chg-a1b2c3d4, read the Summary, the Author, the Risk lane and the Phase, then the table of changes: every Field with its Change type and its value Before and After, marked Added, Changed or Removed. A change that touches several files lists them under Files in this change.",
+      "If the change is in the red risk lane, type the resource name into Resource name confirmation; until you do, the page says so and Approve stays closed.",
+      "Click Approve to merge and reconcile the change, or click Reject to open the rejection dialog.",
+      "When rejecting, enter a detailed explanation in Why are you rejecting this? and click Reject the change."
+     ]
+    ],
+    [
+     "p",
+     "You should see the phase chip change to Merged or Applied, accompanied by a status notification linking to the affected resource."
+    ],
+    [
+     "p",
+     "The live journeys roles-refusals.spec.ts and one-change-at-a-time.spec.ts replay these steps."
+    ],
+    [
+     "h",
+     "By asking the assistant"
+    ],
+    [
+     "p",
+     "Type into the assistant composer: What waits for approval in helsinki?. The assistant queries open change proposals and reports their titles, authors, and risk classes in prose. The assistant cannot approve or reject changes on your behalf, so you must click Approve or Reject in the Portal."
+    ],
+    [
+     "p",
+     "The live journey assistant-reads.spec.ts replays these steps."
+    ]
+   ]
+  },
+  "activity": {
+   "source": "User-Guide/07-users-roles-approvals.md",
+   "number": 3,
+   "heading": "Reviewing and Deciding Change Proposals",
+   "blocks": [
+    [
+     "p",
+     "Every change waits in Approvals until somebody decides it. A green-lane change is approved for you by the platform itself and still lands as a change you can read and revert; a yellow-lane change needs one approver; a red-lane change (anything public, anything across projects, any deletion) needs the full chain."
+    ],
+    [
+     "h",
+     "Reviewing and Deciding a Proposal"
+    ],
+    [
+     "h",
+     "By hand"
+    ],
+    [
+     "ol",
+     [
+      "In the sidebar navigation, click Approvals to open /projects/helsinki/approvals.",
+      "Locate the pending proposal row and click View or click the summary title.",
+      "On /projects/helsinki/approvals/chg-a1b2c3d4, read the Summary, the Author, the Risk lane and the Phase, then the table of changes: every Field with its Change type and its value Before and After, marked Added, Changed or Removed. A change that touches several files lists them under Files in this change.",
+      "If the change is in the red risk lane, type the resource name into Resource name confirmation; until you do, the page says so and Approve stays closed.",
+      "Click Approve to merge and reconcile the change, or click Reject to open the rejection dialog.",
+      "When rejecting, enter a detailed explanation in Why are you rejecting this? and click Reject the change."
+     ]
+    ],
+    [
+     "p",
+     "You should see the phase chip change to Merged or Applied, accompanied by a status notification linking to the affected resource."
+    ],
+    [
+     "p",
+     "The live journeys roles-refusals.spec.ts and one-change-at-a-time.spec.ts replay these steps."
+    ],
+    [
+     "h",
+     "By asking the assistant"
+    ],
+    [
+     "p",
+     "Type into the assistant composer: What waits for approval in helsinki?. The assistant queries open change proposals and reports their titles, authors, and risk classes in prose. The assistant cannot approve or reject changes on your behalf, so you must click Approve or Reject in the Portal."
+    ],
+    [
+     "p",
+     "The live journey assistant-reads.spec.ts replays these steps."
+    ]
+   ]
+  },
+  "assistant": {
+   "source": "User-Guide/08-working-with-ai-agents.md",
+   "number": 1,
+   "heading": "Using the Docked Assistant",
+   "blocks": [
+    [
+     "p",
+     "The assistant is accessible from every page through a persistent button fixed at the bottom right corner of the screen."
+    ],
+    [
+     "h",
+     "Asking Questions and Driving Portal Navigation"
+    ],
+    [
+     "h",
+     "By hand"
+    ],
+    [
+     "ol",
+     [
+      "Click Open the assistant in the bottom right corner of any page.",
+      "In the text area labelled Tell the assistant what to build or change…, type your query, such as asking about platform activity.",
+      "Press Enter or click Send.",
+      "Use the dock header controls to manage the conversation:"
+     ]
+    ],
+    [
+     "ul",
+     [
+      "Click Stop the assistant to interrupt an active response.",
+      "Click Full screen to expand the conversation view across the workspace.",
+      "Click Hide the assistant to fold the panel into the bubble while preserving conversation context.",
+      "Click Close the assistant to release the active dialogue."
+     ]
+    ],
+    [
+     "p",
+     "You should see the assistant stream tool invocations, answer your questions, and navigate to target forms with pre-filled drafts."
+    ],
+    [
+     "p",
+     "The live journeys assistant-reads.spec.ts and assistant-creates.spec.ts replay these steps."
+    ],
+    [
+     "h",
+     "By asking the assistant"
+    ],
+    [
+     "p",
+     "Type into the composer: Create a context space called air-quality in the helsinki project. The assistant switches routes to /projects/helsinki/spaces, opens the New Context Space dialog, and populates the name and model fields. You run the validation check and click Propose change yourself."
+    ]
+   ]
+  },
+  "knowledge": {
+   "source": "User-Guide/08-working-with-ai-agents.md",
+   "number": 1,
+   "heading": "Using the Docked Assistant",
+   "blocks": [
+    [
+     "p",
+     "The assistant is accessible from every page through a persistent button fixed at the bottom right corner of the screen."
+    ],
+    [
+     "h",
+     "Asking Questions and Driving Portal Navigation"
+    ],
+    [
+     "h",
+     "By hand"
+    ],
+    [
+     "ol",
+     [
+      "Click Open the assistant in the bottom right corner of any page.",
+      "In the text area labelled Tell the assistant what to build or change…, type your query, such as asking about platform activity.",
+      "Press Enter or click Send.",
+      "Use the dock header controls to manage the conversation:"
+     ]
+    ],
+    [
+     "ul",
+     [
+      "Click Stop the assistant to interrupt an active response.",
+      "Click Full screen to expand the conversation view across the workspace.",
+      "Click Hide the assistant to fold the panel into the bubble while preserving conversation context.",
+      "Click Close the assistant to release the active dialogue."
+     ]
+    ],
+    [
+     "p",
+     "You should see the assistant stream tool invocations, answer your questions, and navigate to target forms with pre-filled drafts."
+    ],
+    [
+     "p",
+     "The live journeys assistant-reads.spec.ts and assistant-creates.spec.ts replay these steps."
+    ],
+    [
+     "h",
+     "By asking the assistant"
+    ],
+    [
+     "p",
+     "Type into the composer: Create a context space called air-quality in the helsinki project. The assistant switches routes to /projects/helsinki/spaces, opens the New Context Space dialog, and populates the name and model fields. You run the validation check and click Propose change yourself."
+    ]
+   ]
+  },
+  "workspaces": {
+   "source": "User-Guide/02-organizations-projects-spaces.md",
+   "number": 5,
+   "heading": "Working on Project Copies",
+   "blocks": [
+    [
+     "h",
+     "Make Changes in a Copy"
+    ],
+    [
+     "h",
+     "By hand"
+    ],
+    [
+     "ol",
+     [
+      "Navigate to Copies at /projects/helsinki/workspaces.",
+      "Click Work on a copy.",
+      "In Name, enter emp-test. Select The whole project under Covers, and click Start the copy.",
+      "You should see the copy banner across the top stating that you are working on a copy and nothing is live.",
+      "Navigate to /projects/helsinki/pipelines?workspace=emp-test and click Pause on hel-news. Inside a copy the edit is kept in the copy and opens no proposal of its own.",
+      "Open /projects/helsinki/workspaces/emp-test/compare to inspect what the copy changes.",
+      "Open /projects/helsinki/workspaces/emp-test/bring-back and click Propose as one change.",
+      "In /projects/helsinki/approvals, an approver reviews the diff and approves the change."
+     ]
+    ],
+    [
+     "p",
+     "The live journey copy-employee.spec.ts replays these steps."
+    ],
+    [
+     "h",
+     "By asking the assistant"
+    ],
+    [
+     "p",
+     "Type into the assistant composer: Work on a copy of the helsinki project called agent-test, and in that copy pause the hel-news pipeline."
+    ],
+    [
+     "p",
+     "The assistant starts the copy, creates the checked draft inside the copy, and stops at the door. Proposing the copy back to the project or discarding it must be executed by you."
+    ],
+    [
+     "p",
+     "The live journey copy-agent.spec.ts replays these steps."
+    ]
+   ]
+  },
+  "apps": {
+   "source": "User-Guide/11-apps.md",
+   "number": 1,
+   "heading": "Generating an Application",
+   "blocks": [
+    [
+     "p",
+     "You create applications from published endpoints, defining a strict perimeter of types and attributes the application may read."
+    ],
+    [
+     "h",
+     "Requesting an Application"
+    ],
+    [
+     "h",
+     "By hand"
+    ],
+    [
+     "ol",
+     [
+      "In the sidebar navigation, click Applications to open /projects/helsinki/apps.",
+      "Click Generate your own app.",
+      "Under Endpoint, select the source data feed, such as Helsinki city news or helsinki-bikes.",
+      "In What should the app do?, enter a plain description, such as: A table of the latest city news: the headline and when it was published.",
+      "Click Details: name, kind, and what it may read ({name}) to expand configuration options:"
+     ]
+    ],
+    [
+     "ul",
+     [
+      "In App name, enter a unique identifier, such as news-feed-summary.",
+      "In Kind, choose Full stack (Rust backend and React screens), Static (screens only), or Service (backend only, no screens).",
+      "Under What the app will be allowed to read, review the attribute checklist derived from the endpoint, unticking attributes the application does not require."
+     ]
+    ],
+    [
+     "ol",
+     [
+      "Click Generate the app."
+     ]
+    ],
+    [
+     "p",
+     "You should see the Portal open the run view at /projects/helsinki/apps/news-feed-summary tracking build phases."
+    ],
+    [
+     "p",
+     "The live journey build-samples.spec.ts replays these steps."
+    ],
+    [
+     "h",
+     "By asking the assistant"
+    ],
+    [
+     "p",
+     "Type into the assistant composer: Build a static application called news-feed-summary from the helsinki-news endpoint displaying headlines and publication dates. The assistant opens the application builder with the prompt, endpoint, and name pre-filled for your review."
+    ]
+   ]
+  },
+  "settings": {
+   "source": "User-Guide/12-managing-organization-and-projects.md",
+   "number": 2,
+   "heading": "Project settings",
+   "blocks": [
+    [
+     "p",
+     "Open a project and choose Settings, the last item of its menu."
+    ],
+    [
+     "p",
+     "An old link to /projects/{project}/access opens Settings → Members."
+    ]
+   ]
+  }
+ }
+}

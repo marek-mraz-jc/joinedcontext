@@ -1,0 +1,438 @@
+/* The layout primitives' rules (T-2777, UI-84): phone first, widened by the room each one is given
+   (container queries), so a grid inside a split or a framed app lays out for its own width. The
+   width tokens below are the only values that follow the window. */
+
+:root {
+  /* Space between and around blocks, and the heading scale, by the window's width. */
+  --jc-gutter: var(--jc-space-3, 0.75rem);
+  --jc-font-size-title: var(--jc-font-size-xl, 1.25rem);
+  /* The smallest thing a finger has to hit (WCAG 2.5.5). */
+  --jc-target: 2.75rem;
+}
+
+@media (width >= 48rem) {
+  :root {
+    --jc-gutter: var(--jc-space-4, 1rem);
+    --jc-font-size-title: calc(var(--jc-font-size-xl, 1.25rem) * 1.2);
+  }
+}
+
+@media (width >= 90rem) {
+  :root {
+    --jc-gutter: var(--jc-space-6, 1.5rem);
+    --jc-font-size-title: calc(var(--jc-font-size-xl, 1.25rem) * 1.4);
+  }
+}
+
+@media (width >= 150rem) {
+  :root {
+    --jc-gutter: var(--jc-space-8, 2rem);
+    --jc-font-size-title: calc(var(--jc-font-size-xl, 1.25rem) * 1.6);
+  }
+}
+
+.jc-page,
+.jc-page *,
+.jc-card,
+.jc-grid-box,
+.jc-split-box,
+.jc-with-sidebar,
+.jc-tabs {
+  box-sizing: border-box;
+}
+
+.jc-page {
+  display: grid;
+  /* A track never grows to its content: a chart's canvas would push the page wider. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--jc-gutter);
+  align-content: start;
+  width: 100%;
+  min-width: 0;
+  margin-inline: auto;
+}
+
+.jc-page[data-width="narrow"] {
+  max-width: 48rem;
+}
+
+.jc-page[data-width="wide"] {
+  max-width: 150rem;
+}
+
+.jc-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--jc-space-2, 0.5rem) var(--jc-gutter);
+}
+
+.jc-page-heading {
+  min-width: 0;
+}
+
+.jc-page-heading :is(h1, h2, h3) {
+  margin: 0;
+  font-size: var(--jc-font-size-title);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.jc-page-heading p {
+  margin: var(--jc-space-1, 0.25rem) 0 0;
+  color: var(--jc-color-muted, #64748b);
+}
+
+.jc-page-actions,
+.jc-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-2, 0.5rem);
+}
+
+.jc-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--jc-space-3, 0.75rem);
+  align-content: start;
+  min-width: 0;
+  padding: var(--jc-gutter);
+  background: var(--jc-color-card, #f8fafc);
+  border: 1px solid var(--jc-color-line, #e2e8f0);
+  border-radius: var(--jc-radius-lg, 10px);
+}
+
+.jc-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--jc-space-2, 0.5rem);
+}
+
+.jc-card-header :is(h1, h2, h3) {
+  margin: 0;
+  font-size: var(--jc-font-size-lg, 1rem);
+}
+
+/* Grid: one column, then two, three and four as its own box widens. */
+.jc-grid-box,
+.jc-split-box {
+  container-type: inline-size;
+  min-width: 0;
+}
+
+.jc-grid-cols {
+  display: grid;
+  gap: var(--jc-gutter);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@container (width >= 40rem) {
+  .jc-grid-cols:not([data-columns="1"]) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (width >= 64rem) {
+  .jc-grid-cols:is([data-columns="3"], [data-columns="4"]) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@container (width >= 90rem) {
+  .jc-grid-cols[data-columns="4"] {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* Split: stacked, then side by side at 48rem of its own width. */
+.jc-split {
+  display: grid;
+  gap: var(--jc-gutter);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.jc-split-pane {
+  min-width: 0;
+}
+
+@container (width >= 48rem) {
+  .jc-split[data-ratio="1:1"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .jc-split[data-ratio="2:1"] {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  }
+  .jc-split[data-ratio="1:2"] {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  }
+}
+
+/* Sidebar: a column beside the content from 48rem of window, a drawer below it. The drawer is
+   about the window (it covers it), so this one rule follows the window, not the box. */
+.jc-with-sidebar {
+  display: grid;
+  gap: var(--jc-gutter);
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+
+.jc-sidebar-content {
+  min-width: 0;
+}
+
+.jc-sidebar {
+  display: none;
+  flex-direction: column;
+  gap: var(--jc-space-3, 0.75rem);
+  padding: var(--jc-gutter);
+  background: var(--jc-color-surface, #ffffff);
+  color: var(--jc-color-ink, #0f172a);
+}
+
+.jc-sidebar:focus {
+  outline: none;
+}
+
+.jc-sidebar:focus-visible {
+  outline: 2px solid var(--jc-color-accent, #0f766e);
+  outline-offset: -2px;
+}
+
+.jc-sidebar-toggle {
+  justify-self: start;
+}
+
+.jc-with-sidebar[data-open] .jc-sidebar {
+  display: flex;
+  position: fixed;
+  z-index: 20;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: min(20rem, 85vw);
+  overflow-y: auto;
+  box-shadow: 0 0 2rem rgb(15 23 42 / 0.3);
+}
+
+.jc-with-sidebar[data-open][data-position="end"] .jc-sidebar {
+  inset-inline: auto 0;
+}
+
+.jc-sidebar-backdrop {
+  position: fixed;
+  z-index: 19;
+  inset: 0;
+  background: rgb(15 23 42 / 0.4);
+}
+
+@media (width >= 48rem) {
+  .jc-with-sidebar {
+    grid-template-columns: minmax(12rem, 18rem) minmax(0, 1fr);
+    align-items: start;
+  }
+  .jc-with-sidebar[data-position="end"] {
+    grid-template-columns: minmax(0, 1fr) minmax(12rem, 18rem);
+  }
+  .jc-with-sidebar[data-position="end"] .jc-sidebar {
+    order: 2;
+  }
+  .jc-with-sidebar .jc-sidebar,
+  .jc-with-sidebar[data-open] .jc-sidebar {
+    display: flex;
+    position: static;
+    width: auto;
+    box-shadow: none;
+    padding: 0;
+    background: transparent;
+  }
+  .jc-sidebar-toggle,
+  .jc-sidebar-close,
+  .jc-sidebar-backdrop {
+    display: none;
+  }
+}
+
+/* Tabs: a row that scrolls sideways on a phone rather than wrapping into two. */
+.jc-tabs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--jc-space-3, 0.75rem);
+  min-width: 0;
+}
+
+.jc-tablist {
+  display: flex;
+  gap: var(--jc-space-1, 0.25rem);
+  overflow-x: auto;
+  border-bottom: 1px solid var(--jc-color-line, #e2e8f0);
+  scrollbar-width: thin;
+}
+
+.jc-tablist [role="tab"] {
+  flex: none;
+  min-height: var(--jc-target);
+  padding: var(--jc-space-2, 0.5rem) var(--jc-space-3, 0.75rem);
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--jc-color-muted, #64748b);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.jc-tablist [role="tab"][aria-selected="true"] {
+  color: var(--jc-color-accent, #0f766e);
+  border-bottom-color: var(--jc-color-accent, #0f766e);
+}
+
+.jc-tablist [role="tab"]:focus-visible,
+.jc-tabpanel:focus-visible {
+  outline: 2px solid var(--jc-color-accent, #0f766e);
+  outline-offset: 2px;
+}
+
+.jc-tabpanel {
+  min-width: 0;
+}
+
+/* A finger, or a phone's width: every control is at least a target tall. */
+@media (pointer: coarse), (width < 40rem) {
+  :is(.jc-page, .jc-with-sidebar, .jc-card) :is(button, select, input:not([type="checkbox"], [type="radio"])),
+  .jc-sidebar-toggle,
+  .jc-sidebar-close {
+    min-height: var(--jc-target);
+  }
+}
+
+/* The shell every App shares (SDK-39): the title, the pages, the language and the reader's name in
+   one wrapping row, the page under it. An App's own stylesheet may restyle any of it. Without the
+   App's tokens the colours are the system's, so they follow its colour scheme, dark or light. */
+.jc-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  font-family: var(--jc-font-body, system-ui, sans-serif);
+  color: var(--jc-color-ink, CanvasText);
+  background: var(--jc-color-surface, Canvas);
+  line-height: 1.5;
+}
+.jc-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jc-space-3, 0.75rem) var(--jc-space-4, 1rem);
+  padding: var(--jc-space-3, 0.75rem) var(--jc-space-4, 1rem);
+  border-bottom: 1px solid var(--jc-color-line, #e2e8f0);
+}
+.jc-header h1 {
+  margin: 0;
+  font-size: var(--jc-font-size-xl, 1.25rem);
+}
+.jc-header nav {
+  display: flex;
+  gap: var(--jc-space-1, 0.25rem);
+  max-width: 100%;
+  overflow-x: auto;
+}
+.jc-language {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--jc-space-2, 0.5rem);
+}
+.jc-user {
+  margin-inline-start: auto;
+  color: var(--jc-color-muted, color-mix(in srgb, CanvasText 72%, Canvas));
+}
+.jc-main {
+  flex: 1;
+  padding: var(--jc-space-4, 1rem);
+  min-width: 0;
+}
+.jc-loading,
+.jc-empty {
+  padding: var(--jc-space-4, 1rem);
+  color: var(--jc-color-muted, color-mix(in srgb, CanvasText 72%, Canvas));
+  text-align: center;
+}
+.jc-problem {
+  padding: var(--jc-space-3, 0.75rem) var(--jc-space-4, 1rem);
+  border-inline-start: 4px solid var(--jc-color-danger, light-dark(#b91c1c, #fca5a5));
+  background: var(--jc-color-card, color-mix(in srgb, CanvasText 6%, Canvas));
+}
+.jc-problem strong {
+  display: block;
+  color: var(--jc-color-danger, light-dark(#b91c1c, #fca5a5));
+}
+
+/* The entity panel every App shares (SDK-40): beside the page on a wide screen, over it on a phone. */
+.jc-panel {
+  position: fixed;
+  inset-block: 0;
+  inset-inline-end: 0;
+  /* The padding inside the width: on a phone the panel is the viewport, not 2rem past its edge. */
+  box-sizing: border-box;
+  width: min(26rem, 100vw);
+  overflow-y: auto;
+  padding: var(--jc-space-4, 1rem);
+  background: var(--jc-color-surface, Canvas);
+  color: var(--jc-color-ink, CanvasText);
+  border-inline-start: 1px solid var(--jc-color-line, #e2e8f0);
+  box-shadow: -4px 0 16px rgb(0 0 0 / 0.12);
+  z-index: 20;
+}
+.jc-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: var(--jc-space-2, 0.5rem);
+}
+.jc-panel-header h2 {
+  margin: 0;
+  font-size: var(--jc-font-size-lg, 1.125rem);
+  overflow-wrap: anywhere;
+}
+.jc-panel-close {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  font-size: 1.5rem;
+  line-height: 1;
+}
+.jc-panel-type,
+.jc-panel-hint {
+  color: var(--jc-color-muted, color-mix(in srgb, CanvasText 72%, Canvas));
+  font-size: var(--jc-font-size-sm, 0.875rem);
+}
+.jc-panel-attrs {
+  display: grid;
+  gap: var(--jc-space-2, 0.5rem);
+}
+.jc-panel-attrs dt {
+  font-size: var(--jc-font-size-sm, 0.875rem);
+  color: var(--jc-color-muted, color-mix(in srgb, CanvasText 72%, Canvas));
+}
+.jc-panel-attrs dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.jc-panel-field {
+  display: grid;
+  gap: var(--jc-space-1, 0.25rem);
+  margin-block-end: var(--jc-space-3, 0.75rem);
+}
+.jc-panel-error,
+.jc-panel-problem {
+  color: var(--jc-color-danger, light-dark(#b91c1c, #fca5a5));
+}
+.jc-panel-ok {
+  color: var(--jc-color-success, light-dark(#047857, #6ee7b7));
+}
+.jc-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-2, 0.5rem);
+  margin-block-start: var(--jc-space-3, 0.75rem);
+}

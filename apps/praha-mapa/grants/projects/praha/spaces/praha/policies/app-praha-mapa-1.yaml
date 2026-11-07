@@ -1,0 +1,48 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-praha-mapa-1
+  namespace: praha
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:praha/app-praha-mapa
+    kind: role
+  assigner: did:web:praha.eu
+  contextSpaceRef:
+    kind: ContextSpace
+    name: praha-mesto
+  information:
+  - entities:
+    - type: PointOfInterest
+    - type: WasteContainerIsle
+    propertyNames:
+    - name
+    - location
+    - address
+    - url
+    - serviceCategory
+    - facilityType
+    - openingHours
+    - wheelchairAccessible
+    - capacity
+    - pupilCount
+    - stationCode
+    - accessRestriction
+    relationshipNames:
+    - name
+    - location
+    - address
+    - url
+    - serviceCategory
+    - facilityType
+    - openingHours
+    - wheelchairAccessible
+    - capacity
+    - pupilCount
+    - stationCode
+    - accessRestriction
+  operations:
+  - queryEntity
+  - retrieveEntity

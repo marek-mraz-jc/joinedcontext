@@ -1,0 +1,23 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-praha-mesto-1
+  namespace: praha
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:praha/app-praha-mesto
+    kind: role
+  assigner: did:web:praha.eu
+  contextSpaceRef:
+    kind: ContextSpace
+    name: praha-mesto
+  information:
+  - entities:
+    - type: BikeHireDockingStation
+    - type: OffStreetParking
+    - type: AirQualityObserved
+  operations:
+  - queryEntity
+  - retrieveEntity

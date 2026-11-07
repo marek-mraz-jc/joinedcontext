@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>joinedcontext kit</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- vite dev only: the Portal writes this element itself when it serves a preview. -->
+    <script id="kit-spec" type="application/json">{"slug": "demo", "spec": {"title": "Helsinki city bikes", "subtitle": "Stations and the bikes waiting at them, read live from the endpoint.", "sources": [{"name": "stations", "type": "BikeHireDockingStation", "attrs": ["name", "location", "availableBikeNumber", "freeSlotNumber", "totalSlotNumber", "status"]}], "filters": [{"kind": "search", "attrs": ["name"], "label": "Station"}, {"kind": "select", "attr": "status", "label": "Status"}, {"kind": "range", "attr": "availableBikeNumber", "label": "Bikes available"}], "views": [{"kind": "stats", "items": [{"label": "Stations", "agg": "count"}, {"label": "Bikes available", "agg": "sum", "attr": "availableBikeNumber"}, {"label": "Free slots", "agg": "sum", "attr": "freeSlotNumber"}, {"label": "Largest station", "agg": "max", "attr": "totalSlotNumber", "unit": "slots"}]}, {"kind": "map", "title": "Where the bikes are", "label": "name", "color": "availableBikeNumber"}, {"kind": "chart", "title": "Most bikes", "type": "bar", "x": "name", "y": "availableBikeNumber", "top": 15}, {"kind": "detail", "title": "Station"}, {"kind": "table", "title": "All stations", "columns": ["name", "availableBikeNumber", "freeSlotNumber", "totalSlotNumber", "status"], "sort": {"attr": "availableBikeNumber", "dir": "desc"}}], "theme": {"accent": "#0f766e"}}}</script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

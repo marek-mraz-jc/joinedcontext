@@ -1,0 +1,14 @@
+# T-2733: the endpoint workflow as one conversation (Testing/07 §3, AG-87).
+workflow: endpoint
+as: steward
+says:
+  - "Share the air quality space as a public endpoint called eval-air-public."
+expect:
+  calls:
+    - tool: change_resource
+      input: { kind: Endpoint, create: true }
+  outcome: change
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: share the air quality space as a public endpoint called eval-air-public."

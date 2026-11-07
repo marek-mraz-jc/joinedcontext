@@ -1,0 +1,237 @@
+/* The App's own layout over the token variables the SDK sets from design-tokens.json; the screens
+   are laid out by the SDK's primitives (Page, Grid, Card), this is only what they do not cover. */
+
+html,
+body {
+  background: var(--jc-color-surface, #ffffff);
+  color: var(--jc-color-ink, #1a1a1a);
+  /* Native controls follow the reader's scheme. */
+  color-scheme: light dark;
+}
+
+.app-summary {
+  font-size: var(--jc-font-size-lg, 1.125rem);
+  line-height: 1.5;
+  margin: 0;
+  max-width: 60rem;
+}
+
+.app-note {
+  color: var(--jc-color-muted, #64748b);
+  font-size: var(--jc-font-size-sm, 0.75rem);
+}
+
+.app-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--jc-space-3, 0.75rem);
+}
+
+.app-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-1, 0.25rem);
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  color: var(--jc-color-muted, #64748b);
+  min-width: 14rem;
+}
+
+.app-filter-field select {
+  font: inherit;
+  font-size: var(--jc-font-size-md, 0.875rem);
+  padding: var(--jc-space-2, 0.5rem);
+  border: 1px solid var(--jc-color-line, #e2e8f0);
+  border-radius: var(--jc-radius-md, 6px);
+  background: var(--jc-color-card, #ffffff);
+  color: var(--jc-color-ink, #0f172a);
+}
+
+.app-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--jc-space-2, 0.5rem);
+  color: var(--jc-color-ink, #0f172a);
+  font-size: var(--jc-font-size-md, 0.875rem);
+  cursor: pointer;
+  width: 100%;
+}
+
+.app-legend-text {
+  margin: var(--jc-space-2, 0.5rem) 0 0;
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  color: var(--jc-color-muted, #64748b);
+}
+
+.app-ranked-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 24rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-1, 0.25rem);
+}
+
+.app-ranked-item {
+  display: flex;
+  align-items: center;
+  padding: var(--jc-space-2, 0.5rem) var(--jc-space-3, 0.75rem);
+  border-radius: var(--jc-radius-sm, 4px);
+  background: var(--jc-color-card, #f8fafc);
+  border: 1px solid var(--jc-color-line, #e2e8f0);
+}
+
+.app-ranked-item:hover {
+  background: color-mix(in srgb, var(--jc-color-accent, #0000bf) 5%, var(--jc-color-card, #f8fafc));
+}
+
+.app-district-rank {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  color: var(--jc-color-muted, #64748b);
+  min-width: 2rem;
+}
+
+.app-district-name {
+  flex: 1;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-district-val {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--jc-color-ink, #0f172a);
+}
+
+.app-remove-district {
+  all: unset;
+  cursor: pointer;
+  font: inherit;
+  color: var(--jc-color-muted, #64748b);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--jc-space-1, 0.25rem);
+  font-weight: 600;
+}
+
+.app-remove-district:hover {
+  color: var(--jc-color-accent, #0000bf);
+}
+
+.app-table-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--jc-space-1, 0.125rem);
+}
+
+.app-cell-val {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-cell-sub {
+  font-size: var(--jc-font-size-sm, 0.75rem);
+  color: var(--jc-color-muted, #64748b);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A compared district's Details: a button that reads as a link, under its name. */
+.jc-shell .app-open {
+  display: block;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--jc-color-accent, #0000bf);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 400;
+  text-align: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* The files the server keeps (T-3353): the boundaries and their licence. */
+.app-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-2, 0.5rem);
+  margin-bottom: var(--jc-space-3, 0.75rem);
+}
+
+/* Roles and edits (T-3828). */
+.app-role {
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--jc-color-line, #cbd5e1);
+  border-radius: 999px;
+  font-size: var(--jc-font-size-sm, 0.75rem);
+}
+.app-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.app-error {
+  color: var(--jc-color-danger, #b91c1c);
+  font-weight: 600;
+}
+.app-subhead {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+}
+.app-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.app-keep {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: end;
+}
+.app-keep label {
+  display: grid;
+  gap: 0.25rem;
+  flex: 1 1 14rem;
+}
+.app-keep input {
+  min-width: 0;
+}
+.app-saved {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+.app-saved li {
+  display: grid;
+  gap: 0.375rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--jc-color-line, #e2e8f0);
+  overflow-wrap: anywhere;
+}
+.app-saved .app-actions {
+  margin: 0;
+}
+.app-history {
+  width: 100%;
+  border-collapse: collapse;
+}
+.app-history th,
+.app-history td {
+  padding: 0.375rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--jc-color-line, #e2e8f0);
+  overflow-wrap: anywhere;
+}

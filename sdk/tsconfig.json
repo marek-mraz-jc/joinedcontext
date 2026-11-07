@@ -1,0 +1,46 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": [
+      "vite/client",
+      "vitest/globals",
+      "@testing-library/jest-dom"
+    ],
+    "paths": {
+      "@joinedcontext/sdk": [
+        "./src/sdk/index.ts"
+      ],
+      "@joinedcontext/sdk/grid": [
+        "./src/sdk/grid.ts"
+      ],
+      "@joinedcontext/sdk/server": [
+        "./src/sdk/server.ts"
+      ],
+      "@joinedcontext/sdk/testing": [
+        "./src/sdk/testing.ts"
+      ]
+    }
+  },
+  "include": [
+    "src",
+    "tests",
+    "template/src",
+    "template-wasm/src",
+    "examples/services",
+    "template/functions"
+  ]
+}

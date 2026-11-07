@@ -1,0 +1,11 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata:
+  name: bike-rebalancing-steward
+  namespace: org
+  annotations:
+    joinedcontext.com/app: helsinki/bike-rebalancing
+spec:
+  description: The stewards of bike-rebalancing, its default group.
+  members:
+  - user: de300000-0000-4000-8000-000000000001 # demo.steward

@@ -1,0 +1,96 @@
+{
+  "workflow": "connector",
+  "run": "1611369b-2a6f-48a7-9b42-e247b8ae4b60",
+  "recordedAt": "2026-11-03T00:13:11.095Z",
+  "model": "app-builder: google/gemini-3.8-flash",
+  "events": [
+    {
+      "kind": "status",
+      "payload": {
+        "status": "queued"
+      }
+    },
+    {
+      "kind": "message",
+      "payload": {
+        "sentBy": "demo.steward@hel.fi",
+        "text": "Revoke my connector for claude.ai."
+      }
+    },
+    {
+      "kind": "status",
+      "payload": {
+        "status": "starting"
+      }
+    },
+    {
+      "kind": "status",
+      "payload": {
+        "status": "interviewing"
+      }
+    },
+    {
+      "kind": "usage",
+      "payload": {
+        "cachedTokens": 0,
+        "costUsd": 0.000297,
+        "inputTokens": 236,
+        "latencyMs": 2400,
+        "model": "google/gemini-3.8-flash",
+        "outputTokens": 32,
+        "reasoningEffort": "low",
+        "tokensThisStep": 268
+      }
+    },
+    {
+      "kind": "partial",
+      "payload": {
+        "elapsedMs": 6226,
+        "text": "Opening the"
+      }
+    },
+    {
+      "kind": "tool",
+      "payload": {
+        "durationMs": 1,
+        "elapsedMs": 6592,
+        "input": {
+          "endpoint": null,
+          "name": null,
+          "page": "connectors",
+          "plural": null,
+          "q": null,
+          "type": null
+        },
+        "status": "ok",
+        "tool": "jc_ui_navigate"
+      }
+    },
+    {
+      "kind": "navigate",
+      "payload": {
+        "elapsedMs": 6596,
+        "route": "/ai-connectors"
+      }
+    },
+    {
+      "kind": "thought",
+      "payload": {
+        "text": "Opening the connectors page where you can revoke your connector."
+      }
+    },
+    {
+      "kind": "usage",
+      "payload": {
+        "cachedTokens": 9060,
+        "costUsd": 0.0012565,
+        "inputTokens": 9076,
+        "latencyMs": 4105,
+        "model": "google/gemini-3.8-flash",
+        "outputTokens": 50,
+        "reasoningEffort": "low",
+        "tokensThisStep": 9126
+      }
+    }
+  ]
+}

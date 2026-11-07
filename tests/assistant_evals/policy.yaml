@@ -1,0 +1,14 @@
+# T-2733: the policy workflow as one conversation (Testing/07 §3, AG-87).
+workflow: policy
+as: steward
+says:
+  - "Let the role public read AirQualityObserved in the air quality space."
+expect:
+  calls:
+    - tool: jc_ui_navigate
+      input: { page: new, plural: policies }
+  outcome: form
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: let the role public read AirQualityObserved in the air quality space."

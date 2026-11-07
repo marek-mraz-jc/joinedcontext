@@ -1,0 +1,24 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-bbsk-zaznamy-2-steward
+  namespace: bbsk
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:bbsk/app-bbsk-zaznamy/steward
+    kind: role
+  assigner: did:web:bbsk.sk
+  contextSpaceRef:
+    kind: ContextSpace
+    name: bbsk-kraj
+  information:
+  - entities:
+    - type: KeyPerformanceIndicator
+    propertyNames:
+    - stewardNote
+    relationshipNames:
+    - stewardNote
+  operations:
+  - updateAttrs

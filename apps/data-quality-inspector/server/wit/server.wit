@@ -1,0 +1,9 @@
+/// data-quality-inspector's server: the request handler and the daily inspection (T-3579, AP-159).
+package helsinki:data-quality-inspector;
+
+world server {
+    include jc:app/app-host@0.1.0;
+
+    /// One quality run of every type, kept with its report (app.yaml `spec.server.jobs`).
+    export inspect-daily: func() -> result<_, string>;
+}

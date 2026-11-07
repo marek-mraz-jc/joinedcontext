@@ -1,0 +1,20 @@
+{
+  "$comment": [
+    "T-2730: what the live walker (walker.spec.ts) finds on dev and is owed, one entry per route pattern and check, each naming the open task that fixes it.",
+    "A finding no entry excuses becomes a task after the next rollout (rollout-walk.sh, T-4950). The list only shrinks: the task that fixes an entry removes it."
+  ],
+  "excused": [
+    {
+      "route": "/organization/$tab/$",
+      "check": "field-hint",
+      "task": "T-4949",
+      "why": "The group page's add-member fields (E-mail of the person, Where, Role, Project, Application) have no hint yet; T-4949 item 1 writes them."
+    },
+    {
+      "route": "/projects/$project/$plural/$name",
+      "check": "viewer-write",
+      "task": "T-4949",
+      "why": "A viewer can press Add to my connectors on an Endpoint page; T-4949 item 4 decides and enforces it on the server."
+    }
+  ]
+}

@@ -1,0 +1,315 @@
+name: ci
+on:
+  pull_request:
+  push:
+    # A batch branch runs the fast gate on its own head, which tasks/automerge reads before it
+    # merges a low-risk reviewed branch (T-4675). Public repository: the minutes are free.
+    # preview/** asks for a branch preview: preview.yml builds its images after this run (T-5547).
+    branches: [main, "agent/**", "preview/**"]
+permissions: { contents: read }
+# Main runs are keyed by commit (T-5022): GitHub keeps one pending run per concurrency group, so
+# with ci-<ref> each merge replaced the pending main run before it got a runner and main went
+# hours without a verdict. Every main commit now gets its own run, never cancelled. Branches
+# keep one group per ref and cancel the older run.
+concurrency:
+  group: "ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}"
+  cancel-in-progress: "${{ github.ref != 'refs/heads/main' }}"
+jobs:
+  # Which jobs the change needs (T-4985): the paths changed since the branch left main (a pull
+  # request: since its base), mapped by scripts/ci/changes.sh. 15 jobs on every push filled the
+  # runners and main waited behind branch runs. On main the base is the newest commit whose ci run
+  # on main was green (T-4696: running every job on every merge billed ~1,800 minutes a day), so a
+  # range a red or cancelled run left unchecked runs again. gitleaks runs on every push without
+  # asking, as a step of this job (T-6046: its own 13 s job took one of the account's 20 job
+  # slots on each of ~195 runs a day); a leak fails this job, so the run is red and the jobs
+  # behind it do not start. A skipped job counts as success in the run's conclusion.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    permissions: { contents: read, actions: read }
+    outputs:
+      rust: ${{ steps.paths.outputs.rust }}
+      ui: ${{ steps.paths.outputs.ui }}
+      apps: ${{ steps.paths.outputs.apps }}
+      ui_scope: ${{ steps.paths.outputs.ui_scope }}
+      sdk: ${{ steps.paths.outputs.sdk }}
+      base: ${{ steps.paths.outputs.base }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { fetch-depth: 0 }
+      # first, on the whole history: the paths step below may fetch with --depth=1
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+      - name: the path filter self-test
+        run: sh scripts/ci/changes.sh --selftest
+      - id: paths
+        name: the jobs this change needs
+        env:
+          BASE_REF: "${{ github.base_ref || 'main' }}"
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          base=""
+          # Fetch main's last green commit, or fetch the base and deepen both so merge-base finds
+          # the fork (the checkout holds the whole history for gitleaks); no base found runs everything.
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            green=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1" \
+              --jq '.workflow_runs[0].head_sha // empty' || true)
+            if [ -n "$green" ] && git fetch -q --depth=1 origin "$green"; then base=$green; fi
+          elif git fetch -q --deepen=100 origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"; then
+            base=$(git merge-base HEAD "origin/$BASE_REF" || true)
+          fi
+          echo "base: ${base:-none}"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          sh scripts/ci/changes.sh "$base" | tee -a "$GITHUB_OUTPUT"
+  # Supersede (T-5659): with the account's job slots full, every merge queued one more main run and
+  # none finished (9 portal runs queued 10:08-11:55Z on 2026-10-25). tasks/ci closes a task once a
+  # later green main run contains its commit, so this run cancels the older main runs it contains
+  # whose jobs are only queued; scripts/ci/supersede.py says which. Its own job, because only
+  # here does a token get actions: write, and only on a push to main.
+  supersede:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions: { contents: read, actions: write }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { sparse-checkout: scripts/ci }
+      - name: the selection self-test
+        run: python3 scripts/ci/supersede.py --selftest
+      - name: cancel the older main runs this run contains
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: python3 scripts/ci/supersede.py
+  rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    # A warm cache runs this in a few minutes. A cold one (the repo's 10 GB cache evicts the job's
+    # key) needs longer; a run cut off at the timeout never saves its cache, so 8 min turned one
+    # eviction into a red on every push (7fc3df50, 8639008b; T-4146).
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: every action is a commit, and only a publishing job may publish (T-0851)
+        run: python3 scripts/ci/check-workflow-pins.py
+      - name: image.yml's gate finds the newest image to diff against (T-5449, T-6108)
+        run: python3 scripts/ci/image-gate.py --selftest
+      - name: every cargo target is stubbed in the Dockerfile's dependency layer (T-6108)
+        run: python3 scripts/ci/check-dockerfile-members.py --selftest && python3 scripts/ci/check-dockerfile-members.py
+      - name: a branch preview's tag is pv-<DNS-1123 slug of at most 40>-<sha12>, its GC takes only old pv- images (T-5547)
+        run: sh scripts/ci/preview-tag.sh --selftest && python3 scripts/ci/preview-gc.py --selftest
+      - name: every crate a Rust App's own lock names is fetched for the builder's seed (T-4150)
+        run: python3 scripts/ci/check-seed-locks.py
+      - name: public-docs/ is exactly the docs commit it names, which the deployment pins (T-4483)
+        run: scripts/public-docs.sh --check
+      # The checker itself; the statements run on a full `cg build --fg` before every merge, since
+      # cg is not on the runner (T-3681, as Antares T-3587).
+      - name: cg security invariants self-test
+        run: python3 dev/cg-invariants.py --selftest
+      # Code no entry point reaches, Rust crate and UI apart, against ci/cg-dead-code-baseline.txt;
+      # the count itself runs on a full `cg build --fg` in tasks/push, since cg is not on the runner (T-4454).
+      - name: cg dead-code ratchet self-test
+        run: python3 dev/cg-dead-code.py --selftest
+      # Complexity and untested public functions, Rust crate and UI apart, against
+      # ci/cg-structure-baseline.txt; the count runs in tasks/push like the dead-code one (T-4607).
+      - name: cg structure ratchet self-test
+        run: python3 dev/cg-structure.py --selftest
+      # Which images a push builds: a ui/-only push builds the bundle alone (T-2485, T-6158).
+      - name: image matrix path filter self-test
+        run: python3 dev/image-matrix.py --selftest
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with: { components: "rustfmt, clippy" }
+      # Only main saves (T-5251): a branch reads main's cache, but each branch push saved its own
+      # ~1.4 GB, and past the repository's 10 GB cap GitHub evicted ci-full's test-all cache.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with: { save-if: "${{ github.ref == 'refs/heads/main' }}" }
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --lib --bins
+      # The UI's types are generated from the committed spec, so a stale one is a compile the
+      # fast lane can catch in two seconds instead of leaving to the hourly full run (T-1210).
+      - run: cargo test --test openapi_tests
+      # Every route is an operation or says why not (AG-59). It left the lib tests with the table
+      # (T-1499), so it runs here by name to stay in the gate it was in.
+      - run: cargo test --test route_coverage_tests
+      # Wiremock and pure-data binaries that reached main red while only ci-full ran them: a
+      # duplicated authz_matrix.yaml row after a merge (T-4863), a problem slug without its locale
+      # text (T-5208), the gitea shared-writer put_file tests (T-5151). No Postgres, no browser (T-5574).
+      - run: cargo test --locked --test authz_matrix_tests --test problem_types_tests --test gitea_client_tests
+      # The 50 connector scenarios through the MCP door, against their red.txt ratchet (T-5947):
+      # wiremock and the in-memory mirror only, a few seconds once the crate is built.
+      - run: cargo test --locked --test connector_scenarios
+      # A doc link to a private item passed every fast check and broke the hourly lane (T-1453);
+      # rustdoc reuses clippy's metadata, so it costs seconds here.
+      - run: cargo doc --workspace --no-deps
+        env: { RUSTDOCFLAGS: "-D warnings" }
+  # Lint, the build and the bundle weight: the steps that run once, beside the vitest job(s). They
+  # used to ride on vitest shard 1 (T-5158, run 39687447235). The SDK's own typecheck, screens and
+  # build left for ci-full (T-6153: 166 s a push, no failure in 7 days), and so did the four
+  # inventories this job ran a second time: the ui job runs them on every UI change.
+  ui-checks:
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - id: has
+        run: echo "ui=$([ -f ui/package.json ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+      # DM-06: the unit list is the platform's one code list, copied byte for byte; nobody edits
+      # the copy. Regenerate with the platform's `tools/units/generate.py <this path>`.
+      - if: steps.has.outputs.ui == 'yes'
+        name: the unit list is the platform's code list, unedited (DM-06)
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/marek-mraz-jc/joinedcontext-platform/main/crates/jc-core/data/unece-rec20.json \
+            | cmp - sdk/src/sdk/units.json
+      - if: steps.has.outputs.ui == 'yes'
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with: { version: 10 }
+      - if: steps.has.outputs.ui == 'yes'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: ui/pnpm-lock.yaml }
+      # The SDK before the UI: the UI links the SDK's sources (`link:../sdk`, T-1439), and `link:`
+      # installs nothing for the sibling, so the UI's own typecheck and Vite build need the SDK's
+      # dependencies to be beside its sources already (the red main of 1a7c5b9).
+      - if: steps.has.outputs.ui == 'yes'
+        name: the SDK the UI links
+        run: cd sdk && pnpm install --frozen-lockfile && pnpm build
+      - if: steps.has.outputs.ui == 'yes'
+        run: cd ui && pnpm install --frozen-lockfile
+      - if: steps.has.outputs.ui == 'yes'
+        run: cd ui && pnpm lint
+      - if: steps.has.outputs.ui == 'yes'
+        run: cd ui && pnpm build
+      # What every page downloads before it answers stays under its budget (T-3280).
+      - if: steps.has.outputs.ui == 'yes'
+        name: the weight of every visit
+        run: node --test scripts/bundle-budget.test.mjs scripts/shared-deps.test.mjs && node scripts/bundle-budget.mjs ui/dist
+      - if: steps.has.outputs.ui == 'no'
+        run: echo "no ui/package.json yet"
+  ui:
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    # The suite runs in four shards of one matrix: every file once, in one of them, nothing
+    # skipped (vitest --shard splits the files, not the cases). It outgrew one job twice (8 minutes
+    # in T-2447, 12 in T-2920) and three shards (T-5158). A change only to ui/src, ui/tests or
+    # ui/e2e runs, spread the same way, just the tests it reaches and every test that reads the
+    # tree (ui_scope=related, scripts/ci/ui-related.sh; T-6153: 320-393 s a shard for a one-page
+    # change); a page the router imports still reaches a few hundred files. A language catalogue
+    # stands for the keys it moved, not for i18n.ts, which reaches every page.
+    name: ui (${{ matrix.shard }}/4)
+    strategy:
+      fail-fast: false
+      matrix: { shard: [1, 2, 3, 4] }
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - id: has
+        run: echo "ui=$([ -f ui/package.json ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+      - if: steps.has.outputs.ui == 'yes'
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with: { version: 10 }
+      - if: steps.has.outputs.ui == 'yes'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: ui/pnpm-lock.yaml }
+      # The UI links the SDK's sources; ui-checks runs the SDK's own checks.
+      - if: steps.has.outputs.ui == 'yes'
+        name: the SDK the UI links
+        run: cd sdk && pnpm install --frozen-lockfile && pnpm build
+      - if: steps.has.outputs.ui == 'yes'
+        run: cd ui && pnpm install --frozen-lockfile
+      - if: steps.has.outputs.ui == 'yes' && needs.changes.outputs.ui_scope == 'full'
+        name: the UI suite, shard ${{ matrix.shard }} of 4
+        run: cd ui && pnpm vitest run --shard=${{ matrix.shard }}/4
+      - if: steps.has.outputs.ui == 'yes' && needs.changes.outputs.ui_scope != 'full'
+        name: the UI tests this change reaches, shard ${{ matrix.shard }} of 4
+        env: { BASE: "${{ needs.changes.outputs.base }}", UI_SHARD: "${{ matrix.shard }}/4" }
+        run: |
+          set -eu
+          sh scripts/ci/ui-related.sh --selftest
+          git fetch -q --depth=1 origin "$BASE"
+          sh scripts/ci/ui-related.sh "$BASE"
+      - if: steps.has.outputs.ui == 'no'
+        run: echo "no ui/package.json yet"
+  # The SDK's own suite (T-6311): it reads only sdk/, and no other lane ran it, so three reds of
+  # T-6210 and T-6230 merged green. The whole suite, about 70 s.
+  sdk:
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with: { version: 10 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: sdk/pnpm-lock.yaml }
+      - run: cd sdk && pnpm install --frozen-lockfile
+      - name: the SDK suite
+        run: cd sdk && pnpm vitest run
+  # The component-gallery baselines, the WebAssembly example and the Apps' screens left the
+  # per-push lane for ci-full (T-6153: 65-454 s a push, no failure in 7 days); the jobs there are
+  # sdk-screens, ui-gallery and apps-all.
+  apps:
+    needs: changes
+    if: needs.changes.outputs.apps == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - id: has
+        run: echo "ui=$([ -f ui/package.json ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+      - if: steps.has.outputs.ui == 'yes'
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with: { version: 10 }
+      - if: steps.has.outputs.ui == 'yes'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: sdk/pnpm-lock.yaml }
+      # The apps link the SDK's sources, and the lane test needs its Vite.
+      - if: steps.has.outputs.ui == 'yes'
+        name: the SDK's dependencies, which the apps link
+        run: cd sdk && pnpm install --frozen-lockfile
+      # What takes the User Guide's screenshots from a live run into the docs (T-3270).
+      - name: the User Guide shots' publisher
+        run: node --test scripts/publish-guide-shots.test.mjs
+      # The help panel's guide sections' bundler (T-3308).
+      - name: the guide sections' bundler
+        run: node --test scripts/guide-sections.test.mjs
+      # The coverage gate's own tests, and its pending list only ever shrinking (T-3373): the base is
+      # the branch's fork from main, or the commit before on a push to main.
+      - name: the Apps' coverage gate and its shrinking pending list
+        run: |
+          set -eu
+          node --test scripts/app-coverage-gate.test.mjs scripts/apps-ci.test.mjs
+          # A branch push checks out one commit: fetch main into origin/main and deepen both, or
+          # merge-base finds no fork and the step fails with no message (T-4675 runs ci on agent/**).
+          git fetch -q --deepen=100 origin +refs/heads/main:refs/remotes/origin/main
+          base=$(git merge-base HEAD origin/main)
+          [ "$base" = "$(git rev-parse HEAD)" ] && base=$(git rev-parse HEAD~1)
+          git show "$base:apps/coverage-pending.txt" > "$RUNNER_TEMP/pending-base.txt" 2>/dev/null || rm -f "$RUNNER_TEMP/pending-base.txt"
+          node scripts/app-coverage-gate.mjs pending "$RUNNER_TEMP/pending-base.txt"
+      # The digest map the static host checks before it serves a file (AP-12, T-2457).
+      - name: the integrity manifest a static app ships with
+        run: node --test scripts/app-integrity.test.mjs
+      # The merged tasks a "What's new" entry is written from (T-3271).
+      - name: the What's new candidates
+        run: node --test scripts/whats-new-candidates.test.mjs
+      # Feedback from the Portal as blocked, quoted tasks on the board (T-3272).
+      - name: feedback as proposed tasks
+        run: node --test scripts/feedback-to-tasks.test.mjs
+      # The Costs page against the cloud invoice (T-5126).
+      - name: the cost reconciliation check
+        run: node --test scripts/cost-reconcile.test.mjs
+      # The build lane's package check and functions bundle (AP-82, AP-84, ADR-N-026); the bundle
+      # test needs Vite, which the SDK step above installed.
+      - if: steps.has.outputs.ui == 'yes'
+        name: the build lane refuses foreign packages and bundles functions
+        run: ln -s ../sdk/node_modules builder/node_modules && node --test builder/lane.test.mjs builder/runner.test.mjs
+      # Every reference App's type check when the SDK or that App changed (T-6341): an SDK type the
+      # Apps fill turned only the image build red, an hour after the merge.
+      - if: steps.has.outputs.ui == 'yes'
+        name: the reference Apps type-check against this SDK
+        run: sh scripts/apps-ci.sh typecheck
+      # The plain-HTML example's tests (AP-83) are vitest files now, run with its coverage by
+      # scripts/apps-ci.sh ui above (T-3416); node's own runner cannot run them.

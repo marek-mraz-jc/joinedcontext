@@ -1,0 +1,78 @@
+[
+  {
+    "dataProvider": {
+      "type": "Property",
+      "value": "datový podklad © IPR Praha (CC BY 4.0)"
+    },
+    "id": "urn:ngsi-ld:OffStreetParking:praha.cz:praha-mesto:ipr-e043e8f3-a67d-402d-863e-776a39442cf5",
+    "location": {
+      "type": "GeoProperty",
+      "value": {
+        "coordinates": [
+          14.596779481000056,
+          50.080758754000044
+        ],
+        "type": "Point"
+      }
+    },
+    "name": {
+      "languageMap": {
+        "cs": "P+R Běchovice"
+      },
+      "type": "LanguageProperty"
+    },
+    "source": {
+      "type": "Property",
+      "value": "https://opendata.geoportalpraha.cz/"
+    },
+    "totalSpotNumber": {
+      "type": "Property",
+      "value": 92
+    },
+    "type": "OffStreetParking",
+    "availableSpotNumber": {
+      "type": "Property",
+      "value": 23
+    },
+    "dateModified": {
+      "type": "Property",
+      "value": "2026-09-25T13:34:01Z"
+    },
+    "occupiedSpotNumber": {
+      "type": "Property",
+      "value": 55
+    }
+  },
+  {
+    "dataProvider": {
+      "type": "Property",
+      "value": "datový podklad © IPR Praha (CC BY 4.0)"
+    },
+    "id": "urn:ngsi-ld:OffStreetParking:praha.cz:praha-mesto:ipr-707550aa-0b4b-4af2-8f17-f8bb9a9a9cc6",
+    "location": {
+      "type": "GeoProperty",
+      "value": {
+        "coordinates": [
+          14.581984179000074,
+          50.110403147000056
+        ],
+        "type": "Point"
+      }
+    },
+    "name": {
+      "languageMap": {
+        "cs": "P+R Černý Most II"
+      },
+      "type": "LanguageProperty"
+    },
+    "source": {
+      "type": "Property",
+      "value": "https://opendata.geoportalpraha.cz/"
+    },
+    "totalSpotNumber": {
+      "type": "Property",
+      "value": 131
+    },
+    "type": "OffStreetParking"
+  }
+]

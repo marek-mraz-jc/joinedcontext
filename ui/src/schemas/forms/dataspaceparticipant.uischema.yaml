@@ -1,0 +1,89 @@
+# Default form arrangement for DataSpaceParticipant (UI-02, T-1544).
+# How this organization takes part in a data space, once per organization; examples are neutral
+# example.org participants (T-2752).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: dataspaceparticipant
+spec:
+  for: DataSpaceParticipant
+  guide: User-Guide/12-managing-organization-and-projects
+  about:
+    en: >-
+      The data space participant is how this organization appears to other participants: its
+      did:web identifier on its verified domain, the issuer of its credentials, the address of its
+      connector and the issuers it trusts. An organization has one.
+    sk: >-
+      Účastník dátového priestoru je to, ako táto organizácia vystupuje voči iným účastníkom: jej
+      identifikátor did:web na overenej doméne, vydavateľ jej poverení, adresa jej konektora a
+      vydavatelia, ktorým dôveruje. Organizácia má jedného.
+    cs: >-
+      Účastník datového prostoru je to, jak tato organizace vystupuje vůči jiným účastníkům: její
+      identifikátor did:web na ověřené doméně, vydavatel jejích pověření, adresa jejího konektoru a
+      vydavatelé, kterým důvěřuje. Organizace má jednoho.
+    de: >-
+      Der Datenraum-Teilnehmer ist, wie diese Organisation anderen Teilnehmern gegenübertritt: ihre
+      did:web-Kennung auf der verifizierten Domain, der Aussteller ihrer Nachweise, die Adresse ihres
+      Connectors und die Aussteller, denen sie vertraut. Eine Organisation hat einen.
+  order: [name, did, credentialIssuer, connectorUrl, engine, trustAnchors]
+  groups:
+    - title:
+        en: Identity
+        sk: Identita
+        cs: Identita
+        de: Identität
+      description:
+        en: Who this organization is to the data space, and who vouches for it.
+        sk: Kým je táto organizácia pre dátový priestor a kto sa za ňu zaručuje.
+        cs: Kým je tato organizace pro datový prostor a kdo se za ni zaručuje.
+        de: Wer diese Organisation für den Datenraum ist und wer für sie bürgt.
+      fields: [name, did, credentialIssuer]
+    - title:
+        en: Connector and trust
+        sk: Konektor a dôvera
+        cs: Konektor a důvěra
+        de: Connector und Vertrauen
+      description:
+        en: Where other participants negotiate, and whose credentials this organization accepts.
+        sk: Kde iní účastníci vyjednávajú a čie poverenia táto organizácia prijíma.
+        cs: Kde jiní účastníci vyjednávají a čí pověření tato organizace přijímá.
+        de: Wo andere Teilnehmer verhandeln und wessen Nachweise diese Organisation annimmt.
+      fields: [connectorUrl, engine, trustAnchors]
+  fields:
+    name:
+      help:
+        en: The short name the participant is filed under; the organization has only this one.
+        sk: Krátky názov, pod ktorým je účastník uložený; organizácia má len tohto jedného.
+        cs: Krátký název, pod nímž je účastník uložen; organizace má jen tohoto jednoho.
+        de: Der kurze Name des Teilnehmers; die Organisation hat nur diesen einen.
+    did:
+      placeholder: "did:web:participant.example.org"
+      help:
+        en: did:web and the organization's verified domain, as other participants will know it.
+        sk: did:web a overená doména organizácie, ako ju budú poznať iní účastníci.
+        cs: did:web a ověřená doména organizace, jak ji budou znát jiní účastníci.
+        de: did:web und die verifizierte Domain der Organisation, wie andere Teilnehmer sie kennen.
+    credentialIssuer:
+      help:
+        en: The HTTPS address of the service that issues this organization's verifiable credentials.
+        sk: Adresa HTTPS služby, ktorá vydáva overiteľné poverenia tejto organizácie.
+        cs: Adresa HTTPS služby, která vydává ověřitelná pověření této organizace.
+        de: Die HTTPS-Adresse des Dienstes, der die Nachweise dieser Organisation ausstellt.
+    connectorUrl:
+      help:
+        en: The HTTPS address of this organization's connector, where other participants negotiate.
+        sk: Adresa HTTPS konektora tejto organizácie, kde iní účastníci vyjednávajú.
+        cs: Adresa HTTPS konektoru této organizace, kde jiní účastníci vyjednávají.
+        de: Die HTTPS-Adresse des Connectors dieser Organisation, an dem andere Teilnehmer verhandeln.
+    engine:
+      help:
+        en: The connector implementation that runs the Dataspace Protocol for this organization.
+        sk: Implementácia konektora, ktorá pre túto organizáciu vykonáva Dataspace Protocol.
+        cs: Implementace konektoru, která pro tuto organizaci provádí Dataspace Protocol.
+        de: Die Connector-Implementierung, die für diese Organisation das Dataspace Protocol ausführt.
+    trustAnchors:
+      help:
+        en: The did:web identifiers of issuers and authorities whose credentials this organization trusts, each once.
+        sk: Identifikátory did:web vydavateľov a autorít, ktorých povereniam organizácia dôveruje, každý raz.
+        cs: Identifikátory did:web vydavatelů a autorit, jejichž pověřením organizace důvěřuje, každý jednou.
+        de: Die did:web-Kennungen der Aussteller und Stellen, deren Nachweisen die Organisation vertraut, jede einmal.

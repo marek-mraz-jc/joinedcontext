@@ -1,0 +1,16 @@
+/* The application's own layout, over the token variables the SDK sets from design-tokens.json. The
+   screens are laid out by the SDK's primitives (Page, Grid, Card, Split, Sidebar, Tabs); what is
+   here is only what they do not cover. */
+
+.app-detail {
+  display: grid;
+  gap: var(--jc-space-2, 0.5rem);
+  justify-items: start;
+}
+
+/* The endpoint a card's type is read through, when the application reads several. */
+.app-source {
+  margin: 0;
+  color: var(--jc-color-muted, #64748b);
+  font-size: var(--jc-font-size-sm, 0.75rem);
+}

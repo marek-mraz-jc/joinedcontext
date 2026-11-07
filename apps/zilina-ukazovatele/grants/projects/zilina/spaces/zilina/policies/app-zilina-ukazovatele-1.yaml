@@ -1,0 +1,35 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-zilina-ukazovatele-1
+  namespace: zilina
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:zilina/app-zilina-ukazovatele
+    kind: role
+  assigner: did:web:zilina.sk
+  contextSpaceRef:
+    kind: ContextSpace
+    name: zilina-kpi
+  information:
+  - entities:
+    - type: KeyPerformanceIndicator
+    propertyNames:
+    - name
+    - currentValue
+    - calculationPeriod
+    - calculationFormula
+    - updatedAt
+    - location
+    relationshipNames:
+    - name
+    - currentValue
+    - calculationPeriod
+    - calculationFormula
+    - updatedAt
+    - location
+  operations:
+  - queryEntity
+  - retrieveEntity

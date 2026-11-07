@@ -1,0 +1,37 @@
+{
+  "name": "citizen-map",
+  "title": "Citizen map app",
+  "purpose": "Help a resident find something near them on a map: a place, a station, an event; search it, tap it, read what it has now.",
+  "archetype": "citizen-map",
+  "audience": "citizens",
+  "layout": "hero-map",
+  "keywords": ["map", "near", "nearest", "station", "stations", "stop", "bike", "bikes", "citizen", "resident", "public", "place", "places"],
+  "dataNeeds": [
+    {
+      "types": [
+        "BikeHireDockingStation"
+      ],
+      "attrs": [
+        "name",
+        "location",
+        "availableBikeNumber",
+        "freeSlotNumber",
+        "status"
+      ],
+      "operations": [
+        "queryEntity"
+      ]
+    }
+  ],
+  "access": "Read-only, one endpoint that may be public: the app shows only what a resident may see and writes nothing.",
+  "sdk": [
+    "useEntities",
+    "useFilters",
+    "format",
+    "displayName",
+    "Header",
+    "EntityMap",
+    "SearchBox"
+  ],
+  "ready": "City bikes near you"
+}

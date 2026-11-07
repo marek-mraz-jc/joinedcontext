@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Helsinki events</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <header class="top">
+      <h1>Helsinki events</h1>
+      <p class="lead">Upcoming events of the City of Helsinki, from the city's Linked Events register.</p>
+    </header>
+    <main>
+      <form class="filters" role="search" aria-label="Filter events">
+        <label for="query">Search</label>
+        <input id="query" name="query" type="search" autocomplete="off" placeholder="Name, place or description" />
+        <label for="from">From</label>
+        <input id="from" name="from" type="date" />
+        <label for="to">To</label>
+        <input id="to" name="to" type="date" />
+      </form>
+      <p id="status" class="status" role="status" aria-live="polite">Loading events…</p>
+      <div class="layout">
+        <section aria-labelledby="list-heading">
+          <h2 id="list-heading">Events</h2>
+          <ul id="events" class="events"></ul>
+        </section>
+        <div class="side">
+          <section aria-labelledby="map-heading">
+            <h2 id="map-heading">Map</h2>
+            <svg id="map" class="map" viewBox="0 0 320 240" role="img" aria-label="Where the listed events are"></svg>
+          </section>
+          <section id="detail" class="detail" aria-labelledby="detail-heading" tabindex="-1">
+            <h2 id="detail-heading">Details</h2>
+            <p class="hint">Choose an event to read its details.</p>
+          </section>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,4 @@
+[
+  {"id": "urn:ngsi-ld:Alert:a1", "type": "Alert", "name": "Tietyö", "severity": "high", "validFrom": {"@type": "DateTime", "@value": "2026-10-08T07:00:00Z"}},
+  {"id": "urn:ngsi-ld:Alert:a2", "type": "Alert", "name": {"languageMap": {"fi": "Häiriö"}}, "severity": 2, "validFrom": "2026-10-08T08:00:00Z"}
+]

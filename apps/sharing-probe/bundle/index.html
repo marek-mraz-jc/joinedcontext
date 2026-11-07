@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sharing probe</title>
+    <link rel="stylesheet" href="./probe.css" />
+    <script type="module" src="./probe.js"></script>
+  </head>
+  <body>
+    <main class="card" aria-labelledby="title">
+      <p class="eyebrow">Test application</p>
+      <h1 id="title">Sharing probe</h1>
+      <p class="lead">
+        One of five copies of the same page, each shared with a different audience. The App sharing
+        matrix opens it as six kinds of people and records who reaches it and what data it shows.
+      </p>
+      <dl class="facts">
+        <dt>Application</dt>
+        <dd id="app">…</dd>
+        <dt>Signed in as</dt>
+        <dd id="person">…</dd>
+        <dt>City-bike stations this page may read</dt>
+        <dd><output id="count" aria-live="polite">Counting…</output></dd>
+      </dl>
+    </main>
+  </body>
+</html>

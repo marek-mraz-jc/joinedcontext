@@ -1,0 +1,8 @@
+[
+ {
+  "id": "urn:ngsi-ld:Event:helsinki:later",
+  "type": "Event",
+  "name": "Next week",
+  "startDate": "2030-10-27T09:00:00Z"
+ }
+]

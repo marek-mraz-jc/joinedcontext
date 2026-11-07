@@ -1,0 +1,53 @@
+/* The desk: dense, square and quiet, so the severity marks are what the eye finds. */
+
+.app-severity {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--jc-space-1, 0.25rem);
+  font-weight: 600;
+}
+
+/* A mark and a word: the shape carries the level for a person who does not see the colour. */
+.app-severity::before {
+  content: "";
+  display: inline-block;
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 50%;
+  background: var(--jc-color-muted, #64748b);
+}
+
+.app-severity[data-severity="critical"] {
+  color: var(--jc-color-danger, #b91c1c);
+}
+
+.app-severity[data-severity="critical"]::before {
+  border-radius: 0;
+  background: var(--jc-color-danger, #b91c1c);
+  transform: rotate(45deg);
+}
+
+.app-severity[data-severity="high"] {
+  color: var(--jc-color-warning, #b45309);
+}
+
+.app-severity[data-severity="high"]::before {
+  border-radius: 1px;
+  background: var(--jc-color-warning, #b45309);
+}
+
+.app-note {
+  margin: 0;
+  padding: var(--jc-space-2, 0.5rem) var(--jc-space-3, 0.75rem);
+  border-left: 3px solid var(--jc-color-accent, #0f766e);
+  background: var(--jc-color-card, #f8fafc);
+}
+
+.app-hint {
+  margin: 0;
+  padding: var(--jc-space-4, 1rem);
+  color: var(--jc-color-muted, #64748b);
+  border: 1px dashed var(--jc-color-line, #e2e8f0);
+  border-radius: var(--jc-radius-md, 6px);
+}
+

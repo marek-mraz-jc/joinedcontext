@@ -1,0 +1,9 @@
+{
+  "$comment": [
+    "T-2136: the modules no test under ui/tests/ imports yet, each with the task that closes it.",
+    "The gate in gate_modules.test.ts fails on a module that is missing and not listed here, and",
+    "on an entry that is covered or gone. The list only ever shrinks: gate_modules.test.ts asserts",
+    "its length against the number measured on 2026-09-20."
+  ],
+  "modules": {}
+}

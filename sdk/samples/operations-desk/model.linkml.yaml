@@ -1,0 +1,51 @@
+# The data model this sample reads and, for editors, writes one attribute of (SDK-10).
+id: https://example.org/samples/operations-desk
+name: operations-desk
+prefixes:
+  linkml: https://w3id.org/linkml/
+  schema: https://schema.org/
+default_range: string
+imports:
+  - linkml:types
+classes:
+  Alert:
+    description: Something that needs a person to look at it.
+    attributes:
+      name:
+        range: string
+        required: true
+        slot_uri: schema:name
+      description:
+        range: string
+      category:
+        range: string
+      severity:
+        range: Severity
+        required: true
+      status:
+        range: AlertStatus
+        required: true
+      district:
+        range: string
+      dateIssued:
+        range: datetime
+        required: true
+enums:
+  Severity:
+    permissible_values:
+      critical:
+        title: Critical
+      high:
+        title: High
+      medium:
+        title: Medium
+      low:
+        title: Low
+  AlertStatus:
+    permissible_values:
+      open:
+        title: Open
+      acknowledged:
+        title: Acknowledged
+      resolved:
+        title: Resolved

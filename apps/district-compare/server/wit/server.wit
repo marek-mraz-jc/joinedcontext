@@ -1,0 +1,9 @@
+/// district-compare's server: the request handler and the hourly job (T-6503, AP-159).
+package helsinki:district-compare;
+
+world server {
+    include jc:app/app-host@0.1.0;
+
+    /// Keeps today's figures of every district (app.yaml `spec.server.jobs`).
+    export keep-metrics: func() -> result<_, string>;
+}
