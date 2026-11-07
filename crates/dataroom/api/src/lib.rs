@@ -852,6 +852,13 @@ async fn handle_serve_asset(
                     header::CACHE_CONTROL,
                     "public, max-age=31536000, immutable".to_owned(),
                 ),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_owned()),
+                // An uploaded SVG opened on its own runs nothing and loads nothing (B3, defence
+                // in depth behind the upload check).
+                (
+                    header::CONTENT_SECURITY_POLICY,
+                    "default-src 'none'; style-src 'unsafe-inline'; sandbox".to_owned(),
+                ),
             ],
             asset.bytes,
         )

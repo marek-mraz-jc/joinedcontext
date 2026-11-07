@@ -2536,3 +2536,144 @@ async fn g1_g2_g3_g4_mountable_router_portal_and_jcctl_parity() {
         "G3: @included must contain the public dataset node"
     );
 }
+
+#[tokio::test]
+async fn b3_logo_upload_refuses_scripted_svg_and_serves_content_hashed_asset() {
+    let org = OrgId::from_uuid(Uuid::from_u128(0xB301));
+    let cat = CatalogueId::from_uuid(Uuid::from_u128(0x000B_3011));
+    let host = "b3.example.org";
+    let store = Arc::new(MemoryStore::new());
+    store
+        .upsert_catalogue(make_catalogue(org, cat, "b3", host))
+        .await
+        .unwrap();
+    let authz = Arc::new(PolicyAuthorizer::new(vec![GrantRule {
+        org_id: org,
+        catalogue_id: Some(cat),
+        principal: "brand-admin".into(),
+        actions: vec![Action::Admin],
+        publisher_id: None,
+    }]));
+    let state = DataroomState::new(store, authz, org, cat).with_tokens(vec![TokenBinding {
+        token: "tok-brand".into(),
+        subject: Subject::authenticated("brand-admin", vec![org], Vec::new()),
+    }]);
+    let app = router(state);
+
+    let upload = |svg: &'static str, token: Option<&'static str>| {
+        let app = app.clone();
+        async move {
+            let mut builder = Request::builder()
+                .method(Method::POST)
+                .uri("/api/v1/assets/logo")
+                .header(header::HOST, host)
+                .header(header::CONTENT_TYPE, "image/svg+xml");
+            if let Some(tok) = token {
+                builder = builder.header(header::AUTHORIZATION, tok);
+            }
+            let resp = app
+                .oneshot(builder.body(Body::from(svg)).unwrap())
+                .await
+                .unwrap();
+            let status = resp.status();
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            (status, String::from_utf8_lossy(&bytes).into_owned())
+        }
+    };
+
+    // No token: the upload is not allowed.
+    let clean = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#0000bf"/></svg>"##;
+    let (st, _) = upload(clean, None).await;
+    assert!(
+        st == StatusCode::FORBIDDEN || st == StatusCode::UNAUTHORIZED,
+        "got {st}"
+    );
+
+    // A scripted SVG, an event handler and an external image are refused.
+    for bad in [
+        r#"<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>"#,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>"#,
+        r#"<svg xmlns="http://www.w3.org/2000/svg"><image href="https://evil.example/t.png"/></svg>"#,
+    ] {
+        let (st, body) = upload(bad, Some("tok-brand")).await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad}: {body}");
+    }
+
+    // A clean SVG is stored under a content hash and served from dataroom's own origin.
+    let (st, body) = upload(clean, Some("tok-brand")).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let path = body
+        .split('"')
+        .find(|s| s.starts_with("/assets/logo-") && s.ends_with(".svg"))
+        .unwrap_or_else(|| panic!("upload answer names the asset path: {body}"))
+        .to_owned();
+    let (st, hdrs, served) = send_json(&app, Method::GET, &path, host, None, None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(served, clean);
+    assert_eq!(hdrs[header::CONTENT_TYPE], "image/svg+xml");
+    assert_eq!(
+        hdrs[header::CACHE_CONTROL],
+        "public, max-age=31536000, immutable"
+    );
+    assert_eq!(hdrs[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+    let csp = hdrs[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(
+        csp.contains("default-src 'none'") && csp.contains("sandbox"),
+        "{csp}"
+    );
+}
+
+#[tokio::test]
+async fn c2_language_switch_redirect_stays_on_this_site_and_never_panics() {
+    let org = OrgId::from_uuid(Uuid::from_u128(0xC201));
+    let cat = CatalogueId::from_uuid(Uuid::from_u128(0x000C_2011));
+    let host = "c2.example.org";
+    let store = Arc::new(MemoryStore::new());
+    store
+        .upsert_catalogue(make_catalogue(org, cat, "c2", host))
+        .await
+        .unwrap();
+    let app = router(DataroomState::new(
+        store,
+        Arc::new(PolicyAuthorizer::default()),
+        org,
+        cat,
+    ));
+    let post = |form: &'static str| {
+        let app = app.clone();
+        async move {
+            let req = Request::builder()
+                .method(Method::POST)
+                .uri("/util/redirect")
+                .header(header::HOST, host)
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(form))
+                .unwrap();
+            app.oneshot(req).await.unwrap()
+        }
+    };
+
+    let resp = post("url=%2Fsk%2Fdataset%2Fair-quality").await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers()[header::LOCATION], "/sk/dataset/air-quality");
+    let cookie = resp.headers()[header::SET_COOKIE].to_str().unwrap();
+    assert!(cookie.starts_with("ckan_lang=sk; Path=/"), "{cookie}");
+
+    // Another host, by `//`, by `/\` (browsers read it as `//`), or with a line break: the
+    // switch lands on this catalogue's home and sets no cookie.
+    for form in [
+        "url=https%3A%2F%2Fevil.example%2F",
+        "url=%2F%2Fevil.example%2F",
+        "url=%2F%5Cevil.example%2F",
+        "url=%2Fsk%2F%0D%0ASet-Cookie%3A%20x%3D1",
+    ] {
+        let resp = post(form).await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER, "{form}");
+        assert_eq!(resp.headers()[header::LOCATION], "/", "{form}");
+        assert!(resp.headers().get(header::SET_COOKIE).is_none(), "{form}");
+    }
+
+    // A two-letter segment that is not a language code never reaches the cookie.
+    let resp = post("url=%2F%3B%20%2Fdataset").await;
+    assert!(resp.headers().get(header::SET_COOKIE).is_none());
+}
