@@ -331,6 +331,18 @@ fn validate_panels_slice(
             }
         }
 
+        // Data links live in fieldConfig.defaults.links and in override properties
+        // (`{"id": "links", "value": [{"url": ...}]}`); every `url` string is checked.
+        if let Some(fc) = &panel.field_config
+            && let Ok(fc_value) = serde_json::to_value(fc)
+            && let Some(bad) = find_dangerous_url(&fc_value, &format!("{ptr}/fieldConfig"))
+        {
+            return Err(CrError::Unprocessable {
+                detail: format!("dangerous URL scheme in data link at {bad}"),
+                errors: vec![format!("{bad}: disallowed URL scheme")],
+            });
+        }
+
         if panel.panel_type == "row" {
             findings.push(FeatureFinding {
                 pointer: format!("{ptr}/type"),
@@ -591,7 +603,37 @@ pub fn is_dangerous_url(url: &str) -> bool {
         .to_ascii_lowercase();
     normalized.starts_with("javascript:")
         || normalized.starts_with("vbscript:")
-        || (normalized.starts_with("data:") && !normalized.starts_with("data:image/"))
+        || (normalized.starts_with("data:")
+            && ![
+                "data:image/png",
+                "data:image/jpeg",
+                "data:image/gif",
+                "data:image/webp",
+            ]
+            .iter()
+            .any(|raster| {
+                normalized
+                    .strip_prefix(raster)
+                    .is_some_and(|rest| rest.starts_with(';') || rest.starts_with(','))
+            }))
+}
+
+/// Returns the JSON pointer of the first `url` string under `value` that `is_dangerous_url` refuses.
+fn find_dangerous_url(value: &Value, ptr: &str) -> Option<String> {
+    match value {
+        Value::Object(map) => map.iter().find_map(|(k, v)| {
+            let child = format!("{ptr}/{k}");
+            match v {
+                Value::String(url) if k == "url" && is_dangerous_url(url) => Some(child),
+                _ => find_dangerous_url(v, &child),
+            }
+        }),
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .find_map(|(i, v)| find_dangerous_url(v, &format!("{ptr}/{i}"))),
+        _ => None,
+    }
 }
 
 /// Escapes plain text for safe inclusion in HTML attributes and elements (prevents XSS, §4.3).
@@ -655,5 +697,59 @@ mod tests {
         assert!(is_dangerous_url("  JaVaScRiPt:\nalert(1)"));
         assert!(is_dangerous_url("data:text/html,<script>alert(1)</script>"));
         assert!(!is_dangerous_url("https://joinedcontext.example/d/jc-slo"));
+    }
+
+    #[test]
+    fn data_links_in_field_config_defaults_and_overrides_are_checked() {
+        let fc = serde_json::json!({
+            "defaults": {"links": [{"title": "ok", "url": "/d/abc?var-x=${__value.raw}"}]},
+            "overrides": [{
+                "matcher": {"id": "byName", "options": "temp"},
+                "properties": [{"id": "links", "value": [{"title": "x", "url": " javascript:alert(1)"}]}]
+            }]
+        });
+        assert_eq!(
+            find_dangerous_url(&fc, "/panels/0/fieldConfig").as_deref(),
+            Some("/panels/0/fieldConfig/overrides/0/properties/0/value/0/url")
+        );
+        let clean = serde_json::json!({"defaults": {"links": [{"url": "https://x.example/"}]}});
+        assert_eq!(find_dangerous_url(&clean, ""), None);
+    }
+
+    #[test]
+    fn dashboard_with_a_javascript_data_link_is_refused() {
+        let raw = serde_json::json!({
+            "title": "t", "schemaVersion": 42,
+            "panels": [{
+                "type": "table", "id": 1,
+                "gridPos": {"h": 4, "w": 12, "x": 0, "y": 0},
+                "fieldConfig": {"defaults": {"links": [{"title": "x", "url": "javascript:alert(document.cookie)"}]}, "overrides": []}
+            }]
+        });
+        let doc: DashboardDocument = serde_json::from_value(raw.clone()).unwrap();
+        let err = classify_and_validate(
+            raw.to_string().len(),
+            &doc,
+            &BTreeSet::new(),
+            &InputLimits::default(),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("/panels/0/fieldConfig/defaults/links/0/url"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn svg_data_links_are_dangerous_raster_images_are_not() {
+        // SVG documents carry script; only raster image data URLs stay allowed.
+        assert!(is_dangerous_url(
+            "data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9YWxlcnQoMSk+"
+        ));
+        assert!(is_dangerous_url("DATA:image/svg+xml,<svg onload=alert(1)>"));
+        assert!(is_dangerous_url("data:image/pngx,<svg onload=alert(1)>"));
+        assert!(!is_dangerous_url("data:image/png;base64,iVBORw0KGgo="));
+        assert!(!is_dangerous_url("data:image/webp,AAAA"));
     }
 }
