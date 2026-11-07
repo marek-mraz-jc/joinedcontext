@@ -42,7 +42,7 @@ fn required_key(key: Option<&str>) -> Result<&str> {
         .ok_or_else(|| WardkeepError::BadRequest("the operation needs an entity key".into()))
 }
 
-async fn visible_person(
+pub(crate) async fn visible_person(
     state: &AdminState,
     ctx: &RequestCtx,
     id: &str,
@@ -63,7 +63,7 @@ async fn visible_person(
         .ok_or_else(|| WardkeepError::NotFound("user not found".into()))
 }
 
-fn person_target(ctx: &RequestCtx, user: &UserRepresentation) -> ObjectTarget {
+pub(crate) fn person_target(ctx: &RequestCtx, user: &UserRepresentation) -> ObjectTarget {
     ObjectTarget::Person {
         realm_id: ctx.realm_id.clone(),
         org_id: user.org_id.clone(),

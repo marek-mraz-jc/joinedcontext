@@ -298,6 +298,24 @@ async fn scim_list_users(
     })))
 }
 
+async fn run_op(
+    state: &AdminState,
+    mount: &Mount,
+    ctx: &RequestCtx,
+    name: &str,
+    key: Option<&str>,
+    params: &Value,
+) -> Result<Option<Value>> {
+    let op = state
+        .registry
+        .find(name)
+        .ok_or_else(|| WardkeepError::NotSupported(name.to_owned()))?;
+    crate::operations::execute(state, mount, ctx, op, key, params).await
+}
+
+/// Creates a person through the registry executor, so SCIM, REST, OData and MCP make the same
+/// decision and write the same audit row. The address is not marked verified: SCIM carries no
+/// proof of it, and a verified address is what account linking trusts.
 async fn scim_create_user(
     State(state): State<AdminState>,
     Path(realm): Path<String>,
@@ -307,37 +325,41 @@ async fn scim_create_user(
 ) -> Result<Response> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
-    let target = ObjectTarget::Person {
-        realm_id: realm.clone(),
-        org_id: ctx.active_org_id.clone(),
-        person_id: "*".into(),
-    };
-    let dec = state.authorizer.check(&ctx, Action::Create, &target);
-    if !dec.allowed {
-        return Err(WardkeepError::Forbidden(dec.reason));
+    if payload.user_name.trim().is_empty() {
+        return Err(WardkeepError::BadRequest("userName is required".into()));
     }
     let email = payload
         .emails
         .first()
         .map(|e| e.value.clone())
         .or_else(|| Some(payload.user_name.clone()));
-    let created = state
+    let person = UserRepresentation {
+        realm_id: realm.clone(),
+        org_id: ctx.active_org_id.clone(),
+        username: payload.user_name,
+        email,
+        first_name: payload.name.as_ref().and_then(|n| n.given_name.clone()),
+        last_name: payload.name.as_ref().and_then(|n| n.family_name.clone()),
+        enabled: payload.active.unwrap_or(true),
+        email_verified: false,
+        ..Default::default()
+    };
+    let body =
+        serde_json::to_value(&person).map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
+    let created = run_op(&state, &mount, &ctx, "person_create", None, &body)
+        .await?
+        .ok_or_else(|| WardkeepError::Storage("person_create returned nothing".into()))?;
+    let id = created
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| WardkeepError::Storage("created person has no id".into()))?;
+    let user = state
         .oidc
         .store
-        .create_user(UserRepresentation {
-            id: uuid::Uuid::now_v7().to_string(),
-            realm_id: realm,
-            org_id: ctx.active_org_id,
-            username: payload.user_name,
-            email,
-            first_name: payload.name.as_ref().and_then(|n| n.given_name.clone()),
-            last_name: payload.name.as_ref().and_then(|n| n.family_name.clone()),
-            enabled: payload.active.unwrap_or(true),
-            email_verified: true,
-            ..Default::default()
-        })
-        .await?;
-    Ok((StatusCode::CREATED, Json(to_scim_user_json(&created))).into_response())
+        .get_user_by_id(&realm, None, id)
+        .await?
+        .ok_or_else(|| WardkeepError::Storage("created person vanished".into()))?;
+    Ok((StatusCode::CREATED, Json(to_scim_user_json(&user))).into_response())
 }
 
 async fn scim_get_user(
@@ -348,13 +370,16 @@ async fn scim_get_user(
 ) -> Result<Json<Value>> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
-    let allowed = ctx.allowed_orgs();
-    let user = state
-        .oidc
-        .store
-        .get_user_by_id(&realm, allowed.as_deref(), &id)
-        .await?
-        .ok_or_else(|| WardkeepError::NotFound("user not found".into()))?;
+    let user = crate::operations::visible_person(&state, &ctx, &id).await?;
+    let dec = state.authorizer.check(
+        &ctx,
+        Action::Read,
+        &crate::operations::person_target(&ctx, &user),
+    );
+    if !dec.allowed {
+        // Same answer as a missing person: no probing who exists (W5).
+        return Err(WardkeepError::NotFound("user not found".into()));
+    }
     Ok(Json(to_scim_user_json(&user)))
 }
 
@@ -366,16 +391,25 @@ async fn scim_delete_user(
 ) -> Result<StatusCode> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
-    let allowed = ctx.allowed_orgs();
-    let deleted = state
-        .oidc
-        .store
-        .delete_user(&realm, allowed.as_deref(), &id)
-        .await?;
-    if !deleted {
-        return Err(WardkeepError::NotFound("user not found".into()));
-    }
+    run_op(
+        &state,
+        &mount,
+        &ctx,
+        "person_delete",
+        Some(&id),
+        &Value::Null,
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn group_target(ctx: &RequestCtx, group_id: &str) -> ObjectTarget {
+    ObjectTarget::Group {
+        realm_id: ctx.realm_id.clone(),
+        org_id: ctx.active_org_id.clone(),
+        group_id: group_id.to_owned(),
+        managed_by: None,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -393,6 +427,12 @@ async fn scim_list_groups(
 ) -> Result<Json<Value>> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
+    let dec = state
+        .authorizer
+        .check(&ctx, Action::Read, &group_target(&ctx, "*"));
+    if !dec.allowed {
+        return Err(WardkeepError::Forbidden(dec.reason));
+    }
     let filter = match q.get("filter") {
         Some(f) => Some(parse_scim_filter(f)?),
         None => None,
@@ -430,6 +470,20 @@ async fn scim_create_group(
 ) -> Result<Response> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
+    let dec = state
+        .authorizer
+        .check(&ctx, Action::Create, &group_target(&ctx, "*"));
+    if !dec.allowed {
+        return Err(WardkeepError::Forbidden(dec.reason));
+    }
+    // A name with `/` would place the group under another path (another organization's tree,
+    // which the `jc_org`/`groups` mappers read).
+    let name = payload.display_name.trim();
+    if name.is_empty() || name.contains('/') {
+        return Err(WardkeepError::BadRequest(
+            "displayName must be non-empty and must not contain '/'".into(),
+        ));
+    }
     let path = match &ctx.active_org_id {
         Some(org) => format!("/{org}/{}", payload.display_name),
         None => format!("/{}", payload.display_name),
