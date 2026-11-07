@@ -165,7 +165,10 @@ impl OutboundGuard {
             .timeout
             .map_or(self.config.timeout, |t| t.min(self.config.timeout));
 
+        // No proxy: a proxy taken from the environment would resolve the host itself and
+        // bypass the address checks and the DNS pinning above.
         let mut builder = reqwest::Client::builder()
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(timeout);
 
@@ -283,8 +286,16 @@ fn check_ipv4_allowed(ip: Ipv4Addr, allow_loopback_for_tests: bool) -> Result<()
             "blocked non-public IPv4 address {ip}"
         )));
     }
-    // CGNAT 100.64.0.0/10 and benchmark 198.18.0.0/15
-    for cidr in ["100.64.0.0/10", "198.18.0.0/15"] {
+    // "This network" 0/8 (0.x.y.z reaches the local host on Linux), CGNAT, IETF protocol
+    // assignments, 6to4 relay anycast, benchmark and the reserved 240/4.
+    for cidr in [
+        "0.0.0.0/8",
+        "100.64.0.0/10",
+        "192.0.0.0/24",
+        "192.88.99.0/24",
+        "198.18.0.0/15",
+        "240.0.0.0/4",
+    ] {
         if let Ok(net) = Ipv4Net::from_str(cidr)
             && net.contains(&ip)
         {
@@ -314,8 +325,33 @@ fn check_ipv6_allowed(ip: Ipv6Addr, allow_loopback_for_tests: bool) -> Result<()
             "blocked non-public IPv6 address {ip}"
         )));
     }
-    // AWS IPv6 metadata fd00:ec2::254 and documentation 2001:db8::/32
-    for cidr in ["fd00:ec2::/32", "2001:db8::/32"] {
+    let seg = ip.segments();
+    // Addresses that carry an IPv4 address inside: IPv4-compatible (::a.b.c.d), NAT64
+    // (64:ff9b::/96) and 6to4 (2002::/16). The embedded address gets the IPv4 rules.
+    let embedded_v4 = if seg[..6] == [0, 0, 0, 0, 0, 0] || seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+        Some(Ipv4Addr::from(
+            (u32::from(seg[6]) << 16) | u32::from(seg[7]),
+        ))
+    } else if seg[0] == 0x2002 {
+        Some(Ipv4Addr::from(
+            (u32::from(seg[1]) << 16) | u32::from(seg[2]),
+        ))
+    } else {
+        None
+    };
+    if let Some(v4) = embedded_v4 {
+        return check_ipv4_allowed(v4, allow_loopback_for_tests);
+    }
+    // AWS IPv6 metadata fd00:ec2::254, documentation, site-local, discard-only, local-use NAT64
+    // and Teredo (its IPv4 endpoint is hidden).
+    for cidr in [
+        "fd00:ec2::/32",
+        "2001:db8::/32",
+        "fec0::/10",
+        "100::/64",
+        "64:ff9b:1::/48",
+        "2001::/32",
+    ] {
         if let Ok(net) = Ipv6Net::from_str(cidr)
             && net.contains(&ip)
         {
@@ -359,6 +395,65 @@ mod tests {
 
         let public_ip: IpAddr = "93.184.216.34".parse().unwrap();
         assert!(check_ip_allowed(public_ip, false).is_ok());
+    }
+
+    #[test]
+    fn guard_blocks_ipv4_hidden_in_ipv6_and_reserved_ranges() {
+        for blocked in [
+            // IPv4-compatible, NAT64 and 6to4 forms of loopback, metadata and private addresses.
+            "::127.0.0.1",
+            "::169.254.169.254",
+            "64:ff9b::a9fe:a9fe",
+            "64:ff9b::10.0.0.1",
+            "2002:a9fe:a9fe::1",
+            "2002:0a00:0001::1",
+            "64:ff9b:1::1",
+            "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+            "fec0::1",
+            "100::1",
+            "0.1.2.3",
+            "192.0.0.170",
+            "240.0.0.1",
+            "255.255.255.255",
+        ] {
+            let ip: IpAddr = blocked.parse().unwrap();
+            assert!(
+                check_ip_allowed(ip, false).is_err(),
+                "expected {blocked} to be blocked"
+            );
+        }
+        for public in [
+            "2606:4700:4700::1111",
+            "64:ff9b::5db8:d822",
+            "2002:5db8:d822::1",
+        ] {
+            let ip: IpAddr = public.parse().unwrap();
+            assert!(check_ip_allowed(ip, false).is_ok(), "{public}");
+        }
+    }
+
+    #[tokio::test]
+    async fn guard_refuses_metadata_address_literals_even_when_allow_listed() {
+        let guard = OutboundGuard::new(GuardConfig {
+            allow_hosts: vec!["[::ffff:a9fe:a9fe]".into(), "169.254.169.254".into()],
+            allow_http: true,
+            ..GuardConfig::default()
+        });
+        for url in [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[::ffff:a9fe:a9fe]/latest/meta-data/",
+        ] {
+            let err = guard
+                .send(OutboundRequest {
+                    method: Method::GET,
+                    url: url.into(),
+                    headers: vec![],
+                    body: None,
+                    timeout: None,
+                })
+                .await;
+            assert!(matches!(err, Err(DsError::GuardRefused(_))), "{url}");
+        }
     }
 
     #[test]
