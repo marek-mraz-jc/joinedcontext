@@ -273,3 +273,212 @@ pub fn eval_classic_conditions(
         notices: Vec::new(),
     }])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pts(vals: &[Option<f64>]) -> Vec<(i64, Option<f64>)> {
+        vals.iter()
+            .enumerate()
+            .map(|(i, v)| (i as i64, *v))
+            .collect()
+    }
+
+    // Reducer cases from Grafana v12.4.14 `classic/reduce_test.go`.
+    #[test]
+    fn reducers_match_grafana() {
+        let p = pts(&[Some(1.0), Some(2.0), Some(3.0), Some(4.0)]);
+        let r = |name: &str, p: &[(i64, Option<f64>)]| classic_reduce(name, p).unwrap();
+        assert_eq!(r("sum", &p), Some(10.0));
+        assert_eq!(r("avg", &p), Some(2.5));
+        assert_eq!(r("mean", &p), Some(2.5));
+        assert_eq!(r("min", &p), Some(1.0));
+        assert_eq!(r("max", &p), Some(4.0));
+        assert_eq!(r("count", &p), Some(4.0));
+        assert_eq!(r("last", &p), Some(4.0));
+        assert_eq!(r("median", &p), Some(2.5));
+        assert_eq!(
+            r("median", &pts(&[Some(1.0), Some(5.0), Some(2.0)])),
+            Some(2.0)
+        );
+        assert_eq!(
+            r("count_non_null", &pts(&[Some(1.0), None, Some(f64::NAN)])),
+            Some(1.0)
+        );
+
+        // Nulls and NaN are skipped; all-null gives no value except for count.
+        let gappy = pts(&[None, Some(3.0), Some(f64::NAN), Some(1.0), None]);
+        assert_eq!(r("avg", &gappy), Some(2.0));
+        assert_eq!(r("last", &gappy), Some(1.0));
+        assert_eq!(r("min", &gappy), Some(1.0));
+        let nulls = pts(&[None, None]);
+        for name in [
+            "avg",
+            "sum",
+            "min",
+            "max",
+            "last",
+            "median",
+            "diff",
+            "count_non_null",
+        ] {
+            assert_eq!(r(name, &nulls), None, "{name}");
+        }
+        assert_eq!(r("count", &nulls), Some(2.0));
+        assert_eq!(r("sum", &[]), None);
+        assert!(classic_reduce("p95", &p).is_err());
+    }
+
+    #[test]
+    fn diff_reducers_compare_newest_with_oldest_non_null() {
+        let p = pts(&[None, Some(30.0), Some(40.0), Some(15.0), None]);
+        let r = |name: &str| classic_reduce(name, &p).unwrap();
+        assert_eq!(r("diff"), Some(-15.0));
+        assert_eq!(r("diff_abs"), Some(15.0));
+        assert_eq!(r("percent_diff"), Some(-50.0));
+        assert_eq!(r("percent_diff_abs"), Some(50.0));
+        // A single point has nothing to compare with: 0, not null (Grafana `calculateDiff`).
+        assert_eq!(
+            classic_reduce("diff", &pts(&[Some(5.0)])).unwrap(),
+            Some(0.0)
+        );
+    }
+
+    fn cond(reducer: &str, ty: &str, params: &[f64], op: &str, input: &str) -> ClassicCondition {
+        ClassicCondition {
+            input_ref_id: input.into(),
+            reducer: reducer.into(),
+            evaluator_type: ty.into(),
+            evaluator_params: params.to_vec(),
+            operator: op.into(),
+        }
+    }
+
+    fn series(vals: &[Option<f64>]) -> ExprValue {
+        ExprValue::Series {
+            name: "A".into(),
+            labels: BTreeMap::new(),
+            points: pts(vals),
+            notices: Vec::new(),
+        }
+    }
+
+    fn fire(conds: &[ClassicCondition], vars: &HashMap<String, Vec<ExprValue>>) -> Option<f64> {
+        let out = eval_classic_conditions("C", conds, vars).unwrap();
+        match &out[0] {
+            ExprValue::Number { name, value, .. } => {
+                assert_eq!(name, "C");
+                *value
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn conditions_combine_with_and_or_and_report_no_data() {
+        let vars = HashMap::from([
+            ("A".to_owned(), vec![series(&[Some(1.0), Some(9.0)])]),
+            ("B".to_owned(), vec![series(&[Some(1.0), Some(2.0)])]),
+            ("N".to_owned(), vec![series(&[None, None])]),
+        ]);
+        assert_eq!(
+            fire(&[cond("last", "gt", &[5.0], "and", "A")], &vars),
+            Some(1.0)
+        );
+        assert_eq!(
+            fire(
+                &[
+                    cond("last", "gt", &[5.0], "and", "A"),
+                    cond("max", "gt", &[5.0], "and", "B")
+                ],
+                &vars
+            ),
+            Some(0.0)
+        );
+        assert_eq!(
+            fire(
+                &[
+                    cond("last", "gt", &[5.0], "and", "B"),
+                    cond("max", "gt", &[5.0], "or", "A")
+                ],
+                &vars
+            ),
+            Some(1.0)
+        );
+        // logic-or stops at the first firing condition, even before an invalid one.
+        assert_eq!(
+            fire(
+                &[
+                    cond("last", "gt", &[5.0], "and", "A"),
+                    cond("last", "bogus", &[], "logic-or", "B")
+                ],
+                &vars
+            ),
+            Some(1.0)
+        );
+        // All values null: no data, unless the evaluator asks for no_value.
+        assert_eq!(fire(&[cond("avg", "gt", &[0.0], "and", "N")], &vars), None);
+        assert_eq!(
+            fire(&[cond("avg", "no_value", &[], "and", "N")], &vars),
+            Some(1.0)
+        );
+        assert_eq!(
+            fire(&[cond("avg", "no_value", &[], "and", "missing")], &vars),
+            Some(1.0)
+        );
+        assert_eq!(
+            fire(&[cond("avg", "gt", &[0.0], "and", "missing")], &vars),
+            None
+        );
+    }
+
+    #[test]
+    fn evaluators_ranges_scalars_and_errors() {
+        let v = |x: f64| HashMap::from([("A".to_owned(), vec![ExprValue::Scalar(Some(x))])]);
+        let one =
+            |ty: &str, params: &[f64], x: f64| fire(&[cond("last", ty, params, "and", "A")], &v(x));
+        assert_eq!(one("within_range", &[1.0, 3.0], 2.0), Some(1.0));
+        // Grafana accepts the bounds in either order.
+        assert_eq!(one("within_range", &[3.0, 1.0], 2.0), Some(1.0));
+        assert_eq!(one("within_range", &[1.0, 3.0], 3.0), Some(0.0));
+        assert_eq!(one("within_range_included", &[1.0, 3.0], 3.0), Some(1.0));
+        assert_eq!(one("outside_range", &[1.0, 3.0], 4.0), Some(1.0));
+        assert_eq!(one("outside_range", &[1.0, 3.0], 3.0), Some(0.0));
+        assert_eq!(one("outside_range_included", &[1.0, 3.0], 3.0), Some(1.0));
+        for (ty, x, want) in [
+            ("lt", 1.0, 1.0),
+            ("eq", 2.0, 1.0),
+            ("ne", 2.0, 0.0),
+            ("gte", 2.0, 1.0),
+            ("lte", 3.0, 0.0),
+        ] {
+            assert_eq!(one(ty, &[2.0], x), Some(want), "{ty}");
+        }
+        let num = HashMap::from([(
+            "A".to_owned(),
+            vec![ExprValue::Number {
+                name: "A".into(),
+                labels: BTreeMap::new(),
+                value: Some(7.0),
+                notices: Vec::new(),
+            }],
+        )]);
+        assert_eq!(
+            fire(&[cond("last", "gt", &[5.0], "and", "A")], &num),
+            Some(1.0)
+        );
+
+        for bad in [
+            cond("last", "gt", &[], "and", "A"),
+            cond("last", "within_range", &[1.0], "and", "A"),
+            cond("last", "between", &[1.0], "and", "A"),
+        ] {
+            assert!(eval_classic_conditions("C", &[bad], &v(2.0)).is_err());
+        }
+        let s = HashMap::from([("A".to_owned(), vec![series(&[Some(1.0)])])]);
+        assert!(
+            eval_classic_conditions("C", &[cond("p99", "gt", &[0.0], "and", "A")], &s).is_err()
+        );
+    }
+}

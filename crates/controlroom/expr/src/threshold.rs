@@ -204,3 +204,129 @@ pub fn eval_threshold_frames(
     }
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn number(host: &str, v: Option<f64>) -> ExprValue {
+        ExprValue::Number {
+            name: "A".into(),
+            labels: BTreeMap::from([("host".into(), host.into())]),
+            value: v,
+            notices: Vec::new(),
+        }
+    }
+
+    fn value_of(v: &ExprValue) -> Option<f64> {
+        match v {
+            ExprValue::Number { value, .. } | ExprValue::Scalar(value) => *value,
+            other => panic!("expected a number, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn every_predicate_and_its_boundaries() {
+        let cases: &[(&str, &[f64], f64, bool)] = &[
+            ("gt", &[5.0], 5.0, false),
+            ("gt", &[5.0], 5.1, true),
+            ("lt", &[5.0], 4.9, true),
+            ("lt", &[5.0], 5.0, false),
+            ("eq", &[5.0], 5.0, true),
+            ("eq", &[5.0], 5.1, false),
+            ("ne", &[5.0], 5.0, false),
+            ("ne", &[5.0], 4.0, true),
+            ("gte", &[5.0], 5.0, true),
+            ("gte", &[5.0], 4.9, false),
+            ("lte", &[5.0], 5.0, true),
+            ("lte", &[5.0], 5.1, false),
+            ("within_range", &[1.0, 3.0], 1.0, false),
+            ("within_range", &[1.0, 3.0], 2.0, true),
+            ("outside_range", &[1.0, 3.0], 3.0, false),
+            ("outside_range", &[1.0, 3.0], 3.5, true),
+            ("within_range_included", &[1.0, 3.0], 1.0, true),
+            ("within_range_included", &[1.0, 3.0], 3.5, false),
+            ("outside_range_included", &[1.0, 3.0], 3.0, true),
+            ("outside_range_included", &[1.0, 3.0], 2.0, false),
+        ];
+        for (name, params, value, want) in cases {
+            let ty = ThresholdType::parse(name).unwrap();
+            assert_eq!(
+                ty.eval(*value, params).unwrap(),
+                *want,
+                "{name} {params:?} {value}"
+            );
+            // Missing parameters are an error, never a silent false.
+            assert!(
+                ty.eval(*value, &params[..params.len() - 1]).is_err(),
+                "{name}"
+            );
+        }
+        assert!(ThresholdType::parse("between").is_err());
+    }
+
+    #[test]
+    fn threshold_maps_series_numbers_scalars_and_keeps_no_data() {
+        let cond = ThresholdCondition {
+            evaluator_type: ThresholdType::Gt,
+            params: vec![10.0],
+            unload_evaluator: None,
+            loaded_fingerprints: BTreeSet::new(),
+        };
+        let series = ExprValue::Series {
+            name: "A".into(),
+            labels: BTreeMap::new(),
+            points: vec![(0, Some(5.0)), (1, None), (2, Some(11.0))],
+            notices: Vec::new(),
+        };
+        let out = eval_threshold_frames(
+            "B",
+            &cond,
+            &[
+                series,
+                number("a", Some(12.0)),
+                ExprValue::Scalar(Some(1.0)),
+                ExprValue::NoData,
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            out[0],
+            ExprValue::Series {
+                name: "B".into(),
+                labels: BTreeMap::new(),
+                points: vec![(0, Some(0.0)), (1, None), (2, Some(1.0))],
+                notices: Vec::new(),
+            }
+        );
+        assert_eq!(value_of(&out[1]), Some(1.0));
+        assert_eq!(value_of(&out[2]), Some(0.0));
+        assert_eq!(out[3], ExprValue::NoData);
+    }
+
+    // Grafana `hysteresis.go`: a loaded dimension is judged by the unloading evaluator,
+    // inverted (`threshold.go:158`), so it stays firing until it drops below the unload level.
+    #[test]
+    fn hysteresis_uses_the_inverted_unload_evaluator_for_loaded_dimensions() {
+        let cond = ThresholdCondition {
+            evaluator_type: ThresholdType::Gt,
+            params: vec![10.0],
+            unload_evaluator: Some((ThresholdType::Lt, vec![5.0])),
+            loaded_fingerprints: BTreeSet::from(["host=loaded".to_owned()]),
+        };
+        let out = eval_threshold_frames(
+            "B",
+            &cond,
+            &[
+                number("loaded", Some(7.0)),
+                number("loaded", Some(4.0)),
+                number("fresh", Some(7.0)),
+                number("fresh", Some(11.0)),
+            ],
+        )
+        .unwrap();
+        let got: Vec<_> = out.iter().map(value_of).collect();
+        assert_eq!(got, vec![Some(1.0), Some(0.0), Some(0.0), Some(1.0)]);
+    }
+}

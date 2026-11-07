@@ -1,38 +1,77 @@
 # controlroom Status
 
+State on branch `controlroom-argon-1` after the compile-and-verify pass (2026-11-07). The first
+version of this file, written with the generated code before it had ever compiled, marked
+R1–R12 as done. Several of those claims did not hold; they are corrected below. Verdicts:
+**done** (implemented and covered by a test that exercises the real code), **partial** (part
+implemented or tested, the gap is named), **not verified** (written but never run, for the
+reason given).
+
+Every package compiles, `cargo test` (44 tests), `clippy --all-targets -D warnings` and
+`fmt --check` are clean. No test runs against Postgres: the host has no Postgres server and
+Docker cannot start containers (overlay mount fails), so everything in `controlroom-store-pg`
+that touches a database is **not verified**.
+
 ## Contract Items (R1–R12)
 
-- **R1 Store format (Grafana classic JSON at schemaVersion 42, unknown fields kept, normalized index, migrations 36..=42 + below-36 warning)**: done (`crates/controlroom/model/src/migration.rs::tests::step_v36_migrates_datasource_strings_and_nulls_to_refs` .. `step_v42_sets_hide_from_tooltip_when_viz_true`, `below_v36_emits_named_warning_and_migrates_to_42`).
-- **R2 Import / export / CI (`import --dry-run`, provisioning YAML, Grafana HTTP compat, `check`, `plan`/`apply` with stale-plan refusal, exit codes 0/1/2/3/4, JSON & Markdown reports, 9-dashboard round-trip fixed point)**: done (`crates/controlroom/import/tests/round_trip.rs::all_9_dashboards_match_inventory_and_import_export_import_is_fixed_point`, `plan_and_apply_refuse_stale_plan_and_provisioning_guards_work`).
-- **R3 Datasources (`Datasource` trait, `FrameSet`, Prometheus, NGSI-LD with caller token exchange, OData 4.01, Postgres single-SELECT view guard & macros, Loki trait slot, `-- Mixed --`, outbound guard with allow-list/DNS-pinning/no-redirects/size-cap, credentials by secretRef only)**: done (`crates/controlroom/query/src/guard.rs::tests`, `crates/controlroom/query/src/postgres.rs::tests`, `crates/controlroom/server/tests/e2e.rs::e2e_import_9_dashboards_odata_service_and_mocked_prometheus_and_ngsild_queries`).
-- **R4 Calculation step (`__expr__` math, reduce, resample, threshold, classic_conditions, `sql` warning; 13 core transformations including `organize`, others warned and passed through)**: done (`crates/controlroom/expr/src/math.rs::tests`, `crates/controlroom/expr/src/reduce.rs::tests`, `crates/controlroom/expr/src/tx.rs::tests`, `crates/controlroom/server/tests/e2e.rs::e2e_mixed_panel_with_math_and_reduce_expressions`).
-- **R5 Third-party datasource plugins as WASM components (`jc:controlroom/datasource@0.1.0` WIT world, §3.3 limits, pinned SHA-256 digest check, sample plugin)**: partial (`wasmtime` is not in the root `Cargo.lock`; WIT file `crates/controlroom/query/wit/datasource.wit`, `WasmPluginHost` adapter trait, §3.3 limits, digest pinning, and `SampleMetricsWasmPlugin` are implemented and tested in `crates/controlroom/query/src/sample_plugin.rs::tests::wasm_host_enforces_pinned_digest_and_limits`; live `wasmtime` engine binding awaits `wasmtime` in root `Cargo.lock`).
-- **R6 Query editor and API for the Portal (`Datasource/EditorSchema`, `Datasource/Query`, `Datasource/Resource`, `Dashboard/RenderPanel`, server-side HTML first table for no-JS)**: done (`crates/controlroom/server/tests/e2e.rs::e2e_import_9_dashboards_odata_service_and_mocked_prometheus_and_ngsild_queries`).
-- **R6b Inside the Portal and the dataroom catalogue (`panel_view(state, subject, org_id, dashboard_uid, panel_id, range) -> PanelView` in-process Rust function + server-side HTML table)**: done (`crates/controlroom/server/tests/e2e.rs::e2e_import_9_dashboards_odata_service_and_mocked_prometheus_and_ngsild_queries`).
-- **R7 Public dashboards (per-dashboard opt-in off by default, 256-bit random access token stored hashed, saved queries only, forged target/variable refusal, range/interval caps, per-version/panel/range-bucket cache, per-IP rate limit, metadata stripping, token rotation -> 404)**: done (`crates/controlroom/server/tests/e2e.rs::e2e_public_dashboard_rules_of_r7`).
-- **R8 Tenancy (UUIDv7 `org_id` + forced RLS on every table, `controlroom_app` without `BYPASSRLS`, boot check refusing unforced tables, secret-file pool config, per-org quotas, 8 isolation tests of §5.3 on Postgres and memory store)**: done (`crates/controlroom/store-pg/tests/isolation_suite.rs::isolation_suite_passes_on_memory_store_and_verifies_boot_rls_refusal`, `isolation_suite_passes_on_postgres_store`).
-- **R9 Authorization (`Authorizer` trait, Viewer/Editor/Admin role mapping per folder, datasource read check, cross-organization 404 never 403)**: done (`crates/controlroom/store-pg/tests/isolation_suite.rs`, `crates/controlroom/server/tests/e2e.rs::e2e_cross_organization_404s_and_cve_regression_suite`).
-- **R10a Every API is OData (`/odata/v4`, CSDL `$metadata`, `$batch`, all 8 entity sets, all 12 bound/unbound actions & functions, RFC 9457 error slugs, OData/MCP/CLI parity, Grafana compat adapters in `COMPAT.md`)**: done (`crates/controlroom/model/src/registry.rs::tests`, `crates/controlroom/server/tests/e2e.rs::e2e_odata_mcp_and_cli_parity_and_jc_router_mount`).
-- **R10 OData and registry (8 entity sets declared once with `odata-table` for `$filter/$orderby/$select/$top/$skip/$count/$metadata/$allowed`, single operation registry with `Allowed` matching execution decision)**: done (`crates/controlroom/model/src/registry.rs::tests`, `crates/controlroom/server/tests/e2e.rs::e2e_odata_mcp_and_cli_parity_and_jc_router_mount`).
-- **R11 One binary (`controlroom_server::router(state, mount)` honouring `jc-router::Mount`, standalone `controlroom` binary, no global subscribers/recorders/allocators/env-reads in library crates)**: done (`crates/controlroom/server/tests/e2e.rs::e2e_odata_mcp_and_cli_parity_and_jc_router_mount`).
-- **R12 Security (`#![forbid(unsafe_code)]`, no unwrap/expect/panic outside tests, RFC 9457 slugs, parameterized SQL, query-language isolation, input caps, constant-time token compare, §4.3 CVE regression tests)**: done (`crates/controlroom/server/tests/e2e.rs::e2e_cross_organization_404s_and_cve_regression_suite`).
+- **R1 Store format (Grafana classic JSON at schemaVersion 42, unknown fields kept, migrations 36..=42 + below-36 warning)**: done (`model/src/migration.rs::tests`, `import/tests/round_trip.rs::all_9_dashboards_match_inventory_and_import_export_import_is_fixed_point`).
+- **R2 Import / export / CI**: partial.
+  - Done in-process: import with `--dry-run`, export, `check`, `plan`/`apply` with stale-plan refusal and the exit codes, JSON and Markdown reports, and the 9-dashboard round trip as a fixed point (`import/tests/round_trip.rs`).
+  - Provisioning YAML is parsed and its paths are confined to the provisioning root (`import/src/provisioning.rs::tests`), but no code loads a provider's dashboards from disk.
+  - The `controlroom` binary runs on an empty in-memory store for each command. `export`, `plan` and `apply` therefore act on nothing, and `serve` has no persistent store and no configuration.
+- **R3 Datasources**: partial.
+  - Drivers are written for Prometheus, NGSI-LD, OData 4.01 and Postgres, with the `-- Mixed --` datasource and the Loki slot.
+  - The outbound guard covers the allow-list, DNS pinning, no redirects, a size cap, no env proxy, and IPv4 embedded in IPv6 (`query/src/guard.rs::tests`).
+  - The Postgres guard is a token-level single-SELECT check run in a READ ONLY transaction with a row cap (`query/src/postgres.rs::tests`).
+  - Gaps:
+    - Nothing builds a driver from a stored datasource record. `ControlroomState::datasources` is filled only by tests, so a running server cannot query any datasource that was created through the API.
+    - There is no real token exchanger: the default `DenyTokenExchanger` refuses, and NGSI-LD calls that need the caller's token fail until the host supplies an exchanger.
+    - The guard refuses private addresses with no operator allowance, so an in-cluster Prometheus or broker cannot be reached.
+    - The Postgres driver has never run against a server.
+- **R4 Calculation step (`__expr__` math, reduce, resample, threshold, classic_conditions, `sql` warning; 13 transformations)**: done (`expr/src/*::tests`, `server/tests/e2e.rs::e2e_mixed_panel_with_math_and_reduce_expressions`).
+- **R5 WASM datasource plugins**: partial. `wasmtime` is not in the root `Cargo.lock`. The WIT file, the host adapter trait, the §3.3 limits and digest pinning are tested against the in-process sample (`query/src/sample_plugin.rs::tests`); no WASM is executed.
+- **R6 Query editor and API for the Portal (`EditorSchema`, `Query`, `Resource`, `RenderPanel`, server-side HTML table)**: partial. The routes are tested end to end with drivers registered by hand (`server/tests/e2e.rs`). In a running server they have no drivers (see R3).
+- **R6b `panel_view` in-process function + HTML table**: partial. It exists in `api/src/render.rs` and is reached through the e2e test, with the same driver gap.
+- **R7 Public dashboards**: done in memory (`server/tests/e2e.rs::e2e_public_dashboard_rules_of_r7`, `security_compat_routes_authorize_every_object`).
+  - Covered: opt-in off by default, a hashed 256-bit token, saved queries only, refusal of forged payloads, range and interval caps, rotation answering 404, and a per-IP rate limit with a bounded address table.
+  - The cache key now includes the interval and maxDataPoints.
+  - The token lookup under forced RLS on Postgres has a new `public_token_lookup` policy that is **not verified**.
+  - Public queries execute as an internal subject named `admin`, which works but is fragile.
+- **R8 Tenancy**: partial.
+  - Done on the memory store: all 8 isolation tests of §5.3 (`store-pg/tests/isolation_suite.rs::isolation_suite_passes_on_memory_store_and_verifies_boot_rls_refusal`). Tests 3, 5, 7 and 8 used to be vacuous; 5 and 8 now drive the real query cache and export.
+  - Not verified on Postgres: the forced RLS migrations, the `controlroom_app` role, the boot check and the secret-file pool config. `isolation_suite_passes_on_postgres_store` passes only because it skips when no database URL is set.
+  - The memory store's boot RLS refusal is simulated, not a catalog check.
+- **R9 Authorization (`Authorizer`, Viewer/Editor/Admin per folder, cross-org 404)**: done (`server/tests/e2e.rs::e2e_cross_organization_404s_and_cve_regression_suite`, `security_*` tests). Before this pass:
+  - The caller's identity came from `x-controlroom-subject` and `x-controlroom-orgs` request headers, and an anonymous request was admin of the default org.
+  - Export, the org and folder compat routes, search and the public-dashboard config had no or partial checks.
+  - Identity now comes only from a host `SubjectResolver` or a hashed API token.
+- **R10a / R10 OData and registry (`/odata/v4`, CSDL `$metadata`, `$batch`, 8 entity sets, 12 operations, OData/MCP/CLI parity)**: done (`model/src/registry.rs::tests`, `server/tests/e2e.rs::e2e_odata_mcp_and_cli_parity_and_jc_router_mount`). `$batch` is now capped at 100 requests.
+- **R11 One binary (`router(state, mount)`, standalone binary, no globals in library crates)**: partial. The router and mount are tested. The binary has no store or configuration wiring and no way to configure API tokens, so `serve` answers every authenticated route with 404.
+- **R12 Security**: partial.
+  - Done: `forbid(unsafe_code)`, no unwrap or panic outside tests, RFC 9457 slugs, constant-time token compare, the §4.3 CVE regression tests, and the security tests added in this pass.
+  - Not true before this pass: "parameterized SQL / query-language isolation". The Postgres view guard was bypassable, and the template-variable cache key ignored the variables.
+  - PromQL variable escaping only covers `"` and `\`. This is not exploitable today, because authenticated callers may send raw PromQL and public variables are restricted to saved values.
 
 ## §7.1 Compatibility Matrix Verdict Groups
 
-- **`uid`, `title`, `description`, `tags`, `editable`, `timezone`, `version`, `time`, `refresh`, `graphTooltip`, `schemaVersion` 39 -> 42 (`supports`)**: done (`crates/controlroom/import/tests/round_trip.rs::all_9_dashboards_match_inventory_and_import_export_import_is_fixed_point`).
-- **`panels[].gridPos` (24-column grid validation) and `panels[].type` `timeseries`, `table`, `stat` (`supports`)**: done (`crates/controlroom/import/tests/round_trip.rs::all_9_dashboards_match_inventory_and_import_export_import_is_fixed_point`).
-- **`panels[].type` `bargauge` (`maps` with `bargauge.displayMode`) and `geomap` with `markers` layer (`maps`, other layers `refuses`)**: done (`crates/controlroom/import/tests/round_trip.rs::all_9_dashboards_match_inventory_and_import_export_import_is_fixed_point`).
-- **`panels[].datasource` and `targets[].datasource` `{type, uid}` resolution within organization (`supports`, missing UID `refuses`)**: done (`crates/controlroom/store-pg/tests/isolation_suite.rs::isolation_suite_passes_on_memory_store_and_verifies_boot_rls_refusal`).
-- **PromQL `expr`, `legendFormat`, `refId` and NGSI-LD target fields (`supports`)**: done (`crates/controlroom/server/tests/e2e.rs::e2e_import_9_dashboards_odata_service_and_mocked_prometheus_and_ngsild_queries`).
-- **`templating.list[]` query variables (`label_values()`) and `fieldConfig` (`unit`, `decimals`, `noValue`, `custom`, `overrides` `byName`) (`supports`)**: done (`crates/controlroom/import/tests/round_trip.rs::all_9_dashboards_match_inventory_and_import_export_import_is_fixed_point`).
-- **`transformations[]` first 13 (`organize`, `merge`, `reduce`, `filterByValue`, `calculateField`, `groupBy`, `sortBy`, `renameByRegex`, `joinByField`, `convertFieldType`, `limit`, `seriesToRows`, `labelsToFields`) (`supports`, others warned & kept for export)**: done (`crates/controlroom/expr/src/tx.rs::tests::all_13_transformations_execute_cleanly`).
-- **Mixed datasource `-- Mixed --` and server-side expressions `__expr__` (`math`, `reduce`, `resample`, `threshold`, `classic_conditions` `supports`; `sql` `maps` with warning)**: done (`crates/controlroom/server/tests/e2e.rs::e2e_mixed_panel_with_math_and_reduce_expressions`).
-- **Unsupported panel types and unconfigured third-party datasource types (`refuses` with JSON pointer, kept for export)**: done (`crates/controlroom/model/src/validation.rs`).
-- **Dashboard `v2beta1` (`elements`, `layout`) conversion to classic v1 at schemaVersion 42 (`maps`)**: done (`crates/controlroom/model/src/migration.rs::tests::v2beta1_converts_to_v1_at_42`).
-- **Provisioning YAML (`dashboardproviders.yaml`, `datasources.yaml` `maps`; `secureJsonData` `refuses` requiring `secretRef`)**: done (`crates/controlroom/import/tests/round_trip.rs::plan_and_apply_refuse_stale_plan_and_provisioning_guards_work`).
+- **Dashboard top-level fields, schemaVersion 39 → 42**: done (`import/tests/round_trip.rs`).
+- **`gridPos` validation, `timeseries`/`table`/`stat`**: done (`import/tests/round_trip.rs`).
+- **`bargauge`, `geomap` markers layer**: done (`import/tests/round_trip.rs`).
+- **Datasource `{type, uid}` resolution within the org, missing uid refused**: done (`store-pg/tests/isolation_suite.rs`, memory store).
+- **PromQL and NGSI-LD target fields**: done with hand-registered drivers (`server/tests/e2e.rs`). An explicit NGSI-LD `attributes` list is now a projection; before this pass, every attribute was returned.
+- **Query variables and `fieldConfig`**: done (`import/tests/round_trip.rs`). Data links in `fieldConfig` defaults and overrides are now checked for dangerous schemes, and `data:image/svg+xml` is refused (`model/src/validation.rs::tests`).
+- **The 13 transformations**: done (`expr/src/tx.rs::tests::all_13_transformations_execute_cleanly`).
+- **`-- Mixed --` and `__expr__`**: done (`server/tests/e2e.rs::e2e_mixed_panel_with_math_and_reduce_expressions`).
+- **Unsupported panel and datasource types refused with a pointer**: done (`model/src/validation.rs`).
+- **`v2beta1` → v1 at 42**: done (`model/src/migration.rs::tests::v2beta1_converts_to_v1_at_42`).
+- **Provisioning YAML (`secureJsonData` refused, `secretRef` required)**: partial. Parsing and the guards are done (`import/tests/round_trip.rs::plan_and_apply_refuse_stale_plan_and_provisioning_guards_work`); loading providers is not.
+
+## Coverage (cargo +nightly llvm-cov, lines)
+
+COVERAGE_TABLE
 
 ## Out of Scope for This Run (Per Contract)
 
-- **Alerting engine (§2.4; platform alerts stay in Prometheus)**: partial (schema tables `cr_alert_rule` and `cr_alert_state` with forced RLS are present; rule scheduler not in this run per contract).
-- **Remaining 31 browser transformations beyond the first 13 of R4**: partial (imported with a named warning and preserved losslessly on export per R4).
-- **Portal React UI components (`<DashboardView>`, `<PanelView>`, query editor form) beyond the API they call**: partial (`RenderPanel`, `EditorSchema`, `Resource`, `panel_view`, and server-rendered HTML table APIs are complete and tested; TypeScript React components live in the Portal repo).
+- **Alerting engine (§2.4)**: not started. The tables `cr_alert_rule` and `cr_alert_state` exist in the migration (not verified on Postgres).
+- **Remaining 31 browser transformations**: imported with a named warning and kept on export.
+- **Portal React components**: not in this repository.
