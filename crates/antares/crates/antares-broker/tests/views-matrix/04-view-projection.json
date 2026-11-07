@@ -1,0 +1,56 @@
+{
+ "about": "A Vehicle rule showing speed and location only.",
+ "view": {
+  "selector": [
+   "Vehicle"
+  ],
+  "rules": [
+   {
+    "types": [
+     "Vehicle"
+    ],
+    "attributes": [
+     "location",
+     "speed"
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "urn:ngsi-ld:Vehicle:V1": [
+   "location",
+   "speed"
+  ],
+  "urn:ngsi-ld:Vehicle:V2": [
+   "location",
+   "speed"
+  ],
+  "urn:ngsi-ld:Vehicle:V3": [
+   "location",
+   "speed"
+  ],
+  "urn:ngsi-ld:Vehicle:V4": [
+   "location",
+   "speed"
+  ],
+  "urn:ngsi-ld:Vehicle:V5": [
+   "location",
+   "speed"
+  ],
+  "urn:ngsi-ld:Vehicle:V6": [
+   "location",
+   "speed"
+  ],
+  "urn:ngsi-ld:Vehicle:V7": [
+   "location",
+   "speed"
+  ],
+  "urn:ngsi-ld:Vehicle:V8": [
+   "location",
+   "speed"
+  ]
+ },
+ "caller": {
+  "x-jc-roles": "public"
+ }
+}

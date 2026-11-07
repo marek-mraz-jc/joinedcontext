@@ -1,0 +1,72 @@
+[package]
+name = "antares-ops"
+description = "The operation layer every surface serves through: Ops over AppState::call, the closed set of operations, one error mapping."
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+
+# ADR-0027 section 1, surfaces-threat-model 9.1: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "ops"
+
+[features]
+# A broker over the built-in store, for the surfaces' integration tests.
+test-kit = ["antares-api/test-kit", "antares-jsonld/fetch"]
+
+[dependencies]
+antares-api = { workspace = true, features = ["views"] }
+antares-jsonld = { workspace = true }
+antares-model = { workspace = true }
+antares-ql = { workspace = true }
+antares-residual = { workspace = true }
+axum = { version = "0.8", default-features = false, features = ["json"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+metrics = { version = "0.24", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "time"] }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+antares-ops = { path = ".", features = ["test-kit"] }
+http-body-util = { version = "0.1", default-features = false }
+# the Postgres arm of the quality sweep tests (T-4018), skipped without ANTARES_TEST_DATABASE_URL
+antares-sql = { workspace = true, features = ["postgres"] }
+proptest = { workspace = true }
+# the broker's allocator, so `benches/view_query.rs` times what ships
+tikv-jemallocator = { workspace = true }
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+tracing-subscriber = { workspace = true }
+
+# surfaces-threat-model 10.1: the full table, not the workspace's.
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+
+[[bench]]
+name = "views"
+harness = false
+
+[[bench]]
+name = "view_query"
+harness = false

@@ -1,0 +1,46 @@
+[package]
+name = "odata-axum"
+description = "OData 4.01 over axum: the service document and $metadata router, the request extractor and the error responder (ADR-0024 decision 1)."
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+
+# ADR-0024 decision 1 / surfaces-threat-model 9.1: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "protocol"
+
+[dependencies]
+# axum without its defaults, as crates/antares-api does: the router, not the listener.
+axum = { version = "0.8", default-features = false }
+odata-csdl = { path = "../odata-csdl" }
+odata-json = { path = "../odata-json" }
+odata-url = { path = "../odata-url", features = ["edm"] }
+
+[dev-dependencies]
+http-body-util = { version = "0.1", default-features = false }
+tokio = { version = "1", default-features = false, features = ["macros", "rt"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+
+# surfaces-threat-model 10.1: the full table, not the workspace's.
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"

@@ -1,0 +1,37 @@
+{
+  "id": "parity-restricted",
+  "tenant": "conformance",
+  "selector": [
+    "AirQualityObserved"
+  ],
+  "scopeQ": "/SK/BB",
+  "rules": [
+    {
+      "types": [
+        "AirQualityObserved"
+      ],
+      "attributes": [
+        "temperature",
+        "location",
+        "nearest"
+      ]
+    }
+  ],
+  "operations": [
+    "retrieve_entity",
+    "query_entities",
+    "query_entities_post",
+    "retrieve_attribute_value",
+    "retrieve_entity_types",
+    "retrieve_entity_type_details",
+    "retrieve_entity_type_info",
+    "retrieve_attributes",
+    "retrieve_attribute_details",
+    "retrieve_attribute_info",
+    "temporal_retrieve",
+    "temporal_query",
+    "temporal_query_post",
+    "retrieve_subscription",
+    "query_subscriptions"
+  ]
+}

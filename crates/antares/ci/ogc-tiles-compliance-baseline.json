@@ -1,0 +1,25 @@
+{
+ "counts": {
+  "FAIL": 0,
+  "PASS": 15,
+  "SKIP": 1
+ },
+ "results": {
+  "Conditional Core :: Conformance.validateConformanceOperationAndResponse": "PASS",
+  "Conditional Core :: Tile.validateSuccessfulTilesExecutionFollowingLinks": "PASS",
+  "Conditional Core :: Tile.validateTileColDefinitionIsAvailable": "PASS",
+  "Conditional Core :: Tile.validateTileMatrixDefinitionIsAvailable": "PASS",
+  "Conditional Core :: Tile.validateTileRowDefinitionIsAvailable": "PASS",
+  "Conditional Core :: Tile.validateTilesAreAvailable": "PASS",
+  "Conditional Core :: Tile.validateTilesErrorConditions": "PASS",
+  "Core :: MandatoryCore.validateSuccessfulTilesExecution": "PASS",
+  "Core :: MandatoryCore.verifyErrorResponses": "PASS",
+  "Core :: MandatoryCore.verifyMinimalConformance": "PASS",
+  "Dataset Tilesets :: LandingPage.landingPageRetrieval": "SKIP",
+  "GeoData Tilesets :: GeospatialDataResource.geospatialResourceTilesetsLinksCheck": "PASS",
+  "GeoData Tilesets :: GeospatialDataResource.geospatialResourceTilesetsRetrieval": "PASS",
+  "OpenAPI Specification 3.0 :: ApiDefinition.apiDefinitionOperationIdValidation": "PASS",
+  "OpenAPI Specification 3.0 :: ApiDefinition.apiDefinitionValidation": "PASS",
+  "Tilesets List :: TilesetLlinks.validateTilesetsListResponse": "PASS"
+ }
+}

@@ -1,0 +1,40 @@
+# Dependency updates arrive as pull requests into the default branch, dev,
+# where ci.yml proves them like any other change (CONTRIBUTING.md). They
+# reach master with the next promotion and never on their own.
+#
+# Minor and patch bumps come as ONE pull request per ecosystem per week:
+# every pull request into dev costs a full ci run, and forty single-crate
+# bumps would queue forty of them. A major bump comes alone, because it is
+# the one that needs reading. Security updates ignore the schedule and
+# open the day the advisory lands.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    commit-message: { prefix: deps }
+    groups:
+      cargo:
+        update-types: [minor, patch]
+
+  # Actions are pinned by tag (ADR-0018); this is what moves the tags.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    commit-message: { prefix: deps }
+    groups:
+      actions:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    commit-message: { prefix: deps }
+
+  - package-ecosystem: npm
+    directory: /www
+    schedule: { interval: weekly, day: monday }
+    commit-message: { prefix: deps }
+    groups:
+      playground:
+        update-types: [minor, patch]

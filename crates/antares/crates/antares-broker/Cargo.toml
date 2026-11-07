@@ -1,0 +1,198 @@
+[package]
+name = "antares-broker"
+description = "The Antares NGSI-LD context broker binary."
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+
+# ADR-0027 / surfaces-threat-model 9.1: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "core"
+
+[[bin]]
+name = "antares"
+path = "src/main.rs"
+
+[dependencies]
+# The workspace dep is default-features=false so the wasm crate can shed
+# the Pg arm; the native binary turns everything back on here.
+antares-api = { workspace = true }
+axum = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+antares-bus = { workspace = true }
+# the outbound-client crate: its crypto provider is installed from main
+antares-jsonld = { workspace = true, features = ["fetch"] }
+antares-model = { workspace = true }
+antares-store = { workspace = true }
+antares-sql = { workspace = true, features = ["postgres"] }
+futures-util = { workspace = true }
+tokio = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
+# Prometheus render at /q/metrics + env-gated OTLP span export. Only the
+# composition root knows the exporters exist — core crates speak the
+# `metrics` facade at most (a no-op without an installed recorder). The
+# whole stack is a runtime switch: ANTARES_TELEMETRY=1 installs it, the
+# default allocates none of it.
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+opentelemetry-appender-tracing = { workspace = true }
+console-subscriber = { workspace = true, optional = true }
+antares-plugin-example = { workspace = true, optional = true }
+joinedcontext-policy = { workspace = true, optional = true }
+antares-ops = { workspace = true, optional = true }
+antares-views = { workspace = true, optional = true }
+antares-mcp = { workspace = true, optional = true }
+antares-linkml = { workspace = true, optional = true }
+antares-odata = { workspace = true, optional = true }
+antares-ogc = { workspace = true, optional = true }
+antares-sta = { workspace = true, optional = true }
+antares-ical = { workspace = true, optional = true }
+antares-ws = { workspace = true, optional = true }
+antares-icsr = { workspace = true, optional = true }
+antares-geojson = { workspace = true, optional = true }
+antares-feed = { workspace = true, optional = true }
+antares-gbfs = { workspace = true, optional = true }
+antares-gtfsrt = { workspace = true, optional = true }
+antares-jsonstat = { workspace = true, optional = true }
+
+[features]
+# tokio-console in dev — build with RUSTFLAGS="--cfg tokio_unstable"
+# and run `tokio-console` against the default port. Never on in release
+# images. The layer only arms under cfg(tokio_unstable), so an
+# --all-features build without the RUSTFLAGS stays a no-op instead of
+# panicking at startup.
+console = ["dep:console-subscriber"]
+default = ["mqtt"]
+# MQTT notification delivery (rumqttc + rustls); off drops the client and
+# its TLS stack from the binary, MQTT endpoints then fail at subscription
+# creation.
+mqtt = ["antares-api/mqtt"]
+# The reference plugin: the storage, routing and notification seams from a
+# crate outside `crates/`. Off in every shipped build — it adds a backend
+# (`ANTARES_STORE=example`), a surface (`ANTARES_API_SURFACES=…,example`)
+# and a non-network notification binding, none of which belong in a release
+# image. It exists so the seams are proven from outside, not documented.
+plugin-example = ["dep:antares-plugin-example"]
+# The joinedcontext platform's policy engine (ADR-0020 addon, T-3637):
+# `ANTARES_POLICY=joinedcontext`, the Tenant's Policy rules loaded through
+# `/q/policy/{tenant}`. Only the platform image builds it (T-3636); vanilla
+# Antares ships `allow-all`.
+jc-policy = ["dep:joinedcontext-policy", "jc"]
+# The platform's NGSI-LD extensions without its engine (antares-api `jc`,
+# T-4854): provenance headers into history and temporal `versions=all`.
+# jc-policy turns it on; vanilla Antares carries neither.
+jc = ["antares-api/jc"]
+# Endpoint views (ADR-0023): the view table, `/q/views` on the admin surface
+# and its reload, and the view root `/x/views/{view}/ngsi-ld/v1`
+# (`ANTARES_API_SURFACES=admin,views`). Off by default: a vanilla broker
+# links no ops or surface crate (rule M3), and the other surfaces that
+# serve through views each bring their own feature on top of this one.
+views = ["dep:antares-ops", "dep:antares-views"]
+# The MCP surface of a view (ADR-0027, T-3442): `/x/views/{view}/mcp`, the
+# view's read operations as tools and resources
+# (`ANTARES_API_SURFACES=admin,views,mcp`).
+mcp = ["views", "dep:antares-mcp"]
+# The LinkML surface of a view (ADR-0027, T-3511): `/x/views/{view}/linkml`,
+# the view's schema narrowed to what the caller may see
+# (`ANTARES_API_SURFACES=admin,views,linkml`).
+linkml = ["views", "dep:antares-linkml"]
+
+# The OData surface of a view (ADR-0024, T-3508): `/x/views/{view}/odata/v4`,
+# its $metadata from the Tenant's LinkML schema (`/q/schemas/{tenant}`)
+# intersected with the view (`ANTARES_API_SURFACES=admin,views,odata`).
+odata = ["views", "dep:antares-odata"]
+# The OGC API - Features surface of a view (ADR-0029, T-3744):
+# `/x/views/{view}/ogc/features`, collections from the Tenant's LinkML schema
+# intersected with the view (`ANTARES_API_SURFACES=admin,views,ogc`).
+ogc = ["views", "dep:antares-ogc"]
+# OGC API - Features items as Apache Parquet and GeoParquet 1.1 (T-4465,
+# EP-119): `f=parquet` or `Accept: application/vnd.apache.parquet`, through
+# the optional antares-export crate; a build without it writes no file. Not
+# in `full`: Parquet with zstd crossed the ADR-0027 size budget when it was
+# vanilla + 10 MiB (now 15 MiB, T-5246); the platform image names it beside `full`.
+parquet = ["ogc", "antares-ogc/parquet"]
+# OGC API - Features items as CSV, and /collections as a ZIP bundle of a CSV
+# per collection (T-4477; no Excel, owner 2026-10-18): `f=csv|zip`. Beside `full`
+# for the same budget reason as `parquet`.
+tabular = ["ogc", "antares-ogc/tabular"]
+# `/x/views/{view}/sta/v1.1`, OGC SensorThings API v1.1 Sensing read only, from
+# the view's Query, Retrieve and temporal answers (T-4462,
+# `ANTARES_API_SURFACES=admin,views,sta`).
+sta = ["views", "dep:antares-sta"]
+# `/x/views/{view}/ical/v1/events.ics`, the view's SDM Events as an iCalendar
+# (RFC 5545) feed, read only (T-4487, `ANTARES_API_SURFACES=admin,views,ical`).
+ical = ["views", "dep:antares-ical"]
+
+# Inbound bridge Channels (ADR-0031, T-5079): `/x/channels` binds one topic of
+# a configured bridge (`ANTARES_CHANNEL_BROKERS`, loopback or MQTT 5) to one
+# Attribute (`ANTARES_API_SURFACES=admin,channels`).
+channels = ["antares-api/channels"]
+
+# The WebSocket notification channel (ADR-0026, T-3517): `/x/ws/ngsi-ld/v1`
+# (`ANTARES_API_SURFACES=...,ws`), and with `views` also
+# `/x/views/{view}/ws` (`ws-views`); its sink serves `urn:antares:ws:`.
+ws = ["dep:antares-ops", "dep:antares-ws"]
+
+# Internal context sources (ADR-0025, T-3520): a registration whose endpoint
+# is one of ANTARES_SELF_URLS is served in process under the target Tenant's
+# export grant (`/q/grants`) and engine.
+internal-csr = ["views", "dep:antares-icsr"]
+
+# `/x/views/{view}/geojson/v1/{type}`, GeoJSON of a view, read only, generated by
+# dev/new-surface.py (`ANTARES_API_SURFACES=admin,views,geojson`).
+geojson = ["views", "dep:antares-geojson"]
+
+# `/x/views/{view}/feed/v1/{name}/…`, Feeds of a view, read only, generated by
+# dev/new-surface.py (`ANTARES_API_SURFACES=admin,views,feed`).
+feed = ["views", "dep:antares-feed"]
+
+# `/x/views/{view}/gbfs/v1/{type}`, GBFS of a view, read only, generated by
+# dev/new-surface.py (`ANTARES_API_SURFACES=admin,views,gbfs`).
+gbfs = ["views", "dep:antares-gbfs"]
+
+# `/x/views/{view}/gtfsrt/v1/{type}`, GTFS Realtime of a view, read only, generated by
+# dev/new-surface.py (`ANTARES_API_SURFACES=admin,views,gtfsrt`).
+gtfsrt = ["views", "dep:antares-gtfsrt"]
+
+# `/x/views/{view}/jsonstat/v1/{type}`, JSON-stat of a view, read only, generated by
+# dev/new-surface.py (`ANTARES_API_SURFACES=admin,views,jsonstat`).
+jsonstat = ["views", "dep:antares-jsonstat"]
+
+# Every surface the broker serves (ADR-0027 Consequences, T-3636): what
+# `ANTARES_API_SURFACES` can name in one binary. The vanilla image never
+# sets it; the platform image builds `full,jc-policy,linkml,parquet,tabular,ical,feed`
+# (image-jc.yml): those three sit beside `full`, kept out under the 10 MiB ADR-0027 size budget (15 MiB since T-5246).
+full = ["views", "mcp", "odata", "ogc", "sta", "ws"]
+
+# Decay-purging allocator + heap stats (glibc malloc holds far more RSS).
+# Unix-only: the wasm target keeps the default allocator.
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = { workspace = true }
+tikv-jemalloc-ctl = { workspace = true }
+
+[dev-dependencies]
+# the storage seams are object-safe AND asynchronous: a test double
+# implements them through the same boxing macro the drivers use.
+async-trait = { workspace = true }
+# the wiring tests build a state over the built-in store
+antares-api = { workspace = true, features = ["test-kit"] }
+# mqtt e2e: sync rumqttc client against a live mosquitto
+rumqttc = { workspace = true }
+serde_json = { workspace = true }
+# the views differential (T-3777): generated views and policies
+proptest = { workspace = true }
+# the filter parity table reads the OGC Parquet file back (T-4465)
+parquet = { version = "60", default-features = false, features = ["zstd"] }
+
+[lints]
+workspace = true

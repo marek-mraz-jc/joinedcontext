@@ -1,0 +1,48 @@
+{
+  "cpus": {
+    "AMD EPYC-Genoa Processor": {
+      "rows": {
+        "jsonld_compact_page_100": {
+          "p50_ns": 210305.0,
+          "p99_ns": 267401.0,
+          "ratio": 130.3813
+        },
+        "ql_check_type_selection": {
+          "p50_ns": 81.0,
+          "p99_ns": 144.0,
+          "ratio": 0.0502
+        },
+        "ql_geo_from_params": {
+          "p50_ns": 491.0,
+          "p99_ns": 616.0,
+          "ratio": 0.3046
+        },
+        "ql_parse_q": {
+          "p50_ns": 1206.0,
+          "p99_ns": 1592.0,
+          "ratio": 0.7431
+        },
+        "sql_compile_geo_near": {
+          "p50_ns": 1658.0,
+          "p99_ns": 2273.0,
+          "ratio": 1.0266
+        },
+        "sql_compile_geo_within": {
+          "p50_ns": 2640.0,
+          "p99_ns": 3470.0,
+          "ratio": 1.6098
+        },
+        "sql_compile_q": {
+          "p50_ns": 6161.0,
+          "p99_ns": 7307.0,
+          "ratio": 3.8078
+        },
+        "sql_compile_scope_q": {
+          "p50_ns": 680.0,
+          "p99_ns": 787.0,
+          "ratio": 0.4182
+        }
+      }
+    }
+  }
+}

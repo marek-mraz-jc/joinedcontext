@@ -1,0 +1,93 @@
+name: perf-janitor
+
+# The delete job in perf-weekly cannot be trusted alone: `if: always()`
+# does not survive GitHub's force-termination window, and a create job
+# that provisions before failing to emit its output leaks a paid server.
+# Every perf server carries role=perf-runner + an expiry epoch label; this
+# sweep deletes any that outlived its TTL and goes red so the scheduled-
+# failure issue flags it — a leak found here means the primary teardown
+# failed and deserves eyes.
+
+on:
+  # Schedule off while the Hetzner token is out of service, like
+  # perf-weekly and scale-weekly; restore by uncommenting.
+  # schedule:
+  #   - cron: "43 */6 * * *"
+  workflow_dispatch:
+
+# The sweep reads the checkout and talks to Hetzner with its own token;
+# the alarm job that files an issue declares its own wider set.
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete expired perf-runner servers
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          # perf-weekly and scale-weekly provision with this same secret: no
+          # token means they cannot have created anything to sweep. A token
+          # that IS set but refused still goes red below.
+          if [ -z "$HCLOUD_TOKEN" ]; then
+            echo "::notice::HCLOUD_TOKEN is not set — no perf servers can exist, nothing to sweep"
+            exit 0
+          fi
+          NOW=$(date +%s)
+          # A sweep that cannot list is not a clean sweep. Without this the
+          # listing failing (expired token, API outage) leaves the loops with
+          # no input, no leaked.txt and a green job — while the servers the
+          # janitor exists to catch keep billing.
+          servers=$(curl -sS --fail-with-body -H "Authorization: Bearer $HCLOUD_TOKEN" \
+            "https://api.hetzner.cloud/v1/servers?label_selector=role=perf-runner") \
+            || { echo "server listing refused: $servers"; exit 1; }
+          volumes=$(curl -sS --fail-with-body -H "Authorization: Bearer $HCLOUD_TOKEN" \
+            "https://api.hetzner.cloud/v1/volumes?label_selector=role=perf-runner") \
+            || { echo "volume listing refused: $volumes"; exit 1; }
+          echo "$servers" \
+            | jq -r '.servers[] | "\(.id) \(.labels.expiry // 0) \(.name)"' \
+            | while read -r id expiry name; do
+                case $expiry in ''|*[!0-9]*) echo "server $name ($id) has an unusable expiry label '$expiry' — treating as expired"; expiry=0 ;; esac
+                if [ "$expiry" -lt "$NOW" ]; then
+                  echo "leaked server $name ($id, expired $expiry) — deleting"
+                  curl -sf -X DELETE -H "Authorization: Bearer $HCLOUD_TOKEN" \
+                    "https://api.hetzner.cloud/v1/servers/$id"
+                  echo "$id" >> leaked.txt
+                fi
+              done
+          # volumes carry the same labels (scale-weekly); a volume outlives
+          # its server when the delete job never ran
+          echo "$volumes" \
+            | jq -r '.volumes[] | "\(.id) \(.labels.expiry // 0) \(.name)"' \
+            | while read -r id expiry name; do
+                case $expiry in ''|*[!0-9]*) echo "volume $name ($id) has an unusable expiry label '$expiry' — treating as expired"; expiry=0 ;; esac
+                if [ "$expiry" -lt "$NOW" ]; then
+                  echo "leaked volume $name ($id, expired $expiry) — deleting"
+                  curl -sf -X DELETE -H "Authorization: Bearer $HCLOUD_TOKEN" \
+                    "https://api.hetzner.cloud/v1/volumes/$id"
+                  echo "volume $id" >> leaked.txt
+                fi
+              done
+          if [ -s leaked.txt ]; then
+            echo "leaked servers were swept — the primary teardown failed"
+            exit 1
+          fi
+
+  alarm:
+    if: failure() && github.event_name == 'schedule'
+    needs: sweep
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/failure-issue
+        with:
+          title: perf-runner server leaked past its TTL
+          body: >-
+            The perf janitor found and deleted a Hetzner server that
+            outlived its TTL — the perf-weekly delete job failed to tear it
+            down. Check the last perf-weekly run.

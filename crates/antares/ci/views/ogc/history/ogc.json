@@ -1,0 +1,9 @@
+[
+  {"id": "urn:ngsi-ld:AirQualityObserved:bb-1", "type": "AirQualityObserved",
+   "NO2": [{"type": "Property", "value": 18, "observedAt": "2026-04-30T08:00:00Z"},
+           {"type": "Property", "value": 20, "observedAt": "2026-04-30T20:00:00Z"}],
+   "temperature": [{"type": "Property", "value": 8.5, "observedAt": "2026-04-30T08:00:00Z"}]},
+  {"id": "urn:ngsi-ld:AirQualityObserved:ba-1", "type": "AirQualityObserved",
+   "NO2": [{"type": "Property", "value": 35, "observedAt": "2026-04-30T10:00:00Z"}],
+   "location": [{"type": "GeoProperty", "value": {"type": "Point", "coordinates": [17.10, 48.14]}, "observedAt": "2026-04-30T10:00:00Z"}]}
+]

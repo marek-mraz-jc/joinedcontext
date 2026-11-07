@@ -1,0 +1,126 @@
+[
+ {
+  "id": "urn:ngsi-ld:AirQualityObserved:thing-1",
+  "type": "AirQualityObserved",
+  "name": {
+   "type": "Property",
+   "value": "thing 1"
+  },
+  "description": {
+   "type": "Property",
+   "value": "thing 1"
+  },
+  "reference": {
+   "type": "Property",
+   "value": "first"
+  },
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "type": "Point",
+    "coordinates": [
+     -100.05,
+     50.05
+    ]
+   },
+   "observedAt": "2015-10-14T21:31:00.104Z"
+  },
+  "refDevice": {
+   "type": "Relationship",
+   "object": "urn:ngsi-ld:Device:sensor-1"
+  },
+  "luminousFlux": {
+   "type": "Property",
+   "value": 3,
+   "unitCode": "LUM",
+   "observedAt": "2015-03-03T00:00:00Z"
+  },
+  "temperature": {
+   "type": "Property",
+   "value": 6,
+   "unitCode": "CEL",
+   "observedAt": "2015-03-06T00:00:00Z"
+  }
+ },
+ {
+  "id": "urn:ngsi-ld:AirQualityObserved:thing-2",
+  "type": "AirQualityObserved",
+  "name": {
+   "type": "Property",
+   "value": "thing 2"
+  },
+  "description": {
+   "type": "Property",
+   "value": "thing 2"
+  },
+  "reference": {
+   "type": "Property",
+   "value": "second"
+  },
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "type": "Point",
+    "coordinates": [
+     -117.05,
+     51.05
+    ]
+   },
+   "observedAt": "2015-10-14T21:32:00.104Z"
+  },
+  "refDevice": {
+   "type": "Relationship",
+   "object": "urn:ngsi-ld:Device:sensor-2"
+  },
+  "secondLuminousFlux": {
+   "type": "Property",
+   "value": 9,
+   "unitCode": "LUM",
+   "observedAt": "2015-03-09T00:00:00Z"
+  },
+  "temperature": {
+   "type": "Property",
+   "value": 12,
+   "unitCode": "CEL",
+   "observedAt": "2015-03-12T00:00:00Z"
+  }
+ },
+ {
+  "id": "urn:ngsi-ld:Device:sensor-1",
+  "type": "Device",
+  "name": {
+   "type": "Property",
+   "value": "sensor 1"
+  },
+  "description": {
+   "type": "Property",
+   "value": "sensor 1"
+  },
+  "controlledProperty": {
+   "type": "Property",
+   "value": [
+    "luminousFlux",
+    "temperature"
+   ]
+  }
+ },
+ {
+  "id": "urn:ngsi-ld:Device:sensor-2",
+  "type": "Device",
+  "name": {
+   "type": "Property",
+   "value": "sensor 2"
+  },
+  "description": {
+   "type": "Property",
+   "value": "sensor 2"
+  },
+  "controlledProperty": {
+   "type": "Property",
+   "value": [
+    "secondLuminousFlux",
+    "temperature"
+   ]
+  }
+ }
+]

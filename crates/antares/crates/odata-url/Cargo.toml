@@ -1,0 +1,48 @@
+[package]
+name = "odata-url"
+description = "OData 4.01 resource path and system query options to a typed AST (hand-written recursive descent, bounded)."
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+
+# ADR-0024 decision 1 / surfaces-threat-model 9.1: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "protocol"
+
+[features]
+# Resolves names against an `odata_csdl::Model` (ADR-0024 decision 1, row `odata-url`).
+edm = ["dep:odata-csdl"]
+
+[dependencies]
+odata-csdl = { path = "../odata-csdl", optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+
+[[bench]]
+name = "parse"
+harness = false
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"

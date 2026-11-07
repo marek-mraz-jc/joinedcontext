@@ -1,0 +1,83 @@
+name: soak
+
+# One broker held for hours at a fixed low rate (T-3551, dev/soak.py): every
+# answer as defined, every read-back as written, every notification
+# received, RssAnon steady after warm-up, no ERROR or panic in the log. Per
+# store, on a hosted runner. full.yml calls it on v* tags and dispatch; it
+# also runs by itself when the soak changes.
+
+on:
+  workflow_call:
+    inputs:
+      minutes:
+        type: number
+        default: 120
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: soak length per store, minutes
+        default: "120"
+  push:
+    # dev only: a worker branch's push queued hours of runners ahead of ci.yml (2026-10-10)
+    branches: [dev]
+    paths:
+      - dev/soak.py
+      - .github/workflows/soak.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: soak-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  soak:
+    name: soak (${{ matrix.store }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      matrix:
+        store: [memory, file, postgres]
+    services:
+      postgis:
+        image: ghcr.io/baosystems/postgis:17-3.5
+        env:
+          POSTGRES_USER: antares
+          POSTGRES_PASSWORD: antares
+          POSTGRES_DB: antares
+        ports: ["15432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U antares"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: python3 dev/soak.py --selftest
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo build --locked --release -p antares-broker
+      - name: Soak
+        env:
+          MINUTES: ${{ inputs.minutes || 120 }}
+        run: |
+          set -euo pipefail
+          mkdir -p soak data
+          [ "${{ matrix.store }}" = postgres ] \
+            && export ANTARES_DATABASE_URL=postgresql://antares:antares@localhost:15432/antares
+          ANTARES_STORE=${{ matrix.store }} ANTARES_DATA_DIR=$PWD/data ANTARES_HTTP_PORT=9090 \
+            ANTARES_ALLOW_SHARED_LOCAL=1 ANTARES_EGRESS_ALLOW_PRIVATE=true \
+            target/release/antares > soak/broker.log 2>&1 &
+          pid=$!
+          for _ in $(seq 300); do curl -sf -o /dev/null http://127.0.0.1:9090/q/health && break; sleep 0.1; done
+          echo "## soak — ${{ matrix.store }} store" >> "$GITHUB_STEP_SUMMARY"
+          python3 dev/soak.py --url http://127.0.0.1:9090 --minutes "$MINUTES" \
+            --pid "$pid" --log soak/broker.log --series soak/rss.csv
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: soak-${{ matrix.store }}
+          path: soak
+          retention-days: 30

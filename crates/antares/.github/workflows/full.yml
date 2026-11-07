@@ -1,0 +1,491 @@
+name: full
+
+# The EVERYTHING pipeline — twice a week on schedule, on every v* tag, when
+# a PR into main opens or leaves draft (the promotion of dev, which cannot merge without
+# the whole grid green; ci.yml's quick preset gates dev itself), and on
+# manual dispatch: workspace tests, the
+# browser/wasm artifact proven in both runtimes, the wasm Node tier, and
+# the reusable cell matrix at the FULL preset (all seven cells — memory/file/postgres/timescale, both
+# rolling -nats fleets, wasm-file — each serial-all-suites against one
+# stack; the former etsi-serial job duplicated this and was removed).
+#
+# etsi-full.yml was folded in HERE: it duplicated this exact
+# workspace→matrix graph on a 3-day cron. The schedule (now 2×/week) and
+# pages.yml listens to
+# THIS workflow, so the README badges + /reports/ page always render a full
+# 7-cell run (per-commit quick bundles are named ETSI-quick-results and
+# never folded).
+#
+# Publishing: a green v* tag mints the release image (:<version> +
+# :latest); schedule/dispatch runs publish only the ETSI-proven wasm dev
+# image (the native :dev ships per-commit from ci.yml).
+# Moved out: the roll-under-suite drill lives in roll-weekly.yml
+# (weekly + dispatch), the k8s manifest smoke in k8s-smoke.yml (dispatch).
+
+on:
+  schedule:
+    # Wed + Sat 06:23 UTC — the twice-a-week full proof, after the dailies'
+    # 02-05 UTC window and alone among the heavy weeklies on its days (T-5639).
+    - cron: "23 6 * * 3,6"
+  push:
+    tags: ["v*"]
+  pull_request:
+    branches: [main] # the promotion gate; PRs into dev run ci.yml
+    # No `synchronize`: while the promotion PR is open, a push to dev moves
+    # its head and would rerun the whole grid per commit. The grid runs when
+    # the PR opens, reopens or leaves draft. The required checks hang on the
+    # head commit, so after later pushes prove the final head once: dispatch
+    # this workflow on dev, or flip the PR to draft and back.
+    types: [opened, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      soak_minutes:
+        description: soak length per store, minutes (soak.yml)
+        default: "120"
+
+# The default for every job here; the ones that publish an image, cut a
+# release or file an issue declare their own wider set.
+permissions:
+  contents: read
+
+# A scheduled run is never cancelled (its own group, T-5639); a PR reopen
+# supersedes the older run, a tag run is never cancelled.
+concurrency:
+  group: full-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' && !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  MEM_LIMIT_MB: 350
+
+jobs:
+  source:
+    # The branch model, held before a runner is spent on the grid: a pull
+    # request into main is the promotion of this repository's dev, and a
+    # v* tag names a commit on main carrying the workspace version. It
+    # always runs and passes on schedule and dispatch, because a skipped
+    # job would satisfy the required check it is on main.
+    name: Source of the change
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - run: dev/check-source.sh --self-test && dev/check-source.sh
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+
+  workspace:
+    # The shared workspace-test gate (workflow_call) — one definition for
+    # ci and full, see .github/workflows/workspace.yml.
+    name: Workspace tests
+    needs: source
+    uses: ./.github/workflows/workspace.yml
+    with:
+      # scheduled: one cell per matrix job, so the stage peaks at 10 jobs
+      # (7 single jobs + 3 matrices) instead of ~30 (T-5639)
+      max_parallel: ${{ github.event_name == 'schedule' && 1 || 16 }}
+
+  wasm:
+    # The browser artifact. Build (size budget enforced by the script),
+    # then prove it in BOTH runtimes (dev/wasm-test.sh): the
+    # Node shim does a create + a real-HTTP notification; headless Chromium
+    # runs the React playground — OPFS worker broker, entity, subscription,
+    # in-page notification, second tab, federation. The same scripts a
+    # local run uses.
+    name: Browser build (wasm32)
+    # GATE: builds start only after the workspace suite is green (the same
+    # workspace -> builds -> matrix graph as ci.yml / etsi-full.yml).
+    needs: workspace
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: wasm-bindgen (lockfile-matched) + binaryen
+        run: |
+          ./dev/install-wasm-tools.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build + size budget
+        run: |
+          ./dev/wasm-build.sh | tee wasm-size.txt
+          echo "## Browser artifact" >> "$GITHUB_STEP_SUMMARY"
+          tail -1 wasm-size.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: React playground — deps, test, build (www)
+        working-directory: www
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright-core install --with-deps chromium
+          npx vitest run
+          npm run build
+      - name: Node tier smoke + browser tier
+        run: ./dev/wasm-test.sh
+      # NO bundle upload here: the run's ONE antares-wasm-pkg artifact comes
+      # from the matrix's build-wasm job — the bytes the wasm-file cell
+      # ETSI-tested — and that is what the release ships.
+      # (Uploading a second bundle under the same name would collide: v4+
+      # artifacts are immutable.)
+
+  matrix:
+    # The reusable cell matrix at the FULL preset (default): all seven cells
+    # — memory/file/postgres/timescale, both rolling -nats fleets, wasm-file
+    # — each running every suite serially against one stack with the
+    # between-suite reset.
+    name: ETSI cell matrix
+    # GATE: same graph as ci.yml — no image build / ETSI run on a red
+    # workspace suite.
+    needs: workspace
+    uses: ./.github/workflows/etsi-matrix.yml
+    with:
+      # scheduled: 3 of the 7 cells at a time (T-5639)
+      max_parallel: ${{ github.event_name == 'schedule' && 3 || 16 }}
+    permissions:
+      contents: read
+      actions: write # the summary job deletes the merged per-cell artifacts
+
+  # etsi-serial was REMOVED: it duplicated the matrix exactly.
+  # Its comment claimed the matrix cells got a fresh stack per suite — true
+  # in the 32-cell era, stale since the matrix became all-suites-per-cell:
+  # every cell now runs the suites IN ORDER against ONE stack with the
+  # between-suite reset, which is precisely what serial proved.
+
+  etsi-wasm:
+    # The Node tier — the serial ETSI suites against the BROWSER
+    # artifact: five node shims serving the same .wasm a page loads
+    # (WASM=1 in the one pipeline). MQTT stays excluded (no MQTT sink in a
+    # browser build) and there is no RSS gate (the wasm size budget is the
+    # artifact's own gate). Cadence: this workflow's — twice a week, tags,
+    # manual.
+    name: wasm Node tier (serial suites)
+    needs: [workspace, wasm]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: wasm toolchain
+        run: |
+          ./dev/install-wasm-tools.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Serial suites against the wasm shims
+        env:
+          WASM: "1"
+          STORE: memory
+          STOP_ON_ERROR: "0"
+          CALLBACK_HOST: localhost
+          RESULTS_DIR: results/wasm-node
+        run: ./dev/etsi-pipeline.sh || true
+      - name: Upload wasm-tier results
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ETSI-wasm-node
+          path: |
+            results/wasm-node/run-summary.md
+            results/wasm-node/gate-status.txt
+            results/wasm-node/failures.csv
+            results/wasm-node/**/log.html
+            results/wasm-node/**/report.html
+          retention-days: 14
+      - name: Gate — the wasm Node tier is green
+        run: |
+          gate=$(cat results/wasm-node/gate-status.txt 2>/dev/null || echo MISSING)
+          echo "wasm Node tier gate = $gate"
+          cat results/wasm-node/run-summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          [ "$gate" = PASS ]
+
+  alarm:
+    # A red scheduled matrix must not wait for someone to notice the badge:
+    # file a deduped issue (shared failure-issue action). Tag and dispatch
+    # runs are watched by whoever started them.
+    name: File an issue on a red scheduled run
+    if: failure() && github.event_name == 'schedule'
+    needs: [workspace, wasm, matrix, etsi-wasm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/failure-issue
+        with:
+          title: full matrix scheduled run failed
+          body: >-
+            The twice-a-week full run went red — workspace tests, a matrix
+            cell, or a wasm tier. The Pages report and badges will show the
+            red cells; the run's ETSI-matrix-results bundle has every
+            failure with expected-vs-got.
+
+  soak:
+    # T-3551: hours on one broker, before a release and by hand; not on the
+    # twice-weekly schedule or the promotion PR, which it would hold 2 h.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/soak.yml
+    with:
+      minutes: ${{ fromJSON(inputs.soak_minutes || '120') }}
+
+  build-arm:
+    # The arm64 half of the released manifest — BUILT, never tested; the
+    # rationale lives in the shared build-image.yml. Tag runs only.
+    name: Build the arm64 image (untested)
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/build-image.yml
+    with:
+      arch: arm64
+
+  publish-release:
+    # A version tag is the only thing that mints a production image, and it
+    # needs the full cell matrix green (each cell is serial-all-suites).
+    # The roll drill (roll-weekly.yml) and k8s smoke (k8s-smoke.yml) run on
+    # their own cadence and no longer gate the release.
+    name: Publish the release image to GHCR
+    if: startsWith(github.ref, 'refs/tags/v') && success()
+    # The binaries and the browser proof are in the set on purpose: the
+    # image and :latest move only when the whole release can ship, so a red
+    # binary never leaves a version on the registry that has no release.
+    needs: [matrix, build-arm, release-binaries, wasm]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Download the tested image
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: antares-image
+
+      - name: Download the arm64 image
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: antares-image-arm64
+
+      - name: Push amd64 (the EXACT image both gates tested) + arm64, stitch the manifest
+        env:
+          # through the environment, never spliced into the script text:
+          # `${{ }}` is substituted before the shell parses the line
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          docker load < antares-image.tgz
+          docker load < antares-image-arm64.tgz
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          IMG=ghcr.io/${{ github.repository_owner }}/antares-broker
+          # Image tags carry the bare version (the git tag is v0.1.1, the
+          # image is :0.1.1, as registries name images), plus the minor
+          # (:0.1 follows the newest patch) and :latest.
+          VER="${GITHUB_REF_NAME#v}"
+          MINOR="${VER%.*}"
+          SHA=${GITHUB_SHA::7}
+          docker tag antares-local:latest "$IMG:$SHA-amd64"
+          docker tag antares-local:arm64 "$IMG:$SHA-arm64"
+          docker push "$IMG:$SHA-amd64"
+          docker push "$IMG:$SHA-arm64"
+          docker buildx imagetools create \
+            -t "$IMG:$VER" -t "$IMG:$MINOR" -t "$IMG:$SHA" -t "$IMG:latest" \
+            "$IMG:$SHA-amd64" "$IMG:$SHA-arm64"
+          echo -e "\n## Released: \`$IMG:$VER\` + \`$IMG:$MINOR\` + \`$IMG:latest\` (multi-arch amd64+arm64; amd64 = the tested bytes, matrix + serial, all four store modes green)" >> "$GITHUB_STEP_SUMMARY"
+
+  upgrade-path:
+    # Data written by the PREVIOUS release must be served by this one. The
+    # binaries are built from the two commits and pointed at one store in
+    # turn, so the proof is the real artifact pair rather than a migration
+    # read by eye. Nothing to prove on the FIRST tag: there is no N-1.
+    name: Upgrade path from the previous release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: workspace
+    runs-on: ubuntu-latest
+    timeout-minutes: 60  # two fresh fat-LTO release builds (T-5234)
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the previous tag has to be reachable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - name: Resolve the previous release tag
+        id: prev
+        run: |
+          VER="${GITHUB_REF#refs/tags/}"
+          PREV=$(git tag --list 'v*' --sort=-v:refname | grep -v "^$VER$" | head -1)
+          echo "tag=$PREV" >> "$GITHUB_OUTPUT"
+          if [ -z "$PREV" ]; then
+            echo "No previous v* tag: $VER is the first release, nothing to upgrade from." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Build this release
+        if: steps.prev.outputs.tag != ''
+        run: |
+          cargo build --locked --release -p antares-broker
+          cp "$(cargo metadata --format-version 1 --no-deps \
+            | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])')/release/antares" \
+            "$RUNNER_TEMP/antares-new"
+      - name: Build the previous release
+        if: steps.prev.outputs.tag != ''
+        run: |
+          git worktree add "$RUNNER_TEMP/prev" "${{ steps.prev.outputs.tag }}"
+          cd "$RUNNER_TEMP/prev"
+          cargo build --locked --release -p antares-broker
+          cp "$(cargo metadata --format-version 1 --no-deps \
+            | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])')/release/antares" \
+            "$RUNNER_TEMP/antares-old"
+      - name: Serve the previous release's data (file + postgres)
+        if: steps.prev.outputs.tag != ''
+        env:
+          ANTARES_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: |
+          ./dev/upgrade-path.sh "$RUNNER_TEMP/antares-old" "$RUNNER_TEMP/antares-new"
+          echo "Upgrade path from ${{ steps.prev.outputs.tag }}: file + postgres green." \
+            >> "$GITHUB_STEP_SUMMARY"
+
+  release-binaries:
+    # Static musl binaries per arch — release assets.
+    name: Release binary (${{ matrix.target }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: workspace
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45  # a fresh fat-LTO cross build (T-5234)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: sudo apt-get install -y -q musl-tools
+      # The released binary runs the core alone. Checked HERE and not only
+      # in the test gate, because this is where the artifact people download
+      # is produced.
+      - name: No addon in the shipped build
+        run: ./dev/check-no-addon.sh
+      - name: Build + package
+        env:
+          # musl-tools' aarch64-linux-musl-gcc wraps the glibc gcc, whose
+          # default -moutline-atomics links libgcc's lse-init.o, and that
+          # needs glibc's __getauxval. Every atomics probe of jemalloc's
+          # configure then fails to link and the build stops at "Don't have
+          # atomics implemented on this platform". Inline atomics need no
+          # helper. The variable names the target, so the x86_64 leg ignores it.
+          CFLAGS_aarch64_unknown_linux_musl: -mno-outline-atomics
+        run: |
+          # --locked: the released binary and the released image must be built
+          # from the same dependency set (the Dockerfile builds locked too).
+          cargo build --locked --release --target ${{ matrix.target }} -p antares-broker
+          strip "target/${{ matrix.target }}/release/antares"
+          VER="${GITHUB_REF#refs/tags/}"
+          tar czf "antares-$VER-${{ matrix.target }}.tar.gz"             -C "target/${{ matrix.target }}/release" antares             -C "$GITHUB_WORKSPACE" LICENSE README.md
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: release-bin-${{ matrix.target }}
+          path: antares-*.tar.gz
+
+  github-release:
+    # The GitHub Release — gated on the SAME green the image needed,
+    # with binaries, the wasm bundle, an SBOM, and a signed image.
+    name: GitHub Release (assets + SBOM + signature)
+    if: startsWith(github.ref, 'refs/tags/v') && success()
+    needs: [publish-release, release-binaries, wasm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write # cosign keyless
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The image tag is the bare version
+        id: image
+        run: echo "tag=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: release-bin-*
+          merge-multiple: true
+      # the matrix's build-wasm bundle — the ETSI-tested bytes
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: antares-wasm-pkg
+          path: wasm-pkg
+      - name: Zip the wasm bundle
+        run: |
+          VER="${GITHUB_REF#refs/tags/}"
+          (cd wasm-pkg && zip -qr "../antares-wasm-$VER.zip" .)
+      - name: SBOM (syft, spdx-json) of the released image
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ghcr.io/${{ github.repository_owner }}/antares-broker:${{ steps.image.outputs.tag }}
+          format: spdx-json
+          output-file: antares-${{ github.ref_name }}.sbom.spdx.json
+          upload-artifact: false
+      # The CycloneDX SBOMs of the broker beside the image's SPDX one:
+      # vanilla, and full once that feature exists (dev/sbom.sh).
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-cyclonedx@0.5.9
+      - name: SBOM (vanilla and full)
+        run: dev/sbom.sh sbom
+      - name: Sign the image (cosign keyless)
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+      - env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          cosign sign --yes "ghcr.io/${{ github.repository_owner }}/antares-broker:${{ steps.image.outputs.tag }}"
+      - name: Release notes from the commit log
+        run: |
+          VER="${GITHUB_REF#refs/tags/}"
+          # --force, or the fetch dies silently: checkout pins the tag by
+          # sha (+<sha>:refs/tags/<tag>), leaving a lightweight local tag
+          # where the remote has an annotated object, and git rejects the
+          # update as "would clobber existing tag" — exit 1, no output,
+          # since -q swallows the rejection.
+          git fetch -q --tags --force --unshallow 2>/dev/null || git fetch -q --tags --force
+          PREV=$(git describe --tags --abbrev=0 "$VER^" 2>/dev/null || true)
+          git log --no-merges --format='- %s' ${PREV:+$PREV..}"$VER" > notes.md
+          [ -s notes.md ] || echo "Antares $VER." > notes.md
+      - name: Compliance statement (T-4854)
+        # The vanilla image this release ships, against the vendored ETSI
+        # suite: its version and tree, the TPs that must pass (the full
+        # matrix above gates the release on them), and every local suite edit.
+        run: |
+          {
+            echo
+            echo "## Compliance"
+            echo
+            jq -r '"`antares-broker` (vanilla, no platform surface or extension) passes all \(.count) test purposes of the ETSI NGSI-LD test suite for \(.suite.spec) (\(.suite.upstream), tree \(.suite.tree)) in every cell of the full matrix; excluded tags: \(.excluded_tags | join(", "))."' dev/etsi-baseline.json
+            echo
+            echo "Local edits to the vendored suite (\`ngsi-ld-test-suite/\`), each justified in its commit:"
+            echo
+            git log --no-merges --format='- %h %s' -- ngsi-ld-test-suite
+          } >> notes.md
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VER="${GITHUB_REF#refs/tags/}"
+          gh release create "$VER"             --title "Antares $VER" --notes-file notes.md             antares-*.tar.gz "antares-wasm-$VER.zip" "antares-$VER.sbom.spdx.json" sbom/*.cdx.json

@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<edmx:Edmx xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx" Version="4.01">
+  <edmx:Reference Uri="https://oasis-tcs.github.io/odata-vocabularies/vocabularies/Org.OData.Core.V1.xml">
+    <edmx:Include Namespace="Org.OData.Core.V1" Alias="Core"/>
+  </edmx:Reference>
+  <edmx:Reference Uri="https://example.org/own.xml">
+    <edmx:Include Namespace="Example.Own"/>
+  </edmx:Reference>
+  <edmx:DataServices>
+    <Schema xmlns="http://docs.oasis-open.org/odata/ns/edm" Namespace="Test.Space" Alias="t">
+      <EntityType Name="Empty" Abstract="true"/>
+      <EntityType Name="Base" Abstract="true" OpenType="true">
+        <Key>
+          <PropertyRef Name="id"/>
+        </Key>
+        <Property Name="id" Type="Edm.Guid" Nullable="false"/>
+      </EntityType>
+      <EntityType Name="Thing" BaseType="t.Base">
+        <Property Name="tags" Type="Collection(Edm.String)" Nullable="true"/>
+        <Property Name="whole" Type="Edm.Decimal"/>
+        <Property Name="amount" Type="Edm.Decimal" Precision="9" Scale="2"/>
+        <Property Name="ratio" Type="Edm.Decimal" Scale="floating"/>
+        <Property Name="any" Type="Edm.Decimal" Scale="variable"/>
+        <Property Name="shape" Type="Edm.Geometry" SRID="variable"/>
+        <Property Name="spot" Type="Edm.GeographyPoint" SRID="4326"/>
+        <Property Name="at" Type="Edm.DateTimeOffset">
+          <Annotation Term="Core.Computed" Bool="true"/>
+        </Property>
+        <Property Name="raw" Type="Edm.Untyped" Nullable="false"/>
+        <Property Name="where" Type="t.Place"/>
+        <Property Name="ownerId" Type="Edm.Guid" Nullable="false"/>
+        <Property Name="nextId" Type="Edm.Guid"/>
+        <NavigationProperty Name="owner" Type="t.Thing" Nullable="false" Partner="parts">
+          <ReferentialConstraint Property="ownerId" ReferencedProperty="id"/>
+        </NavigationProperty>
+        <NavigationProperty Name="parts" Type="Collection(t.Thing)" Partner="owner"/>
+        <NavigationProperty Name="next" Type="t.Base">
+          <ReferentialConstraint Property="nextId" ReferencedProperty="id"/>
+          <Annotation Term="Core.Description" String="tab&#x9;here"/>
+        </NavigationProperty>
+        <Annotation Term="Core.Description" Qualifier="en" String="thing"/>
+      </EntityType>
+      <ComplexType Name="Place" OpenType="true">
+        <Annotation Term="t.Note">
+          <Record>
+            <PropertyValue Property="P" Path="a/b"/>
+            <PropertyValue Property="Q" PropertyPath="a"/>
+            <PropertyValue Property="N" NavigationPropertyPath="n"/>
+            <PropertyValue Property="E" EnumMember="Core.Permission/Read Core.Permission/Write"/>
+            <PropertyValue Property="I" Int="-7"/>
+            <PropertyValue Property="C">
+              <Collection/>
+            </PropertyValue>
+            <PropertyValue Property="R">
+              <Record/>
+            </PropertyValue>
+            <PropertyValue Property="L">
+              <Collection>
+                <String>x&lt;"y"
+
+z</String>
+                <Bool>false</Bool>
+                <Record>
+                  <PropertyValue Property="V">
+                    <Collection>
+                      <Int>1</Int>
+                    </Collection>
+                  </PropertyValue>
+                </Record>
+              </Collection>
+            </PropertyValue>
+          </Record>
+        </Annotation>
+      </ComplexType>
+      <ComplexType Name="Nothing"/>
+      <Term Name="Note" Type="t.Place" AppliesTo="EntityType Schema"/>
+      <Term Name="When" Type="Collection(Edm.TimeOfDay)" Nullable="false" Precision="3">
+        <Annotation Term="Core.Description" String="w"/>
+      </Term>
+      <Term Name="Rate" Type="Edm.Decimal"/>
+      <EntityContainer Name="Box">
+        <EntitySet Name="Things" EntityType="t.Thing">
+          <NavigationPropertyBinding Path="owner" Target="Things"/>
+          <NavigationPropertyBinding Path="next/t.Thing" Target="Things"/>
+        </EntitySet>
+        <EntitySet Name="Tagged" EntityType="t.Thing">
+          <Annotation Term="Core.Description" String="only annotated"/>
+        </EntitySet>
+        <EntitySet Name="Bare" EntityType="t.Thing"/>
+        <Annotation Term="Core.Description" String="box"/>
+      </EntityContainer>
+      <Annotation Term="Core.SchemaVersion" String="2"/>
+    </Schema>
+    <Schema xmlns="http://docs.oasis-open.org/odata/ns/edm" Namespace="Empty.Space"/>
+    <Schema xmlns="http://docs.oasis-open.org/odata/ns/edm" Namespace="Shapes.Space">
+      <ComplexType Name="Shape">
+        <Property Name="kind" Type="Edm.String"/>
+      </ComplexType>
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>

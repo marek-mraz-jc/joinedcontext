@@ -1,0 +1,299 @@
+[
+ {
+  "id": "urn:ngsi-ld:Vehicle:V1",
+  "type": "Vehicle",
+  "vehicleType": {
+   "type": "Property",
+   "value": "car"
+  },
+  "speed": {
+   "type": "Property",
+   "value": 30
+  },
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "type": "Point",
+    "coordinates": [
+     2,
+     2
+    ]
+   }
+  },
+  "operator": {
+   "type": "Property",
+   "value": "city"
+  },
+  "scope": "/Zilina/transport"
+ },
+ {
+  "id": "urn:ngsi-ld:Vehicle:V2",
+  "type": "Vehicle",
+  "vehicleType": {
+   "type": "Property",
+   "value": "car"
+  },
+  "speed": {
+   "type": "Property",
+   "value": 50
+  },
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "type": "Point",
+    "coordinates": [
+     7,
+     7
+    ]
+   }
+  },
+  "operator": {
+   "type": "Property",
+   "value": "city"
+  },
+  "scope": "/Zilina/transport/buses"
+ },
+ {
+  "id": "urn:ngsi-ld:Vehicle:V3",
+  "type": "Vehicle",
+  "vehicleType": {
+   "type": "Property",
+   "value": "car"
+  },
+  "speed": {
+   "type": "Property",
+   "value": 70
+  },
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "type": "Point",
+    "coordinates": [
+     12,
+     12
+    ]
+   }
+  },
+  "operator": {
+   "type": "Property",
+   "value": "private"
+  },
+  "scope": "/Zilina/police"
+ },
+ {
+  "id": "urn:ngsi-ld:Vehicle:V4",
+  "type": "Vehicle",
+  "vehicleType": {
+   "type": "Property",
+   "value": "truck"
+  },
+  "speed": {
+   "type": "Property",
+   "value": 40
+  },
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "type": "Point",
+    "coordinates": [
+     3,
+     3
+    ]
+   }
+  },
+  "operator": {
+   "type": "Property",
+   "value": "city"
+  },
+  "scope": "/Zilina/transport"
+ },
+ {
+  "id": "urn:ngsi-ld:Vehicle:V5",
+  "type": "Vehicle",
+  "vehicleType": {
+   "type": "Property",
+   "value": "car"
+  },
+  "speed": {
+   "type": "Property",
+   "value": 20
+  },
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "type": "Point",
+    "coordinates": [
+     25,
+     25
+    ]
+   }
+  },
+  "operator": {
+   "type": "Property",
+   "value": "private"
+  },
+  "scope": "/Bratislava/transport"
+ },
+ {
+  "id": "urn:ngsi-ld:Vehicle:V6",
+  "type": "Vehicle",
+  "vehicleType": {
+   "type": "Property",
+   "value": "car"
+  },
+  "speed": {
+   "type": "Property",
+   "value": 10
+  },
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "type": "Point",
+    "coordinates": [
+     10,
+     5
+    ]
+   }
+  },
+  "operator": {
+   "type": "Property",
+   "value": "city"
+  },
+  "scope": "/Zilina/transport"
+ },
+ {
+  "id": "urn:ngsi-ld:Vehicle:V7",
+  "type": "Vehicle",
+  "vehicleType": {
+   "type": "Property",
+   "value": "car"
+  },
+  "speed": {
+   "type": "Property",
+   "value": 90
+  },
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "type": "Point",
+    "coordinates": [
+     8,
+     2
+    ]
+   }
+  }
+ },
+ {
+  "id": "urn:ngsi-ld:Vehicle:V8",
+  "type": "Vehicle",
+  "vehicleType": {
+   "type": "Property",
+   "value": "car"
+  },
+  "speed": [
+   {
+    "type": "Property",
+    "value": 35
+   },
+   {
+    "type": "Property",
+    "value": 36,
+    "datasetId": "urn:ngsi-ld:Dataset:gps"
+   }
+  ],
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "type": "Point",
+    "coordinates": [
+     1,
+     8
+    ]
+   }
+  },
+  "operator": {
+   "type": "Property",
+   "value": "city"
+  },
+  "scope": [
+   "/Zilina/transport",
+   "/Zilina/police"
+  ]
+ },
+ {
+  "id": "urn:ngsi-ld:Parking:P1",
+  "type": "Parking",
+  "name": {
+   "type": "LanguageProperty",
+   "languageMap": {
+    "@none": "Parkovisko Hlavna",
+    "sk": "Parkovisko",
+    "en": "Car park"
+   }
+  },
+  "availableSpots": {
+   "type": "Property",
+   "value": 12
+  },
+  "operator": {
+   "type": "Property",
+   "value": "city"
+  },
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "type": "Point",
+    "coordinates": [
+     4,
+     4
+    ]
+   }
+  },
+  "scope": "/Zilina/transport"
+ },
+ {
+  "id": "urn:ngsi-ld:Parking:P2",
+  "type": "Parking",
+  "availableSpots": {
+   "type": "Property",
+   "value": 0
+  },
+  "operator": {
+   "type": "Property",
+   "value": "private"
+  },
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "type": "Point",
+    "coordinates": [
+     13,
+     13
+    ]
+   }
+  },
+  "scope": "/Martin"
+ },
+ {
+  "id": "urn:ngsi-ld:Sensor:S1",
+  "type": "Sensor",
+  "temperature": {
+   "type": "Property",
+   "value": 21
+  },
+  "operator": {
+   "type": "Property",
+   "value": "city"
+  },
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "type": "Point",
+    "coordinates": [
+     6,
+     6
+    ]
+   }
+  }
+ }
+]

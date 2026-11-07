@@ -1,0 +1,70 @@
+{
+ "id": "https://example.org/views-matrix",
+ "name": "views_matrix",
+ "prefixes": {
+  "d": {
+   "prefix_prefix": "d",
+   "prefix_reference": "https://uri.etsi.org/ngsi-ld/default-context/"
+  }
+ },
+ "default_prefix": "d",
+ "classes": {
+  "Vehicle": {
+   "slots": [
+    "vehicleType",
+    "operator",
+    "speed",
+    "location"
+   ]
+  },
+  "Parking": {
+   "slots": [
+    "name",
+    "availableSpots",
+    "operator",
+    "location"
+   ]
+  },
+  "Sensor": {
+   "slots": [
+    "temperature",
+    "operator",
+    "location"
+   ]
+  }
+ },
+ "slots": {
+  "vehicleType": {
+   "range": "string"
+  },
+  "operator": {
+   "range": "string"
+  },
+  "speed": {
+   "range": "float"
+  },
+  "location": {
+   "slot_uri": "https://uri.etsi.org/ngsi-ld/location",
+   "annotations": {
+    "ngsi_ld_kind": {
+     "tag": "ngsi_ld_kind",
+     "value": "GeoProperty"
+    }
+   }
+  },
+  "availableSpots": {
+   "range": "integer"
+  },
+  "temperature": {
+   "range": "float"
+  },
+  "name": {
+   "annotations": {
+    "ngsi_ld_kind": {
+     "tag": "ngsi_ld_kind",
+     "value": "LanguageProperty"
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,223 @@
+# The ONE ETSI stack: 5 brokers + 5 databases (Scorpio IOP-stack parity).
+# ALL suites run against it — serial suites hit broker1, the IOP suite all five.
+# Driven by dev/etsi-pipeline.sh, identical locally and in CI.
+#
+# Store modes (env, set by the pipeline script):
+#   STORE=memory     brokers only, no DB containers        (docker compose up)
+#   STORE=file       brokers only, one data volume each    (redb)
+#   STORE=postgres   DB_IMAGE=ghcr.io/baosystems/postgis:17-3.5 (--profile db; multi-arch)
+#   STORE=timescale  DB_IMAGE=timescale/timescaledb-ha:pg17 (--profile db)
+#
+# Brokers run with network_mode: host so the federation endpoints the suite
+# registers (http://localhost:909N) resolve identically from the Robot runner,
+# from broker to broker, and back to the runner's notification mocks.
+#
+# Each broker gets its own data volume (file mode) AND its own Postgres
+# (postgres://…@localhost:543N). ANTARES_STORE picks which store the stack
+# runs on; the data dir and the database URL are wired for every broker in
+# every mode, so switching modes costs no compose change.
+x-broker: &broker
+  image: antares-local:latest
+  network_mode: host
+  restart: unless-stopped
+  # The suite's per-test mosquitto container (MQTT TPs, 058_*) lives on the
+  # bridge network compose-files_default (fixed subnet 172.29.9.0/24, created
+  # by dev/etsi-pipeline.sh); as its only container it always gets .2. The
+  # brokers are host-networked, so the container-DNS name the suite puts in
+  # subscription endpoints resolves via this static mapping instead.
+  extra_hosts:
+    - "ngsi-ld-test-suite-mosquitto-container:172.29.9.2"
+
+x-postgres: &postgres
+  image: ${DB_IMAGE:-timescale/timescaledb-ha:pg17}
+  profiles: ["db"]
+  # NOT the default network: the suite's mosquitto container must stay the
+  # only occupant of compose-files_default so it always lands on .2 (the
+  # extra_hosts mapping above). The brokers are host-networked and reach the
+  # databases via their published 543N ports either way.
+  networks: [dbs]
+  environment:
+    POSTGRES_USER: antares
+    POSTGRES_PASSWORD: antares
+    POSTGRES_DB: antares
+    # timescaledb-ha only (plain postgis ignores it): timescaledb-tune panics
+    # when the cgroup memory limit is unreadable (DinD) — skip auto-tuning.
+    NO_TS_TUNE: "true"
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U antares"]
+    interval: 5s
+    timeout: 3s
+    retries: 20
+
+services:
+  postgres1:
+    <<: *postgres
+    container_name: postgres1
+    ports: ["127.0.0.1:5433:5432"]
+  postgres2:
+    <<: *postgres
+    container_name: postgres2
+    ports: ["127.0.0.1:5434:5432"]
+  postgres3:
+    <<: *postgres
+    container_name: postgres3
+    ports: ["127.0.0.1:5435:5432"]
+  postgres4:
+    <<: *postgres
+    container_name: postgres4
+    ports: ["127.0.0.1:5436:5432"]
+  postgres5:
+    <<: *postgres
+    container_name: postgres5
+    ports: ["127.0.0.1:5437:5432"]
+
+  antares1:
+    <<: *broker
+    container_name: antares1
+    volumes: ["antares1-data:/data"]
+    environment:
+      ANTARES_HTTP_PORT: "9090"
+      ANTARES_HOST_ALIAS: antares1
+      # 5.8.1.4: handed to peer brokers as the dist-sub notification
+      # endpoint; host-networked stack => container names do not resolve
+      ANTARES_PUBLIC_URL: http://localhost:9090
+      ANTARES_STORE: ${STORE:-memory}
+      # the TTF 206 cases create 20 instances: the 6.3.10 ceiling they expect (T-4800)
+      ANTARES_TEMPORAL_INSTANCE_LIMIT: "9"
+      # the all-features cells (external-suites.yml) mount every surface the image has
+      ANTARES_API_SURFACES: ${API_SURFACES:-admin}
+      # ADR-0025 equivalence layer 3 (etsi-icsr, surfaces-conformance.yml):
+      # this broker's own URL on the internal-csr image; empty elsewhere,
+      # which the vanilla build reads as unset (one warning)
+      ANTARES_SELF_URLS: ${SELF_URLS:-}
+      # Each broker owns its own database, so one process per store is the
+      # deployment shape the default bus assumes.
+      ANTARES_ALLOW_SHARED_LOCAL: "1"
+      ANTARES_DATA_DIR: /data
+      # 4.22 GC every 2 s so the transient TPs (422_01) exercise the sweep,
+      # not only the read-boundary filter (prod default: 15 min)
+      ANTARES_SWEEP_SECS: "2"
+      # ETSI mocks (notification receivers, context servers) live on localhost
+      ANTARES_EGRESS_ALLOW_PRIVATE: "true"
+      ANTARES_DATABASE_URL: postgresql://antares:antares@localhost:5433/antares
+  antares2:
+    <<: *broker
+    container_name: antares2
+    volumes: ["antares2-data:/data"]
+    environment:
+      ANTARES_HTTP_PORT: "9091"
+      ANTARES_HOST_ALIAS: antares2
+      # 5.8.1.4: handed to peer brokers as the dist-sub notification
+      # endpoint; host-networked stack => container names do not resolve
+      ANTARES_PUBLIC_URL: http://localhost:9091
+      ANTARES_STORE: ${STORE:-memory}
+      # the TTF 206 cases create 20 instances: the 6.3.10 ceiling they expect (T-4800)
+      ANTARES_TEMPORAL_INSTANCE_LIMIT: "9"
+      # the all-features cells (external-suites.yml) mount every surface the image has
+      ANTARES_API_SURFACES: ${API_SURFACES:-admin}
+      # Each broker owns its own database, so one process per store is the
+      # deployment shape the default bus assumes.
+      ANTARES_ALLOW_SHARED_LOCAL: "1"
+      ANTARES_DATA_DIR: /data
+      # 4.22 GC every 2 s so the transient TPs (422_01) exercise the sweep,
+      # not only the read-boundary filter (prod default: 15 min)
+      ANTARES_SWEEP_SECS: "2"
+      # ETSI mocks (notification receivers, context servers) live on localhost
+      ANTARES_EGRESS_ALLOW_PRIVATE: "true"
+      ANTARES_DATABASE_URL: postgresql://antares:antares@localhost:5434/antares
+  antares3:
+    <<: *broker
+    container_name: antares3
+    volumes: ["antares3-data:/data"]
+    environment:
+      ANTARES_HTTP_PORT: "9092"
+      ANTARES_HOST_ALIAS: antares3
+      # 5.8.1.4: handed to peer brokers as the dist-sub notification
+      # endpoint; host-networked stack => container names do not resolve
+      ANTARES_PUBLIC_URL: http://localhost:9092
+      ANTARES_STORE: ${STORE:-memory}
+      # the TTF 206 cases create 20 instances: the 6.3.10 ceiling they expect (T-4800)
+      ANTARES_TEMPORAL_INSTANCE_LIMIT: "9"
+      # the all-features cells (external-suites.yml) mount every surface the image has
+      ANTARES_API_SURFACES: ${API_SURFACES:-admin}
+      # Each broker owns its own database, so one process per store is the
+      # deployment shape the default bus assumes.
+      ANTARES_ALLOW_SHARED_LOCAL: "1"
+      ANTARES_DATA_DIR: /data
+      # 4.22 GC every 2 s so the transient TPs (422_01) exercise the sweep,
+      # not only the read-boundary filter (prod default: 15 min)
+      ANTARES_SWEEP_SECS: "2"
+      # ETSI mocks (notification receivers, context servers) live on localhost
+      ANTARES_EGRESS_ALLOW_PRIVATE: "true"
+      ANTARES_DATABASE_URL: postgresql://antares:antares@localhost:5435/antares
+  antares4:
+    <<: *broker
+    container_name: antares4
+    volumes: ["antares4-data:/data"]
+    environment:
+      ANTARES_HTTP_PORT: "9093"
+      ANTARES_HOST_ALIAS: antares4
+      # 5.8.1.4: handed to peer brokers as the dist-sub notification
+      # endpoint; host-networked stack => container names do not resolve
+      ANTARES_PUBLIC_URL: http://localhost:9093
+      ANTARES_STORE: ${STORE:-memory}
+      # the TTF 206 cases create 20 instances: the 6.3.10 ceiling they expect (T-4800)
+      ANTARES_TEMPORAL_INSTANCE_LIMIT: "9"
+      # the all-features cells (external-suites.yml) mount every surface the image has
+      ANTARES_API_SURFACES: ${API_SURFACES:-admin}
+      # Each broker owns its own database, so one process per store is the
+      # deployment shape the default bus assumes.
+      ANTARES_ALLOW_SHARED_LOCAL: "1"
+      ANTARES_DATA_DIR: /data
+      # 4.22 GC every 2 s so the transient TPs (422_01) exercise the sweep,
+      # not only the read-boundary filter (prod default: 15 min)
+      ANTARES_SWEEP_SECS: "2"
+      # ETSI mocks (notification receivers, context servers) live on localhost
+      ANTARES_EGRESS_ALLOW_PRIVATE: "true"
+      ANTARES_DATABASE_URL: postgresql://antares:antares@localhost:5436/antares
+  antares5:
+    <<: *broker
+    container_name: antares5
+    volumes: ["antares5-data:/data"]
+    environment:
+      ANTARES_HTTP_PORT: "9094"
+      ANTARES_HOST_ALIAS: antares5
+      # 5.8.1.4: handed to peer brokers as the dist-sub notification
+      # endpoint; host-networked stack => container names do not resolve
+      ANTARES_PUBLIC_URL: http://localhost:9094
+      ANTARES_STORE: ${STORE:-memory}
+      # the TTF 206 cases create 20 instances: the 6.3.10 ceiling they expect (T-4800)
+      ANTARES_TEMPORAL_INSTANCE_LIMIT: "9"
+      # the all-features cells (external-suites.yml) mount every surface the image has
+      ANTARES_API_SURFACES: ${API_SURFACES:-admin}
+      # Each broker owns its own database, so one process per store is the
+      # deployment shape the default bus assumes.
+      ANTARES_ALLOW_SHARED_LOCAL: "1"
+      ANTARES_DATA_DIR: /data
+      # 4.22 GC every 2 s so the transient TPs (422_01) exercise the sweep,
+      # not only the read-boundary filter (prod default: 15 min)
+      ANTARES_SWEEP_SECS: "2"
+      # ETSI mocks (notification receivers, context servers) live on localhost
+      ANTARES_EGRESS_ALLOW_PRIVATE: "true"
+      ANTARES_DATABASE_URL: postgresql://antares:antares@localhost:5437/antares
+
+# One volume per broker: `file` mode keeps its redb file here, and the volume
+# is what makes the data survive a container swap — never inside the image.
+volumes:
+  antares1-data:
+  antares2-data:
+  antares3-data:
+  antares4-data:
+  antares5-data:
+
+networks:
+  # Created by dev/etsi-pipeline.sh (fixed subnet 172.29.9.0/24) BEFORE
+  # compose up, because the suite's MqttUtils launches its mosquitto container
+  # onto it by name with `docker run` — external keeps compose from fighting
+  # over ownership labels on a network it did not create.
+  default:
+    name: compose-files_default
+    external: true
+  # The db containers' own bridge — see the x-postgres note.
+  dbs:
+

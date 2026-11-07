@@ -1,0 +1,11 @@
+-- History is never rewritten (T-5570, platform OPS-42, ADR-N-054 2.4).
+--
+-- 0011 gave the Tenant role an UPDATE policy on attr_versions that no
+-- statement uses: a correction copies the superseded row in and never
+-- edits one already there. Under FORCE ROW LEVEL SECURITY a command with no
+-- policy matches no row, so without tenant_update an UPDATE of a version,
+-- the Tenant's own included, changes nothing. DELETE stays: the retention
+-- sweep and the NGSI-LD temporal delete (DELETE /temporal/entities/{id})
+-- remove whole versions, and each such delete is itself a request with
+-- provenance.
+DROP POLICY IF EXISTS tenant_update ON attr_versions;

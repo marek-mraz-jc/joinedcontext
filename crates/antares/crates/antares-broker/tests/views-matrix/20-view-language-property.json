@@ -1,0 +1,31 @@
+{
+ "about": "A LanguageProperty (P1 name) beside location.",
+ "view": {
+  "selector": [
+   "Parking"
+  ],
+  "rules": [
+   {
+    "types": [
+     "Parking"
+    ],
+    "attributes": [
+     "location",
+     "name"
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "urn:ngsi-ld:Parking:P1": [
+   "location",
+   "name"
+  ],
+  "urn:ngsi-ld:Parking:P2": [
+   "location"
+  ]
+ },
+ "caller": {
+  "x-jc-roles": "public"
+ }
+}

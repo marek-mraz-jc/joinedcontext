@@ -1,0 +1,18 @@
+{
+  "data": {
+    "stations": [
+      {
+        "is_installed": true,
+        "is_renting": true,
+        "is_returning": true,
+        "last_reported": "2026-10-23T10:00:00Z",
+        "num_docks_available": 6,
+        "num_vehicles_available": 4,
+        "station_id": "urn:ngsi-ld:BikeHireDockingStation:kamppi"
+      }
+    ]
+  },
+  "last_updated": "2026-10-23T10:00:00Z",
+  "ttl": 60,
+  "version": "3.0"
+}

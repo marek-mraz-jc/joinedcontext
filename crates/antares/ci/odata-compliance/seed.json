@@ -1,0 +1,1259 @@
+[
+  {
+    "id": "urn:ngsi-ld:Categories:c9fed4e1-7326-5f0c-ac67-4e37b2907c7b",
+    "type": "Categories",
+    "ID": {
+      "type": "Property",
+      "value": "c9fed4e1-7326-5f0c-ac67-4e37b2907c7b"
+    },
+    "Name": {
+      "type": "Property",
+      "value": "Electronics"
+    },
+    "Description": {
+      "type": "Property",
+      "value": "Electronic devices and accessories"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:Categories:ae7e474a-bce7-5306-a61c-1f42504eca84",
+    "type": "Categories",
+    "ID": {
+      "type": "Property",
+      "value": "ae7e474a-bce7-5306-a61c-1f42504eca84"
+    },
+    "Name": {
+      "type": "Property",
+      "value": "Kitchen"
+    },
+    "Description": {
+      "type": "Property",
+      "value": "Kitchen appliances and utensils"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:Categories:dd6f0540-d852-53a9-adc6-9a74e701358c",
+    "type": "Categories",
+    "ID": {
+      "type": "Property",
+      "value": "dd6f0540-d852-53a9-adc6-9a74e701358c"
+    },
+    "Name": {
+      "type": "Property",
+      "value": "Furniture"
+    },
+    "Description": {
+      "type": "Property",
+      "value": "Home and office furniture"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:Products:2dcd1e3c-e38a-5391-ba63-17ecfeaea3c2",
+    "type": "Products",
+    "ID": {
+      "type": "Property",
+      "value": "2dcd1e3c-e38a-5391-ba63-17ecfeaea3c2"
+    },
+    "Version": {
+      "type": "Property",
+      "value": 1
+    },
+    "CategoryID": {
+      "type": "Property",
+      "value": "c9fed4e1-7326-5f0c-ac67-4e37b2907c7b"
+    },
+    "Category": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:Categories:c9fed4e1-7326-5f0c-ac67-4e37b2907c7b"
+    },
+    "Descriptions": {
+      "type": "Relationship",
+      "object": [
+        "urn:ngsi-ld:ProductDescriptions:2d6f3efe-4224-566e-beba-7e1af739a4b2",
+        "urn:ngsi-ld:ProductDescriptions:18a1e823-a555-5440-ac41-b51ce7c819f0"
+      ]
+    },
+    "Name": {
+      "type": "Property",
+      "value": "Laptop"
+    },
+    "Price": {
+      "type": "Property",
+      "value": 999.99
+    },
+    "Rating": {
+      "type": "Property",
+      "value": 200
+    },
+    "Temperature": {
+      "type": "Property",
+      "value": -10
+    },
+    "Quantity": {
+      "type": "Property",
+      "value": 1200
+    },
+    "Weight": {
+      "type": "Property",
+      "value": 3.14
+    },
+    "Data": {
+      "type": "Property",
+      "value": "dGVzdA=="
+    },
+    "ReleaseDate": {
+      "type": "Property",
+      "value": "2024-01-15"
+    },
+    "OpenTime": {
+      "type": "Property",
+      "value": "09:30:00"
+    },
+    "ShippingTime": {
+      "type": "Property",
+      "value": "P1D"
+    },
+    "ProcessingTime": {
+      "type": "Property",
+      "value": "PT45S"
+    },
+    "Offset": {
+      "type": "Property",
+      "value": "P0D"
+    },
+    "Status": {
+      "type": "Property",
+      "value": 9
+    },
+    "CreatedAt": {
+      "type": "Property",
+      "value": "2024-01-15T10:30:00Z"
+    },
+    "ProductType": {
+      "type": "Property",
+      "value": "SpecialProduct"
+    },
+    "SpecialProperty": {
+      "type": "Property",
+      "value": "Extended warranty included"
+    },
+    "SpecialFeature": {
+      "type": "Property",
+      "value": "Premium support"
+    },
+    "ShippingAddress": {
+      "type": "Property",
+      "value": {
+        "Street": "123 Tech Way",
+        "City": "Seattle",
+        "State": "WA",
+        "PostalCode": "98101",
+        "Country": "USA"
+      }
+    },
+    "Dimensions": {
+      "type": "Property",
+      "value": {
+        "Length": 35.5,
+        "Width": 25.0,
+        "Height": 2.5,
+        "Unit": "cm"
+      }
+    },
+    "Location": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "Point",
+        "coordinates": [
+          -122.3321,
+          47.6062
+        ]
+      }
+    },
+    "Route": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -122.3321,
+            47.6062
+          ],
+          [
+            -122.4194,
+            47.2529
+          ]
+        ]
+      }
+    },
+    "Area": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -122.5,
+              47.5
+            ],
+            [
+              -122.0,
+              47.5
+            ],
+            [
+              -122.0,
+              47.8
+            ],
+            [
+              -122.5,
+              47.8
+            ],
+            [
+              -122.5,
+              47.5
+            ]
+          ]
+        ]
+      }
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:Products:6b9522bf-7fd8-5287-a719-973238eb7f04",
+    "type": "Products",
+    "ID": {
+      "type": "Property",
+      "value": "6b9522bf-7fd8-5287-a719-973238eb7f04"
+    },
+    "Version": {
+      "type": "Property",
+      "value": 1
+    },
+    "CategoryID": {
+      "type": "Property",
+      "value": "c9fed4e1-7326-5f0c-ac67-4e37b2907c7b"
+    },
+    "Category": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:Categories:c9fed4e1-7326-5f0c-ac67-4e37b2907c7b"
+    },
+    "Descriptions": {
+      "type": "Relationship",
+      "object": [
+        "urn:ngsi-ld:ProductDescriptions:bbe56de3-06bc-5d53-9284-9ead3e09c669",
+        "urn:ngsi-ld:ProductDescriptions:d3867595-4fa5-53e8-b50b-17ea6f3cd42f"
+      ]
+    },
+    "Name": {
+      "type": "Property",
+      "value": "Wireless Mouse"
+    },
+    "Price": {
+      "type": "Property",
+      "value": 29.99
+    },
+    "Rating": {
+      "type": "Property",
+      "value": 110
+    },
+    "Temperature": {
+      "type": "Property",
+      "value": 5
+    },
+    "Quantity": {
+      "type": "Property",
+      "value": 300
+    },
+    "Weight": {
+      "type": "Property",
+      "value": 0.09
+    },
+    "Data": {
+      "type": "Property",
+      "value": "AQID"
+    },
+    "ReleaseDate": {
+      "type": "Property",
+      "value": "2024-01-20"
+    },
+    "OpenTime": {
+      "type": "Property",
+      "value": "08:15:00"
+    },
+    "ShippingTime": {
+      "type": "Property",
+      "value": "PT2H"
+    },
+    "ProcessingTime": {
+      "type": "Property",
+      "value": "PT1.5S"
+    },
+    "Offset": {
+      "type": "Property",
+      "value": "-P1D"
+    },
+    "Status": {
+      "type": "Property",
+      "value": 3
+    },
+    "CreatedAt": {
+      "type": "Property",
+      "value": "2024-03-20T14:45:00Z"
+    },
+    "ProductType": {
+      "type": "Property",
+      "value": "Product"
+    },
+    "ShippingAddress": {
+      "type": "Property",
+      "value": {
+        "Street": "456 Innovation Blvd",
+        "City": "San Francisco",
+        "State": "CA",
+        "PostalCode": "94102",
+        "Country": "USA"
+      }
+    },
+    "Dimensions": {
+      "type": "Property",
+      "value": {
+        "Length": 10.0,
+        "Width": 6.0,
+        "Height": 4.0,
+        "Unit": "cm"
+      }
+    },
+    "Location": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "Point",
+        "coordinates": [
+          -122.4194,
+          37.7749
+        ]
+      }
+    },
+    "Route": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -122.4194,
+            37.7749
+          ],
+          [
+            -122.2711,
+            37.8044
+          ]
+        ]
+      }
+    },
+    "Area": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -122.5,
+              37.7
+            ],
+            [
+              -122.3,
+              37.7
+            ],
+            [
+              -122.3,
+              37.9
+            ],
+            [
+              -122.5,
+              37.9
+            ],
+            [
+              -122.5,
+              37.7
+            ]
+          ]
+        ]
+      }
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:Products:34e95b91-1015-5845-88a4-b4151e7ae85e",
+    "type": "Products",
+    "ID": {
+      "type": "Property",
+      "value": "34e95b91-1015-5845-88a4-b4151e7ae85e"
+    },
+    "Version": {
+      "type": "Property",
+      "value": 1
+    },
+    "CategoryID": {
+      "type": "Property",
+      "value": "ae7e474a-bce7-5306-a61c-1f42504eca84"
+    },
+    "Category": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:Categories:ae7e474a-bce7-5306-a61c-1f42504eca84"
+    },
+    "Descriptions": {
+      "type": "Relationship",
+      "object": [
+        "urn:ngsi-ld:ProductDescriptions:c583935c-93b1-59dc-b9e4-499b400466b4"
+      ]
+    },
+    "Name": {
+      "type": "Property",
+      "value": "Coffee Mug"
+    },
+    "Price": {
+      "type": "Property",
+      "value": 15.5
+    },
+    "Rating": {
+      "type": "Property",
+      "value": 0
+    },
+    "Temperature": {
+      "type": "Property",
+      "value": -5
+    },
+    "Quantity": {
+      "type": "Property",
+      "value": -200
+    },
+    "Weight": {
+      "type": "Property",
+      "value": 0.0
+    },
+    "Data": {
+      "type": "Property",
+      "value": ""
+    },
+    "ReleaseDate": {
+      "type": "Property",
+      "value": "2024-01-01"
+    },
+    "OpenTime": {
+      "type": "Property",
+      "value": "00:00:00"
+    },
+    "ShippingTime": {
+      "type": "Property",
+      "value": "P2D"
+    },
+    "ProcessingTime": {
+      "type": "Property",
+      "value": "PT30M"
+    },
+    "Offset": {
+      "type": "Property",
+      "value": "P0D"
+    },
+    "Status": {
+      "type": "Property",
+      "value": 1
+    },
+    "CreatedAt": {
+      "type": "Property",
+      "value": "2023-11-05T09:15:00Z"
+    },
+    "ProductType": {
+      "type": "Property",
+      "value": "Product"
+    },
+    "ShippingAddress": {
+      "type": "Property",
+      "value": {
+        "Street": "789 Home St",
+        "City": "Portland",
+        "State": "OR",
+        "PostalCode": "97201",
+        "Country": "USA"
+      }
+    },
+    "Dimensions": {
+      "type": "Property",
+      "value": {
+        "Length": 8.0,
+        "Width": 8.0,
+        "Height": 10.0,
+        "Unit": "cm"
+      }
+    },
+    "Location": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "Point",
+        "coordinates": [
+          -122.6765,
+          45.5231
+        ]
+      }
+    },
+    "Route": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -122.6765,
+            45.5231
+          ],
+          [
+            -122.6587,
+            45.5152
+          ]
+        ]
+      }
+    },
+    "Area": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -122.8,
+              45.4
+            ],
+            [
+              -122.5,
+              45.4
+            ],
+            [
+              -122.5,
+              45.7
+            ],
+            [
+              -122.8,
+              45.7
+            ],
+            [
+              -122.8,
+              45.4
+            ]
+          ]
+        ]
+      }
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:Products:34615263-21ab-5257-9625-b211bc3c1495",
+    "type": "Products",
+    "ID": {
+      "type": "Property",
+      "value": "34615263-21ab-5257-9625-b211bc3c1495"
+    },
+    "Version": {
+      "type": "Property",
+      "value": 1
+    },
+    "CategoryID": {
+      "type": "Property",
+      "value": "dd6f0540-d852-53a9-adc6-9a74e701358c"
+    },
+    "Category": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:Categories:dd6f0540-d852-53a9-adc6-9a74e701358c"
+    },
+    "Name": {
+      "type": "Property",
+      "value": "Office Chair"
+    },
+    "Price": {
+      "type": "Property",
+      "value": 249.99
+    },
+    "Rating": {
+      "type": "Property",
+      "value": 255
+    },
+    "Temperature": {
+      "type": "Property",
+      "value": 127
+    },
+    "Quantity": {
+      "type": "Property",
+      "value": 32767
+    },
+    "Weight": {
+      "type": "Property",
+      "value": 150.0
+    },
+    "ReleaseDate": {
+      "type": "Property",
+      "value": "2024-12-31"
+    },
+    "OpenTime": {
+      "type": "Property",
+      "value": "23:59:59"
+    },
+    "ShippingTime": {
+      "type": "Property",
+      "value": "P1DT2H30M"
+    },
+    "ProcessingTime": {
+      "type": "Property",
+      "value": "PT45S"
+    },
+    "Offset": {
+      "type": "Property",
+      "value": "P0D"
+    },
+    "Status": {
+      "type": "Property",
+      "value": 4
+    },
+    "CreatedAt": {
+      "type": "Property",
+      "value": "2023-08-12T16:20:00Z"
+    },
+    "ProductType": {
+      "type": "Property",
+      "value": "Product"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:Products:b29710ff-0b9e-54c0-8ef0-eb0576452043",
+    "type": "Products",
+    "ID": {
+      "type": "Property",
+      "value": "b29710ff-0b9e-54c0-8ef0-eb0576452043"
+    },
+    "Version": {
+      "type": "Property",
+      "value": 1
+    },
+    "CategoryID": {
+      "type": "Property",
+      "value": "c9fed4e1-7326-5f0c-ac67-4e37b2907c7b"
+    },
+    "Category": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:Categories:c9fed4e1-7326-5f0c-ac67-4e37b2907c7b"
+    },
+    "Descriptions": {
+      "type": "Relationship",
+      "object": [
+        "urn:ngsi-ld:ProductDescriptions:84fa5c95-5229-51e1-8cce-6b3a978e3049",
+        "urn:ngsi-ld:ProductDescriptions:0ec21c50-e1f2-54d9-954c-b7a77a79d75e"
+      ]
+    },
+    "Name": {
+      "type": "Property",
+      "value": "Smartphone"
+    },
+    "Price": {
+      "type": "Property",
+      "value": 799.99
+    },
+    "Status": {
+      "type": "Property",
+      "value": 11
+    },
+    "CreatedAt": {
+      "type": "Property",
+      "value": "2024-06-28T11:00:00Z"
+    },
+    "ProductType": {
+      "type": "Property",
+      "value": "Product"
+    },
+    "ShippingAddress": {
+      "type": "Property",
+      "value": {
+        "Street": "321 Mobile Ave",
+        "City": "Austin",
+        "State": "TX",
+        "PostalCode": "78701",
+        "Country": "USA"
+      }
+    },
+    "Dimensions": {
+      "type": "Property",
+      "value": {
+        "Length": 15.0,
+        "Width": 7.5,
+        "Height": 0.8,
+        "Unit": "cm"
+      }
+    },
+    "Location": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "Point",
+        "coordinates": [
+          -97.7431,
+          30.2672
+        ]
+      }
+    },
+    "Route": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -97.7431,
+            30.2672
+          ],
+          [
+            -97.7426,
+            30.2849
+          ]
+        ]
+      }
+    },
+    "Area": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -98.0,
+              30.1
+            ],
+            [
+              -97.5,
+              30.1
+            ],
+            [
+              -97.5,
+              30.5
+            ],
+            [
+              -98.0,
+              30.5
+            ],
+            [
+              -98.0,
+              30.1
+            ]
+          ]
+        ]
+      }
+    },
+    "Rating": {
+      "type": "Property",
+      "value": 0
+    },
+    "Temperature": {
+      "type": "Property",
+      "value": 0
+    },
+    "Quantity": {
+      "type": "Property",
+      "value": 0
+    },
+    "Weight": {
+      "type": "Property",
+      "value": 0.0
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:Products:e39f70fd-f0c9-5e22-9249-58141dbe8cb6",
+    "type": "Products",
+    "ID": {
+      "type": "Property",
+      "value": "e39f70fd-f0c9-5e22-9249-58141dbe8cb6"
+    },
+    "Version": {
+      "type": "Property",
+      "value": 1
+    },
+    "CategoryID": {
+      "type": "Property",
+      "value": "c9fed4e1-7326-5f0c-ac67-4e37b2907c7b"
+    },
+    "Category": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:Categories:c9fed4e1-7326-5f0c-ac67-4e37b2907c7b"
+    },
+    "Name": {
+      "type": "Property",
+      "value": "Premium Laptop Pro"
+    },
+    "Price": {
+      "type": "Property",
+      "value": 1999.99
+    },
+    "Status": {
+      "type": "Property",
+      "value": 9
+    },
+    "CreatedAt": {
+      "type": "Property",
+      "value": "2024-07-01T10:00:00Z"
+    },
+    "ProductType": {
+      "type": "Property",
+      "value": "SpecialProduct"
+    },
+    "SpecialProperty": {
+      "type": "Property",
+      "value": "Extended 5-year warranty"
+    },
+    "SpecialFeature": {
+      "type": "Property",
+      "value": "Premium support package"
+    },
+    "ShippingAddress": {
+      "type": "Property",
+      "value": {
+        "Street": "999 Premium Way",
+        "City": "New York",
+        "State": "NY",
+        "PostalCode": "10001",
+        "Country": "USA"
+      }
+    },
+    "Dimensions": {
+      "type": "Property",
+      "value": {
+        "Length": 40.0,
+        "Width": 28.0,
+        "Height": 2.0,
+        "Unit": "cm"
+      }
+    },
+    "Location": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "Point",
+        "coordinates": [
+          -74.006,
+          40.7128
+        ]
+      }
+    },
+    "Route": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -74.006,
+            40.7128
+          ],
+          [
+            -73.9352,
+            40.7306
+          ]
+        ]
+      }
+    },
+    "Area": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -74.1,
+              40.6
+            ],
+            [
+              -73.8,
+              40.6
+            ],
+            [
+              -73.8,
+              40.9
+            ],
+            [
+              -74.1,
+              40.9
+            ],
+            [
+              -74.1,
+              40.6
+            ]
+          ]
+        ]
+      }
+    },
+    "Rating": {
+      "type": "Property",
+      "value": 0
+    },
+    "Temperature": {
+      "type": "Property",
+      "value": 0
+    },
+    "Quantity": {
+      "type": "Property",
+      "value": 0
+    },
+    "Weight": {
+      "type": "Property",
+      "value": 0.0
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:Products:4e54c4e1-0eac-5771-a1b5-e9416981b9dc",
+    "type": "Products",
+    "ID": {
+      "type": "Property",
+      "value": "4e54c4e1-0eac-5771-a1b5-e9416981b9dc"
+    },
+    "Version": {
+      "type": "Property",
+      "value": 1
+    },
+    "CategoryID": {
+      "type": "Property",
+      "value": "c9fed4e1-7326-5f0c-ac67-4e37b2907c7b"
+    },
+    "Category": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:Categories:c9fed4e1-7326-5f0c-ac67-4e37b2907c7b"
+    },
+    "Name": {
+      "type": "Property",
+      "value": "Gaming Mouse Ultra"
+    },
+    "Price": {
+      "type": "Property",
+      "value": 149.99
+    },
+    "Status": {
+      "type": "Property",
+      "value": 3
+    },
+    "CreatedAt": {
+      "type": "Property",
+      "value": "2024-07-15T14:30:00Z"
+    },
+    "ProductType": {
+      "type": "Property",
+      "value": "SpecialProduct"
+    },
+    "SpecialProperty": {
+      "type": "Property",
+      "value": "RGB lighting with 16 million colors"
+    },
+    "SpecialFeature": {
+      "type": "Property",
+      "value": "Customizable DPI settings"
+    },
+    "ShippingAddress": {
+      "type": "Property",
+      "value": {
+        "Street": "888 Gaming Blvd",
+        "City": "Los Angeles",
+        "State": "CA",
+        "PostalCode": "90001",
+        "Country": "USA"
+      }
+    },
+    "Dimensions": {
+      "type": "Property",
+      "value": {
+        "Length": 12.5,
+        "Width": 7.5,
+        "Height": 4.5,
+        "Unit": "cm"
+      }
+    },
+    "Location": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "Point",
+        "coordinates": [
+          -118.2437,
+          34.0522
+        ]
+      }
+    },
+    "Route": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -118.2437,
+            34.0522
+          ],
+          [
+            -118.3687,
+            34.1016
+          ]
+        ]
+      }
+    },
+    "Area": {
+      "type": "GeoProperty",
+      "value": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -118.5,
+              33.9
+            ],
+            [
+              -118.0,
+              33.9
+            ],
+            [
+              -118.0,
+              34.3
+            ],
+            [
+              -118.5,
+              34.3
+            ],
+            [
+              -118.5,
+              33.9
+            ]
+          ]
+        ]
+      }
+    },
+    "Rating": {
+      "type": "Property",
+      "value": 0
+    },
+    "Temperature": {
+      "type": "Property",
+      "value": 0
+    },
+    "Quantity": {
+      "type": "Property",
+      "value": 0
+    },
+    "Weight": {
+      "type": "Property",
+      "value": 0.0
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:ProductDescriptions:2d6f3efe-4224-566e-beba-7e1af739a4b2",
+    "type": "ProductDescriptions",
+    "ProductID": {
+      "type": "Property",
+      "value": "2dcd1e3c-e38a-5391-ba63-17ecfeaea3c2"
+    },
+    "LanguageKey": {
+      "type": "Property",
+      "value": "EN"
+    },
+    "Description": {
+      "type": "Property",
+      "value": "High-performance laptop for productivity and gaming"
+    },
+    "Product": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:Products:2dcd1e3c-e38a-5391-ba63-17ecfeaea3c2"
+    },
+    "CustomName": {
+      "type": "Property",
+      "value": "Promo"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:ProductDescriptions:18a1e823-a555-5440-ac41-b51ce7c819f0",
+    "type": "ProductDescriptions",
+    "ProductID": {
+      "type": "Property",
+      "value": "2dcd1e3c-e38a-5391-ba63-17ecfeaea3c2"
+    },
+    "LanguageKey": {
+      "type": "Property",
+      "value": "DE"
+    },
+    "Description": {
+      "type": "Property",
+      "value": "Hochleistungs-Laptop für Produktivität und Gaming"
+    },
+    "Product": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:Products:2dcd1e3c-e38a-5391-ba63-17ecfeaea3c2"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:ProductDescriptions:bbe56de3-06bc-5d53-9284-9ead3e09c669",
+    "type": "ProductDescriptions",
+    "ProductID": {
+      "type": "Property",
+      "value": "6b9522bf-7fd8-5287-a719-973238eb7f04"
+    },
+    "LanguageKey": {
+      "type": "Property",
+      "value": "EN"
+    },
+    "Description": {
+      "type": "Property",
+      "value": "Ergonomic wireless mouse with precision tracking"
+    },
+    "Product": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:Products:6b9522bf-7fd8-5287-a719-973238eb7f04"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:ProductDescriptions:d3867595-4fa5-53e8-b50b-17ea6f3cd42f",
+    "type": "ProductDescriptions",
+    "ProductID": {
+      "type": "Property",
+      "value": "6b9522bf-7fd8-5287-a719-973238eb7f04"
+    },
+    "LanguageKey": {
+      "type": "Property",
+      "value": "FR"
+    },
+    "Description": {
+      "type": "Property",
+      "value": "Souris sans fil ergonomique avec suivi de précision"
+    },
+    "Product": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:Products:6b9522bf-7fd8-5287-a719-973238eb7f04"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:ProductDescriptions:c583935c-93b1-59dc-b9e4-499b400466b4",
+    "type": "ProductDescriptions",
+    "ProductID": {
+      "type": "Property",
+      "value": "34e95b91-1015-5845-88a4-b4151e7ae85e"
+    },
+    "LanguageKey": {
+      "type": "Property",
+      "value": "EN"
+    },
+    "Description": {
+      "type": "Property",
+      "value": "Ceramic coffee mug with heat retention technology"
+    },
+    "Product": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:Products:34e95b91-1015-5845-88a4-b4151e7ae85e"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:ProductDescriptions:84fa5c95-5229-51e1-8cce-6b3a978e3049",
+    "type": "ProductDescriptions",
+    "ProductID": {
+      "type": "Property",
+      "value": "b29710ff-0b9e-54c0-8ef0-eb0576452043"
+    },
+    "LanguageKey": {
+      "type": "Property",
+      "value": "EN"
+    },
+    "Description": {
+      "type": "Property",
+      "value": "Latest generation smartphone with advanced camera"
+    },
+    "Product": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:Products:b29710ff-0b9e-54c0-8ef0-eb0576452043"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:ProductDescriptions:0ec21c50-e1f2-54d9-954c-b7a77a79d75e",
+    "type": "ProductDescriptions",
+    "ProductID": {
+      "type": "Property",
+      "value": "b29710ff-0b9e-54c0-8ef0-eb0576452043"
+    },
+    "LanguageKey": {
+      "type": "Property",
+      "value": "ES"
+    },
+    "Description": {
+      "type": "Property",
+      "value": "Smartphone de última generación con cámara avanzada"
+    },
+    "Product": {
+      "type": "Relationship",
+      "object": "urn:ngsi-ld:Products:b29710ff-0b9e-54c0-8ef0-eb0576452043"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:MediaItems:452c1b18-8b3c-5b70-8d30-e27a177f8d6a",
+    "type": "MediaItems",
+    "ID": {
+      "type": "Property",
+      "value": "452c1b18-8b3c-5b70-8d30-e27a177f8d6a"
+    },
+    "Name": {
+      "type": "Property",
+      "value": "Sample Image"
+    },
+    "ContentType": {
+      "type": "Property",
+      "value": "image/png"
+    },
+    "Size": {
+      "type": "Property",
+      "value": 1024
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:MediaItems:bca7d96b-ead8-5cb0-bec6-42c3206da6f4",
+    "type": "MediaItems",
+    "ID": {
+      "type": "Property",
+      "value": "bca7d96b-ead8-5cb0-bec6-42c3206da6f4"
+    },
+    "Name": {
+      "type": "Property",
+      "value": "Sample Document"
+    },
+    "ContentType": {
+      "type": "Property",
+      "value": "application/pdf"
+    },
+    "Size": {
+      "type": "Property",
+      "value": 2048
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:ReadOnlyItems:788810a3-a6ce-5faa-ac6f-c0c70e101bcb",
+    "type": "ReadOnlyItems",
+    "ID": {
+      "type": "Property",
+      "value": "788810a3-a6ce-5faa-ac6f-c0c70e101bcb"
+    },
+    "Name": {
+      "type": "Property",
+      "value": "Read-only item A"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:ReadOnlyItems:a1b40ba4-ec94-58bb-b4b6-aedc5bc87859",
+    "type": "ReadOnlyItems",
+    "ID": {
+      "type": "Property",
+      "value": "a1b40ba4-ec94-58bb-b4b6-aedc5bc87859"
+    },
+    "Name": {
+      "type": "Property",
+      "value": "Read-only item B"
+    }
+  },
+  {
+    "id": "urn:ngsi-ld:DecimalSamples:c971a47a-2bf5-586e-b7ab-1a4865807f00",
+    "type": "DecimalSamples",
+    "ID": {
+      "type": "Property",
+      "value": "c971a47a-2bf5-586e-b7ab-1a4865807f00"
+    },
+    "Name": {
+      "type": "Property",
+      "value": "Seed Decimal"
+    },
+    "Amount": {
+      "type": "Property",
+      "value": 123.45
+    }
+  }
+]

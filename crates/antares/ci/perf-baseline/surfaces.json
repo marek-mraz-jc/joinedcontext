@@ -1,0 +1,148 @@
+{
+  "machine": "sandbox-12c",
+  "measured": "2026-10-20T22:20Z",
+  "builds": {
+    "vanilla": {
+      "ngsi-id": {
+        "p95_ms": 5.19,
+        "p99_ms": 8.34,
+        "rps": 200.0,
+        "error_pct": 0.0
+      },
+      "ngsi-type": {
+        "p95_ms": 7.31,
+        "p99_ms": 8.76,
+        "rps": 100.0,
+        "error_pct": 0.0
+      },
+      "ngsi-q": {
+        "p95_ms": 30.14,
+        "p99_ms": 35.97,
+        "rps": 100.0,
+        "error_pct": 0.0
+      },
+      "ngsi-near": {
+        "p95_ms": 132.91,
+        "p99_ms": 232.31,
+        "rps": 50.0,
+        "error_pct": 0.0
+      },
+      "ngsi-within": {
+        "p95_ms": 8.97,
+        "p99_ms": 95.69,
+        "rps": 50.0,
+        "error_pct": 0.0
+      },
+      "ngsi-attrs": {
+        "p95_ms": 22.28,
+        "p99_ms": 27.21,
+        "rps": 50.0,
+        "error_pct": 0.0
+      },
+      "temporal-lastn": {
+        "p95_ms": 13.48,
+        "p99_ms": 21.53,
+        "rps": 50.0,
+        "error_pct": 0.0
+      },
+      "temporal-between": {
+        "p95_ms": 8.66,
+        "p99_ms": 11.7,
+        "rps": 50.0,
+        "error_pct": 0.0
+      },
+      "upsert-100": {
+        "p95_ms": 51.63,
+        "p99_ms": 65.89,
+        "rps": 5.0,
+        "error_pct": 0.0
+      }
+    },
+    "platform": {
+      "ngsi-id": {
+        "p95_ms": 10.36,
+        "p99_ms": 23.69,
+        "rps": 200.0,
+        "error_pct": 0.0
+      },
+      "ngsi-type": {
+        "p95_ms": 19.54,
+        "p99_ms": 41.36,
+        "rps": 100.0,
+        "error_pct": 0.0
+      },
+      "ngsi-q": {
+        "p95_ms": 62.87,
+        "p99_ms": 226.73,
+        "rps": 100.0,
+        "error_pct": 0.0
+      },
+      "ngsi-within": {
+        "p95_ms": 28.19,
+        "p99_ms": 94.53,
+        "rps": 50.0,
+        "error_pct": 0.0
+      },
+      "ngsi-attrs": {
+        "p95_ms": 25.68,
+        "p99_ms": 42.31,
+        "rps": 50.0,
+        "error_pct": 0.0
+      },
+      "temporal-lastn": {
+        "p95_ms": 22.37,
+        "p99_ms": 47.85,
+        "rps": 50.0,
+        "error_pct": 0.0
+      },
+      "temporal-between": {
+        "p95_ms": 22.59,
+        "p99_ms": 44.88,
+        "rps": 50.0,
+        "error_pct": 0.0
+      },
+      "upsert-100": {
+        "p95_ms": 44.04,
+        "p99_ms": 92.94,
+        "rps": 5.0,
+        "error_pct": 0.0
+      },
+      "view-type": {
+        "p95_ms": 7.78,
+        "p99_ms": 10.11,
+        "rps": 100.0,
+        "error_pct": 0.0
+      },
+      "view-attributes": {
+        "p95_ms": 49.24,
+        "p99_ms": 66.67,
+        "rps": 20.0,
+        "error_pct": 0.0
+      },
+      "sta-things": {
+        "p95_ms": 128.28,
+        "p99_ms": 166.76,
+        "rps": 20.0,
+        "error_pct": 0.0
+      },
+      "sta-observations": {
+        "p95_ms": 14.73,
+        "p99_ms": 26.24,
+        "rps": 50.0,
+        "error_pct": 0.0
+      },
+      "ical": {
+        "p95_ms": 665.98,
+        "p99_ms": 710.84,
+        "rps": 2.0,
+        "error_pct": 0.0
+      },
+      "mcp": {
+        "p95_ms": 57.25,
+        "p99_ms": 83.0,
+        "rps": 50.0,
+        "error_pct": 0.0
+      }
+    }
+  }
+}

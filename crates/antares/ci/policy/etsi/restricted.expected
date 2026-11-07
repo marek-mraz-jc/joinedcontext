@@ -1,0 +1,127 @@
+# TPs the restricted cell of image-jc.yml (etsi-policy) must fail, case by case (T-4855). Policy
+# ci/policy/etsi/restricted.json: every clause granted to the suite, Retrieve and Query Entities (5.7.1,
+# 5.7.2) prohibited on Vehicle; suites ContextInformation/Consumption. A read naming no type is refused
+# whole by a prohibition (README rule 2, platform GW4), so every Retrieve Entity by id is a 403, an unknown
+# or invalid id included (no existence or validity is told to a refused caller); a query naming Vehicle
+# among other types is narrowed: Vehicle is left out of the answer. Each 403 is checked by refusals.py.
+# Measured locally on file, 2026-10-20 (worker-t4855): 529 TPs, these 120 fail (113 refused 403, 7 narrowed).
+577_01_03  refused 403 where the baseline answers 201
+019_01_02  narrowed: the answer leaves the Vehicle out (Item root['Vehicle:2081419835653157'] removed from dictionary.)
+019_01_04  refused 403 where the baseline answers 200
+019_02_02  refused 403 where the baseline answers 200
+019_02_04  refused 403 where the baseline answers 200
+019_02_05  narrowed: the GeoJSON FeatureCollection leaves the Vehicle out
+019_03_03  refused 403 where the baseline answers 400
+019_03_05  refused 403 where the baseline answers 400
+019_09_01  refused 403 where the baseline answers 200
+019_09_02  refused 403 where the baseline answers 200
+019_09_03  refused 403 where the baseline answers 200
+019_09_04  refused 403 where the baseline answers 200
+019_09_05  refused 403 where the baseline answers 200
+019_09_06  refused 403 where the baseline answers 200
+019_09_07  refused 403 where the baseline answers 200
+019_09_08  refused 403 where the baseline answers 200
+019_09_09  refused 403 where the baseline answers 200
+019_09_10  refused 403 where the baseline answers 200
+019_17_02  narrowed: the answer leaves the Vehicle out (Item root[1] removed from iterable.)
+019_17_03  narrowed: the answer leaves the Vehicle out (Item root[1] removed from iterable.)
+019_17_04  narrowed: the answer leaves the Vehicle out (Item root[1] removed from iterable.)
+019_17_05  narrowed: the answer leaves the Vehicle out (Item root[1] removed from iterable.)
+019_17_06  narrowed: the answer leaves the Vehicle out (Item root[1] removed from iterable.)
+019_25  refused 403 where the baseline answers 200
+019_26_01  refused 403 where the baseline answers 200
+019_26_02  refused 403 where the baseline answers 400
+5722_01_01  refused 403 where the baseline answers 400
+5722_01_02  refused 403 where the baseline answers 400
+018_01_01  refused 403 where the baseline answers 200
+018_01_02  refused 403 where the baseline answers 200
+018_02_01  refused 403 where the baseline answers 400
+018_03_01  refused 403 where the baseline answers 404
+018_03_02  refused 403 where the baseline answers 404
+018_04_01  refused 403 where the baseline answers 200
+018_05_01  refused 403 where the baseline answers 200
+018_05_02  refused 403 where the baseline answers 200
+018_05_03  refused 403 where the baseline answers 200
+018_05_04  refused 403 where the baseline answers 200
+018_06_01  refused 403 where the baseline answers 200
+018_06_02  refused 403 where the baseline answers 200
+018_07_01  refused 403 where the baseline answers 200
+018_07_02  refused 403 where the baseline answers 200
+018_07_03  refused 403 where the baseline answers 200
+018_07_04  refused 403 where the baseline answers 200
+018_07_05  refused 403 where the baseline answers 200
+018_07_06  refused 403 where the baseline answers 200
+018_08_01  refused 403 where the baseline answers 200
+018_08_02  refused 403 where the baseline answers 200
+018_09_01  refused 403 where the baseline answers 200
+018_09_02  refused 403 where the baseline answers 200
+018_10_01  refused 403 where the baseline answers 200
+018_10_02  refused 403 where the baseline answers 200
+018_10_03  refused 403 where the baseline answers 200
+018_10_04  refused 403 where the baseline answers 200
+018_11_01  refused 403 where the baseline answers 200
+018_12_01  refused 403 where the baseline answers 200
+018_13_01  refused 403 where the baseline answers 200
+018_13_02  refused 403 where the baseline answers 200
+018_13_03  refused 403 where the baseline answers 200
+018_13_04  refused 403 where the baseline answers 200
+018_14_01  refused 403 where the baseline answers 200
+018_14_02  refused 403 where the baseline answers 200
+018_15_01  refused 403 where the baseline answers 200
+018_15_02  refused 403 where the baseline answers 200
+018_15_03  refused 403 where the baseline answers 200
+018_15_04  refused 403 where the baseline answers 200
+018_15_05  refused 403 where the baseline answers 200
+018_15_06  refused 403 where the baseline answers 200
+018_15_07  refused 403 where the baseline answers 200
+018_16_01  refused 403 where the baseline answers 400
+018_16_02  refused 403 where the baseline answers 400
+018_16_03  refused 403 where the baseline answers 400
+018_16_04  refused 403 where the baseline answers 400
+018_17_01  refused 403 where the baseline answers 200
+018_17_02  refused 403 where the baseline answers 200
+018_17_03  refused 403 where the baseline answers 200
+018_17_04  refused 403 where the baseline answers 200
+018_17_05  refused 403 where the baseline answers 200
+018_17_06  refused 403 where the baseline answers 200
+018_18_01  refused 403 where the baseline answers 400
+018_18_02  refused 403 where the baseline answers 400
+018_18_03  refused 403 where the baseline answers 400
+018_18_04  refused 403 where the baseline answers 400
+018_18_05  refused 403 where the baseline answers 400
+018_18_06  refused 403 where the baseline answers 400
+018_18_07  refused 403 where the baseline answers 400
+018_18_08  refused 403 where the baseline answers 400
+018_18_09  refused 403 where the baseline answers 400
+018_19_01  refused 403 where the baseline answers 404
+018_19_02  refused 403 where the baseline answers 404
+018_20_01  refused 403 where the baseline answers 200
+018_20_02  refused 403 where the baseline answers 200
+018_20_03  refused 403 where the baseline answers 200
+018_20_04  refused 403 where the baseline answers 200
+018_21_01  refused 403 where the baseline answers 200
+018_21_02  refused 403 where the baseline answers 200
+018_21_03  refused 403 where the baseline answers 200
+018_21_04  refused 403 where the baseline answers 200
+415_01_01  refused 403 where the baseline answers 200
+415_01_02  refused 403 where the baseline answers 200
+415_01_03  refused 403 where the baseline answers 200
+415_01_04  refused 403 where the baseline answers 200
+415_01_05  refused 403 where the baseline answers 200
+421_01_01  refused 403 where the baseline answers 200
+421_01_02  refused 403 where the baseline answers 400
+436_08_01  refused 403 where the baseline answers 203
+436_08_02  refused 403 where the baseline answers 200
+4516_01_01  refused 403 where the baseline answers 200
+4516_01_02  refused 403 where the baseline answers 200
+4516_01_03  refused 403 where the baseline answers 200
+4517_01  refused 403 where the baseline answers 200
+454_01  refused 403 where the baseline answers 200
+5711_01_01  refused 403 where the baseline answers 404
+5711_01_02  refused 403 where the baseline answers 200
+5711_01_03  refused 403 where the baseline answers 400
+5714_01_01  refused 403 where the baseline answers 200
+5714_01_02  refused 403 where the baseline answers 200
+5714_01_03  refused 403 where the baseline answers 200
+6311_01_01  refused 403 where the baseline answers 200
+6311_01_02  refused 403 where the baseline answers 200

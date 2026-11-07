@@ -1,0 +1,91 @@
+name: load-surfaces
+
+# Load on every API surface (T-4889): dev/perf/surfaces.sh seeds 100 000 synthetic entities over
+# ten types (a 30-day history, 5 000 Events) into PostgreSQL and runs one k6 shape per surface
+# (NGSI-LD id, type page, q, geo near and within, attrs, temporal lastN and between, batch upsert
+# 100; on the platform build also the view root, OData, OGC Features, SensorThings, iCalendar,
+# MCP and a 1 000-subscriber WebSocket fan-out) against the vanilla and the platform binary.
+# The job fails on a breach of dev/perf/surfaces-budgets.json, or of the committed baseline
+# ci/perf-baseline/surfaces.json when it was measured on this machine class (PERF_MACHINE).
+# Budgets are absolute with headroom for a shared runner's 20-30 % swing; the baseline catches
+# a regression inside them. Write a new baseline from a green run's artifact:
+#   python3 dev/perf/surfaces_gate.py baseline --results <artifact dir> --machine github-ubuntu-latest
+on:
+  schedule:
+    - cron: "23 6 * * 0" # Sunday 06:23 UTC, the heavy weekly of Sunday (T-5639)
+  workflow_dispatch:
+    inputs:
+      shapes:
+        description: comma-separated shapes (empty = all)
+        default: ""
+
+concurrency:
+  group: load-surfaces
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  surfaces:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      issues: write
+    services:
+      postgis:
+        image: ghcr.io/baosystems/postgis:17-3.5
+        env:
+          POSTGRES_USER: antares
+          POSTGRES_PASSWORD: antares
+          POSTGRES_DB: antares
+        ports: ["15432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U antares"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      CARGO_TERM_COLOR: always
+      PERF_MACHINE: github-ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: the gate fails a planted slowdown, a planted error and a missing shape
+        run: python3 dev/perf/surfaces_gate.py --selftest
+      - uses: grafana/setup-k6-action@43b9fc21641a76002687994433dd586f56e791b1 # v1.2.2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Build vanilla and platform
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          cargo build --locked --release -p antares-broker
+          cp target/release/antares bin/antares-vanilla
+          cargo build --locked --release -p antares-broker --features full,jc-policy,linkml,parquet,tabular,ical,feed
+          cp target/release/antares bin/antares-platform
+      - name: Load every surface
+        env:
+          DATABASE_URL: postgresql://antares:antares@localhost:15432/antares
+          BIN_VANILLA: bin/antares-vanilla
+          BIN_PLATFORM: bin/antares-platform
+          SHAPES: ${{ inputs.shapes }}
+          PG_CONTAINER: ${{ job.services.postgis.id }}
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq postgresql-client >/dev/null
+          status=0
+          dev/perf/surfaces.sh || status=$?
+          cat results/surfaces/surfaces.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: load-surfaces
+          path: results/surfaces
+          retention-days: 90
+      - name: File an issue on a scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: load-surfaces went red
+          body: A surface broke its load budget or its baseline, or did not run; the table and the k6 logs are in the load-surfaces artifact.
+          log-file: results/surfaces/surfaces.md

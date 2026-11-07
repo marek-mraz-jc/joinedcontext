@@ -1,0 +1,15 @@
+{
+	"id": "urn:ngsi-ld:Building:randomUUID",
+	"type": "Building",
+	"name": {
+		"type": "Property",
+		"value": "Pisa Tower"
+	},
+	"locatedAt": {
+		"type": "Relationship",
+		"object": "urn:ngsi-ld:City:Pisa"
+	},
+	"@context": [
+		"https://raw.githubusercontent.com/joinedcontext/Antares-NGSI-LD-Context-Broker/dev/ngsi-ld-test-suite/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld"
+	]
+}

@@ -1,0 +1,134 @@
+# What a rollback of each migration's release does (T-5105, docs/src/operations.md).
+# Every file in migrations/ has one entry; dev/check-migrations.py enforces it.
+# Migrations are forward-only: no down step ships, nothing undoes a schema change.
+#   compatible: the previous release boots and serves this schema; `note` names
+#               what that release does not maintain while it runs.
+#   breaking:   the previous release cannot serve it; the file name starts with
+#               `breaking_` so the previous release refuses to boot on it, and
+#               the way back is the backup taken before the release.
+# The boot of a release older than T-5105 refuses every newer migration
+# (sqlx VersionMissing), so a rollback across 0001-0016 restores the backup.
+
+[0001]
+rollback = "breaking"
+note = "the initial schema; nothing older to roll back to"
+
+[0002]
+rollback = "compatible"
+note = "new dead_letters table; an older release never fills it"
+
+[0003]
+rollback = "compatible"
+note = "replaces try_timestamptz with one that also accepts a comma fraction; same signature"
+
+[0004]
+rollback = "compatible"
+note = "drops entity_maps, which no release ever wrote"
+
+[0005]
+rollback = "compatible"
+note = "per-command RLS policies with the same predicates; the service escape covers SELECT and DELETE only"
+
+[0006]
+rollback = "compatible"
+note = "jsonld_contexts gains a generated tenant_id and RLS; an older release writes contexts as before, each confined to its owner"
+
+[0007]
+rollback = "compatible"
+note = "outbox published_at column and indexes; an older release never sets it"
+
+[0008]
+rollback = "compatible"
+note = "new views table; an older release without views ignores it"
+
+[0009]
+rollback = "compatible"
+note = "dataset_instances is not kept by an older release: lastN of an attribute given a datasetId during the rollback may read the newest rows only"
+
+[0010]
+rollback = "compatible"
+note = "partial index only"
+
+[0011]
+rollback = "compatible"
+note = "version and provenance columns with defaults plus attr_versions; an older release keeps version 1 and writes no versions"
+
+[0012]
+rollback = "compatible"
+note = "entity_types is kept by a trigger on retype only: a type first written during the rollback is missing from /types until written again"
+
+[0013]
+rollback = "compatible"
+note = "index swap; an older release reads the type page slower"
+
+[0014]
+rollback = "compatible"
+note = "attrs_expire_at is not written by an older release: attribute expiresAt of rows written during the rollback waits for the next write after roll-forward"
+
+[0015]
+rollback = "compatible"
+note = "generated location_cell column and indexes; Postgres keeps them, nothing to write"
+
+[0016]
+rollback = "compatible"
+note = "extended planner statistics only"
+
+[0017]
+rollback = "compatible"
+note = "index swap; an older release's ON CONFLICT infers u_attr_instances_time from the same column set, and per-partition {partition}_u_time indexes built before the swap wait for the roll-forward"
+
+[0018]
+rollback = "compatible"
+note = "two added btree indexes; an older release reads geo and !location pages slower"
+
+[0019]
+rollback = "compatible"
+note = "index drop; an older release names no index in its statements and plans its q= reads without it, as it already did under RLS"
+
+[0020]
+rollback = "compatible"
+note = "new empty iri_ids, attr_rows and history_cutover (NULL): every history row is still written to attr_instances, which an older release reads"
+
+[0021]
+rollback = "compatible"
+note = "a generated column and its btree; an older release names no generated column in its INSERTs and reads name filters by the type, id or location indexes as before"
+
+[0022]
+rollback = "compatible"
+note = "iri_no's body moves from LANGUAGE sql to PL/pgSQL with the same signature and answers; an older release calls it the same way"
+
+[0023]
+rollback = "breaking"
+note = "attr_rows becomes a parent partitioned by short (plain mode: the 0020 parent renamed attr_rows_long, the unlogged attr_rows_short beside it) and its unique key takes short: a 0022 release's ON CONFLICT names a key no index has and every history write to attr_rows fails, so the boot stops at 0023; the way back is the pre-release backup"
+
+[0024]
+rollback = "compatible"
+note = "new entity_values with its statement triggers on entities; an older release names neither, its writes still fire the triggers, so the table stays current for the roll-forward, and it reads q= and attrs= pages by the type, id or location indexes as before"
+
+[0025]
+rollback = "compatible"
+note = "entity_attrs and its trigger stay; an older release never reads them and folds /attributes, while the trigger keeps the catalogue current for the roll-forward"
+
+[0026]
+rollback = "compatible"
+note = "views gains the generated digest column; an older release names its columns on INSERT and computes the digest in its own query, the same value, so it reads and writes views as before while the column stays current for the roll-forward"
+
+[0027]
+rollback = "compatible"
+note = "a new index on entities (tenant_id, id COLLATE \"C\"); an older release never names it and its writes keep it current"
+
+[0028]
+rollback = "compatible"
+note = "offset_until is not kept by an older release: after a roll-forward, lastN of an attribute given a non-UTC observedAt during the rollback may read its newest rows only, ranked by instant"
+
+[0029]
+rollback = "compatible"
+note = "entity_values_on_update writes only the rows that changed; an older release never names the function, and it leaves the same rows 0024's did"
+
+[0030]
+rollback = "compatible"
+note = "an older release never reads bare and does not clear it on a write: after a roll-forward, an Entity marked bare that gained history during the rollback stays out of temporal query pages until its next write or the sweep's next pass over it"
+
+[0031]
+rollback = "compatible"
+note = "drops the unused tenant_update policy on attr_versions; an older release never updates a version row, so it runs unchanged without it"

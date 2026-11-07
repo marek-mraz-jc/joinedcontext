@@ -1,0 +1,39 @@
+[package]
+name = "ogc-cql2"
+description = "OGC CQL2 1.0 (21-065r2) text and JSON filters to one bounded AST (hand-written recursive descent, no evaluation; ADR-0029 decision 2)."
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+
+# ADR-0029 decision 2 / surfaces-threat-model 9.1: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "protocol"
+
+[dependencies]
+serde_json = { version = "1", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"

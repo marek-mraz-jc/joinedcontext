@@ -1,0 +1,346 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/antares-model",
+    "crates/antares-store",
+    "crates/antares-jsonld",
+    "crates/antares-ql",
+    "crates/antares-sql",
+    "crates/antares-bus",
+    "crates/antares-api",
+    "crates/antares-matcher",
+    "crates/antares-notifier",
+    "crates/antares-broker",
+    "crates/antares-wasm",
+    "crates/antares-ops",
+    "crates/linkml-model",
+    "crates/odata-csdl",
+    "crates/odata-url",
+    "crates/odata-json",
+    "crates/odata-batch",
+    "crates/odata-axum",
+    "crates/ogc-cql2",
+    "crates/antares-residual",
+    "crates/antares-views",
+    "crates/antares-mcp",
+    "crates/antares-linkml",
+    "crates/antares-odata",
+    "crates/antares-ogc",
+    "crates/antares-export",
+    "crates/antares-sta",
+    "crates/antares-ical",
+    "crates/antares-ws",
+    "crates/antares-icsr",
+    "crates/antares-geojson",
+    "crates/antares-feed",
+    "crates/antares-gbfs",
+    "crates/antares-gtfsrt",
+    "crates/antares-jsonstat",
+    # The reference plugin: built and tested with the workspace so the
+    # driver, routing and notification seams cannot drift from it.
+    "examples/plugin-example",
+    # The joinedcontext platform's policy engine (ADR-0020 addon).
+    "addons/joinedcontext-policy",
+]
+# Fuzz harness: own lockfile/profile, built only by cargo-fuzz on
+# nightly (.github/workflows/fuzz.yml) — never part of the normal build.
+exclude = ["fuzz", "vendor/rumqttc"]
+
+[workspace.package]
+version = "0.3.0"
+edition = "2021"
+license = "EUPL-1.2"
+repository = "https://github.com/joinedcontext/Antares-NGSI-LD-Context-Broker"
+rust-version = "1.97"
+
+[workspace.dependencies]
+antares-model = { package = "ngsild-model", path = "crates/antares-model", version = "0.3" }
+antares-store = { path = "crates/antares-store" }
+antares-jsonld = { package = "ngsild-jsonld", path = "crates/antares-jsonld", version = "0.3" }
+antares-ql = { package = "ngsild-ql", path = "crates/antares-ql", version = "0.3" }
+antares-residual = { package = "ngsild-residual", path = "crates/antares-residual", version = "0.3" }
+antares-sql = { path = "crates/antares-sql", default-features = false }
+antares-bus = { path = "crates/antares-bus" }
+antares-api = { path = "crates/antares-api", default-features = false }
+antares-matcher = { package = "ngsild-matcher", path = "crates/antares-matcher", version = "0.3" }
+antares-notifier = { path = "crates/antares-notifier", default-features = false }
+antares-plugin-example = { path = "examples/plugin-example" }
+joinedcontext-policy = { path = "addons/joinedcontext-policy" }
+antares-ops = { path = "crates/antares-ops" }
+antares-views = { path = "crates/antares-views" }
+antares-mcp = { path = "crates/antares-mcp" }
+antares-linkml = { path = "crates/antares-linkml" }
+antares-odata = { path = "crates/antares-odata" }
+antares-ogc = { path = "crates/antares-ogc" }
+antares-export = { path = "crates/antares-export" }
+antares-sta = { path = "crates/antares-sta" }
+antares-ical = { path = "crates/antares-ical" }
+antares-ws = { path = "crates/antares-ws" }
+antares-icsr = { path = "crates/antares-icsr" }
+antares-geojson = { path = "crates/antares-geojson" }
+antares-feed = { path = "crates/antares-feed" }
+antares-gbfs = { path = "crates/antares-gbfs" }
+antares-gtfsrt = { path = "crates/antares-gtfsrt" }
+antares-jsonstat = { path = "crates/antares-jsonstat" }
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+# The storage driver seams are object-safe AND asynchronous, which no
+# stable language feature gives at once: `async fn` in a trait is not
+# dyn-compatible, so every method returns a boxed future. The macro writes
+# that boxing; the alternative is `Box::pin(async move { … })` by hand
+# around two hundred method bodies.
+async-trait = "0.1"
+# One HTTP client major in the build: `opentelemetry-otlp` takes 0.13, so the
+# broker does too. `rustls-no-provider` rather than `rustls`, which would
+# pull aws-lc-rs beside ring — the provider is installed once in
+# `antares_jsonld::client_builder`, and trust anchors come from the
+# platform store (the image carries one) widened by ANTARES_EXTRA_CA_FILE.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "query"] }
+chrono = { version = "0.4", features = ["serde"] }
+# 4.23.3 EXAMPLES 6/7: orderBy collation — ICU4X collator, compiled data
+icu_collator = "2"
+icu_locale_core = "2"
+uuid = { version = "1", features = ["v4", "v5"] }
+regex = "1"
+regex-syntax = "0.8"
+# Property tests (T-3462): the q/scopeQ/geoQ pushdown against the evaluator.
+proptest = { version = "1", default-features = false, features = ["std"] }
+axum = "0.8"
+hyper = "1"
+hyper-util = { version = "0.1", features = ["server-auto", "http1", "http2", "tokio"] }
+tower = "0.5"
+tower-http = { version = "0.7", features = ["cors", "catch-panic", "compression-gzip", "compression-br"] }
+# T-5847: the compression tests decode what the layer sends
+flate2 = "1"
+brotli = "9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# SHA-256 of the access surface's ODRL rules (joinedcontext-policy); the
+# version sqlx and ed25519-dalek already build.
+sha2 = { version = "0.10", default-features = false }
+redb = "4.1"
+# T-5838: the at-rest seal of notification credentials (antares-sql); both
+# already in the vanilla tree through rustls and sqlx
+ring = "0.17"
+base64 = "0.23"
+rumqttc = { version = "0.25", default-features = false, features = ["use-rustls-no-provider"] }
+# The crypto provider for mqtts. rumqttc is built provider-less
+# (use-rustls-no-provider) so the workspace stays on ONE rustls stack with
+# ring only — aws-lc-sys (C + cmake) never enters the build.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+# Geoquery evaluator (4.10): DE-9IM relate + GeoJSON conversion
+# no rayon: the geo operations here run per request on the runtime, and
+# rayon's pool (crossbeam-epoch) is what Miri rejects
+geo = { version = "0.33", default-features = false }
+geo-types = "0.7"
+geojson = "1"
+# @context parsed-LRU, sonic ingest fast path, allocator
+moka = { version = "0.12", features = ["sync"] }
+sonic-rs = "0.5"
+tikv-jemallocator = "0.7"
+tikv-jemalloc-ctl = { version = "0.7", features = ["stats"] }
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls", "json", "chrono", "uuid", "migrate", "macros"] }
+# The JetStream change spine — official client, KV + streams in core
+# (0.50; pre-1.0 pin — upgrade in dedicated PRs)
+# Default features minus "websockets": the bus dials nats:// only, and that
+# transport pulled webpki-roots 0.26 (RUSTSEC-2026-0381) via tokio-websockets.
+async-nats = { version = "0.50", default-features = false, features = ["server_2_10", "server_2_11", "server_2_12", "server_2_14", "service", "ring", "jetstream", "nkeys", "crypto", "object-store", "kv", "nuid"] }
+futures-util = { version = "0.3", default-features = false }
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+# Observability: antares_ Prometheus metrics, env-gated OTLP traces
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
+opentelemetry = "0.32"
+opentelemetry_sdk = "0.32"
+opentelemetry-otlp = { version = "0.32", default-features = false, features = [
+    "trace",
+    "logs",
+    "http-proto",
+    "reqwest-blocking-client",
+] }
+opentelemetry-appender-tracing = "0.32"
+tracing-opentelemetry = "0.33"
+console-subscriber = "0.5"
+
+# dev
+http-body-util = "0.1"
+
+# Browser build (antares-wasm + the wasm32 target sections of core crates)
+http = "1"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = "0.3"
+console_error_panic_hook = "0.1"
+# std::time re-export natively; performance.now()-backed on wasm32 —
+# std::time::Instant::now() PANICS on wasm32-unknown-unknown.
+web-time = "1"
+gloo-timers = { version = "0.4", features = ["futures"] }
+# Sound single-thread Send/Sync bridge (runtime-checked) — reqwest's wasm
+# client/futures are !Send but axum demands Send everywhere.
+send_wrapper = { version = "0.6", features = ["futures"] }
+
+# Debug and test builds carry line tables instead of full DWARF. The
+# workspace's test binaries are linked once per feature configuration, and
+# full debuginfo makes those copies the largest thing on the disk they
+# share; a panic still reports the file and line it came from.
+[profile.dev]
+debug = "line-tables-only"
+
+# `test` inherits from `dev`, and states the same value so a profile
+# override on one of them cannot leave the other on full DWARF.
+[profile.test]
+debug = "line-tables-only"
+
+# The browser artifact optimizes for size (opt-level z + fat LTO); the
+# native release profile stays throughput-tuned and untouched.
+[profile.release]
+# Resident code is the largest idle-RSS consumer (measured 10.9 MiB
+# of a 37.5 MB unstripped binary). Symbols stripped (cargo-auditable's
+# .dep-v0 section survives). Fat LTO (T-5234): one module drops the copies
+# thin LTO imports into each unit; vanilla 32.3 -> 27.0 MB, `full` 42.4 -> 35.8 MB,
+# 3-9 % less broker CPU per request on every shape, +3 min per release link.
+strip = "symbols"
+lto = "fat"
+# Integer overflow panics instead of wrapping: within 3 % of unchecked on
+# the stable perf-baseline shapes (docs/src/perf-baseline.md, T-3552).
+overflow-checks = true
+
+# ADR-0027 section 6 (T-3712): `full` measured +6.81 MiB over vanilla.
+# Request-path surface crates (and rmcp) build as one codegen unit, which
+# drops the copies of generics each unit inlined; cold ones (admin reload,
+# $metadata, $batch, schemas) build for size: +5.58 MiB, OData/MCP benches
+# within host noise. opt-level "s" everywhere reached +4.92 MiB but cost
+# 16-26 % on the OData and MCP benches. Vanilla links none of these crates.
+# T-5234 (`full` 3 KB under its budget): one codegen unit for the cold
+# crates too and for antares-ogc (-416 KiB thin, -260 KiB under fat LTO).
+# opt-level "s" cost antares-ogc 7 % CPU per OGC request and grew rmcp by
+# 10 KB, so neither is taken.
+# surfaces-threat-model 10.1: the new crates keep overflow checks in release.
+[profile.release.package.antares-ops]
+overflow-checks = true
+opt-level = "s"
+codegen-units = 1
+
+[profile.release.package.linkml-model]
+overflow-checks = true
+opt-level = "s"
+codegen-units = 1
+
+[profile.release.package.odata-csdl]
+overflow-checks = true
+opt-level = "s"
+codegen-units = 1
+
+[profile.release.package.odata-url]
+overflow-checks = true
+codegen-units = 1
+
+[profile.release.package.ogc-cql2]
+overflow-checks = true
+codegen-units = 1
+
+[profile.release.package.ngsild-residual]
+overflow-checks = true
+codegen-units = 1
+
+[profile.release.package.odata-json]
+overflow-checks = true
+codegen-units = 1
+
+[profile.release.package.odata-batch]
+overflow-checks = true
+opt-level = "s"
+codegen-units = 1
+
+[profile.release.package.odata-axum]
+overflow-checks = true
+codegen-units = 1
+
+[profile.release.package.antares-views]
+overflow-checks = true
+codegen-units = 1
+
+[profile.release.package.antares-mcp]
+overflow-checks = true
+codegen-units = 1
+
+[profile.release.package.antares-linkml]
+overflow-checks = true
+
+[profile.release.package.antares-odata]
+overflow-checks = true
+codegen-units = 1
+
+[profile.release.package.antares-ogc]
+overflow-checks = true
+codegen-units = 1
+
+[profile.release.package.antares-sta]
+overflow-checks = true
+codegen-units = 1
+
+[profile.release.package.antares-ical]
+overflow-checks = true
+codegen-units = 1
+
+[profile.release.package.antares-ws]
+overflow-checks = true
+codegen-units = 1
+
+[profile.release.package.rmcp]
+codegen-units = 1
+
+[profile.release.package.schemars]
+opt-level = "s"
+codegen-units = 1
+
+[profile.release.package.antares-icsr]
+overflow-checks = true
+
+[profile.release.package.antares-geojson]
+overflow-checks = true
+codegen-units = 1
+
+[profile.release.package.antares-feed]
+overflow-checks = true
+codegen-units = 1
+
+[profile.release.package.antares-gbfs]
+overflow-checks = true
+codegen-units = 1
+
+[profile.release.package.antares-gtfsrt]
+overflow-checks = true
+codegen-units = 1
+
+[profile.release.package.antares-jsonstat]
+overflow-checks = true
+codegen-units = 1
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+# tokio_unstable is tokio's own out-of-band cfg (RUSTFLAGS="--cfg
+# tokio_unstable"); declare it so the console-feature guard doesn't trip
+# the unexpected-cfg lint.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+# clippy 1.98.0 runs this lint into >14 GB on the antares-api test target
+# (the CI runner dies with a bare SIGTERM); every other style lint stays on.
+needless_borrows_for_generic_args = "allow"
+
+# rumqttc 0.25.1 with rustls-webpki 0.103 until a release has it (vendor/rumqttc/README.md, T-4129).
+[patch.crates-io]
+rumqttc = { path = "vendor/rumqttc" }

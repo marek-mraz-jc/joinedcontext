@@ -1,0 +1,45 @@
+[package]
+name = "linkml-model"
+description = "The LinkML subset the surfaces use: read from resolved LinkML JSON, refused when it holds anything else, and written as YAML, JSON Schema, JSON-LD context, SHACL, OWL, RDFS and Markdown."
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+
+# ADR-0027 section 1, surfaces-threat-model 9.1: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "protocol"
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+# The parsed-schema cache every surface shares, bounded by bytes (`cache`, T-4354).
+moka = { version = "0.12", default-features = false, features = ["sync"] }
+
+[dev-dependencies]
+proptest = { workspace = true }
+# YAML is parsed in tests only (LK3): the round trip of the emitter.
+serde-saphyr = { version = "=1.3.0", default-features = false, features = ["deserialize"] }
+
+# surfaces-threat-model 10.1: the full table, not the workspace's.
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"

@@ -1,0 +1,228 @@
+name: ci
+
+# The DEV pipeline — workspace tests GATE everything downstream:
+#
+#   workspace tests ──→ [image build → quick matrix (file postgres timescale) → summary]
+#                   └──→ build arm64 image ──────────────→ publish :dev (dev, all green)
+#
+# On dev the workspace tests are the green `fast` run that started this one
+# (T-3717): the matrix and the arm64 build start at once on its head_sha.
+#
+# Branch model (CONTRIBUTING.md): `dev` takes the commits and the pull
+# requests, and this workflow is its gate. `main` moves only by a pull
+# request from `dev`, gated by full.yml; `v*` tags on `main` run
+# full.yml again as the release gate. Protection lives in GitHub rulesets
+# (dev/branch-protection.sh), not here.
+#
+# No wasm here: the browser bundle is built and ETSI-tested (wasm-file
+# cell) by full.yml, and a commit that only touches native code doesn't
+# pay a wasm toolchain.
+#
+# fmt + clippy + the full workspace suite run FIRST (the shared
+# workspace.yml). If any of them fail no image or bundle is built and the
+# ETSI matrix never runs — the whole pipeline stops at the gate.
+#
+# Nothing else lives here. The full seven-cell matrix, the wasm proofs and
+# the releases live in full.yml (twice a week + v* tags + dispatch); the
+# roll-under-suite drill is roll-weekly.yml and the k8s manifest smoke is
+# k8s-smoke.yml. Shared pieces: workspace.yml (the test gate),
+# etsi-matrix.yml (the cell matrix), build-image.yml (image builds).
+
+# Runs on PRs targeting dev, on manual dispatch, and after a GREEN `fast`
+# run on dev (T-3717): fast.yml already ran workspace.yml on that commit, so
+# this run checks out the fast run's head_sha and starts the ETSI matrix and
+# the arm64 build at once, without a second workspace run. A red fast run
+# starts nothing here. A schedule or dispatch runs workspace first unless a
+# green fast run already passed workspace.yml on the same sha (the `proven`
+# job, T-5573); `with_workspace` true forces it anyway. NOT on every push: cancel-in-progress meant a
+# 40 min run never finished under a stream of fix commits. Tags run full.yml.
+#
+# T-4721 (owner order 2026-10-19): the ETSI matrix and the views differential
+# never run per push nor gate a merge; `fast` is the gate and ship.yml
+# publishes the jc image in minutes. This pipeline runs nightly on dev and on
+# dispatch. It used to run on:
+#   pull_request: {branches: [dev]}
+#   workflow_run: {workflows: [fast], types: [completed], branches: [dev]}
+on:
+  schedule:
+    - cron: "7 2 * * *"
+  workflow_dispatch:
+    inputs:
+      with_workspace:
+        description: "run workspace.yml even when a green fast run already passed it on this sha"
+        type: boolean
+        default: false
+
+# A newer commit supersedes a running pipeline.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# The commit under test: the green fast run's head_sha under workflow_run
+# (github.sha is then the tip of dev, which may have moved), else the
+# triggering commit.
+env:
+  HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+# Every job names its own grants; one without them reads the repository and nothing more.
+permissions:
+  contents: read
+
+jobs:
+  fast-gate:
+    # Under workflow_run a fast run that did not go green (red, or cancelled
+    # by a newer push) starts nothing: this run cancels itself, so tasks/ci
+    # reads it as neither green nor red. The red fast run is its own ci-red.
+    name: The fast run was not green
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/cancel"
+          sleep 120
+
+  proven:
+    # T-5573: the train dispatches this run on a dev sha whose fast run
+    # already passed workspace.yml; the same query as fast.yml's `proven`.
+    name: Already green in fast on this sha
+    if: github.event_name != 'workflow_run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: read
+    outputs:
+      green: ${{ steps.ask.outputs.green }}
+    steps:
+      - id: ask
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          green=false
+          # a failed question runs everything: the answer must prove the sha, never assume it
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$HEAD_SHA&status=success&per_page=30" \
+            --jq '[.workflow_runs[] | select(.path == ".github/workflows/fast.yml") | .id] | join(" ")') || runs=
+          [ -n "$runs" ] && green=true && echo "green fast run(s) on $HEAD_SHA: $runs"
+          echo "green=$green" | tee -a "$GITHUB_OUTPUT"
+
+  workspace:
+    # skipped under workflow_run (fast ran it on this commit) and when a
+    # green fast run proved this sha, unless with_workspace forces it. A
+    # failed `proven` job leaves green empty, so the workspace runs.
+    needs: proven
+    if: ${{ !cancelled() && github.event_name != 'workflow_run' && (inputs.with_workspace || needs.proven.outputs.green != 'true') }}
+    permissions:
+      contents: read
+    # The shared workspace-test gate (workflow_call) — one definition for
+    # ci and full, see .github/workflows/workspace.yml.
+    name: Workspace tests
+    uses: ./.github/workflows/workspace.yml
+
+  matrix:
+    # The per-commit ETSI gate: the QUICK preset (file postgres timescale).
+    # The full seven-cell matrix runs twice a week, on v* tags and by manual
+    # dispatch — all in full.yml.
+    name: ETSI cell matrix
+    # GATE: no image build / ETSI run unless the workspace suite is green,
+    # here or in the fast run that triggered this one.
+    needs: workspace
+    if: ${{ !cancelled() && contains(fromJSON('["success", "skipped"]'), needs.workspace.result) && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
+    uses: ./.github/workflows/etsi-matrix.yml
+    with:
+      preset: quick
+      ref: ${{ github.event.workflow_run.head_sha }}
+    permissions:
+      contents: read
+      actions: write # the summary job deletes the merged per-cell artifacts
+
+  views-differential:
+    # T-3777: the views differential at 2 000 cases (the workspace suite in
+    # `fast` runs it at the default 200): generated Entities, views and
+    # policies, every surface against NGSI-LD through the same view. A red
+    # run prints VIEWS_DIFF_SEED and the shrunk case as a corpus file.
+    name: Views differential (2 000 cases)
+    needs: workspace
+    if: ${{ !cancelled() && contains(fromJSON('["success", "skipped"]'), needs.workspace.result) && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      VIEWS_DIFF_CASES: "2000"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.HEAD_SHA }}
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: views-differential
+      - run: cargo test --locked -p antares-broker --features full,jc-policy,linkml,internal-csr --test views_matrix every_surface_answers_what_ngsi_ld_admits_for_generated -- --nocapture
+
+  build-arm:
+    permissions:
+      contents: read
+    # The arm64 half of the published manifest — BUILT, never tested; the
+    # rationale lives in the shared build-image.yml.
+    name: Build the arm64 image (untested)
+    # GATE: only build after the workspace suite passes (here or in fast).
+    needs: workspace
+    if: ${{ github.ref == 'refs/heads/dev' && !cancelled() && contains(fromJSON('["success", "skipped"]'), needs.workspace.result) && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
+    uses: ./.github/workflows/build-image.yml
+    with:
+      arch: arm64
+      ref: ${{ github.event.workflow_run.head_sha }}
+
+  publish-dev:
+    # Every green dispatched run on dev ships a DEV image: the sha and a moving
+    # `dev` tag. Never `latest` — that belongs to a released version, so
+    # `docker pull …:latest` can't silently land on an unreleased build.
+    # The wasm broker image publishes from full.yml, after its cell.
+    name: Publish the dev image to GHCR
+    # Runs on dev publish :dev; PRs never do. All signals — workspace
+    # tests, the cell matrix (quick preset, all 10 suites incl. IOP per
+    # cell), the views differential and the arm build — must be green.
+    if: >-
+      github.ref == 'refs/heads/dev' && !cancelled()
+      && contains(fromJSON('["success", "skipped"]'), needs.workspace.result)
+      && needs.matrix.result == 'success' && needs.build-arm.result == 'success'
+      && needs.views-differential.result == 'success'
+    needs: [workspace, matrix, build-arm, views-differential]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Download the tested image
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: antares-image
+
+      - name: Download the arm64 image
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: antares-image-arm64
+
+      - name: Push amd64 (the EXACT image the matrix tested) + arm64, stitch the manifest
+        env:
+          # through the environment, never spliced into the script text:
+          # `${{ }}` is substituted before the shell parses the line
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          docker load < antares-image.tgz
+          docker load < antares-image-arm64.tgz
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          IMG=ghcr.io/${{ github.repository_owner }}/antares-broker
+          SHA=${HEAD_SHA::7}
+          docker tag antares-local:latest "$IMG:$SHA-amd64"
+          docker tag antares-local:arm64 "$IMG:$SHA-arm64"
+          docker push "$IMG:$SHA-amd64"
+          docker push "$IMG:$SHA-arm64"
+          docker buildx imagetools create \
+            -t "$IMG:$SHA" -t "$IMG:dev" -t "$IMG:dev-${{ github.run_number }}" \
+            "$IMG:$SHA-amd64" "$IMG:$SHA-arm64"
+          echo -e "\n## Published dev: \`$IMG:dev\` + \`$IMG:dev-${{ github.run_number }}\` + \`$IMG:$SHA\` (multi-arch amd64+arm64; amd64 = the tested bytes, all store gates green)" >> "$GITHUB_STEP_SUMMARY"

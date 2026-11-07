@@ -1,0 +1,41 @@
+{
+  "id": "sta-ets",
+  "tenant": "sta-ets",
+  "selector": [
+    "AirQualityObserved",
+    "Device"
+  ],
+  "rules": [
+    {
+      "types": [
+        "AirQualityObserved"
+      ],
+      "attributes": [
+        "name",
+        "description",
+        "reference",
+        "location",
+        "luminousFlux",
+        "temperature",
+        "secondLuminousFlux",
+        "refDevice"
+      ]
+    },
+    {
+      "types": [
+        "Device"
+      ],
+      "attributes": [
+        "name",
+        "description",
+        "controlledProperty"
+      ]
+    }
+  ],
+  "operations": [
+    "query_entities",
+    "retrieve_entity",
+    "temporal_retrieve",
+    "temporal_query"
+  ]
+}

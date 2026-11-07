@@ -1,0 +1,101 @@
+name: k8s-smoke
+
+# The k8s reference-manifest smoke, parked out of full.yml:
+# dispatch-only for now. Builds the image via the shared build-image.yml
+# (shares the type=gha layer cache), lints every reference manifest, then
+# kind-deploys the self-contained subset.
+
+on:
+  workflow_dispatch:
+
+# Brings a cluster up inside the runner and applies the manifests; the
+# token only has to read the checkout.
+permissions:
+  contents: read
+
+concurrency:
+  group: k8s-smoke
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build the image under test
+    uses: ./.github/workflows/build-image.yml
+    with:
+      arch: amd64
+
+  k8s-manifests:
+    # Lint every reference manifest, then kind-deploy the self-contained
+    # subset (nats + postgres-dev + both broker shapes) with the image the
+    # build job produced. `rollout status` green == readiness probes
+    # (/q/health) answered. The CNPG Cluster is lint-only here — the operator
+    # belongs to a real cluster.
+    name: K8s reference manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: build
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: kubeconform lint
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar xz kubeconform
+          ./kubeconform -strict -summary -ignore-missing-schemas deploy/k8s/
+      - uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        with:
+          cluster_name: antares-smoke
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: antares-image
+      - name: Load the image under test
+        run: |
+          gunzip antares-image.tgz
+          kind load image-archive antares-image.tar --name antares-smoke
+      - name: Deploy the self-contained subset
+        run: |
+          kubectl apply -f deploy/k8s/namespace.yaml
+          kubectl apply -f deploy/k8s/nats.yaml -f deploy/k8s/postgres-dev.yaml
+          # kind has one PG: point the brokers at postgres-dev's antares_app
+          # role — non-superuser, no BYPASSRLS, so ANTARES_REQUIRE_RLS=1 stays
+          # on and the smoke boots under the gate it ships with. Single-node
+          # NATS quorum: R1 streams.
+          sed -e 's|antares:antares@antares-pg-rw.antares.svc|antares_app:antares_app@postgres.antares.svc|' \
+              -e 's|value: "3"|value: "1"|' deploy/k8s/broker-postgres.yaml \
+            | kubectl apply -f -
+          kubectl apply -f deploy/k8s/broker-file.yaml
+          kubectl apply -f deploy/k8s/networkpolicy.yaml
+      - name: Wait for every rollout
+        run: |
+          kubectl -n antares rollout status statefulset/nats --timeout=180s
+          kubectl -n antares rollout status deploy/postgres-dev --timeout=180s
+          kubectl -n antares rollout status deploy/antares-api --timeout=300s
+          kubectl -n antares rollout status deploy/antares-worker --timeout=300s
+          kubectl -n antares rollout status deploy/antares-file --timeout=300s
+          kubectl -n antares get pods -o wide
+      # The other half of the no-addon rule: the dependency gate proves what
+      # was BUILT, this proves what the deployed image RUNS. `/q/health`
+      # names the policy engine and every mounted surface, so an addon that
+      # reached the image is visible here even if it arrived by a route the
+      # dependency gate does not model.
+      - name: The deployed image runs the core alone
+        run: |
+          kubectl -n antares port-forward deploy/antares-api 18080:9090 &
+          pf=$!
+          trap 'kill $pf 2>/dev/null || true' EXIT
+          for i in $(seq 60); do curl -sf localhost:18080/q/health >/dev/null && break; sleep 1; done
+          curl -sf localhost:18080/q/health | tee health.json
+          python3 - <<'EOF'
+          import json, sys
+          h = json.load(open("health.json"))
+          engine = (h.get("policy") or {}).get("engine")
+          surfaces = sorted(h.get("surfaces") or {})
+          print(f"policy engine: {engine!r}, surfaces: {surfaces}")
+          bad = []
+          if engine != "allow-all":
+              bad.append(f"policy engine is {engine!r}, not the built-in allow-all")
+          if surfaces != ["admin"]:
+              bad.append(f"surfaces beyond the built-in admin: {surfaces}")
+          for line in bad:
+              print(f"ADDON IN THE SHIPPED IMAGE: {line}")
+          sys.exit(1 if bad else 0)
+          EOF

@@ -1,0 +1,12 @@
+{
+    "jsonProperty": {
+        "type": "JsonProperty",
+        "json": {
+            "street": "Place Royale",
+            "city": "Nantes"
+        }
+    },
+    "@context": [
+        "https://raw.githubusercontent.com/joinedcontext/Antares-NGSI-LD-Context-Broker/dev/ngsi-ld-test-suite/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld"
+    ]
+}

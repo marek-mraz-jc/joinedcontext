@@ -1,0 +1,48 @@
+# OWL ontology, rendered from the LinkML model.
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+<https://example.org/building> a owl:Ontology ;
+  rdfs:label "building" ;
+  owl:versionInfo "1.2.0" .
+
+<https://example.org/building#Asset> a owl:Class ;
+  rdfs:label "Asset" ;
+  rdfs:comment "Anything the building operator tracks." .
+
+<https://schema.org/Room> a owl:Class ;
+  rdfs:label "Room" ;
+  rdfs:subClassOf <https://example.org/building#Asset> ;
+  rdfs:comment "A room | with a pipe and *stars*." .
+
+<https://example.org/building#Sensor> a owl:Class ;
+  rdfs:label "Sensor" ;
+  rdfs:subClassOf <https://example.org/building#Asset> .
+
+<https://example.org/building#floor> a owl:DatatypeProperty ;
+  rdfs:label "floor" ;
+  rdfs:range xsd:integer .
+
+<https://example.org/building#location> a owl:ObjectProperty ;
+  rdfs:label "location" ;
+  rdfs:range <https://schema.org/Room> ;
+  rdfs:comment "Where the sensor hangs.\nSecond line." .
+
+<https://schema.org/name> a owl:DatatypeProperty ;
+  rdfs:label "name" ;
+  rdfs:range xsd:string .
+
+<https://example.org/building#sensors> a owl:ObjectProperty ;
+  rdfs:label "sensors" ;
+  rdfs:range <https://example.org/building#Sensor> ;
+  owl:inverseOf <https://example.org/building#location> .
+
+<https://example.org/building#status> a owl:DatatypeProperty ;
+  rdfs:label "status" ;
+  rdfs:range xsd:string .
+
+<https://example.org/building#temperature> a owl:DatatypeProperty ;
+  rdfs:label "temperature" ;
+  rdfs:range xsd:float .

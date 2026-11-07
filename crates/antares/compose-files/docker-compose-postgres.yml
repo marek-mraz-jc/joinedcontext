@@ -1,0 +1,30 @@
+# Antares on its own (T-4854): the vanilla broker image and PostGIS, nothing
+# of the joinedcontext platform. NGSI-LD only, on http://localhost:9090.
+#   docker compose -f compose-files/docker-compose-postgres.yml up
+# The credential is a local placeholder; both ports bind to loopback only.
+services:
+  postgres:
+    image: ghcr.io/baosystems/postgis:17-3.5
+    environment:
+      POSTGRES_USER: antares
+      POSTGRES_PASSWORD: antares
+      POSTGRES_DB: antares
+    volumes:
+      - antares-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U antares"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  antares:
+    image: ${ANTARES_IMAGE:-ghcr.io/joinedcontext/antares-broker:latest}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ANTARES_STORE: postgres
+      ANTARES_DATABASE_URL: postgresql://antares:antares@postgres:5432/antares
+    ports:
+      - "127.0.0.1:9090:9090"
+volumes:
+  antares-pg:

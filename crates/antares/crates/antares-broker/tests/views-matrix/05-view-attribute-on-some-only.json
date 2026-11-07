@@ -1,0 +1,45 @@
+{
+ "about": "A rule showing operator, which V7 lacks: V7 is in the view with its frame alone.",
+ "view": {
+  "selector": [
+   "Vehicle"
+  ],
+  "rules": [
+   {
+    "types": [
+     "Vehicle"
+    ],
+    "attributes": [
+     "operator"
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "urn:ngsi-ld:Vehicle:V1": [
+   "operator"
+  ],
+  "urn:ngsi-ld:Vehicle:V2": [
+   "operator"
+  ],
+  "urn:ngsi-ld:Vehicle:V3": [
+   "operator"
+  ],
+  "urn:ngsi-ld:Vehicle:V4": [
+   "operator"
+  ],
+  "urn:ngsi-ld:Vehicle:V5": [
+   "operator"
+  ],
+  "urn:ngsi-ld:Vehicle:V6": [
+   "operator"
+  ],
+  "urn:ngsi-ld:Vehicle:V7": [],
+  "urn:ngsi-ld:Vehicle:V8": [
+   "operator"
+  ]
+ },
+ "caller": {
+  "x-jc-roles": "public"
+ }
+}

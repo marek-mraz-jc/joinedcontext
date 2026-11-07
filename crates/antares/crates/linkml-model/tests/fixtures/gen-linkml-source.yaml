@@ -1,0 +1,67 @@
+id: https://example.org/events
+name: events
+version: 1.0.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  schema: https://schema.org/
+default_prefix: schema
+imports:
+- linkml:types
+default_range: string
+classes:
+  Event:
+    class_uri: schema:Event
+    description: A happening.
+    slots:
+    - name
+    - startDate
+    - capacity
+    - open
+    - organizer
+    - status
+    - temperature
+  Org:
+    slots:
+    - name
+    description: An org
+  Concert:
+    is_a: Event
+    slot_usage:
+      capacity:
+        required: true
+slots:
+  name:
+    slot_uri: schema:name
+    required: true
+    annotations:
+      ngsi_ld_kind: Property
+  startDate:
+    range: datetime
+  capacity:
+    range: integer
+    annotations:
+      odata_computed: true
+  open:
+    range: boolean
+  organizer:
+    range: Org
+    inlined: false
+    multivalued: true
+    annotations:
+      ngsi_ld_kind: Relationship
+  status:
+    range: Status
+  temperature:
+    range: float
+    unit:
+      ucum_code: Cel
+    title: Temperature
+    rank: 3
+enums:
+  Status:
+    description: Event status.
+    permissible_values:
+      scheduled:
+        description: Planned.
+        meaning: schema:EventScheduled
+      cancelled: {}

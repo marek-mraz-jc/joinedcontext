@@ -1,0 +1,95 @@
+{
+ "about": "ADR-0023 rule 11: in A a Vehicle shows speed, location, vehicleType; elsewhere vehicleType only.",
+ "view": {
+  "selector": [
+   "Vehicle"
+  ],
+  "rules": [
+   {
+    "types": [
+     "Vehicle"
+    ],
+    "geoQ": {
+     "georel": "within",
+     "geometry": "Polygon",
+     "coordinates": [
+      [
+       [
+        0,
+        0
+       ],
+       [
+        10,
+        0
+       ],
+       [
+        10,
+        10
+       ],
+       [
+        0,
+        10
+       ],
+       [
+        0,
+        0
+       ]
+      ]
+     ]
+    },
+    "attributes": [
+     "location",
+     "speed",
+     "vehicleType"
+    ]
+   },
+   {
+    "types": [
+     "Vehicle"
+    ],
+    "attributes": [
+     "vehicleType"
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "urn:ngsi-ld:Vehicle:V1": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V2": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V4": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V7": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V8": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V3": [
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V5": [
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V6": [
+   "vehicleType"
+  ]
+ },
+ "caller": {
+  "x-jc-roles": "public"
+ }
+}

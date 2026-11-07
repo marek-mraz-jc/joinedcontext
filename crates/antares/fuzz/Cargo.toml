@@ -1,0 +1,219 @@
+# Fuzzing the user-input interpreters — q=, scopeQ,
+# geoQ params, and the JSON-LD expansion input path — run under libFuzzer in
+# scheduled CI (.github/workflows/fuzz.yml). Not a workspace member.
+[package]
+name = "antares-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+antares-ql = { package = "ngsild-ql", path = "../crates/antares-ql" }
+antares-api = { path = "../crates/antares-api", default-features = false, features = ["fuzzing"] }
+antares-model = { package = "ngsild-model", path = "../crates/antares-model" }
+antares-jsonld = { package = "ngsild-jsonld", path = "../crates/antares-jsonld" }
+antares-ops = { path = "../crates/antares-ops" }
+# q_to_sql: the SQL compilers alone; the Postgres store is not linked.
+antares-sql = { path = "../crates/antares-sql", default-features = false }
+linkml-model = { path = "../crates/linkml-model" }
+odata-url = { path = "../crates/odata-url" }
+odata-csdl = { path = "../crates/odata-csdl" }
+odata-json = { path = "../crates/odata-json" }
+antares-mcp = { path = "../crates/antares-mcp", features = ["fuzzing"] }
+odata-batch = { path = "../crates/odata-batch" }
+antares-ws = { path = "../crates/antares-ws" }
+antares-residual = { package = "ngsild-residual", path = "../crates/antares-residual" }
+
+[[bin]]
+name = "parse_q"
+path = "fuzz_targets/parse_q.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "scope_q"
+path = "fuzz_targets/scope_q.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "geo_params"
+path = "fuzz_targets/geo_params.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "expand_entity"
+path = "fuzz_targets/expand_entity.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "q_to_sql"
+path = "fuzz_targets/q_to_sql.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "type_selection"
+path = "fuzz_targets/type_selection.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "projection"
+path = "fuzz_targets/projection.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "representation"
+path = "fuzz_targets/representation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "join"
+path = "fuzz_targets/join.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "temporal"
+path = "fuzz_targets/temporal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "order_by"
+path = "fuzz_targets/order_by.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "link_header"
+path = "fuzz_targets/link_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tenant_header"
+path = "fuzz_targets/tenant_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "accept_header"
+path = "fuzz_targets/accept_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "id_pattern"
+path = "fuzz_targets/id_pattern.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "datetime"
+path = "fuzz_targets/datetime.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "view_config_load"
+path = "fuzz_targets/view_config_load.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "linkml_read"
+path = "fuzz_targets/linkml_read.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "odata_url_parse"
+path = "fuzz_targets/odata_url_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "odata_json_body"
+path = "fuzz_targets/odata_json_body.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mcp_tool_arguments"
+path = "fuzz_targets/mcp_tool_arguments.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "odata_batch_multipart"
+path = "fuzz_targets/odata_batch_multipart.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mcp_cursor"
+path = "fuzz_targets/mcp_cursor.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "odata_batch_json"
+path = "fuzz_targets/odata_batch_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ws_client_message"
+path = "fuzz_targets/ws_client_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "residual_compile"
+path = "fuzz_targets/residual_compile.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "model_names"
+path = "fuzz_targets/model_names.rs"
+test = false
+doc = false
+bench = false

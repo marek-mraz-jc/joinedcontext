@@ -1,0 +1,18 @@
+{
+    "id": "urn:ngsi-ld:Building:randomUUID",
+    "type": "Building",
+    "name": {
+        "type": "Property",
+        "value": "High Latitude Probe"
+    },
+    "location": {
+        "type": "GeoProperty",
+        "value": {
+            "type": "LineString",
+            "coordinates": [[0.0, 85.6], [1.0, 85.0]]
+        }
+    },
+    "@context": [
+        "https://raw.githubusercontent.com/joinedcontext/Antares-NGSI-LD-Context-Broker/dev/ngsi-ld-test-suite/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld"
+    ]
+}

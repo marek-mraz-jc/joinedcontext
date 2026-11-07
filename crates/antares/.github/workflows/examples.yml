@@ -1,0 +1,255 @@
+name: examples
+
+# Every example's run script executes against a freshly built image —
+# release gate on v* tags, weekly drift catch, and manual dispatch.
+on:
+  push:
+    tags: ["v*"]
+  schedule:
+    - cron: "7 9 * * 3"
+  workflow_dispatch:
+
+concurrency:
+  group: examples-${{ github.ref }}
+  cancel-in-progress: true
+
+# Every job names its own grants; one without them reads the repository and nothing more.
+permissions:
+  contents: read
+
+jobs:
+  plugin-example:
+    # The reference plugin is the proof that the seams are usable from
+    # outside `crates/`: a broker built with it serves its store, its
+    # temporal history, its HTTP surface, its notification binding and its
+    # policy engine, and the whole conformance suite runs through that
+    # driver. A red run here means a seam changed shape without its
+    # documented extension point following.
+    name: Reference plugin (all suites)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      issues: write # the drift alarm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      # The platform's engine is the other addon (T-3637): its contract
+      # tests through the router, and its place on the broker's shelf.
+      - name: The joinedcontext policy engine
+        run: |
+          cargo test --locked -p joinedcontext-policy
+          cargo test --locked -p antares-broker --features jc-policy --bin antares policy_shelf
+
+      - name: Build the broker on the plugin driver
+        run: cargo build --locked -p antares-broker --features plugin-example
+
+      - name: The five seams are served from outside the workspace
+        run: |
+          # The alias is how other parties reach this broker, and it lands in
+          # the notification endpoint of every Subscription copy 5.8.1.4
+          # forwards. Here the broker runs on the runner itself, not as the
+          # compose service the default names, so a TP that dials the
+          # advertised endpoint back has to find it.
+          # The ETSI TPs page temporal answers at 9 instances (206), as every
+          # ETSI stack pins it (T-4800, dev/etsi-pipeline.sh).
+          ANTARES_HTTP_PORT=9090 ANTARES_STORE=example \
+            ANTARES_HOST_ALIAS=localhost ANTARES_TEMPORAL_INSTANCE_LIMIT=9 \
+            ANTARES_API_SURFACES=admin,example ANTARES_SWEEP_SECS=2 \
+            ANTARES_EGRESS_ALLOW_PRIVATE=true \
+            target/debug/antares & echo $! > broker.pid
+          for i in $(seq 100); do curl -sf localhost:9090/q/health >/dev/null && break; sleep 0.2; done
+          curl -sf localhost:9090/q/health | tee health.json
+          python3 - <<'EOF'
+          import json, sys
+          h = json.load(open("health.json"))
+          checks = {
+              "store": h.get("store") == "example",
+              "temporal": h.get("temporal") == "example",
+              "surface": "example" in (h.get("surfaces") or {}),
+              "sink": "memory" in (h.get("notificationSchemes") or []),
+              # the conformance suite below runs on the engine the broker
+              # ships, never on the addon (ADR-0020)
+              "policy": (h.get("policy") or {}).get("engine") == "allow-all",
+          }
+          for seam, ok in checks.items():
+              print(f"{seam}: {'ok' if ok else 'MISSING'}")
+          sys.exit(0 if all(checks.values()) else 1)
+          EOF
+          curl -sf localhost:9090/x/example/entities/count
+          # the façade seam: a route that answers in a shape NGSI-LD does not
+          # define, served by driving the broker's own router in process
+          curl -sf 'localhost:9090/x/example/things?kind=Vehicle' | tee things.json
+          python3 -c 'import json,sys; d=json.load(open("things.json")); sys.exit(0 if isinstance(d.get("value"), list) else 1)'
+
+      - name: The conformance suite through the plugin driver
+        # MQTT TPs need mosquitto and are the image cells' job; everything
+        # else runs, and STOP_ON_ERROR=0 reports the whole picture.
+        run: |
+          BROKER_URL=http://localhost:9090/ngsi-ld/v1 CALLBACK_HOST=127.0.0.1 \
+            RESULTS_DIR=results/plugin-example STOP_ON_ERROR=0 MQTT=0 \
+            dev/etsi-run.sh
+
+      - name: The policy seam, driven by the reference engine
+        # The suite above ran on the default engine — allow-all, the one the
+        # broker ships and the one conformance is asserted against. This step
+        # starts a SECOND broker beside it, on the example engine, and runs
+        # the folder of Antares-specific tests that exercise what an engine
+        # can do: refuse an operation, narrow a query, project a document and
+        # project a notification. The venv is the one dev/etsi-run.sh built.
+        run: |
+          cat > policy-rules.json <<'JSON'
+          {
+            "acme": {"denyTypes": ["PolicySecret"], "omit": ["price"]},
+            "beta": {"q": "speed<100"}
+          }
+          JSON
+          ANTARES_HTTP_PORT=9091 ANTARES_STORE=example \
+            ANTARES_HOST_ALIAS=localhost ANTARES_SWEEP_SECS=2 \
+            ANTARES_EGRESS_ALLOW_PRIVATE=true \
+            ANTARES_POLICY=example \
+            ANTARES_POLICY_RULES="$PWD/policy-rules.json" \
+            ANTARES_POLICY_SUBJECT_HEADERS=X-Subject \
+            target/debug/antares & echo $! > policy-broker.pid
+          for i in $(seq 100); do curl -sf localhost:9091/q/health >/dev/null && break; sleep 0.2; done
+          engine=$(curl -sf localhost:9091/q/health | python3 -c 'import json,sys; print(json.load(sys.stdin)["policy"]["engine"])')
+          [ "$engine" = example ] || { echo "policy engine: '$engine'"; exit 1; }
+          cd ngsi-ld-test-suite && ../.venv/bin/robot \
+            --variable url:http://localhost:9091/ngsi-ld/v1 \
+            --variable notification_server_host:127.0.0.1 \
+            --variable notification_server_port:8095 \
+            --variable context_source_host:127.0.0.1 \
+            --variable context_source_port:8096 \
+            --outputdir ../results/plugin-example/policy \
+            AntaresSpecificTests/policy_engine.robot
+
+      - name: Stop the brokers
+        if: always()
+        run: |
+          kill "$(cat broker.pid)" 2>/dev/null || true
+          kill "$(cat policy-broker.pid)" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: plugin-example-results
+          path: results/plugin-example/
+          if-no-files-found: warn
+
+      - name: File an issue on scheduled drift
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: the reference plugin drifted red
+          body: >-
+            The reference plugin no longer serves the conformance suite. A
+            component seam changed shape without `examples/plugin-example`
+            following it, or the plugin driver broke a rule the API relies
+            on. The run log names the suite.
+
+  examples:
+    name: Run every example
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write # the drift alarm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the image under test
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          tags: ghcr.io/joinedcontext/antares-broker:dev # the tag the examples reference; a local load wins over the registry
+          load: true
+          cache-from: type=gha
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            REVISION=${{ github.sha }}
+
+      - name: The image says what it is
+        run: |
+          L=$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.licenses"}}' ghcr.io/joinedcontext/antares-broker:dev)
+          [ "$L" = EUPL-1.2 ] || { echo "licence label: '$L'"; exit 1; }
+          R=$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' ghcr.io/joinedcontext/antares-broker:dev)
+          [ "$R" = "${{ github.sha }}" ] || { echo "revision label: '$R'"; exit 1; }
+
+      - name: quickstart
+        run: |
+          docker compose -f examples/quickstart/compose.yml up -d --wait
+          BROKER_URL=http://localhost:9090 examples/quickstart/seed.sh
+          docker compose -f examples/quickstart/compose.yml down
+
+      - name: federation
+        run: |
+          docker compose -f examples/federation/compose.yml up -d --wait
+          examples/federation/run.sh
+          docker compose -f examples/federation/compose.yml down
+
+      - name: subscriptions (HTTP callback)
+        # host networking so the broker can call back into the runner's receiver
+        run: |
+          docker run -d --rm --name sub-broker --network host \
+            -e ANTARES_EGRESS_ALLOW_PRIVATE=true \
+            ghcr.io/joinedcontext/antares-broker:dev
+          for i in $(seq 50); do curl -sf localhost:9090/q/health >/dev/null && break; sleep 0.2; done
+          (cd examples/subscriptions && BROKER_URL=http://localhost:9090 ./run.sh)
+          docker stop sub-broker
+
+      - name: subscriptions (MQTT)
+        run: |
+          sudo apt-get install -y -q mosquitto-clients
+          docker compose -f examples/subscriptions/mqtt-compose.yml up -d --wait
+          (cd examples/subscriptions && ./mqtt-run.sh)
+          docker compose -f examples/subscriptions/mqtt-compose.yml down
+
+      - name: smart-city
+        run: |
+          docker compose -f examples/quickstart/compose.yml up -d --wait
+          BROKER_URL=http://localhost:9090 examples/smart-city/seed.sh
+          docker compose -f examples/quickstart/compose.yml down
+
+      - name: browser (Node shim over the newest wasm artifact)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # only a bundle built on this repository's dev is executed here
+          # (same filter as dev/fold-reports.sh)
+          repo_id=$(gh api "repos/${{ github.repository }}" -q .id)
+          art=$(gh api "repos/${{ github.repository }}/actions/artifacts?name=antares-www&per_page=30" \
+               -q "[.artifacts[] | select(.expired == false and .workflow_run.head_branch == \"dev\" and .workflow_run.head_repository_id == $repo_id)][0] | \"\(.id) \(.workflow_run.head_sha)\"" \
+               2>/dev/null || true)
+          id=${art%% *}
+          if [ -z "$id" ] || [ "$id" = "null" ]; then
+            echo "::warning::browser example SKIPPED — no antares-www artifact in retention (dispatch wasm.yml to produce one)"
+            exit 0
+          fi
+          # the newest bundle in retention is not necessarily this commit's;
+          # the step passes or fails against the one it names here
+          echo "browser example runs against wasm bundle from ${art#* }"
+
+          gh api "repos/${{ github.repository }}/actions/artifacts/$id/zip" > www.zip
+          unzip -q -o www.zip -d www-artifact
+          # the artifact is the Pages site: the playground (and its pkg) sits under demo/
+          cp -r www-artifact/demo/pkg www/
+          node www/node-shim.mjs 9090 & shim=$!
+          for i in $(seq 50); do curl -sf localhost:9090/q/health >/dev/null && break; sleep 0.2; done
+          curl -sf -o /dev/null -w 'wasm create: %{http_code}\n' -X POST \
+            localhost:9090/ngsi-ld/v1/entities -H 'Content-Type: application/ld+json' \
+            -d '{"id":"urn:ngsi-ld:Test:ci:1","type":"Test","@context":"https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"}'
+          kill $shim
+
+      - name: File an issue on scheduled drift
+        # tag runs are the release process — whoever tagged is watching
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: examples drifted red
+          body: >-
+            The weekly examples run went red — a documented example no
+            longer works against the current image. The run log names the
+            example step.

@@ -1,0 +1,58 @@
+{
+ "about": "Rules with their own q per type: city Vehicles show operator and speed; Parking shows name (P2 has none: frame only).",
+ "view": {
+  "selector": [
+   "Vehicle",
+   "Parking"
+  ],
+  "rules": [
+   {
+    "types": [
+     "Vehicle"
+    ],
+    "q": "operator==\"city\"",
+    "attributes": [
+     "operator",
+     "speed"
+    ]
+   },
+   {
+    "types": [
+     "Parking"
+    ],
+    "attributes": [
+     "name"
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "urn:ngsi-ld:Vehicle:V1": [
+   "operator",
+   "speed"
+  ],
+  "urn:ngsi-ld:Vehicle:V2": [
+   "operator",
+   "speed"
+  ],
+  "urn:ngsi-ld:Vehicle:V4": [
+   "operator",
+   "speed"
+  ],
+  "urn:ngsi-ld:Vehicle:V6": [
+   "operator",
+   "speed"
+  ],
+  "urn:ngsi-ld:Vehicle:V8": [
+   "operator",
+   "speed"
+  ],
+  "urn:ngsi-ld:Parking:P1": [
+   "name"
+  ],
+  "urn:ngsi-ld:Parking:P2": []
+ },
+ "caller": {
+  "x-jc-roles": "public"
+ }
+}

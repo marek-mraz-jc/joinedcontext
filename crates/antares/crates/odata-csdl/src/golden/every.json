@@ -1,0 +1,201 @@
+{
+  "$Version": "4.01",
+  "$EntityContainer": "Test.Space.Box",
+  "$Reference": {
+    "https://oasis-tcs.github.io/odata-vocabularies/vocabularies/Org.OData.Core.V1.json": {
+      "$Include": [
+        {
+          "$Namespace": "Org.OData.Core.V1",
+          "$Alias": "Core"
+        }
+      ]
+    },
+    "https://example.org/own.xml": {
+      "$Include": [
+        {
+          "$Namespace": "Example.Own"
+        }
+      ]
+    }
+  },
+  "Test.Space": {
+    "$Alias": "t",
+    "Empty": {
+      "$Kind": "EntityType",
+      "$Abstract": true
+    },
+    "Base": {
+      "$Kind": "EntityType",
+      "$Abstract": true,
+      "$OpenType": true,
+      "$Key": [
+        "id"
+      ],
+      "id": {
+        "$Type": "Edm.Guid"
+      }
+    },
+    "Thing": {
+      "$Kind": "EntityType",
+      "$BaseType": "t.Base",
+      "tags": {
+        "$Collection": true,
+        "$Nullable": true
+      },
+      "whole": {
+        "$Type": "Edm.Decimal",
+        "$Nullable": true,
+        "$Scale": 0
+      },
+      "amount": {
+        "$Type": "Edm.Decimal",
+        "$Nullable": true,
+        "$Precision": 9,
+        "$Scale": 2
+      },
+      "ratio": {
+        "$Type": "Edm.Decimal",
+        "$Nullable": true,
+        "$Scale": "floating"
+      },
+      "any": {
+        "$Type": "Edm.Decimal",
+        "$Nullable": true
+      },
+      "shape": {
+        "$Type": "Edm.Geometry",
+        "$Nullable": true,
+        "$SRID": "variable"
+      },
+      "spot": {
+        "$Type": "Edm.GeographyPoint",
+        "$Nullable": true,
+        "$SRID": "4326"
+      },
+      "at": {
+        "$Type": "Edm.DateTimeOffset",
+        "$Nullable": true,
+        "$Precision": 0,
+        "@Core.Computed": true
+      },
+      "raw": {
+        "$Type": "Edm.Untyped"
+      },
+      "where": {
+        "$Type": "t.Place",
+        "$Nullable": true
+      },
+      "ownerId": {
+        "$Type": "Edm.Guid"
+      },
+      "nextId": {
+        "$Type": "Edm.Guid",
+        "$Nullable": true
+      },
+      "owner": {
+        "$Kind": "NavigationProperty",
+        "$Type": "t.Thing",
+        "$Partner": "parts",
+        "$ReferentialConstraint": {
+          "ownerId": "id"
+        }
+      },
+      "parts": {
+        "$Kind": "NavigationProperty",
+        "$Type": "t.Thing",
+        "$Collection": true,
+        "$Partner": "owner"
+      },
+      "next": {
+        "$Kind": "NavigationProperty",
+        "$Type": "t.Base",
+        "$Nullable": true,
+        "$ReferentialConstraint": {
+          "nextId": "id"
+        },
+        "@Core.Description": "tab\u0009here"
+      },
+      "@Core.Description#en": "thing"
+    },
+    "Place": {
+      "$Kind": "ComplexType",
+      "$OpenType": true,
+      "@t.Note": {
+        "P": {
+          "$Path": "a/b"
+        },
+        "Q": "a",
+        "N": "n",
+        "E": "Read,Write",
+        "I": -7,
+        "C": [],
+        "R": {},
+        "L": [
+          "x<\"y\"\u000a\u000az",
+          false,
+          {
+            "V": [
+              1
+            ]
+          }
+        ]
+      }
+    },
+    "Nothing": {
+      "$Kind": "ComplexType"
+    },
+    "Note": {
+      "$Kind": "Term",
+      "$Type": "t.Place",
+      "$Nullable": true,
+      "$AppliesTo": [
+        "EntityType",
+        "Schema"
+      ]
+    },
+    "When": {
+      "$Kind": "Term",
+      "$Type": "Edm.TimeOfDay",
+      "$Collection": true,
+      "$Precision": 3,
+      "@Core.Description": "w"
+    },
+    "Rate": {
+      "$Kind": "Term",
+      "$Type": "Edm.Decimal",
+      "$Nullable": true,
+      "$Scale": 0
+    },
+    "Box": {
+      "$Kind": "EntityContainer",
+      "Things": {
+        "$Collection": true,
+        "$Type": "t.Thing",
+        "$NavigationPropertyBinding": {
+          "owner": "Things",
+          "next/t.Thing": "Things"
+        }
+      },
+      "Tagged": {
+        "$Collection": true,
+        "$Type": "t.Thing",
+        "@Core.Description": "only annotated"
+      },
+      "Bare": {
+        "$Collection": true,
+        "$Type": "t.Thing"
+      },
+      "@Core.Description": "box"
+    },
+    "@Core.SchemaVersion": "2"
+  },
+  "Empty.Space": {},
+  "Shapes.Space": {
+    "Shape": {
+      "$Kind": "ComplexType",
+      "kind": {
+        "$Nullable": true
+      }
+    }
+  }
+}

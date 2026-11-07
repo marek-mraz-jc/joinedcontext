@@ -1,0 +1,36 @@
+[package]
+name = "antares-store"
+description = "Storage driver traits + the backend-neutral store types (no backend dependencies)."
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+
+# ADR-0027 / surfaces-threat-model 9.1: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "core"
+
+[dependencies]
+antares-jsonld = { workspace = true }
+antares-model = { workspace = true }
+antares-ql = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+# the literal a policy rule's id pattern forces (`id_pattern_required`)
+regex-syntax = { workspace = true }
+
+[features]
+# The driver contract as a runnable function (`contract.rs`), for the
+# backends in this workspace and for any driver built outside it. Off by
+# default: nothing in a serving binary calls it.
+test-kit = []
+
+[dev-dependencies]
+regex = { workspace = true }
+# the driver seams are async, so their own tests need a runtime to drive
+tokio = { workspace = true }
+
+[lints]
+workspace = true

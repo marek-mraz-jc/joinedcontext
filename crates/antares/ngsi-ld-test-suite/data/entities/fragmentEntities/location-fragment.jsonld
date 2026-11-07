@@ -1,0 +1,15 @@
+{
+  "location": {
+    "type": "GeoProperty",
+    "value": {
+      "type": "Point",
+      "coordinates": [
+        13.3986,
+        52.5547
+      ]
+    }
+  },
+  "@context": [
+      "https://raw.githubusercontent.com/joinedcontext/Antares-NGSI-LD-Context-Broker/dev/ngsi-ld-test-suite/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld"
+  ]
+}

@@ -1,0 +1,223 @@
+name: image-jc
+
+# The nightly full test of the joinedcontext platform's broker image
+# (`antares-broker-jc`, T-3636; never `antares-broker`, which full.yml releases).
+# ship.yml builds, checks and publishes the image on every dev push in minutes
+# as `dev-<N>`. This workflow takes the newest `dev-<N>` by digest, re-scans
+# it, runs every ETSI suite on its plain root on `ANTARES_POLICY=allow-all`
+# against dev/etsi-baseline.json TP by TP, and only then adds `:<N>` and
+# `:latest` to the same digest with the full-tests attestation (T-4721, owner
+# order 2026-10-19: the long ETSI run is never on the publish path).
+# It used to build and publish on:
+#   push:
+#     branches: [dev]
+#     paths: [crates/**, addons/**, Cargo.toml, Cargo.lock, Dockerfile, .github/workflows/image-jc.yml]
+on:
+  schedule:
+    - cron: "7 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: image-jc-${{ github.ref }}
+  cancel-in-progress: true
+
+# Every job names its own grants; one without them reads the repository and nothing more.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # T-4721: the full tests promote, they never rebuild. This takes the newest image ship.yml
+    # published on dev (`dev-<N>`, built and smoke-tested) by digest, and the promote job below
+    # adds `:<N>` and `:latest` to that same digest when the ETSI run on it is green.
+    name: Take the newest ship image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      n: ${{ steps.pick.outputs.n }}
+      digest: ${{ steps.pick.outputs.digest }}
+      sha: ${{ steps.pick.outputs.sha }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - id: pick
+        run: |
+          set -euo pipefail
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ship.yml/runs?branch=dev&status=success&per_page=1" \
+                  --jq '.workflow_runs[0] // empty | "\(.run_number) \(.head_sha)"')
+          [ -n "$run" ] || { echo "no green ship run on dev: nothing to test"; exit 1; }
+          read -r n sha <<<"$run"
+          img="ghcr.io/${GITHUB_REPOSITORY_OWNER}/antares-broker-jc"
+          docker pull -q "$img:dev-$n"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$img:dev-$n")
+          digest=${digest#*@}
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "no digest for $img:dev-$n"; exit 1; }
+          docker tag "$img:dev-$n" antares-local:latest
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "ship run $n names no commit: $sha"; exit 1; }
+          printf 'n=%s\ndigest=%s\nsha=%s\n' "$n" "$digest" "$sha" >> "$GITHUB_OUTPUT"
+          echo "testing \`$img@$digest\` (dev-$n, commit ${sha::7})" >> "$GITHUB_STEP_SUMMARY"
+      # T-3834, re-run nightly on the published bytes: an advisory published since ship scanned
+      # them turns this red and nothing is promoted.
+      - name: No fixable HIGH or CRITICAL in the image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: antares-local:latest
+          severity: "HIGH,CRITICAL"
+          ignore-unfixed: true
+          exit-code: "1"
+      - run: docker save antares-local:latest | gzip > antares-image.tgz
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: antares-image-jc
+          path: antares-image.tgz
+          retention-days: 3
+
+  etsi:
+    # E3 on the jc image: the plain root with every surface on and the
+    # built-in engine selected must equal the vanilla baseline TP by TP.
+    name: ETSI on the jc image (allow-all, file)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      # The suites, baselines and expectations of the commit the image was built from.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: antares-image-jc
+      - run: docker load < antares-image.tgz
+      - name: Run every suite through the one pipeline
+        env:
+          STORE: file
+          RESULTS_DIR: cells/ETSI-cell-file
+          SKIP_BUILD: "1"
+          STOP_ON_ERROR: "0"
+          CALLBACK_HOST: localhost
+          API_SURFACES: admin,views,mcp,odata,ws,linkml
+        run: ./dev/etsi-pipeline.sh || true
+      - name: Per-TP baseline (dev/etsi-baseline.json)
+        env:
+          STORES: file
+        run: ./dev/etsi-baseline.py check cells
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: ETSI-jc-file
+          path: |
+            cells/ETSI-cell-file/run-summary.md
+            cells/ETSI-cell-file/failures.csv
+            cells/ETSI-cell-file/tp-status.csv
+            cells/ETSI-cell-file/**/log.html
+          retention-days: 30
+
+  etsi-policy:
+    # T-4855: the same image with the platform's engine deciding (ANTARES_POLICY=joinedcontext),
+    # the suite behind a subject proxy in the context-gateway's place (dev/etsi-pipeline.sh
+    # POLICY=, docs/conformance/suite-edits.md section 5). grant: every clause to the suite in its
+    # fixed tenants, which must equal the baseline but for the TPs grant-all.expected lists.
+    # restricted: Vehicle reads prohibited; exactly the TPs restricted.expected lists fail, and
+    # every refusal is a 403 problem naming no entity.
+    name: ETSI on the jc image (joinedcontext ${{ matrix.cell }}, file)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cell: grant
+            policy: grant-all
+            suites: ""
+          - cell: restricted
+            policy: restricted
+            suites: ContextInformation/Consumption
+    env:
+      OUT: cells/ETSI-cell-file
+    steps:
+      # The suites, baselines and expectations of the commit the image was built from.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: antares-image-jc
+      - run: docker load < antares-image.tgz
+      - name: Self-check of the refusal reader
+        run: python3 -m unittest discover -s ci/policy/etsi
+      - name: Run the suites through the subject proxy
+        env:
+          STORE: file
+          RESULTS_DIR: ${{ env.OUT }}
+          SKIP_BUILD: "1"
+          STOP_ON_ERROR: "0"
+          CALLBACK_HOST: localhost
+          API_SURFACES: admin,views,mcp,odata,ws,linkml
+          POLICY: ci/policy/etsi/${{ matrix.policy }}.json
+          SUITES: ${{ matrix.suites }}
+        run: ./dev/etsi-pipeline.sh || true
+      - name: Per-TP baseline, the listed deviations alone (grant)
+        if: matrix.cell == 'grant'
+        env:
+          STORES: file
+          EXPECTED: ci/policy/etsi/grant-all.expected
+        run: ./dev/etsi-baseline.py check cells
+      - name: Exactly the listed refusals, each a 403 naming no entity (restricted)
+        if: matrix.cell == 'restricted'
+        run: |
+          python3 tests/external/etsi/ratchet.py ci/policy/etsi/restricted.expected "$OUT/tp-status.csv"
+          python3 ci/policy/etsi/refusals.py "$OUT"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: ETSI-jc-policy-${{ matrix.cell }}
+          path: |
+            ${{ env.OUT }}/run-summary.md
+            ${{ env.OUT }}/failures.csv
+            ${{ env.OUT }}/tp-status.csv
+            ${{ env.OUT }}/**/log.html
+          retention-days: 30
+
+  promote:
+    # `:<N>` and `:latest` mean "passed the full tests": added to the digest the ETSI run tested,
+    # with the full-tests attestation a tier=production namespace requires (T-4721). The ship
+    # signature is bound to the digest and carries over; a red ETSI or ETSI-policy run promotes nothing.
+    name: Promote the tested digest to :<N> and :latest
+    needs: [build, etsi, etsi-policy]
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # cosign keyless
+    env:
+      N: ${{ needs.build.outputs.n }}
+      DIGEST: ${{ needs.build.outputs.digest }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+      - run: |
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          img="ghcr.io/${{ github.repository_owner }}/antares-broker-jc"
+          cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/ship.yml@refs/heads/dev" \
+            "$img@$DIGEST" > /dev/null
+          docker buildx imagetools create --prefer-index=false --tag "$img:$N" --tag "$img:latest" "$img@$DIGEST"
+          for tag in "$N" latest; do
+            got=$(docker buildx imagetools inspect "$img:$tag" --format '{{json .Manifest}}' | jq -r .digest)
+            [ "$got" = "$DIGEST" ] || { echo "$img:$tag points at $got, not $DIGEST"; exit 1; }
+          done
+          jq -n --arg d "$DIGEST" --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '{digest: $d, suites: [{name: "etsi-pipeline (jc image, file store, dev/etsi-baseline.json)", run: $run}, {name: "etsi-pipeline (jc image, joinedcontext policy grant + restricted)", run: $run}]}' > full-tests.json
+          cosign attest --yes --type https://joinedcontext.com/attestations/full-tests/v1 --predicate full-tests.json "$img@$DIGEST"
+          echo "## Promoted \`$img@$DIGEST\` (dev-$N) to \`:$N\` and \`:latest\`, full-tests attested" >> "$GITHUB_STEP_SUMMARY"

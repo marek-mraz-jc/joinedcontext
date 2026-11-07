@@ -1,0 +1,206 @@
+{
+  "_comment": "T-4889: per shape the rate k6 holds (req/s, open model) for `duration`, and the budget surfaces_gate.py judges: p95/p99 in ms, errors in %, throughput at least 95 % of rate. `tolerance`: p99 may exceed a same-machine baseline by this share.",
+  "duration": "30s",
+  "tolerance": 0.5,
+  "shapes": {
+    "ngsi-id": {
+      "builds": [
+        "vanilla",
+        "platform"
+      ],
+      "rate": 200,
+      "p95_ms": 50,
+      "p99_ms": 150,
+      "max_error_pct": 0.1,
+      "reason": "a page or one entity a person waits on: OPS-18's p95 50 ms for a read, p99 three times that for a shared runner's tail"
+    },
+    "ngsi-type": {
+      "builds": [
+        "vanilla",
+        "platform"
+      ],
+      "rate": 100,
+      "p95_ms": 50,
+      "p99_ms": 150,
+      "max_error_pct": 0.1,
+      "reason": "a page or one entity a person waits on: OPS-18's p95 50 ms for a read, p99 three times that for a shared runner's tail"
+    },
+    "ngsi-q": {
+      "builds": [
+        "vanilla",
+        "platform"
+      ],
+      "rate": 100,
+      "p95_ms": 200,
+      "p99_ms": 500,
+      "max_error_pct": 0.1,
+      "reason": "a filtered, geo or translated query behind a map or a grid: under 200 ms p95 the redraw reads as instant; p99 500 ms"
+    },
+    "ngsi-near": {
+      "builds": [
+        "vanilla",
+        "platform"
+      ],
+      "rate": 50,
+      "p95_ms": 200,
+      "p99_ms": 500,
+      "max_error_pct": 0.1,
+      "reason": "a filtered, geo or translated query behind a map or a grid: under 200 ms p95 the redraw reads as instant; p99 500 ms"
+    },
+    "ngsi-within": {
+      "builds": [
+        "vanilla",
+        "platform"
+      ],
+      "rate": 50,
+      "p95_ms": 200,
+      "p99_ms": 500,
+      "max_error_pct": 0.1,
+      "reason": "a filtered, geo or translated query behind a map or a grid: under 200 ms p95 the redraw reads as instant; p99 500 ms"
+    },
+    "ngsi-attrs": {
+      "builds": [
+        "vanilla",
+        "platform"
+      ],
+      "rate": 50,
+      "p95_ms": 50,
+      "p99_ms": 150,
+      "max_error_pct": 0.1,
+      "reason": "a page or one entity a person waits on: OPS-18's p95 50 ms for a read, p99 three times that for a shared runner's tail; attrs narrows the answer, so it costs no more than the page"
+    },
+    "temporal-lastn": {
+      "builds": [
+        "vanilla",
+        "platform"
+      ],
+      "rate": 50,
+      "p95_ms": 50,
+      "p99_ms": 150,
+      "max_error_pct": 0.1,
+      "reason": "a chart's newest ten values: the read budget"
+    },
+    "temporal-between": {
+      "builds": [
+        "vanilla",
+        "platform"
+      ],
+      "rate": 50,
+      "p95_ms": 200,
+      "p99_ms": 500,
+      "max_error_pct": 0.1,
+      "reason": "a week of a 30-day series behind a chart: the query budget"
+    },
+    "upsert-100": {
+      "builds": [
+        "vanilla",
+        "platform"
+      ],
+      "rate": 5,
+      "p95_ms": 500,
+      "p99_ms": 1000,
+      "max_error_pct": 0.1,
+      "reason": "a pipeline's batch of 100 at 500 entities/s: a batch under 0.5 s keeps a one-second ingest tick"
+    },
+    "view-type": {
+      "builds": [
+        "platform"
+      ],
+      "rate": 100,
+      "p95_ms": 50,
+      "p99_ms": 150,
+      "max_error_pct": 0.1,
+      "reason": "a page or one entity a person waits on: OPS-18's p95 50 ms for a read, p99 three times that for a shared runner's tail; the view root must stay within the root's budget (ADR-0027 section 6)"
+    },
+    "view-attributes": {
+      "builds": [
+        "platform"
+      ],
+      "rate": 20,
+      "p95_ms": 300,
+      "p99_ms": 900,
+      "max_error_pct": 0.1,
+      "reason": "T-4934: the view's attribute list a schema browser or an MCP agent opens first; the task's 300 ms on dev as p95, p99 three times that for a shared runner's tail; the fold it replaced took 13-19 s on dev"
+    },
+    "odata": {
+      "builds": [
+        "platform"
+      ],
+      "rate": 50,
+      "p95_ms": 200,
+      "p99_ms": 500,
+      "max_error_pct": 0.1,
+      "reason": "a filtered, geo or translated query behind a map or a grid: under 200 ms p95 the redraw reads as instant; p99 500 ms ($filter, $orderby, $count)"
+    },
+    "ogc-items": {
+      "builds": [
+        "platform"
+      ],
+      "rate": 50,
+      "p95_ms": 200,
+      "p99_ms": 500,
+      "max_error_pct": 0.1,
+      "reason": "a filtered, geo or translated query behind a map or a grid: under 200 ms p95 the redraw reads as instant; p99 500 ms (bbox + CQL2)"
+    },
+    "ogc-page": {
+      "builds": [
+        "platform"
+      ],
+      "rate": 50,
+      "p95_ms": 200,
+      "p99_ms": 500,
+      "max_error_pct": 0.1,
+      "reason": "a GIS client paging a collection 50 Features at a time: the query budget"
+    },
+    "sta-things": {
+      "builds": [
+        "platform"
+      ],
+      "rate": 20,
+      "p95_ms": 200,
+      "p99_ms": 500,
+      "max_error_pct": 0.1,
+      "reason": "Things with their Datastreams expanded and counted: the query budget"
+    },
+    "sta-observations": {
+      "builds": [
+        "platform"
+      ],
+      "rate": 50,
+      "p95_ms": 200,
+      "p99_ms": 500,
+      "max_error_pct": 0.1,
+      "reason": "a Datastream's Observations after a time: the query budget"
+    },
+    "ical": {
+      "builds": [
+        "platform"
+      ],
+      "rate": 2,
+      "p95_ms": 2000,
+      "p99_ms": 4000,
+      "max_error_pct": 0.1,
+      "reason": "the whole 5 000-Event feed: calendar clients poll it every 15 min or more, so 2 s p95 is the bound"
+    },
+    "mcp": {
+      "builds": [
+        "platform"
+      ],
+      "rate": 50,
+      "p95_ms": 200,
+      "p99_ms": 500,
+      "max_error_pct": 0.1,
+      "reason": "an agent's tools/call query_entities inside a model turn: the query budget"
+    },
+    "ws-fanout": {
+      "builds": [
+        "platform"
+      ],
+      "rate": 200,
+      "p95_ms": 250,
+      "p99_ms": 1000,
+      "max_error_pct": 0.1,
+      "reason": "write-to-socket delivery at 200 writes/s to 1 000 subscribers (50 per write): a live map lags a write by under 250 ms p95; no notification lost"
+    }
+  }
+}

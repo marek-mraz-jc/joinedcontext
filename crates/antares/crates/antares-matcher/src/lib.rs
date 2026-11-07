@@ -1,0 +1,528 @@
+// SPDX-License-Identifier: EUPL-1.2
+//! Subscription matching (CIM 009 5.8.6) against one in-memory entity: the
+//! predicates the broker's notification path applies, usable without a
+//! broker — a gateway or an edge component can answer "would this change
+//! notify subscription X" with the broker's own semantics.
+//!
+//! Inputs are the stored (internal, expanded) forms: the subscription
+//! document as created (5.2.12, selector entity types expanded) and the
+//! entity document as the broker stores it (expanded attribute IRIs,
+//! `type` as an array). Matching is
+//! index-shaped in the broker (candidate lookup by (tenant, type) /
+//! (tenant, watched attribute)); every predicate here evaluates one
+//! candidate self-contained.
+//!
+#![doc = include_str!("../README.md")]
+// T-3468: every surface calls into this crate on a request path, where a
+// panic is a remote DoS. Outside tests it may not unwrap, expect, panic,
+// index out of bounds or overflow.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects
+    )
+)]
+#![deny(missing_docs)]
+
+use antares_jsonld::Context;
+use antares_model::dt_key;
+use antares_ql::eval::EntityLookup;
+use antares_ql::geo::GeoQuery;
+use antares_ql::type_selection_matches;
+use serde_json::{Map, Value};
+
+fn sub_str<'a>(sub: &'a Value, key: &str) -> Option<&'a str> {
+    sub.get(key).and_then(Value::as_str)
+}
+
+fn now_iso() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+/// Every predicate at once: active, entities selector (5.2.33), `q` /
+/// `scopeQ` / `geoQ` conditions, throttling window. `lookup` resolves 4.9
+/// linked-entity terms (`attr{…}`); `&|_| None` when no store is at hand.
+pub fn would_notify(sub: &Value, doc: &Value, ctx: &Context, lookup: EntityLookup) -> bool {
+    is_active(sub)
+        && selector_match(sub, doc, ctx)
+        && conditions_match(sub, doc, ctx, lookup)
+        && !throttled(sub)
+}
+
+/// 5.8.1.4 / 5.2.12: `isActive` false or an `expiresAt` in the past means
+/// the subscription notifies nothing.
+pub fn is_active(sub: &Value) -> bool {
+    if sub.get("isActive") == Some(&Value::Bool(false)) {
+        return false;
+    }
+    // 5.8.1.4 auto-expiry; dt_key so fraction spellings cannot misorder
+    // around the boundary second (4.11)
+    !sub.get("expiresAt")
+        .and_then(Value::as_str)
+        .is_some_and(|e| dt_key(e) < dt_key(&now_iso()))
+}
+
+/// entities selector (5.2.33) against an internal entity doc.
+pub fn selector_match(sub: &Value, doc: &Value, ctx: &Context) -> bool {
+    let Some(sel) = sub.get("entities").and_then(Value::as_array) else {
+        return true; // watchedAttributes-only subscription
+    };
+    let types: Vec<&str> = doc
+        .get("type")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let id = doc.get("id").and_then(Value::as_str).unwrap_or("");
+    sel.iter().any(|e| {
+        let t_ok = e.get("type").and_then(Value::as_str).is_none_or(|t| {
+            // Table 5.2.33-1: "*" indicates "a request for all Entities" —
+            // neither a term nor a 4.17 expression, but the absence of a type
+            // predicate, exactly as `type=*` is on the query side.
+            if t == "*" {
+                true
+            } else if t.contains(['|', ',', ';', '(']) {
+                type_selection_matches(t, &types, ctx)
+            } else {
+                types.contains(&t)
+            }
+        });
+        // Table 5.2.33-1: id is String or String[]; "id takes precedence
+        // over idPattern" — a selector carrying id ignores its idPattern.
+        let id_ok = match e.get("id") {
+            None => true,
+            Some(Value::String(i)) => i == id,
+            Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).any(|i| i == id),
+            Some(_) => false,
+        };
+        let pat_ok = e.get("id").is_some()
+            || e.get("idPattern").and_then(Value::as_str).is_none_or(|p| {
+                antares_ql::regex::compile(p).is_ok_and(|re| re.find(id).is_some())
+            });
+        t_ok && id_ok && pat_ok
+    })
+}
+
+/// A subscription's `geoQ` (Table 5.2.13-1) in the parameter shape the 4.10
+/// GeoQuery parser takes. The one reading of that table: every validator,
+/// matcher and forwarder in the broker turns a `geoQ` object into query
+/// parameters here, so `coordinates` is spelled the same way on all of them.
+pub fn geo_params(g: &Map<String, Value>) -> std::collections::HashMap<String, String> {
+    let mut params: std::collections::HashMap<String, String> = Default::default();
+    for k in ["georel", "geometry", "geoproperty"] {
+        if let Some(s) = g.get(k).and_then(Value::as_str) {
+            params.insert(k.into(), s.to_owned());
+        }
+    }
+    if let Some(c) = g.get("coordinates") {
+        params.insert(
+            "coordinates".into(),
+            match c {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            },
+        );
+    }
+    params
+}
+
+/// 5.8.6 notification matching: the subscription's q (4.9), scopeQ (4.19)
+/// and geoQ (4.10) conditions against an internal entity doc; all present
+/// conditions must hold.
+pub fn conditions_match(sub: &Value, doc: &Value, ctx: &Context, lookup: EntityLookup) -> bool {
+    if let Some(q) = sub_str(sub, "q") {
+        // a JSON string, read as written: no percent-decoding (5.2.12, 046_05)
+        // parsed once per distinct q text, not once per event per candidate
+        match antares_ql::regex::q_node(q) {
+            Some(node) => {
+                // Table 5.2.12-1 gives the Subscription the `expandValues`
+                // and `jsonKeys` pair 4.9 gives the query, and this
+                // condition IS that query: a term the first list names is
+                // compared after JSON-LD type coercion against the @context
+                // the Subscription was supplied with, less the names the
+                // second declares uninterpretable.
+                // ponytail: the coercion rebuilds the tree, so it costs one
+                // clone per event for a Subscription that names the list and
+                // nothing at all for one that does not; cache the coerced
+                // tree beside the parsed one if a deployment measures it.
+                let coerced;
+                let node: &antares_ql::QNode = match antares_ql::eval::expansion_list(
+                    sub_str(sub, "expandValues"),
+                    sub_str(sub, "jsonKeys"),
+                ) {
+                    None => &node,
+                    Some(list) => {
+                        coerced = antares_ql::eval::apply_expand_values(
+                            (*node).clone(),
+                            Some(&list),
+                            ctx,
+                        );
+                        &coerced
+                    }
+                };
+                if !antares_ql::eval::eval_q(node, doc, ctx, lookup) {
+                    return false;
+                }
+            }
+            None => return false,
+        }
+    }
+    if let Some(sq) = sub_str(sub, "scopeQ") {
+        if !antares_ql::scope::scope_matches(sq, doc) {
+            return false;
+        }
+    }
+    if let Some(g) = sub.get("geoQ").and_then(Value::as_object) {
+        // the geometry parse is shared per distinct geoQ member; the
+        // serialization of the stored member is the key
+        let key = serde_json::to_string(g).unwrap_or_default();
+        let gq = antares_ql::regex::geo_query(&key, || {
+            GeoQuery::from_params(&geo_params(g)).ok().flatten()
+        });
+        match gq {
+            Some(gq) => {
+                if !gq.matches(doc, ctx) {
+                    return false;
+                }
+            }
+            None => return false,
+        }
+    }
+    true
+}
+
+/// 5.2.12 `throttling`: true while the last notification is younger than the
+/// throttling window, so no further notification is due yet.
+pub fn throttled(sub: &Value) -> bool {
+    let Some(secs) = sub.get("throttling").and_then(Value::as_f64) else {
+        return false;
+    };
+    let Some(last) = sub
+        .get("notification")
+        .and_then(|n| n.get("lastNotification"))
+        .and_then(Value::as_str)
+    else {
+        return false;
+    };
+    chrono::DateTime::parse_from_rfc3339(last).is_ok_and(|t| {
+        chrono::Utc::now()
+            .signed_duration_since(t.with_timezone(&chrono::Utc))
+            .num_milliseconds()
+            < (secs * 1000.0) as i64
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    const DC: &str = "https://uri.etsi.org/ngsi-ld/default-context";
+
+    /// The core context once per process, with no loader behind it: the
+    /// interpreter-run of these tests (Miri) must not pay for a cache and an
+    /// HTTP client it never uses.
+    fn ctx() -> Arc<Context> {
+        static CORE: std::sync::OnceLock<Arc<Context>> = std::sync::OnceLock::new();
+        CORE.get_or_init(|| Arc::new(antares_jsonld::core_context()))
+            .clone()
+    }
+
+    /// A stored entity in its internal form: the broker's own expansion of
+    /// the API payload (expanded IRIs, `type` as an array, instance arrays).
+    fn expand(doc: Value) -> Value {
+        antares_jsonld::expand_entity(
+            doc.as_object().expect("object"),
+            &ctx(),
+            antares_jsonld::ExpandOpts::default(),
+        )
+        .expect("a valid entity")
+    }
+
+    fn vehicle(speed: f64, lon: f64) -> Value {
+        expand(json!({
+            "id": "urn:ngsi-ld:Vehicle:A1",
+            "type": "Vehicle",
+            "speed": {"type": "Property", "value": speed},
+            "driver": {"type": "Relationship", "object": "urn:ngsi-ld:Person:P1"},
+            "location": {"type": "GeoProperty",
+                "value": {"type": "Point", "coordinates": [lon, 40.4]}}
+        }))
+    }
+
+    /// A subscription as the broker stores it: entity types in the selector
+    /// are already expanded (5.2.33), `q`/`geoQ` as sent.
+    fn sub() -> Value {
+        json!({
+            "id": "urn:ngsi-ld:Subscription:1",
+            "type": "Subscription",
+            "entities": [{"type": format!("{DC}/Vehicle"), "idPattern": "^urn:ngsi-ld:Vehicle:.*"}],
+            "q": "speed>25",
+            "geoQ": {"georel": "near;maxDistance==2000", "geometry": "Point",
+                     "coordinates": "[-3.7,40.4]"},
+            "notification": {"endpoint": {"uri": "http://x/n"}}
+        })
+    }
+
+    /// Table 5.2.12-1 gives a Subscription the same `expandValues` and
+    /// `jsonKeys` pair 4.9 gives a query, and the notification condition IS
+    /// that query: a term whose Attribute `expandValues` names is compared
+    /// after JSON-LD type coercion, and a name `jsonKeys` carries as well is
+    /// left uninterpreted (6.4.3.2, the broker's precedence).
+    #[test]
+    fn clause_5_2_12_expand_values_coerces_the_condition_value() {
+        let c = ctx();
+        let none = |_: &str| None;
+        let doc = expand(json!({
+            "id": "urn:ngsi-ld:Vehicle:A1",
+            "type": "Vehicle",
+            "category": {"type": "Property", "value": format!("{DC}/Camping")}
+        }));
+        let mut s = sub();
+        s.as_object_mut().expect("object").remove("geoQ");
+        s["q"] = json!("category==\"Camping\"");
+        assert!(
+            !conditions_match(&s, &doc, &c, &none),
+            "the literal cannot match the expanded value on its own"
+        );
+        s["expandValues"] = json!("category");
+        assert!(
+            conditions_match(&s, &doc, &c, &none),
+            "expandValues coerces the term value"
+        );
+        s["jsonKeys"] = json!("category");
+        assert!(
+            !conditions_match(&s, &doc, &c, &none),
+            "a name in both lists is left uninterpreted"
+        );
+    }
+
+    /// The lookup of a test with no store: every linked Entity is absent.
+    fn no_store(_: &str) -> Option<Value> {
+        None
+    }
+
+    /// 5.8.6: every predicate holds → the change would notify.
+    #[test]
+    fn matching_change_notifies() {
+        assert!(would_notify(
+            &sub(),
+            &vehicle(30.0, -3.7),
+            &ctx(),
+            &no_store
+        ));
+    }
+
+    /// Each predicate alone refuses: q (4.9), geoQ (4.10), selector type,
+    /// idPattern (5.2.33), `isActive`, `expiresAt` (5.8.1.4), throttling.
+    #[test]
+    fn each_failing_predicate_refuses() {
+        let c = ctx();
+        let none = |_: &str| None;
+        assert!(!would_notify(&sub(), &vehicle(20.0, -3.7), &c, &none), "q");
+        assert!(
+            !would_notify(&sub(), &vehicle(30.0, -4.7), &c, &none),
+            "geoQ"
+        );
+        let mut s = sub();
+        s["entities"][0]["type"] = json!(format!("{DC}/Bicycle"));
+        assert!(!would_notify(&s, &vehicle(30.0, -3.7), &c, &none), "type");
+        let mut s = sub();
+        s["entities"][0]["idPattern"] = json!("^urn:ngsi-ld:Bicycle:.*");
+        assert!(
+            !would_notify(&s, &vehicle(30.0, -3.7), &c, &none),
+            "idPattern"
+        );
+        let mut s = sub();
+        s["isActive"] = json!(false);
+        assert!(
+            !would_notify(&s, &vehicle(30.0, -3.7), &c, &none),
+            "isActive"
+        );
+        let mut s = sub();
+        s["expiresAt"] = json!("2000-01-01T00:00:00Z");
+        assert!(
+            !would_notify(&s, &vehicle(30.0, -3.7), &c, &none),
+            "expiresAt"
+        );
+        let mut s = sub();
+        s["throttling"] = json!(3600);
+        s["notification"]["lastNotification"] = json!(now_iso());
+        assert!(
+            !would_notify(&s, &vehicle(30.0, -3.7), &c, &none),
+            "throttling"
+        );
+        assert!(throttled(&s));
+        s["notification"]["lastNotification"] = json!("2000-01-01T00:00:00Z");
+        assert!(
+            !throttled(&s),
+            "an old lastNotification is outside the window"
+        );
+        // the window is in seconds: 10 s ago is inside 60 s and outside 5 s
+        let ago = (chrono::Utc::now() - chrono::Duration::seconds(10))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        s["notification"]["lastNotification"] = json!(ago);
+        s["throttling"] = json!(60);
+        assert!(throttled(&s), "10 s ago, 60 s window");
+        s["throttling"] = json!(5);
+        assert!(!throttled(&s), "10 s ago, 5 s window");
+    }
+
+    /// 5.2.33 Table 5.2.33-1: `id` takes precedence over `idPattern`, and a
+    /// selector without `type` matches every type.
+    #[test]
+    fn selector_id_precedence_and_typeless_selector() {
+        let c = ctx();
+        let doc = vehicle(30.0, -3.7);
+        let s = json!({"entities": [{"id": "urn:ngsi-ld:Vehicle:A1", "idPattern": "^nothing$"}]});
+        assert!(selector_match(&s, &doc, &c));
+        let s = json!({"entities": [{"id": ["urn:ngsi-ld:Vehicle:B2"], "type": format!("{DC}/Vehicle")}]});
+        assert!(!selector_match(&s, &doc, &c));
+        let s = json!({"watchedAttributes": ["speed"]});
+        assert!(
+            selector_match(&s, &doc, &c),
+            "watchedAttributes-only subscription"
+        );
+    }
+
+    /// The edges of the selector and the conditions (T-3912, the `ngsild` coverage gate): a type
+    /// expression of 4.17, an `id` that is neither a String nor a String[] (Table 5.2.33-1), a
+    /// `q` or a `geoQ` the broker cannot read (it notifies nothing rather than everything), and
+    /// `coordinates` written as a JSON array instead of the string Table 5.2.13-1 shows.
+    #[test]
+    fn selector_and_condition_edges() {
+        let c = ctx();
+        let none = |_: &str| None;
+        let doc = vehicle(30.0, -3.7);
+        let typed = |t: String| json!({"entities": [{"type": t}]});
+        assert!(selector_match(
+            &typed(format!("{DC}/Bicycle|{DC}/Vehicle")),
+            &doc,
+            &c
+        ));
+        assert!(!selector_match(
+            &typed(format!("{DC}/Bicycle|{DC}/Car")),
+            &doc,
+            &c
+        ));
+        assert!(
+            !selector_match(&json!({"entities": [{"id": 7}]}), &doc, &c),
+            "id of no listed shape"
+        );
+
+        let mut s = sub();
+        s["q"] = json!("(speed>25");
+        assert!(antares_ql::parse_q("(speed>25").is_err());
+        assert!(!conditions_match(&s, &doc, &c, &none), "an unreadable q");
+        let mut s = sub();
+        s["geoQ"]["geometry"] = json!("Nothing");
+        assert!(!conditions_match(&s, &doc, &c, &none), "an unreadable geoQ");
+
+        let g = json!({"georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": [-3.7, 40.4]});
+        assert_eq!(
+            geo_params(g.as_object().expect("object"))["coordinates"],
+            "[-3.7,40.4]"
+        );
+        let g = json!({"georel": "near;maxDistance==2000", "geometry": "Point"});
+        assert!(!geo_params(g.as_object().expect("object")).contains_key("coordinates"));
+    }
+
+    /// 4.9 EXAMPLE 13/14: a linked-entity term (`driver{name}`) resolves the
+    /// Relationship object through `lookup`; without a store it cannot match.
+    #[test]
+    fn linked_entity_term_uses_the_lookup() {
+        let c = ctx();
+        let mut s = sub();
+        s["q"] = json!("driver{name}==\"Ann\"");
+        let doc = vehicle(30.0, -3.7);
+        let store = |uri: &str| {
+            (uri == "urn:ngsi-ld:Person:P1").then(|| {
+                expand(json!({"id": uri, "type": "Person",
+                       "name": {"type": "Property", "value": "Ann"}}))
+            })
+        };
+        assert!(conditions_match(&s, &doc, &c, &store));
+        assert!(
+            !conditions_match(&s, &doc, &c, &no_store),
+            "no store, no match"
+        );
+    }
+
+    /// 4.19: `scopeQ` is a condition like `q`.
+    #[test]
+    fn scope_q_is_a_condition() {
+        let c = ctx();
+        let mut doc = vehicle(30.0, -3.7);
+        doc["scope"] = json!(["/Madrid/Centre"]);
+        let mut s = sub();
+        s["scopeQ"] = json!("/Madrid/#");
+        assert!(conditions_match(&s, &doc, &c, &no_store));
+        s["scopeQ"] = json!("/Paris/#");
+        assert!(!conditions_match(&s, &doc, &c, &no_store));
+    }
+
+    /// Table 5.2.12-1: a Subscription's `q` is a JSON string, not part of a
+    /// URI, so it is read as written: `%20` is three characters (forge
+    /// cd2ef2ba, 046_05).
+    #[test]
+    fn a_subscription_q_is_not_percent_decoded() {
+        let c = ctx();
+        let named = |name: &str| {
+            expand(json!({
+                "id": "urn:ngsi-ld:Vehicle:A1",
+                "type": "Vehicle",
+                "name": {"type": "Property", "value": name}
+            }))
+        };
+        let mut s = sub();
+        s.as_object_mut().expect("object").remove("geoQ");
+        s["q"] = json!("name==\"Eiffel%20Tower\"");
+        assert!(conditions_match(
+            &s,
+            &named("Eiffel%20Tower"),
+            &c,
+            &no_store
+        ));
+        assert!(!conditions_match(&s, &named("Eiffel Tower"), &c, &no_store));
+    }
+
+    /// Table 5.2.33-1 `type`: "A valid type selection string as per clause
+    /// 4.17. To indicate a request for all Entities (with implied local
+    /// scope), \"*\" is also allowed as a value." 5.2.33 scopes EntitySelector
+    /// to what is "queried or subscribed to", so a Subscription carrying it
+    /// selects every Entity Type — it is not a 4.17 expression and not a term
+    /// to expand, but the absence of a type predicate.
+    #[test]
+    fn a_star_selector_type_selects_every_entity_type() {
+        let sub = json!({"entities": [{"type": "*"}]});
+        for doc in [
+            json!({"id": "urn:ngsi-ld:Vehicle:1", "type": [format!("{DC}/Vehicle")]}),
+            json!({"id": "urn:ngsi-ld:Parking:1", "type": [format!("{DC}/Parking")]}),
+            json!({"id": "urn:ngsi-ld:Odd:1", "type": ["urn:example:Odd"]}),
+        ] {
+            assert!(
+                selector_match(&sub, &doc, &ctx()),
+                "a \"*\" selector must match every type: {doc}"
+            );
+        }
+        // "*" is the type predicate only — id and idPattern still narrow.
+        let pinned = json!({"entities": [{"type": "*", "id": "urn:ngsi-ld:Vehicle:1"}]});
+        assert!(selector_match(
+            &pinned,
+            &json!({"id": "urn:ngsi-ld:Vehicle:1", "type": [format!("{DC}/Vehicle")]}),
+            &ctx()
+        ));
+        assert!(
+            !selector_match(
+                &pinned,
+                &json!({"id": "urn:ngsi-ld:Vehicle:2", "type": [format!("{DC}/Vehicle")]}),
+                &ctx()
+            ),
+            "a \"*\" type does not widen an id that was given"
+        );
+    }
+}

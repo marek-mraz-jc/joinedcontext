@@ -1,0 +1,66 @@
+[package]
+name = "ngsild-jsonld"
+description = "JSON-LD layer: pinned core contexts, NGSI-LD expansion/compaction + structural validation; the caching HTTP Loader behind the `fetch` feature."
+version.workspace = true
+edition.workspace = true
+publish = ["crates-io"]
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+readme = "README.md"
+# reads the vendored ETSI suite, which is not in the package
+exclude = ["tests/etsi_fixtures.rs"]
+keywords = ["ngsi-ld", "json-ld", "etsi", "linked-data", "fiware"]
+categories = ["parser-implementations", "encoding"]
+
+# ADR-0027 / surfaces-threat-model 9.1: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "ngsild"
+
+[dependencies]
+antares-model = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true, optional = true }
+
+[features]
+# The caching HTTP @context Loader (`loader`): reqwest, rustls, tokio, moka
+# and the egress policy. Off by default so expansion and compaction build
+# with no network stack (T-3911, rule M3); the broker turns it on.
+fetch = [
+    "dep:tokio", "dep:reqwest", "dep:rustls", "dep:moka", "dep:uuid",
+    "dep:web-time", "dep:send_wrapper", "dep:gloo-timers", "dep:futures-util",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true
+
+# Same crates, target-appropriate backends (sockets + rustls natively, the
+# browser's own fetch/timers on wasm32). Target sections only — no logic
+# differs between them.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+# reqwest is built provider-less so the workspace stays on ONE rustls stack
+# with ring; the provider is installed here, once, before the first client.
+rustls = { workspace = true, optional = true }
+# moka's clock panics on wasm32 — the browser build uses src/minicache.rs
+moka = { workspace = true, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1", default-features = false, features = ["sync", "macros"], optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["json"], optional = true }
+web-time = { workspace = true, optional = true }
+send_wrapper = { workspace = true, optional = true }
+# Real fetch deadlines — the browser fetch has no client-level timeout
+# and a hung upstream would hold a resolve permit forever (global stall).
+gloo-timers = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+
+
+[[example]]
+name = "gateway_expand"
+required-features = ["fetch"]

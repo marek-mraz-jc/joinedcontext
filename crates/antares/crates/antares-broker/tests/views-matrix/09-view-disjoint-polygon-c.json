@@ -1,0 +1,60 @@
+{
+ "about": "A region disjoint from A and B.",
+ "view": {
+  "selector": [
+   "Vehicle"
+  ],
+  "rules": [
+   {
+    "types": [
+     "Vehicle"
+    ],
+    "attributes": [
+     "location",
+     "operator",
+     "speed",
+     "vehicleType"
+    ]
+   }
+  ],
+  "geoQ": {
+   "georel": "within",
+   "geometry": "Polygon",
+   "coordinates": [
+    [
+     [
+      20,
+      20
+     ],
+     [
+      30,
+      20
+     ],
+     [
+      30,
+      30
+     ],
+     [
+      20,
+      30
+     ],
+     [
+      20,
+      20
+     ]
+    ]
+   ]
+  }
+ },
+ "expect": {
+  "urn:ngsi-ld:Vehicle:V5": [
+   "location",
+   "operator",
+   "speed",
+   "vehicleType"
+  ]
+ },
+ "caller": {
+  "x-jc-roles": "public"
+ }
+}

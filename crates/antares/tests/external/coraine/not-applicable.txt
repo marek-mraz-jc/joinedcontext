@@ -1,0 +1,46 @@
+# Coraine cases that test what only Coraine has (T-3549). One per line:
+#   tag:<tag> <reason>            every case carrying the tag
+#   name:<case> <reason>          one case (file name without .test)
+#   tag@<store>:<tag> <reason>    only in the cell of that Antares store
+# run.sh skips them (corTest --skip-tags / --skipNames); compare.py reports
+# them as not-applicable with the reason. A case that starts the broker with
+# a Coraine-only flag needs no line: antares.sh refuses the flag and
+# compare.py files the case under that flag.
+tag:bridge Coraine's southbound bridge plugins (loopback, MQTT, HTTP, DDS, Modbus); NGSI-LD defines no bridges
+tag:channel Coraine's bridge channels
+tag:goal Coraine's bridge goals
+tag:plugins Coraine's plugin loader and API plugins
+tag:dds the DDS bridge
+tag:ddsSync the DDS store sync
+tag:modbus the Modbus bridge
+tag:mongoc Coraine's MongoDB store plugin
+tag:corDB Coraine's corDB store plugin
+tag:ramDB Coraine's ramDB store plugin
+tag:cli Coraine's command line
+tag:cor Coraine's cor:// transport
+tag:admin Coraine's /admin API (Antares has its own admin API under another path and contract)
+tag:metrics Coraine's metric names
+tag:migrate the coraine-import migration tool
+tag:upgrade Coraine's own upgrade path
+tag:build compiling Coraine from source
+tag:features Coraine's /build feature report
+tag:version Coraine's /version and /build endpoints
+tag:ha Coraine's MongoDB replica-set cache sync
+tag:docker Coraine's container image
+tag@memory:persistence the memory store keeps nothing across a restart by design
+tag@memory:persist the memory store keeps nothing across a restart by design
+tag@memory:restart the memory store keeps nothing across a restart by design
+tag:service Coraine's Service Execution extension (doc/service-execution.md); TS 104 175 Annex H.1: "There is currently no explicitly and precisely specified support for actuation in the NGSI-LD API"
+name:snapshot_temporal_capture reads Coraine's TimescaleDB tables with psql, behind the broker
+name:snapshot_temporal_lifecycle reads Coraine's TimescaleDB tables with psql, behind the broker
+name:storage_format_timescale reads Coraine's TimescaleDB tables with psql, behind the broker
+name:troe_timescale_basic reads Coraine's TimescaleDB tables with psql, behind the broker
+name:troe_timescale_hypertable reads Coraine's TimescaleDB tables with psql, behind the broker
+name:troe_timescale_geo_shapes reads Coraine's TimescaleDB tables with psql, behind the broker
+name:troe_timescale_temporal_tenant reads Coraine's TimescaleDB tables with psql, behind the broker
+name:troe_timescale_values reads Coraine's TimescaleDB tables with psql, behind the broker
+name:jsonld_contexts_lazy_reload writes @contexts into Coraine's MongoDB, behind the broker
+name:startup_cyclic_persisted_context writes @contexts into Coraine's MongoDB, behind the broker
+name:crash_report_idle kills the broker with a signal and reads Coraine's own crash-report format and readelf build id
+name:geo_attr_type_conflict pins a MongoDB 2dsphere index limit, which the case itself says is no NGSI-LD rule
+name:usage runs the coraine binary's -u usage text

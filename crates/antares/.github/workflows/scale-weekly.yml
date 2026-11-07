@@ -1,0 +1,313 @@
+name: scale-weekly
+
+# The design targets, measured: 100,000,000 entities over 10,000 tenants,
+# 100,000 subscriptions and 100,000 registrations on one PostgreSQL, the
+# resident set and CPU of broker and Postgres per phase, plus the
+# throughput, saturation and notification numbers at that load. One rented dedicated-vCPU box with a volume for the database,
+# registered as an ephemeral runner, deleted afterwards; perf-janitor
+# sweeps a leaked server or volume by its expiry label.
+#
+# `scale` scales every count linearly. The box lives ONE hour at most
+# (TTL, job timeout and the server's own shutdown timer agree), which fits
+# scale 0.01 with margin; the full targets (1.0) do not fit and are not
+# scheduled. Report-only: nothing gates.
+#
+# Secrets: HCLOUD_TOKEN (project-scoped Hetzner API token), RUNNER_PAT
+# (fine-grained, this repository, Administration read/write).
+
+on:
+  # Schedule off — the run rents a Hetzner box. Dispatch it by hand
+  # instead; restore by uncommenting.
+  # schedule:
+  #   - cron: "17 6 * * 4" # Thursday, the heavy weekly of its day (T-5639)
+  workflow_dispatch:
+    inputs:
+      scale:
+        description: fraction of the design targets (1.0 = 100M entities)
+        default: "0.01"
+      subs:
+        description: subscriptions to load (every one a different filter)
+        default: "10000"
+      regs:
+        description: context source registrations to load (every one different)
+        default: "10000"
+      server_type:
+        description: Hetzner server type (ccx33 = 8 dedicated vCPU / 32 GB, ccx43 = 16 / 64, ccx53 = 32 / 128)
+        default: ccx33
+      scenarios:
+        description: deployment scenarios to run (all, none, or space-separated names)
+        default: "all"
+
+# The Hetzner credentials are the sensitive part of this run; the
+# GITHUB_TOKEN itself only has to read the checkout.
+permissions:
+  contents: read
+
+concurrency:
+  group: scale-weekly
+  cancel-in-progress: false
+
+env:
+  SERVER_TYPE: ${{ inputs.server_type || 'ccx33' }}
+  SERVER_IMAGE: ubuntu-24.04
+  SERVER_LOCATION: hel1
+  # full-scale data volume; a fractional dispatch shrinks it in the create
+  # step so a dry run fits a fresh project's volume limit
+  VOLUME_GB: 500
+  TTL_HOURS: 1
+
+jobs:
+  create:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    outputs:
+      label: ${{ steps.mk.outputs.label }}
+      server_id: ${{ steps.mk.outputs.server_id }}
+      volume_id: ${{ steps.mk.outputs.volume_id }}
+    steps:
+      - name: Create server + volume, register the ephemeral runner
+        id: mk
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          RUNNER_PAT: ${{ secrets.RUNNER_PAT }}
+        run: |
+          LABEL="scale-${{ github.run_id }}"
+          VOLUME_GB=$(python3 -c "import math; print(max(10, math.ceil($VOLUME_GB * ${{ inputs.scale || '0.01' }})))")
+          REG=$(curl -sf -X POST -H "Authorization: Bearer $RUNNER_PAT" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runners/registration-token" \
+            | jq -r .token)
+          # Nothing is rented before the registration token is in hand: an
+          # empty one still produces a machine, and a machine whose runner
+          # never registers is an hour of rent and a job queued against a
+          # label that will never appear.
+          [ -n "$REG" ] && [ "$REG" != null ] || { echo "no runner registration token"; exit 1; }
+          EXPIRY=$(( $(date +%s) + TTL_HOURS * 3600 ))
+          # last resort below the API: the box halts itself after the TTL
+          USERDATA=$(cat <<EOF
+          #cloud-config
+          package_update: true
+          packages: [docker.io, jq, build-essential]
+          runcmd:
+            - shutdown -h +$(( TTL_HOURS * 60 ))
+            - mkfs.ext4 -F /dev/disk/by-id/scsi-0HC_Volume_VOLID || true
+            - mkdir -p /mnt/data && mount /dev/disk/by-id/scsi-0HC_Volume_VOLID /mnt/data
+            - |
+              mkdir -p /opt/runner && cd /opt/runner
+              curl -sL https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-linux-x64-2.337.0.tar.gz | tar xz
+              export RUNNER_ALLOW_RUNASROOT=1
+              ./config.sh --url https://github.com/${{ github.repository }} \
+                --token $REG --ephemeral --unattended --no-default-labels --labels $LABEL --name $LABEL
+              nohup ./run.sh >/var/log/runner.log 2>&1 &
+          EOF
+          )
+          VOL=$(jq -n --arg name "$LABEL" --arg loc "$SERVER_LOCATION" --arg exp "$EXPIRY" \
+            '{name:$name, size:'"$VOLUME_GB"', location:$loc, format:"ext4", labels:{role:"perf-runner", expiry:$exp}}' \
+            | curl -sS --fail-with-body -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" -H "Content-Type: application/json" -d @- \
+              https://api.hetzner.cloud/v1/volumes) || { echo "volume refused: $VOL"; exit 1; }
+          VOLID=$(echo "$VOL" | jq -r .volume.id)
+          # recorded before the server call: a refused server must not
+          # leave the volume unknown to the delete job (perf-janitor swept
+          # two of those)
+          echo "volume_id=$VOLID" >> "$GITHUB_OUTPUT"
+          USERDATA=${USERDATA//VOLID/$VOLID}
+          RESP=$(jq -n --arg name "$LABEL" --arg type "$SERVER_TYPE" --arg image "$SERVER_IMAGE" \
+            --arg loc "$SERVER_LOCATION" --arg ud "$USERDATA" --arg exp "$EXPIRY" --argjson vol "$VOLID" \
+            '{name:$name, server_type:$type, image:$image, location:$loc, user_data:$ud,
+              volumes:[$vol], automount:false, labels:{role:"perf-runner", expiry:$exp}}' \
+            | curl -sS --fail-with-body -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" -H "Content-Type: application/json" -d @- \
+              https://api.hetzner.cloud/v1/servers) || { echo "server refused: $RESP"; exit 1; }
+          echo "label=$LABEL" >> "$GITHUB_OUTPUT"
+          echo "server_id=$(echo "$RESP" | jq -r .server.id)" >> "$GITHUB_OUTPUT"
+          PRICE=$(curl -sf -H "Authorization: Bearer $HCLOUD_TOKEN" https://api.hetzner.cloud/v1/server_types \
+            | jq -r ".server_types[] | select(.name==\"$SERVER_TYPE\") | .prices[] | select(.location==\"$SERVER_LOCATION\") | .price_hourly.gross")
+          echo "cost cap: $SERVER_TYPE at $PRICE/h x ${TTL_HOURS}h + ${VOLUME_GB} GB volume" >> "$GITHUB_STEP_SUMMARY"
+
+  scale:
+    needs: create
+    runs-on: ${{ needs.create.outputs.label }}
+    timeout-minutes: 55
+    env:
+      SCALE: ${{ inputs.scale || '0.01' }}
+      SUBS: ${{ inputs.subs || '10000' }}
+      CSRS: ${{ inputs.regs || '10000' }}
+      DATABASE_URL: postgresql://antares:antares@127.0.0.1:5432/antares
+      OUT: results/perf
+      # the allocator settings the image ships (Dockerfile), so the resident
+      # set measured here is the one a deployment sees
+      MALLOC_CONF: background_thread:true,narenas:4,dirty_decay_ms:10000,muzzy_decay_ms:10000
+      _RJEM_MALLOC_CONF: background_thread:true,narenas:4,dirty_decay_ms:10000,muzzy_decay_ms:10000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - name: Install k6 and the Postgres client
+        run: |
+          curl -sL https://github.com/grafana/k6/releases/download/v0.54.0/k6-v0.54.0-linux-amd64.tar.gz \
+            | tar xz --strip-components=1 && mv k6 /usr/local/bin/k6.bin
+          # the load generator is confined to the upper half of the machine so
+          # it cannot starve what it measures; broker and Postgres are not
+          # limited in any way
+          N=$(nproc); printf '#!/bin/sh\nexec taskset -c %s-%s /usr/local/bin/k6.bin "$@"\n' "$((N/2))" "$((N-1))" > /usr/local/bin/k6
+          chmod +x /usr/local/bin/k6
+          apt-get install -y -q postgresql-client python3-matplotlib python3-reportlab
+      - name: PostgreSQL on the volume, mosquitto
+        run: |
+          # Sized from the box rather than from one server type: a wider
+          # machine that keeps an 8-core box's buffer pool measures the
+          # storage, not the broker. shared_buffers is the usual quarter of
+          # RAM, the sort and maintenance budgets follow it, and the pool is
+          # a fixed width per core with the 8-core value pinned where it was
+          # measured. The connection ceiling leaves room above the pool for
+          # the loader and psql.
+          MEM_GB=$(awk '/MemTotal/ { print int($2 / 1048576) }' /proc/meminfo)
+          PG_POOL=$(( $(nproc) * 8 > 100 ? $(nproc) * 8 : 100 ))
+          echo "PG_POOL=$PG_POOL" >> "$GITHUB_ENV"
+          docker run -d --name pg --network host -v /mnt/data/pg:/var/lib/postgresql/data \
+            -e POSTGRES_USER=antares -e POSTGRES_PASSWORD=antares -e POSTGRES_DB=antares \
+            --shm-size=$((MEM_GB / 8 > 1 ? MEM_GB / 8 : 1))g ghcr.io/baosystems/postgis:17-3.5 \
+            -c shared_buffers=$((MEM_GB / 4 > 1 ? MEM_GB / 4 : 1))GB -c work_mem=64MB \
+            -c maintenance_work_mem=$((MEM_GB / 16 > 1 ? MEM_GB / 16 : 1))GB \
+            -c max_wal_size=16GB -c checkpoint_timeout=30min -c synchronous_commit=off \
+            -c max_connections=$((PG_POOL + 200)) \
+            -c shared_preload_libraries=pg_stat_statements
+          docker run -d --name mqtt --network host eclipse-mosquitto:2.0.22 \
+            sh -c 'printf "listener 1883\nallow_anonymous true\n" > /mosquitto/config/perf.conf && exec mosquitto -c /mosquitto/config/perf.conf'
+          docker run -d --name nats --network host nats:2.10-alpine -js
+          until docker exec pg pg_isready -q; do sleep 1; done
+          until (exec 3<>/dev/tcp/127.0.0.1/1883) 2>/dev/null; do sleep 1; done
+          until (exec 3<>/dev/tcp/127.0.0.1/4222) 2>/dev/null; do sleep 1; done
+      - name: Build the release broker
+        run: cargo build --release --locked -p antares-broker
+      - name: Start the broker under the resident-set sampler
+        run: |
+          # connection cap left at the default 10 000: the 200 pin refused
+          # 60% of the 500-VU fire run before any handler ran
+          mkdir -p "$OUT"
+          # eight connections per core, floored at 100: the default 20 stalled
+          # 2-3 s per acquire under federated queries at 100 rps (10k subs /
+          # 10k regs run), and 100 is what an 8-core box was measured with
+          ANTARES_STORE=postgres ANTARES_DATABASE_URL="$DATABASE_URL" ANTARES_ALLOW_SHARED_LOCAL=1 \
+            ANTARES_EGRESS_ALLOW_PRIVATE=true ANTARES_HTTP_PORT=9090 ANTARES_PG_POOL="$PG_POOL" \
+            ANTARES_TELEMETRY=1 \
+            nohup ./target/release/antares > "$OUT/broker.log" 2>&1 &
+          echo $! > broker.pid
+          # bounded: an unbounded wait once burned the whole rented hour
+          for i in $(seq 1 120); do
+            curl -sf -o /dev/null http://127.0.0.1:9090/q/health && break
+            sleep 0.5
+          done
+          curl -sf -o /dev/null http://127.0.0.1:9090/q/health \
+            || { echo "broker never became healthy"; cat "$OUT/broker.log"; exit 1; }
+          METRICS_URL=http://127.0.0.1:9090/q/metrics ./dev/perf/rss.sh start "$(cat broker.pid)" pg
+      - name: Load the dataset
+        run: SUBS=$SUBS CSRS=$CSRS MQTT_URL=mqtt://127.0.0.1:1883 BROKER_URL=http://127.0.0.1:9090 ./dev/perf/load.sh
+      - name: Measure at load
+        run: |
+          # request shapes and saturation against the loaded store, one tenant
+          # per request (k6 picks TENANT); startup rows for the postgres store
+          TENANT=t7 BIN=target/release/antares PORT=9471 ./dev/perf/shapes.sh
+          STORE=postgres PORT=9473 STAGES=10 STAGE=15s ./dev/perf/saturate.sh
+          ./dev/perf/startup.sh
+          # do the subscriptions fire, and up to what rate: update + delete
+          # streams over the loaded entities, delivered set against due
+          read -r ENTITIES TENANTS < <(python3 -c "s=float('$SCALE'); n=lambda t,f: max(f,int(round(t*s))); print(n(100000000,1), n(10000,10))")
+          TENANTS=$TENANTS SUBS=$SUBS ENTITIES=$ENTITIES MQTT=1 BROKER_URL=http://127.0.0.1:9090 ./dev/perf/fire.sh
+          # federated queries across the loaded registrations (all at the sink)
+          TENANTS=$TENANTS BROKER_URL=http://127.0.0.1:9090 ./dev/perf/fed.sh
+      - name: Deployment scenarios
+        if: always()
+        run: |
+          SCEN="${{ inputs.scenarios || 'all' }}"
+          if [ "$SCEN" != "none" ]; then
+            MODE=load STORE=postgres BIN=target/release/antares \
+              NATS_URL=nats://127.0.0.1:4222 \
+              PG_URL_BASE=postgresql://antares:antares@127.0.0.1:5432 \
+              PG_ADMIN_URL="$DATABASE_URL" \
+              ./dev/perf/scenarios.sh "$SCEN"
+          fi
+      - name: Resident set verdict
+        if: always()
+        run: ./dev/perf/rss.sh stop
+      - name: Diagnostics for a later analysis
+        if: always()
+        run: |
+          # everything a reader without the box needs: final metrics and
+          # heap stats, the sink's counters, the Postgres side, charts,
+          # and a manifest naming each file
+          curl -sf http://127.0.0.1:9090/q/metrics > "$OUT/metrics-final.prom" || true
+          curl -sf http://127.0.0.1:9090/q/health > "$OUT/health-final.json" || true
+          curl -sf http://127.0.0.1:9090/q/dead-letters > "$OUT/dead-letters.json" || true
+          curl -sf http://127.0.0.1:9800/stats > "$OUT/sink-stats.json" || true
+          psql "$DATABASE_URL" -c "create extension if not exists pg_stat_statements" >/dev/null 2>&1 || true
+          for q in "select * from pg_stat_user_tables" "select * from pg_stat_user_indexes" \
+                   "select calls, round(total_exec_time) as total_ms, round(mean_exec_time::numeric,3) as mean_ms, rows, left(query,500) as query from pg_stat_statements order by total_exec_time desc limit 40" \
+                   "select * from pg_stat_database where datname='antares'" "select * from pg_stat_bgwriter" \
+                   "select relname, pg_size_pretty(pg_total_relation_size(oid)) from pg_class where relkind='r' and relnamespace='public'::regnamespace" \
+                   "select name, setting from pg_settings where source<>'default'"; do
+            psql "$DATABASE_URL" -A -F, -c "$q" >> "$OUT/pg-stats.csv" 2>&1 || true; echo >> "$OUT/pg-stats.csv"
+          done
+          python3 dev/perf/charts.py "$OUT" || true
+          cat > "$OUT/MANIFEST.md" <<'EOF'
+          # scale-weekly results — what each file is
+          Rig: broker (release, postgres store, ANTARES_TELEMETRY=1, port 9090, no CPU or memory limit),
+          Postgres 17 + PostGIS in docker on the volume (no limit), mosquitto, dev/perf/sink.py on 9800
+          (eight worker processes on 9801-9808, 9800 folds their stats) as every notification/registration
+          target, k6 as the load generator confined to the upper half of the cores. All on ONE machine
+          (SERVER_TYPE in the step summary). The update stream carries READ_PCT (20 %) extra GET /entities/{id}.
+          - rss.csv — 1 Hz sampler: RSS KiB + CPU % (100 = one core) per service (broker, postgres cgroup,
+            k6, sink, mosquitto), host busy cores, and `phase` (which perf stage was running).
+          - cpu.png / memory.png — the same, charted, phases shaded; cpu-saturation.png — broker and
+            Postgres cores busy against the machine's core count (broker = every antares process).
+          - rss.md — RSS and CPU peaks of broker, Postgres and the rig processes.
+          - metrics/<epoch>.prom — Prometheus snapshots of /q/metrics every 15 s (notification
+            counters incl. antares_notification_changes_dropped_total, HTTP histograms, pool gauges).
+          - metrics-final.prom, health-final.json (jemalloc allocated/resident), dead-letters.json.
+          - load.md — dataset sizes and load wall times; subs.md / csr.md — the subscription and
+            registration classes (api-load.py).
+          - shapes.md — req/s + p99 per request shape; saturate-*.csv/.jsonl + saturate.md — the knee.
+          - fire-<rate>.json + fire.md — subscriptions under the update stream: due vs delivered, drops.
+          - fed-<rate>.json + fed.md — federated queries over the registrations.
+          - scenarios/ — edge and topology scenario tables (verdicts.md, hot-entity, noisy-tenant, etc.).
+          - sink-stats.json — what the sink received; sink.log; broker.log — broker stderr (warnings
+            on drops, pool waits, breaker trips).
+          - pg-stats.csv — pg_stat_user_tables/indexes, the 40 costliest statements (pg_stat_statements,
+            constants normalised to $n), pg_stat_database/bgwriter, table sizes, non-default settings.
+          - report.pdf — narrated report (what was stored, who called, the conditions of each number) built by dev/perf/pdf.py.
+          - perf.json + index.html — the folded report (report.py).
+          EOF
+      - name: Fold the tables into one report
+        if: always()
+        run: |
+          python3 dev/perf/report.py "$OUT"
+          {
+            echo "## Scale run (scale $SCALE, ${{ env.SERVER_TYPE }})"
+            python3 dev/perf/report.py "$OUT" --readme
+            if [ -f "$OUT/scenarios/verdicts.md" ]; then
+              echo "### Deployment scenario verdicts"
+              cat "$OUT/scenarios/verdicts.md"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: scale-weekly-results
+          path: results/perf
+          retention-days: 90
+
+  delete:
+    needs: [create, scale]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the server and its volume
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          ID="${{ needs.create.outputs.server_id }}"; VOL="${{ needs.create.outputs.volume_id }}"
+          [ -n "$ID" ] && [ "$ID" != "null" ] && curl -sf -X DELETE -H "Authorization: Bearer $HCLOUD_TOKEN" \
+            "https://api.hetzner.cloud/v1/servers/$ID" || true
+          # a volume detaches only once its server is gone
+          for _ in $(seq 30); do
+            [ -n "$VOL" ] && [ "$VOL" != "null" ] || exit 0
+            curl -sf -X DELETE -H "Authorization: Bearer $HCLOUD_TOKEN" "https://api.hetzner.cloud/v1/volumes/$VOL" && exit 0
+            sleep 10
+          done

@@ -1,0 +1,1691 @@
+// SPDX-License-Identifier: EUPL-1.2
+//! PgEntityStore integration, including the concurrency guarantees.
+//! Skips loudly without ANTARES_TEST_DATABASE_URL (see tests/pg.rs recipe).
+
+// Every test here talks to the Postgres store, which only exists with the
+// `postgres` feature; without it the file builds to nothing (T-3465).
+#![cfg(feature = "postgres")]
+
+use antares_model::TenantId;
+use antares_sql::store::pg;
+use antares_sql::store::pg::entity::PgEntityStore;
+use serde_json::json;
+
+macro_rules! require_db {
+    () => {
+        match std::env::var("ANTARES_TEST_DATABASE_URL") {
+            Ok(url) => url,
+            Err(_) => {
+                eprintln!("SKIP: ANTARES_TEST_DATABASE_URL not set");
+                return;
+            }
+        }
+    };
+}
+
+fn doc(id: &str, n: i64) -> serde_json::Value {
+    json!({
+        "id": id, "type": "Test",
+        "createdAt": "2026-08-04T09:00:00Z", "modifiedAt": "2026-08-04T09:00:00Z",
+        "n": {"type": "Property", "value": n}
+    })
+}
+
+/// 4.6.3: "The Seconds component may optionally contain a decimal fraction.
+/// In this case the string shall contain two integer digits, followed by a
+/// decimal point and then one or more fractional digits, up to a maximum of
+/// six. ... In requests, also a comma instead of a decimal point may be used
+/// as separator for compatibility reasons."
+///
+/// The broker accepts that form deliberately — `parse_datetime` has an
+/// explicit branch for it and `filter::expired_at` rewrites the comma before
+/// parsing, with a comment saying why. The store then handed the raw text to
+/// a bare `::timestamptz` cast, which PostgreSQL refuses: a legal request
+/// became a 500 on the postgres and timescale arms while the memory and file
+/// arms accepted it.
+#[tokio::test(flavor = "multi_thread")]
+async fn clause_4_6_3_a_comma_seconds_fraction_is_stored_like_a_point() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgcomma").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let id = "urn:ngsi-ld:Test:comma1";
+    let _ = s.delete(&t, id).await;
+
+    let with_comma = json!({
+        "id": id, "type": "Test",
+        "createdAt": "2026-08-04T09:00:00,500Z",
+        "modifiedAt": "2026-08-04T09:00:00,500Z",
+        "expiresAt": "2099-01-01T00:00:00,500Z",
+        "n": {"type": "Property", "value": 1}
+    });
+    assert!(
+        s.create(&t, id, &with_comma)
+            .await
+            .expect("4.6.3: the comma form is legal"),
+        "created"
+    );
+
+    // The extracted columns are the point form of the same instant, so every
+    // predicate built on them (4.22 expiry, ordering, the sysAttrs windows)
+    // sees the timestamp the client meant.
+    // Compared as instants against the point form of the same stamps: the
+    // two spellings 4.6.3 allows have to land on the same timestamptz.
+    let (created_ok, expires_ok): (bool, Option<bool>) = sqlx::query_as(
+        "SELECT created_at = $3::timestamptz, expires_at = $4::timestamptz
+           FROM entities WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(t.as_str())
+    .bind(id)
+    .bind("2026-08-04T09:00:00.500Z")
+    .bind("2099-01-01T00:00:00.500Z")
+    .fetch_one(&pool)
+    .await
+    .expect("row");
+    assert!(created_ok, "the comma and point forms are the same instant");
+    assert_eq!(
+        expires_ok,
+        Some(true),
+        "the expiry the client set is the expiry the store holds"
+    );
+
+    // A future expiry means present; the entity is readable, not a 4.22 ghost.
+    assert!(s.get(&t, id).await.expect("get").is_some(), "still valid");
+
+    // And the past-comma form actually expires, rather than reading as no
+    // expiry at all: the meta-side `try_timestamptz` returns NULL for text it
+    // cannot parse, which would silently make the entity immortal.
+    let gone = "urn:ngsi-ld:Test:comma2";
+    let _ = s.delete(&t, gone).await;
+    let expired = json!({
+        "id": gone, "type": "Test",
+        "createdAt": "2020-01-01T00:00:00,250Z", "modifiedAt": "2020-01-01T00:00:00,250Z",
+        "expiresAt": "2020-01-01T00:00:00,250Z",
+        "n": {"type": "Property", "value": 2}
+    });
+    assert!(s.create(&t, gone, &expired).await.expect("create expired"));
+    assert!(
+        s.get(&t, gone).await.expect("get").is_none(),
+        "4.22 + 4.6.3: a comma-stamped expiry in the past is still an expiry"
+    );
+
+    let _ = s.delete(&t, id).await;
+    let _ = s.delete(&t, gone).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn entity_crud_roundtrip_with_extracted_columns() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgcrud").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let id = "urn:ngsi-ld:Test:crud1";
+    let _ = s.delete(&t, id).await;
+
+    assert!(s.create(&t, id, &doc(id, 1)).await.expect("create"));
+    assert!(
+        !s.create(&t, id, &doc(id, 1)).await.expect("dup"),
+        "AlreadyExists → false"
+    );
+    assert_eq!(
+        s.get(&t, id).await.expect("get").expect("present")["n"]["value"],
+        1
+    );
+    assert_eq!(s.version(&t, id).await.expect("v"), Some(1));
+
+    // extracted columns really extracted (types tenant-scoped index shape)
+    let other = TenantId::new("pgcrud_other").expect("tenant");
+    assert!(s.get(&other, id).await.expect("cross-tenant get").is_none());
+    assert_eq!(s.list(&t).await.expect("list").len(), 1);
+
+    let r: Option<Result<(), ()>> = match s
+        .mutate(&t, id, |d| {
+            d["n"]["value"] = json!(2);
+            d["modifiedAt"] = json!("2026-08-04T09:01:00Z");
+            Ok(())
+        })
+        .await
+    {
+        Ok(x) => x,
+        Err(e) => panic!("mutate: {e}"),
+    };
+    assert!(matches!(r, Some(Ok(()))));
+    assert_eq!(
+        s.get(&t, id).await.expect("get").expect("present")["n"]["value"],
+        2
+    );
+    assert_eq!(
+        s.version(&t, id).await.expect("v"),
+        Some(2),
+        "version bumped under the lock"
+    );
+
+    // closure error rolls back, version untouched
+    let r: Option<Result<(), &str>> = match s
+        .mutate(&t, id, |d| {
+            d["n"]["value"] = json!(99);
+            Err("nope")
+        })
+        .await
+    {
+        Ok(x) => x,
+        Err(e) => panic!("mutate: {e}"),
+    };
+    assert!(matches!(r, Some(Err("nope"))));
+    assert_eq!(
+        s.get(&t, id).await.expect("get").expect("present")["n"]["value"],
+        2
+    );
+    assert_eq!(s.version(&t, id).await.expect("v"), Some(2));
+
+    assert!(s.delete(&t, id).await.expect("delete").is_some());
+    assert!(s.get(&t, id).await.expect("get").is_none());
+    assert!(s
+        .mutate(&t, id, |_| Ok::<(), ()>(()))
+        .await
+        .expect("mutate absent")
+        .is_none());
+}
+
+/// Parallel PATCH storm against ONE entity — no lost updates,
+/// version strictly monotone, final state = sum of all increments.
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_mutations_lose_nothing() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 10).await.expect("connect");
+    let t = TenantId::new("pgstorm").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let s = std::sync::Arc::new(PgEntityStore::new(pool));
+    let id = "urn:ngsi-ld:Test:storm";
+    let _ = s.delete(&t, id).await;
+    assert!(s.create(&t, id, &doc(id, 0)).await.expect("create"));
+
+    const WRITERS: i64 = 8;
+    const ROUNDS: i64 = 10;
+    let mut tasks = Vec::new();
+    for _ in 0..WRITERS {
+        let (s, t) = (s.clone(), t.clone());
+        tasks.push(tokio::spawn(async move {
+            for _ in 0..ROUNDS {
+                let r = s
+                    .mutate(&t, id, |d| {
+                        let n = d["n"]["value"].as_i64().expect("n");
+                        d["n"]["value"] = serde_json::json!(n + 1);
+                        Ok::<(), ()>(())
+                    })
+                    .await
+                    .expect("mutate");
+                assert!(matches!(r, Some(Ok(()))), "row must exist throughout");
+            }
+        }));
+    }
+    for task in tasks {
+        task.await.expect("writer");
+    }
+
+    let n = s.get(&t, id).await.expect("get").expect("present")["n"]["value"]
+        .as_i64()
+        .expect("n");
+    assert_eq!(
+        n,
+        WRITERS * ROUNDS,
+        "every increment survived (no lost updates)"
+    );
+    assert_eq!(
+        s.version(&t, id).await.expect("v"),
+        Some(1 + WRITERS * ROUNDS),
+        "version = create + one bump per mutate"
+    );
+}
+
+/// Batch create/delete as single multi-row statements — created flags in
+/// input order, duplicate ids deduped (5.5.11.1/.4), delete returns prevs.
+#[tokio::test(flavor = "multi_thread")]
+async fn batch_create_and_delete_multirow() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("pool");
+    let t = TenantId::new("pgbatch").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let s = PgEntityStore::new(pool);
+
+    // pre-existing entity: its batch item must report false
+    assert!(s
+        .create(&t, "urn:b:0", &doc("urn:b:0", 0))
+        .await
+        .expect("pre"));
+
+    let items = vec![
+        ("urn:b:0".to_owned(), doc("urn:b:0", 9)), // exists → false
+        ("urn:b:1".to_owned(), doc("urn:b:1", 1)),
+        ("urn:b:2".to_owned(), doc("urn:b:2", 2)),
+        ("urn:b:1".to_owned(), doc("urn:b:1", 99)), // duplicate → false
+    ];
+    let flags = s.batch_create(&t, &items).await.expect("batch create");
+    assert_eq!(flags, vec![false, true, true, false]);
+    // first instance won (5.5.11.1): value 1, not 99
+    let stored = s.get(&t, "urn:b:1").await.expect("get").expect("present");
+    assert_eq!(stored["n"]["value"], 1);
+
+    let deleted = s
+        .batch_delete(
+            &t,
+            &["urn:b:0".into(), "urn:b:1".into(), "urn:b:missing".into()],
+        )
+        .await
+        .expect("batch delete");
+    let mut ids: Vec<&str> = deleted.iter().map(|(id, _)| id.as_str()).collect();
+    ids.sort();
+    assert_eq!(ids, vec!["urn:b:0", "urn:b:1"]);
+    // prev doc travels with the delete (change-hook before-image)
+    let prev1 = &deleted
+        .iter()
+        .find(|(id, _)| id == "urn:b:1")
+        .expect("b1")
+        .1;
+    assert_eq!(prev1["n"]["value"], 1);
+    assert!(s.get(&t, "urn:b:1").await.expect("get").is_none());
+
+    // cleanup
+    let _ = s.batch_delete(&t, &["urn:b:2".into()]).await;
+}
+
+// ---- query pushdown ------------------------------------------------------
+// The contract is one-directional and it is the whole reason the pushdown is
+// safe: SQL may only NARROW. Every row the in-memory evaluator would accept
+// must survive the WHERE clause; extra rows are fine because the caller
+// re-filters exactly. So each case below asserts the expected set is present,
+// and the refusal cases assert the query widens to everything rather than
+// guessing a translation.
+
+const NS: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
+
+fn ex(t: &str) -> String {
+    format!("{NS}{t}")
+}
+
+/// The shape the broker actually stores: expanded IRI keys, each holding an
+/// ARRAY of instances. Testing against the internal shape, not a convenient
+/// one, is the point — the jsonpath addresses instances.
+fn expanded(id: &str, ty: &str, attrs: serde_json::Value) -> serde_json::Value {
+    let mut doc = json!({
+        "id": id,
+        "type": format!("{NS}{ty}"),
+        "createdAt": "2026-08-04T09:00:00Z",
+        "modifiedAt": "2026-08-04T09:00:00Z"
+    });
+    for (k, v) in attrs.as_object().expect("attrs object") {
+        doc[ex(k)] = json!([v]);
+    }
+    doc
+}
+
+fn ids_of(rows: &[serde_json::Value]) -> Vec<String> {
+    let mut v: Vec<String> = rows
+        .iter()
+        .map(|r| r["id"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    v.sort();
+    v
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn query_pushdown_narrows_without_dropping_matches() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgquery").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+
+    let seed = [
+        (
+            "urn:ngsi-ld:Room:1",
+            "Room",
+            json!({"temperature": {"type": "Property", "value": 30},
+                   "name": {"type": "Property", "value": "north"}}),
+        ),
+        (
+            "urn:ngsi-ld:Room:2",
+            "Room",
+            json!({"temperature": {"type": "Property", "value": 10}}),
+        ),
+        (
+            "urn:ngsi-ld:Vehicle:1",
+            "Vehicle",
+            json!({"speed": {"type": "Property", "value": 60},
+                   "name": {"type": "Property", "value": "south"}}),
+        ),
+        (
+            "urn:ngsi-ld:Vehicle:2",
+            "Vehicle",
+            json!({"brandName": {"type": "Property", "value": "Mercedes"}}),
+        ),
+    ];
+    for (id, ty, attrs) in &seed {
+        let _ = s.delete(&t, id).await;
+        assert!(
+            s.create(&t, id, &expanded(id, ty, attrs.clone()))
+                .await
+                .expect("create"),
+            "seed {id}"
+        );
+    }
+    let all: Vec<String> = seed.iter().map(|(id, ..)| (*id).to_owned()).collect();
+
+    // a macro, not a closure: the query is awaited and an async closure is
+    // not a stable language feature
+    macro_rules! q {
+        ($f:expr) => {
+            ids_of(&s.query(&t, $f).await.expect("query").rows)
+        };
+    }
+    let base = || antares_sql::store::pg::entity::EntityFilter {
+        expand: &ex,
+        ..Default::default()
+    };
+
+    // no filter: everything this tenant holds
+    assert_eq!(q!(&base()), all);
+
+    // ids
+    let want = ["urn:ngsi-ld:Room:2"];
+    assert_eq!(
+        q!(&antares_sql::store::pg::entity::EntityFilter {
+            ids: Some(&want),
+            ..base()
+        }),
+        want
+    );
+
+    // 5.2.33 idPattern literal: anchored = prefix, unanchored = infix; both
+    // only narrow (the regex decides later), so a literal that occurs
+    // mid-id keeps the row when unanchored and drops it when anchored
+    use antares_sql::store::filter::IdLiteral;
+    let lit = |text, anchored| antares_sql::store::pg::entity::EntityFilter {
+        id_literal: Some(IdLiteral { text, anchored }),
+        ..base()
+    };
+    assert_eq!(
+        q!(&lit("urn:ngsi-ld:Room:", true)),
+        ["urn:ngsi-ld:Room:1", "urn:ngsi-ld:Room:2"]
+    );
+    assert_eq!(q!(&lit("Room:2", false)), ["urn:ngsi-ld:Room:2"]);
+    assert_eq!(q!(&lit("Room:2", true)), Vec::<String>::new());
+    assert_eq!(
+        q!(&lit("ngsi-ld:V", false)),
+        ["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]
+    );
+
+    // type selection (OR of AND-groups, expanded IRIs)
+    let groups = vec![vec![ex("Vehicle")]];
+    assert_eq!(
+        q!(&antares_sql::store::pg::entity::EntityFilter {
+            types: Some(&groups),
+            ..base()
+        }),
+        ["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]
+    );
+
+    // attrs: carries at least one of them
+    let attrs = vec![ex("speed"), ex("brandName")];
+    assert_eq!(
+        q!(&antares_sql::store::pg::entity::EntityFilter {
+            attrs: Some(&attrs),
+            ..base()
+        }),
+        ["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]
+    );
+
+    // q=: numeric comparison over instance values
+    let ast = antares_ql::parse_q("temperature>20").expect("parse");
+    assert_eq!(
+        q!(&antares_sql::store::pg::entity::EntityFilter {
+            q: Some(&ast),
+            ..base()
+        }),
+        ["urn:ngsi-ld:Room:1"]
+    );
+
+    // q=: string equality, and the AND of two predicates
+    let ast = antares_ql::parse_q("name==\"south\";speed==60").expect("parse");
+    assert_eq!(
+        q!(&antares_sql::store::pg::entity::EntityFilter {
+            q: Some(&ast),
+            ..base()
+        }),
+        ["urn:ngsi-ld:Vehicle:1"]
+    );
+
+    // q=: existence, and negated existence (true when the attribute is ABSENT
+    // — the case a naive `NOT jsonb_path_exists` on the wrong path gets wrong)
+    let ast = antares_ql::parse_q("brandName").expect("parse");
+    assert_eq!(
+        q!(&antares_sql::store::pg::entity::EntityFilter {
+            q: Some(&ast),
+            ..base()
+        }),
+        ["urn:ngsi-ld:Vehicle:2"]
+    );
+    let ast = antares_ql::parse_q("!name").expect("parse");
+    assert_eq!(
+        q!(&antares_sql::store::pg::entity::EntityFilter {
+            q: Some(&ast),
+            ..base()
+        }),
+        ["urn:ngsi-ld:Room:2", "urn:ngsi-ld:Vehicle:2"]
+    );
+
+    // q=: a regex both dialects read alike is decided in SQL (T-4907)
+    let ast = antares_ql::parse_q("name~=\"^so\"").expect("parse");
+    assert_eq!(
+        q!(&antares_sql::store::pg::entity::EntityFilter {
+            q: Some(&ast),
+            ..base()
+        }),
+        ["urn:ngsi-ld:Vehicle:1"]
+    );
+
+    // q= the compiler REFUSES (dotted path, a regex outside the pushed
+    // subset, string ordering): the row set must widen to everything, never
+    // narrow on a guess.
+    for refused in ["address.city==\"Bonn\"", "name~=\"\\d\"", "name>\"m\""] {
+        let ast = antares_ql::parse_q(refused).expect("parse");
+        assert_eq!(
+            q!(&antares_sql::store::pg::entity::EntityFilter {
+                q: Some(&ast),
+                ..base()
+            }),
+            all,
+            "{refused} must fall back to the full set, not a guess"
+        );
+    }
+
+    // and the filters compose: type AND q
+    let groups = vec![vec![ex("Room")]];
+    let ast = antares_ql::parse_q("temperature<20").expect("parse");
+    assert_eq!(
+        q!(&antares_sql::store::pg::entity::EntityFilter {
+            types: Some(&groups),
+            q: Some(&ast),
+            ..base()
+        }),
+        ["urn:ngsi-ld:Room:2"]
+    );
+}
+
+/// 5.5.6: "When a query operation is producing so many results that can
+/// potentially exhaust client or server resources, or it can be just
+/// impractical to be managed, implementations shall raise an error of type
+/// TooManyResults. The threshold conditions used as criteria to raise such
+/// error is up to each implementation."
+///
+/// A `q=` shape the compiler declines leaves the request undecided, so no
+/// caller page can be pushed and the statement is bounded by the store's own
+/// safety LIMIT. Reaching it means the answer was cut at a bound nobody
+/// chose: refused, never served as a silent prefix. The same oversized match
+/// set stays perfectly pageable through a decided query — the ceiling bounds
+/// what one statement materializes, it does not cap the tenant.
+#[tokio::test(flavor = "multi_thread")]
+async fn clause_5_5_6_undecided_query_past_the_ceiling_is_refused() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let t = TenantId::new("pgceiling").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let clean = || {
+        let pool = pool.clone();
+        async move {
+            sqlx::query("DELETE FROM entities WHERE tenant_id = 'pgceiling'")
+                .execute(&pool)
+                .await
+                .expect("clean");
+        }
+    };
+    clean().await;
+    let ceiling = antares_sql::store::pg::entity::MAX_UNDECIDED_ROWS;
+    // One statement, ceiling+1 rows: one more than the safety LIMIT can ever
+    // return, so the cut is provable rather than incidental.
+    sqlx::query(
+        "INSERT INTO entities (tenant_id, id, entity, types, created_at, modified_at)
+         SELECT 'pgceiling', 'urn:ngsi-ld:Ceil:' || g,
+                jsonb_build_object('id', 'urn:ngsi-ld:Ceil:' || g, 'type', $1::text),
+                ARRAY[$1::text], now(), now()
+           FROM generate_series(1, $2::bigint) g",
+    )
+    .bind(ex("Ceil"))
+    .bind(ceiling + 1)
+    .execute(&pool)
+    .await
+    .expect("seed");
+
+    let s = PgEntityStore::new(pool.clone());
+    // a dotted path is one of the shapes compile_q declines (see the pushdown
+    // test above) — the request is undecided and therefore unpaged
+    let ast = antares_ql::parse_q("address.city==\"Bonn\"").expect("parse");
+    let err = match s
+        .query(
+            &t,
+            &antares_sql::store::pg::entity::EntityFilter {
+                q: Some(&ast),
+                expand: &ex,
+                ..Default::default()
+            },
+        )
+        .await
+    {
+        Ok(out) => panic!(
+            "a cut result set must be refused, got {} rows (decided={}, paged={})",
+            out.rows.len(),
+            out.decided,
+            out.paged
+        ),
+        Err(e) => e,
+    };
+    let ngsi =
+        antares_sql::store::pg::entity::ngsi_error(&err).expect("a spec error, not a driver error");
+    assert_eq!(ngsi.kind(), "TooManyResults");
+    assert_eq!(
+        ngsi.status(),
+        403,
+        "Table 6.3.2-1 status for TooManyResults"
+    );
+
+    // and the negative: the same oversized set answers a DECIDED paged query
+    // exactly — the ceiling refuses statements, not tenants
+    let groups = vec![vec![ex("Ceil")]];
+    let out = s
+        .query(
+            &t,
+            &antares_sql::store::pg::entity::EntityFilter {
+                types: Some(&groups),
+                page: Some(antares_sql::store::pg::entity::Page {
+                    offset: 0,
+                    limit: 5,
+                    count: true,
+                }),
+                expand: &ex,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("a paged query over the same set is answerable");
+    assert_eq!(out.rows.len(), 5, "exactly the requested page");
+    assert!(out.paged && out.decided);
+    assert_eq!(
+        out.total,
+        Some(ceiling + 1),
+        "pre-LIMIT total, past the ceiling"
+    );
+    clean().await;
+}
+
+/// The four batch seams answer per INPUT item, and the API maps those
+/// answers positionally into the 5.6.7/5.6.8/5.6.9/5.6.10 success and error
+/// arrays. So a result that is shorter than its input attributes one
+/// entity's outcome to another id, and a batch whose ids repeat must not
+/// reach `ON CONFLICT` twice in one statement ("cannot affect row a second
+/// time" is a 500 for a request the spec has an answer for). The empty
+/// batch is the other end of the same seam: every statement here is
+/// set-returning (`jsonb_array_elements`, `= ANY`), which a rewrite to a
+/// VALUES list would turn into a syntax error nothing else would catch.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_batch_seams_answer_per_input_item_for_empty_and_repeated_input() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgbatchedge").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let id = "urn:ngsi-ld:Test:edge1";
+    let _ = s.delete(&t, id).await;
+
+    // Empty in, empty out — and no row of this tenant is touched.
+    assert!(s
+        .batch_create(&t, &[])
+        .await
+        .expect("empty create")
+        .is_empty());
+    assert!(s
+        .batch_delete(&t, &[])
+        .await
+        .expect("empty delete")
+        .is_empty());
+    assert!(s
+        .batch_upsert_replace(&t, &[])
+        .await
+        .expect("empty upsert")
+        .is_empty());
+    assert!(s
+        .batch_mutate(&t, &[], |_id, _d| Ok::<(), ()>(()))
+        .await
+        .expect("empty mutate")
+        .is_empty());
+    assert!(
+        s.get(&t, id).await.expect("get").is_none(),
+        "nothing was written"
+    );
+
+    // The same id three times, upserted: one answer per input item, all of
+    // them describing the one row the batch left behind.
+    let three: Vec<(String, serde_json::Value)> =
+        (1..=3).map(|n| (id.to_owned(), doc(id, n))).collect();
+    let out = s
+        .batch_upsert_replace(&t, &three)
+        .await
+        .expect("a repeated id must not reach ON CONFLICT twice");
+    assert_eq!(out.len(), three.len(), "one answer per input item");
+    assert!(
+        out.iter().all(|(created, prev)| *created && prev.is_none()),
+        "the row did not exist, so every instance of it reports a creation \
+         over no before-image: {out:?}"
+    );
+    assert_eq!(
+        s.get(&t, id).await.expect("get").expect("present")["n"]["value"],
+        1,
+        "5.5.11.1: the first instance of a repeated id is the one that wins"
+    );
+
+    // Repeated ids through the read-modify-write batch: the closure runs
+    // once per distinct row, and the answers still line up with the input.
+    let ids = vec![id.to_owned(), id.to_owned(), "urn:ngsi-ld:Test:gone".into()];
+    let mut calls = 0;
+    let out = s
+        .batch_mutate(&t, &ids, |_id, d| {
+            calls += 1;
+            d["n"]["value"] = json!(calls);
+            Ok::<(), ()>(())
+        })
+        .await
+        .expect("batch mutate");
+    assert_eq!(out.len(), ids.len(), "one answer per input item: {out:?}");
+    assert!(
+        matches!(out[0], Some(Ok(()))) && matches!(out[1], Some(Ok(()))),
+        "both instances of a present id report the same outcome: {out:?}"
+    );
+    assert!(out[2].is_none(), "an absent id is None: {out:?}");
+    assert_eq!(calls, 2, "5.6.9.4 runs 5.6.3 once per input item");
+    assert_eq!(
+        s.get(&t, id).await.expect("get").expect("present")["n"]["value"],
+        2,
+        "the row holds the LAST application, not an intermediate one"
+    );
+
+    // And the delete: a repeated id is one row, returned once.
+    let deleted = s
+        .batch_delete(&t, &[id.to_owned(), id.to_owned()])
+        .await
+        .expect("batch delete");
+    assert_eq!(deleted.len(), 1, "one row, one before-image: {deleted:?}");
+    assert!(s.get(&t, id).await.expect("get").is_none());
+}
+
+/// 4.22 through the batch paths.
+///
+/// 5.6.7.4 (p.170): "For each of the NGSI-LD Entities included in the input
+/// Array execute the behaviour defined by clause 5.6.1, but limited to a
+/// local operation". 5.6.8.4 (p.172): "Create the Entity locally if it does
+/// not exist … executing the behaviour defined by clause 5.6.1". 5.6.10.4
+/// (p.176): "For each of the NGSI-LD Entity IDs included in the input Array
+/// execute the behaviour defined by clause 5.6.6". Each batch operation is
+/// defined as its single-entity clause run per item, so the two paths may
+/// not answer differently about the same id — and 4.22 makes an entity past
+/// its expiry absent to both, whatever the reaping lag.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_batch_paths_see_an_expired_entity_the_way_the_single_entity_paths_do() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgexpiry").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+
+    fn expired(id: &str) -> serde_json::Value {
+        let mut d = doc(id, 1);
+        d["expiresAt"] = json!("2020-01-01T00:00:00Z");
+        d
+    }
+    // a macro, not a closure: the store calls are awaited and an async
+    // closure is not a stable language feature
+    macro_rules! seed {
+        ($id:expr) => {{
+            let id: &str = $id;
+            let _ = s.delete(&t, id).await;
+            assert!(s.create(&t, id, &expired(id)).await.expect("seed"));
+            // The row is there and already invalid: absent to a read, which
+            // is what makes every answer below about expiry and not about
+            // absence.
+            assert!(
+                s.get(&t, id).await.expect("get").is_none(),
+                "an expired entity must read as absent"
+            );
+        }};
+    }
+
+    // The single-entity answers this batch is measured against.
+    let single = "urn:ngsi-ld:Test:exp-single";
+    seed!(single);
+    assert!(
+        s.create(&t, single, &doc(single, 2)).await.expect("create"),
+        "5.6.1: creating over an expired entity creates"
+    );
+    seed!(single);
+    assert!(
+        s.delete(&t, single).await.expect("delete").is_none(),
+        "5.6.6: deleting an expired entity finds nothing"
+    );
+
+    let id = "urn:ngsi-ld:Test:exp-batch".to_owned();
+
+    seed!(&id);
+    assert_eq!(
+        s.batch_create(&t, &[(id.clone(), doc(&id, 3))])
+            .await
+            .expect("batch_create"),
+        vec![true],
+        "5.6.7.4: the batch create of an expired id is the 5.6.1 create, which creates"
+    );
+
+    seed!(&id);
+    let deleted = s
+        .batch_delete(&t, std::slice::from_ref(&id))
+        .await
+        .expect("batch_delete");
+    assert!(
+        deleted.is_empty(),
+        "5.6.10.4: the batch delete of an expired id is the 5.6.6 delete, which finds nothing: {deleted:?}"
+    );
+
+    seed!(&id);
+    let upserted = s
+        .batch_upsert_replace(&t, &[(id.clone(), doc(&id, 4))])
+        .await
+        .expect("batch_upsert");
+    assert_eq!(
+        upserted
+            .iter()
+            .map(|(created, _)| *created)
+            .collect::<Vec<_>>(),
+        vec![true],
+        "5.6.8.4: an expired entity does not exist, so the batch upsert creates it"
+    );
+
+    // 5.6.9.4 (p.175): "For each of the NGSI-LD Entities included in the
+    // input Array execute the behaviour defined by clause 5.6.3, but limited
+    // to a local operation" — and 5.6.3 on an absent entity is
+    // ResourceNotFound, which this seam reports as `None`. `batch_mutate`
+    // carries `entityOperations/update` and `/merge`; without the guard both
+    // reported the id in the SUCCESS array for an entity every read calls
+    // absent, wrote to it, and emitted a change notification for it — the
+    // merge form able to set a future `expiresAt` and resurrect an entity
+    // the single-entity PATCH cannot touch.
+    seed!(&id);
+    let single_patch = s
+        .mutate(&t, single, |_d| Ok::<(), ()>(()))
+        .await
+        .expect("mutate");
+    seed!(single);
+    assert!(
+        s.mutate(&t, single, |_d| Ok::<(), ()>(()))
+            .await
+            .expect("mutate")
+            .is_none(),
+        "5.6.3: an expired entity cannot be updated ({single_patch:?})"
+    );
+    let mutated = s
+        .batch_mutate(&t, std::slice::from_ref(&id), |_id, _d| Ok::<(), ()>(()))
+        .await
+        .expect("batch_mutate");
+    assert_eq!(mutated.len(), 1, "one id in, one answer out: {mutated:?}");
+    assert!(
+        mutated[0].is_none(),
+        "5.6.9.4: the batch update of an expired id is the 5.6.3 update, \
+         which finds nothing: {mutated:?}"
+    );
+
+    let _ = s.delete(&t, &id).await;
+    let _ = s.delete(&t, single).await;
+}
+
+/// 5.5.6 licenses TooManyResults for "a query operation … producing so many
+/// results that can potentially exhaust client or server resources", and
+/// `list` carries that ceiling. `list_page` exists for the readers that are
+/// not query operations and must see every row — 5.9.2.4's
+/// registration-vs-entity conflict check among them, which has no
+/// TooManyResults to raise and would otherwise refuse every redirect
+/// registration on a tenant that outgrew the ceiling. A page bounds the
+/// allocation by construction, so it is served whatever the tenant holds,
+/// and it is read with a keyset rather than built by materializing the
+/// tenant and slicing it.
+#[tokio::test(flavor = "multi_thread")]
+async fn clause_5_5_6_a_page_is_served_where_the_whole_list_is_refused() {
+    use antares_sql::store::pg::entity::{ngsi_error, MAX_UNDECIDED_ROWS};
+
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgpagewalk").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+
+    let over = MAX_UNDECIDED_ROWS + 500;
+    let mut tx = pool.begin().await.expect("tx");
+    pg::set_tenant(&mut tx, &t).await.expect("set_tenant");
+    sqlx::query("DELETE FROM entities WHERE tenant_id = $1")
+        .bind(t.as_str())
+        .execute(&mut *tx)
+        .await
+        .expect("clean");
+    sqlx::query(
+        "INSERT INTO entities (tenant_id, id, entity, types, created_at, modified_at)
+         SELECT $1, 'urn:ngsi-ld:Ceiling:' || lpad(i::text, 6, '0'),
+                jsonb_build_object('id', 'urn:ngsi-ld:Ceiling:' || lpad(i::text, 6, '0'),
+                                   'type', 'Test'),
+                '{Test}', now(), now()
+           FROM generate_series(1, $2) AS i",
+    )
+    .bind(t.as_str())
+    .bind(over)
+    .execute(&mut *tx)
+    .await
+    .expect("bulk insert");
+    tx.commit().await.expect("commit");
+
+    let refused = s
+        .list(&t)
+        .await
+        .expect_err("a tenant over the ceiling refuses `list`");
+    assert_eq!(
+        ngsi_error(&refused).map(antares_model::NgsiError::kind),
+        Some("TooManyResults"),
+        "the ceiling is the 5.5.6 error, not a driver failure"
+    );
+
+    let page = s
+        .list_page(&t, None, 1_000)
+        .await
+        .expect("a page is never refused");
+    assert_eq!(page.len(), 1_000, "a full page is a full page");
+    let first: Vec<&str> = page.iter().filter_map(|d| d["id"].as_str()).collect();
+    assert_eq!(
+        first[0], "urn:ngsi-ld:Ceiling:000001",
+        "id-ordered from the start"
+    );
+    assert!(first.windows(2).all(|w| w[0] < w[1]), "ascending id order");
+
+    // The cursor is exclusive and the walk keeps moving past the ceiling.
+    let next = s
+        .list_page(&t, Some(first[999]), 3)
+        .await
+        .expect("a page is never refused");
+    let next: Vec<&str> = next.iter().filter_map(|d| d["id"].as_str()).collect();
+    assert_eq!(
+        next,
+        [
+            "urn:ngsi-ld:Ceiling:001001",
+            "urn:ngsi-ld:Ceiling:001002",
+            "urn:ngsi-ld:Ceiling:001003"
+        ]
+    );
+
+    // The last page is short, which is how a walker learns it is done.
+    let tail = s
+        .list_page(
+            &t,
+            Some(&format!("urn:ngsi-ld:Ceiling:{:06}", over - 2)),
+            1_000,
+        )
+        .await
+        .expect("a page is never refused");
+    assert_eq!(tail.len(), 2, "the tail page is short, not padded");
+
+    // The same, through the seam `antares-api` calls: the driver trait, not
+    // the store type. This is the read the conflict check makes.
+    let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
+        pool.clone(),
+    ));
+    let page = antares_store::CurrentStateDriver::list_page(
+        &store,
+        &t,
+        antares_sql::store::Kind::Entity,
+        None,
+        1_000,
+    )
+    .await
+    .expect("the seam serves a page of a tenant over the ceiling");
+    assert_eq!(
+        page.len(),
+        1_000,
+        "a full page is a full page at the seam too"
+    );
+
+    let mut tx = pool.begin().await.expect("tx");
+    pg::set_tenant(&mut tx, &t).await.expect("set_tenant");
+    sqlx::query("DELETE FROM entities WHERE tenant_id = $1")
+        .bind(t.as_str())
+        .execute(&mut *tx)
+        .await
+        .expect("clean");
+    tx.commit().await.expect("commit");
+}
+
+/// ADR-0001: "every implicit tenant creation inserts its row in the same
+/// transaction as the document". The claim is not bookkeeping — it is what
+/// makes the purge and a first write agree on an order. The purge takes the
+/// tenant row with `SELECT … FOR UPDATE` before it deletes anything, so a
+/// write that claims its tenant inside its own transaction WAITS there; one
+/// that claimed it beforehand, in a transaction of its own, walks past the
+/// lock and commits rows into a tenant the purge has just removed from the
+/// inventory — rows that stay readable to whoever sends that tenant header,
+/// are listed by nothing, and no later purge can reach.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_first_write_waits_for_the_tenant_row_lock() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = std::sync::Arc::new(PgEntityStore::new(pool.clone()));
+    let t = TenantId::new("pgclaim").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let id = "urn:ngsi-ld:Vehicle:claim1";
+    let _ = s.delete(&t, id).await;
+
+    // the purge's own first statement, held open
+    let mut holder = pool.begin().await.expect("begin");
+    sqlx::query("SELECT 1 FROM tenants WHERE tenant_id = $1 FOR UPDATE")
+        .bind(t.as_str())
+        .fetch_optional(&mut *holder)
+        .await
+        .expect("lock the tenant row");
+
+    let (s2, t2) = (s.clone(), t.clone());
+    let doc = json!({"id": id, "type": "Vehicle",
+                     "createdAt": "2026-01-01T00:00:00Z",
+                     "modifiedAt": "2026-01-01T00:00:00Z"});
+    let writing = tokio::spawn(async move { s2.create(&t2, id, &doc).await });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(
+        !writing.is_finished(),
+        "the write committed while the tenant row was locked — its claim is not in its own \
+         transaction"
+    );
+    holder.rollback().await.expect("release");
+    let created = writing
+        .await
+        .expect("join")
+        .expect("the write finishes once the lock is released");
+    assert!(created, "the entity was created");
+    let _ = s.delete(&t, id).await;
+}
+
+/// 4.9: "If the target element is a Property, the target value is defined as
+/// the Value associated to such Property", and annex C.6 writes that Value
+/// either bare or as the JSON-LD typed value
+/// `{"@type": "DateTime", "@value": …}`. The pushdown decides `==` in the
+/// database, so a jsonpath that only addresses the member itself drops every
+/// row written the second way — rows the evaluator keeps.
+#[tokio::test(flavor = "multi_thread")]
+async fn clause_4_9_a_typed_value_is_not_dropped_by_the_pushdown() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgtyped").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+
+    let seed = [
+        (
+            "urn:ngsi-ld:Vehicle:typed",
+            json!({"testedAt": {"type": "Property",
+                   "value": {"@type": "DateTime", "@value": "2018-12-04T12:00:00Z"}},
+                   "speed": {"type": "Property",
+                   "value": {"@type": "Number", "@value": 60}}}),
+        ),
+        (
+            "urn:ngsi-ld:Vehicle:bare",
+            json!({"testedAt": {"type": "Property", "value": "2018-12-04T12:00:00Z"},
+                   "speed": {"type": "Property", "value": 60}}),
+        ),
+        (
+            "urn:ngsi-ld:Vehicle:other",
+            json!({"testedAt": {"type": "Property", "value": "2020-01-01T00:00:00Z"},
+                   "speed": {"type": "Property", "value": 10}}),
+        ),
+    ];
+    for (id, attrs) in &seed {
+        let _ = s.delete(&t, id).await;
+        assert!(
+            s.create(&t, id, &expanded(id, "Vehicle", attrs.clone()))
+                .await
+                .expect("create"),
+            "seed {id}"
+        );
+    }
+
+    // a macro, not a closure: the query is awaited and an async closure is
+    // not a stable language feature
+    macro_rules! q {
+        ($f:expr) => {
+            ids_of(&s.query(&t, $f).await.expect("query").rows)
+        };
+    }
+    for (term, want) in [
+        (
+            "testedAt==2018-12-04T12:00:00Z",
+            vec!["urn:ngsi-ld:Vehicle:bare", "urn:ngsi-ld:Vehicle:typed"],
+        ),
+        (
+            "speed==60",
+            vec!["urn:ngsi-ld:Vehicle:bare", "urn:ngsi-ld:Vehicle:typed"],
+        ),
+        (
+            "speed>50",
+            vec!["urn:ngsi-ld:Vehicle:bare", "urn:ngsi-ld:Vehicle:typed"],
+        ),
+        ("speed==10", vec!["urn:ngsi-ld:Vehicle:other"]),
+    ] {
+        let ast = antares_ql::parse_q(term).expect("parse");
+        let f = antares_sql::store::pg::entity::EntityFilter {
+            q: Some(&ast),
+            expand: &ex,
+            ..Default::default()
+        };
+        assert_eq!(q!(&f), want, "{term}");
+    }
+}
+
+/// 4.22 / F-ANT1-007: `q` judges what a read may see. An Entity whose only
+/// matching instance has expired is no match, while one whose expired
+/// instance sits beside a live matching one still is.
+#[tokio::test(flavor = "multi_thread")]
+async fn clause_4_22_q_does_not_match_an_expired_instance() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgqexpired").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let gone = "urn:ngsi-ld:Vehicle:gone";
+    let kept = "urn:ngsi-ld:Vehicle:kept";
+    let mut a = expanded(gone, "Vehicle", json!({}));
+    a[ex("speed")] = json!([{"type": "Property", "value": 20,
+                             "expiresAt": "2000-01-01T00:00:00Z"}]);
+    let mut b = expanded(kept, "Vehicle", json!({}));
+    b[ex("speed")] = json!([
+        {"type": "Property", "value": 30, "expiresAt": "2000-01-01T00:00:00Z", "datasetId": "urn:d:1"},
+        {"type": "Property", "value": 40}
+    ]);
+    for (id, d) in [(gone, a), (kept, b)] {
+        let _ = s.delete(&t, id).await;
+        assert!(s.create(&t, id, &d).await.expect("create"), "seed {id}");
+    }
+    for (term, want) in [
+        ("speed>10", vec![kept]),
+        ("speed==30", vec![]),
+        ("speed", vec![kept]),
+    ] {
+        let ast = antares_ql::parse_q(term).expect("parse");
+        let f = antares_sql::store::pg::entity::EntityFilter {
+            q: Some(&ast),
+            expand: &ex,
+            ..Default::default()
+        };
+        let out = s.query(&t, &f).await.expect("query");
+        assert!(out.decided, "{term}");
+        assert_eq!(ids_of(&out.rows), want, "{term}");
+    }
+}
+
+/// T-4610: the type list reads the `types` column, sorted and distinct, of
+/// the Tenant's live Entities alone: an expired Entity and another Tenant's
+/// add nothing, and a type an Entity carries beside another is listed.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_type_list_is_the_live_tenants_distinct_types() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgtypenames").expect("tenant");
+    let other = TenantId::new("pgtypenames2").expect("tenant");
+    for tenant in [&t, &other] {
+        pg::ensure_tenant(&pool, tenant).await.expect("tenant row");
+    }
+    let docs = [
+        (&t, "urn:ngsi-ld:A:1", json!(["A"]), None),
+        (&t, "urn:ngsi-ld:A:2", json!(["A"]), None),
+        (&t, "urn:ngsi-ld:AB:1", json!(["B", "A"]), None),
+        (
+            &t,
+            "urn:ngsi-ld:C:1",
+            json!(["C"]),
+            Some("2020-01-01T00:00:00Z"),
+        ),
+        (&other, "urn:ngsi-ld:D:1", json!(["D"]), None),
+    ];
+    for (tenant, id, types, expires) in &docs {
+        let _ = s.delete(tenant, id).await;
+        let mut doc = json!({"id": id, "type": types, "createdAt": "2026-10-18T00:00:00Z",
+                             "modifiedAt": "2026-10-18T00:00:00Z"});
+        if let Some(at) = expires {
+            doc["expiresAt"] = json!(at);
+        }
+        assert!(s.create(tenant, id, &doc).await.expect("create"));
+    }
+    assert_eq!(s.type_names(&t).await.expect("types"), ["A", "B"]);
+    assert_eq!(s.type_names(&other).await.expect("types"), ["D"]);
+    let empty = TenantId::new("pgtypenames3").expect("tenant");
+    assert!(s.type_names(&empty).await.expect("types").is_empty());
+    for (tenant, id, ..) in &docs {
+        let _ = s.delete(tenant, id).await;
+    }
+}
+
+/// T-4683: the type catalogue keeps up with the writes. A create, a
+/// retyping patch and an upsert list their new types at once; a type whose
+/// last Entity went is no longer listed; `types_beside` names only the types
+/// an Entity carries beside the asked ones.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_type_catalogue_follows_every_write() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgtypecatalogue").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let doc = |id: &str, types: serde_json::Value| {
+        json!({"id": id, "type": types, "createdAt": "2026-10-18T00:00:00Z",
+               "modifiedAt": "2026-10-18T00:00:00Z"})
+    };
+    for id in ["urn:ngsi-ld:X:1", "urn:ngsi-ld:W:1"] {
+        let _ = s.delete(&t, id).await;
+    }
+    assert!(s.type_names(&t).await.expect("types").is_empty());
+
+    assert!(s
+        .create(&t, "urn:ngsi-ld:X:1", &doc("urn:ngsi-ld:X:1", json!(["X"])))
+        .await
+        .expect("create"));
+    assert_eq!(s.type_names(&t).await.expect("types"), ["X"]);
+
+    let patched = s
+        .mutate(&t, "urn:ngsi-ld:X:1", |d| {
+            d["type"] = json!(["X", "Y"]);
+            Ok::<(), ()>(())
+        })
+        .await
+        .expect("mutate");
+    assert!(matches!(patched, Some(Ok(()))));
+    assert_eq!(s.type_names(&t).await.expect("types"), ["X", "Y"]);
+    assert_eq!(
+        s.types_beside(&t, &["Y".into()]).await.expect("beside"),
+        ["X", "Y"]
+    );
+
+    s.batch_upsert_replace(
+        &t,
+        &[(
+            "urn:ngsi-ld:W:1".into(),
+            doc("urn:ngsi-ld:W:1", json!(["W"])),
+        )],
+    )
+    .await
+    .expect("upsert");
+    assert_eq!(s.type_names(&t).await.expect("types"), ["W", "X", "Y"]);
+    assert!(
+        s.types_beside(&t, &["W".into()])
+            .await
+            .expect("beside")
+            .is_empty(),
+        "an Entity of W alone carries nothing beside W"
+    );
+    assert!(s
+        .types_beside(&t, &["Z".into()])
+        .await
+        .expect("beside")
+        .is_empty());
+
+    assert!(s
+        .delete(&t, "urn:ngsi-ld:X:1")
+        .await
+        .expect("delete")
+        .is_some());
+    assert_eq!(s.type_names(&t).await.expect("types"), ["W"]);
+    let _ = s.delete(&t, "urn:ngsi-ld:W:1").await;
+    assert!(s.type_names(&t).await.expect("types").is_empty());
+}
+
+/// T-4934: the attribute catalogue keeps up with the writes. A create lists
+/// its pairs, a patch adding a member or a type lists the new pairs, an
+/// upsert lists its own, and a write that keeps the shape adds none. A pair
+/// whose carrier went stays listed: the reader checks it against a live
+/// Entity.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_attribute_catalogue_follows_every_write() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgattrcatalogue").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let pairs = || async {
+        s.attr_pairs(&t)
+            .await
+            .expect("pairs")
+            .into_iter()
+            .filter(|(_, a)| a.starts_with("urn:a:"))
+            .map(|(ty, a)| format!("{ty} {a}"))
+            .collect::<Vec<_>>()
+    };
+    for id in ["urn:ngsi-ld:X:1", "urn:ngsi-ld:W:1"] {
+        let _ = s.delete(&t, id).await;
+    }
+    let mut tx = pool.begin().await.expect("tx");
+    sqlx::query("SELECT set_config('antares.tenant', $1, true)")
+        .bind(t.as_str())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    sqlx::query("DELETE FROM entity_attrs WHERE tenant_id = $1")
+        .bind(t.as_str())
+        .execute(&mut *tx)
+        .await
+        .expect("clear");
+    tx.commit().await.expect("commit");
+    let prop = json!([{"type": "Property", "value": 1}]);
+    let doc = |id: &str, types: serde_json::Value, attr: &str| {
+        let mut d = json!({"id": id, "type": types, "createdAt": "2026-10-22T00:00:00Z",
+                           "modifiedAt": "2026-10-22T00:00:00Z"});
+        d[attr] = prop.clone();
+        d
+    };
+
+    assert!(s
+        .create(
+            &t,
+            "urn:ngsi-ld:X:1",
+            &doc("urn:ngsi-ld:X:1", json!(["X"]), "urn:a:a")
+        )
+        .await
+        .expect("create"));
+    assert_eq!(pairs().await, ["X urn:a:a"]);
+    let all = s.attr_pairs(&t).await.expect("pairs");
+    assert!(
+        all.contains(&("X".into(), "id".into())),
+        "the frame's members are listed too: {all:?}"
+    );
+
+    let patched = s
+        .mutate(&t, "urn:ngsi-ld:X:1", |d| {
+            d["urn:a:b"] = prop.clone();
+            Ok::<(), ()>(())
+        })
+        .await
+        .expect("mutate");
+    assert!(matches!(patched, Some(Ok(()))));
+    assert_eq!(pairs().await, ["X urn:a:a", "X urn:a:b"]);
+
+    let retyped = s
+        .mutate(&t, "urn:ngsi-ld:X:1", |d| {
+            d["type"] = json!(["X", "Y"]);
+            d.as_object_mut().map(|o| o.remove("urn:a:a"));
+            Ok::<(), ()>(())
+        })
+        .await
+        .expect("mutate");
+    assert!(matches!(retyped, Some(Ok(()))));
+    assert_eq!(
+        pairs().await,
+        ["X urn:a:a", "X urn:a:b", "Y urn:a:b"],
+        "a new type lists the members it arrives with; a removed member stays listed"
+    );
+
+    s.batch_upsert_replace(
+        &t,
+        &[(
+            "urn:ngsi-ld:W:1".into(),
+            doc("urn:ngsi-ld:W:1", json!(["W"]), "urn:a:c"),
+        )],
+    )
+    .await
+    .expect("upsert");
+    assert_eq!(
+        pairs().await,
+        ["W urn:a:c", "X urn:a:a", "X urn:a:b", "Y urn:a:b"]
+    );
+
+    // the same batch again over the stored Entity: ON CONFLICT DO UPDATE
+    // fires the update trigger from an INSERT statement
+    s.batch_upsert_replace(
+        &t,
+        &[(
+            "urn:ngsi-ld:W:1".into(),
+            doc("urn:ngsi-ld:W:1", json!(["W"]), "urn:a:d"),
+        )],
+    )
+    .await
+    .expect("upsert over");
+    assert_eq!(
+        pairs().await,
+        [
+            "W urn:a:c",
+            "W urn:a:d",
+            "X urn:a:a",
+            "X urn:a:b",
+            "Y urn:a:b"
+        ]
+    );
+    for id in ["urn:ngsi-ld:X:1", "urn:ngsi-ld:W:1"] {
+        let _ = s.delete(&t, id).await;
+    }
+}
+
+/// T-4610: a type list the caller stops waiting for (an MCP call cancelled
+/// at its timeout) hands its connection back: on a pool of one, the next
+/// read still gets it, again and again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancelled_type_list_returns_its_connection() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 1).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgtypecancel").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    for wait in [0u64, 50, 200, 500, 1_000, 2_000] {
+        let _ =
+            tokio::time::timeout(std::time::Duration::from_micros(wait), s.type_names(&t)).await;
+        tokio::time::timeout(std::time::Duration::from_secs(10), s.type_names(&t))
+            .await
+            .expect("the one connection came back")
+            .expect("the list reads");
+    }
+}
+
+/// T-4781: one named type is read as two arms, the Entities whose first
+/// type it is and those of several types that carry it later. The merged
+/// page must keep id order across both, every page and the count must be
+/// exactly `types @> ARRAY[T]`, and nothing of another type or another
+/// Tenant may enter.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_one_type_page_merges_both_arms_in_id_order_with_the_exact_count() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let ex = |t: &str| format!("https://uri.etsi.org/ngsi-ld/default-context/{t}");
+    let t = TenantId::new("pgonetype").expect("tenant");
+    let other = TenantId::new("pgonetype2").expect("tenant");
+    for (tenant, name) in [(&t, "pgonetype"), (&other, "pgonetype2")] {
+        pg::ensure_tenant(&pool, tenant).await.expect("tenant row");
+        sqlx::query("DELETE FROM entities WHERE tenant_id = $1")
+            .bind(name)
+            .execute(&pool)
+            .await
+            .expect("clean");
+    }
+    // A first on :1 :3 :5, A second on :2 :4, B alone on :6, A in the other Tenant
+    let seed = [
+        (&t, 1, vec!["A"]),
+        (&t, 2, vec!["B", "A"]),
+        (&t, 3, vec!["A"]),
+        (&t, 4, vec!["C", "A"]),
+        (&t, 5, vec!["A", "B"]),
+        (&t, 6, vec!["B"]),
+        (&other, 7, vec!["A"]),
+    ];
+    for (tenant, n, types) in &seed {
+        let id = format!("urn:ngsi-ld:X:{n}");
+        let types: Vec<String> = types.iter().map(|t| ex(t)).collect();
+        assert!(s
+            .create(
+                tenant,
+                &id,
+                &json!({"id": id, "type": types, "createdAt": "2026-08-04T09:00:00Z",
+                        "modifiedAt": "2026-08-04T09:00:00Z"}),
+            )
+            .await
+            .expect("create"));
+    }
+    let groups = vec![vec![ex("A")]];
+    let page = |offset, count| {
+        let groups = &groups;
+        let s = &s;
+        let t = &t;
+        async move {
+            s.query(
+                t,
+                &antares_sql::store::pg::entity::EntityFilter {
+                    types: Some(groups),
+                    page: Some(antares_sql::store::pg::entity::Page {
+                        offset,
+                        limit: 2,
+                        count,
+                    }),
+                    expand: &ex,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("query")
+        }
+    };
+    let ids = |out: &antares_sql::store::pg::entity::QueryOutcome| -> Vec<String> {
+        out.rows
+            .iter()
+            .map(|d| d["id"].as_str().unwrap_or_default().to_owned())
+            .collect()
+    };
+    let mut seen = Vec::new();
+    for offset in [0, 2, 4] {
+        let out = page(offset, true).await;
+        assert_eq!(out.total, Some(5), "count at offset {offset}");
+        seen.extend(ids(&out));
+    }
+    assert_eq!(
+        seen,
+        (1..=5)
+            .map(|n| format!("urn:ngsi-ld:X:{n}"))
+            .collect::<Vec<_>>()
+    );
+    let out = page(10, true).await;
+    assert!(out.rows.is_empty());
+    assert_eq!(out.total, Some(5), "an off-the-end page still counts");
+    let out = page(2, false).await;
+    assert_eq!(ids(&out), ["urn:ngsi-ld:X:3", "urn:ngsi-ld:X:4"]);
+    assert_eq!(out.total, Some(5), "uncounted: one past the page");
+}
+
+/// T-5661: `id_segments` lists each distinct segment after the lead once,
+/// in byte order, from this Tenant only, and gives up past `max`;
+/// `id_prefixes` keeps exactly the ids with one of the prefixes and walks
+/// them, keyset included, in byte order.
+#[tokio::test(flavor = "multi_thread")]
+async fn id_segments_and_prefixes_read_exact_byte_ranges() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgsegments").expect("tenant");
+    let other = TenantId::new("pgsegments-other").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    pg::ensure_tenant(&pool, &other).await.expect("tenant row");
+    let lead = "urn:ngsi-ld:Kpi:";
+    let ids = [
+        "urn:ngsi-ld:Kpi:b.org:hel:env-1",
+        "urn:ngsi-ld:Kpi:b.org:hel:env-2",
+        "urn:ngsi-ld:Kpi:b.org:hel:serv-1",
+        "urn:ngsi-ld:Kpi:a+b:hel:env-3",
+        "urn:ngsi-ld:Kpi:a",
+        "urn:ngsi-ld:Kpi:a-c:hel:env-4",
+        "urn:ngsi-ld:Kpj:z:hel:env-5",
+        "urn:ngsi-ld:Room:b.org:hel:env-6",
+    ];
+    for id in ids {
+        let _ = s.delete(&t, id).await;
+        assert!(
+            s.create(&t, id, &expanded(id, "Kpi", json!({})))
+                .await
+                .expect("create"),
+            "seed {id}"
+        );
+    }
+    let alien = "urn:ngsi-ld:Kpi:alien:hel:env-7";
+    let _ = s.delete(&other, alien).await;
+    assert!(s
+        .create(&other, alien, &expanded(alien, "Kpi", json!({})))
+        .await
+        .expect("create"));
+
+    let segs = s.id_segments(&t, lead, ':', 10).await.expect("segments");
+    let want = [
+        "urn:ngsi-ld:Kpi:a+b",
+        "urn:ngsi-ld:Kpi:a-c",
+        "urn:ngsi-ld:Kpi:b.org",
+    ];
+    assert_eq!(segs.as_deref(), Some(&want.map(str::to_owned)[..]));
+    // three segments and one id without a separator are four steps
+    assert_eq!(
+        s.id_segments(&t, lead, ':', 3).await.expect("segments"),
+        None
+    );
+    assert_eq!(
+        s.id_segments(&t, "urn:ngsi-ld:Nothing:", ':', 3)
+            .await
+            .expect("segments"),
+        Some(Vec::new())
+    );
+
+    let ex = |t: &str| t.to_owned();
+    let prefixes: Vec<String> = want.iter().map(|p| format!("{p}:hel:env-")).collect();
+    let query = |after: Option<&'static str>| {
+        let prefixes = &prefixes;
+        let s = &s;
+        let t = &t;
+        let ex = &ex;
+        async move {
+            let f = antares_sql::store::pg::entity::EntityFilter {
+                id_prefixes: Some(prefixes),
+                after_id: after,
+                expand: ex,
+                ..Default::default()
+            };
+            ids_of(&s.query(t, &f).await.expect("query").rows)
+        }
+    };
+    assert_eq!(
+        query(None).await,
+        [
+            "urn:ngsi-ld:Kpi:a+b:hel:env-3",
+            "urn:ngsi-ld:Kpi:a-c:hel:env-4",
+            "urn:ngsi-ld:Kpi:b.org:hel:env-1",
+            "urn:ngsi-ld:Kpi:b.org:hel:env-2",
+        ]
+    );
+    assert_eq!(
+        query(Some("urn:ngsi-ld:Kpi:a-c:hel:env-4")).await,
+        [
+            "urn:ngsi-ld:Kpi:b.org:hel:env-1",
+            "urn:ngsi-ld:Kpi:b.org:hel:env-2"
+        ]
+    );
+    let none: [String; 0] = [];
+    let f = antares_sql::store::pg::entity::EntityFilter {
+        id_prefixes: Some(&none),
+        expand: &ex,
+        ..Default::default()
+    };
+    assert!(s.query(&t, &f).await.expect("query").rows.is_empty());
+}
+
+/// T-5826: `id_patterns` selects in Postgres exactly the ids the API's own
+/// regex selects for each pattern `id_pattern_sql` writes, and decides; one
+/// it does not write is left to the caller, undecided.
+#[tokio::test(flavor = "multi_thread")]
+async fn id_patterns_select_as_the_rule_regex_does() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgidpatterns").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let ids = [
+        "urn:ngsi-ld:Tree:hel.fi:praha-mesto:green-trees-0f8a3c2e-1b4d-4e6f-9a0b-1c2d3e4f5a6b",
+        "urn:ngsi-ld:Tree:hel.fi:praha-mesto:green-tree-rows-0f8a3c2e-1b4d-4e6f-9a0b-1c2d3e4f5a6c",
+        "urn:ngsi-ld:Tree:hel.fi:praha-mesto:green-trees-0F8A3C2E-1b4d-4e6f-9a0b-1c2d3e4f5a6b",
+        "urn:ngsi-ld:Tree:hel.fi:praha-mesto:green-trees-short",
+        "urn:ngsi-ld:Tree:hel.fi:praha-mesto:other-trees-0f8a3c2e-1b4d-4e6f-9a0b-1c2d3e4f5a6b",
+        "urn:ngsi-ld:Tree:hel_fi:praha-mesto:green-trees-0f8a3c2e-1b4d-4e6f-9a0b-1c2d3e4f5a6b",
+        "urn:ngsi-ld:Tree:hel.fi:helsinki:lam-12",
+        "urn:ngsi-ld:Tree:hel.fi:helsinki:lam-12-north",
+        "urn:ngsi-ld:Tree:hel.fi:helsinki:lam-12-",
+        "urn:ngsi-ld:Tree:hel.fi:helsinki:autumn-a07-both-2026",
+        "urn:ngsi-ld:Tree:hel.fi:helsinki:autumn-a07-3-2026",
+        "urn:ngsi-ld:Tree:x:y:a.b",
+        "urn:ngsi-ld:Tree:x:y:aXb",
+    ];
+    for id in ids {
+        let _ = s.delete(&t, id).await;
+        assert!(
+            s.create(&t, id, &expanded(id, "Tree", json!({})))
+                .await
+                .expect("create"),
+            "seed {id}"
+        );
+    }
+    let ex = |t: &str| t.to_owned();
+    for pattern in [
+        "^urn:ngsi-ld:Tree:[a-z0-9.-]+:praha-mesto:green-[a-z-]+-[0-9a-f-]{36}$",
+        "^urn:ngsi-ld:Tree:[a-z0-9.-]+:helsinki:lam-[0-9]+(-[a-z]+)?$",
+        "^urn:ngsi-ld:Tree:[a-z0-9.-]+:helsinki:autumn-[a-z][0-9]{2}-(1|2|both)-[0-9]{4}$",
+        "urn:ngsi-ld:Tree:x:y:a[.]b",
+        "urn:ngsi-ld:Tree:x:y:a\\.b",
+        "urn:ngsi-ld:Tree:x:y:(?i)AXB",
+    ] {
+        let re = antares_ql::regex::compile(&format!("^(?:{pattern})$")).expect("regex");
+        let want: Vec<&str> = {
+            let mut w: Vec<&str> = ids.iter().copied().filter(|i| re.is_match(i)).collect();
+            w.sort_unstable();
+            w
+        };
+        assert!(!want.is_empty(), "{pattern} selects a seeded id");
+        let ps = [pattern.to_owned()];
+        let f = antares_sql::store::pg::entity::EntityFilter {
+            id_patterns: Some(&ps),
+            expand: &ex,
+            ..Default::default()
+        };
+        let out = s.query(&t, &f).await.expect("query");
+        assert!(out.decided, "{pattern}");
+        assert_eq!(ids_of(&out.rows), want, "{pattern}");
+    }
+    let ps = ["urn:ngsi-ld:Tree:x:y:a.b".to_owned()];
+    let f = antares_sql::store::pg::entity::EntityFilter {
+        id_patterns: Some(&ps),
+        expand: &ex,
+        ..Default::default()
+    };
+    let out = s.query(&t, &f).await.expect("query");
+    assert!(!out.decided, "`.` stays with the caller");
+    assert_eq!(out.rows.len(), ids.len(), "and narrows nothing");
+}
+
+/// F-ANT1-011: `list_slice` is never refused for volume (the driver
+/// contract): a Tenant past the undecided-row ceiling still answers a window
+/// and the exact total.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slice_of_a_tenant_past_the_ceiling_is_served() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
+        pool.clone(),
+    ));
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgslicebig").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let n = pg::entity::MAX_UNDECIDED_ROWS.saturating_add(1);
+    let items: Vec<(String, serde_json::Value)> = (0..n)
+        .map(|i| {
+            let id = format!("urn:ngsi-ld:Test:{i:06}");
+            let d = doc(&id, i);
+            (id, d)
+        })
+        .collect();
+    for chunk in items.chunks(2000) {
+        s.batch_create(&t, chunk).await.expect("seed");
+    }
+    let (rows, total) = store
+        .list_slice(&t, antares_sql::store::Kind::Entity, 10, 5)
+        .await
+        .expect("a window is never refused for volume");
+    assert_eq!(total, usize::try_from(n).expect("n"));
+    assert_eq!(
+        ids_of(&rows),
+        (10..15)
+            .map(|i| format!("urn:ngsi-ld:Test:{i:06}"))
+            .collect::<Vec<_>>()
+    );
+}

@@ -1,0 +1,31 @@
+[package]
+name = "ngsild-matcher"
+description = "Subscription matching against an in-memory entity: selector, q/scopeQ/geoQ conditions, activity and throttling."
+version.workspace = true
+edition.workspace = true
+publish = ["crates-io"]
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+readme = "README.md"
+# reads the vendored ETSI suite, which is not in the package
+exclude = ["tests/etsi_fixtures.rs"]
+keywords = ["ngsi-ld", "etsi", "subscriptions", "fiware", "context-broker"]
+categories = ["data-structures"]
+
+# ADR-0027 / surfaces-threat-model 9.1: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "ngsild"
+
+[dependencies]
+antares-jsonld = { workspace = true }
+antares-model = { workspace = true }
+antares-ql = { workspace = true }
+chrono = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true

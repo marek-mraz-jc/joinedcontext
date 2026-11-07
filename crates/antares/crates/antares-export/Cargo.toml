@@ -1,0 +1,52 @@
+[package]
+name = "antares-export"
+description = "File encodings of a page-by-page answer under a byte ceiling: Apache Parquet and GeoParquet 1.1 (feature `parquet`, T-4465, EP-119), CSV (`csv`) and a ZIP bundle (`zip`) (T-4477)."
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+
+# ADR-0027 section 2, surfaces-threat-model 9.3: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "protocol"
+
+[features]
+default = []
+# Apache Parquet and GeoParquet 1.1, zstd-compressed, no arrow.
+parquet = ["dep:parquet"]
+# RFC 4180 CSV, no dependency.
+csv = []
+# A ZIP bundle of files.
+zip = ["dep:zip"]
+
+[dependencies]
+parquet = { version = "60", default-features = false, features = ["zstd"], optional = true }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+# 9.0.1, the version the context-gateway locks (T-4478 removes it there)
+zip = { version = "9.0.1", default-features = false, features = ["deflate"], optional = true }
+
+[dev-dependencies]
+bytes = { version = "1", default-features = false }
+
+# surfaces-threat-model 10.1: the full table, not the workspace's.
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"

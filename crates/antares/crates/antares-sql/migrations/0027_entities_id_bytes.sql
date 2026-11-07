@@ -1,0 +1,12 @@
+-- Id prefixes by byte range (T-5661). A policy rule's idPattern such as
+-- `^urn:ngsi-ld:KPI:[a-z0-9.-]+:helsinki:stat-environment-…` narrows a
+-- discovery probe to a few exact id prefixes. `position()`, `LIKE` and `~`
+-- are no index condition for the broker's role (not leakproof, or not
+-- under the database's collation), and under en_US a prefix is no
+-- contiguous range: a probe walked i_entities_first_type_id through the
+-- whole type for a view few of its Entities match (dev: 10 s, the
+-- gateway's 503). Text comparisons are leakproof, and under `COLLATE "C"`
+-- the strings with one prefix are exactly one range of this index, in its
+-- order, so the probe seeks the range and reads only what it holds.
+-- An index changes no access: RLS and the query's own WHERE are untouched.
+CREATE INDEX i_entities_id_bytes ON entities (tenant_id, (id COLLATE "C"));

@@ -1,0 +1,17 @@
+tests/external/coraine - Coraine's functional suite run against Antares
+
+This directory is licensed under the Apache License, Version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0), the licence of the suite it
+drives.
+
+It uses, without copying them here, the following Apache-2.0 works, which the
+external-suites workflow checks out at run time:
+  - SEAMWARE/coraine, test/funcTests (the cases and corTestFunctions.sh),
+    Copyright 2026 Seamware
+  - SEAMWARE/corLibs and SEAMWARE/corTest (corTest, corDiff, corJson,
+    corTestClient), Copyright Seamware
+
+antares.sh replaces four functions of Coraine's corTestFunctions.sh
+(coraineStart, coraineStop, corDbDrop, corTroeInit/corTroeDrop) with
+functions of the same names that drive Antares instead; compare.py
+reimplements corDiff's REGEX() matching rule.

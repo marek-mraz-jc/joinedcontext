@@ -1,0 +1,158 @@
+name: ship
+
+# The jc broker image on every dev push, in minutes (T-4721): build with the
+# layer cache (cargo-chef's dependency layer is reused, only our crates
+# compile), prove what the image carries, gate on trivy, start it and make one
+# real NGSI-LD round trip, then push, sign and attest by digest. The long ETSI
+# run on the image stays in image-jc.yml, nightly and on dispatch: it is no
+# longer in the way of a publish (owner order 2026-10-19).
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "crates/**"
+      - "addons/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "Dockerfile"
+      - ".github/workflows/ship.yml"
+  workflow_dispatch:
+    inputs:
+      smoke_env:
+        description: "NAME=value given to the smoke container (a bad one proves the smoke goes red)"
+        required: false
+        default: ""
+
+# Not cancel-in-progress: a cancel between `docker push` and `cosign sign` would leave a pushed,
+# unsigned tag; a run is a few minutes, so queue per ref instead.
+concurrency:
+  group: ship-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FEATURES: full,jc-policy,linkml,parquet,tabular,ical,feed
+  # what the jc image must carry, by crate name in its auditable list
+  CARRIES: antares-views antares-mcp antares-odata antares-ws antares-linkml joinedcontext-policy
+
+# Every job names its own grants; one without them reads the repository and nothing more.
+permissions:
+  contents: read
+
+jobs:
+  ship:
+    name: Build, check, push, sign and attest the jc image
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # cosign keyless
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Build with the platform's features (layer cache on GHA)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          load: true
+          tags: antares-local:latest
+          build-args: |
+            FEATURES=${{ env.FEATURES }}
+            VERSION=dev
+            REVISION=${{ github.sha }}
+          cache-from: type=gha,scope=antares-jc
+          cache-to: type=gha,scope=antares-jc,mode=max
+      - name: SBOM of the built image (syft reads the cargo-auditable list)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: antares-local:latest
+          format: spdx-json
+          output-file: antares-broker-jc.sbom.spdx.json
+          upload-artifact: false
+      - name: The image carries every surface and the engine
+        run: |
+          rc=0
+          for crate in $CARRIES; do
+            if jq -e --arg c "$crate" '[.packages[].name] | index($c)' \
+                 antares-broker-jc.sbom.spdx.json >/dev/null; then
+              echo "carries $crate"
+            else
+              echo "MISSING $crate"; rc=1
+            fi
+          done
+          exit $rc
+      # T-3834: no HIGH or CRITICAL with a fixed version; an exception is a
+      # .trivyignore line with its reason, task and expiry.
+      - name: No fixable HIGH or CRITICAL in the image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: antares-local:latest
+          severity: "HIGH,CRITICAL"
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: The image starts and answers one NGSI-LD round trip
+        run: |
+          # The surface list the platform deploys (joinedcontext-deployment
+          # components/context-broker/values/broker/base-values.yaml.gotmpl): an unknown or
+          # renamed surface is fatal at start, which is how a chart and an image drift apart.
+          docker run -d --name broker -p 9090:9090 -e ANTARES_POLICY=allow-all \
+            -e ANTARES_API_SURFACES=admin,views,mcp,access,ws,ws-views,ogc,linkml,odata,sta,ical \
+            -e ANTARES_SCHEMA_MAX_BYTES=1048576 \
+            ${SMOKE_ENV:+-e "$SMOKE_ENV"} antares-local:latest
+          for _ in $(seq 30); do curl -sf localhost:9090/q/health >/dev/null && break; sleep 1; done
+          fail() { echo "SMOKE: $1"; docker logs broker | tail -40; exit 1; }
+          curl -sf localhost:9090/q/health >/dev/null || fail "not healthy after 30 s"
+          id=urn:ngsi-ld:Smoke:ship-1
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:9090/ngsi-ld/v1/entities \
+            -H 'Content-Type: application/json' \
+            -d "{\"id\":\"$id\",\"type\":\"Smoke\",\"n\":{\"type\":\"Property\",\"value\":1}}")
+          [ "$code" = 201 ] || fail "create answered $code"
+          curl -sf "localhost:9090/ngsi-ld/v1/entities/$id" | jq -e '.n.value == 1' >/dev/null \
+            || fail "the created entity does not read back"
+          curl -sf localhost:9090/ngsi-ld/v1/types | jq -e 'tostring | contains("Smoke")' >/dev/null \
+            || fail "/types does not list the created type"
+          # The broker-wide WebSocket (T-4048 class: the socket answered 404 or 405, never 101)
+          ws=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+            -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+            -H 'Sec-WebSocket-Protocol: ngsi-ld-ws' localhost:9090/x/ws/ngsi-ld/v1) || true
+          [ "$ws" = 101 ] || fail "WebSocket upgrade answered $ws, not 101"
+          # A LinkML schema and a view over it (the OData compliance fixtures): the schema loads
+          # and becomes an EDM model (the class of the LinkML attribute the broker once refused),
+          # and the view's MCP endpoint lists its tools through the streamable-HTTP framing.
+          tenant=$(jq -r .tenant ci/odata-compliance/view.json); view=$(jq -r .id ci/odata-compliance/view.json)
+          put() {
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "localhost:9090/q/$1" \
+              -H 'Content-Type: application/json' --data-binary "@$2")
+            [ "$code" = 201 ] || fail "PUT /q/$1 answered $code"
+          }
+          put "schemas/$tenant" ci/odata-compliance/schema.json
+          put "views/$view" ci/odata-compliance/view.json
+          curl -sf "localhost:9090/x/views/$view/odata/v4/\$metadata" | grep -q '<edmx:Edmx' \
+            || fail "the view's OData \$metadata is not an EDM document"
+          curl -sf -X POST "localhost:9090/x/views/$view/mcp" -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+            | jq -e '.result.tools | length > 0' >/dev/null || fail "MCP tools/list lists no tool"
+          echo "create 201, read back, /types lists Smoke, WebSocket 101, schema + view, OData \$metadata, MCP tools/list"
+        env:
+          SMOKE_ENV: ${{ inputs.smoke_env }}
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+        if: github.ref == 'refs/heads/dev'
+      - name: Push the tested bytes, sign and attest by digest
+        if: github.ref == 'refs/heads/dev'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          IMG=ghcr.io/${{ github.repository_owner }}/antares-broker-jc
+          SHA=${GITHUB_SHA::7}
+          # dev-<N>: built and smoke-tested (N = this workflow's run number); `:<N>` and
+          # `:latest` are added to the same digest only by the full-test promote (T-4721).
+          for tag in "$SHA" "sha-$SHA" "dev-$GITHUB_RUN_NUMBER" dev; do
+            docker tag antares-local:latest "$IMG:$tag"
+            docker push -q "$IMG:$tag"
+          done
+          DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMG:$SHA")
+          case "$DIGEST" in "$IMG@sha256:"*) ;; *) echo "no digest for $IMG:$SHA: $DIGEST"; exit 1 ;; esac
+          cosign sign --yes "$DIGEST"
+          cosign attest --yes --type spdxjson --predicate antares-broker-jc.sbom.spdx.json "$DIGEST"
+          echo "## Published \`$DIGEST\` (tags \`$SHA\`, \`sha-$SHA\`, \`dev-$GITHUB_RUN_NUMBER\`, \`dev\`; features \`$FEATURES\`; signed, SPDX attested)" >> "$GITHUB_STEP_SUMMARY"

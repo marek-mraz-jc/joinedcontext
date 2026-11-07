@@ -1,0 +1,33 @@
+{
+ "about": "q !operator: only the Vehicle without operator.",
+ "view": {
+  "selector": [
+   "Vehicle"
+  ],
+  "rules": [
+   {
+    "types": [
+     "Vehicle"
+    ],
+    "attributes": [
+     "location",
+     "operator",
+     "speed",
+     "vehicleType"
+    ]
+   }
+  ],
+  "q": "!operator"
+ },
+ "expect": {
+  "urn:ngsi-ld:Vehicle:V7": [
+   "location",
+   "speed",
+   "vehicleType"
+  ]
+ },
+ "caller": {
+  "x-jc-roles": "public"
+ },
+ "linkml": {"Vehicle": ["location", "operator", "speed", "vehicleType"]}
+}

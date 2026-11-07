@@ -1,0 +1,109 @@
+name: fuzz
+
+# Scheduled fuzzing of the user-input interpreters —
+# the q= grammar, scopeQ evaluation, geoQ params, and the JSON-LD expansion
+# input path. Any crash/panic fails the job and uploads the artifact input.
+# Found a crash? Commit the input to fuzz/regressions/<target>/ with the
+# fix — strict.yml replays that corpus daily so it can never regress.
+# A crash also auto-files a security-labeled issue (per target, deduped) —
+# a red twice-a-week run must not sit unnoticed. A target that fails to
+# build alarms too, under its own title: it is not a crash, and a security
+# issue naming an artifact that was never written is one nobody can act on.
+on:
+  schedule:
+    - cron: "17 12 * * 1,4" # twice a week, Mon + Thu 12:17 UTC
+  workflow_dispatch:
+    inputs:
+      # A new target's first long run (T-3507: 30 minutes) on a hosted
+      # runner, not the shared host: targets='["linkml_read"]' seconds=1800.
+      targets:
+        description: JSON list of targets; empty runs them all
+        default: ""
+      seconds:
+        description: run time per target, seconds
+        default: "300"
+
+# One scheduled run at a time, never cancelled (T-5639).
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write # the crash alarm
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      # 6 of the 27 targets at a time: the account runs 20 jobs, the trains
+      # need the rest (T-5639)
+      max-parallel: 6
+      matrix:
+        target: ${{ fromJSON(inputs.targets || '["parse_q", "scope_q", "geo_params", "expand_entity", "q_to_sql", "type_selection", "projection", "representation", "join", "temporal", "order_by", "link_header", "tenant_header", "accept_header", "id_pattern", "datetime", "linkml_read", "view_config_load", "odata_url_parse", "odata_json_body", "odata_batch_multipart", "odata_batch_json", "mcp_tool_arguments", "mcp_cursor", "ws_client_message", "residual_compile", "model_names"]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c76c034f9e32a5d6e2c104dc4df23a22476db04 # nightly
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Seed odata_url_parse from the OASIS ABNF test cases (fetched, digest-checked)
+        if: matrix.target == 'odata_url_parse'
+        run: pip install --quiet pyyaml==6.0.3 && python3 dev/odata-url-abnf.py --seeds fuzz/corpus/odata_url_parse
+      - name: Fuzz ${{ matrix.target }}
+        # the parsers of the published ngsild crates run 10 minutes, the rest 5 (T-3912)
+        # bounded allocation is part of the property (T-3463): one allocation
+        # past 512 MB, or a process past 2 GB, is a finding like a panic
+        # ASan keeps every distinct allocation stack forever; a recursive builder
+        # (residual_compile, nesting to 80) makes a new 30-frame stack per path and
+        # grew to the 2 GB limit with 31 MB live (T-3992). 8 frames keep it flat.
+        env:
+          ASAN_OPTIONS: malloc_context_size=8
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=${{ inputs.seconds || (contains(fromJSON('["parse_q", "scope_q", "geo_params", "expand_entity", "residual_compile", "model_names"]'), matrix.target) && '600' || '300') }} -malloc_limit_mb=512 -rss_limit_mb=2048
+      - name: A crash leaves its input behind
+        # `cargo fuzz run` builds and runs under one command, so a target that
+        # fails to compile exits exactly like one that crashed. Only a crash
+        # writes an input under fuzz/artifacts/<target>: without one there is
+        # no corpus entry to commit and nothing a security issue can point at,
+        # so the two outcomes alarm separately.
+        if: failure()
+        id: outcome
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(ls -A "fuzz/artifacts/${{ matrix.target }}" 2>/dev/null)" ]; then
+            echo "crash=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "crash=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upload crash artifacts
+        if: steps.outcome.outputs.crash == 'true'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/
+      - name: File an issue on a crash
+        # dispatch runs file too — a crash is a real bug worth tracking
+        # either way, and the open issue dedupes repeats
+        if: steps.outcome.outputs.crash == 'true'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: "Fuzz crash in ${{ matrix.target }}"
+          label: security
+          body: >-
+            The fuzz run crashed the `${{ matrix.target }}` target. The crash
+            input is uploaded as the `fuzz-artifacts-${{ matrix.target }}`
+            artifact — commit it to `fuzz/regressions/${{ matrix.target }}/`
+            with the fix so strict.yml's daily replay pins it.
+      - name: File an issue when the target never ran
+        if: failure() && steps.outcome.outputs.crash != 'true'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: "Fuzz target ${{ matrix.target }} did not run"
+          body: >-
+            The `${{ matrix.target }}` job went red without leaving a crash
+            input, so the target did not build or the run never started. The
+            job log names the step; nothing is fuzzed until it is fixed.

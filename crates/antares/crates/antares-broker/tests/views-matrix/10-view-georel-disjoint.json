@@ -1,0 +1,66 @@
+{
+ "about": "georel disjoint with A: the edge point V6 touches A and is out.",
+ "view": {
+  "selector": [
+   "Vehicle"
+  ],
+  "rules": [
+   {
+    "types": [
+     "Vehicle"
+    ],
+    "attributes": [
+     "location",
+     "operator",
+     "speed",
+     "vehicleType"
+    ]
+   }
+  ],
+  "geoQ": {
+   "georel": "disjoint",
+   "geometry": "Polygon",
+   "coordinates": [
+    [
+     [
+      0,
+      0
+     ],
+     [
+      10,
+      0
+     ],
+     [
+      10,
+      10
+     ],
+     [
+      0,
+      10
+     ],
+     [
+      0,
+      0
+     ]
+    ]
+   ]
+  }
+ },
+ "expect": {
+  "urn:ngsi-ld:Vehicle:V3": [
+   "location",
+   "operator",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V5": [
+   "location",
+   "operator",
+   "speed",
+   "vehicleType"
+  ]
+ },
+ "caller": {
+  "x-jc-roles": "public"
+ }
+}

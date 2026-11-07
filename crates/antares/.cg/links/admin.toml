@@ -1,0 +1,89 @@
+# Routes no regex can key: the admin surface mounts its paths from the Admin::PATHS const
+# (crates/antares-api/src/ops.rs) under /q, and /ex/v1/remote-notify sits outside the /ngsi-ld/v1 nest.
+# View routes (antares-ops) come from the view table at run time: no rule can see them.
+[[endpoint]]
+channel = "http"
+role = "provides"
+key = "GET /q/health"
+symbol = "antares_api::ops::health"
+
+[[endpoint]]
+channel = "http"
+role = "provides"
+key = "GET /q/ready"
+symbol = "antares_api::ops::ready"
+
+[[endpoint]]
+channel = "http"
+role = "provides"
+key = "GET /q/metrics"
+symbol = "antares_api::ops::metrics_endpoint"
+
+[[endpoint]]
+channel = "http"
+role = "provides"
+key = "GET /q/tenants"
+symbol = "antares_api::ops::tenants_list"
+
+[[endpoint]]
+channel = "http"
+role = "provides"
+key = "GET /q/tenants/{tenant}"
+symbol = "antares_api::ops::tenant_get"
+
+[[endpoint]]
+channel = "http"
+role = "provides"
+key = "DELETE /q/tenants/{tenant}"
+symbol = "antares_api::ops::tenant_purge"
+
+[[endpoint]]
+channel = "http"
+role = "provides"
+key = "GET /q/tenants/{tenant}/digest"
+symbol = "antares_api::tenant_move::digest"
+
+[[endpoint]]
+channel = "http"
+role = "provides"
+key = "GET /q/tenants/{tenant}/export"
+symbol = "antares_api::tenant_move::export"
+
+[[endpoint]]
+channel = "http"
+role = "provides"
+key = "POST /q/tenants/{tenant}/import"
+symbol = "antares_api::tenant_move::import"
+
+[[endpoint]]
+channel = "http"
+role = "provides"
+key = "GET /q/dead-letters"
+symbol = "antares_api::ops::dead_letters_list"
+
+[[endpoint]]
+channel = "http"
+role = "provides"
+key = "DELETE /q/dead-letters/{id}"
+symbol = "antares_api::ops::dead_letter_delete"
+
+[[endpoint]]
+channel = "http"
+role = "provides"
+key = "POST /q/dead-letters/{id}/replay"
+symbol = "antares_api::ops::dead_letter_replay"
+
+[[endpoint]]
+channel = "http"
+role = "provides"
+key = "POST /ex/v1/remote-notify"
+symbol = "antares_api::distsub::remote_notify"
+
+# The NGSI-LD API of a view (antares-views, T-3643): one catch-all route under /x/views, its
+# handler a closure around `serve`, so no regex keys it. The context-gateway's pinned view hops
+# (its .cg/links/gateway.toml) join this key across the two graphs (T-4594, dev/cg-audit.py).
+[[endpoint]]
+channel = "http"
+role = "provides"
+key = "ANY /x/views/{view}/ngsi-ld/v1/{rest}"
+symbol = "antares_views::serve"

@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 62f91906f09ac7e14265b22aa813d4c675c2161bfdaf6fe5be7360efdb073855 # shrinks to members = [(false, Get, "A", {}, [45, 45, 98])]
+cc 813d7e27fa0192b8c49d8ab1bb94350ae02e4875bc0323ca3c1562bb3b0eba88 # shrinks to number = -2.6255000472898025e-302
+cc 0f0cd964999a9b5b745247f3ec983c40373a726679ee2bcad1ce6f3f4ccfcf09 # shrinks to members = [(false, Get, "A", {}, [10, 45, 45, 98])]

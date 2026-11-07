@@ -1,0 +1,13 @@
+-- Drops i_entities_jsonb, the jsonb_path_ops GIN over the whole entity
+-- document (T-5193). It never served a request: under forced RLS an index
+-- condition must be leakproof, and none of the jsonb operators a q= or
+-- attrs= compiles to is (`@?` jsonb_path_exists_opr, `@>` jsonb_contains,
+-- `?|` jsonb_exists_any: pg_proc.proleakproof is false). The broker's role
+-- is neither superuser nor BYPASSRLS (ANTARES_REQUIRE_RLS), so every q=
+-- page reads its rows through the type, id or location indexes and filters
+-- them (pg_explain.rs). The index still cost a GIN entry per path on every
+-- entity write: about 940 B of a 3.1 KB entity.
+--
+-- A plain DROP INDEX: entities is not partitioned and the lock lasts as
+-- long as the catalog change.
+DROP INDEX IF EXISTS i_entities_jsonb;

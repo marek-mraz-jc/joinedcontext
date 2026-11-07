@@ -1,0 +1,122 @@
+{
+  "id": "compliance",
+  "tenant": "odata-compliance",
+  "selector": [
+    "Products",
+    "Categories",
+    "ProductDescriptions",
+    "MediaItems",
+    "ReadOnlyItems",
+    "DecimalSamples"
+  ],
+  "rules": [
+    {
+      "types": [
+        "Products"
+      ],
+      "attributes": [
+        "ID",
+        "Name",
+        "Description",
+        "Price",
+        "Rating",
+        "Temperature",
+        "Quantity",
+        "Weight",
+        "Data",
+        "ReleaseDate",
+        "OpenTime",
+        "ShippingTime",
+        "ProcessingTime",
+        "Offset",
+        "CategoryID",
+        "Status",
+        "Version",
+        "CreatedAt",
+        "SerialNumber",
+        "ProductType",
+        "SpecialProperty",
+        "SpecialFeature",
+        "ShippingAddress",
+        "Dimensions",
+        "Location",
+        "Route",
+        "Area",
+        "Category",
+        "Descriptions",
+        "RelatedProducts"
+      ]
+    },
+    {
+      "types": [
+        "Categories"
+      ],
+      "attributes": [
+        "ID",
+        "Name",
+        "Description"
+      ]
+    },
+    {
+      "types": [
+        "ProductDescriptions"
+      ],
+      "attributes": [
+        "ProductID",
+        "LanguageKey",
+        "Description",
+        "LongText",
+        "CustomName",
+        "Product"
+      ]
+    },
+    {
+      "types": [
+        "MediaItems"
+      ],
+      "attributes": [
+        "ID",
+        "Name",
+        "ContentType",
+        "Size"
+      ]
+    },
+    {
+      "types": [
+        "ReadOnlyItems"
+      ],
+      "attributes": [
+        "ID",
+        "Name"
+      ]
+    },
+    {
+      "types": [
+        "DecimalSamples"
+      ],
+      "attributes": [
+        "ID",
+        "Name",
+        "Amount"
+      ]
+    }
+  ],
+  "operations": [
+    "retrieve_entity",
+    "query_entities",
+    "query_entities_post",
+    "retrieve_attribute_value",
+    "create_entity",
+    "partial_attribute_update",
+    "delete_attribute",
+    "delete_entity",
+    "merge_entity",
+    "replace_entity",
+    "replace_attribute",
+    "append_attributes",
+    "batch_create",
+    "batch_update",
+    "batch_merge",
+    "batch_delete"
+  ]
+}

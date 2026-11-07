@@ -1,0 +1,1 @@
+{"@odata.count":2,"value":[{"id":"b1","name":null,"height":42,"area":1.5,"price":10,"active":true,"extra":{"free":[1]},"anything":[1],"tags":["a"],"odd":"?","address":{"dynamic":1,"floors":[1,2],"street":"Main"},"homes":[{"street":"Side"},null],"dynamic":"not declared"},{"id":"b2"}],"@odata.nextLink":"https://example.org/odata/Buildings?$skiptoken=b2"}

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 57bf4983c26a157bf29886fdad8f83294f1bea0eb82a1ac6215b2cf920ad91af # shrinks to id = "0", owner = None, properties = [("area", Number(486631118.13075036))]
