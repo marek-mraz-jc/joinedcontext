@@ -38,7 +38,12 @@ members = [
 ]
 # Joined repositories keep their own workspace (lockfile, lints, standalone binaries) for now; jc
 # depends on their crates by path. Making them members is a later step (bins/jc/STATUS.md).
-exclude = ["crates/ekiben"]
+exclude = ["crates/ekiben", "crates/antares"]
+
+# Antares pins rumqttc 0.25.1 with rustls-webpki 0.103 (crates/antares/vendor/rumqttc/README.md); a
+# patch only takes effect from the root manifest.
+[patch.crates-io]
+rumqttc = { path = "crates/antares/vendor/rumqttc" }
 
 [workspace.package]
 edition = "2024"

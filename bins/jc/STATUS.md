@@ -62,3 +62,35 @@ Gates: `cargo build -p jc`, `cargo test -p jc -p jc-router -p dataroom-server`, 
 
 Gates: ekiben workspace `cargo test -p ekiben-server -p ekiben-core -p ekiben-bloblang`, `cargo clippy` (same crates,
 `--all-targets -D warnings`), `cargo fmt --all --check`: green. Root: `cargo build/test/clippy -p jc`, fmt: green.
+
+## Stage 3: Antares (done)
+
+- Imported with `git subtree add --squash --prefix crates/antares /workspace/Antares-NGSI-LD-Context-Broker b683bfc3`
+  (origin/dev sha, not the old working tree). Own workspace and lockfile, excluded from the root workspace like
+  ekiben. Root `Cargo.toml` copies Antares' `[patch.crates-io] rumqttc` (a patch only works from the root).
+- `antares-broker`: `src/main.rs` -> `src/lib.rs`; new `src/main.rs` (allocator + `main_entry()`). `run()` split into
+  `config_from_env() -> BrokerConfig`, `build_state(&cfg, metrics_render) -> Broker`, `spawn_background(&mut Broker)`
+  (bus wiring, sampler, @context preload, expiry sweep, temporal maintenance) and `router(Broker) -> Served { app,
+  metrics_app, drain }`; `run()` calls the same steps, then its own accept loop and drain. Standalone binary
+  behaviour unchanged (its `tests/*` that spawn the binary pass: file_mode 18, store_combos 19, nats_e2e 8, ...).
+- Telemetry (`telemetry.rs`): `try_init` keeps an installed subscriber; a refused second recorder falls back to the
+  installed one (`/q/metrics` 404); `init_hosted()` installs nothing. `tests/hosted_telemetry.rs`; red with the old
+  `.init()` (panics "a global default trace dispatcher has already been set") and with the recorder fallback
+  disabled (`FailedToSetGlobalRecorder`).
+- In `jc` (`bins/jc/src/modules/antares.rs`, feature `antares`, slug `/broker`): config from the broker's own `ANTARES_*`
+  environment, `/q` admin token file mandatory (`JCBIN_ANTARES_ADMIN_TOKEN_FILE`; the standalone broker serves `/q`
+  without a credential when it is unset), no listener of its own (`ANTARES_HTTP_PORT`/`ANTARES_METRICS_PORT` ignored,
+  so no clash with the Portal's 9090), mounted with `Router::fallback_service(served.app)` (axum 0.8 refuses
+  `nest_service("/")`; the jc-router already strips the slug). Default features only (`mqtt`), not `full`.
+- One Antares per process: its statics (memory budget, WebSocket hub, caches, 153 statics per the feasibility
+  report) are process-wide. The jc tests serialize every start with one lock for this reason.
+- Differences when hosted, not verified against the ETSI suite: responses go through axum's server (lower-case
+  header names) instead of Antares' title-case HTTP/1 writer; no connection cap, header read timeout or drain
+  window of its own (jc's graceful shutdown instead); background tasks are plain `tokio::spawn` and stop with the
+  runtime, not with jc's cancellation token.
+- `jc::start` is not `Send` because `antares_broker::build_state`'s future is not (higher-ranked lifetime inside
+  Antares); the binary runs it with `block_on`, tests on the test task.
+
+Gates: Antares workspace `cargo build/test/clippy -p antares-broker --all-targets -D warnings`, `cargo fmt --all
+--check`: green (29 test binaries; Postgres/NATS/mosquitto ones skip themselves without their env). Root
+`cargo test/clippy -p jc`: green.

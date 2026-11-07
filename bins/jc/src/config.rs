@@ -76,6 +76,11 @@ pub struct Cli {
     /// directory under the system temp dir).
     #[arg(long, env = "JCBIN_EKIBEN_FILE_ROOT")]
     pub ekiben_file_root: Option<PathBuf>,
+    /// antares: file holding the `/q` admin token (required: the hosted broker never serves its
+    /// admin surface without a credential). Everything else of Antares is its own `ANTARES_*`
+    /// environment, as for the standalone broker.
+    #[arg(long, env = "JCBIN_ANTARES_ADMIN_TOKEN_FILE")]
+    pub antares_admin_token_file: Option<PathBuf>,
 }
 
 /// Log output format.
@@ -109,6 +114,13 @@ pub struct WardkeepSection {
 pub struct EkibenSection {
     pub token_file: Option<PathBuf>,
     pub file_root: Option<PathBuf>,
+}
+
+/// `[antares]` section.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AntaresSection {
+    pub admin_token_file: Option<PathBuf>,
 }
 
 /// `[dataroom]` section. dataroom runs on its in-memory store inside `jc` for now.
@@ -149,6 +161,8 @@ pub struct FileConfig {
     pub dataroom: Option<DataroomSection>,
     #[serde(default)]
     pub ekiben: EkibenSection,
+    #[serde(default)]
+    pub antares: AntaresSection,
 }
 
 /// Errors while assembling the configuration.
@@ -175,6 +189,10 @@ pub enum ConfigError {
     WardkeepKek,
     #[error("ekiben needs an API token file (JCBIN_EKIBEN_TOKEN_FILE or [ekiben] token_file)")]
     EkibenToken,
+    #[error(
+        "antares needs an admin token file (JCBIN_ANTARES_ADMIN_TOKEN_FILE or [antares] admin_token_file)"
+    )]
+    AntaresToken,
 }
 
 /// The resolved configuration `jc` runs with.
@@ -192,6 +210,7 @@ pub struct Config {
     pub wardkeep: WardkeepSection,
     pub dataroom: DataroomSection,
     pub ekiben: EkibenSection,
+    pub antares: AntaresSection,
 }
 
 impl Config {
@@ -272,6 +291,14 @@ impl Config {
         if roles.contains(&Module::Ekiben) && ekiben.token_file.is_none() {
             return Err(ConfigError::EkibenToken);
         }
+        let antares = AntaresSection {
+            admin_token_file: cli
+                .antares_admin_token_file
+                .or(file.antares.admin_token_file),
+        };
+        if roles.contains(&Module::Antares) && antares.admin_token_file.is_none() {
+            return Err(ConfigError::AntaresToken);
+        }
         Ok(Self {
             roles,
             listen: cli.listen.or(file.listen).unwrap_or_else(|| {
@@ -289,6 +316,7 @@ impl Config {
             wardkeep,
             dataroom: file.dataroom.unwrap_or_default(),
             ekiben,
+            antares,
         })
     }
 }
@@ -510,6 +538,31 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
         )
         .unwrap();
         assert_eq!(ok.ekiben.file_root.as_deref(), Some(Path::new("/b")));
+    }
+
+    #[test]
+    fn antares_without_an_admin_token_file_is_refused() {
+        let err = Config::merge(cli(&["--role", "antares"]), FileConfig::default()).unwrap_err();
+        assert!(matches!(err, ConfigError::AntaresToken), "{err}");
+        let file = Config::parse_file(
+            Path::new("jc.toml"),
+            "[antares]\nadmin_token_file = \"/run/q\"\n",
+        )
+        .unwrap();
+        let ok = Config::merge(cli(&["--role", "antares"]), file).unwrap();
+        assert_eq!(
+            ok.antares.admin_token_file.as_deref(),
+            Some(Path::new("/run/q"))
+        );
+        let ok = Config::merge(
+            cli(&["--role", "antares", "--antares-admin-token-file", "/x"]),
+            FileConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            ok.antares.admin_token_file.as_deref(),
+            Some(Path::new("/x"))
+        );
     }
 
     #[test]

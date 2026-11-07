@@ -10,6 +10,8 @@ use jc_router::Mount;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
+#[cfg(feature = "antares")]
+mod antares;
 #[cfg(feature = "controlroom")]
 mod controlroom;
 #[cfg(feature = "dataroom")]
@@ -37,6 +39,8 @@ pub async fn build(
         Module::Controlroom => Ok(controlroom::build(mount)),
         #[cfg(feature = "ekiben")]
         Module::Ekiben => ekiben::build(&cfg.ekiben),
+        #[cfg(feature = "antares")]
+        Module::Antares => antares::build(&cfg.antares).await,
         #[allow(unreachable_patterns)]
         other => Err(StartError::module(
             other,

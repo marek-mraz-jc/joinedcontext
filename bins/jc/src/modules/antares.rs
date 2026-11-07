@@ -1,0 +1,42 @@
+//! Antares (NGSI-LD broker) inside `jc`: the broker library's own steps (configuration from its
+//! `ANTARES_*` environment, state, background work, router), served through the mount router
+//! instead of its own listener. The host owns the tracing subscriber and the metrics recorder
+//! (`telemetry::init_hosted`), so `/q/metrics` is not served by the broker; `ANTARES_HTTP_PORT`
+//! and `ANTARES_METRICS_PORT` open no listener here.
+//!
+//! The broker keeps process-wide statics (memory budget, WebSocket hub, caches): one Antares per
+//! process.
+
+use crate::app::StartError;
+use crate::config::AntaresSection;
+use crate::module::Module;
+use axum::Router;
+
+fn err(e: impl std::fmt::Display) -> StartError {
+    StartError::module(Module::Antares, e)
+}
+
+pub async fn build(cfg: &AntaresSection) -> Result<Router, StartError> {
+    let render = antares_broker::telemetry::init_hosted();
+    let mut broker_cfg = antares_broker::config_from_env().map_err(err)?;
+    // The `/q` admin credential is mandatory in a shared process.
+    let token_file = cfg
+        .admin_token_file
+        .as_deref()
+        .ok_or_else(|| err("no admin_token_file"))?;
+    broker_cfg.admin_token_file = Some(token_file.display().to_string());
+    if broker_cfg.metrics_port.is_some() {
+        tracing::warn!(
+            "ANTARES_METRICS_PORT opens no listener inside jc; use the jc admin listener"
+        );
+        broker_cfg.metrics_port = None;
+    }
+    let mut broker = antares_broker::build_state(&broker_cfg, render)
+        .await
+        .map_err(err)?;
+    antares_broker::spawn_background(&mut broker)
+        .await
+        .map_err(err)?;
+    let served = antares_broker::router(broker).map_err(err)?;
+    Ok(Router::new().fallback_service(served.app))
+}

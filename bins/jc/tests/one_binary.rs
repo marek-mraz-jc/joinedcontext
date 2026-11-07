@@ -16,9 +16,15 @@ struct Fixture {
     realms: PathBuf,
     ekiben_token: PathBuf,
     ekiben_root: PathBuf,
+    antares_token: PathBuf,
 }
 
+/// Antares keeps process-wide statics (one broker per process), and these tests share one process:
+/// every test that starts jc holds this lock.
+static ONE_JC_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 const EKIBEN_TOKEN: &str = "ekiben-test-token";
+const ANTARES_TOKEN: &str = "antares-admin-test-token-0123456789abcdef";
 
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -38,12 +44,15 @@ fn fixture() -> Fixture {
     let ekiben_token = dir.path().join("ekiben-token");
     std::fs::write(&ekiben_token, format!("{EKIBEN_TOKEN}\n")).expect("token");
     let ekiben_root = dir.path().join("ekiben-files");
+    let antares_token = dir.path().join("antares-admin-token");
+    std::fs::write(&antares_token, format!("{ANTARES_TOKEN}\n")).expect("antares token");
     Fixture {
         _dir: dir,
         kek,
         realms,
         ekiben_token,
         ekiben_root,
+        antares_token,
     }
 }
 
@@ -59,6 +68,7 @@ fn config(fx: &Fixture, mode: MountMode, mounts: BTreeMap<Module, MountOverride>
             wardkeep_import_dir: Some(fx.realms.clone()),
             ekiben_token_file: Some(fx.ekiben_token.clone()),
             ekiben_file_root: Some(fx.ekiben_root.clone()),
+            antares_admin_token_file: Some(fx.antares_token.clone()),
             ..Cli::default()
         },
         FileConfig::default(),
@@ -77,7 +87,7 @@ fn probe(module: Module) -> (&'static str, &'static str) {
         Module::Dataroom => ("/api/3/action/status_show", "\"success\""),
         Module::Controlroom => ("/api/health", "\"database\""),
         Module::Ekiben => ("/ping", "pong"),
-        Module::Antares => ("/ngsi-ld/v1/info/sourceIdentity", "id"),
+        Module::Antares => ("/ngsi-ld/v1/info/sourceIdentity", "antares"),
         Module::Portal => ("/healthz", "ok"),
     }
 }
@@ -112,6 +122,7 @@ async fn raw_get_status(addr: SocketAddr, host: &str, path: &str) -> u16 {
 
 #[tokio::test]
 async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
     let fx = fixture();
     let cfg = config(&fx, MountMode::Slug, BTreeMap::new());
     let running = jc::start(&cfg, CancellationToken::new())
@@ -125,6 +136,20 @@ async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
         assert_eq!(status, StatusCode::OK, "{module} {url}: {body}");
         assert!(body.contains(needle), "{module} {url}: {body}");
     }
+    // Antares' /q admin surface needs its token inside jc; health stays open.
+    let (status, _) = get(addr, "city.test", "/broker/q/health").await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = get(addr, "city.test", "/broker/q/tenants").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}/broker/q/tenants"))
+        .header("host", "city.test")
+        .bearer_auth(ANTARES_TOKEN)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
     // wardkeep's issuer carries the slug: the module was built with its mount.
     let (_, body) = get(
         addr,
@@ -165,6 +190,7 @@ async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
 
 #[tokio::test]
 async fn host_mode_reaches_every_module_and_404s_unknown_hosts() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
     jc::runtime::init_tracing(jc::config::LogFormat::Text);
     let fx = fixture();
     let mut cfg = config(&fx, MountMode::Host, BTreeMap::new());
@@ -206,6 +232,7 @@ async fn host_mode_reaches_every_module_and_404s_unknown_hosts() {
 
 #[tokio::test]
 async fn explicit_mounts_mix_hosts_and_slugs() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
     let fx = fixture();
     let mounts = BTreeMap::from([
         (
@@ -246,6 +273,7 @@ async fn explicit_mounts_mix_hosts_and_slugs() {
 
 #[tokio::test]
 async fn a_forwarded_host_from_an_untrusted_peer_is_ignored() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
     let fx = fixture();
     let mut cfg = config(&fx, MountMode::Host, BTreeMap::new());
     cfg.roles = vec![Module::Controlroom];
@@ -266,6 +294,7 @@ async fn a_forwarded_host_from_an_untrusted_peer_is_ignored() {
 
 #[tokio::test]
 async fn overlapping_mounts_refuse_to_start() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
     let fx = fixture();
     let same = MountOverride {
         host: Some("city.test".into()),
@@ -303,6 +332,7 @@ async fn overlapping_mounts_refuse_to_start() {
 
 #[tokio::test]
 async fn an_invalid_prefix_or_a_bad_module_setting_refuses_to_start() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
     let fx = fixture();
     let cfg = config(
         &fx,
@@ -413,7 +443,47 @@ async fn an_invalid_prefix_or_a_bad_module_setting_refuses_to_start() {
 }
 
 #[tokio::test]
+async fn a_bad_antares_environment_refuses_to_start() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
+    let fx = fixture();
+    let cfg = config(&fx, MountMode::Slug, BTreeMap::new());
+    // SAFETY of the test: env access is serialized by the lock above; removed before unlocking.
+    unsafe { std::env::set_var("ANTARES_BUS", "carrier-pigeon") };
+    let result = jc::start(&cfg, CancellationToken::new()).await;
+    unsafe { std::env::remove_var("ANTARES_BUS") };
+    let err = result.err().expect("refused");
+    assert!(
+        matches!(
+            err,
+            StartError::Module {
+                module: Module::Antares,
+                ..
+            }
+        ),
+        "{err}"
+    );
+
+    let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
+    cfg.antares.admin_token_file = None;
+    let err = jc::start(&cfg, CancellationToken::new())
+        .await
+        .err()
+        .expect("refused");
+    assert!(
+        matches!(
+            err,
+            StartError::Module {
+                module: Module::Antares,
+                ..
+            }
+        ),
+        "{err}"
+    );
+}
+
+#[tokio::test]
 async fn a_taken_port_is_reported() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
     let fx = fixture();
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
@@ -436,21 +506,19 @@ async fn a_taken_port_is_reported() {
 
 #[tokio::test]
 async fn run_until_serves_until_the_stop_future_resolves() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
     let fx = fixture();
     let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
     cfg.admin_listen = None;
     cfg.roles = vec![Module::Controlroom];
-    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-    let handle = tokio::spawn(jc::run_until(cfg, async {
-        let _ = rx.await;
-    }));
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    tx.send(()).unwrap();
-    handle.await.unwrap().expect("clean stop");
+    // jc's start future is not Send (Antares' build_state), so it runs on this task.
+    let stop = tokio::time::sleep(std::time::Duration::from_millis(50));
+    jc::run_until(cfg, stop).await.expect("clean stop");
 }
 
 #[tokio::test]
 async fn running_exposes_its_shutdown_token() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
     let fx = fixture();
     let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
     cfg.roles = vec![Module::Controlroom];
@@ -473,6 +541,7 @@ async fn running_exposes_its_shutdown_token() {
 /// initial environment). The ekiben API also refuses callers without its token.
 #[tokio::test]
 async fn another_modules_secret_is_not_readable_through_an_ekiben_stream() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
     const SECRET: &str = "wardkeep-db-password-7f3a91";
     // SAFETY of the test: a unique variable name, set once before jc starts.
     unsafe { std::env::set_var("JC_E2E_WARDKEEP_DB_PASSWORD", SECRET) };
