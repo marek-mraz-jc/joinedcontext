@@ -1,0 +1,8 @@
+[workspace]
+resolver = "3"
+# Members join as each module gets code; folders hold their README until then.
+members = []
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
