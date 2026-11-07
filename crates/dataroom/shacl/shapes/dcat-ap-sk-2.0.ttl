@@ -1,0 +1,166 @@
+# Derived by Argon (2026-11-07) from DCAT-AP-SK 2.0 (index.bs, schémy/*.json): the SK profile publishes no SHACL.
+# Not an official file; verify against the SK JSON schemas before relying on it.
+@prefix dc: <http://purl.org/dc/terms/> .
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix leg: <https://data.gov.sk/def/ontology/legislation/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix vcard: <http://www.w3.org/2006/vcard/ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://datova-kancelaria.github.io/dcat-ap-sk-2.0#CatalogShape> a sh:NodeShape ;
+  sh:targetClass dcat:Catalog ;
+  sh:property [
+    sh:path dc:title ;
+    sh:name "Názov katalógu"@sk, "Catalogue title"@en ;
+    sh:group "core" ;
+    sh:order 1 ;
+    sh:minCount 1 ;
+    sh:nodeKind sh:Literal ;
+    sh:datatype rdf:langString
+  ] ;
+  sh:property [
+    sh:path dc:description ;
+    sh:name "Popis katalógu"@sk, "Catalogue description"@en ;
+    sh:group "core" ;
+    sh:order 2 ;
+    sh:minCount 1 ;
+    sh:nodeKind sh:Literal ;
+    sh:datatype rdf:langString
+  ] ;
+  sh:property [
+    sh:path dc:publisher ;
+    sh:name "Poskytovateľ"@sk, "Publisher"@en ;
+    sh:group "provenance" ;
+    sh:order 3 ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] ;
+  sh:property [
+    sh:path dcat:dataset ;
+    sh:name "Dataset"@sk, "Dataset"@en ;
+    sh:group "datasets" ;
+    sh:order 4 ;
+    sh:minCount 1 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] .
+
+<https://datova-kancelaria.github.io/dcat-ap-sk-2.0#DatasetShape> a sh:NodeShape ;
+  sh:targetClass dcat:Dataset ;
+  sh:property [
+    sh:path dc:title ;
+    sh:name "Názov"@sk, "Title"@en ;
+    sh:description "Táto vlastnosť obsahuje názov datasetu."@sk ;
+    sh:group "core" ;
+    sh:order 1 ;
+    sh:minCount 1 ;
+    sh:nodeKind sh:Literal ;
+    sh:datatype rdf:langString
+  ] ;
+  sh:property [
+    sh:path dc:description ;
+    sh:name "Popis"@sk, "Description"@en ;
+    sh:description "Táto vlastnosť obsahuje voľný text s popisom datasetu."@sk ;
+    sh:group "core" ;
+    sh:order 2 ;
+    sh:minCount 1 ;
+    sh:nodeKind sh:Literal ;
+    sh:datatype rdf:langString
+  ] ;
+  sh:property [
+    sh:path dc:publisher ;
+    sh:name "Poskytovateľ"@sk, "Publisher"@en ;
+    sh:group "provenance" ;
+    sh:order 3 ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] ;
+  sh:property [
+    sh:path dcat:theme ;
+    sh:name "Téma"@sk, "Theme"@en ;
+    sh:group "classification" ;
+    sh:order 4 ;
+    sh:minCount 1 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] ;
+  sh:property [
+    sh:path dc:accrualPeriodicity ;
+    sh:name "Periodicita aktualizácie"@sk, "Update frequency"@en ;
+    sh:group "temporal" ;
+    sh:order 5 ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] ;
+  sh:property [
+    sh:path dcat:keyword ;
+    sh:name "Kľúčové slovo"@sk, "Keyword"@en ;
+    sh:group "classification" ;
+    sh:order 6 ;
+    sh:minCount 1 ;
+    sh:nodeKind sh:Literal
+  ] ;
+  sh:property [
+    sh:path dcat:distribution ;
+    sh:name "Distribúcia"@sk, "Distribution"@en ;
+    sh:group "distributions" ;
+    sh:order 7 ;
+    sh:minCount 1 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] .
+
+<https://datova-kancelaria.github.io/dcat-ap-sk-2.0#DistributionShape> a sh:NodeShape ;
+  sh:targetClass dcat:Distribution ;
+  sh:property [
+    sh:path dcat:accessURL ;
+    sh:name "Prístupové URL"@sk, "Access URL"@en ;
+    sh:group "distributions" ;
+    sh:order 1 ;
+    sh:minCount 1 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] ;
+  sh:property [
+    sh:path leg:termsOfUse ;
+    sh:name "Špecifikácia podmienok použitia"@sk, "Terms of use"@en ;
+    sh:group "rights" ;
+    sh:order 2 ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:nodeKind sh:BlankNodeOrIRI ;
+    sh:class leg:TermsOfUse
+  ] .
+
+<https://datova-kancelaria.github.io/dcat-ap-sk-2.0#TermsOfUseShape> a sh:NodeShape ;
+  sh:targetClass leg:TermsOfUse ;
+  sh:property [
+    sh:path leg:authorsWorkType ;
+    sh:name "Autorské dielo"@sk, "Authors work type"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] ;
+  sh:property [
+    sh:path leg:originalDatabaseType ;
+    sh:name "Databáza ako autorské dielo"@sk, "Original database type"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] ;
+  sh:property [
+    sh:path leg:databaseProtectedBySpecialRightsType ;
+    sh:name "Databáza chránená zvláštnymi právami"@sk, "Sui generis database rights"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] ;
+  sh:property [
+    sh:path leg:personalDataContainmentType ;
+    sh:name "Osobné údaje"@sk, "Personal data containment"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] .

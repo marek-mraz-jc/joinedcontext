@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} — {{ catalogue_title }}</title>
+  <style nonce="{{ csp_nonce }}">
+    :root {
+      --jc-primary: {{ theme.primary }};
+      --jc-secondary: {{ theme.secondary }};
+      --jc-accent: {{ theme.accent }};
+      --jc-bg: {{ theme.background }};
+      --jc-text: {{ theme.text }};
+    }
+    body { font-family: system-ui, sans-serif; background: var(--jc-bg); color: var(--jc-text); margin: 0; }
+    header, main, footer { max-width: 1200px; margin: 0 auto; padding: 1rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #ddd; }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">{{ labels.skip_to_content }}</a>
+  <header>
+    <nav aria-label="Main">
+      <a href="/">{{ catalogue_title }}</a> |
+      <a href="/dataset">{{ labels.datasets }}</a> |
+      <a href="/organization">{{ labels.publishers }}</a> |
+      <a href="/catalog.ttl">DCAT-AP (Turtle)</a> |
+      <a href="/catalog.jsonld">DCAT-AP (JSON-LD)</a>
+    </nav>
+  </header>
+  <main id="main-content">
+    <h1>{{ catalogue_title }}</h1>
+    <p>{{ catalogue_description }}</p>
+    <form action="/dataset" method="get" role="search">
+      <label for="q">{{ labels.search_label }}</label>
+      <input id="q" name="q" type="search" value="{{ query }}">
+      <button type="submit">{{ labels.search_button }}</button>
+    </form>
+
+    <section aria-labelledby="datasets-heading">
+      <h2 id="datasets-heading">{{ labels.datasets }} ({{ total_datasets }})</h2>
+      <div class="sdk-datagrid" data-grid-config="{{ dataset_grid_config }}">
+        {% if datasets.is_empty() %}
+        <div class="empty-state" role="status">
+          <p>{{ labels.empty_datasets }}</p>
+        </div>
+        {% else %}
+        <table>
+          <thead>
+            <tr>
+              <th>{{ labels.col_title }}</th>
+              <th>{{ labels.col_publisher }}</th>
+              <th>{{ labels.col_formats }}</th>
+              <th>{{ labels.col_modified }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for ds in datasets %}
+            <tr>
+              <td><a href="/dataset/{{ ds.name }}">{{ ds.title }}</a></td>
+              <td>{{ ds.publisher }}</td>
+              <td>{{ ds.formats }}</td>
+              <td>{{ ds.modified }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+      </div>
+    </section>
+
+    <section aria-labelledby="publishers-heading">
+      <h2 id="publishers-heading">{{ labels.publishers }}</h2>
+      <div class="sdk-datagrid" data-grid-config="{{ publisher_grid_config }}">
+        {% if publishers.is_empty() %}
+        <p>{{ labels.empty_publishers }}</p>
+        {% else %}
+        <table>
+          <thead>
+            <tr>
+              <th>{{ labels.col_title }}</th>
+              <th>IRI</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for pub_item in publishers %}
+            <tr>
+              <td><a href="/publisher/{{ pub_item.name }}">{{ pub_item.title }}</a></td>
+              <td><code>{{ pub_item.uri }}</code></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+      </div>
+    </section>
+  </main>
+  <footer>
+    <p>{{ theme.organisation }} — dataroom</p>
+  </footer>
+</body>
+</html>

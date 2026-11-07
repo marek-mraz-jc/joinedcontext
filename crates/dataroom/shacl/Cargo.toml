@@ -1,0 +1,15 @@
+[package]
+name = "dataroom-shacl"
+version = "0.1.0"
+edition = "2021"
+license = "EUPL-1.2"
+description = "SHACL Core validator, built-in and uploaded versioned DCAT-AP profile registry, dry-run reports and form layout generator"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+dataroom-core = { path = "../core" }
+dataroom-rdf = { path = "../rdf" }
+regex = "1.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.8", features = ["v4", "v7", "serde"] }

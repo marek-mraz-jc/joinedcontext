@@ -1,0 +1,12 @@
+crates/dataroom/core
+crates/dataroom/store-memory
+crates/dataroom/store-pg
+crates/dataroom/search
+crates/dataroom/rdf
+crates/dataroom/shacl
+crates/dataroom/harvest
+crates/dataroom/plugin
+crates/dataroom/api
+crates/dataroom/mcp
+crates/dataroom/web
+crates/dataroom/server

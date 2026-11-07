@@ -1,0 +1,116 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
+@prefix sh: <http://www.w3.org/ns/shacl#>.
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#> rdfs:member <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape>, <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:DatasetShape>, <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#foaf:AgentShape>, <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#foaf:DocumentShape>, <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#rdfs:ResourceShape>, <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#vcard:OrganizationShape>, <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:DatasetSeriesShape>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Katalog>;
+    sh:closed false;
+    sh:targetClass <http://www.w3.org/ns/dcat#Catalog>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape/553012fe> a sh:PropertyShape;
+    sh:name "title"@en, "název"@cs;
+    sh:nodeKind sh:Literal;
+    sh:path <http://purl.org/dc/terms/title>;
+    sh:maxCount 1;
+    sh:datatype rdf:langString.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape/553012fe>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape/cb1a4e2> a sh:PropertyShape;
+    sh:name "description"@en, "popis"@cs;
+    sh:nodeKind sh:Literal;
+    sh:path <http://purl.org/dc/terms/description>;
+    sh:maxCount 1;
+    sh:datatype rdf:langString.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape/cb1a4e2>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape/7c138dbd> a sh:PropertyShape;
+    sh:name "publisher"@en, "poskytovatel"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://purl.org/dc/terms/publisher>;
+    sh:maxCount 1.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape/7c138dbd>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape/25d390cf> a sh:PropertyShape;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#contactPoint>;
+    sh:maxCount 1.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape/25d390cf>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape/-3a575271> a sh:PropertyShape;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#dataset>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape/-3a575271>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape/-71e661ea> a sh:PropertyShape;
+    sh:name "homepage"@en, "domovská stránka"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://xmlns.com/foaf/0.1/homepage>;
+    sh:maxCount 1.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape/-71e661ea>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape/-5094c90d> a sh:PropertyShape;
+    sh:description "Pro DCAT-AP Dokumenty je to URL souboru katalogu a zároveň IRI katalogu uvnitř souboru.\nPro SPARQL endpoint je to URL SPARQL endpointu."@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#endpointURL>;
+    sh:maxCount 1.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:CatalogShape/-5094c90d>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:DatasetShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#DatováSada>;
+    sh:closed false;
+    sh:targetClass <http://www.w3.org/ns/dcat#Dataset>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#foaf:AgentShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Poskytovatel>;
+    sh:closed false;
+    sh:targetClass <http://xmlns.com/foaf/0.1/Agent>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#foaf:DocumentShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Dokument>;
+    sh:closed false;
+    sh:targetClass <http://xmlns.com/foaf/0.1/Document>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#rdfs:ResourceShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#E-mailAddress>;
+    sh:closed false;
+    sh:targetClass rdfs:Resource.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#vcard:OrganizationShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Organizace>;
+    sh:closed false;
+    sh:targetClass <http://www.w3.org/2006/vcard/ns#Organization>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#vcard:OrganizationShape/-2d700674> a sh:PropertyShape;
+    sh:name "formatted name"@en, "jméno"@cs;
+    sh:nodeKind sh:Literal;
+    sh:path <http://www.w3.org/2006/vcard/ns#fn>;
+    sh:maxCount 1;
+    sh:datatype rdf:langString.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#vcard:OrganizationShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#vcard:OrganizationShape/-2d700674>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#vcard:OrganizationShape/-1eba4bc0> a sh:PropertyShape;
+    sh:name "has email"@en, "email"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/2006/vcard/ns#hasEmail>;
+    sh:maxCount 1.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#vcard:OrganizationShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#vcard:OrganizationShape/-1eba4bc0>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#dcat:DatasetSeriesShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#SérieDatovýchSad>;
+    sh:closed false;
+    sh:targetClass <http://www.w3.org/ns/dcat#DatasetSeries>.
+
+<https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#rdfs:ResourceShape> rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Zdroj>.
+

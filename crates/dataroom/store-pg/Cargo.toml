@@ -1,0 +1,15 @@
+[package]
+name = "dataroom-store-pg"
+version = "0.1.0"
+edition = "2021"
+license = "EUPL-1.2"
+description = "PostgreSQL Store implementation for dataroom with forced RLS and boot checks"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+dataroom-core = { path = "../core" }
+odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table", features = ["postgres"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = ">=0.8, <0.10", default-features = false, features = ["runtime-tokio", "postgres", "json", "chrono", "uuid", "macros", "migrate"] }
+uuid = { version = "1.8", features = ["v4", "v7", "serde"] }

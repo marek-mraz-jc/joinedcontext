@@ -1,0 +1,21 @@
+[package]
+name = "dataroom-plugin"
+version = "0.1.0"
+edition = "2021"
+license = "EUPL-1.2"
+description = "Plugin traits, built-in view plugins, HTML sanitizer, and WASM host limits for dataroom"
+
+[features]
+default = ["dcat", "view-table", "view-map", "view-text", "view-image", "view-chart", "pages"]
+dcat = []
+view-table = []
+view-map = []
+view-text = []
+view-image = []
+view-chart = []
+pages = []
+
+[dependencies]
+dataroom-core = { path = "../core" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

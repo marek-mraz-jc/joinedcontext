@@ -1,0 +1,22 @@
+[package]
+name = "dataroom-harvest"
+version = "0.1.0"
+edition = "2021"
+license = "EUPL-1.2"
+description = "Catalogue harvesters (DCAT-AP, NKOD SPARQL, CKAN Action API, ArcGIS Hub) with SSRF guard and withdrawal"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+dataroom-core = { path = "../core" }
+dataroom-rdf = { path = "../rdf" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+unicode-normalization = "0.1"
+url = "2.5"
+uuid = { version = "1.8", features = ["v4", "v5", "v7", "serde"] }
+
+[dev-dependencies]
+dataroom-store-memory = { path = "../store-memory" }
+tokio = { version = "1", features = ["macros", "rt"] }

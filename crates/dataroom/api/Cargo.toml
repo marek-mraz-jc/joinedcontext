@@ -1,0 +1,31 @@
+[package]
+name = "dataroom-api"
+version = "0.1.0"
+edition = "2021"
+license = "EUPL-1.2"
+description = "Axum HTTP router for dataroom: REST, OData v4, OpenAPI 3.1, CKAN Action API v3, DCAT-AP feeds, Atom, MCP, and HTML UI"
+
+[dependencies]
+axum = { version = "0.8", features = ["json", "query", "original-uri"] }
+chrono = { version = "0.4", features = ["serde"] }
+dataroom-core = { path = "../core" }
+dataroom-harvest = { path = "../harvest" }
+dataroom-mcp = { path = "../mcp" }
+dataroom-plugin = { path = "../plugin" }
+dataroom-rdf = { path = "../rdf" }
+dataroom-search = { path = "../search" }
+dataroom-shacl = { path = "../shacl" }
+dataroom-web = { path = "../web" }
+odata-csdl = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-csdl" }
+odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table" }
+odata-url = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-url" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tower = { version = "0.5", features = ["util"] }
+url = "2.5"
+uuid = { version = "1.8", features = ["v4", "v5", "v7", "serde"] }
+
+[dev-dependencies]
+dataroom-store-memory = { path = "../store-memory" }
+http-body-util = "0.1"
+tokio = { version = "1", features = ["macros", "rt"] }

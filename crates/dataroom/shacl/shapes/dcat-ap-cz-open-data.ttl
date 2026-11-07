@@ -1,0 +1,607 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
+@prefix sh: <http://www.w3.org/ns/shacl#>.
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#> rdfs:member <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#vcard:KindShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:PeriodOfTimeShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:MediaTypeOrExtentShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:MediaTypeShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:LocationShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:FrequencyShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#skos:ConceptShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#eli:LegalResourceShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#foaf:AgentShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#rdfs:ResourceShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:StandardShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:LicenseDocumentShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#foaf:DocumentShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#vcard:IndividualShape>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#vcard:OrganizationShape>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DatováSada>;
+    sh:closed false;
+    sh:targetClass <http://www.w3.org/ns/dcat#Dataset>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/62a47917> a sh:PropertyShape;
+    sh:name "title"@en, "název"@cs;
+    sh:nodeKind sh:Literal;
+    sh:path <http://purl.org/dc/terms/title>;
+    sh:maxCount 1;
+    sh:datatype rdf:langString.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/62a47917>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/193d543b> a sh:PropertyShape;
+    sh:name "description"@en, "popis"@cs;
+    sh:nodeKind sh:Literal;
+    sh:path <http://purl.org/dc/terms/description>;
+    sh:maxCount 1;
+    sh:datatype rdf:langString.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/193d543b>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/-49f20d7> a sh:PropertyShape;
+    sh:nodeKind sh:Literal;
+    sh:path <http://www.w3.org/ns/dcat#keyword>;
+    sh:datatype rdf:langString.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/-49f20d7>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/-8388296> a sh:PropertyShape;
+    sh:name "prostorové rozlišení v metrech"@cs, "resolución espacial (metros)"@es, "risoluzione spaziale (metri)"@it, "spatial resolution (meters)"@en-us, "spatial resolution (metres)"@en-gb, "geografisk opløsning (meter)"@da, "spatial resolution"@en;
+    sh:nodeKind sh:Literal;
+    sh:path <http://www.w3.org/ns/dcat#spatialResolutionInMeters>;
+    sh:maxCount 1;
+    sh:datatype xsd:decimal.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/-8388296>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/-760a80cc> a sh:PropertyShape;
+    sh:nodeKind sh:Literal;
+    sh:path <http://www.w3.org/ns/dcat#temporalResolution>;
+    sh:maxCount 1;
+    sh:datatype xsd:duration.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/-760a80cc>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/-302761a5> a sh:PropertyShape;
+    sh:name "in series"@en, "en serie"@es, "in serie"@it, "je součástí"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#inSeries>;
+    sh:maxCount 1;
+    sh:class <http://www.w3.org/ns/dcat#DatasetSeries>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/-302761a5>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/27727816> a sh:PropertyShape;
+    sh:name "publisher"@en, "poskytovatel"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://purl.org/dc/terms/publisher>;
+    sh:maxCount 1;
+    sh:class <http://xmlns.com/foaf/0.1/Agent>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/27727816>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/59fdf78d> a sh:PropertyShape;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#theme>;
+    sh:class <http://www.w3.org/2004/02/skos/core#Concept>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/59fdf78d>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/1a485c5c> a sh:PropertyShape;
+    sh:name "frequency"@en, "periodicita aktualizace"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://purl.org/dc/terms/accrualPeriodicity>;
+    sh:maxCount 1;
+    sh:class <http://purl.org/dc/terms/Frequency>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/1a485c5c>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/4cfe4be9> a sh:PropertyShape;
+    sh:name "geographical coverage"@en, "související geografické území - prvek z RÚIAN"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://purl.org/dc/terms/spatial>;
+    sh:class <http://purl.org/dc/terms/Location>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/4cfe4be9>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/4cfe4be9> sh:name "související geografické území"@cs.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/212ea083> a sh:PropertyShape;
+    sh:name "temporal coverage"@en, "časové pokrytí"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://purl.org/dc/terms/temporal>;
+    sh:maxCount 1;
+    sh:class <http://purl.org/dc/terms/PeriodOfTime>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/212ea083>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/1cce4f7> a sh:PropertyShape;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#contactPoint>;
+    sh:maxCount 1;
+    sh:class <http://www.w3.org/2006/vcard/ns#Kind>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/1cce4f7>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/37fcd85c> a sh:PropertyShape;
+    sh:name "documentation"@en, "dokumentace"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://xmlns.com/foaf/0.1/page>;
+    sh:maxCount 1;
+    sh:class <http://xmlns.com/foaf/0.1/Document>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/37fcd85c>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/-40b87aff> a sh:PropertyShape;
+    sh:name "conforms to"@en, "specifikace"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://purl.org/dc/terms/conformsTo>;
+    sh:class <http://purl.org/dc/terms/Standard>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/-40b87aff>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/59fdf78d> sh:name "tema"@es, "tema"@it, "theme"@en, "thème"@fr, "klasifikace dle EuroVoc"@cs, "Θέμα"@el, "التصنيف"@ar, "テーマ/カテゴリー"@ja, "emne"@da.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/9bbaf04> a sh:PropertyShape;
+    sh:name "applicable legislation"@en, "příslušný právní předpis"@cs;
+    sh:description "Pro označení otevřených dat je povinné uvést https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://data.europa.eu/r5r/applicableLegislation>;
+    sh:class <http://data.europa.eu/eli/ontology#LegalResource>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/9bbaf04>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/6924b6b0> a sh:PropertyShape;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#distribution>;
+    sh:class <http://www.w3.org/ns/dcat#Distribution>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/6924b6b0>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/-6bad8441> a sh:PropertyShape;
+    sh:description "It is intended to point to a landing page at the original data provider, not to a page on a site of a third party, such as an aggregator."@en, "Lze použít pro indikaci stránky datové sady v lokálním katalogu dat."@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#landingPage>;
+    sh:maxCount 1;
+    sh:class <http://xmlns.com/foaf/0.1/Document>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetShape/-6bad8441>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DatováSlužba>;
+    sh:closed false;
+    sh:targetClass <http://www.w3.org/ns/dcat#DataService>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape/3c0333e1> a sh:PropertyShape;
+    sh:name "title"@en, "název"@cs;
+    sh:nodeKind sh:Literal;
+    sh:path <http://purl.org/dc/terms/title>;
+    sh:maxCount 1;
+    sh:datatype rdf:langString.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape/3c0333e1>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape/2c368ace> a sh:PropertyShape;
+    sh:name "applicable legislation"@en, "příslušný právní předpis"@cs;
+    sh:description "Pro označení otevřených dat je povinné uvést https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://data.europa.eu/r5r/applicableLegislation>;
+    sh:class <http://data.europa.eu/eli/ontology#LegalResource>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape/2c368ace>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape/-6ae82c6a> a sh:PropertyShape;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#endpointURL>;
+    sh:maxCount 1.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape/-6ae82c6a>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape/3ad7d29> a sh:PropertyShape;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#endpointDescription>;
+    sh:maxCount 1.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape/3ad7d29>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape/-36b83089> a sh:PropertyShape;
+    sh:name "conforms to"@en, "specifikace"@cs;
+    sh:description "Takovou specifikací je například SPARQL. Seznam možných hodnot lze nalézt například v seznamu udržovaném Open Source Geospatial Foundation."@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://purl.org/dc/terms/conformsTo>;
+    sh:class <http://purl.org/dc/terms/Standard>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape/-36b83089>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape/-477f322e> a sh:PropertyShape;
+    sh:name "documentation"@en, "dokumentace"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://xmlns.com/foaf/0.1/page>;
+    sh:maxCount 1;
+    sh:class <http://xmlns.com/foaf/0.1/Document>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DataServiceShape/-477f322e>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#SérieDatovýchSad>;
+    sh:closed false;
+    sh:targetClass <http://www.w3.org/ns/dcat#DatasetSeries>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/46aa96eb> a sh:PropertyShape;
+    sh:name "title"@en, "název"@cs;
+    sh:nodeKind sh:Literal;
+    sh:path <http://purl.org/dc/terms/title>;
+    sh:maxCount 1;
+    sh:datatype rdf:langString.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/46aa96eb>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/4422c30f> a sh:PropertyShape;
+    sh:name "description"@en, "popis"@cs;
+    sh:nodeKind sh:Literal;
+    sh:path <http://purl.org/dc/terms/description>;
+    sh:maxCount 1;
+    sh:datatype rdf:langString.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/4422c30f>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/5f2a00d5> a sh:PropertyShape;
+    sh:nodeKind sh:Literal;
+    sh:path <http://www.w3.org/ns/dcat#keyword>;
+    sh:datatype rdf:langString.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/5f2a00d5>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/-541765d1> a sh:PropertyShape;
+    sh:name "temporal coverage"@en, "časové pokrytí"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://purl.org/dc/terms/temporal>;
+    sh:class <http://purl.org/dc/terms/PeriodOfTime>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/-541765d1>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/465a28a3> a sh:PropertyShape;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#contactPoint>;
+    sh:maxCount 1;
+    sh:class <http://www.w3.org/2006/vcard/ns#Kind>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/465a28a3>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/-6174c4c7> a sh:PropertyShape;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#theme>;
+    sh:class <http://www.w3.org/2004/02/skos/core#Concept>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/-6174c4c7>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/-6174c4c7> sh:name "tema"@es, "tema"@it, "theme"@en, "thème"@fr, "klasifikace dle EuroVoc"@cs, "Θέμα"@el, "التصنيف"@ar, "テーマ/カテゴリー"@ja, "emne"@da.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/-72a196d0> a sh:PropertyShape;
+    sh:name "frequency"@en, "periodicita aktualizace"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://purl.org/dc/terms/accrualPeriodicity>;
+    sh:maxCount 1;
+    sh:class <http://purl.org/dc/terms/Frequency>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/-72a196d0>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/-7001cad1> a sh:PropertyShape;
+    sh:name "in series"@en, "en serie"@es, "in serie"@it, "je součástí"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#inSeries>;
+    sh:class <http://www.w3.org/ns/dcat#DatasetSeries>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/-7001cad1>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/203622ea> a sh:PropertyShape;
+    sh:name "publisher"@en, "poskytovatel"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://purl.org/dc/terms/publisher>;
+    sh:maxCount 1;
+    sh:class <http://xmlns.com/foaf/0.1/Agent>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/203622ea>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/70ffaed8> a sh:PropertyShape;
+    sh:name "applicable legislation"@en, "příslušný právní předpis"@cs;
+    sh:description "Pro označení otevřených dat je povinné uvést https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://data.europa.eu/r5r/applicableLegislation>;
+    sh:class <http://data.europa.eu/eli/ontology#LegalResource>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/70ffaed8>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/45c1f6bd> a sh:PropertyShape;
+    sh:name "geographical coverage"@en, "související geografické území"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://purl.org/dc/terms/spatial>;
+    sh:class <http://purl.org/dc/terms/Location>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/45c1f6bd>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/45c1f6bd> sh:name "související geografické území - prvek z RÚIAN"@cs.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/-12917cf8> a sh:PropertyShape;
+    sh:name "documentation"@en, "dokumentace"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://xmlns.com/foaf/0.1/page>;
+    sh:maxCount 1;
+    sh:class <http://xmlns.com/foaf/0.1/Document>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/-12917cf8>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/60d7b793> a sh:PropertyShape;
+    sh:description "Lze použít pro indikaci stránky série datových sad v lokálním katalogu dat."@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#landingPage>;
+    sh:maxCount 1;
+    sh:class <http://xmlns.com/foaf/0.1/Document>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DatasetSeriesShape/60d7b793>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#Distribuce>;
+    sh:closed false;
+    sh:targetClass <http://www.w3.org/ns/dcat#Distribution>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/-5c45056d> a sh:PropertyShape;
+    sh:name "title"@en, "název"@cs;
+    sh:nodeKind sh:Literal;
+    sh:path <http://purl.org/dc/terms/title>;
+    sh:maxCount 1;
+    sh:datatype rdf:langString.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/-5c45056d>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/-65820a29> a sh:PropertyShape;
+    sh:name "URL d'accès"@fr, "URL de acceso"@es, "URL πρόσβασης"@el, "access URL"@en, "indirizzo di accesso"@it, "přístupové URL"@cs, "رابط وصول"@ar, "アクセスURL"@ja, "adgangsadresse"@da;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#accessURL>;
+    sh:maxCount 1.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/-65820a29>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/-18702980> a sh:PropertyShape;
+    sh:name "applicable legislation"@en, "příslušný právní předpis"@cs;
+    sh:description "Pro označení otevřených dat je povinné uvést https://www.e-sbirka.cz/eli/cz/sb/1999/106/2025-08-19"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://data.europa.eu/r5r/applicableLegislation>;
+    sh:class <http://data.europa.eu/eli/ontology#LegalResource>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/-18702980>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/7eb125f4> a sh:PropertyShape;
+    sh:name "specifikace podmínek užití"@cs, "Terms of use specification"@en;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <https://data.gov.cz/slovník/podmínky-užití/specifikace>;
+    sh:maxCount 1;
+    sh:class <https://data.gov.cz/slovník/podmínky-užití/Specifikace>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/7eb125f4>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#vcard:KindShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#KontaktníBod>;
+    sh:closed false;
+    sh:targetClass <http://www.w3.org/2006/vcard/ns#Kind>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#vcard:KindShape/45a1226b> a sh:PropertyShape;
+    sh:name "formatted name"@en, "jméno"@cs;
+    sh:nodeKind sh:Literal;
+    sh:path <http://www.w3.org/2006/vcard/ns#fn>;
+    sh:maxCount 1;
+    sh:datatype rdf:langString.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#vcard:KindShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#vcard:KindShape/45a1226b>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#vcard:KindShape/607fa4c1> a sh:PropertyShape;
+    sh:name "has email"@en, "email"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/2006/vcard/ns#hasEmail>;
+    sh:maxCount 1.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#vcard:KindShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#vcard:KindShape/607fa4c1>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:PeriodOfTimeShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#ČasovýInterval>;
+    sh:closed false;
+    sh:targetClass <http://purl.org/dc/terms/PeriodOfTime>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:PeriodOfTimeShape/-6107b4ab> a sh:PropertyShape;
+    sh:nodeKind sh:Literal;
+    sh:path <http://www.w3.org/ns/dcat#startDate>;
+    sh:maxCount 1;
+    sh:datatype xsd:date.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:PeriodOfTimeShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:PeriodOfTimeShape/-6107b4ab>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:PeriodOfTimeShape/-4320b4f2> a sh:PropertyShape;
+    sh:nodeKind sh:Literal;
+    sh:path <http://www.w3.org/ns/dcat#endDate>;
+    sh:maxCount 1;
+    sh:datatype xsd:date.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:PeriodOfTimeShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:PeriodOfTimeShape/-4320b4f2>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape> rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DistribuceDatováSlužba>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/433f172a> a sh:PropertyShape;
+    sh:name "access service"@en, "servicio de acceso de datos"@es, "servizio di accesso ai dati"@it, "přístupová služba"@cs, "dataadgangstjeneste"@da;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#accessService>;
+    sh:maxCount 1;
+    sh:class <http://www.w3.org/ns/dcat#DataService>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/433f172a>;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DistribuceSoubor>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/53c2ca8f> a sh:PropertyShape;
+    sh:name "URL de descarga"@es, "URL de téléchargement"@fr, "URL di scarico"@it, "odkaz na stažení souboru"@cs, "URL μεταφόρτωσης"@el, "download URL"@en, "رابط تحميل"@ar, "ダウンロードURL"@ja, "downloadURL"@da;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#downloadURL>;
+    sh:maxCount 1.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/53c2ca8f>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/9e183c8> a sh:PropertyShape;
+    sh:name "format"@en, "formát souboru ke stažení"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://purl.org/dc/terms/format>;
+    sh:maxCount 1;
+    sh:class <http://purl.org/dc/terms/MediaTypeOrExtent>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/9e183c8>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/622f9bff> a sh:PropertyShape;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#mediaType>;
+    sh:maxCount 1;
+    sh:class <http://purl.org/dc/terms/MediaType>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/622f9bff>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/73d01280> a sh:PropertyShape;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#packageFormat>;
+    sh:maxCount 1;
+    sh:class <http://purl.org/dc/terms/MediaType>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/73d01280>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/3b49571a> a sh:PropertyShape;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://www.w3.org/ns/dcat#compressFormat>;
+    sh:maxCount 1;
+    sh:class <http://purl.org/dc/terms/MediaType>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/3b49571a>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/26a6f3c3> a sh:PropertyShape;
+    sh:name "linked schemas"@en, "strojově čitelné schéma souboru ke stažení"@cs;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <http://purl.org/dc/terms/conformsTo>;
+    sh:maxCount 1.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcat:DistributionShape/26a6f3c3>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:MediaTypeOrExtentShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#FormátSouboru>;
+    sh:closed false;
+    sh:targetClass <http://purl.org/dc/terms/MediaTypeOrExtent>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:MediaTypeShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#TypMédia>;
+    sh:closed false;
+    sh:targetClass <http://purl.org/dc/terms/MediaType>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:LocationShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#GeografickéÚzemí>;
+    sh:closed false;
+    sh:targetClass <http://purl.org/dc/terms/Location>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:FrequencyShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#Frekvence>;
+    sh:closed false;
+    sh:targetClass <http://purl.org/dc/terms/Frequency>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#skos:ConceptShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#Koncept>;
+    sh:closed false;
+    sh:targetClass <http://www.w3.org/2004/02/skos/core#Concept>;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#DatovéTéma>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#TémaEuroVoc>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#eli:LegalResourceShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#PrávníPředpis>;
+    sh:closed false;
+    sh:targetClass <http://data.europa.eu/eli/ontology#LegalResource>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#foaf:AgentShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#Poskytovatel>;
+    sh:closed false;
+    sh:targetClass <http://xmlns.com/foaf/0.1/Agent>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#rdfs:ResourceShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#Zdroj>;
+    sh:closed false;
+    sh:targetClass rdfs:Resource.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:LocationShape> rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#PrvekRÚIAN>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:StandardShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#Standard>;
+    sh:closed false;
+    sh:targetClass <http://purl.org/dc/terms/Standard>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#SpecifikacePodmínekUžití>;
+    sh:closed false;
+    sh:targetClass <https://data.gov.cz/slovník/podmínky-užití/Specifikace>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape/-301d0e8e> a sh:PropertyShape;
+    sh:name "jména autorů originální databáze"@cs, "Names of authors of database"@en;
+    sh:nodeKind sh:Literal;
+    sh:path <https://data.gov.cz/slovník/podmínky-užití/autor-databáze>;
+    sh:maxCount 1;
+    sh:datatype rdf:langString.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape/-301d0e8e>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape/1ae079d9> a sh:PropertyShape;
+    sh:name "jména autorů díla"@cs, "Names of authors"@en;
+    sh:nodeKind sh:Literal;
+    sh:path <https://data.gov.cz/slovník/podmínky-užití/autor>;
+    sh:maxCount 1;
+    sh:datatype rdf:langString.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape/1ae079d9>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape/-5827361d> a sh:PropertyShape;
+    sh:name "originální databáze"@cs, "Copyrighted database"@en;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <https://data.gov.cz/slovník/podmínky-užití/databáze-jako-autorské-dílo>;
+    sh:maxCount 1;
+    sh:class <http://purl.org/dc/terms/LicenseDocument>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape/-5827361d>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape/5322526a> a sh:PropertyShape;
+    sh:name "autorské dílo"@cs, "Copyrighted work"@en;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <https://data.gov.cz/slovník/podmínky-užití/autorské-dílo>;
+    sh:maxCount 1;
+    sh:class <http://purl.org/dc/terms/LicenseDocument>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape/5322526a>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape/-6aa2389d> a sh:PropertyShape;
+    sh:name "zvláštní právo pořizovatele databáze"@cs, "Sui generis database rights"@en;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <https://data.gov.cz/slovník/podmínky-užití/databáze-chráněná-zvláštními-právy>;
+    sh:maxCount 1;
+    sh:class <http://purl.org/dc/terms/LicenseDocument>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape/-6aa2389d>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape/b0bb0bc> a sh:PropertyShape;
+    sh:name "osobní údaje"@cs, "Personal data"@en;
+    sh:nodeKind sh:BlankNodeOrIRI;
+    sh:path <https://data.gov.cz/slovník/podmínky-užití/osobní-údaje>;
+    sh:maxCount 1;
+    sh:class <http://purl.org/dc/terms/LicenseDocument>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape> sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#podmínky-užití:SpecifikaceShape/b0bb0bc>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#dcterms:LicenseDocumentShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#Licence>;
+    sh:closed false;
+    sh:targetClass <http://purl.org/dc/terms/LicenseDocument>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#foaf:DocumentShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#Dokument>;
+    sh:closed false;
+    sh:targetClass <http://xmlns.com/foaf/0.1/Document>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#vcard:IndividualShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#Jednotlivec>;
+    sh:closed false;
+    sh:targetClass <http://www.w3.org/2006/vcard/ns#Individual>;
+    sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#vcard:KindShape/45a1226b>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#vcard:KindShape/607fa4c1>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#vcard:OrganizationShape> a sh:NodeShape;
+    rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#Organizace>;
+    sh:closed false;
+    sh:targetClass <http://www.w3.org/2006/vcard/ns#Organization>;
+    sh:property <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#vcard:KindShape/45a1226b>, <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#vcard:KindShape/607fa4c1>.
+
+<https://ofn.gov.cz/dcat-ap-cz-otevřená-data#rdfs:ResourceShape> rdfs:seeAlso <https://ofn.gov.cz/dcat-ap-cz-otevřená-data#E-mailAddress>.
+

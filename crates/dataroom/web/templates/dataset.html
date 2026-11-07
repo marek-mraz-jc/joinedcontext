@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ dataset_title }} — {{ catalogue_title }}</title>
+  <style nonce="{{ csp_nonce }}">
+    :root {
+      --jc-primary: {{ theme.primary }};
+      --jc-secondary: {{ theme.secondary }};
+      --jc-bg: {{ theme.background }};
+      --jc-text: {{ theme.text }};
+    }
+    body { font-family: system-ui, sans-serif; background: var(--jc-bg); color: var(--jc-text); margin: 0; }
+    header, main, footer { max-width: 1200px; margin: 0 auto; padding: 1rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #ddd; }
+    .shacl-panel { border: 1px solid #ccc; padding: 1rem; margin-top: 1.5rem; border-radius: 4px; }
+  </style>
+  <script type="application/ld+json" nonce="{{ csp_nonce }}">{{ schema_org_jsonld|safe }}</script>
+</head>
+<body>
+  <header>
+    <nav aria-label="Breadcrumb">
+      <a href="/">{{ catalogue_title }}</a> &rsaquo;
+      <a href="/publisher/{{ publisher_slug }}">{{ publisher_title }}</a> &rsaquo;
+      <span>{{ dataset_title }}</span>
+    </nav>
+  </header>
+  <main id="main-content">
+    <h1>{{ dataset_title }}</h1>
+    <p>{{ dataset_description }}</p>
+    <p>
+      <strong>{{ labels.col_publisher }}:</strong>
+      <a href="/publisher/{{ publisher_slug }}">{{ publisher_title }}</a>
+      {% if !licence_title.is_empty() %}
+      | <strong>{{ labels.licence }}:</strong> {{ licence_title }}
+      {% endif %}
+      | <strong>RDF:</strong>
+      <a href="/dataset/{{ dataset_name }}.ttl">Turtle</a>,
+      <a href="/dataset/{{ dataset_name }}.jsonld">JSON-LD</a>,
+      <a href="/dataset/{{ dataset_name }}.rdf">RDF/XML</a>
+    </p>
+
+    {% if !endpoint_url.is_empty() %}
+    <section aria-labelledby="preview-heading">
+      <h2 id="preview-heading">{{ labels.live_preview }}</h2>
+      <p><a href="{{ endpoint_url }}">{{ endpoint_url }}</a></p>
+    </section>
+    {% endif %}
+
+    <section aria-labelledby="distributions-heading">
+      <h2 id="distributions-heading">{{ labels.distributions }}</h2>
+      <div class="sdk-datagrid" data-grid-config="{{ distributions_grid_config }}">
+        {% if distributions.is_empty() %}
+        <p>{{ labels.empty_distributions }}</p>
+        {% else %}
+        <table>
+          <thead>
+            <tr>
+              <th>{{ labels.col_title }}</th>
+              <th>{{ labels.col_formats }}</th>
+              <th>URL</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for dist in distributions %}
+            <tr>
+              <td>{{ dist.title }}</td>
+              <td>{{ dist.format }}</td>
+              <td><a href="{{ dist.url }}">{{ dist.url }}</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+      </div>
+    </section>
+
+    {% if show_editor_panel %}
+    <section class="shacl-panel" aria-labelledby="shacl-heading">
+      <h2 id="shacl-heading">{{ labels.shacl_validation }}</h2>
+      <div class="sdk-datagrid" data-grid-config="{{ shacl_grid_config }}">
+        {% if shacl_reports.is_empty() %}
+        <p>OK</p>
+        {% else %}
+        <table>
+          <thead>
+            <tr>
+              <th>Profile</th>
+              <th>Version</th>
+              <th>Status</th>
+              <th>Violations</th>
+              <th>Warnings</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for rep in shacl_reports %}
+            <tr>
+              <td>{{ rep.profile_id }}</td>
+              <td>{{ rep.profile_version }}</td>
+              <td>{% if rep.conforms %}Conforms{% else %}Violation{% endif %}</td>
+              <td>{{ rep.violation_count }}</td>
+              <td>{{ rep.warning_count }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+      </div>
+    </section>
+    {% endif %}
+  </main>
+  <footer>
+    <p>{{ theme.organisation }} — dataroom</p>
+  </footer>
+</body>
+</html>

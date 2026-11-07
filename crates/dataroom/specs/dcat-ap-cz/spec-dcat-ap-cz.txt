@@ -1,0 +1,4275 @@
+
+DCAT-AP-CZ: Základní datový model pro katalogy dat
+        Cílem tohoto dokumentu je specifikovat základní datový model českého aplikačního profilu evropského standardu 
+DCAT-AP 3.0.1
+ pro katalogizaci dat.
+        Z DCAT-AP 3.0.1 je identifikována pro české prostředí relevantní podmnožina pojmů a jejich vazeb.
+        Nad rámec DCAT-AP 3.0.1 je specifikován zejména detailnější způsob reprezentace podmínek užití distribuce datové sady, ale také způsob reprezentace územního pokrytí datové sady pomocí základního registru RÚIAN, identifikace OVM dle základního registru RPP a možnost anotovat téma datové sady pomocí tezauru EuroVoc.
+        Tento základní model je pak dále rozšiřován a uzpůsobován pro použití v konkrétnějších případech.
+        V současnosti jsou známy následující aplikační profily DCAT-AP-CZ:
+Rozhraní katalogů dat
+ a související
+Datové sady otevřených dat
+Datové sady s vysokou hodnotou (HVD)
+Datová rozhraní
+ pro plnění povinností dle 
+§ 6 zákona č. 60/2026 Sb., o správě dat a o řízeném přístupu k datům
+, a dále pak dle 
+§ 24 odst. 2 vyhlášky č. 360/2023 Sb., o dlouhodobém řízení informačních systémů veřejné správy
+Dokumentace obsahu Národního katalogu dat (NKD)
+Přehled
+Datová sada
+Série datových sad
+Hlavní profily tříd
+            V této sekci jsou popsány položky metadatového záznamu.
+            Položky se řídí standardem 
+DCAT Application Profile for data portals in Europe Version 3.0.1 (DCAT-AP 3.0.1)
+.
+            Jedná se o standard založený na propojených datech, předpokládá se tedy znalost 
+Otevřené formální normy Propojená data
+.
+            DCAT-AP 3.0.1 rozlišuje čtyři základní typy entit.
+            Datovou sadu, její distribuci, datovou službu a datovou sérii.
+            Metadata datové sady ji popisují bez ohledu na konkrétní reprezentaci jejích dat.
+            Ta je popsána jako distribuce datové sady, která reprezentuje buď soubor ke stažení, nebo odkazuje na datovou službu, přes kterou jsou data k dispozici.
+            Distribucí může mít datová sada více, lišit se ale mohou pouze formátem souboru ke stažení (např. CSV či JSON) či způsobem zpřístupnění (soubor ke stažení či datová služba).
+            Obsahově by distribuce měly být ekvivalentní.
+            Datová série pak reprezentuje skupinu datových sad.
+            Jednotlivé datové sady v sérii se mohou lišit například geograficky, např. datové sady za jednotlivé obce, nebo časově, např. datové sady za jednotlivé roky.
+            Datovou sérii však mohou tvořit například i datové sady z jednoho informačního systému.
+            Datové série nemají vlastní distribuce.
+Datová sada
+IRI profilovaných tříd
+dcat:Dataset
+IRI
+dcat-ap-cz:DatováSada
+Název
+Datová sada
+Definice
+Kolekce dat poskytovaná či řízená jedním zdrojem, která je k dispozici pro přístup či stažení v jednom či více formátech.
+Hierarchie
+                                    profiluje
+                profil
+Datová sada
+ (
+dcat-ap:Dataset
+)
+Definice: 
+Kolekce dat poskytovaná či řízená jedním zdrojem, která je k dispozici pro přístup či stažení v jednom či více formátech.
+                                  profiluje
+                profil
+Datová sada
+ (
+dcat-dap:Dataset
+)
+                                  profiluje
+                třídu
+Datová sada
+ (
+dcat:Dataset
+)
+Definice: 
+Kolekce dat poskytovaná či řízená jedním zdrojem, která je k dispozici pro přístup či stažení v jednom či více formátech.
+                                  specializuje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-dap:CatalogedResource
+)
+                                  profiluje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-ap:CataloguedResource
+)
+                                  profiluje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-dap:CatalogedResource
+)
+                                  profiluje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+Vlastnosti
+Pro tento profil třídy jsou definovány následující vlastnosti: 
+časové pokrytí
+, 
+časové rozlišení
+, 
+distribuce
+, 
+dokumentace
+, 
+je součástí
+, 
+klasifikace dle EuroVoc
+, 
+klíčové slovo
+, 
+kontaktní bod
+, 
+název
+, 
+periodicita aktualizace
+, 
+popis
+, 
+poskytovatel
+, 
+příslušný právní předpis
+, 
+prostorové rozlišení v metrech
+, 
+související geografické území
+, 
+související geografické území - prvek z RÚIAN
+, 
+specifikace
+, 
+téma
+, 
+vstupní stránka
+.
+Zpětné asociace
+z domény 
+ → 
+z domény 
+ → 
+časové pokrytí
+IRI profilovaných vztahů
+dcterms:temporal
+IRI
+dcat-ap-cz:DatováSada.časovéPokrytí
+Název
+časové pokrytí
+Definice
+Časový úsek pokrytý datovou sadou
+Definiční obor
+Datová sada
+Obor hodnot
+Časový interval
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+temporal coverage (@en)
+ (
+dcat-ap:Dataset.temporalCoverage
+)
+                                      profiluje
+                    profil
+temporal coverage (@en)
+ (
+dcat-dap:Dataset.temporalCoverage
+)
+Definice: 
+The temporal period that the dataset covers.
+                                      profiluje
+                    vlastnost
+Temporal Coverage (@en)
+ (
+dcterms:temporal
+)
+Definice: 
+Temporal characteristics of the resource.
+                                      specializuje
+                    vlastnost
+Coverage (@en)
+ (
+dcterms:coverage
+)
+Definice: 
+The spatial or temporal topic of the resource, spatial applicability of the resource, or jurisdiction under which the resource is relevant.
+Popis použití v profilu
+The temporal coverage of a dataset may be encoded as an instance of dcterms:PeriodOfTime, or may be indicated using an IRI reference (link) to a resource describing a time period or interval. (@en)
+časové rozlišení
+IRI profilovaných vztahů
+dcat:temporalResolution
+IRI
+dcat-ap-cz:DatováSada.časovéRozlišení
+Název
+časové rozlišení
+Definice
+Časové rozlišení dat v datové sadě. Jedná se o nejmenší časový rozdíl v datové sadě.
+Definiční obor
+Datová sada
+Obor hodnot
+xsd:duration
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    profil
+časové rozlišení
+ (
+dcat-ap:Dataset.temporalResolution
+)
+                                      profiluje
+                    profil
+časové rozlišení
+ (
+dcat-dap:Dataset.temporalResolution
+)
+Definice: 
+minimální doba trvání rozlišitelná v datové sadě.
+                                      profiluje
+                    vlastnost
+časové rozlišení
+ (
+dcat:temporalResolution
+)
+Definice: 
+minimální doba trvání rozlišitelná v datové sadě.
+Popis použití v profilu
+If the dataset is a time-series this should correspond to the spacing of items in the series. For other kinds of dataset, this property will usually indicate the smallest time difference between items in the dataset. (@en)
+distribuce
+IRI profilovaných vztahů
+dcat:distribution
+IRI
+dcat-ap-cz:DatováSada.distribuce
+Název
+distribuce
+Definice
+Dostupná distribuce datové sady.
+Definiční obor
+Datová sada
+Obor hodnot
+Distribuce
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+distribuce
+ (
+dcat-ap:Dataset.datasetDistribution
+)
+Definice: 
+Dostupná distribuce datové sady.
+                                      profiluje
+                    profil
+distribuce
+ (
+dcat-dap:Dataset.distribution
+)
+                                      profiluje
+                    vlastnost
+distribuce
+ (
+dcat:distribution
+)
+Definice: 
+Dostupná distribuce datové sady.
+                                      specializuje
+                    vlastnost
+Relation (@en)
+ (
+dcterms:relation
+)
+Definice: 
+A related resource.
+dokumentace
+IRI profilovaných vztahů
+foaf:page
+IRI
+dcat-ap-cz:DatováSada.dokumentace
+Název
+dokumentace
+Definice
+Stránka či dokument o datové sadě
+Definiční obor
+Datová sada
+Obor hodnot
+Dokument
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+documentation (@en)
+ (
+dcat-ap:Dataset.documentation
+)
+Definice: 
+A page or document about this Dataset.
+                                      profiluje
+                    vlastnost
+page (@en)
+ (
+foaf:page
+)
+Definice: 
+A page or document about this thing.
+je součástí
+IRI profilovaných vztahů
+dcat:inSeries
+IRI
+dcat-ap-cz:DatováSada.jeSoučástí
+Název
+je součástí
+Definice
+Série datových sad, jíž je datová sada součástí.
+Definiční obor
+Datová sada
+Obor hodnot
+Série datových sad
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    profil
+in series (@en)
+ (
+dcat-ap:Dataset.inSeries
+)
+                                      profiluje
+                    profil
+in series (@en)
+ (
+dcat-dap:Dataset.inSeries
+)
+                                      profiluje
+                    vlastnost
+in series (@en)
+ (
+dcat:inSeries
+)
+Definice: 
+A dataset series of which the dataset is part.
+                                      specializuje
+                    vlastnost
+Is Part Of (@en)
+ (
+dcterms:isPartOf
+)
+Definice: 
+A related resource in which the described resource is physically or logically included.
+                                      specializuje
+                    vlastnost
+Relation (@en)
+ (
+dcterms:relation
+)
+Definice: 
+A related resource.
+klasifikace dle EuroVoc
+IRI profilovaných vztahů
+dcat:theme
+IRI
+dcat-ap-cz:DatováSada.klasifikaceDleEurovoc
+Název
+klasifikace dle EuroVoc
+Definice
+Kategorie či téma datové sady dle EuroVoc.
+Definiční obor
+Datová sada
+Obor hodnot
+Téma EuroVoc
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+téma
+ (
+dcat-ap:Dataset.theme
+)
+Definice: 
+Hlavní téma zdroje. Zdroj může mít více témat.
+                                      profiluje
+                    profil
+téma
+ (
+dcat-dap:CatalogedResource.theme-category
+)
+                                      profiluje
+                    vlastnost
+téma
+ (
+dcat:theme
+)
+Definice: 
+Hlavní téma zdroje. Zdroj může mít více témat.
+                                      specializuje
+                    vlastnost
+Subject (@en)
+ (
+dcterms:subject
+)
+Definice: 
+A topic of the resource.
+Popis použití v profilu
+A Dataset may be associated with multiple themes. (@en)
+klíčové slovo
+IRI profilovaných vztahů
+dcat:keyword
+IRI
+dcat-ap-cz:DatováSada.klíčovéSlovo
+Název
+klíčové slovo
+Definice
+Klíčové slovo nebo značka popisující zdroj.
+Definiční obor
+Datová sada
+Obor hodnot
+rdf:langString
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+klíčové slovo
+ (
+dcat-ap:Dataset.keyword
+)
+                                      profiluje
+                    profil
+klíčové slovo
+ (
+dcat-dap:CatalogedResource.keyword
+)
+                                      profiluje
+                    vlastnost
+klíčové slovo
+ (
+dcat:keyword
+)
+Definice: 
+Klíčové slovo nebo značka popisující zdroj.
+kontaktní bod
+IRI profilovaných vztahů
+dcat:contactPoint
+IRI
+dcat-ap-cz:DatováSada.kontaktníBod
+Název
+kontaktní bod
+Definice
+Kontaktní informace, které mohou být využity pro zasílání připomínek k datové sadě.
+Definiční obor
+Datová sada
+Obor hodnot
+Kontaktní bod
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+kontaktní bod
+ (
+dcat-ap:Dataset.contactPoint
+)
+Definice: 
+Relevantní kontaktní informace pro katalogizovaný zdroj. Doporučuje se použít slovník VCard.
+                                      profiluje
+                    profil
+kontaktní bod
+ (
+dcat-dap:CatalogedResource.contactPoint
+)
+                                      profiluje
+                    vlastnost
+kontaktní bod
+ (
+dcat:contactPoint
+)
+Definice: 
+Relevantní kontaktní informace pro katalogizovaný zdroj. Doporučuje se použít slovník VCard.
+název
+IRI profilovaných vztahů
+dcterms:title
+IRI
+dcat-ap-cz:DatováSada.název
+Název
+název
+Definice
+Název datové sady (@en)
+Definiční obor
+Datová sada
+Obor hodnot
+Text
+                          [1..1]
+Hierarchie
+                                        profiluje
+                    profil
+title (@en)
+ (
+dcat-ap:Dataset.title
+)
+Definice: 
+A name given to the Dataset.
+                                      profiluje
+                    profil
+title (@en)
+ (
+dcat-dap:CatalogedResource.title
+)
+                                      profiluje
+                    vlastnost
+Title (@en)
+ (
+dcterms:title
+)
+Definice: 
+A name given to the resource.
+Popis použití v profilu
+This property can be repeated for parallel language versions of the name. (@en)
+periodicita aktualizace
+IRI profilovaných vztahů
+dcterms:accrualPeriodicity
+IRI
+dcat-ap-cz:DatováSada.periodicitaAktualizace
+Název
+periodicita aktualizace
+Definice
+Frekvence, se kterou je datová sada aktualizována.
+Definiční obor
+Datová sada
+Obor hodnot
+Frekvence
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    profil
+frequency (@en)
+ (
+dcat-ap:Dataset.frequency
+)
+Definice: 
+The frequency at which the Dataset is updated.
+                                      profiluje
+                    profil
+frequency (@en)
+ (
+dcat-dap:Dataset.frequency
+)
+Definice: 
+The frequency at which a dataset is published.
+                                      profiluje
+                    vlastnost
+Accrual Periodicity (@en)
+ (
+dcterms:accrualPeriodicity
+)
+Definice: 
+The frequency with which items are added to a collection.
+Popis použití v profilu
+The value of dcterms:accrualPeriodicity gives the rate at which the dataset-as-a-whole is updated. This may be complemented by dcat:temporalResolution to give the time between collected data points in a time series. (@en)
+popis
+IRI profilovaných vztahů
+dcterms:description
+IRI
+dcat-ap-cz:DatováSada.popis
+Název
+popis
+Definice
+Volný text s popisem datové sady
+Definiční obor
+Datová sada
+Obor hodnot
+Text
+                          [1..1]
+Hierarchie
+                                        profiluje
+                    profil
+description (@en)
+ (
+dcat-ap:Dataset.description
+)
+Definice: 
+A free-text account of the Dataset.
+                                      profiluje
+                    profil
+description (@en)
+ (
+dcat-dap:CatalogedResource.description
+)
+Definice: 
+A free-text account of the resource.
+                                      profiluje
+                    vlastnost
+Description (@en)
+ (
+dcterms:description
+)
+Definice: 
+An account of the resource.
+Popis použití v profilu
+This property can be repeated for parallel language versions of the description. (@en)
+poskytovatel
+IRI profilovaných vztahů
+dcterms:publisher
+IRI
+dcat-ap-cz:DatováSada.poskytovatel
+Název
+poskytovatel
+Definice
+Poskytovatel datové sady
+Definiční obor
+Datová sada
+Obor hodnot
+Poskytovatel
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    profil
+publisher (@en)
+ (
+dcat-ap:Dataset.publisher
+)
+Definice: 
+An entity (organisation) responsible for making the Dataset available.
+                                      profiluje
+                    profil
+publisher (@en)
+ (
+dcat-dap:CatalogedResource.publisher
+)
+                                      profiluje
+                    vlastnost
+Publisher (@en)
+ (
+dcterms:publisher
+)
+Definice: 
+An entity responsible for making the resource available.
+příslušný právní předpis
+IRI profilovaných vztahů
+dcatap:applicableLegislation
+IRI
+dcat-ap-cz:DatováSada.příslušnýPrávníPředpis
+Název
+příslušný právní předpis
+Definice
+Indikace příslušného právního předpisu předepisujícího vznik datové sady.
+Definiční obor
+Datová sada
+Obor hodnot
+Právní předpis
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+applicable legislation (@en)
+ (
+dcat-ap:Dataset.applicableLegislation
+)
+Definice: 
+The legislation that mandates the creation or management of the Dataset.
+                                      profiluje
+                    vlastnost
+applicable legislation (@en)
+ (
+dcatap:applicableLegislation
+)
+Definice: 
+the legislation that is applicable to this resource.
+prostorové rozlišení v metrech
+IRI profilovaných vztahů
+dcat:spatialResolutionInMeters
+IRI
+dcat-ap-cz:DatováSada.prostorovéRozlišeníVMetrech
+Název
+prostorové rozlišení v metrech
+Definice
+Prostorové rozlišení dat v datové sadě v metrech. Jedná se o nejmenší prostorový rozdíl v datové sadě.
+Definiční obor
+Datová sada
+Obor hodnot
+xsd:decimal
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    profil
+prostorové rozlišení (metry)
+ (
+dcat-ap:Dataset.spatialResolution
+)
+                                      profiluje
+                    profil
+prostorové rozlišení (metry)
+ (
+dcat-dap:Dataset.spatialResolution
+)
+Definice: 
+minimální prostorový rozestup rozeznatelný v datové sadě, měřeno v metrech.
+                                      profiluje
+                    vlastnost
+prostorové rozlišení (metry)
+ (
+dcat:spatialResolutionInMeters
+)
+Definice: 
+minimální prostorový rozestup rozeznatelný v datové sadě, měřeno v metrech.
+související geografické území
+IRI profilovaných vztahů
+dcterms:spatial
+IRI
+dcat-ap-cz:DatováSada.souvisejícíGeografickéÚzemí
+Název
+související geografické území
+Definice
+Území pokryté datovou sadou.
+Definiční obor
+Datová sada
+Obor hodnot
+Geografické území
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+geographical coverage (@en)
+ (
+dcat-ap:Dataset.geographicalCoverage
+)
+                                      profiluje
+                    profil
+spatial/geographical coverage (@en)
+ (
+dcat-dap:Dataset.spatial-geographicalCoverage
+)
+Definice: 
+The geographical area covered by the dataset.
+                                      profiluje
+                    vlastnost
+Spatial Coverage (@en)
+ (
+dcterms:spatial
+)
+Definice: 
+Spatial characteristics of the resource.
+                                      specializuje
+                    vlastnost
+Coverage (@en)
+ (
+dcterms:coverage
+)
+Definice: 
+The spatial or temporal topic of the resource, spatial applicability of the resource, or jurisdiction under which the resource is relevant.
+Popis použití v profilu
+The spatial coverage of a dataset may be encoded as an instance of dcterms:Location, or may be indicated using an IRI reference (link) to a resource describing a location. It is recommended that links are to entries in a well maintained gazetteer such as Geonames. (@en)
+související geografické území - prvek z RÚIAN
+IRI profilovaných vztahů
+dcterms:spatial
+IRI
+dcat-ap-cz:DatováSada.souvisejícíGeografickéÚzemí-PrvekZRúian
+Název
+související geografické území - prvek z RÚIAN
+Definice
+Území pokryté datovou sadou, vyjádřené pomocí prvku RÚIAN
+Definiční obor
+Datová sada
+Obor hodnot
+Prvek z RÚIAN
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+geographical coverage (@en)
+ (
+dcat-ap:Dataset.geographicalCoverage
+)
+                                      profiluje
+                    profil
+spatial/geographical coverage (@en)
+ (
+dcat-dap:Dataset.spatial-geographicalCoverage
+)
+Definice: 
+The geographical area covered by the dataset.
+                                      profiluje
+                    vlastnost
+Spatial Coverage (@en)
+ (
+dcterms:spatial
+)
+Definice: 
+Spatial characteristics of the resource.
+                                      specializuje
+                    vlastnost
+Coverage (@en)
+ (
+dcterms:coverage
+)
+Definice: 
+The spatial or temporal topic of the resource, spatial applicability of the resource, or jurisdiction under which the resource is relevant.
+Popis použití v profilu
+The spatial coverage of a dataset may be encoded as an instance of dcterms:Location, or may be indicated using an IRI reference (link) to a resource describing a location. It is recommended that links are to entries in a well maintained gazetteer such as Geonames. (@en)
+specifikace
+IRI profilovaných vztahů
+dcterms:conformsTo
+IRI
+dcat-ap-cz:DatováSada.specifikace
+Název
+specifikace
+Definice
+Specifikace, jíž se datová sada řídí.
+Definiční obor
+Datová sada
+Obor hodnot
+Standard
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+conforms to (@en)
+ (
+dcat-ap:Dataset.conformsTo
+)
+Definice: 
+An implementing rule or other specification.
+                                      profiluje
+                    profil
+conforms to (@en)
+ (
+dcat-dap:CatalogedResource.conformsTo
+)
+                                      profiluje
+                    vlastnost
+Conforms To (@en)
+ (
+dcterms:conformsTo
+)
+Definice: 
+An established standard to which the described resource conforms.
+                                      specializuje
+                    vlastnost
+Relation (@en)
+ (
+dcterms:relation
+)
+Definice: 
+A related resource.
+téma
+IRI profilovaných vztahů
+dcat:theme
+IRI
+dcat-ap-cz:DatováSada.téma
+Název
+téma
+Definice
+Téma datové sady. Datová sada může být popsána více tématy.
+Definiční obor
+Datová sada
+Obor hodnot
+Datové téma
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+téma
+ (
+dcat-ap:Dataset.theme
+)
+Definice: 
+Hlavní téma zdroje. Zdroj může mít více témat.
+                                      profiluje
+                    profil
+téma
+ (
+dcat-dap:CatalogedResource.theme-category
+)
+                                      profiluje
+                    vlastnost
+téma
+ (
+dcat:theme
+)
+Definice: 
+Hlavní téma zdroje. Zdroj může mít více témat.
+                                      specializuje
+                    vlastnost
+Subject (@en)
+ (
+dcterms:subject
+)
+Definice: 
+A topic of the resource.
+Popis použití v profilu
+A Dataset may be associated with multiple themes. (@en)
+vstupní stránka
+IRI profilovaných vztahů
+dcat:landingPage
+IRI
+dcat-ap-cz:DatováSada.vstupníStránka
+Název
+vstupní stránka
+Definice
+Webová stránka, na kterou lze pro získání přístupu k datové sadě, jejím distribucím a/nebo dalším informacím přistoupit webovým prohlížečem.
+Definiční obor
+Datová sada
+Obor hodnot
+Dokument
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+vstupní stránka
+ (
+dcat-ap:Dataset.landingPage
+)
+Definice: 
+Webová stránka, na kterou lze pro získání přístupu ke katalogu, datové sadě, jejím distribucím a/nebo dalším informacím přistoupit webovým prohlížečem.
+                                      profiluje
+                    profil
+vstupní stránka
+ (
+dcat-dap:CatalogedResource.landingPage
+)
+                                      profiluje
+                    vlastnost
+vstupní stránka
+ (
+dcat:landingPage
+)
+Definice: 
+Webová stránka, na kterou lze pro získání přístupu ke katalogu, datové sadě, jejím distribucím a/nebo dalším informacím přistoupit webovým prohlížečem.
+                                      specializuje
+                    vlastnost
+page (@en)
+ (
+foaf:page
+)
+Definice: 
+A page or document about this thing.
+Popis použití v profilu
+It is intended to point to a landing page at the original data provider, not to a page on a site of a third party, such as an aggregator. (@en)
+Datová služba
+IRI profilovaných tříd
+dcat:DataService
+IRI
+dcat-ap-cz:DatováSlužba
+Název
+Datová služba
+Definice
+Umístění či přístupový bod poskytující operace související s hledáním, přistupem k, či výkonem funkcí na datech či souvisejících zdrojích.
+Hierarchie
+                                    profiluje
+                profil
+Data Service (@en)
+ (
+dcat-ap:DataService
+)
+                                  profiluje
+                profil
+Data Service (@en)
+ (
+dcat-dap:DataService
+)
+Definice: 
+Umístění či přístupový bod poskytující operace související s hledáním, přistupem k, či výkonem funkcí na datech či souvisejících zdrojích.
+                                  profiluje
+                třídu
+Data service (@en)
+ (
+dcat:DataService
+)
+Definice: 
+Umístění či přístupový bod poskytující operace související s hledáním, přistupem k, či výkonem funkcí na datech či souvisejících zdrojích.
+                                  specializuje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-dap:CatalogedResource
+)
+                                  profiluje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-ap:CataloguedResource
+)
+                                  profiluje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-dap:CatalogedResource
+)
+                                  profiluje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+Popis použití v profilu
+If a dcat:DataService is bound to one or more specified Datasets, they are indicated by the dcat:servesDataset property.
+          The kind of service can be indicated using the dcterms:type property. Its value may be taken from a controlled vocabulary such as the INSPIRE spatial data service type code list [INSPIRE-SDST]. (@en)
+Vlastnosti
+Pro tento profil třídy jsou definovány následující vlastnosti: 
+dokumentace
+, 
+kontaktní bod
+, 
+název
+, 
+popis přístupového bodu služby
+, 
+poskytuje datovou sadu
+, 
+příslušný právní předpis
+, 
+přístupový bod služby
+, 
+specifikace
+.
+Zpětné asociace
+z domény 
+ → 
+dokumentace
+IRI profilovaných vztahů
+foaf:page
+IRI
+dcat-ap-cz:DatováSlužba.dokumentace
+Název
+dokumentace
+Definice
+Dokumentace dále popisující datovou službu.
+Definiční obor
+Datová služba
+Obor hodnot
+Dokument
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+documentation (@en)
+ (
+dcat-ap:DataService.documentation
+)
+Definice: 
+A page or document about this Data Service
+                                      profiluje
+                    vlastnost
+page (@en)
+ (
+foaf:page
+)
+Definice: 
+A page or document about this thing.
+kontaktní bod
+IRI profilovaných vztahů
+dcat:contactPoint
+IRI
+dcat-ap-cz:DatováSlužba.kontaktníBod
+Název
+kontaktní bod
+Definice
+Relevantní kontaktní informace pro katalogizovaný zdroj. Doporučuje se použít slovník VCard.
+Definiční obor
+Datová služba
+Obor hodnot
+Kontaktní bod
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+kontaktní bod
+ (
+dcat-ap:DataService.contactPoint
+)
+Definice: 
+Relevantní kontaktní informace pro katalogizovaný zdroj. Doporučuje se použít slovník VCard.
+                                      profiluje
+                    profil
+kontaktní bod
+ (
+dcat-dap:CatalogedResource.contactPoint
+)
+                                      profiluje
+                    vlastnost
+kontaktní bod
+ (
+dcat:contactPoint
+)
+Definice: 
+Relevantní kontaktní informace pro katalogizovaný zdroj. Doporučuje se použít slovník VCard.
+název
+IRI profilovaných vztahů
+dcterms:title
+IRI
+dcat-ap-cz:DatováSlužba.název
+Název
+název
+Definice
+Název datové služby.
+Definiční obor
+Datová služba
+Obor hodnot
+Text
+                          [1..1]
+Hierarchie
+                                        profiluje
+                    profil
+title (@en)
+ (
+dcat-ap:DataService.title
+)
+Definice: 
+A name given to the Data Service.
+                                      profiluje
+                    profil
+title (@en)
+ (
+dcat-dap:CatalogedResource.title
+)
+                                      profiluje
+                    vlastnost
+Title (@en)
+ (
+dcterms:title
+)
+Definice: 
+A name given to the resource.
+Popis použití v profilu
+This property can be repeated for parallel language versions of the name. (@en)
+popis přístupového bodu služby
+IRI profilovaných vztahů
+dcat:endpointDescription
+IRI
+dcat-ap-cz:DatováSlužba.popisPřístupovéhoBoduSlužby
+Název
+popis přístupového bodu služby
+Definice
+Popis přístupového bodu služby včetně operací, parametrů apod.
+Definiční obor
+Datová služba
+Obor hodnot
+Zdroj
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+popis přístupového bodu služby
+ (
+dcat-ap:DataService.endpointDescription
+)
+Definice: 
+Popis přístupového bodu služby včetně operací, parametrů apod.
+                                      profiluje
+                    profil
+popis přístupového bodu služby
+ (
+dcat-dap:DataService.endpointDescription
+)
+                                      profiluje
+                    vlastnost
+popis přístupového bodu služby
+ (
+dcat:endpointDescription
+)
+Definice: 
+Popis přístupového bodu služby včetně operací, parametrů apod.
+Popis použití v profilu
+The endpoint description gives specific details of the actual endpoint instances, while dcterms:conformsTo is used to indicate the general standard or specification that the endpoints implement.
+              An endpoint description may be expressed in a machine-readable form, such as an OpenAPI (Swagger) description [OpenAPI], an OGC GetCapabilities response [WFS], [ISO-19142], [WMS], [ISO-19128], a SPARQL Service Description [SPARQL11-SERVICE-DESCRIPTION], an [OpenSearch] or [WSDL20] document, a Hydra API description [HYDRA], else in text or some other informal mode if a formal representation is not possible. (@en)
+poskytuje datovou sadu
+IRI profilovaných vztahů
+dcat:servesDataset
+IRI
+dcat-ap-cz:DatováSlužba.poskytujeDatovouSadu
+Název
+poskytuje datovou sadu
+Definice
+Kolekce dat, kterou je tato Datová služba schopna poskytnout.
+Definiční obor
+Datová služba
+Obor hodnot
+Datová sada
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+poskytuje datovou sadu
+ (
+dcat-ap:DataService.servesDataset
+)
+Definice: 
+Kolekce dat, kterou je tato Datová služba schopna poskytnout.
+                                      profiluje
+                    profil
+poskytuje datovou sadu
+ (
+dcat-dap:DataService.servesDataset
+)
+                                      profiluje
+                    vlastnost
+poskytuje datovou sadu
+ (
+dcat:servesDataset
+)
+Definice: 
+Kolekce dat, kterou je tato Datová služba schopna poskytnout.
+příslušný právní předpis
+IRI profilovaných vztahů
+dcatap:applicableLegislation
+IRI
+dcat-ap-cz:DatováSlužba.příslušnýPrávníPředpis
+Název
+příslušný právní předpis
+Definice
+Indikace příslušného právního předpisu předepisujícího vznik datové služby.
+Definiční obor
+Datová služba
+Obor hodnot
+Právní předpis
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+applicable legislation (@en)
+ (
+dcat-ap:DataService.applicableLegislation
+)
+Definice: 
+The legislation that mandates the creation or management of the Data Service.
+                                      profiluje
+                    vlastnost
+applicable legislation (@en)
+ (
+dcatap:applicableLegislation
+)
+Definice: 
+the legislation that is applicable to this resource.
+přístupový bod služby
+IRI profilovaných vztahů
+dcat:endpointURL
+IRI
+dcat-ap-cz:DatováSlužba.přístupovýBodSlužby
+Název
+přístupový bod služby
+Definice
+Kořenové umístění nebo hlavní přístupový bod služby (IRI přístupné přes Web).
+Definiční obor
+Datová služba
+Obor hodnot
+Zdroj
+                          [1..*]
+Hierarchie
+                                        profiluje
+                    profil
+přístupový bod služby
+ (
+dcat-ap:DataService.endpointUrl
+)
+Definice: 
+Kořenové umístění nebo hlavní přístupový bod služby (IRI přístupné přes Web).
+                                      profiluje
+                    profil
+přístupový bod služby
+ (
+dcat-dap:DataService.endpointUrl
+)
+                                      profiluje
+                    vlastnost
+přístupový bod služby
+ (
+dcat:endpointURL
+)
+Definice: 
+Kořenové umístění nebo hlavní přístupový bod služby (IRI přístupné přes Web).
+specifikace
+IRI profilovaných vztahů
+dcterms:conformsTo
+IRI
+dcat-ap-cz:DatováSlužba.specifikace
+Název
+specifikace
+Definice
+Specifikaci, jíž se datová služba řídí.
+Definiční obor
+Datová služba
+Obor hodnot
+Standard
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+conforms to (@en)
+ (
+dcat-ap:DataService.conformsTo
+)
+Definice: 
+An established (technical) standard to which the Data Service conforms.
+                                      profiluje
+                    profil
+conforms to (@en)
+ (
+dcat-dap:CatalogedResource.conformsTo
+)
+                                      profiluje
+                    vlastnost
+Conforms To (@en)
+ (
+dcterms:conformsTo
+)
+Definice: 
+An established standard to which the described resource conforms.
+                                      specializuje
+                    vlastnost
+Relation (@en)
+ (
+dcterms:relation
+)
+Definice: 
+A related resource.
+Popis použití v profilu
+Takovou specifikací je například SPARQL. Seznam možných hodnot lze nalézt například v seznamu udržovaném Open Source Geospatial Foundation.
+Distribuce
+IRI profilovaných tříd
+dcat:Distribution
+IRI
+dcat-ap-cz:Distribuce
+Název
+Distribuce
+Definice
+Konkrétní reprezentace datové sady. Datová sada může být dostupná v různých serializacích, které se mohou navzájem lišit různými způsoby, mimo jiné přirozeným jazykem, media-typem či formátem, schematickou organizací, časovým a prostorovým rozlišením, úrovní detailu či profily (které mohou specifikovat některé či všechny tyto rozdíly).
+Hierarchie
+                                    profiluje
+                profil
+Distribuce
+ (
+dcat-ap:Distribution
+)
+                                  profiluje
+                profil
+Distribuce
+ (
+dcat-dap:Distribution
+)
+                                  profiluje
+                třídu
+Distribuce
+ (
+dcat:Distribution
+)
+Definice: 
+Konkrétní reprezentace datové sady. Datová sada může být dostupná v různých serializacích, které se mohou navzájem lišit různými způsoby, mimo jiné přirozeným jazykem, media-typem či formátem, schematickou organizací, časovým a prostorovým rozlišením, úrovní detailu či profily (které mohou specifikovat některé či všechny tyto rozdíly).
+Vlastnosti
+Pro tento profil třídy jsou definovány následující vlastnosti: 
+název
+, 
+příslušný právní předpis
+, 
+přístupové URL
+, 
+Specifikace podmínek užití
+.
+Zpětné asociace
+z domény 
+ → 
+název
+IRI profilovaných vztahů
+dcterms:title
+IRI
+dcat-ap-cz:Distribuce.název
+Název
+název
+Definice
+Název distribuce datové sady
+Definiční obor
+Distribuce
+Obor hodnot
+Text
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    profil
+title (@en)
+ (
+dcat-ap:Distribution.title
+)
+                                      profiluje
+                    profil
+title (@en)
+ (
+dcat-dap:Distribution.title
+)
+Definice: 
+A name given to the distribution.
+                                      profiluje
+                    vlastnost
+Title (@en)
+ (
+dcterms:title
+)
+Definice: 
+A name given to the resource.
+Popis použití v profilu
+This property can be repeated for parallel language versions of the description. (@en)
+příslušný právní předpis
+IRI profilovaných vztahů
+dcatap:applicableLegislation
+IRI
+dcat-ap-cz:Distribuce.příslušnýPrávníPředpis
+Název
+příslušný právní předpis
+Definice
+Indikace příslušného právního předpisu předepisujícího vznik distribuce.
+Definiční obor
+Distribuce
+Obor hodnot
+Právní předpis
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+applicable legislation (@en)
+ (
+dcat-ap:Distribution.applicableLegislation
+)
+Definice: 
+The legislation that mandates the creation or management of the Distribution.
+                                      profiluje
+                    vlastnost
+applicable legislation (@en)
+ (
+dcatap:applicableLegislation
+)
+Definice: 
+the legislation that is applicable to this resource.
+přístupové URL
+IRI profilovaných vztahů
+dcat:accessURL
+IRI
+dcat-ap-cz:Distribuce.přístupovéUrl
+Název
+přístupové URL
+Definice
+URL zdroje, přes které je přístupná distribuce datové sady. Příkladem může být vstupní stránka, RSS kanál či SPARQL endpoint. Použijte ve všech případech kromě URL souboru ke stažení, pro které je lepší použít dcat:downloadURL.
+Definiční obor
+Distribuce
+Obor hodnot
+Zdroj
+                          [1..*]
+Hierarchie
+                                        profiluje
+                    profil
+přístupová adresa
+ (
+dcat-ap:Distribution.accessUrl
+)
+Definice: 
+URL zdroje, přes které je přístupná distribuce datové sady. Příkladem může být vstupní stránka, RSS kanál či SPARQL endpoint. Použijte ve všech případech kromě URL souboru ke stažení, pro které je lepší použít dcat:downloadURL.
+                                      profiluje
+                    profil
+přístupová adresa
+ (
+dcat-dap:Distribution.accessUrl
+)
+Definice: 
+URL zdroje, přes které je přístupná distribuce datové sady. Příkladem může být vstupní stránka, RSS kanál či SPARQL endpoint. Použijte ve všech případech kromě URL souboru ke stažení, pro které je lepší použít dcat:downloadURL.
+                                      profiluje
+                    vlastnost
+přístupová adresa
+ (
+dcat:accessURL
+)
+Definice: 
+URL zdroje, přes které je přístupná distribuce datové sady. Příkladem může být vstupní stránka, RSS kanál či SPARQL endpoint. Použijte ve všech případech kromě URL souboru ke stažení, pro které je lepší použít dcat:downloadURL.
+Popis použití v profilu
+The resource at the access URL may contain information about how to get the Dataset. (@en)
+Specifikace podmínek užití
+IRI profilovaných vztahů
+https://data.gov.cz/slovník/podmínky-užití/specifikace
+IRI
+dcat-ap-cz:Distribuce.specifikacePodmínekUžití
+Název
+Specifikace podmínek užití
+Definice
+Specifikace podmínek užití dle https://opendata.gov.cz/cinnost:stanoveni-podminek-uziti.
+Definiční obor
+Distribuce
+Obor hodnot
+Specifikace podmínek užití
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    vlastnost
+Specifikace podmínek užití
+ (
+https://data.gov.cz/slovník/podmínky-užití/specifikace
+)
+Definice: 
+Specifikace podmínek užití dle https://opendata.gov.cz/cinnost:stanoveni-podminek-uziti.
+                                      specializuje
+                    vlastnost
+License (@en)
+ (
+dcterms:license
+)
+Definice: 
+A legal document giving official permission to do something with the resource.
+                                      specializuje
+                    vlastnost
+Rights (@en)
+ (
+dcterms:rights
+)
+Definice: 
+Information about rights held in and over the resource.
+Distribuce - Datová služba
+IRI profilovaných tříd
+dcat:Distribution
+IRI
+dcat-ap-cz:DistribuceDatováSlužba
+Název
+Distribuce - Datová služba
+Definice
+Konkrétní reprezentace datové sady datovou službou.
+Hierarchie
+                                    profiluje
+                profil
+Distribuce
+ (
+dcat-ap:Distribution
+)
+                                  profiluje
+                profil
+Distribuce
+ (
+dcat-dap:Distribution
+)
+                                  profiluje
+                třídu
+Distribuce
+ (
+dcat:Distribution
+)
+Definice: 
+Konkrétní reprezentace datové sady. Datová sada může být dostupná v různých serializacích, které se mohou navzájem lišit různými způsoby, mimo jiné přirozeným jazykem, media-typem či formátem, schematickou organizací, časovým a prostorovým rozlišením, úrovní detailu či profily (které mohou specifikovat některé či všechny tyto rozdíly).
+                                  specializuje
+                profil
+Distribuce
+ (
+dcat-ap-cz:Distribuce
+)
+                                  profiluje
+                profil
+Distribuce
+ (
+dcat-ap:Distribution
+)
+                                  profiluje
+                profil
+Distribuce
+ (
+dcat-dap:Distribution
+)
+                                  profiluje
+                třídu
+Distribuce
+ (
+dcat:Distribution
+)
+Definice: 
+Konkrétní reprezentace datové sady. Datová sada může být dostupná v různých serializacích, které se mohou navzájem lišit různými způsoby, mimo jiné přirozeným jazykem, media-typem či formátem, schematickou organizací, časovým a prostorovým rozlišením, úrovní detailu či profily (které mohou specifikovat některé či všechny tyto rozdíly).
+Popis použití v profilu
+ (@en)
+Vlastnosti
+Pro tento profil třídy jsou definovány následující vlastnosti: 
+přístupová služba
+.
+přístupová služba
+IRI profilovaných vztahů
+dcat:accessService
+IRI
+dcat-ap-cz:Distribuce-DatováSlužba.přístupováSlužba
+Název
+přístupová služba
+Definice
+Umístění či přístupový bod zpřístupňující distribuci datové sady.
+Definiční obor
+Distribuce - Datová služba
+Obor hodnot
+Datová služba
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+služba pro přístup k datům
+ (
+dcat-ap:Distribution.accessService
+)
+Definice: 
+Umístění či přístupový bod zpřístupňující distribuci datové sady.
+                                      profiluje
+                    profil
+služba pro přístup k datům
+ (
+dcat-dap:Distribution.accessService
+)
+                                      profiluje
+                    vlastnost
+služba pro přístup k datům
+ (
+dcat:accessService
+)
+Definice: 
+Umístění či přístupový bod zpřístupňující distribuci datové sady.
+Popis použití v profilu
+dcat:accessService SHOULD be used to link to a description of a dcat:DataService that can provide access to this distribution. (@en)
+Distribuce - Soubor ke stažení
+IRI profilovaných tříd
+dcat:Distribution
+IRI
+dcat-ap-cz:DistribuceSoubor
+Název
+Distribuce - Soubor ke stažení
+Definice
+Konkrétní reprezentace datové sady jako souboru ke stažení.
+Hierarchie
+                                    profiluje
+                profil
+Distribuce
+ (
+dcat-ap:Distribution
+)
+                                  profiluje
+                profil
+Distribuce
+ (
+dcat-dap:Distribution
+)
+                                  profiluje
+                třídu
+Distribuce
+ (
+dcat:Distribution
+)
+Definice: 
+Konkrétní reprezentace datové sady. Datová sada může být dostupná v různých serializacích, které se mohou navzájem lišit různými způsoby, mimo jiné přirozeným jazykem, media-typem či formátem, schematickou organizací, časovým a prostorovým rozlišením, úrovní detailu či profily (které mohou specifikovat některé či všechny tyto rozdíly).
+                                  specializuje
+                profil
+Distribuce
+ (
+dcat-ap-cz:Distribuce
+)
+                                  profiluje
+                profil
+Distribuce
+ (
+dcat-ap:Distribution
+)
+                                  profiluje
+                profil
+Distribuce
+ (
+dcat-dap:Distribution
+)
+                                  profiluje
+                třídu
+Distribuce
+ (
+dcat:Distribution
+)
+Definice: 
+Konkrétní reprezentace datové sady. Datová sada může být dostupná v různých serializacích, které se mohou navzájem lišit různými způsoby, mimo jiné přirozeným jazykem, media-typem či formátem, schematickou organizací, časovým a prostorovým rozlišením, úrovní detailu či profily (které mohou specifikovat některé či všechny tyto rozdíly).
+Popis použití v profilu
+ (@en)
+Vlastnosti
+Pro tento profil třídy jsou definovány následující vlastnosti: 
+formát balíčku
+, 
+formát komprese
+, 
+formát souboru ke stažení
+, 
+odkaz na stažení souboru
+, 
+strojově čitelné schéma souboru ke stažení
+, 
+typ média
+.
+formát balíčku
+IRI profilovaných vztahů
+dcat:packageFormat
+IRI
+dcat-ap-cz:Distribuce-SouborKeStažení.formátBalíčku
+Název
+formát balíčku
+Definice
+Balíčkový formát souboru, ve kterém je jeden či více souborů seskupeno dohromady, např. aby bylo možné stáhnout sadu souvisejících souborů naráz.
+Definiční obor
+Distribuce - Soubor ke stažení
+Obor hodnot
+Typ média
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    profil
+formát balíčku
+ (
+dcat-ap:Distribution.packagingFormat
+)
+                                      profiluje
+                    profil
+formát balíčku
+ (
+dcat-dap:Distribution.packagingFormat
+)
+                                      profiluje
+                    vlastnost
+formát balíčku
+ (
+dcat:packageFormat
+)
+Definice: 
+Balíčkový formát souboru, ve kterém je jeden či více souborů seskupeno dohromady, např. aby bylo možné stáhnout sadu souvisejících souborů naráz.
+                                      specializuje
+                    vlastnost
+Format (@en)
+ (
+dcterms:format
+)
+Definice: 
+The file format, physical medium, or dimensions of the resource.
+Popis použití v profilu
+This property to be used when the files in the distribution are packaged, e.g., in a TAR file, a ZIP file, a Frictionless Data Package or a Bagit file. The format SHOULD be expressed using a media type as defined by IANA [[IANA-MEDIA-TYPES]], if available. (@en)
+formát komprese
+IRI profilovaných vztahů
+dcat:compressFormat
+IRI
+dcat-ap-cz:Distribuce-SouborKeStažení.formátKomprese
+Název
+formát komprese
+Definice
+Formát komprese souboru, ve kterém jsou data poskytována v komprimované podobě, např. ke snížení velikosti souboru ke stažení.
+Definiční obor
+Distribuce - Soubor ke stažení
+Obor hodnot
+Typ média
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    profil
+formát komprese
+ (
+dcat-ap:Distribution.compressionFormat
+)
+Definice: 
+Formát komprese souboru, ve kterém jsou data poskytována v komprimované podobě, např. ke snížení velikosti souboru ke stažení.
+                                      profiluje
+                    profil
+formát komprese
+ (
+dcat-dap:Distribution.compressionFormat
+)
+                                      profiluje
+                    vlastnost
+formát komprese
+ (
+dcat:compressFormat
+)
+Definice: 
+Formát komprese souboru, ve kterém jsou data poskytována v komprimované podobě, např. ke snížení velikosti souboru ke stažení.
+                                      specializuje
+                    vlastnost
+Format (@en)
+ (
+dcterms:format
+)
+Definice: 
+The file format, physical medium, or dimensions of the resource.
+Popis použití v profilu
+It SHOULD be expressed using a media type as defined in the official register of media types managed by IANA. (@en)
+formát souboru ke stažení
+IRI profilovaných vztahů
+dcterms:format
+IRI
+dcat-ap-cz:Distribuce-SouborKeStažení.formátSouboruKeStažení
+Název
+formát souboru ke stažení
+Definice
+Tato vlastnost odkazuje na typ souboru s distribucí.
+Definiční obor
+Distribuce - Soubor ke stažení
+Obor hodnot
+Formát souboru
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    profil
+format (@en)
+ (
+dcat-ap:Distribution.format
+)
+                                      profiluje
+                    profil
+format (@en)
+ (
+dcat-dap:Distribution.format
+)
+Definice: 
+The file format of the distribution.
+                                      profiluje
+                    vlastnost
+Format (@en)
+ (
+dcterms:format
+)
+Definice: 
+The file format, physical medium, or dimensions of the resource.
+Popis použití v profilu
+dcat:mediaType SHOULD be used if the type of the distribution is defined by IANA [[IANA-MEDIA-TYPES]]. (@en)
+odkaz na stažení souboru
+IRI profilovaných vztahů
+dcat:downloadURL
+IRI
+dcat-ap-cz:Distribuce-SouborKeStažení.odkazNaStaženíSouboru
+Název
+odkaz na stažení souboru
+Definice
+URL, které je přímým odkazem na stažitelný soubor v daném formátu.
+Definiční obor
+Distribuce - Soubor ke stažení
+Obor hodnot
+Zdroj
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+URL souboru ke stažení
+ (
+dcat-ap:Distribution.downloadUrl
+)
+Definice: 
+URL souboru ke stažení v daném formátu, například CSV nebo RDF soubor. Formát je popsán vlastností distribuce dcterms:format a/nebo dcat:mediaType.
+                                      profiluje
+                    profil
+URL souboru ke stažení
+ (
+dcat-dap:Distribution.downloadUrl
+)
+                                      profiluje
+                    vlastnost
+URL souboru ke stažení
+ (
+dcat:downloadURL
+)
+Definice: 
+URL souboru ke stažení v daném formátu, například CSV nebo RDF soubor. Formát je popsán vlastností distribuce dcterms:format a/nebo dcat:mediaType.
+Popis použití v profilu
+dcat:downloadURL SHOULD be used for the URL at which this distribution is available directly, typically through a HTTP Get request. (@en)
+strojově čitelné schéma souboru ke stažení
+IRI profilovaných vztahů
+dcterms:conformsTo
+IRI
+dcat-ap-cz:Distribuce-SouborKeStažení.strojověČitelnéSchémaSouboruKeStažení
+Název
+strojově čitelné schéma souboru ke stažení
+Definice
+Ustanovené schéma, jímž se popisovaná distribuce řídí.
+Definiční obor
+Distribuce - Soubor ke stažení
+Obor hodnot
+Zdroj
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+linked schemas (@en)
+ (
+dcat-ap:Distribution.linkedSchemas
+)
+Definice: 
+An established schema to which the described Distribution conforms.
+                                      profiluje
+                    profil
+conforms to (@en)
+ (
+dcat-dap:Distribution.conformsTo
+)
+Definice: 
+An established standard to which the distribution conforms.
+                                      profiluje
+                    vlastnost
+Conforms To (@en)
+ (
+dcterms:conformsTo
+)
+Definice: 
+An established standard to which the described resource conforms.
+                                      specializuje
+                    vlastnost
+Relation (@en)
+ (
+dcterms:relation
+)
+Definice: 
+A related resource.
+Popis použití v profilu
+This property SHOULD be used to indicate the model, schema, ontology, view or profile that this representation of a dataset conforms to. This is (generally) a complementary concern to the media-type or format. (@en)
+typ média
+IRI profilovaných vztahů
+dcat:mediaType
+IRI
+dcat-ap-cz:Distribuce-SouborKeStažení.typMédia
+Název
+typ média
+Definice
+Typ média distribuce definovaný v IANA.
+Definiční obor
+Distribuce - Soubor ke stažení
+Obor hodnot
+Typ média
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    profil
+typ média
+ (
+dcat-ap:Distribution.mediaType
+)
+                                      profiluje
+                    profil
+typ média
+ (
+dcat-dap:Distribution.mediaType
+)
+                                      profiluje
+                    vlastnost
+typ média
+ (
+dcat:mediaType
+)
+Definice: 
+Typ média distribuce definovaný v IANA.
+                                      specializuje
+                    vlastnost
+Format (@en)
+ (
+dcterms:format
+)
+Definice: 
+The file format, physical medium, or dimensions of the resource.
+Popis použití v profilu
+This property SHOULD be used when the media type of the distribution is defined in IANA [[IANA-MEDIA-TYPES]], otherwise dcterms:format MAY be used with different values. (@en)
+Katalog
+IRI profilovaných tříd
+dcat:Catalog
+IRI
+dcat-ap-cz:Katalog
+Název
+Katalog
+Definice
+Řízená kolekce metadat o datových sadách a datových službách
+Hierarchie
+                                    profiluje
+                profil
+Katalog
+ (
+dcat-ap:Catalogue
+)
+Definice: 
+Řízená kolekce metadat o datových sadách a datových službách
+                                  profiluje
+                profil
+Katalog
+ (
+dcat-dap:Catalog
+)
+Definice: 
+Řízená kolekce metadat o datových sadách a datových službách
+                                  profiluje
+                třídu
+Katalog
+ (
+dcat:Catalog
+)
+Definice: 
+Řízená kolekce metadat o datových sadách a datových službách
+                                  specializuje
+                třídu
+Datová sada
+ (
+dcat:Dataset
+)
+Definice: 
+Kolekce dat poskytovaná či řízená jedním zdrojem, která je k dispozici pro přístup či stažení v jednom či více formátech.
+                                  specializuje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Datová sada
+ (
+dcat-dap:Dataset
+)
+                                  profiluje
+                třídu
+Datová sada
+ (
+dcat:Dataset
+)
+Definice: 
+Kolekce dat poskytovaná či řízená jedním zdrojem, která je k dispozici pro přístup či stažení v jednom či více formátech.
+                                  specializuje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-dap:CatalogedResource
+)
+                                  profiluje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+Vlastnosti
+Pro tento profil třídy jsou definovány následující vlastnosti: 
+datová sada
+, 
+domovská stránka
+, 
+kontaktní bod
+, 
+název
+, 
+popis
+, 
+poskytovatel
+.
+datová sada
+IRI profilovaných vztahů
+dcat:dataset
+IRI
+dcat-ap-cz:Katalog.datováSada
+Název
+datová sada
+Definice
+Kolekce dat, která je katalogizována v katalogu.
+Definiční obor
+Katalog
+Obor hodnot
+Datová sada
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+datová sada
+ (
+dcat-ap:Catalogue.dataset
+)
+Definice: 
+Kolekce dat, která je katalogizována v katalogu.
+                                      profiluje
+                    profil
+datová sada
+ (
+dcat-dap:Catalog.dataset
+)
+                                      profiluje
+                    vlastnost
+datová sada
+ (
+dcat:dataset
+)
+Definice: 
+Kolekce dat, která je katalogizována v katalogu.
+                                      specializuje
+                    vlastnost
+resource (@en)
+ (
+dcat:resource
+)
+Definice: 
+A resource that is listed in the catalog.
+                                      specializuje
+                    vlastnost
+Has Part (@en)
+ (
+dcterms:hasPart
+)
+Definice: 
+A related resource that is included either physically or logically in the described resource.
+                                      specializuje
+                    vlastnost
+Relation (@en)
+ (
+dcterms:relation
+)
+Definice: 
+A related resource.
+Popis použití v profilu
+As empty Catalogues are usually indications of problems, this property should be combined with the property service to implement an empty Catalogue check. (@en)
+domovská stránka
+IRI profilovaných vztahů
+foaf:homepage
+IRI
+dcat-ap-cz:Katalog.domovskáStránka
+Název
+domovská stránka
+Definice
+Tato vlastnost odkazuje na domovskou stránku lokálního katalogu, kam mohou chodit uživatelé.
+Definiční obor
+Katalog
+Obor hodnot
+Dokument
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    profil
+homepage (@en)
+ (
+dcat-ap:Catalogue.homepage
+)
+Definice: 
+A web page that acts as the main page for the Catalogue.
+                                      profiluje
+                    profil
+homepage (@en)
+ (
+dcat-dap:Catalog.homepage
+)
+Definice: 
+A homepage of the catalog (a public Web document usually available in HTML).
+                                      profiluje
+                    vlastnost
+homepage (@en)
+ (
+foaf:homepage
+)
+Definice: 
+This axiom needed so that Protege loads DCAT 3 without errors.
+                                      specializuje
+                    vlastnost
+is primary topic of (@en)
+ (
+foaf:isPrimaryTopicOf
+)
+Definice: 
+A document that this thing is the primary topic of.
+                                      specializuje
+                    vlastnost
+page (@en)
+ (
+foaf:page
+)
+Definice: 
+A page or document about this thing.
+                                      specializuje
+                    vlastnost
+page (@en)
+ (
+foaf:page
+)
+Definice: 
+A page or document about this thing.
+Popis použití v profilu
+ (@en)
+kontaktní bod
+IRI profilovaných vztahů
+dcat:contactPoint
+IRI
+dcat-ap-cz:Katalog.kontaktníBod
+Název
+kontaktní bod
+Definice
+Tato vlastnost obsahuje kontaktní informace, které mohou být využity pro zasílání připomínek ke katalogu.
+Definiční obor
+Katalog
+Obor hodnot
+Kontaktní bod
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    vlastnost
+kontaktní bod
+ (
+dcat:contactPoint
+)
+Definice: 
+Relevantní kontaktní informace pro katalogizovaný zdroj. Doporučuje se použít slovník VCard.
+název
+IRI profilovaných vztahů
+dcterms:title
+IRI
+dcat-ap-cz:Katalog.název
+Název
+název
+Definice
+Tato vlastnost obsahuje název datového katalogu.
+Definiční obor
+Katalog
+Obor hodnot
+Text
+                          [1..1]
+Hierarchie
+                                        profiluje
+                    profil
+title (@en)
+ (
+dcat-ap:Catalogue.title
+)
+Definice: 
+A name given to the Catalogue.
+                                      profiluje
+                    profil
+title (@en)
+ (
+dcat-dap:CatalogedResource.title
+)
+                                      profiluje
+                    vlastnost
+Title (@en)
+ (
+dcterms:title
+)
+Definice: 
+A name given to the resource.
+Popis použití v profilu
+This property can be repeated for parallel language versions of the name. (@en)
+popis
+IRI profilovaných vztahů
+dcterms:description
+IRI
+dcat-ap-cz:Katalog.popis
+Název
+popis
+Definice
+Tato vlastnost obsahuje volný text s popisem datového katalogu.
+Definiční obor
+Katalog
+Obor hodnot
+Text
+                          [1..1]
+Hierarchie
+                                        profiluje
+                    profil
+description (@en)
+ (
+dcat-ap:Catalogue.description
+)
+Definice: 
+A free-text account of the Catalogue.
+                                      profiluje
+                    profil
+description (@en)
+ (
+dcat-dap:CatalogedResource.description
+)
+Definice: 
+A free-text account of the resource.
+                                      profiluje
+                    vlastnost
+Description (@en)
+ (
+dcterms:description
+)
+Definice: 
+An account of the resource.
+Popis použití v profilu
+This property can be repeated for parallel language versions of the description. (@en)
+poskytovatel
+IRI profilovaných vztahů
+dcterms:publisher
+IRI
+dcat-ap-cz:Katalog.poskytovatel
+Název
+poskytovatel
+Definice
+Poskytovatel datového katalogu.
+Definiční obor
+Katalog
+Obor hodnot
+Poskytovatel
+                          [1..1]
+Hierarchie
+                                        profiluje
+                    profil
+publisher (@en)
+ (
+dcat-ap:Catalogue.publisher
+)
+Definice: 
+An entity (organisation) responsible for making the Catalogue available.
+                                      profiluje
+                    profil
+publisher (@en)
+ (
+dcat-dap:CatalogedResource.publisher
+)
+                                      profiluje
+                    vlastnost
+Publisher (@en)
+ (
+dcterms:publisher
+)
+Definice: 
+An entity responsible for making the resource available.
+Série datových sad
+IRI profilovaných tříd
+dcat:DatasetSeries
+IRI
+dcat-ap-cz:SérieDatovýchSad
+Název
+Série datových sad
+Definice
+Série datových sad zastřešuje související datové sady a jiné série. Souvislost může být časová (rozpočet v letech), prostorová (seznamy ulic v obcích) či tématická (datové sady z jednoho systému).
+Hierarchie
+                                    profiluje
+                profil
+Dataset Series (@en)
+ (
+dcat-ap:DatasetSeries
+)
+                                  profiluje
+                profil
+Dataset Series (@en)
+ (
+dcat-dap:DatasetSeries
+)
+                                  profiluje
+                třídu
+Dataset series (@en)
+ (
+dcat:DatasetSeries
+)
+Definice: 
+A collection of datasets that are published separately, but share some characteristics that group them.
+                                  specializuje
+                třídu
+Datová sada
+ (
+dcat:Dataset
+)
+Definice: 
+Kolekce dat poskytovaná či řízená jedním zdrojem, která je k dispozici pro přístup či stažení v jednom či více formátech.
+                                  specializuje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Datová sada
+ (
+dcat-dap:Dataset
+)
+                                  profiluje
+                třídu
+Datová sada
+ (
+dcat:Dataset
+)
+Definice: 
+Kolekce dat poskytovaná či řízená jedním zdrojem, která je k dispozici pro přístup či stažení v jednom či více formátech.
+                                  specializuje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-dap:CatalogedResource
+)
+                                  profiluje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-ap:CataloguedResource
+)
+                                  profiluje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-dap:CatalogedResource
+)
+                                  profiluje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+Popis použití v profilu
+It is recommended to avoid Dataset Series without a dataset in the collection. Therefore at least one Dataset should refer to a Dataset Series using the property in series (dcat:inSeries). (@en)
+Vlastnosti
+Pro tento profil třídy jsou definovány následující vlastnosti: 
+časové pokrytí
+, 
+dokumentace
+, 
+je součástí
+, 
+klasifikace dle EuroVoc
+, 
+klíčové slovo
+, 
+kontaktní bod
+, 
+název
+, 
+periodicita aktualizace
+, 
+popis
+, 
+poskytovatel
+, 
+příslušný právní předpis
+, 
+související geografické území
+, 
+související geografické území - prvek z RÚIAN
+, 
+téma
+, 
+vstupní stránka
+.
+Zpětné asociace
+z domény 
+ → 
+z domény 
+ → 
+časové pokrytí
+IRI profilovaných vztahů
+dcterms:temporal
+IRI
+dcat-ap-cz:SérieDatovýchSad.časovéPokrytí
+Název
+časové pokrytí
+Definice
+Časový úsek pokrytý sérií datových sad
+Definiční obor
+Série datových sad
+Obor hodnot
+Časový interval
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+temporal coverage (@en)
+ (
+dcat-ap:DatasetSeries.temporalCoverage
+)
+Definice: 
+A temporal period that the Dataset Series covers.
+                                      profiluje
+                    profil
+temporal coverage (@en)
+ (
+dcat-dap:Dataset.temporalCoverage
+)
+Definice: 
+The temporal period that the dataset covers.
+                                      profiluje
+                    vlastnost
+Temporal Coverage (@en)
+ (
+dcterms:temporal
+)
+Definice: 
+Temporal characteristics of the resource.
+                                      specializuje
+                    vlastnost
+Coverage (@en)
+ (
+dcterms:coverage
+)
+Definice: 
+The spatial or temporal topic of the resource, spatial applicability of the resource, or jurisdiction under which the resource is relevant.
+Popis použití v profilu
+When temporal coverage is a dimension in the dataset series then the temporal coverage of each dataset in the collection should be part of the temporal coverage. In that case, an open ended value is recommended, e.g. after 2012. (@en)
+dokumentace
+IRI profilovaných vztahů
+foaf:page
+IRI
+dcat-ap-cz:SérieDatovýchSad.dokumentace
+Název
+dokumentace
+Definice
+Stránka či dokument o sérii datových sad
+Definiční obor
+Série datových sad
+Obor hodnot
+Dokument
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+documentation (@en)
+ (
+dcat-ap:Dataset.documentation
+)
+Definice: 
+A page or document about this Dataset.
+                                      profiluje
+                    vlastnost
+page (@en)
+ (
+foaf:page
+)
+Definice: 
+A page or document about this thing.
+je součástí
+IRI profilovaných vztahů
+dcat:inSeries
+IRI
+dcat-ap-cz:SérieDatovýchSad.jeSoučástí
+Název
+je součástí
+Definice
+Série datových sad, jíž je tato série datových sad součástí.
+Definiční obor
+Série datových sad
+Obor hodnot
+Série datových sad
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+in series (@en)
+ (
+dcat-ap:Dataset.inSeries
+)
+                                      profiluje
+                    profil
+in series (@en)
+ (
+dcat-dap:Dataset.inSeries
+)
+                                      profiluje
+                    vlastnost
+in series (@en)
+ (
+dcat:inSeries
+)
+Definice: 
+A dataset series of which the dataset is part.
+                                      specializuje
+                    vlastnost
+Is Part Of (@en)
+ (
+dcterms:isPartOf
+)
+Definice: 
+A related resource in which the described resource is physically or logically included.
+                                      specializuje
+                    vlastnost
+Relation (@en)
+ (
+dcterms:relation
+)
+Definice: 
+A related resource.
+klasifikace dle EuroVoc
+IRI profilovaných vztahů
+dcat:theme
+IRI
+dcat-ap-cz:SérieDatovýchSad.klasifikaceDleEurovoc
+Název
+klasifikace dle EuroVoc
+Definice
+Kategorie či téma série datových sad dle EuroVoc.
+Definiční obor
+Série datových sad
+Obor hodnot
+Téma EuroVoc
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+téma
+ (
+dcat-ap:Dataset.theme
+)
+Definice: 
+Hlavní téma zdroje. Zdroj může mít více témat.
+                                      profiluje
+                    profil
+téma
+ (
+dcat-dap:CatalogedResource.theme-category
+)
+                                      profiluje
+                    vlastnost
+téma
+ (
+dcat:theme
+)
+Definice: 
+Hlavní téma zdroje. Zdroj může mít více témat.
+                                      specializuje
+                    vlastnost
+Subject (@en)
+ (
+dcterms:subject
+)
+Definice: 
+A topic of the resource.
+Popis použití v profilu
+A Dataset may be associated with multiple themes. (@en)
+klíčové slovo
+IRI profilovaných vztahů
+dcat:keyword
+IRI
+dcat-ap-cz:SérieDatovýchSad.klíčovéSlovo
+Název
+klíčové slovo
+Definice
+Klíčové slovo nebo značka popisující zdroj.
+Definiční obor
+Série datových sad
+Obor hodnot
+rdf:langString
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+klíčové slovo
+ (
+dcat-ap:Dataset.keyword
+)
+                                      profiluje
+                    profil
+klíčové slovo
+ (
+dcat-dap:CatalogedResource.keyword
+)
+                                      profiluje
+                    vlastnost
+klíčové slovo
+ (
+dcat:keyword
+)
+Definice: 
+Klíčové slovo nebo značka popisující zdroj.
+kontaktní bod
+IRI profilovaných vztahů
+dcat:contactPoint
+IRI
+dcat-ap-cz:SérieDatovýchSad.kontaktníBod
+Název
+kontaktní bod
+Definice
+Kontaktní informace, které mohou být využity pro zasílání připomínek k sérii datových sad.
+Definiční obor
+Série datových sad
+Obor hodnot
+Kontaktní bod
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+kontaktní bod
+ (
+dcat-ap:DatasetSeries.contactPoint
+)
+Definice: 
+Relevantní kontaktní informace pro katalogizovaný zdroj. Doporučuje se použít slovník VCard.
+                                      profiluje
+                    profil
+kontaktní bod
+ (
+dcat-dap:CatalogedResource.contactPoint
+)
+                                      profiluje
+                    vlastnost
+kontaktní bod
+ (
+dcat:contactPoint
+)
+Definice: 
+Relevantní kontaktní informace pro katalogizovaný zdroj. Doporučuje se použít slovník VCard.
+název
+IRI profilovaných vztahů
+dcterms:title
+IRI
+dcat-ap-cz:SérieDatovýchSad.název
+Název
+název
+Definice
+Název série datových sad
+Definiční obor
+Série datových sad
+Obor hodnot
+Text
+                          [1..1]
+Hierarchie
+                                        profiluje
+                    profil
+title (@en)
+ (
+dcat-ap:DatasetSeries.title
+)
+Definice: 
+A name given to the Dataset Series.
+                                      profiluje
+                    profil
+title (@en)
+ (
+dcat-dap:CatalogedResource.title
+)
+                                      profiluje
+                    vlastnost
+Title (@en)
+ (
+dcterms:title
+)
+Definice: 
+A name given to the resource.
+Popis použití v profilu
+This property can be repeated for parallel language versions of the name. (@en)
+periodicita aktualizace
+IRI profilovaných vztahů
+dcterms:accrualPeriodicity
+IRI
+dcat-ap-cz:SérieDatovýchSad.periodicitaAktualizace
+Název
+periodicita aktualizace
+Definice
+Frekvence, se kterou je série datových sad aktualizována.
+Definiční obor
+Série datových sad
+Obor hodnot
+Frekvence
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    profil
+frequency (@en)
+ (
+dcat-ap:DatasetSeries.frequency
+)
+Definice: 
+The frequency at which the Dataset Series is updated.
+                                      profiluje
+                    profil
+frequency (@en)
+ (
+dcat-dap:Dataset.frequency
+)
+Definice: 
+The frequency at which a dataset is published.
+                                      profiluje
+                    vlastnost
+Accrual Periodicity (@en)
+ (
+dcterms:accrualPeriodicity
+)
+Definice: 
+The frequency with which items are added to a collection.
+Popis použití v profilu
+The frequency of a dataset series is not equal to the frequency of the dataset in the collection. (@en)
+popis
+IRI profilovaných vztahů
+dcterms:description
+IRI
+dcat-ap-cz:SérieDatovýchSad.popis
+Název
+popis
+Definice
+Volný text s popisem série datových sad
+Definiční obor
+Série datových sad
+Obor hodnot
+Text
+                          [1..1]
+Hierarchie
+                                        profiluje
+                    profil
+description (@en)
+ (
+dcat-ap:DatasetSeries.description
+)
+Definice: 
+A free-text account of the Dataset Series.
+                                      profiluje
+                    profil
+description (@en)
+ (
+dcat-dap:CatalogedResource.description
+)
+Definice: 
+A free-text account of the resource.
+                                      profiluje
+                    vlastnost
+Description (@en)
+ (
+dcterms:description
+)
+Definice: 
+An account of the resource.
+Popis použití v profilu
+This property can be repeated for parallel language versions. It is recommended to provide an indication about the dimensions the Dataset Series evolves. (@en)
+poskytovatel
+IRI profilovaných vztahů
+dcterms:publisher
+IRI
+dcat-ap-cz:SérieDatovýchSad.poskytovatel
+Název
+poskytovatel
+Definice
+Poskytovatel série datových sad zajišťující její soudržnost.
+Definiční obor
+Série datových sad
+Obor hodnot
+Poskytovatel
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    profil
+publisher (@en)
+ (
+dcat-ap:DatasetSeries.publisher
+)
+Definice: 
+An entity (organisation) responsible for ensuring the coherency of the Dataset Series.
+                                      profiluje
+                    profil
+publisher (@en)
+ (
+dcat-dap:CatalogedResource.publisher
+)
+                                      profiluje
+                    vlastnost
+Publisher (@en)
+ (
+dcterms:publisher
+)
+Definice: 
+An entity responsible for making the resource available.
+Popis použití v profilu
+The publisher of the dataset series may not be the publisher of all datasets.  E.g. a digital archive could take over the publishing of older datasets in the series.  (@en)
+příslušný právní předpis
+IRI profilovaných vztahů
+dcatap:applicableLegislation
+IRI
+dcat-ap-cz:SérieDatovýchSad.příslušnýPrávníPředpis
+Název
+příslušný právní předpis
+Definice
+Indikace příslušného právního předpisu předepisujícího vznik série datových sad.
+Definiční obor
+Série datových sad
+Obor hodnot
+Právní předpis
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+applicable legislation (@en)
+ (
+dcat-ap:DatasetSeries.applicableLegislation
+)
+Definice: 
+The legislation that mandates the creation or management of the Dataset Series.
+                                      profiluje
+                    vlastnost
+applicable legislation (@en)
+ (
+dcatap:applicableLegislation
+)
+Definice: 
+the legislation that is applicable to this resource.
+související geografické území
+IRI profilovaných vztahů
+dcterms:spatial
+IRI
+dcat-ap-cz:SérieDatovýchSad.souvisejícíGeografickéÚzemí
+Název
+související geografické území
+Definice
+Geografické území pokryté sérií datových sad.
+Definiční obor
+Série datových sad
+Obor hodnot
+Geografické území
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+geographical coverage (@en)
+ (
+dcat-ap:DatasetSeries.geographicalCoverage
+)
+Definice: 
+A geographic region that is covered by the Dataset Series.
+                                      profiluje
+                    profil
+spatial/geographical coverage (@en)
+ (
+dcat-dap:Dataset.spatial-geographicalCoverage
+)
+Definice: 
+The geographical area covered by the dataset.
+                                      profiluje
+                    vlastnost
+Spatial Coverage (@en)
+ (
+dcterms:spatial
+)
+Definice: 
+Spatial characteristics of the resource.
+                                      specializuje
+                    vlastnost
+Coverage (@en)
+ (
+dcterms:coverage
+)
+Definice: 
+The spatial or temporal topic of the resource, spatial applicability of the resource, or jurisdiction under which the resource is relevant.
+Popis použití v profilu
+When spatial coverage is a dimension in the dataset series then the spatial coverage of each dataset in the collection should be part of the spatial coverage. In that case, an open ended value is recommended, e.g. EU or a broad bounding box covering the expected values. (@en)
+související geografické území - prvek z RÚIAN
+IRI profilovaných vztahů
+dcterms:spatial
+IRI
+dcat-ap-cz:SérieDatovýchSad.souvisejícíGeografickéÚzemí-PrvekZRúian
+Název
+související geografické území - prvek z RÚIAN
+Definice
+Území pokryté datovou sadou, vyjádřené pomocí prvku RÚIAN
+Definiční obor
+Série datových sad
+Obor hodnot
+Prvek z RÚIAN
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+geographical coverage (@en)
+ (
+dcat-ap:Dataset.geographicalCoverage
+)
+                                      profiluje
+                    profil
+spatial/geographical coverage (@en)
+ (
+dcat-dap:Dataset.spatial-geographicalCoverage
+)
+Definice: 
+The geographical area covered by the dataset.
+                                      profiluje
+                    vlastnost
+Spatial Coverage (@en)
+ (
+dcterms:spatial
+)
+Definice: 
+Spatial characteristics of the resource.
+                                      specializuje
+                    vlastnost
+Coverage (@en)
+ (
+dcterms:coverage
+)
+Definice: 
+The spatial or temporal topic of the resource, spatial applicability of the resource, or jurisdiction under which the resource is relevant.
+Popis použití v profilu
+The spatial coverage of a dataset may be encoded as an instance of dcterms:Location, or may be indicated using an IRI reference (link) to a resource describing a location. It is recommended that links are to entries in a well maintained gazetteer such as Geonames. (@en)
+téma
+IRI profilovaných vztahů
+dcat:theme
+IRI
+dcat-ap-cz:SérieDatovýchSad.téma
+Název
+téma
+Definice
+Hlavní téma zdroje. Zdroj může mít více témat.
+Definiční obor
+Série datových sad
+Obor hodnot
+Datové téma
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+téma
+ (
+dcat-ap:Dataset.theme
+)
+Definice: 
+Hlavní téma zdroje. Zdroj může mít více témat.
+                                      profiluje
+                    profil
+téma
+ (
+dcat-dap:CatalogedResource.theme-category
+)
+                                      profiluje
+                    vlastnost
+téma
+ (
+dcat:theme
+)
+Definice: 
+Hlavní téma zdroje. Zdroj může mít více témat.
+                                      specializuje
+                    vlastnost
+Subject (@en)
+ (
+dcterms:subject
+)
+Definice: 
+A topic of the resource.
+Popis použití v profilu
+A Dataset may be associated with multiple themes. (@en)
+vstupní stránka
+IRI profilovaných vztahů
+dcat:landingPage
+IRI
+dcat-ap-cz:SérieDatovýchSad.vstupníStránka
+Název
+vstupní stránka
+Definice
+Webová stránka, na kterou lze pro získání přístupu ke sérii datových sad přistoupit webovým prohlížečem.
+Definiční obor
+Série datových sad
+Obor hodnot
+Dokument
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+vstupní stránka
+ (
+dcat-dap:CatalogedResource.landingPage
+)
+                                      profiluje
+                    vlastnost
+vstupní stránka
+ (
+dcat:landingPage
+)
+Definice: 
+Webová stránka, na kterou lze pro získání přístupu ke katalogu, datové sadě, jejím distribucím a/nebo dalším informacím přistoupit webovým prohlížečem.
+                                      specializuje
+                    vlastnost
+page (@en)
+ (
+foaf:page
+)
+Definice: 
+A page or document about this thing.
+Specifikace podmínek užití
+IRI profilovaných tříd
+https://data.gov.cz/slovník/podmínky-užití/Specifikace
+IRI
+dcat-ap-cz:SpecifikacePodmínekUžití
+Název
+Specifikace podmínek užití
+Definice
+Specifikace podmínek užití dle https://opendata.gov.cz/cinnost:stanoveni-podminek-uziti.
+Hierarchie
+                                    profiluje
+                třídu
+Specifikace podmínek užití
+ (
+https://data.gov.cz/slovník/podmínky-užití/Specifikace
+)
+Definice: 
+Specifikace podmínek užití dle https://opendata.gov.cz/cinnost:stanoveni-podminek-uziti.
+                                  specializuje
+                třídu
+License Document (@en)
+ (
+dcterms:LicenseDocument
+)
+Definice: 
+A legal document giving official permission to do something with a resource.
+                                  specializuje
+                třídu
+Rights Statement (@en)
+ (
+dcterms:RightsStatement
+)
+Definice: 
+A statement about the intellectual property rights (IPR) held in or over a resource, a legal document giving official permission to do something with a resource, or a statement about access rights.
+Vlastnosti
+Pro tento profil třídy jsou definovány následující vlastnosti: 
+autorské dílo
+, 
+jména autorů díla
+, 
+jména autorů originální databáze
+, 
+originální databáze
+, 
+osobní údaje
+, 
+zvláštní právo pořizovatele databáze
+.
+Zpětné asociace
+z domény 
+ → 
+autorské dílo
+IRI profilovaných vztahů
+https://data.gov.cz/slovník/podmínky-užití/autorské-dílo
+IRI
+dcat-ap-cz:SpecifikacePodmínekUžití.autorskéDílo
+Název
+autorské dílo
+Definice
+Většina případů poskytovaných dat nebude spadat pod definici autorského díla dle § 2 autorského zákona (121/2000 Sb.), nebude se na ně proto vztahovat autorskoprávní ochrana a nebude proto pro ně potřeba jakékoli licence. „Prostá data“ nejsou chráněna právy duševního vlastnictví. Ve výjimečných případech se však může stát, že databáze bude obsahovat autorskoprávně chráněná díla. Příkladem dat obsahujících autorskoprávně chráněná díla by mohl být seznam příspěvků literární soutěže pořádané radnicí, který by byl uveřejněný včetně plnotextového znění přihlášených soutěžních děl.
+Definiční obor
+Specifikace podmínek užití
+Obor hodnot
+Licence
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    vlastnost
+Autorské dílo
+ (
+https://data.gov.cz/slovník/podmínky-užití/autorské-dílo
+)
+Definice: 
+Většina případů poskytovaných dat nebude spadat pod definici autorského díla dle § 2 autorského zákona (121/2000 Sb.), nebude se na ně proto vztahovat autorskoprávní ochrana a nebude proto pro ně potřeba jakékoli licence. „Prostá data“ nejsou chráněna právy duševního vlastnictví. Ve výjimečných případech se však může stát, že databáze bude obsahovat autorskoprávně chráněná díla. Příkladem dat obsahujících autorskoprávně chráněná díla by mohl být seznam příspěvků literární soutěže pořádané radnicí, který by byl uveřejněný včetně plnotextového znění přihlášených soutěžních děl.
+jména autorů díla
+IRI profilovaných vztahů
+https://data.gov.cz/slovník/podmínky-užití/autor
+IRI
+dcat-ap-cz:SpecifikacePodmínekUžití.jménaAutorůDíla
+Název
+jména autorů díla
+Definice
+Jména autorů díla pro použití s licencí CC BY 4.0
+Definiční obor
+Specifikace podmínek užití
+                          [0..*]
+Obor hodnot
+rdf:langString
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    vlastnost
+Jména autorů díla
+ (
+https://data.gov.cz/slovník/podmínky-užití/autor
+)
+Definice: 
+Jména autorů díla pro použití s licencí CC BY 4.0
+jména autorů originální databáze
+IRI profilovaných vztahů
+https://data.gov.cz/slovník/podmínky-užití/autor-databáze
+IRI
+dcat-ap-cz:SpecifikacePodmínekUžití.jménaAutorůOriginálníDatabáze
+Název
+jména autorů originální databáze
+Definice
+Jména autorů originální databáze pro použití s licencí CC BY 4.0
+Definiční obor
+Specifikace podmínek užití
+                          [0..*]
+Obor hodnot
+rdf:langString
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    vlastnost
+Jména autorů originální databáze
+ (
+https://data.gov.cz/slovník/podmínky-užití/autor-databáze
+)
+Definice: 
+Jména autorů originální databáze pro použití s licencí CC BY 4.0
+originální databáze
+IRI profilovaných vztahů
+https://data.gov.cz/slovník/podmínky-užití/databáze-jako-autorské-dílo
+IRI
+dcat-ap-cz:SpecifikacePodmínekUžití.originálníDatabáze
+Název
+originální databáze
+Definice
+Tato ochrana je založena § 2 odst. 2 a 5 Autorského zákona a chráněny jsou takové databáze, které jsou „způsobem výběru nebo uspořádáním obsahu autorovým vlastním duševním výtvorem“. Chráněna je tady originální struktura, systém řazení údajů a podobně, tedy kostra, do které se samotné údaje vkládají. Takové databázi se říká „originální databáze“. Příkladem originální databáze může být obchodní rejstřík, který je však zároveň úředním dílem.
+Definiční obor
+Specifikace podmínek užití
+Obor hodnot
+Licence
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    vlastnost
+Originální databáze
+ (
+https://data.gov.cz/slovník/podmínky-užití/databáze-jako-autorské-dílo
+)
+Definice: 
+Tato ochrana je založena § 2 odst. 2 a 5 Autorského zákona a chráněny jsou takové databáze, které jsou „způsobem výběru nebo uspořádáním obsahu autorovým vlastním duševním výtvorem“. Chráněna je tady originální struktura, systém řazení údajů a podobně, tedy kostra, do které se samotné údaje vkládají. Takové databázi se říká „originální databáze“. Příkladem originální databáze může být obchodní rejstřík, který je však zároveň úředním dílem.
+osobní údaje
+IRI profilovaných vztahů
+https://data.gov.cz/slovník/podmínky-užití/osobní-údaje
+IRI
+dcat-ap-cz:SpecifikacePodmínekUžití.osobníÚdaje
+Název
+osobní údaje
+Definice
+Pokud data obsahují osobní údaje, je třeba o této skutečnosti informovat příjemce dat. Předpřipravené dokumenty mají IRI https://data.gov.cz/podmínky-užití/obsahuje-osobní-údaje/ a https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/.
+Definiční obor
+Specifikace podmínek užití
+Obor hodnot
+Licence
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    vlastnost
+Osobní údaje
+ (
+https://data.gov.cz/slovník/podmínky-užití/osobní-údaje
+)
+Definice: 
+Pokud data obsahují osobní údaje, je třeba o této skutečnosti informovat příjemce dat. Předpřipravené dokumenty mají IRI https://data.gov.cz/podmínky-užití/obsahuje-osobní-údaje/ a https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/.
+zvláštní právo pořizovatele databáze
+IRI profilovaných vztahů
+https://data.gov.cz/slovník/podmínky-užití/databáze-chráněná-zvláštními-právy
+IRI
+dcat-ap-cz:SpecifikacePodmínekUžití.zvláštníPrávoPořizovateleDatabáze
+Název
+zvláštní právo pořizovatele databáze
+Definice
+Tato ochrana je založena § 88 a následujícími Autorského zákona. Zvláštní databázová práva chrání investice vynaložené při zřízení databáze, ověření uvedených dat, nebo jejich publikaci. Práva vznikají, pokud pořízení, ověření nebo předvedení obsahu databáze představuje kvalitativně nebo kvantitativně podstatný vklad. Držitelem práv je pořizovatel databáze, což je osoba, která na svou odpovědnost pořídí databázi, nebo pro kterou tak z jejího podnětu učiní jiná osoba. Zvláštních databázových práv se dá plně vzdát, na rozdíl od autorských práv. Příkladem databáze chráněné zvláštními právy pořizovatele databáze je databáze právních předpisů.
+Definiční obor
+Specifikace podmínek užití
+Obor hodnot
+Licence
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    vlastnost
+Zvláštní právo pořizovatele databáze
+ (
+https://data.gov.cz/slovník/podmínky-užití/databáze-chráněná-zvláštními-právy
+)
+Definice: 
+Tato ochrana je založena § 88 a následujícími Autorského zákona. Zvláštní databázová práva chrání investice vynaložené při zřízení databáze, ověření uvedených dat, nebo jejich publikaci. Práva vznikají, pokud pořízení, ověření nebo předvedení obsahu databáze představuje kvalitativně nebo kvantitativně podstatný vklad. Držitelem práv je pořizovatel databáze, což je osoba, která na svou odpovědnost pořídí databázi, nebo pro kterou tak z jejího podnětu učiní jiná osoba. Zvláštních databázových práv se dá plně vzdát, na rozdíl od autorských práv. Příkladem databáze chráněné zvláštními právy pořizovatele databáze je databáze právních předpisů.
+Podpůrné profily třídy
+Časový interval
+IRI profilovaných tříd
+dcterms:PeriodOfTime
+IRI
+dcat-ap-cz:ČasovýInterval
+Název
+Časový interval
+Definice
+Časový interval definovaný svým začátkem a koncem.
+Hierarchie
+                                    profiluje
+                profil
+Period of Time (@en)
+ (
+dcat-ap:PeriodOfTime
+)
+                                  profiluje
+                profil
+Period of Time (@en)
+ (
+dcat-dap:PeriodOfTime
+)
+Definice: 
+An interval of time that is named or defined by its start and end.
+                                  profiluje
+                třídu
+Period of Time (@en)
+ (
+dcterms:PeriodOfTime
+)
+Definice: 
+An interval of time that is named or defined by its start and end dates.
+                                  specializuje
+                třídu
+Location, Period, or Jurisdiction (@en)
+ (
+dcterms:LocationPeriodOrJurisdiction
+)
+Definice: 
+A location, period of time, or jurisdiction.
+Vlastnosti
+Pro tento profil třídy jsou definovány následující vlastnosti: 
+datum konce
+, 
+datum začátku
+.
+Zpětné asociace
+z domény 
+ → 
+z domény 
+ → 
+datum konce
+IRI profilovaných vztahů
+dcat:endDate
+IRI
+dcat-ap-cz:ČasovýInterval.datumKonce
+Název
+datum konce
+Definice
+Konec doby trvání.
+Definiční obor
+Časový interval
+Obor hodnot
+xsd:date
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    profil
+datum konce
+ (
+dcat-ap:PeriodOfTime.endDate
+)
+                                      profiluje
+                    profil
+datum konce
+ (
+dcat-dap:PeriodOfTime.endDate
+)
+                                      profiluje
+                    vlastnost
+datum konce
+ (
+dcat:endDate
+)
+Definice: 
+Konec doby trvání.
+Popis použití v profilu
+rdfs:Literal encoded using the relevant ISO 8601 Date and Time compliant string [[DATETIME]] and typed using the appropriate XML Schema datatype [[XMLSCHEMA11-2]] (@en)
+datum začátku
+IRI profilovaných vztahů
+dcat:startDate
+IRI
+dcat-ap-cz:ČasovýInterval.datumZačátku
+Název
+datum začátku
+Definice
+Začátek doby trvání.
+Definiční obor
+Časový interval
+Obor hodnot
+xsd:date
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    profil
+datum začátku
+ (
+dcat-ap:PeriodOfTime.startDate
+)
+                                      profiluje
+                    profil
+datum začátku
+ (
+dcat-dap:PeriodOfTime.startDate
+)
+Definice: 
+The start of the period.
+                                      profiluje
+                    vlastnost
+datum začátku
+ (
+dcat:startDate
+)
+Definice: 
+Začátek doby trvání
+Popis použití v profilu
+rdfs:Literal encoded using the relevant ISO 8601 Date and Time compliant string [[DATETIME]] and typed using the appropriate XML Schema datatype [[XMLSCHEMA11-2]] (xsd:gYear, xsd:gYearMonth, xsd:date, or xsd:dateTime). (@en)
+Datové téma
+IRI profilovaných tříd
+skos:Concept
+IRI
+dcat-ap-cz:DatovéTéma
+Název
+Datové téma
+Definice
+Datové téma.
+Hierarchie
+                                    profiluje
+                profil
+Koncept
+ (
+dcat-ap-cz:Koncept
+)
+Definice: 
+Pojem; myšlenková jednotka
+                                  profiluje
+                profil
+Concept (@en)
+ (
+dcat-ap:Concept
+)
+Definice: 
+An idea or notion; a unit of thought.
+                                  profiluje
+                třídu
+Concept (@en)
+ (
+skos:Concept
+)
+Popis použití v profilu
+Datové téma z evropského číselníku datových témat [[EUV-THEMES]].
+Zpětné asociace
+z domény 
+ → 
+z domény 
+ → 
+Dokument
+IRI profilovaných tříd
+foaf:Document
+IRI
+dcat-ap-cz:Dokument
+Název
+Dokument
+Definice
+Textový dokument určený pro čtení lidmi. Například webová stránka.
+Hierarchie
+                                    profiluje
+                profil
+Document (@en)
+ (
+dcat-ap:Document
+)
+Definice: 
+A textual resource intended for human consumption that contains information, e.g. a web page about a Dataset.
+                                  profiluje
+                třídu
+Document (@en)
+ (
+foaf:Document
+)
+Definice: 
+A document.
+Zpětné asociace
+z domény 
+ → 
+z domény 
+ → 
+z domény 
+ → 
+z domény 
+ → 
+z domény 
+ → 
+z domény 
+ → 
+E-mailová adresa
+IRI profilovaných tříd
+rdfs:Resource
+IRI
+dcat-ap-cz:E-mailAddress
+Název
+E-mailová adresa
+Definice
+E-mailová adresa identifikovaná pomocí mailto: IRI.
+Hierarchie
+                                    profiluje
+                profil
+Zdroj
+ (
+dcat-ap-cz:Zdroj
+)
+Definice: 
+Cokoliv, co má URL.
+                                  profiluje
+                profil
+Resource (@en)
+ (
+dcat-ap:rdfs-Resource
+)
+Definice: 
+Anything described by RDF.
+                                  profiluje
+                profil
+Resource (@en)
+ (
+dcat-dap:rdfs-Resource
+)
+                                  profiluje
+                třídu
+Resource (@en)
+ (
+rdfs:Resource
+)
+Definice: 
+The class resource, everything.
+Zpětné asociace
+z domény 
+ → 
+Formát souboru
+IRI profilovaných tříd
+dcterms:MediaTypeOrExtent
+IRI
+dcat-ap-cz:FormátSouboru
+Název
+Formát souboru
+Definice
+Datový formát souboru.
+Hierarchie
+                                    profiluje
+                profil
+Media Type or Extent (@en)
+ (
+dcat-ap:MediaTypeOrExtent
+)
+                                  profiluje
+                profil
+Media Type or Extent (@en)
+ (
+dcat-dap:MediaTypeOrExtent
+)
+                                  profiluje
+                třídu
+Media Type or Extent (@en)
+ (
+dcterms:MediaTypeOrExtent
+)
+Definice: 
+A media type or extent.
+Popis použití v profilu
+Formát souboru z evropského číselníku typů souborů [[EUV-FT]].
+Zpětné asociace
+z domény 
+ → 
+Frekvence
+IRI profilovaných tříd
+dcterms:Frequency
+IRI
+dcat-ap-cz:Frekvence
+Název
+Frekvence
+Definice
+Frekvence nějakého jevu, například aktualizace datové sady.
+Hierarchie
+                                    profiluje
+                profil
+Frequency (@en)
+ (
+dcat-ap:Frequency
+)
+Definice: 
+A rate at which something recurs, e.g. the publication of a Dataset.
+                                  profiluje
+                profil
+Frequency (@en)
+ (
+dcat-dap:Frequency
+)
+                                  profiluje
+                třídu
+Frequency (@en)
+ (
+dcterms:Frequency
+)
+Definice: 
+A rate at which something recurs.
+Popis použití v profilu
+Hodnoty jsou z evropského číselníku frekvencí [[EUV-FREQ]].
+Zpětné asociace
+z domény 
+ → 
+z domény 
+ → 
+Geografické území
+IRI profilovaných tříd
+dcterms:Location
+IRI
+dcat-ap-cz:GeografickéÚzemí
+Název
+Geografické území
+Definice
+Území nebo pojmenované místo.
+Hierarchie
+                                    profiluje
+                profil
+Location (@en)
+ (
+dcat-ap:Location
+)
+                                  profiluje
+                profil
+Location (@en)
+ (
+dcat-dap:Location
+)
+                                  profiluje
+                třídu
+Location (@en)
+ (
+dcterms:Location
+)
+Definice: 
+A spatial region or named place.
+                                  specializuje
+                třídu
+Location, Period, or Jurisdiction (@en)
+ (
+dcterms:LocationPeriodOrJurisdiction
+)
+Definice: 
+A location, period of time, or jurisdiction.
+Popis použití v profilu
+Hodnoty musí být z evropských číselníků kontinentů [[EUV-CONT]], zemí [[EUV-COUNTRIES]] a míst [[EUV-PLACES]], pokud tam jsou. Pokud ne, musí se jednat o URI z Geonames [[GEONAMES]].
+Zpětné asociace
+z domény 
+ → 
+z domény 
+ → 
+Jednotlivec
+IRI profilovaných tříd
+vcard:Individual
+IRI
+dcat-ap-cz:Jednotlivec
+Název
+Jednotlivec
+Definice
+Jednotlivá fyzická osoba.
+Hierarchie
+                                    profiluje
+                třídu
+Individual (@en)
+ (
+vcard:Individual
+)
+Definice: 
+An object representing a single person or entity
+                                  specializuje
+                třídu
+Kind (@en)
+ (
+vcard:Kind
+)
+Definice: 
+The parent class for all objects
+                                  specializuje
+                profil
+Kontaktní bod
+ (
+dcat-ap-cz:KontaktníBod
+)
+Definice: 
+Obsahuje kontaktní informace, které mohou být využity pro zasílání připomínek.
+                                  profiluje
+                profil
+Kind (@en)
+ (
+dcat-ap:Kind
+)
+Definice: 
+A description following the vCard specification, e.g. to provide telephone number and e-mail address for a contact point.
+                                  profiluje
+                profil
+Kind (@en)
+ (
+dcat-dap:Kind
+)
+                                  profiluje
+                třídu
+Kind (@en)
+ (
+vcard:Kind
+)
+Definice: 
+The parent class for all objects
+Koncept
+IRI profilovaných tříd
+skos:Concept
+IRI
+dcat-ap-cz:Koncept
+Název
+Koncept
+Definice
+Pojem; myšlenková jednotka
+Hierarchie
+                                    profiluje
+                profil
+Concept (@en)
+ (
+dcat-ap:Concept
+)
+Definice: 
+An idea or notion; a unit of thought.
+                                  profiluje
+                třídu
+Concept (@en)
+ (
+skos:Concept
+)
+Popis použití v profilu
+In DCAT-AP, a Concept is used to denote codes within a codelist. In section 10. Controlled Vocabularies the expectations are elaborated in more detail. (@en)
+Kontaktní bod
+IRI profilovaných tříd
+vcard:Kind
+IRI
+dcat-ap-cz:KontaktníBod
+Název
+Kontaktní bod
+Definice
+Obsahuje kontaktní informace, které mohou být využity pro zasílání připomínek.
+Hierarchie
+                                    profiluje
+                profil
+Kind (@en)
+ (
+dcat-ap:Kind
+)
+Definice: 
+A description following the vCard specification, e.g. to provide telephone number and e-mail address for a contact point.
+                                  profiluje
+                profil
+Kind (@en)
+ (
+dcat-dap:Kind
+)
+                                  profiluje
+                třídu
+Kind (@en)
+ (
+vcard:Kind
+)
+Definice: 
+The parent class for all objects
+Vlastnosti
+Pro tento profil třídy jsou definovány následující vlastnosti: 
+email
+, 
+jméno
+.
+Zpětné asociace
+z domény 
+ → 
+z domény 
+ → 
+z domény 
+ → 
+z domény 
+ → 
+email
+IRI profilovaných vztahů
+vcard:hasEmail
+IRI
+dcat-ap-cz:KontaktníBod.email
+Název
+email
+Definice
+E-mailová adresa pro komunikaci.
+Definiční obor
+Kontaktní bod
+Obor hodnot
+E-mailová adresa
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    vlastnost
+has email (@en)
+ (
+vcard:hasEmail
+)
+Definice: 
+To specify the electronic mail address for communication with the object
+jméno
+IRI profilovaných vztahů
+vcard:fn
+IRI
+dcat-ap-cz:KontaktníBod.jméno
+Název
+jméno
+Definice
+Jméno objektu jako formátovaný text.
+Definiční obor
+Kontaktní bod
+                          [0..*]
+Obor hodnot
+Text
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    vlastnost
+formatted name (@en)
+ (
+vcard:fn
+)
+Definice: 
+The formatted text corresponding to the name of the object
+Licence
+IRI profilovaných tříd
+dcterms:LicenseDocument
+IRI
+dcat-ap-cz:Licence
+Název
+Licence
+Definice
+Právní dokument oficiálně dovolující pracovat se zdrojem.
+Hierarchie
+                                    profiluje
+                třídu
+License Document (@en)
+ (
+dcterms:LicenseDocument
+)
+Definice: 
+A legal document giving official permission to do something with a resource.
+                                  specializuje
+                třídu
+Rights Statement (@en)
+ (
+dcterms:RightsStatement
+)
+Definice: 
+A statement about the intellectual property rights (IPR) held in or over a resource, a legal document giving official permission to do something with a resource, or a statement about access rights.
+Zpětné asociace
+z domény 
+ → 
+z domény 
+ → 
+z domény 
+ → 
+z domény 
+ → 
+Organizace
+IRI profilovaných tříd
+vcard:Organization
+IRI
+dcat-ap-cz:Organizace
+Název
+Organizace
+Definice
+Organizace, právnická osoba nebo její část.
+Hierarchie
+                                    profiluje
+                třídu
+Organization (@en)
+ (
+vcard:Organization
+)
+Definice: 
+An object representing an organization.  An organization is a single entity, and might represent a business or government, a department or division within a business or government, a club, an association, or the like.
+                                  specializuje
+                třídu
+Kind (@en)
+ (
+vcard:Kind
+)
+Definice: 
+The parent class for all objects
+                                  specializuje
+                profil
+Kontaktní bod
+ (
+dcat-ap-cz:KontaktníBod
+)
+Definice: 
+Obsahuje kontaktní informace, které mohou být využity pro zasílání připomínek.
+                                  profiluje
+                profil
+Kind (@en)
+ (
+dcat-ap:Kind
+)
+Definice: 
+A description following the vCard specification, e.g. to provide telephone number and e-mail address for a contact point.
+                                  profiluje
+                profil
+Kind (@en)
+ (
+dcat-dap:Kind
+)
+                                  profiluje
+                třídu
+Kind (@en)
+ (
+vcard:Kind
+)
+Definice: 
+The parent class for all objects
+Poskytovatel
+IRI profilovaných tříd
+foaf:Agent
+IRI
+dcat-ap-cz:Poskytovatel
+Název
+Poskytovatel
+Definice
+Poskytovatel dat
+Hierarchie
+                                    profiluje
+                profil
+Agent (@en)
+ (
+dcat-ap:Agent
+)
+Definice: 
+Any entity carrying out actions with respect to the entities Catalogue and the Catalogued Resources.
+                                  profiluje
+                profil
+Agent (@en)
+ (
+dcat-dap:Agent
+)
+                                  profiluje
+                třídu
+Agent (@en)
+ (
+foaf:Agent
+)
+Definice: 
+An agent (eg. person, group, software or physical artifact).
+Zpětné asociace
+z domény 
+ → 
+z domény 
+ → 
+z domény 
+ → 
+Právní předpis
+IRI profilovaných tříd
+http://data.europa.eu/eli/ontology#LegalResource
+IRI
+dcat-ap-cz:PrávníPředpis
+Název
+Právní předpis
+Definice
+Tato třída představuje legislativu nebo politiku, které stojí za pravidly upravujícími službu.
+Hierarchie
+                                    profiluje
+                profil
+Legal Resource (@en)
+ (
+dcat-ap:LegalResource
+)
+Definice: 
+This class represents the legislation,policy or policies that lie behind the Rules that govern the service.
+                                  profiluje
+                třídu
+Legal Resource (@en)
+ (
+http://data.europa.eu/eli/ontology#LegalResource
+)
+Definice: 
+A work in a legislative corpus. This applies to acts that have been legally enacted (whether or not they are still in force).
+          For example, the abstract concept of the legal resource; e.g. "act 3 of 2005" (adapted from Akoma Ntoso)
+          A legal resource can represent a legal act or any component of a legal act, like an article.  Legal resources can be linked together using properties defined in the model.
+          Note that ELI ontology accommodates different point of view on what should be considered a new legal resource, or a new legal expression of the same resource. Typically, a consolidated version can be viewed, in the context of ELI, either as separate legal resource (linked to original version and previous consolidated version using corresponding ELI relations), or as a different legal expression of the same legal resource.
+                                  specializuje
+                třídu
+Work (@en)
+ (
+http://data.europa.eu/eli/ontology#Work
+)
+Definice: 
+Any distinct intellectual creation (i.e., the intellectual content), in the context of ELI.
+          The substance of Work is ideas.
+                                  specializuje
+                třídu
+beze jména
+ (
+http://iflastandards.info/ns/fr/frbr/frbroo/F1_Work
+)
+Popis použití v profilu
+The definition and properties of the Legal Resource class are aligned with the ontology included in "Council conclusions inviting the introduction of the European Legislation Identifier (ELI)". For describing the attributes of a Legal Resource (labels, preferred labels, alternative labels, definition, etc.) we refer to the (ELI) ontology. In this data specification the use is restricted to instances of this class that follow the (ELI) URI guidelines. (@en)
+Zpětné asociace
+z domény 
+ → 
+z domény 
+ → 
+z domény 
+ → 
+z domény 
+ → 
+Prvek z RÚIAN
+IRI profilovaných tříd
+dcterms:Location
+IRI
+dcat-ap-cz:PrvekRÚIAN
+Název
+Prvek z RÚIAN
+Definice
+Územní prvek z RÚIAN.
+Hierarchie
+                                    profiluje
+                profil
+Location (@en)
+ (
+dcat-ap:Location
+)
+                                  profiluje
+                profil
+Location (@en)
+ (
+dcat-dap:Location
+)
+                                  profiluje
+                třídu
+Location (@en)
+ (
+dcterms:Location
+)
+Definice: 
+A spatial region or named place.
+                                  specializuje
+                třídu
+Location, Period, or Jurisdiction (@en)
+ (
+dcterms:LocationPeriodOrJurisdiction
+)
+Definice: 
+A location, period of time, or jurisdiction.
+Popis použití v profilu
+Hodnota musí být IRI prvku z RÚIAN [[RUIAN]].
+Zpětné asociace
+z domény 
+ → 
+z domény 
+ → 
+Standard
+IRI profilovaných tříd
+dcterms:Standard
+IRI
+dcat-ap-cz:Standard
+Název
+Standard
+Definice
+Standard, specifikace.
+Hierarchie
+                                    profiluje
+                profil
+Standard (@en)
+ (
+dcat-ap:Standard
+)
+Definice: 
+A standard or other specification to which a resource conforms.
+                                  profiluje
+                profil
+Standard (@en)
+ (
+dcat-dap:Standard
+)
+                                  profiluje
+                třídu
+Standard (@en)
+ (
+dcterms:Standard
+)
+Definice: 
+A reference point against which other things can be evaluated or compared.
+Zpětné asociace
+z domény 
+ → 
+z domény 
+ → 
+Téma EuroVoc
+IRI profilovaných tříd
+skos:Concept
+IRI
+dcat-ap-cz:TémaEuroVoc
+Název
+Téma EuroVoc
+Definice
+Datové téma z evropského tezauru EuroVoc.
+Hierarchie
+                                    profiluje
+                profil
+Koncept
+ (
+dcat-ap-cz:Koncept
+)
+Definice: 
+Pojem; myšlenková jednotka
+                                  profiluje
+                profil
+Concept (@en)
+ (
+dcat-ap:Concept
+)
+Definice: 
+An idea or notion; a unit of thought.
+                                  profiluje
+                třídu
+Concept (@en)
+ (
+skos:Concept
+)
+Popis použití v profilu
+Téma z evropského tezauru EuroVoc [[EUV-EUROVOC]].
+Zpětné asociace
+z domény 
+ → 
+z domény 
+ → 
+Typ média
+IRI profilovaných tříd
+dcterms:MediaType
+IRI
+dcat-ap-cz:TypMédia
+Název
+Typ média
+Definice
+Datový formát souboru.
+Hierarchie
+                                    profiluje
+                profil
+Media Type (@en)
+ (
+dcat-ap:MediaType
+)
+                                  profiluje
+                profil
+Media Type (@en)
+ (
+dcat-dap:MediaType
+)
+                                  profiluje
+                třídu
+Media Type (@en)
+ (
+dcterms:MediaType
+)
+Definice: 
+A file format or physical medium.
+                                  specializuje
+                třídu
+Media Type or Extent (@en)
+ (
+dcterms:MediaTypeOrExtent
+)
+Definice: 
+A media type or extent.
+Popis použití v profilu
+Typ média z číselníku IANA [[IANA-MEDIA-TYPES]].
+Zpětné asociace
+z domény 
+ → 
+z domény 
+ → 
+z domény 
+ → 
+Zdroj
+IRI profilovaných tříd
+rdfs:Resource
+IRI
+dcat-ap-cz:Zdroj
+Název
+Zdroj
+Definice
+Cokoliv, co má URL.
+Hierarchie
+                                    profiluje
+                profil
+Resource (@en)
+ (
+dcat-ap:rdfs-Resource
+)
+Definice: 
+Anything described by RDF.
+                                  profiluje
+                profil
+Resource (@en)
+ (
+dcat-dap:rdfs-Resource
+)
+                                  profiluje
+                třídu
+Resource (@en)
+ (
+rdfs:Resource
+)
+Definice: 
+The class resource, everything.
+Zpětné asociace
+z domény 
+ → 
+z domény 
+ → 
+z domény 
+ → 
+z domény 
+ → 
+z domény 
+ → 
+Použité prefixy
+Prefix
+Namespace IRI
+dcat
+http://www.w3.org/ns/dcat#
+dcat-ap-cz
+https://ofn.gov.cz/dcat-ap-cz#
+dcat-ap
+https://mff-uk.github.io/specifications/dcat-ap#
+dcat-dap
+https://mff-uk.github.io/specifications/dcat-dap#
+dcterms
+http://purl.org/dc/terms/
+xsd
+http://www.w3.org/2001/XMLSchema#
+foaf
+http://xmlns.com/foaf/0.1/
+rdf
+http://www.w3.org/1999/02/22-rdf-syntax-ns#
+dcatap
+http://data.europa.eu/r5r/
+skos
+http://www.w3.org/2004/02/skos/core#
+rdfs
+http://www.w3.org/2000/01/rdf-schema#
+vcard
+http://www.w3.org/2006/vcard/ns#
+Přílohy
+Součástí této specifikace jsou následující přílohy.
+Příloha
+Odkaz
+Aplikační profil
+../dsv.ttl
+SHACL validační pravidla
+../shacl.ttl
+Dokumentace
+#

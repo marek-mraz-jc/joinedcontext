@@ -1,0 +1,1500 @@
+
+DCAT-AP-CZ: Rozhraní katalogů dat
+      Cílem tohoto dokumentu je specifikovat rozhraní lokálních katalogů dat (LKD) pro jejich harvestování Národním katalogem dat (NKD).
+      Dokument je založen na základním datovém modelu pro katalogy dat 
+DCAT-AP-CZ
+.
+      Jsou specifikovány 2 varianty rozhraní pro harvestaci, jedna využívá SPARQL endpoint a jedna specifikuje variantu uložení záznamů v souborech, bez použití SPARQL endpointu.
+      Specifikace metadatových záznamů datových sad v katalogu jsou popsány v samostatných specifikacích dle jejich druhu.
+Úvod
+      Provozování lokálního katalogu dat (LKD) je 
+jedním ze způsobů zajištění katalogizace dat v Národním katalogu dat (NKD)
+.
+      Tento způsob katalogizace je vhodný pro všechny organizace, u kterých se dá předpokládat katalogizace většího množství datových sad či častější aktualizace jejich metadat.
+      Touto OFN je specifikován samotný lokální katalog dat a způsob jeho harvestace, nezávisle na typu obsažených datových sad.
+      Pro specifikaci jednotlivých typů datových sad v katalogu slouží samostané OFN.
+Typy datových sad v katalozích dat
+          V lokálních katalozích dat poskytovatelé katalogizují různé typy datových sad.
+          Každý z typů datových sad je specifikován samostatnou OFN.
+          Aktuálně rozlišujeme tři typy datových sad.
+Otevřená data pro splnění podmínky 
+registrace otevřených dat v Národním katalogu otevřených dat
+. Záznamy datových sad otevřených dat jsou specifikovány OFN 
+DCAT-AP-CZ: Datové sady otevřených dat
+.
+Datové sady s vysokou hodnotou (HVD). Záznamy datových sad jsou specifikovány OFN 
+Datové sady s vysokou hodnotou (HVD)
+.
+Datová rozhraní dle 
+§ 6 zákona č. 60/2026 Sb., o správě dat a o řízeném přístupu k datům
+ a dle 
+§ 24 odst. 2 vyhlášky č. 360/2023 Sb., o dlouhodobém řízení informačních systémů veřejné správy
+. Záznamy těchto datových sad jsou specifikovány OFN 
+DCAT-AP-CZ: Datová rozhraní
+.
+Změny od poslední verze
+          Tato OFN vznikla osamostatněním části 
+rozhraní lokálních katalogů z původní OFN Rozhraní katalogů otevřených dat
+.
+          Je totiž nezávislá na konkrétním typu datové sady v katalogu, kterých je nyní více.
+          Podporovaná rozhraní, ani princip jejich fungování se však nezměnil.
+          Jediná změna se týká IRI JSON-LD kontextu, které je nyní jiné pro soubor s katalogem a pro jednotlivé typy datových sad v katalogu.
+Přehled
+DCAT-AP-CZ: Rozhraní katalogů dat
+        Specifikace struktury pro
+        Katalog
+Datová struktura pro Katalog. Řízená kolekce metadat o datových sadách a datových službách
+      JSON struktura pro    Katalog
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat/2026-09-23/katalog/schéma.json
+Definováno v
+../katalog/schéma.json
+Verze použitého jazyka
+2020-12
+ (metaschema IRI: 
+https://json-schema.org/draft/2020-12/schema
+)
+Kořen
+    Kořenem JSON schématu je
+        Objekt 
+Katalog
+Popis
+Řízená kolekce metadat o datových sadách a datových službách
+Interpretace
+Katalog
+    objekt
+    s vlastnostmi (
+properties
+):
+@context
+:
+          povinná
+          položka typu
+        právě jedno z následujících (
+oneOf
+):
+    konstantní hodnota
+"https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat/2026-09-23/katalog/kontext.jsonld"
+      pole hodnot 
+{0..*}
+ typu       
+    řetězec
+  (formát: 
+iri
+)
+     a musí obsahovat: 
+"https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat/2026-09-23/katalog/kontext.jsonld"
+iri
+:
+          povinná
+          položka typu
+    řetězec
+  (formát: 
+iri
+)
+  (dle regulárního výrazu: 
+^https://
+)
+typ
+:
+          povinná
+          položka typu
+        právě jedno z následujících (
+oneOf
+):
+    konstantní hodnota
+"Katalog"
+      pole hodnot 
+{0..*}
+ typu       
+    řetězec
+     a musí obsahovat: 
+"Katalog"
+název
+:
+            (
+název
+)
+          povinná
+          položka typu
+    objekt
+    s vlastnostmi (
+properties
+):
+cs
+:
+          nepovinná
+          položka typu
+    řetězec
+en
+:
+          nepovinná
+          položka typu
+    řetězec
+popis
+:
+            (
+popis
+)
+          povinná
+          položka typu
+    objekt
+    s vlastnostmi (
+properties
+):
+cs
+:
+          nepovinná
+          položka typu
+    řetězec
+en
+:
+          nepovinná
+          položka typu
+    řetězec
+kontaktní_bod
+:
+            (
+kontaktní bod
+)
+          povinná
+          položka typu
+domovská_stránka
+:
+            (
+domovská stránka
+)
+          nepovinná
+          položka typu
+    řetězec
+  (formát: 
+iri
+)
+  (dle regulárního výrazu: 
+^https://
+)
+poskytovatel
+:
+            (
+poskytovatel
+)
+          povinná
+          položka typu
+    řetězec
+  (formát: 
+iri
+)
+  (dle regulárního výrazu: 
+^https://
+)
+přístupový_bod
+:
+            (
+přístupový bod služby
+)
+          povinná
+          položka typu
+    řetězec
+  (formát: 
+iri
+)
+  (dle regulárního výrazu: 
+^https://
+)
+datová_sada
+:
+            (
+datová sada
+)
+          nepovinná
+          položka typu
+      pole hodnot 
+{0..*}
+ typu       
+    řetězec
+  (formát: 
+iri
+)
+  (dle regulárního výrazu: 
+^https://
+)
+        Objekt 
+Organizace
+Popis
+Organizace, právnická osoba nebo její část.
+Interpretace
+Organizace
+    objekt
+    s vlastnostmi (
+properties
+):
+iri
+:
+          nepovinná
+          položka typu
+    řetězec
+  (formát: 
+iri
+)
+typ
+:
+          povinná
+          položka typu
+        právě jedno z následujících (
+oneOf
+):
+    konstantní hodnota
+"Organizace"
+      pole hodnot 
+{0..*}
+ typu       
+    řetězec
+     a musí obsahovat: 
+"Organizace"
+jméno
+:
+            (
+jméno
+)
+          povinná
+          položka typu
+    objekt
+    s vlastnostmi (
+properties
+):
+cs
+:
+          nepovinná
+          položka typu
+    řetězec
+en
+:
+          nepovinná
+          položka typu
+    řetězec
+e-mail
+:
+            (
+email
+)
+          povinná
+          položka typu
+    řetězec
+  (formát: 
+iri
+)
+Rozhraní lokálních katalogů
+            V této sekci je popis dvou možných rozhraní lokálních katalogů dat pro harvestaci záznamů do Národního katalogu dat.
+Rozhraní DCAT-AP Dokumenty
+                Tato varianta rozhraní je určena pro instituce, které nechtějí nebo nemohou provozovat pro účely harvestace metadat o datových sadách do NKD SPARQL endpoint.
+                Počítá se serializací metadat o datových sadách do statických souborů umístěných na web.
+                Jako indexový soubor pak poslouží soubor obsahující instanci třídy 
+dcat:Catalog
+, která pomocí vlastnosti 
+dcat:dataset
+ ukazuje na URL jednotlivých datových sad a sérií datových sad.
+                Při přístupu na tato URL datových sad NKD předpokládá, že v odpovědi dostane kompletní katalogizační záznam pro danou datovou sadu dle 
+příslušné OFN
+.
+                Katalog a datové sady musí být identifikovány svými IRI, nesmí se jednat o 
+RDF blank nody
+.
+                Požadavek na shodu identifikátorů:
+IRI datového katalogu uvnitř souboru katalogu musí být totožné s URL LKD API registrovaným v NKD.
+IRI datové sady (nebo série datových sad) v jejím souboru musí odpovídat příslušnému IRI uvedenému v souboru katalogu.
+                HTTP přesměrování:
+Přesměrování na jinou URL adresu ze strany serveru je povolené. Cílový soubor stažený z přesměrované URL však musí v definici dat stále obsahovat původní IRI.
+                Příklady obsahují i příslušná JSON schémata pro validaci souborů ve variantě JSON-LD.
+Soubor katalogu
+                    Soubor katalogu je soubor v RDF serializaci 
+Turtle
+ či 
+JSON-LD
+, který obsahuje instanci třídy 
+dcat:Catalog
+ a odkazy na jednotlivé katalogizované datové sady.
+Stáhnout RDF Turtle
+.
+                        Umístěno na URL 
+https://data.gov.cz/lkod/mdcr/katalog
+.
+    @prefix dcat:    <http://www.w3.org/ns/dcat#> .
+    @prefix dct:     <http://purl.org/dc/terms/> .
+    @prefix foaf: <http://xmlns.com/foaf/0.1/> .
+    @prefix vcard2006: <http://www.w3.org/2006/vcard/ns#> .
+    <https://data.gov.cz/lkod/mdcr/katalog> a dcat:Catalog ;
+      dct:title "Katalog otevřených dat Ministerstva dopravy"@cs, "Open Data Catalog of the Ministry of Transport"@en ;
+      dct:description "Otevřená data Ministerstva dopravy. Obsahuje datové sady o jízdních řádech a liniových vedeních veřejné dopravy."@cs;
+      dct:description "Open data of the Ministry of Transport. It contains datasets regarding timetables of public transport."@en ;
+      dct:publisher <https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/66003008> ;
+      foaf:homepage <https://data.gov.cz/datové-sady?poskytovatel=Ministerstvo%20dopravy> ;
+      dcat:contactPoint [
+          a vcard2006:Organization ;
+          vcard2006:fn "Ministerstvo dopravy, Odbor veřejné dopravy"@cs, "Ministry of Transport"@en ;
+          vcard2006:hasEmail <mailto:sekretariat.190@mdcr.cz>
+      ] ;
+      dcat:dataset  <https://data.gov.cz/lkod/mdcr/datové-sady/seznam-zastavky> ,
+        <https://data.gov.cz/lkod/mdcr/datové-sady/vld> ,
+        <https://data.gov.cz/lkod/mdcr/datové-sady/seznam-trate> .
+JSON-LD
+, 
+JSON schéma
+, 
+JSON-LD kontext
+.
+                        Umístěno na URL 
+https://data.gov.cz/lkod/mdcr/katalog
+.
+    {
+      "@context": "https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat/2026-09-23/katalog/kontext.jsonld",
+      "iri": "https://data.gov.cz/lkod/mdcr/katalog",
+      "typ": "Katalog",
+      "název": {
+          "cs": "Katalog otevřených dat Ministerstva dopravy",
+          "en": "Open Data Catalog of the Ministry of Transport"
+      },
+      "popis": {
+          "cs": "Otevřená data Ministerstva dopravy. Obsahuje datové sady o jízdních řádech a liniových vedeních veřejné dopravy.",
+          "en": "Open data of the Ministry of Transport. It contains datasets regarding timetables of public transport."
+      },
+      "kontaktní_bod": {
+          "typ": "Organizace",
+          "jméno": {
+          "cs": "Ministerstvo dopravy, Odbor veřejné dopravy",
+          "en": "Ministry of Transport"
+          },
+          "e-mail": "mailto:sekretariat.190@mdcr.cz"
+      },
+      "domovská_stránka": "https://data.gov.cz/datové-sady?poskytovatel=Ministerstvo%20dopravy",
+      "poskytovatel": "https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/66003008",
+      "datová_sada": [
+          "https://data.gov.cz/lkod/mdcr/datové-sady/vld",
+          "https://data.gov.cz/lkod/mdcr/datové-sady/seznam-zastavky",
+          "https://data.gov.cz/lkod/mdcr/datové-sady/seznam-trate"
+      ]
+     }
+Příklady lokálních katalogů typu DCAT-AP Dokumenty
+                    V této sekci uvádíme příklady katalogů užívajících rozhraní DCAT-AP Dokumenty.
+https://open.datakhk.cz/katalog.jsonld
+https://kod.brno.cz/nkod/index.ttl
+https://opendata.mv.gov.cz/api/catalogue
+https://lkod.mzp.cz/output/lkod-mzp/lkod-mzp.jsonld
+                    Aktuální příklady lze nalézt v sekci 
+Lokální katalogy
+ v NKD.
+Rozhraní DCAT-AP SPARQL Endpoint
+                Toto rozhraní předpokládá, že metadata datových sad dle této specifikace jsou uložena a přístupná ve SPARQL endpointu.
+                Obsah záznamů je identický k rozhraní 
+DCAT-AP Dokumenty
+.
+                Po registraci tohoto SPARQL endpointu se na něm NKD zeptá nejprve na seznam instancí tříd 
+dcat:Dataset
+ a 
+dcat:DatasetSeries
+, a poté se po skupinách bude ptát na povinné, nepovinné i další položky jednotlivých datových sad dle 
+příslušné OFN
+.
+                Jedná se o nejjednodušší způsob registrace lokálního katalogu dat.
+Příklady lokálních katalogů typu SPARQL endpoint
+                    V této sekci uvádíme příklady katalogů užívajících rozhraní SPARQL endpoint.
+https://data.cssz.cz/sparql
+https://data.dia.gov.cz/sparql
+https://data.mvcr.gov.cz/sparql
+https://opendata.mfcr.cz/lod/sparql
+                    Aktuální příklady lze nalézt v sekci 
+Lokální katalogy
+ v NKD.
+Hlavní profily tříd
+Katalog
+IRI profilovaných tříd
+dcat:Catalog
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Katalog
+Název
+Katalog
+Definice
+Řízená kolekce metadat o datových sadách a datových službách
+Hierarchie
+                                    profiluje
+                profil
+Katalog
+ (
+dcat-ap-cz:Katalog
+)
+                                  profiluje
+                profil
+Katalog
+ (
+dcat-ap:Catalogue
+)
+Definice: 
+Řízená kolekce metadat o datových sadách a datových službách
+                                  profiluje
+                profil
+Katalog
+ (
+dcat-dap:Catalog
+)
+Definice: 
+Řízená kolekce metadat o datových sadách a datových službách
+                                  profiluje
+                třídu
+Katalog
+ (
+dcat:Catalog
+)
+Definice: 
+Řízená kolekce metadat o datových sadách a datových službách
+                                  specializuje
+                třídu
+Datová sada
+ (
+dcat:Dataset
+)
+Definice: 
+Kolekce dat poskytovaná či řízená jedním zdrojem, která je k dispozici pro přístup či stažení v jednom či více formátech.
+                                  specializuje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Datová sada
+ (
+dcat-dap:Dataset
+)
+                                  profiluje
+                třídu
+Datová sada
+ (
+dcat:Dataset
+)
+Definice: 
+Kolekce dat poskytovaná či řízená jedním zdrojem, která je k dispozici pro přístup či stažení v jednom či více formátech.
+                                  specializuje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-dap:CatalogedResource
+)
+                                  profiluje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+Popis použití v profilu
+A Web-based data catalog is typically represented as a single instance of this class.
+          Datasets and data services are examples of resources in the context of a data catalog. (@en)
+Vlastnosti
+Pro tento profil třídy jsou definovány následující vlastnosti: 
+název
+, 
+popis
+, 
+kontaktní bod
+, 
+poskytovatel
+, 
+domovská stránka
+, 
+datová sada
+, 
+přístupový bod služby
+.
+název
+IRI profilovaných vztahů
+dcterms:title
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Katalog.název
+Název
+název
+Definice
+Tato vlastnost obsahuje název datového katalogu.
+Definiční obor
+Katalog
+Obor hodnot
+Text
+                          [1..1]
+Hierarchie
+                                        profiluje
+                    profil
+název
+ (
+dcat-ap-cz:Katalog.název
+)
+Definice: 
+Tato vlastnost obsahuje název datového katalogu.
+                                      profiluje
+                    profil
+title (@en)
+ (
+dcat-ap:Catalogue.title
+)
+Definice: 
+A name given to the Catalogue.
+                                      profiluje
+                    profil
+title (@en)
+ (
+dcat-dap:CatalogedResource.title
+)
+                                      profiluje
+                    vlastnost
+Title (@en)
+ (
+dcterms:title
+)
+Definice: 
+A name given to the resource.
+Popis použití v profilu
+This property can be repeated for parallel language versions of the name. (@en)
+popis
+IRI profilovaných vztahů
+dcterms:description
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Katalog.popis
+Název
+popis
+Definice
+Tato vlastnost obsahuje volný text s popisem datového katalogu.
+Definiční obor
+Katalog
+Obor hodnot
+Text
+                          [1..1]
+Hierarchie
+                                        profiluje
+                    profil
+popis
+ (
+dcat-ap-cz:Katalog.popis
+)
+Definice: 
+Tato vlastnost obsahuje volný text s popisem datového katalogu.
+                                      profiluje
+                    profil
+description (@en)
+ (
+dcat-ap:Catalogue.description
+)
+Definice: 
+A free-text account of the Catalogue.
+                                      profiluje
+                    profil
+description (@en)
+ (
+dcat-dap:CatalogedResource.description
+)
+Definice: 
+A free-text account of the resource.
+                                      profiluje
+                    vlastnost
+Description (@en)
+ (
+dcterms:description
+)
+Definice: 
+An account of the resource.
+Popis použití v profilu
+This property can be repeated for parallel language versions of the description. (@en)
+kontaktní bod
+IRI profilovaných vztahů
+dcat:contactPoint
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Katalog.kontaktníBod
+Název
+kontaktní bod
+Definice
+Tato vlastnost obsahuje kontaktní informace, které mohou být využity pro zasílání připomínek ke katalogu.
+Definiční obor
+Katalog
+Obor hodnot
+Organizace
+                          [1..1]
+Hierarchie
+                                        profiluje
+                    profil
+kontaktní bod
+ (
+dcat-ap-cz:Katalog.kontaktníBod
+)
+Definice: 
+Tato vlastnost obsahuje kontaktní informace, které mohou být využity pro zasílání připomínek ke katalogu.
+                                      profiluje
+                    vlastnost
+kontaktní bod
+ (
+dcat:contactPoint
+)
+Definice: 
+Relevantní kontaktní informace pro katalogizovaný zdroj. Doporučuje se použít slovník VCard.
+poskytovatel
+IRI profilovaných vztahů
+dcterms:publisher
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Katalog.poskytovatel
+Název
+poskytovatel
+Definice
+Poskytovatel datového katalogu.
+Definiční obor
+Katalog
+Obor hodnot
+Poskytovatel
+                          [1..1]
+Hierarchie
+                                        profiluje
+                    profil
+poskytovatel
+ (
+dcat-ap-cz:Katalog.poskytovatel
+)
+Definice: 
+Poskytovatel datového katalogu.
+                                      profiluje
+                    profil
+publisher (@en)
+ (
+dcat-ap:Catalogue.publisher
+)
+Definice: 
+An entity (organisation) responsible for making the Catalogue available.
+                                      profiluje
+                    profil
+publisher (@en)
+ (
+dcat-dap:CatalogedResource.publisher
+)
+                                      profiluje
+                    vlastnost
+Publisher (@en)
+ (
+dcterms:publisher
+)
+Definice: 
+An entity responsible for making the resource available.
+domovská stránka
+IRI profilovaných vztahů
+foaf:homepage
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Katalog.domovskáStránka
+Název
+domovská stránka
+Definice
+Tato vlastnost odkazuje na domovskou stránku lokálního katalogu, kam mohou chodit uživatelé.
+Definiční obor
+Katalog
+Obor hodnot
+Dokument
+                          [0..1]
+Hierarchie
+                                        profiluje
+                    profil
+domovská stránka
+ (
+dcat-ap-cz:Katalog.domovskáStránka
+)
+Definice: 
+Tato vlastnost odkazuje na domovskou stránku lokálního katalogu, kam mohou chodit uživatelé.
+                                      profiluje
+                    profil
+homepage (@en)
+ (
+dcat-ap:Catalogue.homepage
+)
+Definice: 
+A web page that acts as the main page for the Catalogue.
+                                      profiluje
+                    profil
+homepage (@en)
+ (
+dcat-dap:Catalog.homepage
+)
+Definice: 
+A homepage of the catalog (a public Web document usually available in HTML).
+                                      profiluje
+                    vlastnost
+homepage (@en)
+ (
+foaf:homepage
+)
+Definice: 
+This axiom needed so that Protege loads DCAT 3 without errors.
+                                      specializuje
+                    vlastnost
+is primary topic of (@en)
+ (
+foaf:isPrimaryTopicOf
+)
+Definice: 
+A document that this thing is the primary topic of.
+                                      specializuje
+                    vlastnost
+page (@en)
+ (
+foaf:page
+)
+Definice: 
+A page or document about this thing.
+                                      specializuje
+                    vlastnost
+page (@en)
+ (
+foaf:page
+)
+Definice: 
+A page or document about this thing.
+Popis použití v profilu
+ (@en)
+datová sada
+IRI profilovaných vztahů
+dcat:dataset
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Katalog.datováSada
+Název
+datová sada
+Definice
+Kolekce dat, která je katalogizována v katalogu.
+Definiční obor
+Katalog
+Obor hodnot
+Datová sada
+                          [0..*]
+Hierarchie
+                                        profiluje
+                    profil
+datová sada
+ (
+dcat-ap-cz:Katalog.datováSada
+)
+                                      profiluje
+                    profil
+datová sada
+ (
+dcat-ap:Catalogue.dataset
+)
+Definice: 
+Kolekce dat, která je katalogizována v katalogu.
+                                      profiluje
+                    profil
+datová sada
+ (
+dcat-dap:Catalog.dataset
+)
+                                      profiluje
+                    vlastnost
+datová sada
+ (
+dcat:dataset
+)
+Definice: 
+Kolekce dat, která je katalogizována v katalogu.
+                                      specializuje
+                    vlastnost
+resource (@en)
+ (
+dcat:resource
+)
+Definice: 
+A resource that is listed in the catalog.
+                                      specializuje
+                    vlastnost
+Has Part (@en)
+ (
+dcterms:hasPart
+)
+Definice: 
+A related resource that is included either physically or logically in the described resource.
+                                      specializuje
+                    vlastnost
+Relation (@en)
+ (
+dcterms:relation
+)
+Definice: 
+A related resource.
+Popis použití v profilu
+As empty Catalogues are usually indications of problems, this property should be combined with the property service to implement an empty Catalogue check. (@en)
+přístupový bod služby
+IRI profilovaných vztahů
+dcat:endpointURL
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Katalog.přístupovýBodSlužby
+Název
+přístupový bod služby
+Definice
+Kořenové umístění nebo hlavní přístupový bod služby (IRI přístupné přes Web).
+Definiční obor
+Katalog
+Obor hodnot
+Zdroj
+                          [1..1]
+Hierarchie
+                                        profiluje
+                    profil
+přístupový bod služby
+ (
+dcat-ap-cz:DatováSlužba.přístupovýBodSlužby
+)
+                                      profiluje
+                    profil
+přístupový bod služby
+ (
+dcat-ap:DataService.endpointUrl
+)
+Definice: 
+Kořenové umístění nebo hlavní přístupový bod služby (IRI přístupné přes Web).
+                                      profiluje
+                    profil
+přístupový bod služby
+ (
+dcat-dap:DataService.endpointUrl
+)
+                                      profiluje
+                    vlastnost
+přístupový bod služby
+ (
+dcat:endpointURL
+)
+Definice: 
+Kořenové umístění nebo hlavní přístupový bod služby (IRI přístupné přes Web).
+Popis použití v profilu
+Pro DCAT-AP Dokumenty je to URL souboru katalogu a zároveň IRI katalogu uvnitř souboru.
+              Pro SPARQL endpoint je to URL SPARQL endpointu.
+Podpůrné profily třídy
+Datová sada
+IRI profilovaných tříd
+dcat:Dataset
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#DatováSada
+Název
+Datová sada
+Definice
+Kolekce dat poskytovaná či řízená jedním zdrojem, která je k dispozici pro přístup či stažení v jednom či více formátech.
+Hierarchie
+                                    profiluje
+                profil
+Datová sada
+ (
+dcat-ap-cz:DatováSada
+)
+                                  profiluje
+                profil
+Datová sada
+ (
+dcat-ap:Dataset
+)
+Definice: 
+Kolekce dat poskytovaná či řízená jedním zdrojem, která je k dispozici pro přístup či stažení v jednom či více formátech.
+                                  profiluje
+                profil
+Datová sada
+ (
+dcat-dap:Dataset
+)
+                                  profiluje
+                třídu
+Datová sada
+ (
+dcat:Dataset
+)
+Definice: 
+Kolekce dat poskytovaná či řízená jedním zdrojem, která je k dispozici pro přístup či stažení v jednom či více formátech.
+                                  specializuje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-dap:CatalogedResource
+)
+                                  profiluje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-ap:CataloguedResource
+)
+                                  profiluje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-dap:CatalogedResource
+)
+                                  profiluje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+Popis použití v profilu
+If a Dataset is used as part of a Dataset Series, the usage of the properties listed below must be coherent with the associated Dataset Series. For this usage, consult the guidelines in section 14. General usage guidelines. (@en)
+Zpětné asociace
+z domény 
+ → 
+Dokument
+IRI profilovaných tříd
+foaf:Document
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Dokument
+Název
+Dokument
+Definice
+Textový dokument určený pro čtení lidmi. Například webová stránka.
+Hierarchie
+                                    profiluje
+                profil
+Dokument
+ (
+dcat-ap-cz:Dokument
+)
+Definice: 
+Textový dokument určený pro čtení lidmi. Například webová stránka.
+                                  profiluje
+                profil
+Document (@en)
+ (
+dcat-ap:Document
+)
+Definice: 
+A textual resource intended for human consumption that contains information, e.g. a web page about a Dataset.
+                                  profiluje
+                třídu
+Document (@en)
+ (
+foaf:Document
+)
+Definice: 
+A document.
+Zpětné asociace
+z domény 
+ → 
+E-mailová adresa
+IRI profilovaných tříd
+rdfs:Resource
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#E-mailAddress
+Název
+E-mailová adresa
+Definice
+E-mailová adresa identifikovaná pomocí mailto: IRI.
+Hierarchie
+                                    profiluje
+                profil
+E-mailová adresa
+ (
+dcat-ap-cz:E-mailAddress
+)
+Definice: 
+E-mailová adresa identifikovaná pomocí mailto: IRI.
+                                  profiluje
+                profil
+Zdroj
+ (
+dcat-ap-cz:Zdroj
+)
+Definice: 
+Cokoliv, co má URL.
+                                  profiluje
+                profil
+Resource (@en)
+ (
+dcat-ap:rdfs-Resource
+)
+Definice: 
+Anything described by RDF.
+                                  profiluje
+                profil
+Resource (@en)
+ (
+dcat-dap:rdfs-Resource
+)
+                                  profiluje
+                třídu
+Resource (@en)
+ (
+rdfs:Resource
+)
+Definice: 
+The class resource, everything.
+Zpětné asociace
+z domény 
+ → 
+Organizace
+IRI profilovaných tříd
+vcard:Organization
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Organizace
+Název
+Organizace
+Definice
+Organizace, právnická osoba nebo její část.
+Hierarchie
+                                    profiluje
+                profil
+Organizace
+ (
+dcat-ap-cz:Organizace
+)
+Definice: 
+Organizace, právnická osoba nebo její část.
+                                  profiluje
+                třídu
+Organization (@en)
+ (
+vcard:Organization
+)
+Definice: 
+An object representing an organization.  An organization is a single entity, and might represent a business or government, a department or division within a business or government, a club, an association, or the like.
+                                  specializuje
+                třídu
+Kind (@en)
+ (
+vcard:Kind
+)
+Definice: 
+The parent class for all objects
+                                  specializuje
+                profil
+Kontaktní bod
+ (
+dcat-ap-cz:KontaktníBod
+)
+Definice: 
+Obsahuje kontaktní informace, které mohou být využity pro zasílání připomínek.
+                                  profiluje
+                profil
+Kind (@en)
+ (
+dcat-ap:Kind
+)
+Definice: 
+A description following the vCard specification, e.g. to provide telephone number and e-mail address for a contact point.
+                                  profiluje
+                profil
+Kind (@en)
+ (
+dcat-dap:Kind
+)
+                                  profiluje
+                třídu
+Kind (@en)
+ (
+vcard:Kind
+)
+Definice: 
+The parent class for all objects
+Vlastnosti
+Pro tento profil třídy jsou definovány následující vlastnosti: 
+email
+, 
+jméno
+.
+Zpětné asociace
+z domény 
+ → 
+email
+IRI profilovaných vztahů
+vcard:hasEmail
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Organizace.email
+Název
+email
+Definice
+E-mailová adresa pro komunikaci.
+Definiční obor
+Organizace
+Obor hodnot
+E-mailová adresa
+                          [1..1]
+Hierarchie
+                                        profiluje
+                    profil
+email
+ (
+dcat-ap-cz:KontaktníBod.email
+)
+Definice: 
+E-mailová adresa pro komunikaci.
+                                      profiluje
+                    vlastnost
+has email (@en)
+ (
+vcard:hasEmail
+)
+Definice: 
+To specify the electronic mail address for communication with the object
+jméno
+IRI profilovaných vztahů
+vcard:fn
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Organizace.jméno
+Název
+jméno
+Definice
+Jméno objektu jako formátovaný text.
+Definiční obor
+Organizace
+Obor hodnot
+Text
+                          [1..1]
+Hierarchie
+                                        profiluje
+                    profil
+jméno
+ (
+dcat-ap-cz:KontaktníBod.jméno
+)
+Definice: 
+Jméno objektu jako formátovaný text.
+                                      profiluje
+                    vlastnost
+formatted name (@en)
+ (
+vcard:fn
+)
+Definice: 
+The formatted text corresponding to the name of the object
+Poskytovatel
+IRI profilovaných tříd
+foaf:Agent
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Poskytovatel
+Název
+Poskytovatel
+Definice
+Poskytovatel dat
+Hierarchie
+                                    profiluje
+                profil
+Poskytovatel
+ (
+dcat-ap-cz:Poskytovatel
+)
+Definice: 
+Poskytovatel dat
+                                  profiluje
+                profil
+Agent (@en)
+ (
+dcat-ap:Agent
+)
+Definice: 
+Any entity carrying out actions with respect to the entities Catalogue and the Catalogued Resources.
+                                  profiluje
+                profil
+Agent (@en)
+ (
+dcat-dap:Agent
+)
+                                  profiluje
+                třídu
+Agent (@en)
+ (
+foaf:Agent
+)
+Definice: 
+An agent (eg. person, group, software or physical artifact).
+Popis použití v profilu
+If the Agent is an organisation, the use of the Organization Ontology is recommended. (@en)
+Zpětné asociace
+z domény 
+ → 
+Série datových sad
+IRI profilovaných tříd
+dcat:DatasetSeries
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#SérieDatovýchSad
+Název
+Série datových sad
+Definice
+Série datových sad zastřešuje související datové sady a jiné série. Souvislost může být časová (rozpočet v letech), prostorová (seznamy ulic v obcích) či tématická (datové sady z jednoho systému).
+Hierarchie
+                                    profiluje
+                profil
+Série datových sad
+ (
+dcat-ap-cz:SérieDatovýchSad
+)
+Definice: 
+Série datových sad zastřešuje související datové sady a jiné série. Souvislost může být časová (rozpočet v letech), prostorová (seznamy ulic v obcích) či tématická (datové sady z jednoho systému).
+                                  profiluje
+                profil
+Dataset Series (@en)
+ (
+dcat-ap:DatasetSeries
+)
+                                  profiluje
+                profil
+Dataset Series (@en)
+ (
+dcat-dap:DatasetSeries
+)
+                                  profiluje
+                třídu
+Dataset series (@en)
+ (
+dcat:DatasetSeries
+)
+Definice: 
+A collection of datasets that are published separately, but share some characteristics that group them.
+                                  specializuje
+                třídu
+Datová sada
+ (
+dcat:Dataset
+)
+Definice: 
+Kolekce dat poskytovaná či řízená jedním zdrojem, která je k dispozici pro přístup či stažení v jednom či více formátech.
+                                  specializuje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Datová sada
+ (
+dcat-dap:Dataset
+)
+                                  profiluje
+                třídu
+Datová sada
+ (
+dcat:Dataset
+)
+Definice: 
+Kolekce dat poskytovaná či řízená jedním zdrojem, která je k dispozici pro přístup či stažení v jednom či více formátech.
+                                  specializuje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-dap:CatalogedResource
+)
+                                  profiluje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-ap:CataloguedResource
+)
+                                  profiluje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-dap:CatalogedResource
+)
+                                  profiluje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Datová sada
+ (
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#DatováSada
+)
+                                  profiluje
+                profil
+Datová sada
+ (
+dcat-ap-cz:DatováSada
+)
+                                  profiluje
+                profil
+Datová sada
+ (
+dcat-ap:Dataset
+)
+Definice: 
+Kolekce dat poskytovaná či řízená jedním zdrojem, která je k dispozici pro přístup či stažení v jednom či více formátech.
+                                  profiluje
+                profil
+Datová sada
+ (
+dcat-dap:Dataset
+)
+                                  profiluje
+                třídu
+Datová sada
+ (
+dcat:Dataset
+)
+Definice: 
+Kolekce dat poskytovaná či řízená jedním zdrojem, která je k dispozici pro přístup či stažení v jednom či více formátech.
+                                  specializuje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-dap:CatalogedResource
+)
+                                  profiluje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+                                  specializuje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-ap:CataloguedResource
+)
+                                  profiluje
+                profil
+Katalogizovaný zdroj
+ (
+dcat-dap:CatalogedResource
+)
+                                  profiluje
+                třídu
+Katalogizovaný zdroj
+ (
+dcat:Resource
+)
+Definice: 
+Zdroj publikovaný či řízený jediným činitelem.
+Popis použití v profilu
+It is recommended to avoid Dataset Series without a dataset in the collection. Therefore at least one Dataset should refer to a Dataset Series using the property in series (dcat:inSeries). (@en)
+Zdroj
+IRI profilovaných tříd
+rdfs:Resource
+IRI
+https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat#Zdroj
+Název
+Zdroj
+Definice
+Cokoliv, co má URL.
+Hierarchie
+                                    profiluje
+                profil
+Zdroj
+ (
+dcat-ap-cz:Zdroj
+)
+Definice: 
+Cokoliv, co má URL.
+                                  profiluje
+                profil
+Resource (@en)
+ (
+dcat-ap:rdfs-Resource
+)
+Definice: 
+Anything described by RDF.
+                                  profiluje
+                profil
+Resource (@en)
+ (
+dcat-dap:rdfs-Resource
+)
+                                  profiluje
+                třídu
+Resource (@en)
+ (
+rdfs:Resource
+)
+Definice: 
+The class resource, everything.
+Zpětné asociace
+z domény 
+ → 
+Použité prefixy
+Prefix
+Namespace IRI
+dcat
+http://www.w3.org/ns/dcat#
+dcat-ap-cz
+https://ofn.gov.cz/dcat-ap-cz#
+dcat-ap
+https://mff-uk.github.io/specifications/dcat-ap#
+dcat-dap
+https://mff-uk.github.io/specifications/dcat-dap#
+dcterms
+http://purl.org/dc/terms/
+foaf
+http://xmlns.com/foaf/0.1/
+rdfs
+http://www.w3.org/2000/01/rdf-schema#
+vcard
+http://www.w3.org/2006/vcard/ns#
+Přílohy
+Součástí této specifikace jsou následující přílohy.
+Příloha
+Odkaz
+Aplikační profil
+../dsv.ttl
+SHACL validační pravidla
+../shacl.ttl
+Popis strukturálního modelu
+../katalog/structure.ttl
+Serializace změn v LDES formátu
+../dsv.ldes.ttl
+JSON schéma
+../katalog/schéma.json
+JSON-LD kontext
+../katalog/kontext.jsonld
+Dokumentace
+#

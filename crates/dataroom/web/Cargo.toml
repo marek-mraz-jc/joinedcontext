@@ -1,0 +1,13 @@
+[package]
+name = "dataroom-web"
+version = "0.1.0"
+edition = "2021"
+license = "EUPL-1.2"
+description = "Server-rendered HTML pages (askama), i18n (sk, cs, en), CSP nonces and SDK DataGrid configurations for dataroom"
+
+[dependencies]
+askama = "0.12"
+dataroom-core = { path = "../core" }
+dataroom-search = { path = "../search" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
