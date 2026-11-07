@@ -13,7 +13,7 @@ use dataroom_core::{
 use odata_table::{PgTable, Table};
 use sqlx::postgres::PgConnection;
 use sqlx::types::Json;
-use sqlx::{Acquire, PgPool};
+use sqlx::PgPool;
 use std::sync::Arc;
 
 /// All tenant tables in the `dataroom` schema that must have `relrowsecurity` and

@@ -163,12 +163,15 @@ impl OutboundFetcher for HttpFetcher {
     }
 }
 
+/// Hosts and the addresses a [`MapFetcher`] was asked to connect to.
+type PinnedSeen = Arc<std::sync::RwLock<Vec<(String, Vec<SocketAddr>)>>>;
+
 /// Deterministic in-memory map fetcher for testing harvest runs, redirects, DNS pinning, byte caps,
 /// pagination and withdrawal (A2).
 #[derive(Clone, Default)]
 pub struct MapFetcher {
     responses: Arc<std::sync::RwLock<BTreeMap<String, FetchResponse>>>,
-    pinned_seen: Arc<std::sync::RwLock<Vec<(String, Vec<SocketAddr>)>>>,
+    pinned_seen: PinnedSeen,
 }
 
 impl MapFetcher {
@@ -313,7 +316,7 @@ impl HarvestEngine {
             let resolver_ref = self
                 .custom_dns
                 .as_ref()
-                .map(|r| r.as_ref() as &dyn Fn(&str, u16) -> Result<Vec<SocketAddr>>);
+                .map(|r| r.as_ref() as &crate::guard::DnsResolver);
             let target = validate_and_pin_url(
                 &current_url,
                 &source.allowed_hosts,

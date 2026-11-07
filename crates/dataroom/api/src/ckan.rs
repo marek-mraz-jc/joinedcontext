@@ -14,12 +14,11 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::Utc;
 use dataroom_core::ckan_compat::{
-    ckan_license_list, dataset_from_ckan, dataset_to_ckan, distribution_from_ckan,
+    ckan_license_list, dataset_to_ckan, distribution_from_ckan,
     distribution_to_ckan, resource_view_to_ckan,
 };
 use dataroom_core::{
-    text_in_lang, Action, DataroomError, DatasetFilter, ObjectTarget, Publisher, RecordState,
-    RequestCtx, ResourceView, Visibility,
+    text_in_lang, Action, DataroomError, DatasetFilter, ObjectTarget, Publisher, RecordState, ResourceView, Visibility,
 };
 use dataroom_plugin::validate_view_payload;
 use dataroom_search::{apply_fq_to_filter, search_datasets};

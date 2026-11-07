@@ -21,15 +21,13 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::Datelike;
 use axum::body::Bytes;
 use dataroom_core::auth::constant_time_eq;
 use dataroom_core::ops::{all_operations, execute_operation, OpContext, OperationDef};
 use dataroom_core::{
-    localized_text, validate_and_sanitise_logo, Action, ActivityRow, Authorizer, BrandingBlock,
+    validate_and_sanitise_logo, Action, ActivityRow, Authorizer, BrandingBlock,
     Catalogue, CatalogueId, DataroomError, Dataset, DatasetFilter, ObjectTarget, OrgId, ProfilePin,
     ProfileRecord, Publisher, RecordState, RequestCtx, Result, SanitisedAsset, Store, Subject,
-    Visibility,
 };
 use dataroom_harvest::{HarvestEngine, HttpFetcher};
 use dataroom_mcp::handle_mcp_jsonrpc;

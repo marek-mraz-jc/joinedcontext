@@ -192,13 +192,16 @@ pub fn resolve_and_validate_host(
     Ok(addrs)
 }
 
+/// A name resolver used instead of the system one (tests, a pinned resolver).
+pub type DnsResolver = dyn Fn(&str, u16) -> Result<Vec<std::net::SocketAddr>>;
+
 /// Validates an outbound URL and returns a [`ValidatedTarget`] with pinned DNS addresses (A2).
 pub fn validate_and_pin_url(
     raw_url: &str,
     allowed_hosts: &[String],
     catalogue_allowed_hosts: &[String],
     resolve_dns: bool,
-    custom_resolver: Option<&dyn Fn(&str, u16) -> Result<Vec<std::net::SocketAddr>>>,
+    custom_resolver: Option<&DnsResolver>,
 ) -> Result<ValidatedTarget> {
     let parsed = validate_outbound_url(raw_url, allowed_hosts, catalogue_allowed_hosts, false)?;
     let host = parsed

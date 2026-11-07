@@ -191,16 +191,13 @@ impl Default for ThemeTokens {
 
 /// Kind of contact point (`vcard:Organization` or `vcard:Individual`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default)]
 pub enum ContactKind {
+    #[default]
     Organization,
     Individual,
 }
 
-impl Default for ContactKind {
-    fn default() -> Self {
-        Self::Organization
-    }
-}
 
 /// Contact point (`dcat:contactPoint`, `vcard:Kind`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

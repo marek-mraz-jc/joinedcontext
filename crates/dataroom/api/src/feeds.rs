@@ -15,7 +15,7 @@ use dataroom_rdf::{
     negotiate_profile, negotiate_rdf_format, serialize_catalogue, DcatProfileKind, HydraPageInfo,
     RdfFormat,
 };
-use dataroom_shacl::{validate_graph_against_shapes, ProfileRegistry};
+use dataroom_shacl::validate_graph_against_shapes;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -96,6 +96,7 @@ async fn public_feed_datasets(
     (visible, pub_map)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_dcat_catalog_response(
     cat: &Catalogue,
     all_visible: Vec<Dataset>,

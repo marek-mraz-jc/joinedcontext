@@ -800,11 +800,11 @@ pub fn jc_about(
         }
     }
 
-    if let Some(ref ident) = ds.identifier.as_ref().or_else(|| ds.extras.get("identifier")) {
+    if let Some(ident) = ds.identifier.as_ref().or_else(|| ds.extras.get("identifier")) {
         if !ident.is_empty() {
             rows.push(AboutRow {
                 label: jc_t("identifier", lang),
-                text: (*ident).clone(),
+                text: ident.clone(),
                 link: None,
             });
         }
@@ -858,8 +858,11 @@ fn parse_sources_extra(raw: &str) -> Vec<(String, String)> {
     out
 }
 
+/// A frequency label and, when known, the next expected update and whether it is overdue.
+pub type FrequencyInfo = (String, Option<(DateTime<Utc>, bool)>);
+
 /// Frequency label and next expected update (`jc_frequency` in `plugin.py` lines 536-552).
-pub fn jc_frequency(ds: &Dataset, lang: &str) -> Option<(String, Option<(DateTime<Utc>, bool)>)> {
+pub fn jc_frequency(ds: &Dataset, lang: &str) -> Option<FrequencyInfo> {
     let raw = ds
         .frequency
         .as_deref()
@@ -1998,20 +2001,23 @@ pub fn jc_try_prompt(branding: &BrandingBlock, lang: &str) -> String {
     )
 }
 
+/// One assistant guide's text: name, checked date, paste step, help URL, who, steps, trouble.
+type GuideText = (
+    &'static str,
+    &'static str,
+    usize,
+    &'static str,
+    Vec<&'static str>,
+    Vec<&'static str>,
+    Vec<(&'static str, &'static str)>,
+);
+
 pub fn jc_assistant_guide(id: &str, branding: &BrandingBlock, lang: &str) -> Option<AssistantGuideView> {
     if !matches!(id, "chatgpt" | "claude" | "grok") {
         return None;
     }
     let code = normalize_lang_code(lang);
-    let (name, checked_date, paste_index, help, who, steps, trouble): (
-        &str,
-        &str,
-        usize,
-        &str,
-        Vec<&str>,
-        Vec<&str>,
-        Vec<(&str, &str)>,
-    ) = match (id, code.as_str()) {
+    let (name, checked_date, paste_index, help, who, steps, trouble): GuideText = match (id, code.as_str()) {
         ("claude", "sk") => (
             "Claude",
             "2026-10-18",
@@ -2277,8 +2283,10 @@ mod tests {
     #[test]
     fn d6_no_mcp_panel_without_a_valid_domain() {
         assert!(jc_mcp_install(&BrandingBlock::default()).is_none());
-        let mut branding = BrandingBlock::default();
-        branding.domain = "evil\"><script>.example".into();
+        let branding = BrandingBlock {
+            domain: "evil\"><script>.example".into(),
+            ..BrandingBlock::default()
+        };
         assert!(jc_mcp_install(&branding).is_none());
     }
 }

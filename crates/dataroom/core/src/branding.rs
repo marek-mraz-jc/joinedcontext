@@ -8,7 +8,7 @@ use crate::model::{text_in_lang, Texts};
 use base64::Engine as _;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
@@ -1022,6 +1022,7 @@ pub fn is_mcp_server(v: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn b1_three_level_branding_overrides_fallbacks_and_loads_dev_stage_smartcity() {

@@ -17,7 +17,7 @@ use dataroom_core::vocab::{
     iana_iri_to_media_type, language_to_eu_iri, media_type_to_iana_iri, theme_code, theme_to_iri,
 };
 use dataroom_core::{
-    AgentDetails, Catalogue, CatalogueId, ContactKind, ContactPoint, DataService, DataroomError,
+    AgentDetails, Catalogue, CatalogueId, ContactKind, ContactPoint, DataService,
     Dataset, Distribution, OrgId, Publisher, RecordState, TemporalPeriod, TermsOfUse, Visibility,
 };
 use std::collections::BTreeMap;
@@ -1886,6 +1886,7 @@ fn clean_ckan_tag(word: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dataroom_core::DataroomError;
     use dataroom_core::ThemeTokens;
 
     fn sample_catalogue(org_id: OrgId, catalogue_id: CatalogueId) -> Catalogue {

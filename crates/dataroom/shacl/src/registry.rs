@@ -8,12 +8,12 @@ use crate::validator::{
 use dataroom_core::ops::DatasetValidator;
 use dataroom_core::{
     Catalogue, DataroomError, Dataset, FormFieldLayout, OrgId, ProfileDryRunReport, ProfilePin,
-    ProfileRecord, Publisher, Result, ShaclValidationReport, Texts,
+    ProfileRecord, Publisher, Result, ShaclValidationReport,
 };
 use dataroom_rdf::jsonld::{CZ_CATALOG_CONTEXT_IRI, SK_CATALOG_CONTEXT_IRI};
 use dataroom_rdf::{catalogue_to_graph, dataset_to_graph, DcatProfileKind, RdfLimits};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::RwLock;
 
 /// Upstream and built-in SHACL shape sources.
@@ -277,9 +277,7 @@ impl ProfileRegistry {
             }
         }
         guard
-            .iter()
-            .filter(|((pid, _), _)| pid == id)
-            .next_back()
+            .iter().rfind(|((pid, _), _)| pid == id)
             .map(|(_, (rec, _))| rec.clone())
     }
 
@@ -292,16 +290,12 @@ impl ProfileRegistry {
                 .cloned()
                 .or_else(|| {
                     guard
-                        .iter()
-                        .filter(|((pid, _), _)| pid == id)
-                        .next_back()
+                        .iter().rfind(|((pid, _), _)| pid == id)
                         .map(|(_, pair)| pair.clone())
                 })
         } else {
             guard
-                .iter()
-                .filter(|((pid, _), _)| pid == id)
-                .next_back()
+                .iter().rfind(|((pid, _), _)| pid == id)
                 .map(|(_, pair)| pair.clone())
         }
         .ok_or_else(|| DataroomError::NotFound(format!("profile '{id}' not found")))?;
@@ -314,9 +308,7 @@ impl ProfileRegistry {
                 break;
             };
             let found = guard
-                .iter()
-                .filter(|((pid, _), _)| pid == base_id)
-                .next_back()
+                .iter().rfind(|((pid, _), _)| pid == base_id)
                 .map(|(_, (r, sg))| (r.base_profile.clone(), sg.clone()));
             if let Some((next_base, sg)) = found {
                 chain.push(sg);
@@ -553,6 +545,7 @@ impl DatasetValidator for ProfileRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
     use dataroom_core::{AgentDetails, CatalogueId, Distribution, RecordState, ThemeTokens, Visibility};
     use dataroom_rdf::{parse_rdf_graph, RdfFormat};
     use uuid::Uuid;

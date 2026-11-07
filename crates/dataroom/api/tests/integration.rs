@@ -1274,9 +1274,9 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
 #[tokio::test]
 async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
     let org_a = OrgId::from_uuid(Uuid::from_u128(0xB401));
-    let cat_a = CatalogueId::from_uuid(Uuid::from_u128(0xB401_1));
+    let cat_a = CatalogueId::from_uuid(Uuid::from_u128(0x000B_4011));
     let org_b = OrgId::from_uuid(Uuid::from_u128(0xB402));
-    let cat_b = CatalogueId::from_uuid(Uuid::from_u128(0xB402_1));
+    let cat_b = CatalogueId::from_uuid(Uuid::from_u128(0x000B_4021));
 
     let store = Arc::new(MemoryStore::new());
     let mut c_a = make_catalogue(org_a, cat_a, "bb", "data.banskabystrica.sk");
@@ -1445,7 +1445,7 @@ fn normalise_entities(html: &str) -> String {
 #[tokio::test]
 async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
     let org_id = OrgId::from_uuid(Uuid::from_u128(0xD001));
-    let cat_id = CatalogueId::from_uuid(Uuid::from_u128(0xD001_1));
+    let cat_id = CatalogueId::from_uuid(Uuid::from_u128(0x000D_0011));
     let store = Arc::new(MemoryStore::new());
     let host = "opendata.dev.joinedcontext.com";
 
@@ -1931,9 +1931,9 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
 #[tokio::test]
 async fn f1_f2_f3_operation_registry_surfaces_allowed_parity_and_admin_audit_rows() {
     let org_a = OrgId::from_uuid(Uuid::from_u128(0xF101));
-    let cat_a = CatalogueId::from_uuid(Uuid::from_u128(0xF101_1));
+    let cat_a = CatalogueId::from_uuid(Uuid::from_u128(0x000F_1011));
     let org_b = OrgId::from_uuid(Uuid::from_u128(0xF102));
-    let cat_b = CatalogueId::from_uuid(Uuid::from_u128(0xF102_1));
+    let cat_b = CatalogueId::from_uuid(Uuid::from_u128(0x000F_1021));
 
     let store = Arc::new(MemoryStore::new());
     store
@@ -2214,7 +2214,7 @@ async fn f1_f2_f3_operation_registry_surfaces_allowed_parity_and_admin_audit_row
 #[tokio::test]
 async fn g1_g2_g3_g4_mountable_router_portal_and_jcctl_parity() {
     let org_id = OrgId::from_uuid(Uuid::from_u128(0x6100));
-    let cat_id = CatalogueId::from_uuid(Uuid::from_u128(0x6100_1));
+    let cat_id = CatalogueId::from_uuid(Uuid::from_u128(0x0006_1001));
     let store = Arc::new(MemoryStore::new());
     let host = "opendata.city.example";
     store

@@ -7,7 +7,7 @@
 
 use chrono::Utc;
 use dataroom_core::{
-    CatalogueId, DataroomError, FormFieldLayout, OrgId, Result, ShaclFinding, ShaclSeverity,
+    CatalogueId, OrgId, Result, ShaclFinding, ShaclSeverity,
     ShaclValidationReport, Texts,
 };
 use dataroom_rdf::turtle::parse_turtle_checked;
@@ -528,7 +528,7 @@ fn validate_node_shape(
                     allowed_preds.insert(p.clone());
                 }
             }
-            for t in data.triples.iter().filter(|t| &t.subject == &subj) {
+            for t in data.triples.iter().filter(|t| t.subject == subj) {
                 if !allowed_preds.contains(&t.predicate) {
                     findings.push(ShaclFinding {
                         focus_node: focus.string_value().to_owned(),
@@ -1016,7 +1016,7 @@ fn datatype_matches(lit: &dataroom_rdf::LiteralValue, expected_dt: &str) -> bool
             .get(..10)
             .is_some_and(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok()),
         ns::XSD_HEX_BINARY => {
-            lit.value.len() % 2 == 0 && lit.value.bytes().all(|b| b.is_ascii_hexdigit())
+            lit.value.len().is_multiple_of(2) && lit.value.bytes().all(|b| b.is_ascii_hexdigit())
         }
         _ => true,
     }

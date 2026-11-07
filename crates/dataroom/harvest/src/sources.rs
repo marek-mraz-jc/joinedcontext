@@ -675,6 +675,9 @@ pub fn parse_nkod_sparql_bindings(
     (kept, skipped)
 }
 
+/// Records of one feed page by source item id, and the next page URL.
+type ParsedPage = (Vec<(String, Dataset)>, Option<String>);
+
 /// Parses a DCAT-AP RDF document (Turtle, JSON-LD, RDF/XML) and extracts datasets plus any
 /// `hydra:next` / `hydra:nextPage` link.
 pub fn parse_dcat_page(
@@ -684,7 +687,7 @@ pub fn parse_dcat_page(
     body: &str,
     content_type: Option<&str>,
     default_lang: &str,
-) -> Result<(Vec<(String, Dataset)>, Option<String>)> {
+) -> Result<ParsedPage> {
     let format = content_type
         .and_then(|ct| dataroom_rdf::negotiate_rdf_format(None, Some(ct)))
         .or_else(|| {

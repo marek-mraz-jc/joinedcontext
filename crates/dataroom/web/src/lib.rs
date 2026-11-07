@@ -1986,6 +1986,7 @@ pub fn render_assistant_guide_page(
 }
 
 /// Renders `/map/{id}` or `/map/{id}/{resource_id}` (D6).
+#[allow(clippy::too_many_arguments)]
 pub fn render_map_page(
     catalogue: &Catalogue,
     installation_branding: Option<&BrandingBlock>,

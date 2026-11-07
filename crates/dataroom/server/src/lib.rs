@@ -23,7 +23,6 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Command-line interface for the `dataroom` binary.
 #[derive(Debug, Parser)]
@@ -415,6 +414,7 @@ pub async fn run_cli(cli: Cli) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[tokio::test]
     async fn import_ckan_and_feed_check_work_end_to_end() {

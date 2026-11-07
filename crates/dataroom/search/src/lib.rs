@@ -89,7 +89,7 @@ pub fn jc_stem(word: &str) -> String {
         }
     }
     for (ending, rest) in FLEETING_ENDINGS {
-        if lower.ends_with(ending) && char_count - 1 >= 5 {
+        if lower.ends_with(ending) && char_count > 5 {
             let end_chars = ending.chars().count();
             let base: String = word.chars().take(char_count - end_chars).collect();
             return format!("({word} OR {word}* OR {base}{rest}*)");
@@ -148,7 +148,7 @@ pub fn word_stem_candidates(word: &str) -> Vec<String> {
             }
         }
         for (ending, rest) in FLEETING_ENDINGS {
-            if lower.ends_with(ending) && char_count - 1 >= 5 {
+            if lower.ends_with(ending) && char_count > 5 {
                 let end_chars = ending.chars().count();
                 let base: String = word.chars().take(char_count - end_chars).collect();
                 let alt = format!("{base}{rest}");
@@ -292,7 +292,7 @@ pub fn matches_full_text(dataset: &Dataset, terms: &[String]) -> (bool, usize) {
             title_bag.push_str(t);
         }
     }
-    for (_, t) in &dataset.title {
+    for t in dataset.title.values() {
         title_bag.push(' ');
         title_bag.push_str(t);
     }
@@ -303,7 +303,7 @@ pub fn matches_full_text(dataset: &Dataset, terms: &[String]) -> (bool, usize) {
             desc_bag.push_str(d);
         }
     }
-    for (_, d) in &dataset.description {
+    for d in dataset.description.values() {
         desc_bag.push(' ');
         desc_bag.push_str(d);
     }
