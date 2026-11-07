@@ -1,0 +1,237 @@
+{
+  "uid": "jc-slo",
+  "title": "SLOs — public surfaces",
+  "description": "The objectives of every public surface over 30 days as the synthetic probe sees them from outside (T-5104): 99.5 % available and p95 under 500 ms per target and surface, the budget left and how fast it burns, and when certificates and domains expire. No series carries a token, a query or a person.",
+  "tags": [
+    "joinedcontext",
+    "slo",
+    "probes"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Availability over 30 days",
+      "description": "Share of synthetic probes per target and surface that held their check (T-5103) over the last 30 days. The objective is 99.5 %; SurfaceAvailabilityBudgetBurnFast and -Slow fire when the error budget burns faster than 30 days allow.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "jc:probe_availability:ratio30d",
+          "legendFormat": "{{target}} {{surface}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "p95 latency over 30 days",
+      "description": "The 95th percentile of the probes' answer time per target and surface over the last 30 days. The objective is under 0.5 s; SurfaceLatencyBudgetBurnFast and -Slow fire on the share of probes slower than that.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "jc:probe_latency:p95_30d",
+          "legendFormat": "{{target}} {{surface}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Availability error budget left",
+      "description": "1 is the whole 30-day budget of 0.5 % failed probes, 0 is spent, below 0 is the objective missed.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 - jc:probe_failure:ratio_rate30d / 0.005",
+          "legendFormat": "{{target}} {{surface}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Availability burn rate, 1 h",
+      "description": "How many times faster than 30 days allow the budget burns now: 14.4 over 1 h (with 5 min) pages, 6 over 6 h (with 30 min) pages, 1 over 3 days is a ticket.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "jc:probe_failure:ratio_rate1h / 0.005",
+          "legendFormat": "{{target}} {{surface}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Latency budget left",
+      "description": "1 is the whole 30-day budget of 5 % probes slower than 0.5 s, 0 is spent.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 - jc:probe_slow:ratio_rate30d / 0.05",
+          "legendFormat": "{{target}} {{surface}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Days until certificates and domains expire",
+      "description": "From the probe's outside view, hourly: each host's TLS certificate (TLSCertificateExpiresSoon under 14 days) and each registered domain from RDAP (DomainExpiresSoon under 30 days).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(jc_probe_tls_cert_expiry_timestamp_seconds - time()) / 86400",
+          "legendFormat": "{{host}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "expr": "(jc_probe_domain_expiry_timestamp_seconds - time()) / 86400",
+          "legendFormat": "{{domain}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "d"
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

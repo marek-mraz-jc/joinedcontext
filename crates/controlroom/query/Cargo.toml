@@ -1,0 +1,32 @@
+[package]
+name = "controlroom-query"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
+controlroom-expr = { path = "../expr" }
+controlroom-model = { path = "../model" }
+futures-util = "0.3"
+hex = "0.4"
+indexmap = { version = "2", features = ["serde"] }
+ipnet = "2"
+parking_lot = "0.12"
+percent-encoding = "2"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+schemars = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "chrono", "json", "uuid"] }
+thiserror = "2"
+tokio = { version = "1", features = ["sync", "time", "net", "rt"] }
+url = "2"
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+zeroize = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"] }

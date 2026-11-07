@@ -1,0 +1,86 @@
+package jc:controlroom@0.1.0;
+
+/// Outbound HTTP capability mediated by the controlroom host guard (§3.3, R5).
+/// Only hosts in the organization's datasource allow-list may be contacted;
+/// private, loopback, link-local, and metadata addresses are blocked after DNS resolution,
+/// and redirects are disabled.
+interface http-out {
+    record http-header {
+        name: string,
+        value: string,
+    }
+
+    record http-request {
+        method: string,
+        url: string,
+        headers: list<http-header>,
+        body: option<list<u8>>,
+        timeout-ms: u32,
+    }
+
+    record http-response {
+        status: u16,
+        headers: list<http-header>,
+        body: list<u8>,
+    }
+
+    send: func(req: http-request) -> result<http-response, string>;
+}
+
+/// Secret resolution capability mediated by the host (§3.3, R5).
+/// Resolves a secretRef configured on the datasource; secret values are never
+/// returned to the guest's caller, frames, errors, or logs.
+interface secret {
+    /// Attaches a secretRef as an outbound header or bearer token inside the host
+    /// or returns an opaque handle for the current call.
+    resolve: func(secret-ref: string) -> result<string, string>;
+}
+
+/// Third-party datasource plugin world (R5, §3.3).
+world datasource {
+    import http-out;
+    import secret;
+
+    record query-ctx {
+        org-id: string,
+        instance-id: string,
+        from-ms: s64,
+        to-ms: s64,
+        max-data-points: u32,
+        interval-ms: u64,
+        timeout-ms: u32,
+    }
+
+    record query-req {
+        ref-id: string,
+        payload-json: string,
+    }
+
+    record health-status {
+        ok: bool,
+        message: string,
+    }
+
+    record resource-req {
+        path: string,
+        params-json: string,
+    }
+
+    /// Execute one or more queries and return JSON-encoded Vec<FrameSet>.
+    export query: func(ctx: query-ctx, queries: list<query-req>) -> result<string, string>;
+
+    /// Check datasource health.
+    export health: func(ctx: query-ctx) -> health-status;
+
+    /// Query editor helper resource call (metric names, label values, etc.).
+    export resource: func(ctx: query-ctx, req: resource-req) -> result<string, string>;
+
+    /// JSON Schema of the target model plus field hints for the Portal query editor.
+    export editor-schema: func() -> string;
+
+    /// Convert a Grafana target JSON into canonical Query JSON, or a named warning.
+    export import-target: func(grafana-target-json: string) -> result<string, string>;
+
+    /// Convert a canonical Query JSON back into a Grafana target JSON.
+    export export-target: func(query-json: string) -> string;
+}
