@@ -1,0 +1,23 @@
+[package]
+name = "ekiben-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ekiben-bloblang = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_norway = { workspace = true }
+bytes = { workspace = true }
+regex = { workspace = true }
+chrono = { workspace = true }
+url = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+smallvec = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+subtle = { workspace = true }

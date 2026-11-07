@@ -1,0 +1,101 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ekiben-bloblang",
+    "crates/ekiben-core",
+    "crates/ekiben-processors",
+    "crates/ekiben-io-http",
+    "crates/ekiben-io-file",
+    "crates/ekiben-parquet",
+    "crates/ekiben-protobuf",
+    "crates/ekiben-io-nats",
+    "crates/ekiben-server",
+    "crates/ekiben-testkit",
+]
+
+# Platform modules not built in this call (each is a standalone product and composable into `jc`):
+# - crates/jc-core          (shared types: OrgId, RequestCtx, BoundedCache, ProblemDetails, protobuf/Arrow contracts)
+# - crates/jc-auth          (token verification, DPoP, mTLS identity, constant-time bearer/grant checks)
+# - crates/broker           (NGSI-LD broker: Antares data-core, data-ngsild, data-odata, data-ogc, data-sta, data-mcp, data-ws, data-graph)
+# - crates/edge             (TLS 1.3 / ACME, HTTP/1.1, HTTP/2, WebSocket, host/path routing, WFQ rate limits, NGSI-LD pre-checks)
+# - crates/gateway          (context-gateway compatibility layer and endpoint policy enforcement, merging into edge + broker)
+# - crates/portal           (control plane: OData 4.01 reads, manifest store, review lanes, reconciler, Portal React UI)
+# - crates/identity         (OIDC provider, OAuth 2.1 AS, WebAuthn/TOTP MFA, OpenID4VP/VCI, Zanzibar Check engine, internal CA)
+# - crates/forge            (Git smart-HTTP server on gitoxide, repositories, PRs, reviews, issues, actions runners, webhooks, API)
+# - crates/dsc              (Eclipse Dataspace Protocol DSP 2025-1 & DCP 1.0 connector, did:web, ODRL 2.2 policy compiler)
+# - crates/opendata         (DCAT-AP 3.0.1 / HVD / GeoDCAT-AP catalogue, MQA scorer, OAI-PMH, CKAN Action API read subset)
+# - crates/mqtt             (multi-tenant MQTT 3.1.1 & 5.0 broker listener with {OrgId}/{space}/ topic isolation)
+# - crates/dash             (5-level Grafana-compatible dashboards, alerting, PromQL/LogQL/SQL/Endpoint sources, columnar store)
+# - crates/factory          (code factory: AI builders for Apps/Pipelines/DataModels/Endpoints/Dashboards, Firecracker sandbox runner)
+# - crates/assistant        (AI knowledge assistant, crawler, hybrid pgvector + FTS RRF retrieval, scoped MCP connectors, LLM proxy)
+# - crates/embedder         (shared stateless mmap int8 text/multimodal embedding service)
+# - crates/bill             (real-time spend-cap admission counters, usage outbox ingester, Parquet rollup rater, invoicing)
+# - crates/ekiben-io-kafka  (optional Kafka Franz-semantics input/output plugin crate behind a cargo feature)
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.80"
+
+[workspace.dependencies]
+ekiben-bloblang = { path = "crates/ekiben-bloblang" }
+ekiben-core = { path = "crates/ekiben-core" }
+ekiben-processors = { path = "crates/ekiben-processors" }
+ekiben-io-http = { path = "crates/ekiben-io-http" }
+ekiben-io-file = { path = "crates/ekiben-io-file" }
+ekiben-parquet = { path = "crates/ekiben-parquet" }
+ekiben-protobuf = { path = "crates/ekiben-protobuf" }
+ekiben-io-nats = { path = "crates/ekiben-io-nats" }
+ekiben-testkit = { path = "crates/ekiben-testkit" }
+
+tokio = { version = "1.54", features = ["full", "test-util"] }
+axum = { version = "0.8", features = ["macros", "json"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order", "float_roundtrip"] }
+serde_norway = "0.9"
+bytes = "1.12"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "form", "json", "gzip", "brotli", "stream", "multipart", "http2"] }
+regex = "1.13"
+chrono = { version = "0.4.45", features = ["serde"] }
+chrono-tz = "0.10.4"
+quick-xml = { version = "0.42", features = ["serialize"] }
+csv = "1.4"
+zip = { version = "9.3", default-features = false, features = ["deflate"] }
+tar = "0.4.46"
+flate2 = "1.1"
+base64 = "0.23"
+sha2 = "0.11"
+sha1 = "0.11"
+md-5 = "0.11"
+hmac = "0.13"
+aes-gcm = "0.11.1"
+aes = "0.9.3"
+argon2 = "0.6.0"
+bcrypt = "0.19.3"
+lz4_flex = { version = "0.14.0", default-features = false, features = ["frame", "safe-encode", "safe-decode", "std"] }
+p256 = "0.14.0"
+p384 = "0.14.0"
+p521 = "0.14.0"
+serde_json_path = "0.7.2"
+crypto-bigint = { version = "0.7.10", features = ["alloc"] }
+pem-rfc7468 = { version = "1.0.0", features = ["alloc"] }
+crc32fast = "1.5"
+twox-hash = "2.1"
+hex = "0.4"
+url = "2.5.8"
+thiserror = "2.0"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
+clap = { version = "4.6", features = ["derive", "env"] }
+uuid = { version = "1.29", features = ["v4", "v7", "fast-rng", "serde"] }
+stacker = "0.1.25"
+smallvec = { version = "1.16", features = ["serde"] }
+async-trait = "0.1.92"
+futures = "0.3.34"
+subtle = "2.6"
+glob = "0.3.4"
+async-nats = "0.51"
+nkeys = "0.4"
+criterion = { version = "0.8", features = ["async_tokio"] }
+tempfile = "3.27"

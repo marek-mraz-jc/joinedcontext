@@ -1,0 +1,46 @@
+Test 'tests/bento-config-tests/ekiben/failures.yaml' failed
+
+Failures:
+
+--- tests/bento-config-tests/ekiben/failures.yaml ---
+
+content mismatch [line 11]:
+batch 0 message 0: content_equals: content mismatch
+  expected: HELLO WORLD
+  received: HELLO
+
+several conditions on one message [line 17]:
+batch 0 message 0: bloblang: bloblang expression was false
+batch 0 message 0: content_matches: pattern mismatch
+   pattern: ^h.*
+  received: HELLO
+batch 0 message 0: metadata_equals: metadata key 'seen' mismatch
+  expected: no
+  received: yes
+
+missing metadata key [line 26]:
+batch 0 message 0: metadata_equals: metadata key 'absent' expected but not found
+
+numeric metadata mismatch [line 33]:
+batch 0 message 0: metadata_equals: metadata key 'n' mismatch
+  expected: 6
+  received: 5
+
+too few output batches [line 40]:
+wrong batch count, expected 2, got 1
+
+unexpected batch and message [line 47]:
+mismatch of output batch 0 message counts, expected 1, got 2
+unexpected message from batch 0: B
+unexpected batch: [C]
+
+processor error with a failing condition [line 55]:
+batch 0 message 0: content_equals: content mismatch
+  expected: BOOM!
+  received: BOOM
+batch 0 message 0: failed assignment (line 1): went wrong
+
+output that is not JSON [line 61]:
+batch 0 message 0: json_equals: JSON content mismatch
+first argument is invalid json
+exit 1

@@ -1,0 +1,10 @@
+# Copied from github.com/warpstreamlabs/bento v1.22.0 config/test/cookbooks/filtering.yaml
+# Copyright (c) 2024-present Bento contributors, MIT License: see LICENSE-bento beside this tree.
+pipeline:
+  processors:
+    - bloblang: |
+        root = match {
+          meta("topic").or("") == "foo" ||
+          doc.type.or("") == "bar" ||
+          doc.urls.contains("https://warpstreamlabs.github.io/bento/").catch(false) => deleted()
+        }

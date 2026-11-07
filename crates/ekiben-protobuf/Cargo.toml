@@ -1,0 +1,22 @@
+[package]
+name = "ekiben-protobuf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ekiben-bloblang = { workspace = true }
+ekiben-core = { workspace = true }
+ekiben-io-file = { workspace = true }
+async-trait = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+prost = "=0.14.3"
+prost-reflect = { version = "=0.16.5", features = ["serde"] }
+protox = "=0.9.1"
+
+[dev-dependencies]
+sha2 = { workspace = true }
+hex = { workspace = true }
+tokio = { workspace = true }
+tempfile = { workspace = true }

@@ -1,0 +1,16 @@
+# Copied from github.com/warpstreamlabs/bento v1.22.0 config/test/unit_test_example.yaml
+# Copyright (c) 2024-present Bento contributors, MIT License: see LICENSE-bento beside this tree.
+input:
+  kafka:
+    addresses: [ TODO ]
+    topics: [ foo, bar ]
+    consumer_group: foogroup
+
+pipeline:
+  processors:
+    - mapping: 'root = "%vend".format(content().uppercase().string())'
+
+output:
+  aws_s3:
+    bucket: TODO
+    path: '${! meta("kafka_topic") }/${! json("message.id") }.json'

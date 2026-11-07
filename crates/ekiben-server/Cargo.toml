@@ -1,0 +1,52 @@
+[package]
+name = "ekiben-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ekiben"
+path = "src/main.rs"
+
+[features]
+# parquet_decode (arrow-rs parquet) and protobuf (protox + prost-reflect) are the heavy decoders; both on by default
+# because seeds use them, off with --no-default-features for a smaller binary.
+default = ["parquet", "protobuf"]
+parquet = ["dep:ekiben-parquet"]
+protobuf = ["dep:ekiben-protobuf"]
+
+[dependencies]
+ekiben-bloblang = { workspace = true }
+ekiben-core = { workspace = true }
+ekiben-processors = { workspace = true }
+ekiben-io-http = { workspace = true }
+ekiben-io-file = { workspace = true }
+ekiben-io-nats = { workspace = true }
+ekiben-parquet = { workspace = true, optional = true }
+ekiben-protobuf = { workspace = true, optional = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_norway = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+subtle = { workspace = true }
+thiserror = { workspace = true }
+futures = { workspace = true }
+regex = { workspace = true }
+
+[dev-dependencies]
+ekiben-testkit = { workspace = true }
+tempfile = { workspace = true }
+flate2 = { workspace = true }
+reqwest = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "pipeline_bench"
+harness = false

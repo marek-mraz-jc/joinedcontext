@@ -1,0 +1,19 @@
+# Copied from github.com/warpstreamlabs/bento v1.22.0 config/test/bloblang/cities_test.yaml
+# Copyright (c) 2024-present Bento contributors, MIT License: see LICENSE-bento beside this tree.
+tests:
+  - name: test cities mapping
+    target_mapping: './cities.blobl'
+    environment: {}
+    input_batch:
+      - content: |
+          {
+            "locations": [
+              {"name": "Seattle", "state": "WA"},
+              {"name": "New York", "state": "NY"},
+              {"name": "Bellevue", "state": "WA"},
+              {"name": "Olympia", "state": "WA"}
+            ]
+          }
+    output_batches:
+      -
+        - json_equals: {"Cities": "Bellevue, Olympia, Seattle"}

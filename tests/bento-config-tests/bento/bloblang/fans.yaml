@@ -1,0 +1,26 @@
+# Copied from github.com/warpstreamlabs/bento v1.22.0 config/test/bloblang/fans.yaml
+# Copyright (c) 2024-present Bento contributors, MIT License: see LICENSE-bento beside this tree.
+pipeline:
+  processors:
+  - mutation: |
+      root.fans = this.fans.filter(fan -> fan.obsession > 0.5)
+
+tests:
+  - name: Bloblang fans test
+    input_batch:
+      - json_content:
+          id: foo
+          fans:
+            - {"name":"bev","obsession":0.57}
+            - {"name":"grace","obsession":0.21}
+            - {"name":"ali","obsession":0.89}
+            - {"name":"vic","obsession":0.43}
+    output_batches:
+      - - json_equals:
+            id: foo
+            fans:
+              - {"name":"bev","obsession":0.57}
+              - {"name":"ali","obsession":0.89}
+
+
+

@@ -1,0 +1,166 @@
+[
+  {
+    "name": "codec-brotli",
+    "processor": {
+      "parquet_decode": {}
+    },
+    "input": "codec-brotli.parquet",
+    "expected": {
+      "sha256": "42f124693e3d648cf7bd74b9796f136b5d9b6c9ed47eeb99d4e9d5e5acc72a49",
+      "len": 6980,
+      "lines": 300
+    }
+  },
+  {
+    "name": "codec-gzip",
+    "processor": {
+      "parquet_decode": {}
+    },
+    "input": "codec-gzip.parquet",
+    "expected": {
+      "sha256": "42f124693e3d648cf7bd74b9796f136b5d9b6c9ed47eeb99d4e9d5e5acc72a49",
+      "len": 6980,
+      "lines": 300
+    }
+  },
+  {
+    "name": "codec-lz4",
+    "processor": {
+      "parquet_decode": {}
+    },
+    "input": "codec-lz4.parquet",
+    "expected": {
+      "sha256": "42f124693e3d648cf7bd74b9796f136b5d9b6c9ed47eeb99d4e9d5e5acc72a49",
+      "len": 6980,
+      "lines": 300
+    }
+  },
+  {
+    "name": "codec-none",
+    "processor": {
+      "parquet_decode": {}
+    },
+    "input": "codec-none.parquet",
+    "expected": {
+      "sha256": "42f124693e3d648cf7bd74b9796f136b5d9b6c9ed47eeb99d4e9d5e5acc72a49",
+      "len": 6980,
+      "lines": 300
+    }
+  },
+  {
+    "name": "codec-zstd",
+    "processor": {
+      "parquet_decode": {}
+    },
+    "input": "codec-zstd.parquet",
+    "expected": {
+      "sha256": "42f124693e3d648cf7bd74b9796f136b5d9b6c9ed47eeb99d4e9d5e5acc72a49",
+      "len": 6980,
+      "lines": 300
+    }
+  },
+  {
+    "name": "corrupt-empty",
+    "processor": {
+      "parquet_decode": {}
+    },
+    "input": "corrupt-empty.parquet",
+    "expected": {
+      "error": "reading magic header of parquet file: EOF"
+    }
+  },
+  {
+    "name": "corrupt-not-parquet",
+    "processor": {
+      "parquet_decode": {}
+    },
+    "input": "corrupt-not-parquet.parquet",
+    "expected": {
+      "error": "invalid magic header of parquet file: \"this\""
+    }
+  },
+  {
+    "name": "corrupt-truncated",
+    "processor": {
+      "parquet_decode": {}
+    },
+    "input": "corrupt-truncated.parquet",
+    "expected": {
+      "error": "invalid magic footer of parquet file: \"AIAA\""
+    }
+  },
+  {
+    "name": "decimal-ints",
+    "processor": {
+      "parquet_decode": {}
+    },
+    "input": "decimal-ints.parquet",
+    "expected": {
+      "text": "{\"dec_i32\":12.34,\"dec_i64\":123456.789}\n{\"dec_i32\":-0.05,\"dec_i64\":-0.001}\n{\"dec_i32\":null,\"dec_i64\":null}\n"
+    }
+  },
+  {
+    "name": "eea-sk0020a-pm10",
+    "processor": {
+      "parquet_decode": {}
+    },
+    "input": "eea-sk0020a-pm10.parquet",
+    "expected": {
+      "sha256": "68c325e859c777c53965c1140c2338366f8de5f04ceb95056862158c4b4facc7",
+      "len": 2329307,
+      "lines": 7273
+    }
+  },
+  {
+    "name": "empty",
+    "processor": {
+      "parquet_decode": {}
+    },
+    "input": "empty.parquet",
+    "expected": {
+      "error": "Seek: invalid offset"
+    }
+  },
+  {
+    "name": "int96",
+    "processor": {
+      "parquet_decode": {}
+    },
+    "input": "int96.parquet",
+    "expected": {
+      "text": "{\"t\":[0,0,2440588]}\n{\"t\":[2062601493,18626,2460263]}\n{\"t\":null}\n"
+    }
+  },
+  {
+    "name": "nested",
+    "processor": {
+      "parquet_decode": {}
+    },
+    "input": "nested.parquet",
+    "expected": {
+      "text": "{\"attrs\":{\"j\":2,\"k\":1},\"grid\":{\"list\":[{\"element\":[1,2]},{\"element\":[3]}]},\"id\":1,\"maybe\":{\"list\":[{\"element\":1},{\"element\":null},{\"element\":3}]},\"point\":{\"x\":1.5,\"y\":null},\"rows\":{\"list\":[{\"element\":{\"v\":1}},{\"element\":{\"v\":null}}]},\"tags\":{\"list\":[{\"element\":\"a\"},{\"element\":\"b\"}]}}\n{\"attrs\":{},\"grid\":{\"list\":[{\"element\":[]}]},\"id\":2,\"maybe\":null,\"point\":null,\"rows\":null,\"tags\":{\"list\":[]}}\n{\"attrs\":null,\"grid\":null,\"id\":3,\"maybe\":{\"list\":[{\"element\":null}]},\"point\":{\"x\":0,\"y\":\"a\"},\"rows\":{\"list\":[]},\"tags\":null}\n"
+    }
+  },
+  {
+    "name": "scalars",
+    "processor": {
+      "parquet_decode": {}
+    },
+    "input": "scalars.parquet",
+    "expected": {
+      "text": "{\"b\":true,\"bin\":\"\\u0000��\",\"date\":0,\"dec\":\"-1.5\",\"dec_big\":\"1.23456789e+06\",\"dec_i32\":\"12.34\",\"dec_i64\":\"123456.789\",\"f32\":0.1,\"f64\":0.1,\"fixed\":\"YWJjZA==\",\"i64\":-9223372036854775808,\"i8\":-1,\"s\":\"žltá \\\"q\\\" <&>\",\"ts_ms\":0,\"u16\":0,\"u32\":0,\"u64\":0}\n{\"b\":false,\"bin\":\"plain\",\"date\":19000,\"dec\":\"1e-05\",\"dec_big\":\"-0.01\",\"dec_i32\":\"-0.05\",\"dec_i64\":\"-0.001\",\"f32\":-1.5,\"f64\":1e+21,\"fixed\":\"AAECAw==\",\"i64\":9223372036854775807,\"i8\":127,\"s\":\"\",\"ts_ms\":1700000000000,\"u16\":65535,\"u32\":4294967295,\"u64\":-1}\n{\"b\":null,\"bin\":null,\"date\":null,\"dec\":null,\"dec_big\":null,\"dec_i32\":null,\"dec_i64\":null,\"f32\":null,\"f64\":null,\"fixed\":null,\"i64\":null,\"i8\":null,\"s\":null,\"ts_ms\":null,\"u16\":null,\"u32\":null,\"u64\":null}\n"
+    }
+  },
+  {
+    "name": "nested-go-slices",
+    "processor": {
+      "parquet_decode": {
+        "use_parquet_list_format": false
+      }
+    },
+    "input": "nested.parquet",
+    "expected": {
+      "text": "{\"attrs\":{\"j\":2,\"k\":1},\"grid\":[[1,2],[3]],\"id\":1,\"maybe\":[1,null,3],\"point\":{\"x\":1.5,\"y\":null},\"rows\":[{\"v\":1},{\"v\":null}],\"tags\":[\"a\",\"b\"]}\n{\"attrs\":{},\"grid\":[[]],\"id\":2,\"maybe\":null,\"point\":null,\"rows\":null,\"tags\":[]}\n{\"attrs\":null,\"grid\":null,\"id\":3,\"maybe\":[null],\"point\":{\"x\":0,\"y\":\"a\"},\"rows\":[],\"tags\":null}\n"
+    }
+  }
+]

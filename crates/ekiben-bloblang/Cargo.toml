@@ -1,0 +1,48 @@
+[package]
+name = "ekiben-bloblang"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_norway = { workspace = true }
+regex = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+quick-xml = { workspace = true }
+csv = { workspace = true }
+flate2 = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+sha1 = { workspace = true }
+md-5 = { workspace = true }
+hmac = { workspace = true }
+crc32fast = { workspace = true }
+twox-hash = { workspace = true }
+hex = { workspace = true }
+url = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+stacker = { workspace = true }
+smallvec = { workspace = true }
+ryu = "1.0.23"
+aes-gcm = { workspace = true }
+crypto-bigint = { workspace = true }
+pem-rfc7468 = { workspace = true }
+aes = { workspace = true }
+argon2 = { workspace = true }
+bcrypt = { workspace = true }
+lz4_flex = { workspace = true }
+p256 = { workspace = true }
+p384 = { workspace = true }
+p521 = { workspace = true }
+serde_json_path = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "bloblang_bench"
+harness = false

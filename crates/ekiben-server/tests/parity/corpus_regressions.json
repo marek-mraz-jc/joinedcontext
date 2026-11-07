@@ -1,0 +1,256 @@
+[
+  {
+    "name": "untouched message is re-encoded with sorted keys and HTML escaped",
+    "source": "cookbooks/filtering.md",
+    "mapping": "root = if this.drop == true { deleted() }",
+    "input": [
+      "{\"z\":1,\"a\":\"<&>\",\"drop\":false}",
+      "{\"drop\":true}"
+    ],
+    "stdout": "{\"a\":\"\\u003c\\u0026\\u003e\",\"drop\":false,\"z\":1}\n\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "name": "a deleted message prints an empty line",
+    "source": "cookbooks/custom_metrics.md",
+    "mapping": "root = deleted()",
+    "input": [
+      "{\"a\":1}",
+      "{\"b\":2}"
+    ],
+    "stdout": "\n\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "name": "an erroring line does not stop the run",
+    "source": "corpus synth inputs",
+    "mapping": "root.b = this.a + 1",
+    "input": [
+      "{\"a\":1}",
+      "{\"a\":\"x\"}",
+      "{\"a\":2}",
+      ""
+    ],
+    "stdout": "{\"b\":2}\n{\"b\":3}\n",
+    "stderr": "failed to execute map: failed assignment (line 1): cannot add types string (from field `this.a`) and number (from number literal)\nfailed to execute map: unable to reference message as structured (with 'this.a'): message is empty\n",
+    "code": 0
+  },
+  {
+    "name": "floats print as Go's strconv and encoding/json do",
+    "source": "corpus synth inputs",
+    "mapping": "root = [this.a * 1000000.0, this.a / 10000000.0, this.a / 1000000.0, this.a * 1234567.5, (this.a * 1234567.5).string(), (this.a * 1000000.0).string(), (this.a / 100000.0).string()]",
+    "input": [
+      "{\"a\":1}",
+      "{\"a\":-3}"
+    ],
+    "stdout": "[1000000,1e-7,0.000001,1234567.5,\"1.2345675e+06\",\"1e+06\",\"1e-05\"]\n[-3000000,-3e-7,-0.000003,-3703702.5,\"-3.7037025e+06\",\"-3e+06\",\"-3e-05\"]\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "name": "format %v prints Go values",
+    "source": "cookbooks/discord_bot.md, config/test/protobuf/house.yaml",
+    "mapping": "root = \"%v|%v|%v|%v|%v\".format(this.arr, this.obj, this.missing, this.n, this.s)",
+    "input": [
+      "{\"arr\":[1,\"x\",{\"k\":\"v\"}],\"obj\":{\"k\":\"v\",\"n\":1},\"n\":2.5,\"s\":\"t\"}"
+    ],
+    "stdout": "[1 x map[k:v]]|map[k:v n:1]|<nil>|2.5|t\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "name": "== reads the right side as the left side's type",
+    "source": "cookbooks/discord_bot.md",
+    "mapping": "root = [this.t == 7, this.t == 0, this.n == true, this.t == 1.0, [this.t] == [1], {\"a\": this.t} == {\"a\": 2}, this.s == this.s.bytes(), \"1\" == 1, null == null]",
+    "input": [
+      "{\"t\":true,\"n\":1,\"s\":\"x\"}"
+    ],
+    "stdout": "[true,false,false,true,true,true,true,false,true]\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "name": "merge and assign ignore a non-object source and name the target on a type error",
+    "source": "docs/components/processors/elasticsearch.md",
+    "mapping": "root = this.merge(this.x).assign(this.y)",
+    "input": [
+      "{\"a\":1}",
+      "{\"a\":1,\"x\":{\"b\":2},\"y\":3}",
+      "\"plain\"",
+      "7"
+    ],
+    "stdout": "{\"a\":1}\n{\"a\":1,\"b\":2,\"x\":{\"b\":2},\"y\":3}\n",
+    "stderr": "failed to execute map: failed assignment (line 1): expected object or array value, got string from field `this` (\"plain\")\nfailed to execute map: failed assignment (line 1): expected object or array value, got number from field `this` (7)\n",
+    "code": 0
+  },
+  {
+    "name": "array to string is json.Marshal, HTML escaped",
+    "source": "config/test/bloblang/walk_json.yaml",
+    "mapping": "root = [this.s, this.n].string()",
+    "input": [
+      "{\"s\":\"<a & b>\",\"n\":1.5}"
+    ],
+    "stdout": "[\"\\u003ca \\u0026 b\\u003e\",1.5]\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "name": "unknown method is reported after its arguments, with the source line",
+    "source": "blog/2020-04-18-sneak-peek-at-bloblang.md",
+    "mapping": "json.foo.bar = json().(something + another.thing)\njson.and_this = meta(\"kafka_key\").base64()",
+    "input": [
+      "{}"
+    ],
+    "stdout": "",
+    "stderr": "failed to parse mapping: line 2 char 43: unrecognised method 'base64'\n  |\n2 | json.and_this = meta(\"kafka_key\").base64()\n  |                                           ^---\n",
+    "code": 1
+  },
+  {
+    "name": "unknown function is reported after its arguments",
+    "source": "corpus synth",
+    "mapping": "root = nope(1, 2)",
+    "input": [
+      "{}"
+    ],
+    "stdout": "",
+    "stderr": "failed to parse mapping: line 1 char 18: unrecognised function 'nope'\n  |\n1 | root = nope(1, 2)\n  |                  ^---\n",
+    "code": 1
+  },
+  {
+    "name": "an empty query names the position",
+    "source": "corpus synth",
+    "mapping": "root = ",
+    "input": [
+      "{}"
+    ],
+    "stdout": "",
+    "stderr": "failed to parse mapping: line 1 char 8: expected query\n  |\n1 | root = \n  |        ^---\n",
+    "code": 1
+  },
+  {
+    "name": "format %s prints Go's %!s forms for nil and bool",
+    "source": "collector/quickstart/collector/streams/input.yaml",
+    "mapping": "root = \"%s|%s|%s|%s\".format(this.missing, this.t, this.arr, this.s)",
+    "input": [
+      "{\"t\":true,\"arr\":[\"a\",{\"k\":\"v\"}],\"s\":\"x\"}"
+    ],
+    "stdout": "%!s(<nil>)|%!s(bool=true)|[a map[k:v]]|x\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "name": "modulo truncates float operands to int64",
+    "source": "benthos_config_files/gen03.yaml",
+    "mapping": "root = [this.value % 2, 3.0 % 2, 7 % 2.5, -7.9 % 2]",
+    "input": [
+      "{\"value\":2.5}",
+      "{\"value\":\"s\"}"
+    ],
+    "stdout": "[0,1,1,-1]\n",
+    "stderr": "failed to execute map: failed assignment (line 1): cannot modulo types string (from field `this.value`) and number (from number literal)\n",
+    "code": 0
+  },
+  {
+    "name": "a method without its required parameter fails to parse",
+    "source": "skills/recipes/deduplicate-events/pipeline.yaml",
+    "mapping": "root.is_duplicate = meta(\"cache_result\").exists() && meta(\"cache_result\") != \"\"",
+    "input": [
+      "{}"
+    ],
+    "stdout": "",
+    "stderr": "failed to parse mapping: line 1 char 50: missing parameter: path\n  |\n1 | root.is_duplicate = meta(\"cache_result\").exists() && meta(\"cache_result\") != \"\"\n  |                                                  ^---\n",
+    "code": 1
+  },
+  {
+    "name": "a function without its required parameter fails to parse",
+    "source": "required_params.rs",
+    "mapping": "root = env()",
+    "input": [
+      "{}"
+    ],
+    "stdout": "",
+    "stderr": "failed to parse mapping: line 1 char 13: missing parameter: name\n  |\n1 | root = env()\n  |             ^---\n",
+    "code": 1
+  },
+  {
+    "name": "an empty statement block in if is valid",
+    "source": "bento-config-examples/aws_s3->archive.yaml",
+    "mapping": "if this.exists(\"imageKey\") { } else { root = this.decode(\"base64\") }",
+    "input": [
+      "{\"imageKey\":1}",
+      "\"aGk=\""
+    ],
+    "stdout": "{\"imageKey\":1}\nhi\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "name": "&& and || read numbers as bools, ! does not",
+    "source": "registry-monitor.yaml",
+    "mapping": "root = [!false && this.n, false || this.z, true && 3]",
+    "input": [
+      "{\"n\":3,\"z\":0}"
+    ],
+    "stdout": "[true,false,true]\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "name": "&& names no source on a type error",
+    "source": "registry-monitor.yaml",
+    "mapping": "root = this.s && true",
+    "input": [
+      "{\"s\":\"x\"}"
+    ],
+    "stdout": "",
+    "stderr": "failed to execute map: failed assignment (line 1): expected bool value, got string (\"x\")\n",
+    "code": 0
+  },
+  {
+    "name": "! refuses a number and names its source",
+    "source": "registry-monitor.yaml",
+    "mapping": "root = !this.n",
+    "input": [
+      "{\"n\":3}"
+    ],
+    "stdout": "",
+    "stderr": "failed to execute map: failed assignment (line 1): expected bool value, got number from field `this.n` (3)\n",
+    "code": 0
+  },
+  {
+    "name": "%s prints a nil inside a slice or map as <nil>",
+    "source": "config.yaml (INSERT INTO users)",
+    "mapping": "root = \"%s\".format({\"a\":[true, this.missing]})",
+    "input": [
+      "{}"
+    ],
+    "stdout": "map[a:[%!s(bool=true) <nil>]]\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "name": "deleting a field of an unassigned root leaves an empty object",
+    "source": "config/migration.yaml",
+    "mapping": "root._meta._body_parse_error = this._parse_error | deleted()\nroot._body_html = if !this.exists(\"_parse_error\") { metadata(\"body_text\") } else { deleted() }",
+    "input": [
+      "{\"_parse_error\":null}",
+      "{\"x\":1}"
+    ],
+    "stdout": "{}\n{\"_body_html\":null}\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "name": "blobl reads metadata in place: a null meta assignment is kept",
+    "source": "postgres_cdc.yml",
+    "mapping": "meta target_topic = meta(\"table\")\nroot = this\nroot._metadata = metadata()",
+    "input": [
+      "{\"a\":1}"
+    ],
+    "stdout": "{\"_metadata\":{\"target_topic\":null},\"a\":1}\n",
+    "stderr": "",
+    "code": 0
+  }
+]

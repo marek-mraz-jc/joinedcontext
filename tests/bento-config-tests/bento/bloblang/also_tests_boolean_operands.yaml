@@ -1,0 +1,15 @@
+# Copied from github.com/warpstreamlabs/bento v1.22.0 config/test/bloblang/also_tests_boolean_operands.yaml
+# Copyright (c) 2024-present Bento contributors, MIT License: see LICENSE-bento beside this tree.
+tests:
+  - name: neither exists
+    target_processors: ./boolean_operands.yaml#/pipeline/processors
+    input_batch:
+      - content: '{"none":"of the target values"}'
+      - content: '{"first":true}'
+      - content: '{"first":false}'
+      - content: '{"first":true,"second":true}'
+    output_batches:
+      - - content_equals: '{"ands":"failed","ors":"failed"}'
+        - content_equals: '{"ands":"failed","ors":true}'
+        - content_equals: '{"ands":false,"ors":"failed"}'
+        - content_equals: '{"ands":true,"ors":true}'

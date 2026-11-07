@@ -1,0 +1,17 @@
+// Copied from github.com/warpstreamlabs/bento v1.22.0 config/test/protobuf/schema/person.proto
+// Copyright (c) 2024-present Bento contributors, MIT License: see LICENSE-bento beside this tree.
+syntax = "proto3";
+package testing;
+
+import "google/protobuf/timestamp.proto";
+
+message Person {
+  string first_name = 1;
+  string last_name = 2;
+  string full_name = 3;
+  int32 age = 4;
+  int32 id = 5;  // Unique ID number for this person.
+  string email = 6;
+
+  google.protobuf.Timestamp last_updated = 7;
+}

@@ -1,0 +1,8 @@
+# Copied from github.com/warpstreamlabs/bento v1.22.0 config/test/resources/other_mappings.yaml
+# Copyright (c) 2024-present Bento contributors, MIT License: see LICENSE-bento beside this tree.
+processor_resources:
+  - label: prefix
+    bloblang: 'root = "bar " + content()'
+
+  - label: upper
+    bloblang: 'root = content().uppercase()'
