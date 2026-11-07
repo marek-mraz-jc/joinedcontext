@@ -197,3 +197,195 @@ pub fn verify_dpop_proof(
         nonce: claims.nonce,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use wardkeep_crypto::{Kek, KeyManager};
+
+    const HTU: &str = "https://idm.example.test/realms/dev/protocol/openid-connect/token";
+
+    struct Holder {
+        jwk: Value,
+        key: EncodingKey,
+    }
+
+    fn holder() -> Holder {
+        let kek = Kek::generate_for_tests();
+        let rec = KeyManager::generate_es256("dev", &kek, 100, "ACTIVE").unwrap();
+        let der = kek
+            .decrypt(
+                format!("dev:{}", rec.kid).as_bytes(),
+                &rec.encrypted_private_key,
+            )
+            .unwrap();
+        Holder {
+            jwk: serde_json::from_str(&rec.public_jwk_json).unwrap(),
+            key: EncodingKey::from_ec_der(&der),
+        }
+    }
+
+    fn proof_with(h: &Holder, typ: &str, jwk: &Value, claims: &Value) -> String {
+        let mut header = Header::new(Algorithm::ES256);
+        header.typ = Some(typ.to_owned());
+        header.jwk = Some(serde_json::from_value(jwk.clone()).unwrap());
+        encode(&header, claims, &h.key).unwrap()
+    }
+
+    fn claims(extra: Value) -> Value {
+        let mut c =
+            json!({ "jti": "j-1", "htm": "POST", "htu": HTU, "iat": Utc::now().timestamp() });
+        for (k, v) in extra.as_object().unwrap() {
+            c[k] = v.clone();
+        }
+        c
+    }
+
+    fn oauth_error(e: WardkeepError) -> String {
+        match e {
+            WardkeepError::OAuth { error, .. } => error,
+            other => panic!("not an OAuth error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rfc7638_thumbprint_vector_and_key_types() {
+        let rsa = json!({ "kty": "RSA", "e": "AQAB", "alg": "RS256", "kid": "2011-04-29",
+            "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw" });
+        assert_eq!(
+            compute_jwk_thumbprint(&rsa).unwrap(),
+            "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs"
+        );
+        // Members outside the RFC 7638 set never change the thumbprint.
+        let ec = json!({ "kty": "EC", "crv": "P-256", "x": "a", "y": "b" });
+        let ec_noise =
+            json!({ "kty": "EC", "crv": "P-256", "x": "a", "y": "b", "kid": "k", "use": "sig" });
+        assert_eq!(
+            compute_jwk_thumbprint(&ec).unwrap(),
+            compute_jwk_thumbprint(&ec_noise).unwrap()
+        );
+        assert!(
+            compute_jwk_thumbprint(&json!({ "kty": "OKP", "crv": "Ed25519", "x": "q" })).is_ok()
+        );
+        for bad in [
+            json!({}),
+            json!({ "kty": "oct", "k": "c2VjcmV0" }),
+            json!({ "kty": "EC", "x": "a", "y": "b" }),
+            json!({ "kty": "EC", "crv": "P-256", "y": "b" }),
+            json!({ "kty": "EC", "crv": "P-256", "x": "a" }),
+            json!({ "kty": "RSA", "n": "n" }),
+            json!({ "kty": "RSA", "e": "AQAB" }),
+            json!({ "kty": "OKP", "x": "q" }),
+            json!({ "kty": "OKP", "crv": "Ed25519" }),
+        ] {
+            assert_eq!(
+                oauth_error(compute_jwk_thumbprint(&bad).unwrap_err()),
+                "invalid_dpop_proof"
+            );
+        }
+    }
+
+    #[test]
+    fn a_fresh_proof_binds_the_key_thumbprint() {
+        let h = holder();
+        let p = proof_with(&h, "dpop+jwt", &h.jwk, &claims(json!({})));
+        let out = verify_dpop_proof(&p, "post", &format!("{HTU}?x=1"), None, None).unwrap();
+        assert_eq!(out.jti, "j-1");
+        assert_eq!(out.jkt, compute_jwk_thumbprint(&h.jwk).unwrap());
+        assert_eq!(out.nonce, None);
+    }
+
+    #[test]
+    fn wrong_type_private_key_time_method_or_target_is_refused() {
+        let h = holder();
+        // A header carrying private key material, assembled by hand (the typed Jwk drops `d`).
+        let mut with_d = h.jwk.clone();
+        with_d["d"] = json!("private");
+        let valid = proof_with(&h, "dpop+jwt", &h.jwk, &claims(json!({})));
+        let mut parts = valid.splitn(2, '.');
+        let _ = parts.next();
+        let header_d = URL_SAFE_NO_PAD
+            .encode(json!({ "alg": "ES256", "typ": "dpop+jwt", "jwk": with_d }).to_string());
+        let leaked = format!("{header_d}.{}", parts.next().unwrap());
+        let cases = [
+            proof_with(&h, "JWT", &h.jwk, &claims(json!({}))),
+            leaked,
+            proof_with(
+                &h,
+                "dpop+jwt",
+                &h.jwk,
+                &claims(json!({ "iat": Utc::now().timestamp() - 301 })),
+            ),
+            proof_with(
+                &h,
+                "dpop+jwt",
+                &h.jwk,
+                &claims(json!({ "iat": Utc::now().timestamp() + 301 })),
+            ),
+            proof_with(&h, "dpop+jwt", &h.jwk, &claims(json!({ "htm": "GET" }))),
+            proof_with(
+                &h,
+                "dpop+jwt",
+                &h.jwk,
+                &claims(json!({ "htu": "https://evil.test/token" })),
+            ),
+            proof_with(
+                &h,
+                "dpop+jwt",
+                &h.jwk,
+                &json!({ "htm": "POST", "htu": HTU }),
+            ),
+        ];
+        for p in cases {
+            let e = verify_dpop_proof(&p, "POST", HTU, None, None).unwrap_err();
+            assert_eq!(oauth_error(e), "invalid_dpop_proof");
+        }
+        for garbage in ["", "@@@.x.y", "e30.@@@.x", "bm90IGpzb24.e30.x"] {
+            assert!(verify_dpop_proof(garbage, "POST", HTU, None, None).is_err());
+        }
+    }
+
+    #[test]
+    fn a_proof_signed_by_another_key_or_with_a_mac_is_refused() {
+        let h = holder();
+        let other = holder();
+        // Header names h's public key, signature made with the other private key.
+        let mut header = Header::new(Algorithm::ES256);
+        header.typ = Some("dpop+jwt".into());
+        header.jwk = Some(serde_json::from_value(h.jwk.clone()).unwrap());
+        let forged = encode(&header, &claims(json!({})), &other.key).unwrap();
+        let e = verify_dpop_proof(&forged, "POST", HTU, None, None).unwrap_err();
+        assert_eq!(oauth_error(e), "invalid_dpop_proof");
+
+        let mut header = Header::new(Algorithm::HS256);
+        header.typ = Some("dpop+jwt".into());
+        header.jwk = Some(serde_json::from_value(h.jwk.clone()).unwrap());
+        let mac = encode(&header, &claims(json!({})), &EncodingKey::from_secret(b"k")).unwrap();
+        let e = verify_dpop_proof(&mac, "POST", HTU, None, None).unwrap_err();
+        assert_eq!(oauth_error(e), "invalid_dpop_proof");
+    }
+
+    #[test]
+    fn access_token_hash_and_server_nonce_must_match() {
+        let h = holder();
+        let ath = sha256_base64url("the-access-token");
+        let good = proof_with(
+            &h,
+            "dpop+jwt",
+            &h.jwk,
+            &claims(json!({ "ath": ath, "nonce": "n-1" })),
+        );
+        assert!(
+            verify_dpop_proof(&good, "POST", HTU, Some("the-access-token"), Some("n-1")).is_ok()
+        );
+        let e = verify_dpop_proof(&good, "POST", HTU, Some("another-token"), None).unwrap_err();
+        assert_eq!(oauth_error(e), "invalid_dpop_proof");
+        let no_ath = proof_with(&h, "dpop+jwt", &h.jwk, &claims(json!({})));
+        assert!(verify_dpop_proof(&no_ath, "POST", HTU, Some("the-access-token"), None).is_err());
+        let e = verify_dpop_proof(&good, "POST", HTU, None, Some("n-2")).unwrap_err();
+        assert_eq!(oauth_error(e), "use_dpop_nonce");
+        let e = verify_dpop_proof(&no_ath, "POST", HTU, None, Some("n-1")).unwrap_err();
+        assert_eq!(oauth_error(e), "use_dpop_nonce");
+    }
+}

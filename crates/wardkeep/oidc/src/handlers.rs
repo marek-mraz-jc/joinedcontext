@@ -2397,10 +2397,54 @@ async fn revoke_endpoint(
     Ok(StatusCode::OK)
 }
 
+/// RFC 9449 §7: a token bound to a key (`cnf.jkt`) is only honoured under the `DPoP` scheme with
+/// a fresh, single-use proof for this request, made by that key and carrying the token hash
+/// (`ath`). A stolen bound token presented as a Bearer token gets nothing.
+async fn enforce_dpop_binding(
+    state: &OidcState,
+    realm_id: &str,
+    claims: &Value,
+    headers: &HeaderMap,
+    (method, htu): (&str, &str),
+    raw_token: &str,
+    dpop_scheme: bool,
+) -> Result<()> {
+    let Some(bound) = claims.pointer("/cnf/jkt").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    if !dpop_scheme {
+        return Err(WardkeepError::Unauthorized(
+            "a DPoP-bound token needs the DPoP scheme".into(),
+        ));
+    }
+    let proof_hdr = headers
+        .get("dpop")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| WardkeepError::Unauthorized("DPoP proof missing".into()))?;
+    let proof = verify_dpop_proof(proof_hdr.trim(), method, htu, Some(raw_token), None)
+        .map_err(|_| WardkeepError::Unauthorized("invalid DPoP proof".into()))?;
+    if proof.jkt != bound {
+        return Err(WardkeepError::Unauthorized(
+            "DPoP proof key does not match the token".into(),
+        ));
+    }
+    state
+        .store
+        .mark_token_revoked(RevokedTokenRecord {
+            jti_hash: sha256_hex(&format!("dpop:{}", proof.jti)),
+            realm_id: realm_id.to_owned(),
+            expires_at: Utc::now() + Duration::minutes(10),
+        })
+        .await
+        .map_err(|_| WardkeepError::Unauthorized("replayed DPoP proof".into()))
+}
+
 /// UserInfo endpoint (`GET/POST /realms/{realm}/protocol/openid-connect/userinfo`, W1).
 async fn userinfo_endpoint(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
+    method: axum::http::Method,
+    OriginalUri(orig_uri): OriginalUri,
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Json<Map<String, Value>>> {
@@ -2410,14 +2454,15 @@ async fn userinfo_endpoint(
         .await?
         .ok_or_else(|| WardkeepError::NotFound("realm not found".into()))?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
-    let raw_token = headers
+    let authz = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| {
-            v.strip_prefix("Bearer ")
-                .or_else(|| v.strip_prefix("DPoP "))
-        })
-        .map(str::trim)
+        .unwrap_or_default();
+    let (dpop_scheme, raw_token) = match authz.strip_prefix("DPoP ") {
+        Some(t) => (true, t),
+        None => (false, authz.strip_prefix("Bearer ").unwrap_or_default()),
+    };
+    let raw_token = Some(raw_token.trim())
         .filter(|s| !s.is_empty())
         .ok_or_else(|| WardkeepError::Unauthorized("missing bearer token".into()))?;
 
@@ -2427,6 +2472,23 @@ async fn userinfo_endpoint(
     if claims.get("typ").and_then(Value::as_str) != Some("Bearer") {
         return Err(WardkeepError::Unauthorized("not an access token".into()));
     }
+    let htu = format!(
+        "{}://{}{}{}",
+        mount.scheme,
+        mount.host,
+        mount.path_prefix,
+        orig_uri.path()
+    );
+    enforce_dpop_binding(
+        &state,
+        &realm.id,
+        &claims,
+        &headers,
+        (method.as_str(), &htu),
+        raw_token,
+        dpop_scheme,
+    )
+    .await?;
     // A revoked token, or one whose SSO session ended (logout, code replay, refresh reuse),
     // gets no claims, as at introspection.
     if let Some(jti) = claims.get("jti").and_then(Value::as_str)
