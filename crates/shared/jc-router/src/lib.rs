@@ -579,4 +579,94 @@ mod tests {
         let res3 = jc.dispatch(req3, None).await;
         assert_eq!(res3.status(), StatusCode::NOT_FOUND);
     }
+
+    #[test]
+    fn defaults_and_mount_helpers() {
+        let m = Mount::default();
+        assert_eq!(m.module, "wardkeep");
+        assert_eq!(m.public_base(), "https://idm.localhost");
+        assert_eq!(m.realm_cookie_path("dev"), "/realms/dev");
+        assert_eq!(m.cookie_name("sso"), "__Host-wk_sso");
+        let m = Mount::new("wardkeep", "https", "city.example", "/id/").unwrap();
+        assert_eq!(m.realm_cookie_path("dev"), "/id/realms/dev");
+        assert_eq!(m.realm_issuer("dev"), "https://city.example/id/realms/dev");
+        assert!(Mount::new("x", "https", "h", "id").is_err());
+        assert!(Mount::new("x", "https", "h", "/a?b").is_err());
+        assert!(Mount::new("x", "https", "h", "/a//b").is_err());
+        assert_eq!(normalize_prefix(" / ").unwrap(), "");
+        let b = JcRouterBuilder::default();
+        assert_eq!(b.default_scheme, "https");
+        assert_eq!(b.default_host, "localhost");
+    }
+
+    #[tokio::test]
+    async fn bare_prefix_maps_to_root_and_query_is_kept() {
+        async fn echo(uri: Uri) -> String {
+            uri.to_string()
+        }
+        let jc = JcRouterBuilder::new("https", "city.example")
+            .mount(
+                MountSpec {
+                    module: "m".into(),
+                    host: None,
+                    path_prefix: Some("/m".into()),
+                },
+                Router::new().route("/", get(echo)).route("/q", get(echo)),
+            )
+            .mount(
+                MountSpec {
+                    module: "root".into(),
+                    host: None,
+                    path_prefix: Some("/".into()),
+                },
+                Router::new().route("/", get(echo)),
+            )
+            .build()
+            .unwrap();
+        for (uri, want) in [
+            ("/m", "/"),
+            ("/m?x=1", "/?x=1"),
+            ("/m/q?a=b&c", "/q?a=b&c"),
+            ("/", "/"),
+        ] {
+            let resp = jc
+                .dispatch(
+                    Request::builder()
+                        .uri(uri)
+                        .header("host", "city.example")
+                        .body(Body::empty())
+                        .unwrap(),
+                    None,
+                )
+                .await;
+            assert_eq!(resp.status(), StatusCode::OK, "{uri}");
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(String::from_utf8(bytes.to_vec()).unwrap(), want, "{uri}");
+        }
+        // Two root mounts on the same (any) host overlap.
+        let err = JcRouterBuilder::default()
+            .mount(
+                MountSpec {
+                    module: "a".into(),
+                    host: None,
+                    path_prefix: None,
+                },
+                Router::new(),
+            )
+            .mount(
+                MountSpec {
+                    module: "b".into(),
+                    host: Some(" ".into()),
+                    path_prefix: Some("/".into()),
+                },
+                Router::new(),
+            )
+            .build()
+            .err()
+            .expect("overlap");
+        assert_eq!(
+            err.to_string(),
+            "overlapping mounts between module 'a' and 'b' on host '*' prefix '/'"
+        );
+    }
 }

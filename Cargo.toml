@@ -34,6 +34,7 @@ members = [
   "crates/controlroom/api",
   "crates/controlroom/mcp",
   "crates/controlroom/server",
+  "bins/jc",
 ]
 
 [workspace.package]

@@ -91,6 +91,69 @@ pub enum Command {
     },
 }
 
+/// Creates the default catalogue `catalogue_id` of `org_id` on `host` when the store has none yet,
+/// as `serve` does at start. Used by the standalone binary and by `jc`, which hosts dataroom in its
+/// own process (in-memory store by default).
+pub async fn ensure_default_catalogue(
+    store: &dyn Store,
+    org_id: OrgId,
+    catalogue_id: CatalogueId,
+    host: &str,
+) -> Result<()> {
+    if store.get_catalogue(org_id, catalogue_id).await?.is_none() {
+        let host = host.to_owned();
+        store
+            .upsert_catalogue(Catalogue {
+                org_id,
+                id: catalogue_id,
+                name: "default".into(),
+                host,
+                title: BTreeMap::from([
+                    ("sk".into(), "Katalóg otvorených dát".into()),
+                    ("cs".into(), "Katalog otevřených dat".into()),
+                    ("en".into(), "Open Data Catalogue".into()),
+                ]),
+                description: BTreeMap::from([
+                    ("sk".into(), "Katalóg dát".into()),
+                    ("cs".into(), "Katalog dat".into()),
+                    ("en".into(), "Data catalogue".into()),
+                ]),
+                homepage: None,
+                default_language: "sk".into(),
+                languages: vec!["sk".into(), "cs".into(), "en".into()],
+                main_profile: "dcat-ap-3.0.1".into(),
+                active_profiles: vec![
+                    ProfilePin {
+                        profile_id: "dcat-ap-3.0.1".into(),
+                        version: "3.0.1".into(),
+                    },
+                    ProfilePin {
+                        profile_id: "dcat-ap-cz".into(),
+                        version: "2026-09-23".into(),
+                    },
+                    ProfilePin {
+                        profile_id: "dcat-ap-sk-2.0".into(),
+                        version: "2.0.1".into(),
+                    },
+                ],
+                default_licence: Some("cc-by".into()),
+                publisher_uri: Some("https://data.gov.sk/id/legal-subject/00000000".into()),
+                publisher_name: None,
+                contact_point: None,
+                theme: ThemeTokens::default(),
+                branding: None,
+                hidden_datasets: BTreeMap::new(),
+                allow_cross_org_harvest: true,
+                allowed_outbound_hosts: Vec::new(),
+                applicable_legislation: Vec::new(),
+                modified: Utc::now(),
+            })
+            .await?;
+    }
+
+    Ok(())
+}
+
 /// Imports a CKAN JSON dump (an array of packages, or a `package_search` envelope `{"result": {"results": [...]}}`)
 /// into `store` under `ctx`, creating missing publishers and validating each dataset.
 pub async fn import_ckan_json(
@@ -290,59 +353,11 @@ pub async fn run_cli(cli: Cli) -> Result<Value> {
         None => Arc::new(MemoryStore::new()),
     };
 
-    if store.get_catalogue(org_id, catalogue_id).await?.is_none() {
-        let host = match &cli.command {
-            Command::Serve { host, .. } => host.clone(),
-            _ => "opendata.localhost".into(),
-        };
-        store
-            .upsert_catalogue(Catalogue {
-                org_id,
-                id: catalogue_id,
-                name: "default".into(),
-                host,
-                title: BTreeMap::from([
-                    ("sk".into(), "Katalóg otvorených dát".into()),
-                    ("cs".into(), "Katalog otevřených dat".into()),
-                    ("en".into(), "Open Data Catalogue".into()),
-                ]),
-                description: BTreeMap::from([
-                    ("sk".into(), "Katalóg dát".into()),
-                    ("cs".into(), "Katalog dat".into()),
-                    ("en".into(), "Data catalogue".into()),
-                ]),
-                homepage: None,
-                default_language: "sk".into(),
-                languages: vec!["sk".into(), "cs".into(), "en".into()],
-                main_profile: "dcat-ap-3.0.1".into(),
-                active_profiles: vec![
-                    ProfilePin {
-                        profile_id: "dcat-ap-3.0.1".into(),
-                        version: "3.0.1".into(),
-                    },
-                    ProfilePin {
-                        profile_id: "dcat-ap-cz".into(),
-                        version: "2026-09-23".into(),
-                    },
-                    ProfilePin {
-                        profile_id: "dcat-ap-sk-2.0".into(),
-                        version: "2.0.1".into(),
-                    },
-                ],
-                default_licence: Some("cc-by".into()),
-                publisher_uri: Some("https://data.gov.sk/id/legal-subject/00000000".into()),
-                publisher_name: None,
-                contact_point: None,
-                theme: ThemeTokens::default(),
-                branding: None,
-                hidden_datasets: BTreeMap::new(),
-                allow_cross_org_harvest: true,
-                allowed_outbound_hosts: Vec::new(),
-                applicable_legislation: Vec::new(),
-                modified: Utc::now(),
-            })
-            .await?;
-    }
+    let host = match &cli.command {
+        Command::Serve { host, .. } => host.clone(),
+        _ => "opendata.localhost".into(),
+    };
+    ensure_default_catalogue(store.as_ref(), org_id, catalogue_id, &host).await?;
 
     let ctx = RequestCtx::new(
         org_id,

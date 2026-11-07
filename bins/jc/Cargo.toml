@@ -1,0 +1,77 @@
+[package]
+name = "jc"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "One binary hosting the joinedcontext modules behind one mount router"
+
+[lib]
+name = "jc"
+path = "src/lib.rs"
+
+[[bin]]
+name = "jc"
+path = "src/main.rs"
+
+[features]
+default = ["wardkeep", "dataroom", "controlroom", "jemalloc"]
+wardkeep = [
+  "dep:wardkeep-server",
+  "dep:wardkeep-core",
+  "dep:wardkeep-crypto",
+  "dep:wardkeep-oidc",
+  "dep:wardkeep-store-memory",
+  "dep:wardkeep-import",
+]
+dataroom = [
+  "dep:dataroom-server",
+  "dep:dataroom-api",
+  "dep:dataroom-core",
+  "dep:dataroom-store-memory",
+]
+controlroom = [
+  "dep:controlroom-server",
+  "dep:controlroom-model",
+  "dep:controlroom-store-memory",
+]
+jemalloc = ["dep:tikv-jemallocator"]
+
+[dependencies]
+jc-router = { path = "../../crates/shared/jc-router" }
+axum = "0.8"
+clap = { version = "4.6", features = ["derive", "env"] }
+ipnet = { version = "2.12", features = ["serde"] }
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "io-util"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+tikv-jemallocator = { version = "0.7", optional = true }
+
+wardkeep-server = { path = "../../crates/wardkeep/server", optional = true }
+wardkeep-core = { path = "../../crates/wardkeep/core", optional = true }
+wardkeep-crypto = { path = "../../crates/wardkeep/crypto", optional = true }
+wardkeep-oidc = { path = "../../crates/wardkeep/oidc", optional = true }
+wardkeep-store-memory = { path = "../../crates/wardkeep/store-memory", optional = true }
+wardkeep-import = { path = "../../crates/wardkeep/import", optional = true }
+
+dataroom-server = { path = "../../crates/dataroom/server", optional = true }
+dataroom-api = { path = "../../crates/dataroom/api", optional = true }
+dataroom-core = { path = "../../crates/dataroom/core", optional = true }
+dataroom-store-memory = { path = "../../crates/dataroom/store-memory", optional = true }
+
+controlroom-server = { path = "../../crates/controlroom/server", optional = true }
+controlroom-model = { path = "../../crates/controlroom/model", optional = true }
+controlroom-store-memory = { path = "../../crates/controlroom/store-memory", optional = true }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+tempfile = "3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1"
