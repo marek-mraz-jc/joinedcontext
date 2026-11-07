@@ -7,7 +7,7 @@ R1–R12 as done. Several of those claims did not hold; they are corrected below
 implemented or tested, the gap is named), **not verified** (written but never run, for the
 reason given).
 
-Every package compiles, `cargo test` (44 tests), `clippy --all-targets -D warnings` and
+Every package compiles, `cargo test` (59 tests), `clippy --all-targets -D warnings` and
 `fmt --check` are clean. No test runs against Postgres: the host has no Postgres server and
 Docker cannot start containers (overlay mount fails), so everything in `controlroom-store-pg`
 that touches a database is **not verified**.
@@ -23,6 +23,7 @@ that touches a database is **not verified**.
   - Drivers are written for Prometheus, NGSI-LD, OData 4.01 and Postgres, with the `-- Mixed --` datasource and the Loki slot.
   - The outbound guard covers the allow-list, DNS pinning, no redirects, a size cap, no env proxy, and IPv4 embedded in IPv6 (`query/src/guard.rs::tests`).
   - The Postgres guard is a token-level single-SELECT check run in a READ ONLY transaction with a row cap (`query/src/postgres.rs::tests`).
+  - The OData driver is tested against a local HTTP server (`query/src/odata.rs::tests`). The entity set must be a simple identifier; before this pass it was pasted into the URL path. Columns come out in key order, not in `$select` order.
   - Gaps:
     - Nothing builds a driver from a stored datasource record. `ControlroomState::datasources` is filled only by tests, so a running server cannot query any datasource that was created through the API.
     - There is no real token exchanger: the default `DenyTokenExchanger` refuses, and NGSI-LD calls that need the caller's token fail until the host supplies an exchanger.
@@ -45,7 +46,7 @@ that touches a database is **not verified**.
   - The caller's identity came from `x-controlroom-subject` and `x-controlroom-orgs` request headers, and an anonymous request was admin of the default org.
   - Export, the org and folder compat routes, search and the public-dashboard config had no or partial checks.
   - Identity now comes only from a host `SubjectResolver` or a hashed API token.
-- **R10a / R10 OData and registry (`/odata/v4`, CSDL `$metadata`, `$batch`, 8 entity sets, 12 operations, OData/MCP/CLI parity)**: done (`model/src/registry.rs::tests`, `server/tests/e2e.rs::e2e_odata_mcp_and_cli_parity_and_jc_router_mount`). `$batch` is now capped at 100 requests.
+- **R10a / R10 OData and registry (`/odata/v4`, CSDL `$metadata`, `$batch`, 8 entity sets, 12 operations, OData/MCP/CLI parity)**: done (`model/src/registry.rs::tests`, `server/tests/e2e.rs::e2e_odata_mcp_and_cli_parity_and_jc_router_mount`). `$batch` is now capped at 100 requests. MCP tools refuse a subject with no role, refuse writes by a viewer and by a read-only connector (`server/tests/e2e.rs::security_mcp_tools_authorize_like_odata`).
 - **R11 One binary (`router(state, mount)`, standalone binary, no globals in library crates)**: partial. The router and mount are tested. The binary has no store or configuration wiring and no way to configure API tokens, so `serve` answers every authenticated route with 404.
 - **R12 Security**: partial.
   - Done: `forbid(unsafe_code)`, no unwrap or panic outside tests, RFC 9457 slugs, constant-time token compare, the §4.3 CVE regression tests, and the security tests added in this pass.
@@ -68,7 +69,25 @@ that touches a database is **not verified**.
 
 ## Coverage (cargo +nightly llvm-cov, lines)
 
-COVERAGE_TABLE
+Target 95 % lines; not reached. Only tests of real behaviour were added. `store-pg` needs a
+Postgres server to run its code, and `server` is mostly the CLI `main`, which no test starts.
+
+| Package | Lines | Missed | Line coverage |
+|---|---:|---:|---:|
+| controlroom-model | 2959 | 620 | 79.0 % |
+| controlroom-expr | 3341 | 1305 | 60.9 % |
+| controlroom-query | 3963 | 1423 | 64.1 % |
+| controlroom-store-memory | 560 | 223 | 60.2 % |
+| controlroom-store-pg | 1372 | 1344 | 2.0 % |
+| controlroom-import | 935 | 155 | 83.4 % |
+| controlroom-api | 2907 | 1177 | 59.5 % |
+| controlroom-mcp | 152 | 38 | 75.0 % |
+| controlroom-server | 285 | 204 | 28.4 % |
+| all controlroom | 16474 | 6489 | 60.6 % |
+
+Files with no coverage at all: `query/src/loki.rs` (a trait slot), `server/src/main.rs` and
+`model/src/entities.rs`. `expr/src/pipeline.rs`, `expr/src/tx.rs`, `api/src/compat.rs` and
+`api/src/odata.rs` sit between 33 % and 45 %.
 
 ## Out of Scope for This Run (Per Contract)
 
