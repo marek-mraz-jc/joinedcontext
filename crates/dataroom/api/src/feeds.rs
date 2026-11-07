@@ -6,7 +6,7 @@
 use crate::{problem_response, DataroomState};
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Response};
 use dataroom_core::{
     text_in_lang, Catalogue, DataroomError, Dataset, Publisher, RecordState, RequestCtx,
     Visibility,
@@ -285,10 +285,13 @@ async fn serve_catalog(
                     RdfFormat::RdfXml => "rdf",
                     RdfFormat::NTriples => "nt",
                 };
-                return Redirect::permanent(&format!(
-                    "/publisher/{merged_target}/catalog.{ext}"
-                ))
-                .into_response();
+                return crate::safe_redirect(
+                    StatusCode::PERMANENT_REDIRECT,
+                    &format!(
+                        "{}/publisher/{merged_target}/catalog.{ext}",
+                        state.mount_prefix
+                    ),
+                );
             }
             if raw_pub.state == RecordState::Withdrawn {
                 return problem_response(DataroomError::NotFound(format!(

@@ -385,6 +385,25 @@ pub fn find_operation(name: &str) -> Option<OperationDef> {
         .find(|op| op.name == name || op.mcp_tool == name || op.cli_command == name)
 }
 
+/// Scopes a proposed record to the request: `orgId` and `catalogueId` always come from the
+/// request context (a caller never picks the tenant), and the given server-kept timestamps are
+/// filled with now when the caller left them out.
+fn scoped_record(mut raw: Value, req_ctx: &RequestCtx, timestamps: &[&str]) -> Result<Value> {
+    let Some(obj) = raw.as_object_mut() else {
+        return Err(DataroomError::field_error("body", "expected a JSON object"));
+    };
+    obj.insert("orgId".into(), Value::String(req_ctx.org_id.to_string()));
+    obj.insert(
+        "catalogueId".into(),
+        Value::String(req_ctx.catalogue_id.to_string()),
+    );
+    let now = Value::String(Utc::now().to_rfc3339());
+    for key in timestamps {
+        obj.entry((*key).to_owned()).or_insert_with(|| now.clone());
+    }
+    Ok(raw)
+}
+
 fn enforce_decision(decision: Decision) -> Result<()> {
     if decision.allowed {
         Ok(())
@@ -780,7 +799,11 @@ pub async fn execute_operation(
             Ok(json!({ "publishers": publishers }))
         }
         "publisher.propose" => {
-            let raw_pub = input.get("publisher").cloned().unwrap_or(input);
+            let raw_pub = scoped_record(
+                input.get("publisher").cloned().unwrap_or(input),
+                req_ctx,
+                &["created", "modified"],
+            )?;
             let mut publisher: Publisher = serde_json::from_value(raw_pub).map_err(|e| {
                 DataroomError::field_error("publisher", format!("invalid publisher: {e}"))
             })?;
@@ -823,7 +846,11 @@ pub async fn execute_operation(
             Ok(json!({ "sources": sources }))
         }
         "harvest_source.propose" => {
-            let raw_src = input.get("source").cloned().unwrap_or(input);
+            let raw_src = scoped_record(
+                input.get("source").cloned().unwrap_or(input),
+                req_ctx,
+                &["modified"],
+            )?;
             let mut source: HarvestSource = serde_json::from_value(raw_src).map_err(|e| {
                 DataroomError::field_error("source", format!("invalid harvest source: {e}"))
             })?;
@@ -913,7 +940,11 @@ pub async fn execute_operation(
             Ok(json!({ "plugins": plugins }))
         }
         "plugin.propose" => {
-            let raw_pl = input.get("plugin").cloned().unwrap_or(input);
+            let raw_pl = scoped_record(
+                input.get("plugin").cloned().unwrap_or(input),
+                req_ctx,
+                &["modified"],
+            )?;
             let mut plugin: CataloguePlugin = serde_json::from_value(raw_pl).map_err(|e| {
                 DataroomError::field_error("plugin", format!("invalid plugin: {e}"))
             })?;

@@ -18,7 +18,7 @@ pub mod odata_routes;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Datelike;
@@ -243,6 +243,25 @@ pub fn problem_response(err: DataroomError) -> Response {
         .into_response()
 }
 
+/// Mounts dataroom under `prefix` (G1): a router the host app merges beside its own routes.
+///
+/// `Router::nest(prefix, router(state))` serves `{prefix}` but not `{prefix}/` (axum 0.8 nests
+/// the root route at the bare prefix only), while every page links home as `{prefix}/`;
+/// `mount` serves both. The state's mount prefix is set to `prefix`.
+pub fn mount(prefix: &str, state: DataroomState) -> Router {
+    let state = state.with_mount_prefix(prefix);
+    let prefix = state.mount_prefix.clone();
+    if prefix.is_empty() {
+        return router(state);
+    }
+    Router::new()
+        .route(
+            &format!("{prefix}/"),
+            get(handle_ui_dispatch_root).with_state(state.clone()),
+        )
+        .nest(&prefix, router(state))
+}
+
 /// Builds the complete Axum [`Router`] for `dataroom` (mountable standalone or under `/catalogue`, G1).
 pub fn router(state: DataroomState) -> Router {
     Router::new()
@@ -337,7 +356,9 @@ pub fn router(state: DataroomState) -> Router {
         .route("/{lang}/user/login", get(handle_user_login_lang))
         // Server-rendered UI and dataset RDF content negotiation (including /{lang}/... prefix)
         .route("/", get(handle_ui_dispatch_root))
-        .route("/{*path}", get(handle_ui_dispatch_path))
+        // Every other path is a UI page: a fallback rather than `/{*path}`, because a root
+        // catch-all conflicts with the `/{lang}/...` routes in the router's matcher.
+        .fallback(handle_ui_dispatch_fallback)
         .with_state(state)
 }
 
@@ -934,14 +955,14 @@ fn redirect_from_form(state: &DataroomState, body: &[u8]) -> Response {
     let mut url_target = format!("{}/", state.mount_prefix);
     let mut chosen_lang = None;
     for (k, v) in url::form_urlencoded::parse(body) {
-        if k == "url" && v.starts_with('/') && !v.starts_with("//") {
+        if k == "url" && is_safe_local_target(&v) {
             url_target = v.into_owned();
             let trimmed = url_target
                 .strip_prefix(&state.mount_prefix)
                 .unwrap_or(&url_target)
                 .trim_start_matches('/');
             if let Some(seg) = trimmed.split('/').next() {
-                if seg.len() == 2 {
+                if seg.len() == 2 && seg.bytes().all(|b| b.is_ascii_lowercase()) {
                     chosen_lang = Some(seg.to_owned());
                 }
             }
@@ -953,19 +974,25 @@ fn redirect_from_form(state: &DataroomState, body: &[u8]) -> Response {
         &state.mount_prefix
     };
     if let Some(l) = chosen_lang {
-        (
-            StatusCode::SEE_OTHER,
-            [
-                (header::LOCATION, url_target),
-                (
-                    header::SET_COOKIE,
-                    format!("ckan_lang={l}; Path={cookie_path}; SameSite=Lax"),
-                ),
-            ],
-        )
-            .into_response()
+        let mut response = safe_redirect(StatusCode::SEE_OTHER, &url_target);
+        if response.status() == StatusCode::SEE_OTHER {
+            match axum::http::HeaderValue::try_from(format!(
+                "ckan_lang={l}; Path={cookie_path}; SameSite=Lax"
+            )) {
+                Ok(cookie) => {
+                    response.headers_mut().insert(header::SET_COOKIE, cookie);
+                }
+                Err(_) => {
+                    return problem_response(DataroomError::Validation {
+                        message: "mount prefix is not a valid cookie path".into(),
+                        fields: Default::default(),
+                    })
+                }
+            }
+        }
+        response
     } else {
-        Redirect::to(&url_target).into_response()
+        safe_redirect(StatusCode::SEE_OTHER, &url_target)
     }
 }
 
@@ -995,7 +1022,7 @@ async fn login_redirect(state: &DataroomState, headers: &HeaderMap) -> Response 
     } else {
         format!("{}/", state.mount_prefix)
     };
-    Redirect::temporary(&target).into_response()
+    safe_redirect(StatusCode::TEMPORARY_REDIRECT, &target)
 }
 
 async fn handle_ui_dispatch_root(
@@ -1006,14 +1033,44 @@ async fn handle_ui_dispatch_root(
     dispatch_ui_route(state, headers, "/", raw_query).await
 }
 
-async fn handle_ui_dispatch_path(
+async fn handle_ui_dispatch_fallback(
     State(state): State<DataroomState>,
+    method: axum::http::Method,
+    uri: axum::http::Uri,
     headers: HeaderMap,
-    Path(path): Path<String>,
-    axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
 ) -> Response {
-    let full = format!("/{}", path.trim_start_matches('/'));
+    if method != axum::http::Method::GET && method != axum::http::Method::HEAD {
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            [(header::ALLOW, "GET, HEAD")],
+        )
+            .into_response();
+    }
+    // Inside `Router::nest` the URI arrives with the mount prefix stripped.
+    let full = format!("/{}", uri.path().trim_start_matches('/'));
+    let raw_query = uri.query().map(str::to_owned);
     dispatch_ui_route(state, headers, &full, raw_query).await
+}
+
+/// Builds a redirect without panicking on a target that is not a valid header value
+/// (`axum::response::Redirect` panics on one).
+pub(crate) fn safe_redirect(status: StatusCode, target: &str) -> Response {
+    match axum::http::HeaderValue::try_from(target) {
+        Ok(location) => (status, [(header::LOCATION, location)]).into_response(),
+        Err(_) => problem_response(DataroomError::Validation {
+            message: "redirect target is not a valid URL".into(),
+            fields: Default::default(),
+        }),
+    }
+}
+
+/// A same-origin redirect target from user input: an absolute path, no scheme-relative
+/// `//` or `/\` (browsers read both as another host), no control characters.
+fn is_safe_local_target(v: &str) -> bool {
+    v.starts_with('/')
+        && !v.starts_with("//")
+        && !v.contains('\\')
+        && !v.chars().any(char::is_control)
 }
 
 fn html_response_with_csp(html: String, nonce: &str, branding: &BrandingBlock, framable_map: bool) -> Response {
@@ -1385,11 +1442,10 @@ async fn dispatch_ui_route(
                     } else {
                         "organization"
                     };
-                    return Redirect::permanent(&format!(
-                        "{}/{prefix_part}/{target_name}",
-                        state.mount_prefix
-                    ))
-                    .into_response();
+                    return safe_redirect(
+                        StatusCode::PERMANENT_REDIRECT,
+                        &format!("{}/{prefix_part}/{target_name}", state.mount_prefix),
+                    );
                 }
             }
             let Some(pub_rec) = state.store.get_publisher(&ctx, name).await.ok().flatten() else {

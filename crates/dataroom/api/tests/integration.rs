@@ -405,7 +405,7 @@ async fn ckan_action_api_answers_all_19_calls_with_jcctl_field_set() {
         Some(json!({ "id": "helsinki-transport", "version": "1.2.0" })),
     )
     .await;
-    assert_eq!(st, StatusCode::OK);
+    assert_eq!(st, StatusCode::OK, "package_patch: {body}");
     assert_eq!(
         serde_json::from_str::<Value>(&body).unwrap()["result"]["version"],
         "1.2.0"
@@ -1436,6 +1436,12 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
     assert_eq!(robots_b, "User-agent: *\nDisallow: /\n");
 }
 
+/// The pack's live pages escape `'` as `&#39;` (Jinja), askama as `&#x27;`: the same character.
+/// Snapshot comparisons read both in the pack's form.
+fn normalise_entities(html: &str) -> String {
+    html.replace("&#x27;", "&#39;").replace("&#x22;", "&quot;").replace("&#34;", "&quot;")
+}
+
 #[tokio::test]
 async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
     let org_id = OrgId::from_uuid(Uuid::from_u128(0xD001));
@@ -1676,6 +1682,27 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
         .await
         .unwrap();
 
+    // A second public dataset on another topic. The theme leaves out a Topic value every result
+    // shares (plugin.py `jc_facet_labels`) and a filter with nothing to choose
+    // (templates__snippets__facet_list.html); the live list page shows "Téma" because its
+    // datasets carry different topics, so the seed does too.
+    let mut second = store
+        .get_dataset(&ctx, "air-quality")
+        .await
+        .unwrap()
+        .unwrap();
+    second.id = "5b0c7d1e-2f3a-4b5c-8d9e-0f1a2b3c4d5e".into();
+    second.name = "parking-occupancy".into();
+    second.title = BTreeMap::from([("sk".into(), "Obsadenosť parkovísk".into())]);
+    second.themes = vec!["TRAN".into()];
+    second.identifier = None;
+    second.endpoint_url = None;
+    for (i, dist) in second.distributions.iter_mut().enumerate() {
+        dist.id = format!("parking-occupancy-res-{i}");
+        dist.dataset_id = second.id.clone();
+    }
+    store.upsert_dataset(&ctx, second).await.unwrap();
+
     store
         .upsert_resource_view(
             &ctx,
@@ -1703,6 +1730,7 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
 
     // 1. Home page (`live/dev-home.html` parity)
     let (st, hdrs, home_html) = send_json(&app, Method::GET, "/", host, None, None, None).await;
+    let home_html = normalise_entities(&home_html);
     assert_eq!(st, StatusCode::OK);
     let csp = hdrs
         .get(header::CONTENT_SECURITY_POLICY)
@@ -1735,6 +1763,7 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
 
     // 2. Dataset list page (`live/dev-dataset-list.html` parity)
     let (st, _, list_html) = send_json(&app, Method::GET, "/dataset/", host, None, None, None).await;
+    let list_html = normalise_entities(&list_html);
     assert_eq!(st, StatusCode::OK);
     for expected in [
         "id=\"dataset-search-form\"",
@@ -1764,6 +1793,7 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
         None,
     )
     .await;
+    let ds_html = normalise_entities(&ds_html);
     assert_eq!(st, StatusCode::OK);
     for expected in [
         "id=\"jc-explorer-title\"",
@@ -1808,6 +1838,7 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
         None,
     )
     .await;
+    let res_html = normalise_entities(&res_html);
     assert_eq!(st, StatusCode::OK);
     for expected in [
         "NGSI-LD API",
@@ -1826,6 +1857,7 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
     // 5. Organization list (`live/dev-organization-list.html` parity) & Organization page (`live/dev-organization-banskabystrica.html` parity)
     let (st, _, org_list_html) =
         send_json(&app, Method::GET, "/organization/", host, None, None, None).await;
+        let org_list_html = normalise_entities(&org_list_html);
     assert_eq!(st, StatusCode::OK);
     for expected in [
         "id=\"organization-search-form\"",
@@ -1850,6 +1882,7 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
         None,
     )
     .await;
+    let org_bb_html = normalise_entities(&org_bb_html);
     assert_eq!(st, StatusCode::OK);
     for expected in [
         "id=\"organization-info\"",
@@ -1875,6 +1908,7 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
         None,
     )
     .await;
+    let claude_html = normalise_entities(&claude_html);
     assert_eq!(st, StatusCode::OK);
     for expected in [
         "Claude krok za krokom",
@@ -2072,7 +2106,7 @@ async fn f1_f2_f3_operation_registry_surfaces_allowed_parity_and_admin_audit_row
     .await;
     assert_eq!(st, StatusCode::OK);
 
-    let (st, _, _) = send_json(
+    let (st, _, propose_body) = send_json(
         &app,
         Method::POST,
         "/api/v1/ops/publisher.propose",
@@ -2090,7 +2124,7 @@ async fn f1_f2_f3_operation_registry_surfaces_allowed_parity_and_admin_audit_row
         })),
     )
     .await;
-    assert_eq!(st, StatusCode::OK);
+    assert_eq!(st, StatusCode::OK, "publisher.propose: {propose_body}");
 
     let (st, _, _) = send_json(
         &app,
@@ -2238,7 +2272,19 @@ async fn g1_g2_g3_g4_mountable_router_portal_and_jcctl_parity() {
             "/healthz",
             axum::routing::get(|| async { "portal-host-ok" }),
         )
+        .merge(dataroom_api::mount("/catalogue", dr_state.clone()));
+
+    // A host that nests the plain router reaches the catalogue home at the bare prefix.
+    let nested_app = axum::Router::new()
+        .route(
+            "/healthz",
+            axum::routing::get(|| async { "portal-host-ok" }),
+        )
         .nest("/catalogue", router(dr_state));
+    let (st_nested, _, nested_html) =
+        send_json(&nested_app, Method::GET, "/catalogue", host, None, None, None).await;
+    assert_eq!(st_nested, StatusCode::OK);
+    assert!(nested_html.contains("href=\"/catalogue/dataset/\""));
 
     // Verify sibling router and mounted dataroom routes (`/catalogue/`, `/catalogue/catalog.ttl`,
     // `/catalogue/odata/v4/Datasets`, `/catalogue/api/v1/branding`)

@@ -328,12 +328,17 @@ pub fn dataset_from_ckan(
     default_lang: &str,
 ) -> Dataset {
     let now = Utc::now();
-    let id = payload
-        .get("id")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
-        .or_else(|| existing.map(|d| d.id.clone()))
+    // CKAN callers address a dataset by id or by name in `id`; an update of an existing record
+    // keeps that record's id, so `{"id": "<name>"}` never forks a second record.
+    let id = existing
+        .map(|d| d.id.clone())
+        .or_else(|| {
+            payload
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        })
         .unwrap_or_else(|| format!("pkg-{}", Uuid::now_v7()));
 
     let name = payload
