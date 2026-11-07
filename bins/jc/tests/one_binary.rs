@@ -88,7 +88,7 @@ fn probe(module: Module) -> (&'static str, &'static str) {
         Module::Controlroom => ("/api/health", "\"database\""),
         Module::Ekiben => ("/ping", "pong"),
         Module::Antares => ("/ngsi-ld/v1/info/sourceIdentity", "antares"),
-        Module::Portal => ("/healthz", "ok"),
+        Module::Portal => ("/api/v1/health", "\"status\":\"ok\""),
     }
 }
 

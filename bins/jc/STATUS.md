@@ -94,3 +94,41 @@ Gates: ekiben workspace `cargo test -p ekiben-server -p ekiben-core -p ekiben-bl
 Gates: Antares workspace `cargo build/test/clippy -p antares-broker --all-targets -D warnings`, `cargo fmt --all
 --check`: green (29 test binaries; Postgres/NATS/mosquitto ones skip themselves without their env). Root
 `cargo test/clippy -p jc`: green.
+
+## Stage 4: Portal (done)
+
+- Imported with `git subtree add --squash --prefix crates/portal /workspace/joinedcontext-portal 8d2241f9` (commits
+  `141e04e`, `1aa86f8`). Own workspace and lockfile, excluded from the root workspace.
+- Its git dependencies cannot be fetched here (GitHub refuses the token), so they are vendored (`vendor/SOURCES.md`):
+  `vendor/joinedcontext-platform` (origin/main `e59ceb9f`, the 8 crates the Portal links; the Portal pinned
+  `9b0b8594`, 4 commits behind) and `vendor/ngsild` (`v0.3.0`, `b06b4145`, from the local cargo git cache). Both the
+  root manifest and `crates/portal/Cargo.toml` patch the two git URLs.
+- One ngsild in `jc`: the root patches the ngsild URL to Antares' own `antares-{ql,jsonld,matcher,model}` (the ngsild
+  repository is a generated copy of them at Antares `15c08b85`; Antares `b683bfc3` is newer). Two path packages of one
+  name and version cannot share a lockfile. The standalone Portal workspace still builds against `vendor/ngsild`.
+  Not verified: that the Portal's gateway behaves the same on Antares `b683bfc3`'s ngsild as on `v0.3.0` beyond the
+  jc tests (the Portal's own suite runs against `vendor/ngsild`).
+- `crates/portal/src/server.rs`: `serve()` split into `spawn_background(&state)` (reapers, sync, SyncSource and
+  foreign-model loops, build pods, agent reaper, erasures, kept answers, Grafana restore) and
+  `spawn_internal_listener(&state, shutdown) -> Option<SocketAddr>`; `serve()` calls both, then `app(state)` as before.
+  `app`, `AppState::from_config` and `Config::from_vars` were public already.
+- In `jc` (`bins/jc/src/modules/portal.rs`, feature `portal`, slug `/portal`): the Portal reads its own `JC_*`
+  environment exactly as standalone (its own DB URL, realm, client secret, auth); the only new default is
+  `JC_PORTAL_PUBLIC_URL` = the mount's public base when unset (standalone: `http://localhost:8080`).
+- The 9090 clash: Antares opens no listener inside `jc` (stage 3), so the Portal's internal listener
+  (`JC_INTERNAL_BIND`, default `0.0.0.0:9090`, opened only when a realm is configured, every route needs a workload
+  token) is the only one on 9090; a clash with `jc`'s own `--listen`/`--admin-listen` shows as a bind error at start.
+- Metrics: `jc` installs its recorder before any module is built (`app::start`); the Portal's `telemetry::install`
+  then falls back to a detached recorder (its warning says so). Portal series go to `jc`'s admin `/metrics`, without the
+  Portal's custom histogram buckets; the Portal's own `/metrics` is empty inside `jc`.
+- Background tasks of the Portal are plain `tokio::spawn` and stop with the runtime; the internal listener stops on
+  `jc`'s cancellation token.
+- Not verified: the Portal UI (embedded assets, absolute asset paths) under `/portal/` in slug mode; the Portal with a
+  realm (no Keycloak/wardkeep realm wiring between modules in this prototype); every Postgres path (no Postgres: the
+  12 tests that need `JC_APPS_DB_TEST_URL` fail by design without it, all other 4965 pass).
+
+Gates: Portal workspace `cargo test -p joinedcontext-portal --no-fail-fast` (2 jobs, `debug=0`): 4965 passed, 12
+failed, all 12 at `tests/common/apps_db.rs:16` (`JC_APPS_DB_TEST_URL` unset); `cargo clippy -p joinedcontext-portal
+--all-targets -D warnings`, `cargo fmt --all --check`: green (2 deprecation warnings in vendored `jcctl`, upstream,
+unchanged). Root `cargo test -p jc` (lib 20, binary 4, one_binary 11), `cargo clippy -p jc --all-targets -D
+warnings`, `cargo fmt --all --check`: green.

@@ -191,11 +191,14 @@ impl Running {
     }
 }
 
-/// Starts `jc`: installs the crypto provider and metrics recorder (once per process), builds the
-/// modules, binds the public listener (and the admin listener when configured) and serves until
-/// `shutdown` is cancelled.
+/// Starts `jc`: installs the crypto provider and the metrics recorder (once per process, before
+/// any module), builds the modules, binds the public listener (and the admin listener when
+/// configured) and serves until `shutdown` is cancelled.
 pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running, StartError> {
     runtime::install_crypto_provider();
+    // The one recorder goes in before any module is built: a module that installs its own when
+    // none is there (the Portal's `telemetry::install`) then falls back to recording into this one.
+    runtime::metrics_handle().map_err(StartError::Metrics)?;
     let tasks = TaskTracker::new();
     let router = build_router(cfg, &shutdown, &tasks).await?;
     let listener = bind(cfg.listen).await?;

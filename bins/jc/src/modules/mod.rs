@@ -18,6 +18,8 @@ mod controlroom;
 mod dataroom;
 #[cfg(feature = "ekiben")]
 mod ekiben;
+#[cfg(feature = "portal")]
+mod portal;
 #[cfg(feature = "wardkeep")]
 mod wardkeep;
 
@@ -41,6 +43,8 @@ pub async fn build(
         Module::Ekiben => ekiben::build(&cfg.ekiben),
         #[cfg(feature = "antares")]
         Module::Antares => antares::build(&cfg.antares).await,
+        #[cfg(feature = "portal")]
+        Module::Portal => portal::build(mount, shutdown).await,
         #[allow(unreachable_patterns)]
         other => Err(StartError::module(
             other,

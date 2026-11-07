@@ -67,8 +67,7 @@ impl Module {
             Module::Controlroom => cfg!(feature = "controlroom"),
             Module::Ekiben => cfg!(feature = "ekiben"),
             Module::Antares => cfg!(feature = "antares"),
-            // Joined in a later stage (bins/jc/STATUS.md); not mountable yet.
-            Module::Portal => false,
+            Module::Portal => cfg!(feature = "portal"),
         }
     }
 }

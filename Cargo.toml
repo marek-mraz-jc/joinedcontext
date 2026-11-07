@@ -38,7 +38,7 @@ members = [
 ]
 # Joined repositories keep their own workspace (lockfile, lints, standalone binaries) for now; jc
 # depends on their crates by path. Making them members is a later step (bins/jc/STATUS.md).
-exclude = ["crates/ekiben", "crates/antares"]
+exclude = ["crates/ekiben", "crates/antares", "crates/portal", "vendor/joinedcontext-platform", "vendor/ngsild"]
 
 # Antares pins rumqttc 0.25.1 with rustls-webpki 0.103 (crates/antares/vendor/rumqttc/README.md); a
 # patch only takes effect from the root manifest.
@@ -48,3 +48,18 @@ rumqttc = { path = "crates/antares/vendor/rumqttc" }
 [workspace.package]
 edition = "2024"
 license = "MIT"
+
+# The Portal's git dependencies, vendored (vendor/SOURCES.md): GitHub refuses the fetch here.
+[patch."https://github.com/marek-mraz-jc/joinedcontext-platform.git"]
+jc-core = { path = "vendor/joinedcontext-platform/crates/jc-core" }
+jcctl = { path = "vendor/joinedcontext-platform/crates/jcctl" }
+context-gateway = { path = "vendor/joinedcontext-platform/crates/context-gateway" }
+
+# One ngsild in the binary: the Portal's platform crates take Antares' own crates (the ngsild repository
+# only carries released copies of them; vendor/ngsild is what the standalone Portal workspace builds
+# against). Two path packages of one name and version cannot share a lockfile.
+[patch."https://github.com/marek-mraz-jc/ngsild"]
+ngsild-ql = { path = "crates/antares/crates/antares-ql" }
+ngsild-jsonld = { path = "crates/antares/crates/antares-jsonld" }
+ngsild-matcher = { path = "crates/antares/crates/antares-matcher" }
+ngsild-model = { path = "crates/antares/crates/antares-model" }

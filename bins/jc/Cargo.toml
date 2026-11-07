@@ -14,7 +14,7 @@ name = "jc"
 path = "src/main.rs"
 
 [features]
-default = ["wardkeep", "dataroom", "controlroom", "ekiben", "antares", "jemalloc"]
+default = ["wardkeep", "dataroom", "controlroom", "ekiben", "antares", "portal", "jemalloc"]
 wardkeep = [
   "dep:wardkeep-server",
   "dep:wardkeep-core",
@@ -36,6 +36,7 @@ controlroom = [
 ]
 ekiben = ["dep:ekiben-server", "dep:ekiben-core"]
 antares = ["dep:antares-broker"]
+portal = ["dep:joinedcontext-portal"]
 jemalloc = ["dep:tikv-jemallocator"]
 
 [dependencies]
@@ -75,6 +76,8 @@ ekiben-server = { path = "../../crates/ekiben/crates/ekiben-server", optional = 
 ekiben-core = { path = "../../crates/ekiben/crates/ekiben-core", optional = true }
 
 antares-broker = { path = "../../crates/antares/crates/antares-broker", optional = true }
+
+joinedcontext-portal = { path = "../../crates/portal", optional = true }
 
 [dev-dependencies]
 http-body-util = "0.1"
