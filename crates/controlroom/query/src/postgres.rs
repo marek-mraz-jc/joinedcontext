@@ -87,9 +87,7 @@ pub fn strip_sql_comments(sql: &str) -> String {
             if j < n && bytes[j] == b'$' {
                 i = consume_dollar_quoted(sql, i, "$$", &mut out);
                 continue;
-            } else if j < n
-                && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_')
-            {
+            } else if j < n && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
                 let mut k = j + 1;
                 while k < n && (bytes[k].is_ascii_alphanumeric() || bytes[k] == b'_') {
                     k += 1;
@@ -202,12 +200,12 @@ pub fn interpolate_postgres_macros(
         .replace_all(&sql, |caps: &regex::Captures<'_>| {
             let full_match = &caps[0];
             let mut name = caps[1].to_owned();
-            if name == "__timeGroup" {
-                if let Some(idx) = sql.find(full_match) {
-                    let after = idx + full_match.len();
-                    if sql.as_bytes().get(after) == Some(&b',') {
-                        name = "__timeGroupAlias".to_owned();
-                    }
+            if name == "__timeGroup"
+                && let Some(idx) = sql.find(full_match)
+            {
+                let after = idx + full_match.len();
+                if sql.as_bytes().get(after) == Some(&b',') {
+                    name = "__timeGroupAlias".to_owned();
                 }
             }
             let args: Vec<&str> = caps[2]
@@ -263,24 +261,33 @@ fn eval_pg_macro(
 
     match name {
         "__time" => {
-            let col = check_col(name, *args.first().ok_or_else(|| DsError::InvalidQuery {
-                ref_id: "sql".into(),
-                reason: "missing time column argument for $__time".into(),
-            })?)?;
+            let col = check_col(
+                name,
+                args.first().ok_or_else(|| DsError::InvalidQuery {
+                    ref_id: "sql".into(),
+                    reason: "missing time column argument for $__time".into(),
+                })?,
+            )?;
             Ok(format!("{col} AS \"time\""))
         }
         "__timeEpoch" => {
-            let col = check_col(name, *args.first().ok_or_else(|| DsError::InvalidQuery {
-                ref_id: "sql".into(),
-                reason: "missing time column argument for $__timeEpoch".into(),
-            })?)?;
+            let col = check_col(
+                name,
+                args.first().ok_or_else(|| DsError::InvalidQuery {
+                    ref_id: "sql".into(),
+                    reason: "missing time column argument for $__timeEpoch".into(),
+                })?,
+            )?;
             Ok(format!("extract(epoch from {col}) as \"time\""))
         }
         "__timeFilter" => {
-            let col = check_col(name, *args.first().ok_or_else(|| DsError::InvalidQuery {
-                ref_id: "sql".into(),
-                reason: "missing time column argument for $__timeFilter".into(),
-            })?)?;
+            let col = check_col(
+                name,
+                args.first().ok_or_else(|| DsError::InvalidQuery {
+                    ref_id: "sql".into(),
+                    reason: "missing time column argument for $__timeFilter".into(),
+                })?,
+            )?;
             Ok(format!("{col} BETWEEN '{from_iso}' AND '{to_iso}'"))
         }
         "__timeFrom" => Ok(format!("'{from_iso}'")),
@@ -317,10 +324,13 @@ fn eval_pg_macro(
             }
         }
         "__unixEpochFilter" => {
-            let col = check_col(name, *args.first().ok_or_else(|| DsError::InvalidQuery {
-                ref_id: "sql".into(),
-                reason: "missing time column argument for $__unixEpochFilter".into(),
-            })?)?;
+            let col = check_col(
+                name,
+                args.first().ok_or_else(|| DsError::InvalidQuery {
+                    ref_id: "sql".into(),
+                    reason: "missing time column argument for $__unixEpochFilter".into(),
+                })?,
+            )?;
             Ok(format!("{col} >= {from_sec} AND {col} <= {to_sec}"))
         }
         "__unixEpochGroup" | "__unixEpochGroupAlias" => {
@@ -700,10 +710,12 @@ impl Datasource for PostgresDatasource {
     }
 
     fn import(&self, grafana_target: &Value) -> Result<ImportOutcome, DsError> {
-        let obj = grafana_target.as_object().ok_or_else(|| DsError::InvalidQuery {
-            ref_id: "A".into(),
-            reason: "Postgres target must be a JSON object".into(),
-        })?;
+        let obj = grafana_target
+            .as_object()
+            .ok_or_else(|| DsError::InvalidQuery {
+                ref_id: "A".into(),
+                reason: "Postgres target must be a JSON object".into(),
+            })?;
         let ref_id = obj
             .get("refId")
             .and_then(Value::as_str)
@@ -747,17 +759,20 @@ mod tests {
             WHERE $__timeFilter(created_at)
             GROUP BY 1
         "#;
-        let expanded =
-            interpolate_postgres_macros(sql_with_macros, 1_700_000_000_000, 1_700_003_600_000, 60_000, false)
-                .unwrap();
+        let expanded = interpolate_postgres_macros(
+            sql_with_macros,
+            1_700_000_000_000,
+            1_700_003_600_000,
+            60_000,
+            false,
+        )
+        .unwrap();
         assert!(expanded.contains("AS \"time\""));
         assert!(expanded.contains("BETWEEN '2023-11-14T22:13:20"));
         assert!(validate_readonly_select("A", &expanded, &allowed).is_ok());
 
         // Unauthorized table/view refused
-        assert!(
-            validate_readonly_select("A", "SELECT * FROM other_org_table", &allowed).is_err()
-        );
+        assert!(validate_readonly_select("A", "SELECT * FROM other_org_table", &allowed).is_err());
         // Multiple statements refused
         assert!(
             validate_readonly_select(

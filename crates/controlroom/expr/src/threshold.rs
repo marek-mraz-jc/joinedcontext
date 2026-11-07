@@ -195,7 +195,9 @@ pub fn eval_threshold_frames(
                 });
             }
             ExprValue::Scalar(v) => {
-                out.push(ExprValue::Scalar(eval_single_point(*v, ty, params, invert)?));
+                out.push(ExprValue::Scalar(eval_single_point(
+                    *v, ty, params, invert,
+                )?));
             }
             ExprValue::NoData => out.push(ExprValue::NoData),
         }

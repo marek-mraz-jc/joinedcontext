@@ -308,18 +308,16 @@ impl Datasource for WasmPluginAdapter {
             };
 
             let wall_limit = ctx.timeout.min(self.host.limits.wall_time);
-            let resp_json = tokio::time::timeout(
-                wall_limit,
-                self.guest.export_query(imports, ctx, &req_json),
-            )
-            .await
-            .map_err(|_| {
-                DsError::Wasm(format!(
-                    "WASM plugin exceeded wall-time limit of {}ms",
-                    wall_limit.as_millis()
-                ))
-            })?
-            .map_err(DsError::Wasm)?;
+            let resp_json =
+                tokio::time::timeout(wall_limit, self.guest.export_query(imports, ctx, &req_json))
+                    .await
+                    .map_err(|_| {
+                        DsError::Wasm(format!(
+                            "WASM plugin exceeded wall-time limit of {}ms",
+                            wall_limit.as_millis()
+                        ))
+                    })?
+                    .map_err(DsError::Wasm)?;
 
             if resp_json.len() > self.host.limits.response_bytes {
                 return Err(DsError::Wasm(format!(
@@ -329,8 +327,9 @@ impl Datasource for WasmPluginAdapter {
                 )));
             }
 
-            let frame_sets: Vec<FrameSet> = serde_json::from_str(&resp_json)
-                .map_err(|e| DsError::Wasm(format!("invalid FrameSet JSON from WASM guest: {e}")))?;
+            let frame_sets: Vec<FrameSet> = serde_json::from_str(&resp_json).map_err(|e| {
+                DsError::Wasm(format!("invalid FrameSet JSON from WASM guest: {e}"))
+            })?;
             Ok(frame_sets)
         })
     }
@@ -397,10 +396,7 @@ impl Datasource for WasmPluginAdapter {
 
     fn import(&self, grafana_target: &Value) -> Result<ImportOutcome, DsError> {
         let s = serde_json::to_string(grafana_target).map_err(|e| DsError::Wasm(e.to_string()))?;
-        let out = self
-            .guest
-            .export_import_target(&s)
-            .map_err(DsError::Wasm)?;
+        let out = self.guest.export_import_target(&s).map_err(DsError::Wasm)?;
         serde_json::from_str(&out).map_err(|e| DsError::Wasm(e.to_string()))
     }
 

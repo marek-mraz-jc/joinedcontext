@@ -48,16 +48,16 @@ impl ODataDatasource {
             ("Accept".to_owned(), "application/json".to_owned()),
             ("OData-Version".to_owned(), "4.01".to_owned()),
         ];
-        if let Some(caller_token) = &ctx.subject.bearer_token {
-            if !caller_token.is_empty() {
-                let exchanged = self
-                    .token_exchanger
-                    .exchange_for_audience(caller_token, &self.audience)?;
-                headers.push((
-                    "Authorization".to_owned(),
-                    format!("Bearer {}", exchanged.as_str()),
-                ));
-            }
+        if let Some(caller_token) = &ctx.subject.bearer_token
+            && !caller_token.is_empty()
+        {
+            let exchanged = self
+                .token_exchanger
+                .exchange_for_audience(caller_token, &self.audience)?;
+            headers.push((
+                "Authorization".to_owned(),
+                format!("Bearer {}", exchanged.as_str()),
+            ));
         }
         Ok(headers)
     }
@@ -82,20 +82,18 @@ fn odata_rows_to_frame(ref_id: &str, entity_set: &str, rows: &[Value]) -> Frame 
                 .iter()
                 .map(|r| r.get(&name).cloned().unwrap_or(Value::Null))
                 .collect();
-            let field_type = values
-                .iter()
-                .find(|v| !v.is_null())
-                .map_or(FieldType::String, |sample| match sample {
+            let field_type = values.iter().find(|v| !v.is_null()).map_or(
+                FieldType::String,
+                |sample| match sample {
                     Value::Number(_) => FieldType::Number,
                     Value::Bool(_) => FieldType::Bool,
-                    Value::String(s)
-                        if chrono::DateTime::parse_from_rfc3339(s).is_ok() =>
-                    {
+                    Value::String(s) if chrono::DateTime::parse_from_rfc3339(s).is_ok() => {
                         FieldType::Time
                     }
                     Value::String(_) => FieldType::String,
                     _ => FieldType::Json,
-                });
+                },
+            );
             FieldColumn {
                 name,
                 field_type,
@@ -170,10 +168,10 @@ impl Datasource for ODataDatasource {
                         ));
                     }
                 }
-                if let Some(top) = q.model.get("$top").or_else(|| q.model.get("top")) {
-                    if let Some(n) = top.as_u64() {
-                        params.push(format!("$top={n}"));
-                    }
+                if let Some(top) = q.model.get("$top").or_else(|| q.model.get("top"))
+                    && let Some(n) = top.as_u64()
+                {
+                    params.push(format!("$top={n}"));
                 }
 
                 let qs = params.join("&");
@@ -312,10 +310,12 @@ impl Datasource for ODataDatasource {
     }
 
     fn import(&self, grafana_target: &Value) -> Result<ImportOutcome, DsError> {
-        let obj = grafana_target.as_object().ok_or_else(|| DsError::InvalidQuery {
-            ref_id: "A".into(),
-            reason: "OData target must be a JSON object".into(),
-        })?;
+        let obj = grafana_target
+            .as_object()
+            .ok_or_else(|| DsError::InvalidQuery {
+                ref_id: "A".into(),
+                reason: "OData target must be a JSON object".into(),
+            })?;
         let ref_id = obj
             .get("refId")
             .and_then(Value::as_str)

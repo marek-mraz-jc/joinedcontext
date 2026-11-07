@@ -128,15 +128,13 @@ pub fn migrate_datasource_name_to_ref(
     if return_default_as_null && is_null_or_default {
         return Value::Null;
     }
-    if let Some(v) = name_or_ref {
-        if is_datasource_ref(v) {
-            return v.clone();
-        }
+    if let Some(v) = name_or_ref
+        && is_datasource_ref(v)
+    {
+        return v.clone();
     }
-    if is_null_or_default {
-        if let Some(ds) = index.get_default() {
-            return get_datasource_ref(Some(ds));
-        }
+    if is_null_or_default && let Some(ds) = index.get_default() {
+        return get_datasource_ref(Some(ds));
     }
     if let Some(Value::String(s)) = name_or_ref {
         if s.is_empty() {
@@ -190,14 +188,13 @@ pub fn migrate_v36(dashboard: &mut Value, index: &DatasourceIndex) {
     if let Some(annotations) = dash_obj
         .get_mut("annotations")
         .and_then(Value::as_object_mut)
+        && let Some(list) = annotations.get_mut("list").and_then(Value::as_array_mut)
     {
-        if let Some(list) = annotations.get_mut("list").and_then(Value::as_array_mut) {
-            for query in list {
-                if let Some(q_map) = query.as_object_mut() {
-                    let migrated =
-                        migrate_datasource_name_to_ref(q_map.get("datasource"), false, index);
-                    q_map.insert("datasource".to_owned(), migrated);
-                }
+        for query in list {
+            if let Some(q_map) = query.as_object_mut() {
+                let migrated =
+                    migrate_datasource_name_to_ref(q_map.get("datasource"), false, index);
+                q_map.insert("datasource".to_owned(), migrated);
             }
         }
     }
@@ -206,18 +203,17 @@ pub fn migrate_v36(dashboard: &mut Value, index: &DatasourceIndex) {
     if let Some(templating) = dash_obj
         .get_mut("templating")
         .and_then(Value::as_object_mut)
+        && let Some(list) = templating.get_mut("list").and_then(Value::as_array_mut)
     {
-        if let Some(list) = templating.get_mut("list").and_then(Value::as_array_mut) {
-            let default_ds = index.get_default();
-            for var in list {
-                if let Some(var_map) = var.as_object_mut() {
-                    let var_type = var_map.get("type").and_then(Value::as_str).unwrap_or("");
-                    if var_type != "query" {
-                        continue;
-                    }
-                    if matches!(var_map.get("datasource"), Some(Value::Null)) {
-                        var_map.insert("datasource".to_owned(), get_datasource_ref(default_ds));
-                    }
+        let default_ds = index.get_default();
+        for var in list {
+            if let Some(var_map) = var.as_object_mut() {
+                let var_type = var_map.get("type").and_then(Value::as_str).unwrap_or("");
+                if var_type != "query" {
+                    continue;
+                }
+                if matches!(var_map.get("datasource"), Some(Value::Null)) {
+                    var_map.insert("datasource".to_owned(), get_datasource_ref(default_ds));
                 }
             }
         }
@@ -315,12 +311,11 @@ fn migrate_panel_datasources_internal(
                 target_map.insert("datasource".to_owned(), migrated);
             }
 
-            if panel_ds_was_default {
-                if let Some(Value::Object(t_ds)) = target_map.get("datasource") {
-                    let uid = t_ds.get("uid").and_then(Value::as_str).unwrap_or("");
-                    if !uid.is_empty() && uid != "__expr__" {
-                        updated_panel_ds = Some(Value::Object(t_ds.clone()));
-                    }
+            if panel_ds_was_default && let Some(Value::Object(t_ds)) = target_map.get("datasource")
+            {
+                let uid = t_ds.get("uid").and_then(Value::as_str).unwrap_or("");
+                if !uid.is_empty() && uid != "__expr__" {
+                    updated_panel_ds = Some(Value::Object(t_ds.clone()));
                 }
             }
         }
@@ -406,17 +401,14 @@ fn process_panels_v38(panels: &mut [Value]) {
         if let Some(defaults) = field_config
             .get_mut("defaults")
             .and_then(Value::as_object_mut)
+            && let Some(custom) = defaults.get_mut("custom").and_then(Value::as_object_mut)
+            && let Some(dm_val) = custom.remove("displayMode")
+            && let Some(dm_str) = dm_val.as_str()
         {
-            if let Some(custom) = defaults.get_mut("custom").and_then(Value::as_object_mut) {
-                if let Some(dm_val) = custom.remove("displayMode") {
-                    if let Some(dm_str) = dm_val.as_str() {
-                        custom.insert(
-                            "cellOptions".to_owned(),
-                            migrate_table_display_mode_to_cell_options(dm_str),
-                        );
-                    }
-                }
-            }
+            custom.insert(
+                "cellOptions".to_owned(),
+                migrate_table_display_mode_to_cell_options(dm_str),
+            );
         }
         if let Some(overrides) = field_config
             .get_mut("overrides")
@@ -579,35 +571,27 @@ pub fn migrate_v42(dashboard: &mut Value) {
 }
 
 fn migrate_hide_from_for_panel(panel: &mut Map<String, Value>) {
-    if let Some(field_config) = panel.get_mut("fieldConfig").and_then(Value::as_object_mut) {
-        if let Some(overrides) = field_config
+    if let Some(field_config) = panel.get_mut("fieldConfig").and_then(Value::as_object_mut)
+        && let Some(overrides) = field_config
             .get_mut("overrides")
             .and_then(Value::as_array_mut)
-        {
-            for ov in overrides {
-                let Some(ov_map) = ov.as_object_mut() else {
+    {
+        for ov in overrides {
+            let Some(ov_map) = ov.as_object_mut() else {
+                continue;
+            };
+            let Some(props) = ov_map.get_mut("properties").and_then(Value::as_array_mut) else {
+                continue;
+            };
+            for prop in props {
+                let Some(prop_map) = prop.as_object_mut() else {
                     continue;
                 };
-                let Some(props) = ov_map.get_mut("properties").and_then(Value::as_array_mut) else {
-                    continue;
-                };
-                for prop in props {
-                    let Some(prop_map) = prop.as_object_mut() else {
-                        continue;
-                    };
-                    if prop_map.get("id").and_then(Value::as_str) == Some("custom.hideFrom") {
-                        if let Some(val_map) =
-                            prop_map.get_mut("value").and_then(Value::as_object_mut)
-                        {
-                            if val_map
-                                .get("viz")
-                                .and_then(Value::as_bool)
-                                .unwrap_or(false)
-                            {
-                                val_map.insert("tooltip".to_owned(), Value::Bool(true));
-                            }
-                        }
-                    }
+                if prop_map.get("id").and_then(Value::as_str) == Some("custom.hideFrom")
+                    && let Some(val_map) = prop_map.get_mut("value").and_then(Value::as_object_mut)
+                    && val_map.get("viz").and_then(Value::as_bool).unwrap_or(false)
+                {
+                    val_map.insert("tooltip".to_owned(), Value::Bool(true));
                 }
             }
         }
@@ -630,10 +614,11 @@ pub fn is_v2beta1_dashboard(doc: &Value) -> bool {
     if obj.contains_key("elements") && obj.contains_key("layout") {
         return true;
     }
-    if let Some(spec) = obj.get("spec").and_then(Value::as_object) {
-        if spec.contains_key("elements") && spec.contains_key("layout") {
-            return true;
-        }
+    if let Some(spec) = obj.get("spec").and_then(Value::as_object)
+        && spec.contains_key("elements")
+        && spec.contains_key("layout")
+    {
+        return true;
     }
     false
 }
@@ -643,10 +628,7 @@ pub fn convert_v2beta1_to_v1(doc: &Value) -> CrResult<Value> {
     let root = doc
         .as_object()
         .ok_or_else(|| CrError::BadRequest("v2beta1 dashboard must be a JSON object".into()))?;
-    let spec = root
-        .get("spec")
-        .and_then(Value::as_object)
-        .unwrap_or(root);
+    let spec = root.get("spec").and_then(Value::as_object).unwrap_or(root);
     let metadata = root.get("metadata").and_then(Value::as_object);
 
     let uid = metadata
@@ -659,7 +641,10 @@ pub fn convert_v2beta1_to_v1(doc: &Value) -> CrResult<Value> {
         .and_then(Value::as_str)
         .unwrap_or("Converted Dashboard");
     let description = spec.get("description").and_then(Value::as_str);
-    let editable = spec.get("editable").and_then(Value::as_bool).unwrap_or(true);
+    let editable = spec
+        .get("editable")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
     let tags = spec
         .get("tags")
         .cloned()
@@ -697,29 +682,28 @@ pub fn convert_v2beta1_to_v1(doc: &Value) -> CrResult<Value> {
 
     // Map layout items to gridPos by element name
     let mut grid_positions: HashMap<String, Value> = HashMap::new();
-    if let Some(layout) = spec.get("layout").and_then(Value::as_object) {
-        if let Some(l_spec) = layout.get("spec").and_then(Value::as_object) {
-            if let Some(items) = l_spec.get("items").and_then(Value::as_array) {
-                for (idx, item) in items.iter().enumerate() {
-                    if let Some(i_spec) = item.get("spec").and_then(Value::as_object) {
-                        let el_name = i_spec
-                            .get("element")
-                            .and_then(|e| e.get("name"))
-                            .and_then(Value::as_str)
-                            .unwrap_or("");
-                        let x = i_spec.get("x").and_then(Value::as_u64).unwrap_or(0);
-                        let y = i_spec
-                            .get("y")
-                            .and_then(Value::as_u64)
-                            .unwrap_or((idx as u64) * 8);
-                        let w = i_spec.get("width").and_then(Value::as_u64).unwrap_or(12);
-                        let h = i_spec.get("height").and_then(Value::as_u64).unwrap_or(8);
-                        grid_positions.insert(
-                            el_name.to_owned(),
-                            json!({ "x": x, "y": y, "w": w, "h": h }),
-                        );
-                    }
-                }
+    if let Some(layout) = spec.get("layout").and_then(Value::as_object)
+        && let Some(l_spec) = layout.get("spec").and_then(Value::as_object)
+        && let Some(items) = l_spec.get("items").and_then(Value::as_array)
+    {
+        for (idx, item) in items.iter().enumerate() {
+            if let Some(i_spec) = item.get("spec").and_then(Value::as_object) {
+                let el_name = i_spec
+                    .get("element")
+                    .and_then(|e| e.get("name"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let x = i_spec.get("x").and_then(Value::as_u64).unwrap_or(0);
+                let y = i_spec
+                    .get("y")
+                    .and_then(Value::as_u64)
+                    .unwrap_or((idx as u64) * 8);
+                let w = i_spec.get("width").and_then(Value::as_u64).unwrap_or(12);
+                let h = i_spec.get("height").and_then(Value::as_u64).unwrap_or(8);
+                grid_positions.insert(
+                    el_name.to_owned(),
+                    json!({ "x": x, "y": y, "w": w, "h": h }),
+                );
             }
         }
     }
@@ -729,7 +713,10 @@ pub fn convert_v2beta1_to_v1(doc: &Value) -> CrResult<Value> {
         let Some(el_obj) = el_val.as_object() else {
             continue;
         };
-        let kind = el_obj.get("kind").and_then(Value::as_str).unwrap_or("Panel");
+        let kind = el_obj
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("Panel");
         let Some(el_spec) = el_obj.get("spec").and_then(Value::as_object) else {
             continue;
         };
@@ -804,8 +791,7 @@ pub fn convert_v2beta1_to_v1(doc: &Value) -> CrResult<Value> {
                                 .and_then(Value::as_object)
                                 .cloned()
                                 .unwrap_or_default();
-                            target_map
-                                .insert("refId".to_owned(), Value::String(ref_id.to_owned()));
+                            target_map.insert("refId".to_owned(), Value::String(ref_id.to_owned()));
                             if hidden {
                                 target_map.insert("hide".to_owned(), Value::Bool(true));
                             }
@@ -836,10 +822,10 @@ pub fn convert_v2beta1_to_v1(doc: &Value) -> CrResult<Value> {
             "options": options,
             "fieldConfig": field_config,
         });
-        if !transformations.is_empty() {
-            if let Some(po) = panel_obj.as_object_mut() {
-                po.insert("transformations".to_owned(), Value::Array(transformations));
-            }
+        if !transformations.is_empty()
+            && let Some(po) = panel_obj.as_object_mut()
+        {
+            po.insert("transformations".to_owned(), Value::Array(transformations));
         }
         panels.push(panel_obj);
     }
@@ -856,10 +842,10 @@ pub fn convert_v2beta1_to_v1(doc: &Value) -> CrResult<Value> {
         "time": { "from": from, "to": to },
         "panels": panels,
     });
-    if let Some(desc) = description {
-        if let Some(m) = out.as_object_mut() {
-            m.insert("description".to_owned(), Value::String(desc.to_owned()));
-        }
+    if let Some(desc) = description
+        && let Some(m) = out.as_object_mut()
+    {
+        m.insert("description".to_owned(), Value::String(desc.to_owned()));
     }
     Ok(out)
 }

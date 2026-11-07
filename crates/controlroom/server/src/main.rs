@@ -6,9 +6,7 @@ use clap::{Parser, Subcommand};
 use controlroom_import::{
     DashboardImportInput, DesiredBundle, ExitCode, PlanBundle, check_dashboards_offline,
 };
-use controlroom_model::{
-    CrError, DataSourceInfo, InputLimits, OrgId, RequestCtx, Subject,
-};
+use controlroom_model::{CrError, DataSourceInfo, InputLimits, OrgId, RequestCtx, Subject};
 use controlroom_server::{ControlroomState, ServerConfig, execute_cli_command, router};
 use controlroom_store_memory::MemoryStore;
 use jc_router::Mount;
@@ -20,7 +18,10 @@ use std::process;
 use std::sync::Arc;
 
 #[derive(Debug, Parser)]
-#[command(name = "controlroom", about = "JoinedContext dashboard and panel server")]
+#[command(
+    name = "controlroom",
+    about = "JoinedContext dashboard and panel server"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -227,11 +228,9 @@ async fn main() {
                 .await
                 {
                     Ok(rep_val) => {
-                        if let Ok(rep) =
-                            serde_json::from_value::<controlroom_import::ImportReport>(
-                                rep_val.clone(),
-                            )
-                        {
+                        if let Ok(rep) = serde_json::from_value::<controlroom_import::ImportReport>(
+                            rep_val.clone(),
+                        ) {
                             if format == "markdown" || format == "md" {
                                 println!("{}", rep.to_markdown());
                             } else {
@@ -259,10 +258,7 @@ async fn main() {
         Commands::Export { uid } => {
             match execute_cli_command(&state, &ctx, "export", json!({ "uid": uid })).await {
                 Ok(val) => {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&val).unwrap_or_default()
-                    );
+                    println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
                     ExitCode::Ok.code()
                 }
                 Err(e) => {
@@ -305,10 +301,7 @@ async fn main() {
                     match execute_cli_command(&state, &ctx, "apply", json!({ "plan": plan })).await
                     {
                         Ok(rep) => {
-                            println!(
-                                "{}",
-                                serde_json::to_string_pretty(&rep).unwrap_or_default()
-                            );
+                            println!("{}", serde_json::to_string_pretty(&rep).unwrap_or_default());
                             ExitCode::Ok.code()
                         }
                         Err(CrError::StalePlan(msg)) => {
@@ -341,10 +334,7 @@ async fn main() {
             .await
             {
                 Ok(dec) => {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&dec).unwrap_or_default()
-                    );
+                    println!("{}", serde_json::to_string_pretty(&dec).unwrap_or_default());
                     if dec["allowed"].as_bool() == Some(true) {
                         ExitCode::Ok.code()
                     } else {

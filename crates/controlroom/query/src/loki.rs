@@ -80,10 +80,12 @@ impl Datasource for LokiDatasource {
     }
 
     fn import(&self, grafana_target: &Value) -> Result<ImportOutcome, DsError> {
-        let obj = grafana_target.as_object().ok_or_else(|| DsError::InvalidQuery {
-            ref_id: "A".into(),
-            reason: "Loki target must be a JSON object".into(),
-        })?;
+        let obj = grafana_target
+            .as_object()
+            .ok_or_else(|| DsError::InvalidQuery {
+                ref_id: "A".into(),
+                reason: "Loki target must be a JSON object".into(),
+            })?;
         let ref_id = obj
             .get("refId")
             .and_then(Value::as_str)

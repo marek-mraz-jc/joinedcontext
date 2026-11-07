@@ -7,9 +7,7 @@ use crate::math::{ExprValue, MathExpr};
 use crate::reduce::{ReduceMode, ReducerId, reduce_frames};
 use crate::resample::{Upsampler, resample_frames};
 use crate::threshold::{ThresholdCondition, ThresholdType, eval_threshold_frames};
-use controlroom_model::{
-    CrError, CrResult, Frame, FrameMeta, FrameSet, Notice, NoticeSeverity,
-};
+use controlroom_model::{CrError, CrResult, Frame, FrameMeta, FrameSet, Notice, NoticeSeverity};
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
@@ -123,21 +121,18 @@ pub struct ExprNodeSpec {
 impl ExprNodeSpec {
     /// Parses a Grafana `__expr__` target JSON object into an [`ExprNodeSpec`] (`nodes.go:buildCMDNode`).
     pub fn from_json(target: &Value, max_depth: usize) -> CrResult<Self> {
-        let obj = target
-            .as_object()
-            .ok_or_else(|| CrError::ExpressionError("expression target must be an object".into()))?;
+        let obj = target.as_object().ok_or_else(|| {
+            CrError::ExpressionError("expression target must be an object".into())
+        })?;
         let ref_id = obj
             .get("refId")
             .and_then(Value::as_str)
             .unwrap_or("A")
             .to_owned();
         let hidden = obj.get("hide").and_then(Value::as_bool).unwrap_or(false);
-        let cmd_type = obj
-            .get("type")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                CrError::ExpressionError(format!("no expression command type in query '{ref_id}'"))
-            })?;
+        let cmd_type = obj.get("type").and_then(Value::as_str).ok_or_else(|| {
+            CrError::ExpressionError(format!("no expression command type in query '{ref_id}'"))
+        })?;
 
         let command = match cmd_type {
             "math" => {
@@ -161,14 +156,11 @@ impl ExprNodeSpec {
                         ))
                     })?;
                 let var_to_reduce = raw_var.trim_start_matches('$').to_owned();
-                let reducer_str = obj
-                    .get("reducer")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        CrError::ExpressionError(format!(
-                            "reduce command '{ref_id}' is missing 'reducer'"
-                        ))
-                    })?;
+                let reducer_str = obj.get("reducer").and_then(Value::as_str).ok_or_else(|| {
+                    CrError::ExpressionError(format!(
+                        "reduce command '{ref_id}' is missing 'reducer'"
+                    ))
+                })?;
                 let reducer = ReducerId::parse(reducer_str)?;
                 let mut mode = ReduceMode::Strict;
                 if let Some(settings) = obj.get("settings").and_then(Value::as_object) {
@@ -209,14 +201,11 @@ impl ExprNodeSpec {
                         ))
                     })?;
                 let var_to_resample = raw_var.trim_start_matches('$').to_owned();
-                let window_str = obj
-                    .get("window")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        CrError::ExpressionError(format!(
-                            "resample command '{ref_id}' is missing 'window'"
-                        ))
-                    })?;
+                let window_str = obj.get("window").and_then(Value::as_str).ok_or_else(|| {
+                    CrError::ExpressionError(format!(
+                        "resample command '{ref_id}' is missing 'window'"
+                    ))
+                })?;
                 let window_ms = parse_duration_ms(window_str)?;
                 let ds_str = obj
                     .get("downsampler")
@@ -280,21 +269,20 @@ impl ExprNodeSpec {
                     .map(|arr| arr.iter().filter_map(Value::as_f64).collect())
                     .unwrap_or_default();
 
-                let unload_evaluator = if let Some(u_obj) =
-                    first.get("unloadEvaluator").and_then(Value::as_object)
-                {
-                    let uty = ThresholdType::parse(
-                        u_obj.get("type").and_then(Value::as_str).unwrap_or(""),
-                    )?;
-                    let uparams: Vec<f64> = u_obj
-                        .get("params")
-                        .and_then(Value::as_array)
-                        .map(|arr| arr.iter().filter_map(Value::as_f64).collect())
-                        .unwrap_or_default();
-                    Some((uty, uparams))
-                } else {
-                    None
-                };
+                let unload_evaluator =
+                    if let Some(u_obj) = first.get("unloadEvaluator").and_then(Value::as_object) {
+                        let uty = ThresholdType::parse(
+                            u_obj.get("type").and_then(Value::as_str).unwrap_or(""),
+                        )?;
+                        let uparams: Vec<f64> = u_obj
+                            .get("params")
+                            .and_then(Value::as_array)
+                            .map(|arr| arr.iter().filter_map(Value::as_f64).collect())
+                            .unwrap_or_default();
+                        Some((uty, uparams))
+                    } else {
+                        None
+                    };
 
                 ExprCommand::Threshold {
                     reference_var,
@@ -307,14 +295,14 @@ impl ExprNodeSpec {
                 }
             }
             "classic_conditions" => {
-                let conds_arr = obj
-                    .get("conditions")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| {
-                        CrError::ExpressionError(
-                            "classic_conditions missing 'conditions' array".into(),
-                        )
-                    })?;
+                let conds_arr =
+                    obj.get("conditions")
+                        .and_then(Value::as_array)
+                        .ok_or_else(|| {
+                            CrError::ExpressionError(
+                                "classic_conditions missing 'conditions' array".into(),
+                            )
+                        })?;
                 let mut conditions = Vec::with_capacity(conds_arr.len());
                 for (idx, c_val) in conds_arr.iter().enumerate() {
                     let op = c_val
@@ -614,10 +602,10 @@ pub fn evaluate_pipeline(
         }
     }
     for node in expr_nodes {
-        if !node.hidden {
-            if let Some(frames) = expr_frames.remove(&node.ref_id) {
-                out_sets.push(FrameSet::new(node.ref_id.clone(), frames));
-            }
+        if !node.hidden
+            && let Some(frames) = expr_frames.remove(&node.ref_id)
+        {
+            out_sets.push(FrameSet::new(node.ref_id.clone(), frames));
         }
     }
 

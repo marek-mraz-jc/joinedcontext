@@ -202,9 +202,7 @@ async fn all_9_dashboards_match_inventory_and_import_export_import_is_fixed_poin
         migrate_to_latest(&mut migrated, &ds_index).expect("migrate_to_42");
         let uid = migrated["uid"].as_str().unwrap().to_owned();
 
-        let exported_1 = export_dashboard(&store, org, &uid)
-            .await
-            .expect("export 1");
+        let exported_1 = export_dashboard(&store, org, &uid).await.expect("export 1");
         let mut expected_42 = CanonicalJson::export_dashboard_json(&migrated);
         if let Some(obj) = expected_42.as_object_mut() {
             obj.insert("version".to_owned(), Value::from(1));

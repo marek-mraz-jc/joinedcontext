@@ -5,9 +5,9 @@
 
 use chrono::Utc;
 use controlroom_model::{
-    ControlroomStore, CrError, CrResult, DashboardRecord, DashboardVersionRecord,
-    DatasourceRecord, FolderRecord, ImportReportRecord, LibraryPanelRecord, OrgId, OrgQuotas,
-    PublicDashboardRecord, QueryCacheStatRecord, constant_time_eq, store::StoreFuture,
+    ControlroomStore, CrError, CrResult, DashboardRecord, DashboardVersionRecord, DatasourceRecord,
+    FolderRecord, ImportReportRecord, LibraryPanelRecord, OrgId, OrgQuotas, PublicDashboardRecord,
+    QueryCacheStatRecord, constant_time_eq, store::StoreFuture,
 };
 use parking_lot::RwLock;
 use std::collections::{BTreeMap, BTreeSet};
@@ -46,7 +46,10 @@ impl MemoryStore {
 
     /// Simulates creating a table without `FORCE ROW LEVEL SECURITY` to test the boot check (R8).
     pub fn simulate_table_without_forced_rls(&self, table_name: impl Into<String>) {
-        self.inner.write().unguarded_tables.insert(table_name.into());
+        self.inner
+            .write()
+            .unguarded_tables
+            .insert(table_name.into());
     }
 
     /// Simulates an app role with `BYPASSRLS` to test the boot check refusal (R8).
@@ -228,7 +231,9 @@ impl ControlroomStore for MemoryStore {
                         dashboard.uid, existing.version, dashboard.version
                     )));
                 }
-                if existing.is_provisioned && !existing.allow_ui_updates && !dashboard.is_provisioned
+                if existing.is_provisioned
+                    && !existing.allow_ui_updates
+                    && !dashboard.is_provisioned
                 {
                     return Err(CrError::Forbidden(
                         "cannot update provisioned dashboard when allowUiUpdates is false".into(),
@@ -252,8 +257,14 @@ impl ControlroomStore for MemoryStore {
             }
 
             if let Some(obj) = dashboard.data.as_object_mut() {
-                obj.insert("version".to_owned(), serde_json::Value::from(dashboard.version));
-                obj.insert("uid".to_owned(), serde_json::Value::String(dashboard.uid.clone()));
+                obj.insert(
+                    "version".to_owned(),
+                    serde_json::Value::from(dashboard.version),
+                );
+                obj.insert(
+                    "uid".to_owned(),
+                    serde_json::Value::String(dashboard.uid.clone()),
+                );
             }
 
             let ver_record = DashboardVersionRecord {
@@ -354,12 +365,10 @@ impl ControlroomStore for MemoryStore {
         let name = name.to_owned();
         Box::pin(async move {
             let guard = self.inner.read();
-            Ok(guard.orgs.get(&org_id).and_then(|o| {
-                o.datasources
-                    .values()
-                    .find(|ds| ds.name == name)
-                    .cloned()
-            }))
+            Ok(guard
+                .orgs
+                .get(&org_id)
+                .and_then(|o| o.datasources.values().find(|ds| ds.name == name).cloned()))
         })
     }
 
@@ -421,12 +430,12 @@ impl ControlroomStore for MemoryStore {
             let Some(org) = guard.orgs.get_mut(&org_id) else {
                 return Ok(false);
             };
-            if let Some(ds) = org.datasources.get(&uid) {
-                if ds.read_only {
-                    return Err(CrError::Forbidden(
-                        "Cannot delete read-only data source".into(),
-                    ));
-                }
+            if let Some(ds) = org.datasources.get(&uid)
+                && ds.read_only
+            {
+                return Err(CrError::Forbidden(
+                    "Cannot delete read-only data source".into(),
+                ));
             }
             Ok(org.datasources.remove(&uid).is_some())
         })
@@ -543,10 +552,10 @@ impl ControlroomStore for MemoryStore {
             let guard = self.inner.read();
             for org in guard.orgs.values() {
                 for pd in org.public_dashboards.values() {
-                    if constant_time_eq(&pd.access_token_hash, &th) {
-                        if let Some(dash) = org.dashboards.get(&pd.dashboard_uid) {
-                            return Ok(Some((pd.clone(), dash.clone())));
-                        }
+                    if constant_time_eq(&pd.access_token_hash, &th)
+                        && let Some(dash) = org.dashboards.get(&pd.dashboard_uid)
+                    {
+                        return Ok(Some((pd.clone(), dash.clone())));
                     }
                 }
             }

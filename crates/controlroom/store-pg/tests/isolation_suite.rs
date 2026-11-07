@@ -209,7 +209,10 @@ async fn run_8_isolation_tests(store: &dyn ControlroomStore) {
 
     // Test 2 (§5.3): Viewer of `a` gets `b`'s dashboard by uid: the same None / 404 as an unknown uid.
     let b_dash_from_a = store.get_dashboard(org_a, "b-exclusive-uid").await.unwrap();
-    let unknown_from_a = store.get_dashboard(org_a, "non-existent-uid").await.unwrap();
+    let unknown_from_a = store
+        .get_dashboard(org_a, "non-existent-uid")
+        .await
+        .unwrap();
     assert_eq!(b_dash_from_a, None);
     assert_eq!(b_dash_from_a, unknown_from_a);
 
@@ -237,7 +240,10 @@ async fn run_8_isolation_tests(store: &dyn ControlroomStore) {
     );
     assert!(!decision.allowed && !decision.visible);
     assert_eq!(
-        decision.into_result("Dashboard not found").unwrap_err().status_code(),
+        decision
+            .into_result("Dashboard not found")
+            .unwrap_err()
+            .status_code(),
         404
     );
 

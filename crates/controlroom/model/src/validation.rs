@@ -160,49 +160,48 @@ pub fn classify_and_validate(
         });
     }
 
-    if let Some(uid) = &doc.uid {
-        if uid.len() > 40
+    if let Some(uid) = &doc.uid
+        && (uid.len() > 40
             || !uid
                 .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        {
-            return Err(CrError::Unprocessable {
-                detail: format!(
-                    "dashboard uid '{uid}' is invalid (must be 1..=40 ASCII alphanumeric, '-' or '_')"
-                ),
-                errors: vec![format!("/uid: invalid uid '{uid}'")],
-            });
-        }
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+    {
+        return Err(CrError::Unprocessable {
+            detail: format!(
+                "dashboard uid '{uid}' is invalid (must be 1..=40 ASCII alphanumeric, '-' or '_')"
+            ),
+            errors: vec![format!("/uid: invalid uid '{uid}'")],
+        });
     }
 
-    if let Some(month) = doc.fiscal_year_start_month {
-        if month >= 12 {
-            return Err(CrError::Unprocessable {
-                detail: format!("fiscalYearStartMonth must be < 12, got {month}"),
-                errors: vec![format!("/fiscalYearStartMonth: must be < 12, got {month}")],
-            });
-        }
+    if let Some(month) = doc.fiscal_year_start_month
+        && month >= 12
+    {
+        return Err(CrError::Unprocessable {
+            detail: format!("fiscalYearStartMonth must be < 12, got {month}"),
+            errors: vec![format!("/fiscalYearStartMonth: must be < 12, got {month}")],
+        });
     }
 
-    if let Some(gt) = doc.graph_tooltip {
-        if gt > 2 {
-            return Err(CrError::Unprocessable {
-                detail: format!("graphTooltip must be 0, 1, or 2, got {gt}"),
-                errors: vec![format!("/graphTooltip: invalid value {gt}")],
-            });
-        }
+    if let Some(gt) = doc.graph_tooltip
+        && gt > 2
+    {
+        return Err(CrError::Unprocessable {
+            detail: format!("graphTooltip must be 0, 1, or 2, got {gt}"),
+            errors: vec![format!("/graphTooltip: invalid value {gt}")],
+        });
     }
 
     // Validate dashboard links for dangerous schemes (javascript:, data:, vbscript:)
     if let Some(links) = &doc.links {
         for (idx, link) in links.iter().enumerate() {
-            if let Some(url) = &link.url {
-                if is_dangerous_url(url) {
-                    return Err(CrError::Unprocessable {
-                        detail: format!("dangerous URL scheme in dashboard link at /links/{idx}/url"),
-                        errors: vec![format!("/links/{idx}/url: disallowed URL scheme")],
-                    });
-                }
+            if let Some(url) = &link.url
+                && is_dangerous_url(url)
+            {
+                return Err(CrError::Unprocessable {
+                    detail: format!("dangerous URL scheme in dashboard link at /links/{idx}/url"),
+                    errors: vec![format!("/links/{idx}/url: disallowed URL scheme")],
+                });
             }
         }
     }
@@ -233,12 +232,13 @@ pub fn classify_and_validate(
                     ),
                 });
             }
-            if let Some(ds) = &var.datasource {
-                if let Some(uid) = &ds.uid {
-                    if !uid.is_empty() && uid != "-- Mixed --" && uid != "__expr__" {
-                        referenced_ds.insert(uid.clone());
-                    }
-                }
+            if let Some(ds) = &var.datasource
+                && let Some(uid) = &ds.uid
+                && !uid.is_empty()
+                && uid != "-- Mixed --"
+                && uid != "__expr__"
+            {
+                referenced_ds.insert(uid.clone());
             }
         }
     }
@@ -304,27 +304,29 @@ fn validate_panels_slice(
             });
         }
 
-        if let Some(gp) = &panel.grid_pos {
-            if gp.h == 0 || gp.w == 0 || gp.w > 24 || gp.x >= 24 {
-                return Err(CrError::Unprocessable {
-                    detail: format!(
-                        "panel at {ptr} has invalid gridPos (h={}, w={}, x={}; CUE requires h>0, 0<w<=24, 0<=x<24)",
-                        gp.h, gp.w, gp.x
-                    ),
-                    errors: vec![format!("{ptr}/gridPos: out of 24-column grid bounds")],
-                });
-            }
+        if let Some(gp) = &panel.grid_pos
+            && (gp.h == 0 || gp.w == 0 || gp.w > 24 || gp.x >= 24)
+        {
+            return Err(CrError::Unprocessable {
+                detail: format!(
+                    "panel at {ptr} has invalid gridPos (h={}, w={}, x={}; CUE requires h>0, 0<w<=24, 0<=x<24)",
+                    gp.h, gp.w, gp.x
+                ),
+                errors: vec![format!("{ptr}/gridPos: out of 24-column grid bounds")],
+            });
         }
 
         if let Some(links) = &panel.links {
             for (l_idx, link) in links.iter().enumerate() {
-                if let Some(url) = &link.url {
-                    if is_dangerous_url(url) {
-                        return Err(CrError::Unprocessable {
-                            detail: format!("dangerous URL scheme in panel link at {ptr}/links/{l_idx}/url"),
-                            errors: vec![format!("{ptr}/links/{l_idx}/url: disallowed URL scheme")],
-                        });
-                    }
+                if let Some(url) = &link.url
+                    && is_dangerous_url(url)
+                {
+                    return Err(CrError::Unprocessable {
+                        detail: format!(
+                            "dangerous URL scheme in panel link at {ptr}/links/{l_idx}/url"
+                        ),
+                        errors: vec![format!("{ptr}/links/{l_idx}/url: disallowed URL scheme")],
+                    });
                 }
             }
         }
@@ -468,10 +470,7 @@ fn validate_panels_slice(
                     || ds_uid == Some("-100")
                     || ds_type == Some("__expr__")
                 {
-                    let expr_type = target
-                        .get("type")
-                        .and_then(Value::as_str)
-                        .unwrap_or("math");
+                    let expr_type = target.get("type").and_then(Value::as_str).unwrap_or("math");
                     if expr_type == "sql" {
                         findings.push(FeatureFinding {
                             pointer: format!("{t_ptr}/type"),
@@ -551,20 +550,20 @@ fn check_datasource_ref(
     findings: &mut Vec<FeatureFinding>,
     referenced_ds: &mut BTreeSet<String>,
 ) {
-    if let Some(uid) = ds_uid {
-        if !uid.is_empty() && uid != "-- Mixed --" && uid != "__expr__" && uid != "-100" {
-            referenced_ds.insert(uid.to_owned());
-        }
+    if let Some(uid) = ds_uid
+        && !uid.is_empty()
+        && uid != "-- Mixed --"
+        && uid != "__expr__"
+        && uid != "-100"
+    {
+        referenced_ds.insert(uid.to_owned());
     }
     if let Some(t) = ds_type {
-        if t == "datasource" || t == "-- Mixed --" || t.starts_with("wasm:") {
-            findings.push(FeatureFinding {
-                pointer: pointer.to_owned(),
-                code: format!("datasource.{t}"),
-                verdict: Verdict::Supports,
-                message: format!("datasource type '{t}' supported"),
-            });
-        } else if SUPPORTED_DATASOURCE_TYPES.contains(&t) {
+        if t == "datasource"
+            || t == "-- Mixed --"
+            || t.starts_with("wasm:")
+            || SUPPORTED_DATASOURCE_TYPES.contains(&t)
+        {
             findings.push(FeatureFinding {
                 pointer: pointer.to_owned(),
                 code: format!("datasource.{t}"),

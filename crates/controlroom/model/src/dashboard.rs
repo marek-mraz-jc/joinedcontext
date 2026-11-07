@@ -85,11 +85,7 @@ pub struct TimePickerConfig {
     pub refresh_intervals: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quick_ranges: Option<Vec<Value>>,
-    #[serde(
-        rename = "nowDelay",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "nowDelay", default, skip_serializing_if = "Option::is_none")]
     pub now_delay: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -545,24 +541,24 @@ impl DashboardDocument {
                 }
                 *panel_count += 1;
                 panel_types.insert(p.panel_type.clone());
-                if let Some(ds) = &p.datasource {
-                    if let Some(u) = &ds.uid {
-                        if u == "__expr__" || u == "-100" {
-                            *has_expressions = true;
-                        } else if !u.is_empty() && u != "-- Mixed --" {
-                            ds_uids.insert(u.clone());
-                        }
+                if let Some(ds) = &p.datasource
+                    && let Some(u) = &ds.uid
+                {
+                    if u == "__expr__" || u == "-100" {
+                        *has_expressions = true;
+                    } else if !u.is_empty() && u != "-- Mixed --" {
+                        ds_uids.insert(u.clone());
                     }
                 }
                 if let Some(targets) = &p.targets {
                     for t in targets {
-                        if let Some(ds) = t.get("datasource").and_then(Value::as_object) {
-                            if let Some(u) = ds.get("uid").and_then(Value::as_str) {
-                                if u == "__expr__" || u == "-100" {
-                                    *has_expressions = true;
-                                } else if !u.is_empty() && u != "-- Mixed --" {
-                                    ds_uids.insert(u.to_owned());
-                                }
+                        if let Some(ds) = t.get("datasource").and_then(Value::as_object)
+                            && let Some(u) = ds.get("uid").and_then(Value::as_str)
+                        {
+                            if u == "__expr__" || u == "-100" {
+                                *has_expressions = true;
+                            } else if !u.is_empty() && u != "-- Mixed --" {
+                                ds_uids.insert(u.to_owned());
                             }
                         }
                     }
@@ -594,12 +590,13 @@ impl DashboardDocument {
 
         if let Some(templating) = &self.templating {
             for v in &templating.list {
-                if let Some(ds) = &v.datasource {
-                    if let Some(u) = &ds.uid {
-                        if !u.is_empty() && u != "-- Mixed --" && u != "__expr__" {
-                            ds_uids.insert(u.clone());
-                        }
-                    }
+                if let Some(ds) = &v.datasource
+                    && let Some(u) = &ds.uid
+                    && !u.is_empty()
+                    && u != "-- Mixed --"
+                    && u != "__expr__"
+                {
+                    ds_uids.insert(u.clone());
                 }
             }
         }

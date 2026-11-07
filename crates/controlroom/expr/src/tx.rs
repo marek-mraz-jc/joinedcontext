@@ -21,7 +21,7 @@ use controlroom_model::{
     DataTransformerConfig, FieldColumn, FieldType, Frame, FrameMeta, Notice, NoticeSeverity,
 };
 use regex::Regex;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -212,9 +212,7 @@ pub fn tx_merge(frames: Vec<Frame>) -> Vec<Frame> {
             // Try to merge with an existing row that matches on all key_fields and has no conflicting fields
             let mut merged = false;
             for existing in &mut merged_rows {
-                let same_key = key_fields
-                    .iter()
-                    .all(|k| existing.get(k) == row_map.get(k));
+                let same_key = key_fields.iter().all(|k| existing.get(k) == row_map.get(k));
                 if !same_key {
                     continue;
                 }
@@ -534,10 +532,7 @@ pub fn tx_calculate_field(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
                 }
                 "cumulativeFunctions" => {
                     let cum = options.get("cumulative").unwrap_or(&Value::Null);
-                    let reducer = cum
-                        .get("reducer")
-                        .and_then(Value::as_str)
-                        .unwrap_or("sum");
+                    let reducer = cum.get("reducer").and_then(Value::as_str).unwrap_or("sum");
                     let target = cum.get("field").and_then(Value::as_str);
                     let col = frame.fields.iter().find(|f| {
                         target.map_or(f.field_type == FieldType::Number, |t| {
@@ -559,10 +554,7 @@ pub fn tx_calculate_field(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
                 _ => {
                     // reduceRow
                     let red = options.get("reduce").unwrap_or(&Value::Null);
-                    let r_str = red
-                        .get("reducer")
-                        .and_then(Value::as_str)
-                        .unwrap_or("sum");
+                    let r_str = red.get("reducer").and_then(Value::as_str).unwrap_or("sum");
                     let r_id = ReducerId::parse(r_str).unwrap_or(ReducerId::Sum);
                     let num_cols: Vec<&FieldColumn> = frame
                         .fields
@@ -571,8 +563,10 @@ pub fn tx_calculate_field(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
                         .collect();
                     let mut v = Vec::with_capacity(row_cnt);
                     for i in 0..row_cnt {
-                        let row_vals: Vec<Option<f64>> =
-                            num_cols.iter().filter_map(|c| c.f64_at(i).map(Some)).collect();
+                        let row_vals: Vec<Option<f64>> = num_cols
+                            .iter()
+                            .filter_map(|c| c.f64_at(i).map(Some))
+                            .collect();
                         v.push(reduce_slice(r_id, &row_vals));
                     }
                     (r_str.to_owned(), v)
@@ -598,11 +592,7 @@ pub fn tx_calculate_field(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
         .collect()
 }
 
-fn resolve_binary_operand(
-    frame: &Frame,
-    spec: Option<&Value>,
-    row_cnt: usize,
-) -> Vec<Option<f64>> {
+fn resolve_binary_operand(frame: &Frame, spec: Option<&Value>, row_cnt: usize) -> Vec<Option<f64>> {
     let Some(spec) = spec else {
         return vec![Some(0.0); row_cnt];
     };
@@ -622,19 +612,17 @@ fn resolve_binary_operand(
         .get("matcher")
         .and_then(|m| m.get("options"))
         .and_then(Value::as_str)
-    {
-        if let Some(col) = frame
+        && let Some(col) = frame
             .fields
             .iter()
             .find(|f| f.name == name || f.effective_name() == name)
-        {
-            return (0..row_cnt).map(|i| col.f64_at(i)).collect();
-        }
+    {
+        return (0..row_cnt).map(|i| col.f64_at(i)).collect();
     }
-    if let Some(fixed_str) = spec.get("fixed").and_then(Value::as_str) {
-        if let Ok(fixed) = fixed_str.parse::<f64>() {
-            return vec![Some(fixed); row_cnt];
-        }
+    if let Some(fixed_str) = spec.get("fixed").and_then(Value::as_str)
+        && let Ok(fixed) = fixed_str.parse::<f64>()
+    {
+        return vec![Some(fixed); row_cnt];
     }
     if let Some(fixed_num) = spec.get("fixed").and_then(Value::as_f64) {
         return vec![Some(fixed_num); row_cnt];
@@ -743,8 +731,10 @@ pub fn tx_group_by(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
                         .iter()
                         .map(|k| {
                             let rows = &group_rows[k];
-                            let slice: Vec<Option<f64>> =
-                                rows.iter().filter_map(|&r| col.f64_at(r).map(Some)).collect();
+                            let slice: Vec<Option<f64>> = rows
+                                .iter()
+                                .filter_map(|&r| col.f64_at(r).map(Some))
+                                .collect();
                             reduce_slice(r_id, &slice)
                         })
                         .collect();
@@ -1112,7 +1102,7 @@ pub fn tx_series_to_rows(frames: Vec<Frame>) -> Vec<Frame> {
     if rows.is_empty() {
         return frames;
     }
-    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.0));
 
     let times: Vec<i64> = rows.iter().map(|(t, _, _)| *t).collect();
     let metrics: Vec<Option<String>> = rows.iter().map(|(_, m, _)| Some(m.clone())).collect();
@@ -1221,6 +1211,7 @@ pub fn tx_labels_to_fields(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn organize_excludes_reorders_and_renames_like_bbsk_and_helsinki() {

@@ -2,9 +2,7 @@
 //! Sample third-party WASM datasource plugin implementing `jc:controlroom/datasource@0.1.0` (R5).
 
 use crate::wasm::{WasmHostImports, WasmPluginGuest};
-use crate::{
-    DsFuture, EditorFieldHint, EditorSchema, ImportOutcome, Query, QueryCtx,
-};
+use crate::{DsFuture, EditorFieldHint, EditorSchema, ImportOutcome, Query, QueryCtx};
 use controlroom_model::{FieldColumn, Frame, FrameMeta, FrameSet};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -60,9 +58,7 @@ impl WasmPluginGuest for SampleMetricsWasmPlugin {
 
             // If a secretRef is configured, resolve it via host `secret` import (never returned in frames)
             if !host.allowed_secret_refs.is_empty() {
-                let _resolved = host
-                    .resolve_secret("apiKey")
-                    .map_err(|e| e.to_string())?;
+                let _resolved = host.resolve_secret("apiKey").map_err(|e| e.to_string())?;
             }
 
             let mut out = Vec::with_capacity(queries.len());
@@ -72,11 +68,7 @@ impl WasmPluginGuest for SampleMetricsWasmPlugin {
                     .get("metric")
                     .and_then(Value::as_str)
                     .unwrap_or("sample_metric");
-                let scale = q
-                    .model
-                    .get("scale")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(1.0);
+                let scale = q.model.get("scale").and_then(Value::as_f64).unwrap_or(1.0);
 
                 let frame = Frame {
                     name: metric.to_owned(),

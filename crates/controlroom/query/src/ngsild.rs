@@ -91,30 +91,27 @@ impl NgsiLdDatasource {
 
     fn build_headers(&self, ctx: &QueryCtx) -> Result<Vec<(String, String)>, DsError> {
         let mut headers = vec![("Accept".to_owned(), "application/json".to_owned())];
-        if let Some(ctx_url) = &self.context_url {
-            if !ctx_url.trim().is_empty() {
-                headers.push((
+        if let Some(ctx_url) = &self.context_url
+            && !ctx_url.trim().is_empty()
+        {
+            headers.push((
                     "Link".to_owned(),
                     format!(
                         "<{}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"",
                         ctx_url.trim()
                     ),
                 ));
-            }
         }
-        if let Some(t) = &self.tenant {
-            if !t.trim().is_empty() {
-                headers.push(("NGSILD-Tenant".to_owned(), t.trim().to_owned()));
-            }
+        if let Some(t) = &self.tenant
+            && !t.trim().is_empty()
+        {
+            headers.push(("NGSILD-Tenant".to_owned(), t.trim().to_owned()));
         }
 
         // Exchange caller's token for Endpoint audience when oauthPassThru is active or bearer token is present
         if self.oauth_pass_thru {
             let caller_token = ctx.subject.bearer_token.as_deref().unwrap_or("");
-            let audience = self
-                .endpoint_slug
-                .as_deref()
-                .unwrap_or(self.uid.as_str());
+            let audience = self.endpoint_slug.as_deref().unwrap_or(self.uid.as_str());
             let exchanged = self
                 .token_exchanger
                 .exchange_for_audience(caller_token, audience)?;
@@ -122,20 +119,17 @@ impl NgsiLdDatasource {
                 "Authorization".to_owned(),
                 format!("Bearer {}", exchanged.as_str()),
             ));
-        } else if let Some(caller_token) = &ctx.subject.bearer_token {
-            if !caller_token.is_empty() {
-                let audience = self
-                    .endpoint_slug
-                    .as_deref()
-                    .unwrap_or(self.uid.as_str());
-                let exchanged = self
-                    .token_exchanger
-                    .exchange_for_audience(caller_token, audience)?;
-                headers.push((
-                    "Authorization".to_owned(),
-                    format!("Bearer {}", exchanged.as_str()),
-                ));
-            }
+        } else if let Some(caller_token) = &ctx.subject.bearer_token
+            && !caller_token.is_empty()
+        {
+            let audience = self.endpoint_slug.as_deref().unwrap_or(self.uid.as_str());
+            let exchanged = self
+                .token_exchanger
+                .exchange_for_audience(caller_token, audience)?;
+            headers.push((
+                "Authorization".to_owned(),
+                format!("Bearer {}", exchanged.as_str()),
+            ));
         }
 
         Ok(headers)
@@ -219,10 +213,10 @@ pub fn build_ngsild_request(
     let mut params: Vec<(String, String)> = Vec::new();
 
     fn add(params: &mut Vec<(String, String)>, k: &str, v: Option<String>) {
-        if let Some(s) = v {
-            if !s.is_empty() {
-                params.push((k.to_owned(), s));
-            }
+        if let Some(s) = v
+            && !s.is_empty()
+        {
+            params.push((k.to_owned(), s));
         }
     }
 
@@ -380,10 +374,11 @@ pub fn build_ngsild_request(
         add(&mut params, "timeAt", Some(from_iso));
         add(&mut params, "endTimeAt", Some(to_iso));
 
-        if let Some(tp) = model.get("timeProperty").and_then(Value::as_str) {
-            if tp != "observedAt" && !tp.is_empty() {
-                add(&mut params, "timeproperty", Some(tp.to_owned()));
-            }
+        if let Some(tp) = model.get("timeProperty").and_then(Value::as_str)
+            && tp != "observedAt"
+            && !tp.is_empty()
+        {
+            add(&mut params, "timeproperty", Some(tp.to_owned()));
         }
         if let Some(methods) = aggr_method {
             add(&mut params, "aggrMethods", Some(methods.to_owned()));
@@ -401,10 +396,10 @@ pub fn build_ngsild_request(
                 add(&mut params, "aggrPeriodDuration", Some(p));
             }
         }
-        if let Some(last_n) = model.get("lastN").and_then(Value::as_u64) {
-            if last_n > 0 {
-                add(&mut params, "lastN", Some(last_n.to_string()));
-            }
+        if let Some(last_n) = model.get("lastN").and_then(Value::as_u64)
+            && last_n > 0
+        {
+            add(&mut params, "lastN", Some(last_n.to_string()));
         }
     }
 
@@ -443,10 +438,10 @@ pub fn extract_ngsi_value(attr: &Value, lang: Option<&str>) -> Value {
         return o.clone();
     }
     if let Some(lm) = obj.get("languageMap").and_then(Value::as_object) {
-        if let Some(l) = lang {
-            if let Some(v) = lm.get(l) {
-                return v.clone();
-            }
+        if let Some(l) = lang
+            && let Some(v) = lm.get(l)
+        {
+            return v.clone();
         }
         if let Some(v) = lm.get("@none").or_else(|| lm.get("en")) {
             return v.clone();
@@ -473,14 +468,15 @@ fn entity_label_of(entity: &serde_json::Map<String, Value>, model: &Value) -> St
         .get("entityName")
         .and_then(Value::as_str)
         .unwrap_or("id_short");
-    if entity_name != "id" && entity_name != "id_short" {
-        if let Some(attr) = entity.get(entity_name) {
-            let v = extract_ngsi_value(attr, lang);
-            if let Some(s) = v.as_str() {
-                if !s.is_empty() {
-                    return s.to_owned();
-                }
-            }
+    if entity_name != "id"
+        && entity_name != "id_short"
+        && let Some(attr) = entity.get(entity_name)
+    {
+        let v = extract_ngsi_value(attr, lang);
+        if let Some(s) = v.as_str()
+            && !s.is_empty()
+        {
+            return s.to_owned();
         }
     }
     let id = entity.get("id").and_then(Value::as_str).unwrap_or("");
@@ -535,11 +531,7 @@ fn entities_to_table_frame(ref_id: &str, entities: &[Value], model: &Value) -> F
         let Some(obj) = e.as_object() else {
             continue;
         };
-        ids.push(
-            obj.get("id")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-        );
+        ids.push(obj.get("id").and_then(Value::as_str).map(str::to_owned));
         let t_str = match obj.get("type") {
             Some(Value::String(s)) => Some(s.clone()),
             Some(Value::Array(arr)) => Some(
@@ -560,12 +552,12 @@ fn entities_to_table_frame(ref_id: &str, entities: &[Value], model: &Value) -> F
                 other => other,
             };
             if let Some(inst_val) = inst {
-                if let Some(obs_str) = inst_val.get("observedAt").and_then(Value::as_str) {
-                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(obs_str) {
-                        let ms = dt.timestamp_millis();
-                        newest_obs = Some(newest_obs.map_or(ms, |prev| prev.max(ms)));
-                        has_observed = true;
-                    }
+                if let Some(obs_str) = inst_val.get("observedAt").and_then(Value::as_str)
+                    && let Ok(dt) = chrono::DateTime::parse_from_rfc3339(obs_str)
+                {
+                    let ms = dt.timestamp_millis();
+                    newest_obs = Some(newest_obs.map_or(ms, |prev| prev.max(ms)));
+                    has_observed = true;
                 }
                 let unit = inst_val
                     .get("unitCode")
@@ -669,16 +661,16 @@ fn temporal_entities_to_frames(ref_id: &str, entities: &[Value], model: &Value) 
                 if let Some(pairs) = inst_obj.get("values").and_then(Value::as_array) {
                     let mut pts: Vec<(i64, Option<f64>)> = Vec::with_capacity(pairs.len());
                     for p in pairs {
-                        if let Some(arr) = p.as_array() {
-                            if arr.len() >= 2 {
-                                let v = extract_ngsi_value(&arr[0], lang).as_f64();
-                                let t = arr[1]
-                                    .as_str()
-                                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                                    .map(|dt| dt.timestamp_millis())
-                                    .unwrap_or(0);
-                                pts.push((t, v));
-                            }
+                        if let Some(arr) = p.as_array()
+                            && arr.len() >= 2
+                        {
+                            let v = extract_ngsi_value(&arr[0], lang).as_f64();
+                            let t = arr[1]
+                                .as_str()
+                                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                                .map(|dt| dt.timestamp_millis())
+                                .unwrap_or(0);
+                            pts.push((t, v));
                         }
                     }
                     pts.sort_by_key(|(t, _)| *t);
@@ -701,16 +693,16 @@ fn temporal_entities_to_frames(ref_id: &str, entities: &[Value], model: &Value) 
                     if let Some(buckets) = inst_obj.get(method).and_then(Value::as_array) {
                         let mut pts: Vec<(i64, Option<f64>)> = Vec::with_capacity(buckets.len());
                         for b in buckets {
-                            if let Some(arr) = b.as_array() {
-                                if arr.len() >= 2 {
-                                    let v = arr[0].as_f64();
-                                    let t = arr[1]
-                                        .as_str()
-                                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                                        .map(|dt| dt.timestamp_millis())
-                                        .unwrap_or(0);
-                                    pts.push((t, v));
-                                }
+                            if let Some(arr) = b.as_array()
+                                && arr.len() >= 2
+                            {
+                                let v = arr[0].as_f64();
+                                let t = arr[1]
+                                    .as_str()
+                                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                                    .map(|dt| dt.timestamp_millis())
+                                    .unwrap_or(0);
+                                pts.push((t, v));
                             }
                         }
                         pts.sort_by_key(|(t, _)| *t);
@@ -896,13 +888,8 @@ impl Datasource for NgsiLdDatasource {
                 })
                 .await
             {
-                Ok(resp) if resp.status == 200 => {
-                    Health::ok("NGSI-LD broker reachable")
-                }
-                Ok(resp) => Health::error(format!(
-                    "NGSI-LD API returned HTTP {}",
-                    resp.status
-                )),
+                Ok(resp) if resp.status == 200 => Health::ok("NGSI-LD broker reachable"),
+                Ok(resp) => Health::error(format!("NGSI-LD API returned HTTP {}", resp.status)),
                 Err(e) => Health::error(format!("Cannot reach the NGSI-LD API ({e})")),
             }
         })
@@ -936,10 +923,11 @@ impl Datasource for NgsiLdDatasource {
                     timeout: Some(ctx.timeout),
                 })
                 .await?;
-            let data: Value = serde_json::from_slice(&resp.body).map_err(|e| DsError::Upstream {
-                status: 502,
-                message: format!("invalid JSON from NGSI-LD resource: {e}"),
-            })?;
+            let data: Value =
+                serde_json::from_slice(&resp.body).map_err(|e| DsError::Upstream {
+                    status: 502,
+                    message: format!("invalid JSON from NGSI-LD resource: {e}"),
+                })?;
             Ok(ResourceResp { data })
         })
     }
@@ -999,10 +987,12 @@ impl Datasource for NgsiLdDatasource {
     }
 
     fn import(&self, grafana_target: &Value) -> Result<ImportOutcome, DsError> {
-        let obj = grafana_target.as_object().ok_or_else(|| DsError::InvalidQuery {
-            ref_id: "A".into(),
-            reason: "NGSI-LD target must be a JSON object".into(),
-        })?;
+        let obj = grafana_target
+            .as_object()
+            .ok_or_else(|| DsError::InvalidQuery {
+                ref_id: "A".into(),
+                reason: "NGSI-LD target must be a JSON object".into(),
+            })?;
         let ref_id = obj
             .get("refId")
             .and_then(Value::as_str)

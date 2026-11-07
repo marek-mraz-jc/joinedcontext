@@ -7,12 +7,10 @@
 //! - Per-transaction `SELECT set_config('cr.org', $1, true)` and `SELECT ... FOR UPDATE` on
 //!   `cr_quota` during write transactions (§5.3).
 
-use chrono::{DateTime, Utc};
 use controlroom_model::{
-    ControlroomStore, CrError, CrResult, DashboardRecord, DashboardVersionRecord,
-    DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId, InstanceId,
-    LibraryPanelRecord, OrgId, OrgQuotas, PublicDashboardRecord, QueryCacheStatRecord, ShareType,
-    store::StoreFuture,
+    ControlroomStore, CrError, CrResult, DashboardRecord, DashboardVersionRecord, DatasourceRecord,
+    FolderRecord, ImportReportRecord, InstallationId, InstanceId, LibraryPanelRecord, OrgId,
+    OrgQuotas, PublicDashboardRecord, QueryCacheStatRecord, ShareType, store::StoreFuture,
 };
 use serde_json::Value;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -67,9 +65,7 @@ impl PgPoolConfig {
             })?;
         let trimmed = raw.trim().to_owned();
         if trimmed.is_empty() {
-            return Err(CrError::BadRequest(
-                "postgres secret file is empty".into(),
-            ));
+            return Err(CrError::BadRequest("postgres secret file is empty".into()));
         }
         Ok(Self {
             host: host.into(),
@@ -564,13 +560,12 @@ impl ControlroomStore for PgStore {
                 dashboard.version = ex_ver + 1;
                 ex_ver
             } else {
-                let cnt: i64 = sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM cr_dashboard WHERE org_id = $1",
-                )
-                .bind(dashboard.org_id.as_uuid())
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+                let cnt: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM cr_dashboard WHERE org_id = $1")
+                        .bind(dashboard.org_id.as_uuid())
+                        .fetch_one(&mut *tx)
+                        .await
+                        .map_err(|e| CrError::Internal(e.to_string()))?;
                 if cnt as u64 >= quotas.max_dashboards {
                     return Err(CrError::QuotaExceeded {
                         resource: "dashboards".into(),
@@ -669,14 +664,12 @@ impl ControlroomStore for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(|e| CrError::Internal(e.to_string()))?;
-            sqlx::query(
-                "DELETE FROM cr_public_dashboard WHERE org_id = $1 AND dashboard_uid = $2",
-            )
-            .bind(org_id.as_uuid())
-            .bind(&uid)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
+            sqlx::query("DELETE FROM cr_public_dashboard WHERE org_id = $1 AND dashboard_uid = $2")
+                .bind(org_id.as_uuid())
+                .bind(&uid)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| CrError::Internal(e.to_string()))?;
             let res = sqlx::query("DELETE FROM cr_dashboard WHERE org_id = $1 AND uid = $2")
                 .bind(org_id.as_uuid())
                 .bind(&uid)
@@ -798,13 +791,9 @@ impl ControlroomStore for PgStore {
     fn upsert_datasource(&self, ds: DatasourceRecord) -> StoreFuture<'_, DatasourceRecord> {
         Box::pin(async move {
             let mut tx = self.begin_org_tx(ds.org_id).await?;
-            let quotas = Self::lock_org_quotas(
-                &mut tx,
-                ds.installation_id,
-                ds.org_id,
-                ds.instance_id,
-            )
-            .await?;
+            let quotas =
+                Self::lock_org_quotas(&mut tx, ds.installation_id, ds.org_id, ds.instance_id)
+                    .await?;
 
             let exists: Option<i32> = sqlx::query_scalar(
                 "SELECT version FROM cr_datasource WHERE org_id = $1 AND uid = $2",
@@ -816,13 +805,12 @@ impl ControlroomStore for PgStore {
             .map_err(|e| CrError::Internal(e.to_string()))?;
 
             if exists.is_none() {
-                let cnt: i64 = sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM cr_datasource WHERE org_id = $1",
-                )
-                .bind(ds.org_id.as_uuid())
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+                let cnt: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM cr_datasource WHERE org_id = $1")
+                        .bind(ds.org_id.as_uuid())
+                        .fetch_one(&mut *tx)
+                        .await
+                        .map_err(|e| CrError::Internal(e.to_string()))?;
                 if cnt as u64 >= quotas.max_datasources {
                     return Err(CrError::QuotaExceeded {
                         resource: "datasources".into(),

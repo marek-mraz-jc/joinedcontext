@@ -60,50 +60,51 @@ impl ExprValue {
             .map(|(i, _)| i)
             .collect();
 
-        if let Some(t_idx) = time_idx {
-            if !num_indices.is_empty() {
-                let time_col = &frame.fields[t_idx];
-                let mut out = Vec::with_capacity(num_indices.len());
-                for v_idx in num_indices {
-                    let val_col = &frame.fields[v_idx];
-                    let len = time_col.len().min(val_col.len());
-                    let mut points = Vec::with_capacity(len);
-                    for i in 0..len {
-                        let t = time_col.time_ms_at(i).unwrap_or(0);
-                        let v = val_col.f64_at(i);
-                        points.push((t, v));
-                    }
-                    let name = if !frame.name.is_empty() {
-                        frame.name.clone()
-                    } else {
-                        val_col.effective_name().to_owned()
-                    };
-                    out.push(Self::Series {
-                        name,
-                        labels: val_col.labels.clone(),
-                        points,
-                        notices: frame.meta.notices.clone(),
-                    });
+        if let Some(t_idx) = time_idx
+            && !num_indices.is_empty()
+        {
+            let time_col = &frame.fields[t_idx];
+            let mut out = Vec::with_capacity(num_indices.len());
+            for v_idx in num_indices {
+                let val_col = &frame.fields[v_idx];
+                let len = time_col.len().min(val_col.len());
+                let mut points = Vec::with_capacity(len);
+                for i in 0..len {
+                    let t = time_col.time_ms_at(i).unwrap_or(0);
+                    let v = val_col.f64_at(i);
+                    points.push((t, v));
                 }
-                return out;
+                let name = if !frame.name.is_empty() {
+                    frame.name.clone()
+                } else {
+                    val_col.effective_name().to_owned()
+                };
+                out.push(Self::Series {
+                    name,
+                    labels: val_col.labels.clone(),
+                    points,
+                    notices: frame.meta.notices.clone(),
+                });
             }
+            return out;
         }
 
         // Numeric single-row or number table
         if !num_indices.is_empty() {
             let v_idx = num_indices[0];
             let val_col = &frame.fields[v_idx];
-            if val_col.len() == 0 {
+            if val_col.is_empty() {
                 return vec![Self::NoData];
             }
             let mut out = Vec::with_capacity(val_col.len());
             for row in 0..val_col.len() {
                 let mut labels = val_col.labels.clone();
                 for (col_idx, col) in frame.fields.iter().enumerate() {
-                    if col_idx != v_idx && col.field_type == FieldType::String {
-                        if let Some(Value::String(s)) = col.values.get(row) {
-                            labels.insert(col.name.clone(), s.clone());
-                        }
+                    if col_idx != v_idx
+                        && col.field_type == FieldType::String
+                        && let Some(Value::String(s)) = col.values.get(row)
+                    {
+                        labels.insert(col.name.clone(), s.clone());
                     }
                 }
                 out.push(Self::Number {
@@ -440,8 +441,8 @@ struct Parser {
     var_names: Vec<String>,
 }
 
-const zero_arg_funcs: &[&str] = &["nan", "inf", "infn", "null"];
-const one_arg_funcs: &[&str] = &[
+const ZERO_ARG_FUNCS: &[&str] = &["nan", "inf", "infn", "null"];
+const ONE_ARG_FUNCS: &[&str] = &[
     "abs",
     "log",
     "is_nan",
@@ -652,8 +653,8 @@ impl Parser {
     }
 
     fn parse_func(&mut self, name: String) -> CrResult<AstNode> {
-        let is_zero = zero_arg_funcs.contains(&name.as_str());
-        let is_one = one_arg_funcs.contains(&name.as_str());
+        let is_zero = ZERO_ARG_FUNCS.contains(&name.as_str());
+        let is_one = ONE_ARG_FUNCS.contains(&name.as_str());
         if !is_zero && !is_one {
             return Err(CrError::ExpressionError(format!(
                 "non existent function {name}"
@@ -859,7 +860,10 @@ struct UnionPair<'a> {
     b: &'a ExprValue,
 }
 
-fn union_values<'a>(a_vals: &'a [ExprValue], b_vals: &'a [ExprValue]) -> (Vec<UnionPair<'a>>, usize) {
+fn union_values<'a>(
+    a_vals: &'a [ExprValue],
+    b_vals: &'a [ExprValue],
+) -> (Vec<UnionPair<'a>>, usize) {
     if a_vals.is_empty() || b_vals.is_empty() {
         return (Vec::new(), 0);
     }
@@ -915,8 +919,8 @@ fn union_values<'a>(a_vals: &'a [ExprValue], b_vals: &'a [ExprValue]) -> (Vec<Un
         b_matched[0] = true;
     }
 
-    let dropped = a_matched.iter().filter(|m| !**m).count()
-        + b_matched.iter().filter(|m| !**m).count();
+    let dropped =
+        a_matched.iter().filter(|m| !**m).count() + b_matched.iter().filter(|m| !**m).count();
     (unions, dropped)
 }
 
@@ -992,18 +996,18 @@ fn eval_node(
                 let v = eval_binary_pair(ref_id, op, u.labels, u.a, u.b)?;
                 out.push(v);
             }
-            if dropped > 0 {
-                if let Some(first) = out.first_mut() {
-                    let notice = Notice {
-                        severity: NoticeSeverity::Warning,
-                        text: format!("{dropped} items dropped from union(s)"),
-                    };
-                    match first {
-                        ExprValue::Number { notices, .. } | ExprValue::Series { notices, .. } => {
-                            notices.push(notice);
-                        }
-                        _ => {}
+            if dropped > 0
+                && let Some(first) = out.first_mut()
+            {
+                let notice = Notice {
+                    severity: NoticeSeverity::Warning,
+                    text: format!("{dropped} items dropped from union(s)"),
+                };
+                match first {
+                    ExprValue::Number { notices, .. } | ExprValue::Series { notices, .. } => {
+                        notices.push(notice);
                     }
+                    _ => {}
                 }
             }
             Ok(out)
@@ -1088,14 +1092,7 @@ fn eval_binary_pair(
                 notices: Vec::new(),
             })
         }
-        (
-            ExprValue::Series {
-                points: a_pts, ..
-            },
-            ExprValue::Series {
-                points: b_pts, ..
-            },
-        ) => {
+        (ExprValue::Series { points: a_pts, .. }, ExprValue::Series { points: b_pts, .. }) => {
             let b_map: HashMap<i64, Option<f64>> = b_pts.iter().copied().collect();
             let mut new_pts = Vec::new();
             for (t, af) in a_pts {
@@ -1244,8 +1241,8 @@ mod tests {
         };
         assert_eq!(points, &[(1000, Some(8.0)), (2000, Some(10.0))]);
 
-        let null_check = eval_math_on_vars("D", "is_null(null()) && !is_number(nan())", &vars, 100)
-            .unwrap();
+        let null_check =
+            eval_math_on_vars("D", "is_null(null()) && !is_number(nan())", &vars, 100).unwrap();
         assert_eq!(null_check, vec![ExprValue::Scalar(Some(1.0))]);
     }
 

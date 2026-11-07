@@ -36,12 +36,12 @@ pub fn classic_reduce(reducer: &str, points: &[(i64, Option<f64>)]) -> CrResult<
         "avg" | "mean" => {
             let mut valid_count = 0usize;
             for f in &vals {
-                if let Some(x) = f {
-                    if !x.is_nan() {
-                        value += *x;
-                        valid_count += 1;
-                        all_null = false;
-                    }
+                if let Some(x) = f
+                    && !x.is_nan()
+                {
+                    value += *x;
+                    valid_count += 1;
+                    all_null = false;
                 }
             }
             if valid_count > 0 {
@@ -50,23 +50,23 @@ pub fn classic_reduce(reducer: &str, points: &[(i64, Option<f64>)]) -> CrResult<
         }
         "sum" => {
             for f in &vals {
-                if let Some(x) = f {
-                    if !x.is_nan() {
-                        value += *x;
-                        all_null = false;
-                    }
+                if let Some(x) = f
+                    && !x.is_nan()
+                {
+                    value += *x;
+                    all_null = false;
                 }
             }
         }
         "min" => {
             value = f64::MAX;
             for f in &vals {
-                if let Some(x) = f {
-                    if !x.is_nan() {
-                        all_null = false;
-                        if *x < value {
-                            value = *x;
-                        }
+                if let Some(x) = f
+                    && !x.is_nan()
+                {
+                    all_null = false;
+                    if *x < value {
+                        value = *x;
                     }
                 }
             }
@@ -74,12 +74,12 @@ pub fn classic_reduce(reducer: &str, points: &[(i64, Option<f64>)]) -> CrResult<
         "max" => {
             value = f64::MIN;
             for f in &vals {
-                if let Some(x) = f {
-                    if !x.is_nan() {
-                        all_null = false;
-                        if *x > value {
-                            value = *x;
-                        }
+                if let Some(x) = f
+                    && !x.is_nan()
+                {
+                    all_null = false;
+                    if *x > value {
+                        value = *x;
                     }
                 }
             }
@@ -90,12 +90,12 @@ pub fn classic_reduce(reducer: &str, points: &[(i64, Option<f64>)]) -> CrResult<
         }
         "last" => {
             for f in vals.iter().rev() {
-                if let Some(x) = f {
-                    if !x.is_nan() {
-                        value = *x;
-                        all_null = false;
-                        break;
-                    }
+                if let Some(x) = f
+                    && !x.is_nan()
+                {
+                    value = *x;
+                    all_null = false;
+                    break;
                 }
             }
         }
@@ -124,21 +124,19 @@ pub fn classic_reduce(reducer: &str, points: &[(i64, Option<f64>)]) -> CrResult<
                     break;
                 }
             }
-            if let Some((newest_idx, newest_val)) = newest {
-                if newest_idx >= 1 {
-                    for f in &vals {
-                        if !nil_or_nan(*f) {
-                            let oldest_val = f.unwrap_or(0.0);
-                            value = match reducer {
-                                "diff" => newest_val - oldest_val,
-                                "diff_abs" => (newest_val - oldest_val).abs(),
-                                "percent_diff" => {
-                                    (newest_val - oldest_val) / oldest_val.abs() * 100.0
-                                }
-                                _ => ((newest_val - oldest_val) / oldest_val * 100.0).abs(),
-                            };
-                            break;
-                        }
+            if let Some((newest_idx, newest_val)) = newest
+                && newest_idx >= 1
+            {
+                for f in &vals {
+                    if !nil_or_nan(*f) {
+                        let oldest_val = f.unwrap_or(0.0);
+                        value = match reducer {
+                            "diff" => newest_val - oldest_val,
+                            "diff_abs" => (newest_val - oldest_val).abs(),
+                            "percent_diff" => (newest_val - oldest_val) / oldest_val.abs() * 100.0,
+                            _ => ((newest_val - oldest_val) / oldest_val * 100.0).abs(),
+                        };
+                        break;
                     }
                 }
             }
@@ -160,18 +158,10 @@ pub fn classic_reduce(reducer: &str, points: &[(i64, Option<f64>)]) -> CrResult<
         }
     }
 
-    if all_null {
-        Ok(None)
-    } else {
-        Ok(Some(value))
-    }
+    if all_null { Ok(None) } else { Ok(Some(value)) }
 }
 
-fn eval_classic_value(
-    eval_type: &str,
-    params: &[f64],
-    val: Option<f64>,
-) -> CrResult<bool> {
+fn eval_classic_value(eval_type: &str, params: &[f64], val: Option<f64>) -> CrResult<bool> {
     if eval_type == "no_value" {
         return Ok(val.is_none());
     }
@@ -194,10 +184,7 @@ fn eval_classic_value(
                 _ => fv <= t,
             })
         }
-        "within_range"
-        | "outside_range"
-        | "within_range_included"
-        | "outside_range_included" => {
+        "within_range" | "outside_range" | "within_range_included" | "outside_range_included" => {
             if params.len() != 2 {
                 return Err(CrError::ExpressionError(
                     "ranged evaluator requires 2 parameters".into(),

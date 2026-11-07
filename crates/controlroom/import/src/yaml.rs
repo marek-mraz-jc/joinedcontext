@@ -34,10 +34,11 @@ fn strip_yaml_comment(line: &str) -> &str {
         match ch {
             '\'' if !in_double => in_single = !in_single,
             '"' if !in_single => in_double = !in_double,
-            '#' if !in_single && !in_double => {
-                if idx == 0 || line.as_bytes()[idx - 1].is_ascii_whitespace() {
-                    return &line[..idx];
-                }
+            '#' if !in_single
+                && !in_double
+                && (idx == 0 || line.as_bytes()[idx - 1].is_ascii_whitespace()) =>
+            {
+                return &line[..idx];
             }
             _ => {}
         }
@@ -204,10 +205,10 @@ fn parse_scalar(s: &str) -> Value {
     if (t.starts_with('"') && t.ends_with('"')) || (t.starts_with('\'') && t.ends_with('\'')) {
         return Value::String(unquote(t));
     }
-    if t.starts_with('[') || t.starts_with('{') {
-        if let Ok(v) = serde_json::from_str::<Value>(t) {
-            return v;
-        }
+    if (t.starts_with('[') || t.starts_with('{'))
+        && let Ok(v) = serde_json::from_str::<Value>(t)
+    {
+        return v;
     }
     match t {
         "true" | "True" | "TRUE" => Value::Bool(true),
@@ -217,7 +218,8 @@ fn parse_scalar(s: &str) -> Value {
             if let Ok(i) = t.parse::<i64>() {
                 Value::from(i)
             } else if let Ok(f) = t.parse::<f64>() {
-                serde_json::Number::from_f64(f).map_or_else(|| Value::String(t.to_owned()), Value::Number)
+                serde_json::Number::from_f64(f)
+                    .map_or_else(|| Value::String(t.to_owned()), Value::Number)
             } else {
                 Value::String(t.to_owned())
             }

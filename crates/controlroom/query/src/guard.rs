@@ -200,13 +200,13 @@ impl OutboundGuard {
             )));
         }
 
-        if let Some(cl) = resp.content_length() {
-            if cl > self.config.max_response_bytes as u64 {
-                return Err(DsError::GuardRefused(format!(
-                    "response content-length {cl} exceeds limit of {} bytes",
-                    self.config.max_response_bytes
-                )));
-            }
+        if let Some(cl) = resp.content_length()
+            && cl > self.config.max_response_bytes as u64
+        {
+            return Err(DsError::GuardRefused(format!(
+                "response content-length {cl} exceeds limit of {} bytes",
+                self.config.max_response_bytes
+            )));
         }
 
         let headers: Vec<(String, String)> = resp
@@ -285,12 +285,12 @@ fn check_ipv4_allowed(ip: Ipv4Addr, allow_loopback_for_tests: bool) -> Result<()
     }
     // CGNAT 100.64.0.0/10 and benchmark 198.18.0.0/15
     for cidr in ["100.64.0.0/10", "198.18.0.0/15"] {
-        if let Ok(net) = Ipv4Net::from_str(cidr) {
-            if net.contains(&ip) {
-                return Err(DsError::GuardRefused(format!(
-                    "blocked reserved IPv4 range {ip} ({cidr})"
-                )));
-            }
+        if let Ok(net) = Ipv4Net::from_str(cidr)
+            && net.contains(&ip)
+        {
+            return Err(DsError::GuardRefused(format!(
+                "blocked reserved IPv4 range {ip} ({cidr})"
+            )));
         }
     }
     Ok(())
@@ -305,7 +305,10 @@ fn check_ipv6_allowed(ip: Ipv6Addr, allow_loopback_for_tests: bool) -> Result<()
             "blocked IPv6 loopback address {ip}"
         )));
     }
-    if ip.is_unspecified() || ip.is_multicast() || ip.is_unique_local() || ip.is_unicast_link_local()
+    if ip.is_unspecified()
+        || ip.is_multicast()
+        || ip.is_unique_local()
+        || ip.is_unicast_link_local()
     {
         return Err(DsError::GuardRefused(format!(
             "blocked non-public IPv6 address {ip}"
@@ -313,12 +316,12 @@ fn check_ipv6_allowed(ip: Ipv6Addr, allow_loopback_for_tests: bool) -> Result<()
     }
     // AWS IPv6 metadata fd00:ec2::254 and documentation 2001:db8::/32
     for cidr in ["fd00:ec2::/32", "2001:db8::/32"] {
-        if let Ok(net) = Ipv6Net::from_str(cidr) {
-            if net.contains(&ip) {
-                return Err(DsError::GuardRefused(format!(
-                    "blocked reserved IPv6 address {ip}"
-                )));
-            }
+        if let Ok(net) = Ipv6Net::from_str(cidr)
+            && net.contains(&ip)
+        {
+            return Err(DsError::GuardRefused(format!(
+                "blocked reserved IPv6 address {ip}"
+            )));
         }
     }
     Ok(())
@@ -364,9 +367,25 @@ mod tests {
             allow_hosts: vec!["metrics.example.com".into()],
             ..GuardConfig::default()
         });
-        assert!(guard.validate_url("https://metrics.example.com/api/v1/query").is_ok());
-        assert!(guard.validate_url("http://metrics.example.com/api/v1/query").is_err());
-        assert!(guard.validate_url("https://evil.example.com/api/v1/query").is_err());
-        assert!(guard.validate_url("https://user:pass@metrics.example.com/api").is_err());
+        assert!(
+            guard
+                .validate_url("https://metrics.example.com/api/v1/query")
+                .is_ok()
+        );
+        assert!(
+            guard
+                .validate_url("http://metrics.example.com/api/v1/query")
+                .is_err()
+        );
+        assert!(
+            guard
+                .validate_url("https://evil.example.com/api/v1/query")
+                .is_err()
+        );
+        assert!(
+            guard
+                .validate_url("https://user:pass@metrics.example.com/api")
+                .is_err()
+        );
     }
 }

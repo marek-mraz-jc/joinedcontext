@@ -46,11 +46,8 @@ pub trait ControlroomStore: Send + Sync {
 
     // Datasources
     fn list_datasources(&self, org_id: OrgId) -> StoreFuture<'_, Vec<DatasourceRecord>>;
-    fn get_datasource(
-        &self,
-        org_id: OrgId,
-        uid: &str,
-    ) -> StoreFuture<'_, Option<DatasourceRecord>>;
+    fn get_datasource(&self, org_id: OrgId, uid: &str)
+    -> StoreFuture<'_, Option<DatasourceRecord>>;
     fn get_datasource_by_name(
         &self,
         org_id: OrgId,

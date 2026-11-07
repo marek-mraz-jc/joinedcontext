@@ -71,13 +71,13 @@ impl PrometheusDatasource {
 #[must_use]
 pub fn format_prom_interval(ms: u64) -> String {
     let ms = ms.max(1);
-    if ms % 86_400_000 == 0 {
+    if ms.is_multiple_of(86_400_000) {
         format!("{}d", ms / 86_400_000)
-    } else if ms % 3_600_000 == 0 {
+    } else if ms.is_multiple_of(3_600_000) {
         format!("{}h", ms / 3_600_000)
-    } else if ms % 60_000 == 0 {
+    } else if ms.is_multiple_of(60_000) {
         format!("{}m", ms / 60_000)
-    } else if ms % 1_000 == 0 {
+    } else if ms.is_multiple_of(1_000) {
         format!("{}s", ms / 1_000)
     } else {
         format!("{ms}ms")
@@ -243,23 +243,23 @@ fn parse_prom_response_to_frames(
         let mut vals = Vec::new();
 
         if result_type == "vector" {
-            if let Some(pair) = item.get("value").and_then(Value::as_array) {
-                if pair.len() == 2 {
+            if let Some(pair) = item.get("value").and_then(Value::as_array)
+                && pair.len() == 2
+            {
+                let ts_sec = pair[0].as_f64().unwrap_or(0.0);
+                let val_str = pair[1].as_str().unwrap_or("NaN");
+                times.push((ts_sec * 1000.0) as i64);
+                vals.push(val_str.parse::<f64>().ok());
+            }
+        } else if let Some(values_arr) = item.get("values").and_then(Value::as_array) {
+            for pair_val in values_arr {
+                if let Some(pair) = pair_val.as_array()
+                    && pair.len() == 2
+                {
                     let ts_sec = pair[0].as_f64().unwrap_or(0.0);
                     let val_str = pair[1].as_str().unwrap_or("NaN");
                     times.push((ts_sec * 1000.0) as i64);
                     vals.push(val_str.parse::<f64>().ok());
-                }
-            }
-        } else if let Some(values_arr) = item.get("values").and_then(Value::as_array) {
-            for pair_val in values_arr {
-                if let Some(pair) = pair_val.as_array() {
-                    if pair.len() == 2 {
-                        let ts_sec = pair[0].as_f64().unwrap_or(0.0);
-                        let val_str = pair[1].as_str().unwrap_or("NaN");
-                        times.push((ts_sec * 1000.0) as i64);
-                        vals.push(val_str.parse::<f64>().ok());
-                    }
                 }
             }
         }
@@ -316,15 +316,12 @@ fn build_prom_table_frame(ref_id: &str, expr: &str, results: &[Value]) -> Frame 
                 col.push(v);
             }
         }
-        let pair = item
-            .get("value")
-            .and_then(Value::as_array)
-            .or_else(|| {
-                item.get("values")
-                    .and_then(Value::as_array)
-                    .and_then(|a| a.last())
-                    .and_then(Value::as_array)
-            });
+        let pair = item.get("value").and_then(Value::as_array).or_else(|| {
+            item.get("values")
+                .and_then(Value::as_array)
+                .and_then(|a| a.last())
+                .and_then(Value::as_array)
+        });
         if let Some(p) = pair {
             let ts = (p.first().and_then(Value::as_f64).unwrap_or(0.0) * 1000.0) as i64;
             let v = p
@@ -382,14 +379,12 @@ impl Datasource for PrometheusDatasource {
                 if q.hide {
                     continue;
                 }
-                let raw_expr = q
-                    .model
-                    .get("expr")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| DsError::InvalidQuery {
+                let raw_expr = q.model.get("expr").and_then(Value::as_str).ok_or_else(|| {
+                    DsError::InvalidQuery {
                         ref_id: q.ref_id.clone(),
                         reason: "missing 'expr' field".into(),
-                    })?;
+                    }
+                })?;
 
                 let interval_factor = q
                     .model
@@ -456,12 +451,11 @@ impl Datasource for PrometheusDatasource {
                     });
                 }
 
-                let payload: Value = serde_json::from_slice(&resp.body).map_err(|e| {
-                    DsError::Upstream {
+                let payload: Value =
+                    serde_json::from_slice(&resp.body).map_err(|e| DsError::Upstream {
                         status: 502,
                         message: format!("invalid JSON from Prometheus: {e}"),
-                    }
-                })?;
+                    })?;
 
                 let frames = parse_prom_response_to_frames(
                     &q.ref_id,
@@ -494,13 +488,8 @@ impl Datasource for PrometheusDatasource {
                 })
                 .await
             {
-                Ok(resp) if resp.status == 200 => {
-                    Health::ok("Data source is working")
-                }
-                Ok(resp) => Health::error(format!(
-                    "Prometheus returned HTTP {}",
-                    resp.status
-                )),
+                Ok(resp) if resp.status == 200 => Health::ok("Data source is working"),
+                Ok(resp) => Health::error(format!("Prometheus returned HTTP {}", resp.status)),
                 Err(e) => Health::error(format!("unreachable: {e}")),
             }
         })
@@ -568,10 +557,11 @@ impl Datasource for PrometheusDatasource {
                     timeout: Some(ctx.timeout),
                 })
                 .await?;
-            let data: Value = serde_json::from_slice(&resp.body).map_err(|e| DsError::Upstream {
-                status: 502,
-                message: format!("invalid JSON in resource response: {e}"),
-            })?;
+            let data: Value =
+                serde_json::from_slice(&resp.body).map_err(|e| DsError::Upstream {
+                    status: 502,
+                    message: format!("invalid JSON in resource response: {e}"),
+                })?;
             Ok(ResourceResp { data })
         })
     }
@@ -620,10 +610,12 @@ impl Datasource for PrometheusDatasource {
     }
 
     fn import(&self, grafana_target: &Value) -> Result<ImportOutcome, DsError> {
-        let obj = grafana_target.as_object().ok_or_else(|| DsError::InvalidQuery {
-            ref_id: "A".into(),
-            reason: "target must be a JSON object".into(),
-        })?;
+        let obj = grafana_target
+            .as_object()
+            .ok_or_else(|| DsError::InvalidQuery {
+                ref_id: "A".into(),
+                reason: "target must be a JSON object".into(),
+            })?;
         let ref_id = obj
             .get("refId")
             .and_then(Value::as_str)
@@ -668,10 +660,7 @@ pub fn parse_label_values_call(q: &str) -> Option<(Option<String>, String)> {
         .strip_suffix(')')?
         .trim();
     if let Some((first, second)) = inner.rsplit_once(',') {
-        Some((
-            Some(first.trim().to_owned()),
-            second.trim().to_owned(),
-        ))
+        Some((Some(first.trim().to_owned()), second.trim().to_owned()))
     } else if !inner.is_empty() {
         Some((None, inner.to_owned()))
     } else {

@@ -272,10 +272,7 @@ pub fn parse_datasources_yaml(
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
             .map_or_else(|| safe_uid_from_name(&name), str::to_owned);
-        let access_raw = m
-            .get("access")
-            .and_then(Value::as_str)
-            .unwrap_or("proxy");
+        let access_raw = m.get("access").and_then(Value::as_str).unwrap_or("proxy");
         let access = if access_raw == "direct" || access_raw == "proxy" {
             access_raw.to_owned()
         } else {
@@ -300,10 +297,7 @@ pub fn parse_datasources_yaml(
                 ));
             }
         }
-        let editable = m
-            .get("editable")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+        let editable = m.get("editable").and_then(Value::as_bool).unwrap_or(false);
         let json_data = m
             .get("jsonData")
             .or_else(|| m.get("json_data"))
@@ -315,17 +309,16 @@ pub fn parse_datasources_yaml(
             .get("secureJsonData")
             .or_else(|| m.get("secure_json_data"))
             .and_then(Value::as_object)
+            && !sec.is_empty()
         {
-            if !sec.is_empty() {
-                findings.push(FeatureFinding {
-                    pointer: format!("{ptr}/secureJsonData"),
-                    code: "provisioning.secureJsonData".into(),
-                    verdict: Verdict::Refuses,
-                    message: format!(
-                        "datasource '{name}' carries raw secureJsonData; name a secretRef instead"
-                    ),
-                });
-            }
+            findings.push(FeatureFinding {
+                pointer: format!("{ptr}/secureJsonData"),
+                code: "provisioning.secureJsonData".into(),
+                verdict: Verdict::Refuses,
+                message: format!(
+                    "datasource '{name}' carries raw secureJsonData; name a secretRef instead"
+                ),
+            });
         }
 
         let secret_refs: BTreeMap<String, String> = m
@@ -339,10 +332,10 @@ pub fn parse_datasources_yaml(
             .unwrap_or_default();
 
         let mut allow_hosts = Vec::new();
-        if let Ok(parsed_url) = url::Url::parse(&url) {
-            if let Some(h) = parsed_url.host_str() {
-                allow_hosts.push(h.to_owned());
-            }
+        if let Ok(parsed_url) = url::Url::parse(&url)
+            && let Some(h) = parsed_url.host_str()
+        {
+            allow_hosts.push(h.to_owned());
         }
 
         findings.push(FeatureFinding {

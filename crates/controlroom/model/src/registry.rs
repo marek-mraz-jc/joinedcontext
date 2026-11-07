@@ -76,15 +76,39 @@ pub fn controlroom_odata_service() -> Service {
         description: "Grafana classic dashboards stored at schemaVersion 42.".into(),
         key: "uid".into(),
         fields: vec![
-            non_null("uid", FieldKind::String, "Unique dashboard UID within the organization"),
+            non_null(
+                "uid",
+                FieldKind::String,
+                "Unique dashboard UID within the organization",
+            ),
             non_null("title", FieldKind::String, "Dashboard title"),
-            non_null("slug", FieldKind::String, "URL-safe slug derived from title"),
+            non_null(
+                "slug",
+                FieldKind::String,
+                "URL-safe slug derived from title",
+            ),
             Field::new("folderUid", FieldKind::String, "Parent folder UID"),
-            non_null("panelCount", FieldKind::Integer, "Number of visualization panels"),
+            non_null(
+                "panelCount",
+                FieldKind::Integer,
+                "Number of visualization panels",
+            ),
             non_null("version", FieldKind::Integer, "Dashboard version number"),
-            non_null("schemaVersion", FieldKind::Integer, "Grafana JSON schemaVersion (42)"),
-            non_null("isProvisioned", FieldKind::Boolean, "Whether provisioned from code"),
-            Field::new("updatedBy", FieldKind::String, "Last actor who updated the dashboard"),
+            non_null(
+                "schemaVersion",
+                FieldKind::Integer,
+                "Grafana JSON schemaVersion (42)",
+            ),
+            non_null(
+                "isProvisioned",
+                FieldKind::Boolean,
+                "Whether provisioned from code",
+            ),
+            Field::new(
+                "updatedBy",
+                FieldKind::String,
+                "Last actor who updated the dashboard",
+            ),
             Field::new("updatedAt", FieldKind::DateTime, "Last update timestamp"),
         ],
         rules: read_propose_approve_rules("dashboards"),
@@ -96,13 +120,25 @@ pub fn controlroom_odata_service() -> Service {
         description: "Immutable version history entries of dashboards.".into(),
         key: "id".into(),
         fields: vec![
-            non_null("id", FieldKind::String, "Composite key {dashboardUid}:{version}"),
+            non_null(
+                "id",
+                FieldKind::String,
+                "Composite key {dashboardUid}:{version}",
+            ),
             non_null("dashboardUid", FieldKind::String, "Dashboard UID"),
             non_null("version", FieldKind::Integer, "Version number"),
             non_null("parentVersion", FieldKind::Integer, "Parent version number"),
-            non_null("restoredFrom", FieldKind::Integer, "Version restored from, or 0"),
+            non_null(
+                "restoredFrom",
+                FieldKind::Integer,
+                "Version restored from, or 0",
+            ),
             non_null("message", FieldKind::String, "Save commit message"),
-            Field::new("createdBy", FieldKind::String, "Actor who saved this version"),
+            Field::new(
+                "createdBy",
+                FieldKind::String,
+                "Actor who saved this version",
+            ),
             Field::new("createdAt", FieldKind::DateTime, "Timestamp when saved"),
         ],
         rules: read_only_rules("dashboards"),
@@ -132,12 +168,28 @@ pub fn controlroom_odata_service() -> Service {
         fields: vec![
             non_null("uid", FieldKind::String, "Datasource UID"),
             non_null("name", FieldKind::String, "Datasource display name"),
-            non_null("type", FieldKind::String, "Plugin kind (prometheus, ngsild, odata, postgres, wasm:<id>)"),
+            non_null(
+                "type",
+                FieldKind::String,
+                "Plugin kind (prometheus, ngsild, odata, postgres, wasm:<id>)",
+            ),
             non_null("access", FieldKind::String, "Access mode (proxy)"),
             non_null("url", FieldKind::String, "Upstream endpoint URL"),
-            non_null("isDefault", FieldKind::Boolean, "Whether default datasource for the organization"),
-            non_null("readOnly", FieldKind::Boolean, "Whether read-only / provisioned"),
-            Field::new("wasmDigest", FieldKind::String, "Pinned SHA-256 digest for WASM plugins"),
+            non_null(
+                "isDefault",
+                FieldKind::Boolean,
+                "Whether default datasource for the organization",
+            ),
+            non_null(
+                "readOnly",
+                FieldKind::Boolean,
+                "Whether read-only / provisioned",
+            ),
+            Field::new(
+                "wasmDigest",
+                FieldKind::String,
+                "Pinned SHA-256 digest for WASM plugins",
+            ),
             non_null("version", FieldKind::Integer, "Datasource version"),
         ],
         rules: read_propose_approve_rules("datasources"),
@@ -167,10 +219,26 @@ pub fn controlroom_odata_service() -> Service {
         fields: vec![
             non_null("uid", FieldKind::String, "Public dashboard UID"),
             non_null("dashboardUid", FieldKind::String, "Target dashboard UID"),
-            non_null("isEnabled", FieldKind::Boolean, "Whether public access is enabled"),
-            non_null("timeSelectionEnabled", FieldKind::Boolean, "Whether anonymous viewer can pick time range"),
-            non_null("annotationsEnabled", FieldKind::Boolean, "Whether annotations are shown"),
-            non_null("showQueryText", FieldKind::Boolean, "Whether executed query text is included"),
+            non_null(
+                "isEnabled",
+                FieldKind::Boolean,
+                "Whether public access is enabled",
+            ),
+            non_null(
+                "timeSelectionEnabled",
+                FieldKind::Boolean,
+                "Whether anonymous viewer can pick time range",
+            ),
+            non_null(
+                "annotationsEnabled",
+                FieldKind::Boolean,
+                "Whether annotations are shown",
+            ),
+            non_null(
+                "showQueryText",
+                FieldKind::Boolean,
+                "Whether executed query text is included",
+            ),
             non_null("share", FieldKind::String, "Share mode (public)"),
         ],
         rules: read_propose_approve_rules("dashboards"),
@@ -712,10 +780,7 @@ impl OperationRegistry {
                 "EditorSchema",
                 &[("kind", "Edm.String"), ("schemaJson", "Edm.String")][..],
             ),
-            (
-                "ResourceResponse",
-                &[("itemsJson", "Edm.String")][..],
-            ),
+            ("ResourceResponse", &[("itemsJson", "Edm.String")][..]),
             (
                 "PanelView",
                 &[
@@ -787,9 +852,7 @@ impl OperationRegistry {
             for param in &op.params {
                 xml.push_str(&format!(
                     "        <Parameter Name=\"{}\" Type=\"{}\" Nullable=\"{}\"/>\n",
-                    param.name,
-                    param.edm_type,
-                    !param.required
+                    param.name, param.edm_type, !param.required
                 ));
             }
             xml.push_str(&format!(
@@ -821,7 +884,9 @@ impl OperationRegistry {
                 op.name
             ));
         }
-        xml.push_str("      </EntityContainer>\n    </Schema>\n  </edmx:DataServices>\n</edmx:Edmx>\n");
+        xml.push_str(
+            "      </EntityContainer>\n    </Schema>\n  </edmx:DataServices>\n</edmx:Edmx>\n",
+        );
         xml
     }
 

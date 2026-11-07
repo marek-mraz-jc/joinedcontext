@@ -29,6 +29,7 @@ pub struct CacheKey {
 
 impl CacheKey {
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         org_id: OrgId,
         instance_id: InstanceId,
@@ -78,6 +79,7 @@ pub struct PublicCacheKey {
 
 impl PublicCacheKey {
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         org_id: OrgId,
         instance_id: InstanceId,
@@ -145,17 +147,15 @@ impl QueryCache {
     #[must_use]
     pub fn get(&self, key: &CacheKey) -> Option<Vec<FrameSet>> {
         let mut guard = self.orgs.lock();
-        let bucket = guard
-            .entry((key.org_id, key.instance_id))
-            .or_default();
+        let bucket = guard.entry((key.org_id, key.instance_id)).or_default();
         let now = Instant::now();
-        if let Some(entry) = bucket.entries.get(key) {
-            if entry.expires_at > now {
-                let res = entry.value.clone();
-                let stat = bucket.stats.entry(key.datasource_uid.clone()).or_default();
-                stat.0 += 1;
-                return Some(res);
-            }
+        if let Some(entry) = bucket.entries.get(key)
+            && entry.expires_at > now
+        {
+            let res = entry.value.clone();
+            let stat = bucket.stats.entry(key.datasource_uid.clone()).or_default();
+            stat.0 += 1;
+            return Some(res);
         }
         if let Some(expired) = bucket.entries.remove(key) {
             bucket.bytes_used = bucket.bytes_used.saturating_sub(expired.bytes);
@@ -172,9 +172,7 @@ impl QueryCache {
             return;
         }
         let mut guard = self.orgs.lock();
-        let bucket = guard
-            .entry((key.org_id, key.instance_id))
-            .or_default();
+        let bucket = guard.entry((key.org_id, key.instance_id)).or_default();
 
         if let Some(old) = bucket.entries.remove(&key) {
             bucket.bytes_used = bucket.bytes_used.saturating_sub(old.bytes);
@@ -206,20 +204,18 @@ impl QueryCache {
     #[must_use]
     pub fn get_public(&self, key: &PublicCacheKey) -> Option<Vec<FrameSet>> {
         let mut guard = self.orgs.lock();
-        let bucket = guard
-            .entry((key.org_id, key.instance_id))
-            .or_default();
+        let bucket = guard.entry((key.org_id, key.instance_id)).or_default();
         let now = Instant::now();
-        if let Some(entry) = bucket.public_entries.get(key) {
-            if entry.expires_at > now {
-                let res = entry.value.clone();
-                let stat = bucket
-                    .stats
-                    .entry(format!("public:{}", key.dashboard_uid))
-                    .or_default();
-                stat.0 += 1;
-                return Some(res);
-            }
+        if let Some(entry) = bucket.public_entries.get(key)
+            && entry.expires_at > now
+        {
+            let res = entry.value.clone();
+            let stat = bucket
+                .stats
+                .entry(format!("public:{}", key.dashboard_uid))
+                .or_default();
+            stat.0 += 1;
+            return Some(res);
         }
         if let Some(expired) = bucket.public_entries.remove(key) {
             bucket.bytes_used = bucket.bytes_used.saturating_sub(expired.bytes);
@@ -239,9 +235,7 @@ impl QueryCache {
             return;
         }
         let mut guard = self.orgs.lock();
-        let bucket = guard
-            .entry((key.org_id, key.instance_id))
-            .or_default();
+        let bucket = guard.entry((key.org_id, key.instance_id)).or_default();
         if let Some(old) = bucket.public_entries.remove(&key) {
             bucket.bytes_used = bucket.bytes_used.saturating_sub(old.bytes);
         }

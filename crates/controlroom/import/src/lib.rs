@@ -12,8 +12,8 @@ pub use provisioning::{
 
 use chrono::Utc;
 use controlroom_model::{
-    CanonicalJson, ControlroomStore, CrError, CrResult, DataSourceInfo, DashboardDocument,
-    DashboardRecord, DatasourceIndex, DatasourceRecord, FeatureFinding, FolderRecord,
+    CanonicalJson, ControlroomStore, CrError, CrResult, DashboardDocument, DashboardRecord,
+    DataSourceInfo, DatasourceIndex, DatasourceRecord, FeatureFinding, FolderRecord,
     ImportReportRecord, InputLimits, InstallationId, InstanceId, LibraryPanelRecord,
     MigrationReport, OrgId, Verdict, classify_and_validate, migrate_to_latest, sha256_hex,
 };
@@ -111,11 +111,10 @@ impl ImportReport {
             ));
         }
         if !self.provisioning_findings.is_empty()
-            || self.dashboards.iter().any(|d| {
-                d.findings
-                    .iter()
-                    .any(|f| f.verdict != Verdict::Supports)
-            })
+            || self
+                .dashboards
+                .iter()
+                .any(|d| d.findings.iter().any(|f| f.verdict != Verdict::Supports))
         {
             md.push_str("\n## Findings\n\n");
             for pf in &self.provisioning_findings {
@@ -171,14 +170,13 @@ pub fn inline_library_panels(
             .and_then(|lp| lp.get("uid"))
             .and_then(Value::as_str)
             .map(str::to_owned);
-        if let Some(uid) = lib_uid {
-            if let Some(lib_rec) = library_panels.get(&uid) {
-                if let Some(model_obj) = lib_rec.model.as_object() {
-                    for (k, v) in model_obj {
-                        if k != "id" && k != "gridPos" && k != "libraryPanel" {
-                            p_obj.entry(k.clone()).or_insert_with(|| v.clone());
-                        }
-                    }
+        if let Some(uid) = lib_uid
+            && let Some(lib_rec) = library_panels.get(&uid)
+            && let Some(model_obj) = lib_rec.model.as_object()
+        {
+            for (k, v) in model_obj {
+                if k != "id" && k != "gridPos" && k != "libraryPanel" {
+                    p_obj.entry(k.clone()).or_insert_with(|| v.clone());
                 }
             }
         }
@@ -209,12 +207,11 @@ pub fn prepare_dashboard(
     let migration = migrate_to_latest(&mut dash_val, ds_index)?;
     let canonical_val = CanonicalJson::export_dashboard_json(&dash_val);
 
-    let doc: DashboardDocument = serde_json::from_value(canonical_val.clone()).map_err(|e| {
-        CrError::Unprocessable {
+    let doc: DashboardDocument =
+        serde_json::from_value(canonical_val.clone()).map_err(|e| CrError::Unprocessable {
             detail: format!("dashboard failed schema validation: {e}"),
             errors: vec![e.to_string()],
-        }
-    })?;
+        })?;
 
     let val_report = classify_and_validate(raw_bytes_len, &doc, known_ds_uids, limits)?;
     let idx = doc.extract_index();
@@ -265,13 +262,8 @@ pub fn check_dashboards_offline(
     let mut supported_count = 0usize;
 
     for item in inputs {
-        let (_, _, mut rep) = prepare_dashboard(
-            &item.raw_json,
-            &ds_index,
-            &known_uids,
-            &empty_libs,
-            limits,
-        )?;
+        let (_, _, mut rep) =
+            prepare_dashboard(&item.raw_json, &ds_index, &known_uids, &empty_libs, limits)?;
         if rep.folder_uid.is_none() {
             rep.folder_uid.clone_from(&item.folder_uid);
         }
@@ -311,6 +303,7 @@ pub fn check_dashboards_offline(
 }
 
 /// Imports one or more dashboards into `store` (or performs a dry run when `dry_run == true`) (R2, §7.2).
+#[allow(clippy::too_many_arguments)]
 pub async fn import_dashboards(
     store: &dyn ControlroomStore,
     installation_id: InstallationId,
@@ -490,7 +483,10 @@ pub struct PlanBundle {
 }
 
 /// Computes a deterministic SHA-256 digest of the organization's live folders, datasources, and dashboards.
-pub async fn compute_org_state_etag(store: &dyn ControlroomStore, org_id: OrgId) -> CrResult<String> {
+pub async fn compute_org_state_etag(
+    store: &dyn ControlroomStore,
+    org_id: OrgId,
+) -> CrResult<String> {
     let folders = store.list_folders(org_id).await?;
     let datasources = store.list_datasources(org_id).await?;
     let dashboards = store.list_dashboards(org_id).await?;
