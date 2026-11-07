@@ -12,13 +12,33 @@ use crate::state::{ControlroomState, error_response, resolve_request_ctx};
 use axum::extract::{Path, Query as AxumQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post, put};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
 use controlroom_import::export_dashboard;
-use controlroom_model::{
-    Action, CrError, DatasourceRecord, FolderRecord, ObjectTarget, OrgId,
-};
+use controlroom_model::RequestCtx;
+
+/// `ctx` with `org_id` as the active organization (the authorizer only decides inside it).
+fn ctx_in_org(ctx: &RequestCtx, org_id: OrgId) -> RequestCtx {
+    let mut c = ctx.clone();
+    c.org_id = org_id;
+    c
+}
+
+fn can_read_folder(state: &ControlroomState, ctx: &RequestCtx, folder_uid: &str) -> bool {
+    state
+        .authorizer
+        .check(
+            ctx,
+            Action::Read,
+            &ObjectTarget::Folder {
+                org_id: ctx.org_id,
+                folder_uid: folder_uid.to_owned(),
+            },
+        )
+        .allowed
+}
+use controlroom_model::{Action, CrError, DatasourceRecord, FolderRecord, ObjectTarget, OrgId};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -42,8 +62,21 @@ struct CreateOrgReq {
 
 async fn compat_create_org(
     State(state): State<ControlroomState>,
+    headers: HeaderMap,
     Json(req): Json<CreateOrgReq>,
 ) -> Response {
+    // Creating an organization is an installation admin act: admin of the main organization.
+    let ctx = ctx_in_org(&resolve_request_ctx(&state, &headers), state.default_org_id);
+    let dec = state.authorizer.check(
+        &ctx,
+        Action::Admin,
+        &ObjectTarget::Organization {
+            org_id: state.default_org_id,
+        },
+    );
+    if let Err(e) = dec.into_result("Organization not found") {
+        return error_response(&e);
+    }
     let mut reg = state.org_registry.write();
     if reg.by_name.contains_key(&req.name) {
         return error_response(&CrError::Conflict("Organization name taken".into()));
@@ -64,12 +97,36 @@ async fn compat_create_org(
 
 async fn compat_get_org_by_name(
     State(state): State<ControlroomState>,
+    headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Response {
-    let reg = state.org_registry.read();
-    let Some(&(num, org_id)) = reg.by_name.get(&name) else {
+    let ctx = resolve_request_ctx(&state, &headers);
+    let found = state.org_registry.read().by_name.get(&name).copied();
+    let Some((num, org_id)) = found else {
         return error_response(&CrError::NotFound("Organization not found".into()));
     };
+    // Only a member (or the installation admin) learns that the organization exists.
+    let member = state
+        .authorizer
+        .check(
+            &ctx_in_org(&ctx, org_id),
+            Action::Read,
+            &ObjectTarget::Organization { org_id },
+        )
+        .allowed;
+    let installation_admin = state
+        .authorizer
+        .check(
+            &ctx_in_org(&ctx, state.default_org_id),
+            Action::Admin,
+            &ObjectTarget::Organization {
+                org_id: state.default_org_id,
+            },
+        )
+        .allowed;
+    if !member && !installation_admin {
+        return error_response(&CrError::NotFound("Organization not found".into()));
+    }
     (
         StatusCode::OK,
         Json(json!({
@@ -87,6 +144,14 @@ async fn compat_get_current_org(
     headers: HeaderMap,
 ) -> Response {
     let ctx = resolve_request_ctx(&state, &headers);
+    let dec = state.authorizer.check(
+        &ctx,
+        Action::Read,
+        &ObjectTarget::Organization { org_id: ctx.org_id },
+    );
+    if let Err(e) = dec.into_result("Organization not found") {
+        return error_response(&e);
+    }
     let reg = state.org_registry.read();
     let (num, name) = reg
         .by_num
@@ -199,19 +264,22 @@ async fn compat_add_datasource(
             "data source with the same uid already exists".into(),
         ));
     }
-    if let Ok(Some(_)) = state.store.get_datasource_by_name(ctx.org_id, &req.name).await {
+    if let Ok(Some(_)) = state
+        .store
+        .get_datasource_by_name(ctx.org_id, &req.name)
+        .await
+    {
         return error_response(&CrError::Conflict(
             "data source with the same name already exists".into(),
         ));
     }
 
     let mut allow_hosts = req.allow_hosts;
-    if allow_hosts.is_empty() {
-        if let Ok(u) = url::Url::parse(&req.url) {
-            if let Some(h) = u.host_str() {
-                allow_hosts.push(h.to_owned());
-            }
-        }
+    if allow_hosts.is_empty()
+        && let Ok(u) = url::Url::parse(&req.url)
+        && let Some(h) = u.host_str()
+    {
+        allow_hosts.push(h.to_owned());
     }
 
     let now = Utc::now();
@@ -333,11 +401,8 @@ async fn compat_get_datasource_by_uid(
     match state.store.get_datasource(ctx.org_id, &uid).await {
         Ok(Some(ds)) => {
             // Never return secret values: only list secureJsonFields booleans like Grafana
-            let secure_fields: BTreeMap<String, bool> = ds
-                .secret_refs
-                .keys()
-                .map(|k| (k.clone(), true))
-                .collect();
+            let secure_fields: BTreeMap<String, bool> =
+                ds.secret_refs.keys().map(|k| (k.clone(), true)).collect();
             (
                 StatusCode::OK,
                 Json(json!({
@@ -438,10 +503,12 @@ async fn compat_create_folder(
     if let Err(e) = dec.into_result("Organization not found") {
         return error_response(&e);
     }
-    let uid = req
-        .uid
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| format!("folder-{}", req.title.to_ascii_lowercase().replace(' ', "-")));
+    let uid = req.uid.filter(|s| !s.is_empty()).unwrap_or_else(|| {
+        format!(
+            "folder-{}",
+            req.title.to_ascii_lowercase().replace(' ', "-")
+        )
+    });
     let now = Utc::now();
     let rec = FolderRecord {
         installation_id: state.installation_id,
@@ -483,6 +550,7 @@ async fn compat_list_folders(
         Ok(list) => {
             let hits: Vec<Value> = list
                 .into_iter()
+                .filter(|f| can_read_folder(&state, &ctx, &f.uid))
                 .enumerate()
                 .map(|(i, f)| {
                     json!({
@@ -505,6 +573,9 @@ async fn compat_get_folder_by_uid(
     Path(uid): Path<String>,
 ) -> Response {
     let ctx = resolve_request_ctx(&state, &headers);
+    if !can_read_folder(&state, &ctx, &uid) {
+        return error_response(&CrError::NotFound("Folder not found".into()));
+    }
     match state.store.get_folder(ctx.org_id, &uid).await {
         Ok(Some(f)) => (
             StatusCode::OK,
@@ -720,61 +791,60 @@ async fn compat_search(
     AxumQuery(params): AxumQuery<SearchParams>,
 ) -> Response {
     let ctx = resolve_request_ctx(&state, &headers);
-    let q_lower = params
-        .query
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let q_lower = params.query.as_deref().unwrap_or("").to_ascii_lowercase();
     let mut hits = Vec::new();
 
-    if params.search_type.as_deref() != Some("dash-db") {
-        if let Ok(folders) = state.store.list_folders(ctx.org_id).await {
-            for f in folders {
-                if q_lower.is_empty() || f.title.to_ascii_lowercase().contains(&q_lower) {
-                    hits.push(json!({
-                        "uid": f.uid,
-                        "title": f.title,
-                        "type": "dash-folder",
-                        "url": format!("/dashboards/f/{}", f.uid),
-                    }));
-                }
+    if params.search_type.as_deref() != Some("dash-db")
+        && let Ok(folders) = state.store.list_folders(ctx.org_id).await
+    {
+        for f in folders {
+            if !can_read_folder(&state, &ctx, &f.uid) {
+                continue;
+            }
+            if q_lower.is_empty() || f.title.to_ascii_lowercase().contains(&q_lower) {
+                hits.push(json!({
+                    "uid": f.uid,
+                    "title": f.title,
+                    "type": "dash-folder",
+                    "url": format!("/dashboards/f/{}", f.uid),
+                }));
             }
         }
     }
 
-    if params.search_type.as_deref() != Some("dash-folder") {
-        if let Ok(dashboards) = state.store.list_dashboards(ctx.org_id).await {
-            for d in dashboards {
-                let readable = state
-                    .authorizer
-                    .check(
-                        &ctx,
-                        Action::Read,
-                        &ObjectTarget::Dashboard {
-                            org_id: ctx.org_id,
-                            dashboard_uid: d.uid.clone(),
-                            folder_uid: d.folder_uid.clone(),
-                        },
-                    )
-                    .allowed;
-                if !readable {
-                    continue;
-                }
-                let q_ok = q_lower.is_empty() || d.title.to_ascii_lowercase().contains(&q_lower);
-                let tag_ok = params
-                    .tag
-                    .as_ref()
-                    .is_none_or(|t| d.tags.iter().any(|dt| dt == t));
-                if q_ok && tag_ok {
-                    hits.push(json!({
-                        "uid": d.uid,
-                        "title": d.title,
-                        "type": "dash-db",
-                        "url": format!("/d/{}/{}", d.uid, d.slug),
-                        "tags": d.tags,
-                        "folderUid": d.folder_uid,
-                    }));
-                }
+    if params.search_type.as_deref() != Some("dash-folder")
+        && let Ok(dashboards) = state.store.list_dashboards(ctx.org_id).await
+    {
+        for d in dashboards {
+            let readable = state
+                .authorizer
+                .check(
+                    &ctx,
+                    Action::Read,
+                    &ObjectTarget::Dashboard {
+                        org_id: ctx.org_id,
+                        dashboard_uid: d.uid.clone(),
+                        folder_uid: d.folder_uid.clone(),
+                    },
+                )
+                .allowed;
+            if !readable {
+                continue;
+            }
+            let q_ok = q_lower.is_empty() || d.title.to_ascii_lowercase().contains(&q_lower);
+            let tag_ok = params
+                .tag
+                .as_ref()
+                .is_none_or(|t| d.tags.iter().any(|dt| dt == t));
+            if q_ok && tag_ok {
+                hits.push(json!({
+                    "uid": d.uid,
+                    "title": d.title,
+                    "type": "dash-db",
+                    "url": format!("/d/{}/{}", d.uid, d.slug),
+                    "tags": d.tags,
+                    "folderUid": d.folder_uid,
+                }));
             }
         }
     }

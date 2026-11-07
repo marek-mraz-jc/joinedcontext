@@ -13,9 +13,7 @@
 //!   is enabled by the owner, nor any other organization's data).
 //! - Revoke = token rotation (`rotate_public_dashboard_token`): old token immediately answers 404.
 
-use crate::render::{
-    execute_targets_and_expressions, find_panel_in_slice, parse_time_str_ms,
-};
+use crate::render::{execute_targets_and_expressions, find_panel_in_slice, parse_time_str_ms};
 use crate::state::{ControlroomState, error_response, resolve_request_ctx};
 use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -25,7 +23,7 @@ use axum::{Json, Router};
 use chrono::Utc;
 use controlroom_expr::apply_transformations;
 use controlroom_model::{
-    Action, CanonicalJson, CrError, CrResult, DashboardDocument, FrameSet, ObjectTarget, OrgId,
+    Action, CanonicalJson, CrError, CrResult, DashboardDocument, FrameSet, ObjectTarget,
     PublicDashboardRecord, RequestCtx, ShareType, Subject, sha256_hex,
 };
 use controlroom_query::PublicCacheKey;
@@ -72,9 +70,22 @@ impl PublicRateLimiter {
         }
     }
 
+    /// Most source addresses tracked at once; expired windows are dropped first, and a full table
+    /// refuses new addresses rather than growing without bound.
+    pub const MAX_TRACKED_ADDRESSES: usize = 65_536;
+
     pub fn check_rate_limit(&self, addr: IpAddr) -> CrResult<()> {
         let mut guard = self.buckets.lock();
         let now = Instant::now();
+        if guard.len() >= Self::MAX_TRACKED_ADDRESSES && !guard.contains_key(&addr) {
+            let window = self.window;
+            guard.retain(|_, (_, started)| now.duration_since(*started) < window);
+            if guard.len() >= Self::MAX_TRACKED_ADDRESSES {
+                return Err(CrError::RateLimited(
+                    "public dashboard rate limit table is full".into(),
+                ));
+            }
+        }
         let entry = guard.entry(addr).or_insert((0, now));
         if now.duration_since(entry.1) >= self.window {
             *entry = (1, now);
@@ -161,6 +172,16 @@ pub async fn create_or_update_public_dashboard(
         },
     );
     decision.into_result(format!("Dashboard '{dashboard_uid}' not found"))?;
+    if state
+        .store
+        .get_dashboard(req_ctx.org_id, dashboard_uid)
+        .await?
+        .is_none()
+    {
+        return Err(CrError::NotFound(format!(
+            "Dashboard '{dashboard_uid}' not found"
+        )));
+    }
 
     let existing = state
         .store
@@ -439,14 +460,15 @@ pub async fn execute_public_dashboard_query(
             )));
         };
         let allowed_options = saved_var.options.as_deref().unwrap_or(&[]);
-        let is_allowed = allowed_options.iter().any(|opt| {
-            opt.value.as_ref().and_then(Value::as_str) == Some(caller_val.as_str())
-        }) || saved_var
-            .current
-            .as_ref()
-            .and_then(|c| c.value.as_ref())
-            .and_then(Value::as_str)
-            == Some(caller_val.as_str());
+        let is_allowed = allowed_options
+            .iter()
+            .any(|opt| opt.value.as_ref().and_then(Value::as_str) == Some(caller_val.as_str()))
+            || saved_var
+                .current
+                .as_ref()
+                .and_then(|c| c.value.as_ref())
+                .and_then(Value::as_str)
+                == Some(caller_val.as_str());
 
         if !is_allowed {
             return Err(CrError::BadRequest(format!(
@@ -458,12 +480,11 @@ pub async fn execute_public_dashboard_query(
 
     // Populate defaults for remaining saved variables
     for sv in saved_vars {
-        if !resolved_vars.contains_key(&sv.name) {
-            if let Some(curr) = &sv.current {
-                if let Some(v_str) = curr.value.as_ref().and_then(Value::as_str) {
-                    resolved_vars.insert(sv.name.clone(), v_str.to_owned());
-                }
-            }
+        if !resolved_vars.contains_key(&sv.name)
+            && let Some(curr) = &sv.current
+            && let Some(v_str) = curr.value.as_ref().and_then(Value::as_str)
+        {
+            resolved_vars.insert(sv.name.clone(), v_str.to_owned());
         }
     }
 
@@ -534,10 +555,10 @@ pub async fn execute_public_dashboard_query(
         effective_interval_ms as i64,
     );
 
-    if resolved_vars.is_empty() {
-        if let Some(cached) = state.query_cache.get_public(&pub_cache_key) {
-            return Ok(cached);
-        }
+    if resolved_vars.is_empty()
+        && let Some(cached) = state.query_cache.get_public(&pub_cache_key)
+    {
+        return Ok(cached);
     }
 
     let raw_targets: Vec<Value> = panel
@@ -580,12 +601,12 @@ pub async fn execute_public_dashboard_query(
     )
     .await?;
 
-    if let Some(txs) = &panel.transformations {
-        if !txs.is_empty() {
-            for fs in &mut frame_sets {
-                let outcome = apply_transformations(std::mem::take(&mut fs.frames), txs);
-                fs.frames = outcome.frames;
-            }
+    if let Some(txs) = &panel.transformations
+        && !txs.is_empty()
+    {
+        for fs in &mut frame_sets {
+            let outcome = apply_transformations(std::mem::take(&mut fs.frames), txs);
+            fs.frames = outcome.frames;
         }
     }
 
@@ -681,6 +702,17 @@ async fn http_get_public_dashboard(
     Path(dashboard_uid): Path<String>,
 ) -> Response {
     let ctx = resolve_request_ctx(&state, &headers);
+    let dec = state.authorizer.check(
+        &ctx,
+        Action::Read,
+        &ObjectTarget::PublicDashboard {
+            org_id: ctx.org_id,
+            dashboard_uid: dashboard_uid.clone(),
+        },
+    );
+    if !dec.allowed {
+        return error_response(&CrError::NotFound("Public dashboard not found".into()));
+    }
     match state
         .store
         .get_public_dashboard_by_dashboard_uid(ctx.org_id, &dashboard_uid)

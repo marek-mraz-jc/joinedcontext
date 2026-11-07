@@ -30,8 +30,8 @@ use controlroom_import::{
 use controlroom_model::{Action, CrError, CrResult, ObjectTarget, RequestCtx};
 use controlroom_query::{QueryCtx, ResourceReq};
 use jc_router::ClientAddr;
-use odata_table::{Table,
-    MemoryTable, Operation as TableOp, Scope, TableError, allowed as table_allowed,
+use odata_table::{
+    MemoryTable, Operation as TableOp, Scope, Table, TableError, allowed as table_allowed,
     export as table_export, key_options, query as table_query,
 };
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,8 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 const MAX_PAGE_SIZE: u64 = 500;
+/// Most sub-requests one `$batch` may carry.
+pub const MAX_BATCH_REQUESTS: usize = 100;
 
 /// Builds a `MemoryTable` snapshot for `set_name` in `ctx.org_id` using the single `odata-table`
 /// `Service` declaration from `controlroom-model::registry` (R10).
@@ -196,9 +198,7 @@ async fn build_entity_table(
             })
             .collect(),
         "QueryCacheStats" => {
-            let mut stats = state
-                .query_cache
-                .stats_for_org(ctx.org_id, ctx.instance_id);
+            let mut stats = state.query_cache.stats_for_org(ctx.org_id, ctx.instance_id);
             let stored = state.store.list_query_cache_stats(ctx.org_id).await?;
             for s in stored {
                 if !stats.iter().any(|x| x.id == s.id) {
@@ -267,7 +267,11 @@ fn scope_for_ctx(state: &ControlroomState, ctx: &RequestCtx) -> Scope {
     ] {
         if state
             .authorizer
-            .check(ctx, verb, &ObjectTarget::Organization { org_id: ctx.org_id })
+            .check(
+                ctx,
+                verb,
+                &ObjectTarget::Organization { org_id: ctx.org_id },
+            )
             .allowed
         {
             for prefix in ["dashboards", "folders", "datasources"] {
@@ -330,9 +334,7 @@ async fn odata_metadata(
     headers: HeaderMap,
     RawQuery(raw_q): RawQuery,
 ) -> Response {
-    let wants_json = raw_q
-        .as_deref()
-        .is_some_and(|q| q.contains("$format=json"))
+    let wants_json = raw_q.as_deref().is_some_and(|q| q.contains("$format=json"))
         || headers
             .get(axum::http::header::ACCEPT)
             .and_then(|v| v.to_str().ok())
@@ -358,10 +360,10 @@ async fn odata_metadata(
 
 /// Parses a segment like `"Dashboards"`, `"Dashboards('jc-slo')"`, `"Allowed(operation='Import')"`
 fn split_paren_segment(seg: &str) -> (&str, Option<&str>) {
-    if let Some((head, tail)) = seg.split_once('(') {
-        if let Some(inner) = tail.strip_suffix(')') {
-            return (head, Some(inner));
-        }
+    if let Some((head, tail)) = seg.split_once('(')
+        && let Some(inner) = tail.strip_suffix(')')
+    {
+        return (head, Some(inner));
     }
     (seg, None)
 }
@@ -386,11 +388,11 @@ fn parse_func_args(parens: Option<&str>, raw_query: Option<&str>) -> BTreeMap<St
             }
         }
     }
-    if let Some(q) = raw_query {
-        if let Ok(pairs) = serde_urlencoded::from_str::<Vec<(String, String)>>(q) {
-            for (k, v) in pairs {
-                map.insert(k, v);
-            }
+    if let Some(q) = raw_query
+        && let Ok(pairs) = serde_urlencoded::from_str::<Vec<(String, String)>>(q)
+    {
+        for (k, v) in pairs {
+            map.insert(k, v);
         }
     }
     map
@@ -546,6 +548,34 @@ pub async fn exec_odata_datasource_resource(
         )
         .await?;
     Ok(resp.data)
+}
+
+/// `Dashboard/Export`: the stored dashboard as Grafana JSON, after a read decision on the
+/// dashboard in its folder. Unknown, other-organization and unreadable dashboards answer the same 404.
+pub async fn exec_odata_export(
+    state: &ControlroomState,
+    ctx: &RequestCtx,
+    uid: &str,
+) -> CrResult<Value> {
+    let not_found = || CrError::NotFound(format!("Dashboard '{uid}' not found"));
+    let rec = state
+        .store
+        .get_dashboard(ctx.org_id, uid)
+        .await?
+        .ok_or_else(not_found)?;
+    let dec = state.authorizer.check(
+        ctx,
+        Action::Read,
+        &ObjectTarget::Dashboard {
+            org_id: ctx.org_id,
+            dashboard_uid: rec.uid.clone(),
+            folder_uid: rec.folder_uid.clone(),
+        },
+    );
+    if !dec.allowed {
+        return Err(not_found());
+    }
+    export_dashboard(state.store.as_ref(), ctx.org_id, uid).await
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -725,7 +755,7 @@ async fn handle_odata_single_segment_get(
     if name == "Dashboard.Export" || name == "Dashboard_Export" {
         let args = parse_func_args(parens, raw_q.as_deref());
         let uid = args.get("uid").map_or("", String::as_str);
-        return match export_dashboard(state.store.as_ref(), ctx.org_id, uid).await {
+        return match exec_odata_export(&state, &ctx, uid).await {
             Ok(val) => (StatusCode::OK, Json(val)).into_response(),
             Err(e) => error_response(&e),
         };
@@ -774,8 +804,7 @@ async fn handle_odata_single_segment_get(
                     payload["@odata.count"] = Value::from(c);
                 }
                 if let Some(next) = ans.next {
-                    payload["@odata.nextLink"] =
-                        Value::String(format!("{name}?$skiptoken={next}"));
+                    payload["@odata.nextLink"] = Value::String(format!("{name}?$skiptoken={next}"));
                 }
                 (
                     StatusCode::OK,
@@ -821,8 +850,7 @@ async fn handle_odata_two_segment_get(
             ("Datasources", "Resource") => {
                 let mut args = parse_func_args(sub_parens, raw_q.as_deref());
                 let path = args.remove("path").unwrap_or_default();
-                return match exec_odata_datasource_resource(&state, &ctx, &uid, &path, args).await
-                {
+                return match exec_odata_datasource_resource(&state, &ctx, &uid, &path, args).await {
                     Ok(v) => (StatusCode::OK, Json(v)).into_response(),
                     Err(e) => error_response(&e),
                 };
@@ -853,7 +881,7 @@ async fn handle_odata_two_segment_get(
                 };
             }
             ("Dashboards", "Export") => {
-                return match export_dashboard(state.store.as_ref(), ctx.org_id, &uid).await {
+                return match exec_odata_export(&state, &ctx, &uid).await {
                     Ok(val) => (StatusCode::OK, Json(val)).into_response(),
                     Err(e) => error_response(&e),
                 };
@@ -871,14 +899,11 @@ async fn handle_odata_two_segment_get(
 
     match sub_op {
         "$count" => {
-            let mut opts = match parse_odata_query_options(
-                &table.info().model,
-                set_name,
-                raw_q.as_deref(),
-            ) {
-                Ok(o) => o,
-                Err(e) => return error_response(&e),
-            };
+            let mut opts =
+                match parse_odata_query_options(&table.info().model, set_name, raw_q.as_deref()) {
+                    Ok(o) => o,
+                    Err(e) => return error_response(&e),
+                };
             opts.count = Some(true);
             opts.top = Some(0);
             match table_query(&table, &opts, &scope, 1).await {
@@ -892,14 +917,11 @@ async fn handle_odata_two_segment_get(
             }
         }
         "$export" => {
-            let opts = match parse_odata_query_options(
-                &table.info().model,
-                set_name,
-                raw_q.as_deref(),
-            ) {
-                Ok(o) => o,
-                Err(e) => return error_response(&e),
-            };
+            let opts =
+                match parse_odata_query_options(&table.info().model, set_name, raw_q.as_deref()) {
+                    Ok(o) => o,
+                    Err(e) => return error_response(&e),
+                };
             match table_export(&table, &opts, &scope, 100, 10_000).await {
                 Ok(rows) => (StatusCode::OK, Json(rows)).into_response(),
                 Err(e) => error_response(&map_table_error(e)),
@@ -1074,12 +1096,10 @@ async fn handle_odata_two_segment_post(
             Ok(v) => (StatusCode::OK, Json(v)).into_response(),
             Err(e) => error_response(&e),
         },
-        ("Dashboards", "Export") => {
-            match export_dashboard(state.store.as_ref(), ctx.org_id, &uid).await {
-                Ok(v) => (StatusCode::OK, Json(v)).into_response(),
-                Err(e) => error_response(&e),
-            }
-        }
+        ("Dashboards", "Export") => match exec_odata_export(&state, &ctx, &uid).await {
+            Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+            Err(e) => error_response(&e),
+        },
         ("PublicDashboards", "Rotate") => {
             match rotate_public_dashboard_token(&state, &ctx, &uid).await {
                 Ok(rec) => (StatusCode::OK, Json(rec)).into_response(),
@@ -1120,6 +1140,12 @@ async fn odata_batch(
     Json(batch): Json<ODataBatchRequest>,
 ) -> Response {
     let ctx = resolve_request_ctx(&state, &headers);
+    if batch.requests.len() > MAX_BATCH_REQUESTS {
+        return error_response(&CrError::BadRequest(format!(
+            "$batch carries {} requests, the limit is {MAX_BATCH_REQUESTS}",
+            batch.requests.len()
+        )));
+    }
     let mut responses = Vec::with_capacity(batch.requests.len());
 
     for sub in batch.requests {
@@ -1145,12 +1171,8 @@ async fn odata_batch(
             "GET" => match build_entity_table(&state, &ctx, seg_name).await {
                 Ok(table) => {
                     let scope = scope_for_ctx(&state, &ctx);
-                    let opts = parse_odata_query_options(
-                        &table.info().model,
-                        seg_name,
-                        query_part,
-                    )
-                    .unwrap_or_default();
+                    let opts = parse_odata_query_options(&table.info().model, seg_name, query_part)
+                        .unwrap_or_default();
                     match table_query(&table, &opts, &scope, MAX_PAGE_SIZE).await {
                         Ok(ans) => (200, json!({ "value": ans.rows })),
                         Err(e) => {

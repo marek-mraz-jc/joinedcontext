@@ -85,7 +85,8 @@ impl From<DsError> for CrError {
 
 /// Resolves a `secretRef` at call time without storing or logging the secret (R3, §3.2, §4.2).
 pub trait SecretResolver: Send + Sync {
-    fn resolve_secret(&self, org_id: OrgId, secret_ref: &str) -> Result<Zeroizing<String>, DsError>;
+    fn resolve_secret(&self, org_id: OrgId, secret_ref: &str)
+    -> Result<Zeroizing<String>, DsError>;
 }
 
 /// In-memory secret resolver for standalone and test environments.
@@ -100,13 +101,23 @@ impl MapSecretResolver {
         Self::default()
     }
 
-    pub fn insert(&mut self, org_id: OrgId, secret_ref: impl Into<String>, value: impl Into<String>) {
-        self.secrets.insert((org_id, secret_ref.into()), value.into());
+    pub fn insert(
+        &mut self,
+        org_id: OrgId,
+        secret_ref: impl Into<String>,
+        value: impl Into<String>,
+    ) {
+        self.secrets
+            .insert((org_id, secret_ref.into()), value.into());
     }
 }
 
 impl SecretResolver for MapSecretResolver {
-    fn resolve_secret(&self, org_id: OrgId, secret_ref: &str) -> Result<Zeroizing<String>, DsError> {
+    fn resolve_secret(
+        &self,
+        org_id: OrgId,
+        secret_ref: &str,
+    ) -> Result<Zeroizing<String>, DsError> {
         self.secrets
             .get(&(org_id, secret_ref.to_owned()))
             .map(|s| Zeroizing::new(s.clone()))
@@ -126,7 +137,26 @@ pub trait TokenExchanger: Send + Sync {
     ) -> Result<Zeroizing<String>, DsError>;
 }
 
-/// Default token exchanger that scopes the caller's token to `audience`.
+/// Default token exchanger: refuses every exchange. A deployment wires its real RFC 8693 exchanger
+/// (wardkeep); until then no caller token ever leaves controlroom toward a datasource URL.
+#[derive(Debug, Clone, Default)]
+pub struct DenyTokenExchanger;
+
+impl TokenExchanger for DenyTokenExchanger {
+    fn exchange_for_audience(
+        &self,
+        _caller_token: &str,
+        audience: &str,
+    ) -> Result<Zeroizing<String>, DsError> {
+        Err(DsError::TokenExchange {
+            audience: audience.to_owned(),
+            reason: "no token exchanger is configured".into(),
+        })
+    }
+}
+
+/// Test double: marks the caller's token with the audience (`exchanged:{audience}:{token}`). It
+/// forwards the caller's token, so it is for tests and local mocks only, never a deployment.
 #[derive(Debug, Clone, Default)]
 pub struct PassthroughAudienceExchanger;
 

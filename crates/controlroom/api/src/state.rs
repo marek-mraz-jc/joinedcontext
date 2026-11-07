@@ -6,15 +6,41 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use controlroom_model::{
     Authorizer, ControlroomStore, CrError, InputLimits, InstallationId, InstanceId,
-    OperationRegistry, OrgId, PolicyAuthorizer, RequestCtx, Subject, controlroom_registry,
+    OperationRegistry, OrgId, PolicyAuthorizer, RequestCtx, Subject, constant_time_eq,
+    controlroom_registry, sha256_hex,
 };
 use controlroom_query::{
-    Datasource, MapSecretResolver, PassthroughAudienceExchanger, QueryCache, SecretResolver,
-    TokenExchanger, WasmPluginHost,
+    Datasource, DenyTokenExchanger, MapSecretResolver, QueryCache, SecretResolver, TokenExchanger,
+    WasmPluginHost,
 };
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+
+/// Live datasource drivers keyed by `(org_id, datasource_uid)`.
+pub type DriverMap = BTreeMap<(OrgId, String), Arc<dyn Datasource>>;
+
+/// Host-supplied resolver of a verified [`Subject`] (the Portal or jc binary that mounts controlroom
+/// in-process and has already verified the session or bearer token). `None` means "not mine".
+pub type SubjectResolver = Arc<dyn Fn(&HeaderMap) -> Option<Subject> + Send + Sync>;
+
+/// One API credential: the SHA-256 of the token (never the token) and the subject it stands for.
+#[derive(Debug, Clone)]
+pub struct TokenBinding {
+    pub token_sha256: String,
+    pub subject: Subject,
+}
+
+impl TokenBinding {
+    /// Binds the raw `token` (hashed here, the raw value is not kept) to `subject`.
+    #[must_use]
+    pub fn new(token: &str, subject: Subject) -> Self {
+        Self {
+            token_sha256: sha256_hex(token.as_bytes()),
+            subject,
+        }
+    }
+}
 
 /// Shared state of a `controlroom` instance (R11: passed in as a struct, no globals or env reads).
 #[derive(Clone)]
@@ -25,7 +51,7 @@ pub struct ControlroomState {
     pub store: Arc<dyn ControlroomStore>,
     pub authorizer: Arc<dyn Authorizer>,
     /// Live datasource drivers keyed by `(org_id, datasource_uid)`.
-    pub datasources: Arc<RwLock<BTreeMap<(OrgId, String), Arc<dyn Datasource>>>>,
+    pub datasources: Arc<RwLock<DriverMap>>,
     /// Mapping between Grafana numeric `orgId` / org name and `(numeric_id, OrgId)` for `provision.sh` and `src/grafana.rs`.
     pub org_registry: Arc<RwLock<OrgDirectory>>,
     pub query_cache: Arc<QueryCache>,
@@ -35,6 +61,10 @@ pub struct ControlroomState {
     pub limits: InputLimits,
     pub public_rate_limiter: Arc<PublicRateLimiter>,
     pub registry: Arc<OperationRegistry>,
+    /// API credentials (hashed) accepted as `Authorization: Bearer <token>` or `Basic <base64>`.
+    pub tokens: Arc<Vec<TokenBinding>>,
+    /// Verified subject from the host that mounts controlroom (checked before `tokens`).
+    pub subject_resolver: Option<SubjectResolver>,
 }
 
 /// Directory mapping Grafana organization names and numeric IDs to UUIDv7 [`OrgId`]s.
@@ -53,8 +83,7 @@ impl OrgDirectory {
             by_num: BTreeMap::new(),
             next_num: 2,
         };
-        dir.by_name
-            .insert("Main Org.".to_owned(), (1, main_org_id));
+        dir.by_name.insert("Main Org.".to_owned(), (1, main_org_id));
         dir.by_num.insert(1, ("Main Org.".to_owned(), main_org_id));
         dir
     }
@@ -91,11 +120,62 @@ impl ControlroomState {
             query_cache: Arc::new(QueryCache::default()),
             wasm_host: Arc::new(WasmPluginHost::default()),
             secret_resolver: Arc::new(MapSecretResolver::new()),
-            token_exchanger: Arc::new(PassthroughAudienceExchanger),
+            token_exchanger: Arc::new(DenyTokenExchanger),
             limits: InputLimits::default(),
             public_rate_limiter: Arc::new(PublicRateLimiter::new(120, 60)),
             registry: Arc::new(controlroom_registry()),
+            tokens: Arc::new(Vec::new()),
+            subject_resolver: None,
         }
+    }
+
+    /// Accepts these API credentials (hashed bindings).
+    #[must_use]
+    pub fn with_tokens(mut self, tokens: Vec<TokenBinding>) -> Self {
+        self.tokens = Arc::new(tokens);
+        self
+    }
+
+    /// Takes the verified subject from the mounting host before looking at API credentials.
+    #[must_use]
+    pub fn with_subject_resolver<F>(mut self, resolver: F) -> Self
+    where
+        F: Fn(&HeaderMap) -> Option<Subject> + Send + Sync + 'static,
+    {
+        self.subject_resolver = Some(Arc::new(resolver));
+        self
+    }
+
+    /// The subject bound to the credential in `Authorization`, compared on SHA-256 digests in
+    /// constant time; `None` for a missing or unknown credential.
+    #[must_use]
+    pub fn subject_for_credential(&self, headers: &HeaderMap) -> Option<Subject> {
+        let raw = headers
+            .get(axum::http::header::AUTHORIZATION)?
+            .to_str()
+            .ok()?
+            .trim();
+        let (scheme, credential) = raw.split_once(' ')?;
+        let credential = credential.trim();
+        if credential.is_empty() {
+            return None;
+        }
+        let is_bearer = scheme.eq_ignore_ascii_case("bearer");
+        if !is_bearer && !scheme.eq_ignore_ascii_case("basic") {
+            return None;
+        }
+        let digest = sha256_hex(credential.as_bytes());
+        let mut found: Option<&TokenBinding> = None;
+        for binding in self.tokens.iter() {
+            if constant_time_eq(&binding.token_sha256, &digest) && found.is_none() {
+                found = Some(binding);
+            }
+        }
+        let mut subject = found?.subject.clone();
+        if is_bearer {
+            subject.bearer_token = Some(credential.to_owned());
+        }
+        Some(subject)
     }
 
     /// Registers a runtime [`Datasource`] implementation for `(org_id, uid)`.
@@ -122,10 +202,7 @@ impl ControlroomState {
     /// Convenience constructor with a permissive policy for standalone tests.
     #[must_use]
     pub fn for_standalone(store: Arc<dyn ControlroomStore>, default_org_id: OrgId) -> Self {
-        let authz = Arc::new(PolicyAuthorizer::allow_org_members(
-            default_org_id,
-            "admin",
-        ));
+        let authz = Arc::new(PolicyAuthorizer::allow_org_members(default_org_id, "admin"));
         Self::new(
             InstallationId::from_u128(1),
             default_org_id,
@@ -136,17 +213,25 @@ impl ControlroomState {
     }
 }
 
-/// Extracts [`RequestCtx`] from HTTP headers:
-/// - `X-Controlroom-Org-Id` (UUID) or `X-Grafana-Org-Id` (numeric ID or UUID) selects the active organization.
-/// - `X-Controlroom-Subject` (actor ID), `X-Controlroom-Orgs` (comma-separated UUIDs),
-///   `X-Controlroom-Groups` (comma-separated groups), and `Authorization: Bearer <token>` or Basic auth
-///   populate the [`Subject`].
+/// Builds the [`RequestCtx`] of a request. The subject comes only from verified sources: the
+/// mounting host's [`SubjectResolver`], then an API credential in `Authorization` (hashed,
+/// constant-time). Anything else is anonymous: no organization, no role. Client headers never
+/// grant identity or membership; `X-Controlroom-Org-Id` / `X-Grafana-Org-Id` only choose which
+/// of the subject's organizations is active (authorization still checks membership), and
+/// `X-Controlroom-Readonly: true` can only narrow the caller.
 #[must_use]
 pub fn resolve_request_ctx(state: &ControlroomState, headers: &HeaderMap) -> RequestCtx {
-    let active_org = headers
+    let mut subject = state
+        .subject_resolver
+        .as_ref()
+        .and_then(|resolve| resolve(headers))
+        .or_else(|| state.subject_for_credential(headers))
+        .unwrap_or_else(Subject::anonymous);
+
+    let requested_org = headers
         .get("x-controlroom-org-id")
         .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<OrgId>().ok())
+        .and_then(|s| s.trim().parse::<OrgId>().ok())
         .or_else(|| {
             let gf_org = headers.get("x-grafana-org-id")?.to_str().ok()?.trim();
             if let Ok(uuid_org) = gf_org.parse::<OrgId>() {
@@ -159,65 +244,18 @@ pub fn resolve_request_ctx(state: &ControlroomState, headers: &HeaderMap) -> Req
                 .by_num
                 .get(&num)
                 .map(|(_, oid)| *oid)
-        })
+        });
+    let active_org = requested_org
+        .or_else(|| subject.organizations.first().copied())
         .unwrap_or(state.default_org_id);
 
-    let bearer_token = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer ").or_else(|| s.strip_prefix("bearer ")))
-        .map(|s| s.trim().to_owned());
-
-    let has_basic_admin = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|s| s.starts_with("Basic "));
-
-    let actor_id = headers
-        .get("x-controlroom-subject")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned)
-        .or_else(|| {
-            if has_basic_admin || bearer_token.is_some() {
-                Some("admin".to_owned())
-            } else {
-                Some("admin".to_owned())
-            }
-        });
-
-    let member_orgs: Vec<OrgId> = headers
-        .get("x-controlroom-orgs")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| {
-            s.split(',')
-                .filter_map(|p| p.trim().parse::<OrgId>().ok())
-                .collect()
-        })
-        .unwrap_or_else(|| vec![active_org]);
-
-    let groups: Vec<String> = headers
-        .get("x-controlroom-groups")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| {
-            s.split(',')
-                .map(|g| g.trim().to_owned())
-                .filter(|g| !g.is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let read_only = headers
+    if headers
         .get("x-controlroom-readonly")
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|s| s == "true" || s == "1");
-
-    let subject = Subject {
-        actor_id,
-        organizations: member_orgs,
-        groups,
-        bearer_token,
-        read_only,
-    };
+        .is_some_and(|s| s == "true" || s == "1")
+    {
+        subject.read_only = true;
+    }
 
     RequestCtx::new(
         state.installation_id,

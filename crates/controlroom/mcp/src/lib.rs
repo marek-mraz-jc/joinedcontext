@@ -7,15 +7,14 @@
 
 use controlroom_api::odata::{
     ODataImportActionBody, ODataQueryActionBody, exec_odata_apply,
-    exec_odata_datasource_editor_schema, exec_odata_datasource_health,
-    exec_odata_datasource_query, exec_odata_datasource_resource, exec_odata_import,
-    exec_odata_plan,
+    exec_odata_datasource_editor_schema, exec_odata_datasource_health, exec_odata_datasource_query,
+    exec_odata_datasource_resource, exec_odata_export, exec_odata_import, exec_odata_plan,
 };
 use controlroom_api::{
     ControlroomState, PanelTimeRange, PublicDashboardQueryReq, execute_public_dashboard_query,
     panel_view, rotate_public_dashboard_token,
 };
-use controlroom_import::{DesiredBundle, PlanBundle, export_dashboard};
+use controlroom_import::{DesiredBundle, PlanBundle};
 use controlroom_model::{Action, CrError, CrResult, ObjectTarget, RequestCtx};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -124,9 +123,7 @@ pub async fn call_mcp_tool(
     }
 
     let Some(op_def) = state.registry.find_operation(tool_name) else {
-        return Err(CrError::NotFound(format!(
-            "unknown MCP tool '{tool_name}'"
-        )));
+        return Err(CrError::NotFound(format!("unknown MCP tool '{tool_name}'")));
     };
 
     match op_def.name.as_str() {
@@ -155,10 +152,7 @@ pub async fn call_mcp_tool(
         }
         "Dashboard/RenderPanel" => {
             let uid = args.get("uid").and_then(Value::as_str).unwrap_or("");
-            let panel_id = args
-                .get("panelId")
-                .and_then(Value::as_u64)
-                .unwrap_or(1) as u32;
+            let panel_id = args.get("panelId").and_then(Value::as_u64).unwrap_or(1) as u32;
             let range = PanelTimeRange {
                 from: args.get("from").and_then(Value::as_str).map(str::to_owned),
                 to: args.get("to").and_then(Value::as_str).map(str::to_owned),
@@ -169,17 +163,7 @@ pub async fn call_mcp_tool(
         }
         "Dashboard/Export" => {
             let uid = args.get("uid").and_then(Value::as_str).unwrap_or("");
-            let dec = state.authorizer.check(
-                ctx,
-                Action::Read,
-                &ObjectTarget::Dashboard {
-                    org_id: ctx.org_id,
-                    dashboard_uid: uid.to_owned(),
-                    folder_uid: None,
-                },
-            );
-            dec.into_result(format!("Dashboard '{uid}' not found"))?;
-            export_dashboard(state.store.as_ref(), ctx.org_id, uid).await
+            exec_odata_export(state, ctx, uid).await
         }
         "Import" => {
             let body: ODataImportActionBody = serde_json::from_value(args)
@@ -208,10 +192,7 @@ pub async fn call_mcp_tool(
                 .get("accessToken")
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            let panel_id = args
-                .get("panelId")
-                .and_then(Value::as_u64)
-                .unwrap_or(1) as u32;
+            let panel_id = args.get("panelId").and_then(Value::as_u64).unwrap_or(1) as u32;
             let sets = execute_public_dashboard_query(
                 state,
                 IpAddr::V4(Ipv4Addr::LOCALHOST),

@@ -81,7 +81,7 @@ pub fn parse_time_str_ms(raw: Option<&str>, default_offset_ms: i64) -> i64 {
     if let Some(rest) = s.strip_prefix("now-") {
         let clean = rest.split('/').next().unwrap_or(rest);
         if let Ok(dur_ms) = parse_duration_ms(clean) {
-            return now_ms - dur_ms;
+            return now_ms.saturating_sub(dur_ms);
         }
     }
     if let Ok(epoch_ms) = s.parse::<i64>() {
@@ -145,16 +145,17 @@ pub fn find_panel_in_slice(panels: &[PanelSpec], panel_id: u32) -> Option<PanelS
         if p.id == Some(panel_id) && p.panel_type != "row" {
             return Some(p.clone());
         }
-        if let Some(nested) = &p.panels {
-            if let Some(found) = find_panel_in_slice(nested, panel_id) {
-                return Some(found);
-            }
+        if let Some(nested) = &p.panels
+            && let Some(found) = find_panel_in_slice(nested, panel_id)
+        {
+            return Some(found);
         }
     }
     None
 }
 
 /// Executes a mixed list of datasource targets and `__expr__` expressions (R3, R4, R6).
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_targets_and_expressions(
     state: &ControlroomState,
     req_ctx: &RequestCtx,
@@ -174,6 +175,15 @@ pub async fn execute_targets_and_expressions(
             state.limits.max_targets_per_panel
         )));
     }
+
+    if to_ms <= from_ms {
+        return Err(CrError::BadRequest(
+            "invalid time range: 'to' must be after 'from'".into(),
+        ));
+    }
+    // Never more than 11 000 points per series (Grafana's safe resolution), whatever the caller asks.
+    let span_ms = u64::try_from(to_ms.saturating_sub(from_ms)).unwrap_or(u64::MAX);
+    let interval_ms = interval_ms.max(span_ms / 11_000).max(1);
 
     let mut ds_targets: Vec<(String, Query, Value)> = Vec::new();
     let mut hidden_ds_refs: BTreeSet<String> = BTreeSet::new();
@@ -251,10 +261,7 @@ pub async fn execute_targets_and_expressions(
         }
 
         // Check authorization on the datasource in the caller's organization (R9, §5.3 test 3)
-        let ds_meta = state
-            .store
-            .get_datasource(req_ctx.org_id, &ds_uid)
-            .await?;
+        let ds_meta = state.store.get_datasource(req_ctx.org_id, &ds_uid).await?;
         let driver = state.get_datasource_driver(req_ctx.org_id, &ds_uid);
 
         if ds_meta.is_none() && driver.is_none() {
@@ -273,22 +280,26 @@ pub async fn execute_targets_and_expressions(
         );
         decision.into_result(format!("Data source '{ds_uid}' not found"))?;
 
+        // The answer depends on the target, the variable values interpolated into it and the
+        // point budget: all three are in the key, so one caller's variables never serve another's.
         let cache_key = CacheKey::new(
             req_ctx.org_id,
             req_ctx.instance_id,
             &principals,
             &ds_uid,
-            &raw_target,
+            &json!({
+                "target": raw_target,
+                "variables": variables,
+                "maxDataPoints": max_data_points,
+            }),
             from_ms,
             to_ms,
             interval_ms,
         );
 
-        if !skip_cache {
-            if let Some(cached) = state.query_cache.get(&cache_key) {
-                ds_frame_sets.extend(cached);
-                continue;
-            }
+        if !skip_cache && let Some(cached) = state.query_cache.get(&cache_key) {
+            ds_frame_sets.extend(cached);
+            continue;
         }
 
         let Some(drv) = driver else {
@@ -354,10 +365,8 @@ pub async fn panel_view(
     );
     dash_decision.into_result(format!("Dashboard '{dashboard_uid}' not found"))?;
 
-    let doc: DashboardDocument =
-        serde_json::from_value(dash_record.data.clone()).map_err(|e| {
-            CrError::Internal(format!("stored dashboard failed to deserialize: {e}"))
-        })?;
+    let doc: DashboardDocument = serde_json::from_value(dash_record.data.clone())
+        .map_err(|e| CrError::Internal(format!("stored dashboard failed to deserialize: {e}")))?;
 
     let panels = doc.panels.as_deref().unwrap_or(&[]);
     let panel = find_panel_in_slice(panels, panel_id).ok_or_else(|| {
@@ -426,10 +435,7 @@ pub async fn panel_view(
             .and_then(Value::as_str)
             .or(default_ds_uid)
             .unwrap_or("");
-        if !ds_uid.is_empty()
-            && ds_uid != "-- Mixed --"
-            && !is_expression_datasource_uid(ds_uid)
-        {
+        if !ds_uid.is_empty() && ds_uid != "-- Mixed --" && !is_expression_datasource_uid(ds_uid) {
             let dec = state.authorizer.check(
                 &req_ctx,
                 Action::Read,
@@ -479,21 +485,21 @@ pub async fn panel_view(
     let mut vars = BTreeMap::new();
     if let Some(templating) = &doc.templating {
         for v in &templating.list {
-            if let Some(curr) = &v.current {
-                if let Some(val_str) = curr.value.as_ref().and_then(Value::as_str) {
-                    if val_str == "$__all" {
-                        if let Some(all_v) = &v.all_value {
-                            vars.insert(v.name.clone(), all_v.clone());
-                        }
-                    } else {
-                        vars.insert(v.name.clone(), val_str.to_owned());
+            if let Some(curr) = &v.current
+                && let Some(val_str) = curr.value.as_ref().and_then(Value::as_str)
+            {
+                if val_str == "$__all" {
+                    if let Some(all_v) = &v.all_value {
+                        vars.insert(v.name.clone(), all_v.clone());
                     }
+                } else {
+                    vars.insert(v.name.clone(), val_str.to_owned());
                 }
             }
-            if !vars.contains_key(&v.name) {
-                if let Some(all_v) = &v.all_value {
-                    vars.insert(v.name.clone(), all_v.clone());
-                }
+            if !vars.contains_key(&v.name)
+                && let Some(all_v) = &v.all_value
+            {
+                vars.insert(v.name.clone(), all_v.clone());
             }
         }
     }

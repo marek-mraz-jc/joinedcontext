@@ -8,13 +8,14 @@
 //! 6. Cross-organization 404s (never 403) and zero outbound calls on cross-org datasource query.
 //! 7. Regression tests for the §4.3 / R12 CVE classes (datasource proxy credential leak, SSRF & redirect block, stored XSS in titles/markdown, public dashboard data leak, provisioning path traversal).
 
+use axum::Json;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::Query as AxumQuery;
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::routing::get;
-use axum::Json;
 use chrono::Utc;
+use controlroom_api::state::TokenBinding;
 use controlroom_api::{PanelTimeRange, panel_view};
 use controlroom_import::parse_dashboard_providers_yaml;
 use controlroom_mcp::call_mcp_tool;
@@ -211,9 +212,7 @@ async fn send_req(app: &Router, req: Request<Body>) -> (StatusCode, HeaderMap, V
     (status, headers, json_val)
 }
 
-async fn setup_world(
-    upstream_url: &str,
-) -> (ControlroomState, OrgId, OrgId, Router) {
+async fn setup_world(upstream_url: &str) -> (ControlroomState, OrgId, OrgId, Router) {
     let inst = InstallationId::from_u128(1);
     let instance = InstanceId::from_u128(1);
     let org_a = OrgId::from_u128(10);
@@ -224,14 +223,47 @@ async fn setup_world(
         RoleBinding::from_grafana_role(org_a, "admin", GrafanaRole::Admin, None),
         RoleBinding::from_grafana_role(org_a, "viewer-a", GrafanaRole::Viewer, None),
         RoleBinding::from_grafana_role(org_b, "admin-b", GrafanaRole::Admin, None),
+        RoleBinding::from_grafana_role(
+            org_a,
+            "folder-viewer",
+            GrafanaRole::Viewer,
+            Some("ops".into()),
+        ),
     ]));
 
     let mut secrets = MapSecretResolver::new();
     secrets.insert(org_a, "prom-token-ref", "super-secret-prom-credential-xyz");
     let secrets = Arc::new(secrets);
 
-    let mut state = ControlroomState::new(inst, org_a, instance, store.clone(), authz);
+    let mut state =
+        ControlroomState::new(inst, org_a, instance, store.clone(), authz).with_tokens(vec![
+            TokenBinding::new(
+                "admin-a-token",
+                Subject::authenticated("admin", vec![org_a], vec![]),
+            ),
+            TokenBinding::new(
+                "user-alice-jwt",
+                Subject::authenticated("admin", vec![org_a], vec![]),
+            ),
+            TokenBinding::new(
+                "caller-jwt",
+                Subject::authenticated("admin", vec![org_a], vec![]),
+            ),
+            TokenBinding::new(
+                "viewer-a-token",
+                Subject::authenticated("viewer-a", vec![org_a], vec![]),
+            ),
+            TokenBinding::new(
+                "admin-b-token",
+                Subject::authenticated("admin-b", vec![org_b], vec![]),
+            ),
+            TokenBinding::new(
+                "folder-viewer-token",
+                Subject::authenticated("folder-viewer", vec![org_a], vec![]),
+            ),
+        ]);
     state.secret_resolver = secrets.clone();
+    // The NGSI-LD drivers below carry their own exchanger; the state's default (deny) stays.
 
     let host_only = url::Url::parse(upstream_url)
         .unwrap()
@@ -408,6 +440,7 @@ async fn e2e_import_9_dashboards_odata_service_and_mocked_prometheus_and_ngsild_
             Request::builder()
                 .method("POST")
                 .uri("/odata/v4/Import")
+                .header("authorization", "Bearer admin-a-token")
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
@@ -428,6 +461,7 @@ async fn e2e_import_9_dashboards_odata_service_and_mocked_prometheus_and_ngsild_
         &app,
         Request::builder()
             .uri("/odata/v4/Dashboards?$count=true&$orderby=uid&$select=uid,title,panelCount")
+            .header("authorization", "Bearer admin-a-token")
             .body(Body::empty())
             .unwrap(),
     )
@@ -443,6 +477,7 @@ async fn e2e_import_9_dashboards_odata_service_and_mocked_prometheus_and_ngsild_
         &app,
         Request::builder()
             .uri("/odata/v4/Dashboards('jc-assistant')/RenderPanel?panelId=1")
+            .header("authorization", "Bearer admin-a-token")
             .body(Body::empty())
             .unwrap(),
     )
@@ -585,7 +620,7 @@ async fn e2e_odata_mcp_and_cli_parity_and_jc_router_mount() {
         &app,
         Request::builder()
             .uri("/odata/v4/Allowed?operation=Apply&object=Organization:default")
-            .header("x-controlroom-subject", "viewer-a")
+            .header("authorization", "Bearer viewer-a-token")
             .body(Body::empty())
             .unwrap(),
     )
@@ -667,6 +702,7 @@ async fn e2e_public_dashboard_rules_of_r7() {
         Request::builder()
             .method("POST")
             .uri("/api/dashboards/db")
+            .header("authorization", "Bearer admin-a-token")
             .header("content-type", "application/json")
             .body(Body::from(
                 json!({ "dashboard": slo_json, "overwrite": true }).to_string(),
@@ -682,6 +718,7 @@ async fn e2e_public_dashboard_rules_of_r7() {
         Request::builder()
             .method("POST")
             .uri("/api/dashboards/uid/jc-slo/public-dashboards")
+            .header("authorization", "Bearer admin-a-token")
             .header("content-type", "application/json")
             .body(Body::from(json!({}).to_string()))
             .unwrap(),
@@ -715,6 +752,7 @@ async fn e2e_public_dashboard_rules_of_r7() {
             .uri(format!(
                 "/api/dashboards/uid/jc-slo/public-dashboards/{pub_uid}"
             ))
+            .header("authorization", "Bearer admin-a-token")
             .header("content-type", "application/json")
             .body(Body::from(
                 json!({ "isEnabled": true, "timeSelectionEnabled": true }).to_string(),
@@ -814,6 +852,7 @@ async fn e2e_public_dashboard_rules_of_r7() {
         Request::builder()
             .method("POST")
             .uri(format!("/odata/v4/PublicDashboards('{pub_uid}')/Rotate"))
+            .header("authorization", "Bearer admin-a-token")
             .body(Body::empty())
             .unwrap(),
     )
@@ -830,7 +869,7 @@ async fn e2e_public_dashboard_rules_of_r7() {
             .unwrap(),
     )
     .await;
-    let (st_unk, _, body_unk) = send_req(
+    let (_st_unk, _, body_unk) = send_req(
         &app,
         Request::builder()
             .uri("/api/public/dashboards/0000000000000000000000000000000000000000000000000000000000000000")
@@ -865,8 +904,7 @@ async fn e2e_cross_organization_404s_and_cve_regression_suite() {
             .method("POST")
             .uri("/odata/v4/Import")
             .header("x-controlroom-org-id", org_b.to_string())
-            .header("x-controlroom-orgs", org_b.to_string())
-            .header("x-controlroom-subject", "admin-b")
+            .header("authorization", "Bearer admin-b-token")
             .header("content-type", "application/json")
             .body(Body::from(
                 json!({
@@ -891,15 +929,17 @@ async fn e2e_cross_organization_404s_and_cve_regression_suite() {
         Request::builder()
             .uri("/api/dashboards/uid/b-secret-dash")
             .header("x-controlroom-org-id", org_a.to_string())
+            .header("authorization", "Bearer admin-a-token")
             .body(Body::empty())
             .unwrap(),
     )
     .await;
-    let (st_unk, _, body_unk) = send_req(
+    let (_st_unk, _, body_unk) = send_req(
         &app,
         Request::builder()
             .uri("/api/dashboards/uid/unknown-uid-xyz")
             .header("x-controlroom-org-id", org_a.to_string())
+            .header("authorization", "Bearer admin-a-token")
             .body(Body::empty())
             .unwrap(),
     )
@@ -915,6 +955,7 @@ async fn e2e_cross_organization_404s_and_cve_regression_suite() {
             .method("POST")
             .uri("/api/ds/query")
             .header("x-controlroom-org-id", org_a.to_string())
+            .header("authorization", "Bearer admin-a-token")
             .header("content-type", "application/json")
             .body(Body::from(
                 json!({
@@ -940,6 +981,7 @@ async fn e2e_cross_organization_404s_and_cve_regression_suite() {
         &app,
         Request::builder()
             .uri("/api/datasources/uid/prometheus")
+            .header("authorization", "Bearer admin-a-token")
             .body(Body::empty())
             .unwrap(),
     )
@@ -1014,6 +1056,7 @@ async fn e2e_cross_organization_404s_and_cve_regression_suite() {
         Request::builder()
             .method("POST")
             .uri("/odata/v4/Import")
+            .header("authorization", "Bearer admin-a-token")
             .header("content-type", "application/json")
             .body(Body::from(
                 json!({ "dryRun": false, "dashboard": xss_dash }).to_string(),
@@ -1051,6 +1094,7 @@ async fn e2e_cross_organization_404s_and_cve_regression_suite() {
         Request::builder()
             .method("POST")
             .uri("/odata/v4/Import")
+            .header("authorization", "Bearer admin-a-token")
             .header("content-type", "application/json")
             .body(Body::from(
                 json!({ "dryRun": false, "dashboard": js_link_dash }).to_string(),
@@ -1070,4 +1114,391 @@ providers:
       path: "../../etc/shadow"
 "#;
     assert!(parse_dashboard_providers_yaml(bad_prov, None).is_err());
+}
+
+fn req(method: &str, uri: &str, token: Option<&str>, body: Option<Value>) -> Request<Body> {
+    let mut b = Request::builder().method(method).uri(uri);
+    if let Some(t) = token {
+        b = b.header("authorization", format!("Bearer {t}"));
+    }
+    match body {
+        Some(v) => b
+            .header("content-type", "application/json")
+            .body(Body::from(v.to_string()))
+            .unwrap(),
+        None => b.body(Body::empty()).unwrap(),
+    }
+}
+
+fn simple_dash(uid: &str) -> Value {
+    json!({ "uid": uid, "title": format!("Dash {uid}"), "schemaVersion": 42, "panels": [] })
+}
+
+/// Identity comes only from verified credentials: forged `X-Controlroom-*` identity headers, an
+/// unknown bearer token and no credential at all are anonymous and see nothing (404).
+#[tokio::test]
+async fn security_forged_identity_headers_grant_nothing() {
+    let (upstream_url, _, _) = spawn_mock_upstream().await;
+    let (_state, org_a, org_b, app) = setup_world(&upstream_url).await;
+
+    // Forged headers claiming admin-b in org_b, no credential.
+    let forged = Request::builder()
+        .method("POST")
+        .uri("/odata/v4/Import")
+        .header("x-controlroom-org-id", org_b.to_string())
+        .header("x-controlroom-orgs", org_b.to_string())
+        .header("x-controlroom-subject", "admin-b")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({ "dryRun": false, "dashboard": simple_dash("forged") }).to_string(),
+        ))
+        .unwrap();
+    let (st, _, _) = send_req(&app, forged).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // No credential at all: the default organization is not writable either.
+    let (st, _, _) = send_req(
+        &app,
+        req(
+            "POST",
+            "/odata/v4/Import",
+            None,
+            Some(json!({ "dryRun": false, "dashboard": simple_dash("anon") })),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // An unknown bearer token is anonymous too.
+    let (st, _, _) = send_req(
+        &app,
+        req(
+            "POST",
+            "/odata/v4/Import",
+            Some("not-a-known-token"),
+            Some(json!({ "dryRun": false, "dashboard": simple_dash("unknown") })),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // Nothing was written in either organization.
+    for (org, token) in [(org_a, "admin-a-token"), (org_b, "admin-b-token")] {
+        let r = Request::builder()
+            .uri("/api/search?type=dash-db")
+            .header("x-controlroom-org-id", org.to_string())
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let (st, _, hits) = send_req(&app, r).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(hits.as_array().unwrap().len(), 0, "{hits}");
+    }
+
+    // A member of org_b selecting org_a by header gets 404, not org_a's data.
+    let r = Request::builder()
+        .uri("/api/datasources/uid/prometheus")
+        .header("x-controlroom-org-id", org_a.to_string())
+        .header("authorization", "Bearer admin-b-token")
+        .body(Body::empty())
+        .unwrap();
+    let (st, _, _) = send_req(&app, r).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+/// `Dashboard/Export` (OData GET, bound GET, bound POST, MCP) decides read on the dashboard in its
+/// folder: a viewer scoped to another folder gets the same 404 as for an unknown dashboard.
+#[tokio::test]
+async fn security_export_requires_read_on_the_dashboard() {
+    let (upstream_url, _, _) = spawn_mock_upstream().await;
+    let (state, org_a, _org_b, app) = setup_world(&upstream_url).await;
+    let (st, _, _) = send_req(
+        &app,
+        req(
+            "POST",
+            "/odata/v4/Import",
+            Some("admin-a-token"),
+            Some(json!({ "dryRun": false, "dashboard": simple_dash("root-dash") })),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st_unknown, _, body_unknown) = send_req(
+        &app,
+        req(
+            "GET",
+            "/odata/v4/Dashboards('no-such-dash')/Export",
+            Some("folder-viewer-token"),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(st_unknown, StatusCode::NOT_FOUND);
+    for (method, uri) in [
+        ("GET", "/odata/v4/Dashboards('root-dash')/Export"),
+        ("POST", "/odata/v4/Dashboards('root-dash')/Export"),
+        ("GET", "/odata/v4/Dashboard.Export(uid='root-dash')"),
+    ] {
+        let (st, _, body) =
+            send_req(&app, req(method, uri, Some("folder-viewer-token"), None)).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{method} {uri}: {body}");
+        assert_eq!(
+            body["error"]["code"], body_unknown["error"]["code"],
+            "{method} {uri}"
+        );
+        assert!(!body.to_string().contains("Dash root-dash"));
+    }
+    let viewer = RequestCtx::new(
+        state.installation_id,
+        org_a,
+        state.default_instance_id,
+        Subject::authenticated("folder-viewer", vec![org_a], vec![]),
+    );
+    let mcp = call_mcp_tool(
+        &state,
+        &viewer,
+        "controlroom_export",
+        json!({ "uid": "root-dash" }),
+    )
+    .await;
+    assert!(mcp.is_err());
+
+    // The admin still exports it.
+    let (st, _, body) = send_req(
+        &app,
+        req(
+            "GET",
+            "/odata/v4/Dashboards('root-dash')/Export",
+            Some("admin-a-token"),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body["uid"], "root-dash");
+}
+
+/// Grafana compat folder, search, organization and public-dashboard config routes decide like the
+/// native ones: another organization's objects answer 404 and never appear in a list.
+#[tokio::test]
+async fn security_compat_routes_authorize_every_object() {
+    let (upstream_url, _, _) = spawn_mock_upstream().await;
+    let (_state, org_a, _org_b, app) = setup_world(&upstream_url).await;
+
+    let (st, _, _) = send_req(
+        &app,
+        req(
+            "POST",
+            "/api/folders",
+            Some("admin-a-token"),
+            Some(json!({ "uid": "secret-folder", "title": "Org A Secret Folder" })),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _, _) = send_req(
+        &app,
+        req(
+            "POST",
+            "/api/dashboards/db",
+            Some("admin-a-token"),
+            Some(json!({ "dashboard": simple_dash("a-pub"), "overwrite": true })),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _, _) = send_req(
+        &app,
+        req(
+            "POST",
+            "/api/dashboards/uid/a-pub/public-dashboards",
+            Some("admin-a-token"),
+            Some(json!({ "isEnabled": true })),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let as_b_in_a = |uri: &str| {
+        Request::builder()
+            .uri(uri)
+            .header("x-controlroom-org-id", org_a.to_string())
+            .header("authorization", "Bearer admin-b-token")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let (st, _, folders) = send_req(&app, as_b_in_a("/api/folders")).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(!folders.to_string().contains("secret-folder"), "{folders}");
+    let (st, _, _) = send_req(&app, as_b_in_a("/api/folders/secret-folder")).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _, hits) = send_req(&app, as_b_in_a("/api/search")).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(!hits.to_string().contains("secret-folder"), "{hits}");
+    let (st, _, _) = send_req(&app, as_b_in_a("/api/org")).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _, cfg) = send_req(
+        &app,
+        as_b_in_a("/api/dashboards/uid/a-pub/public-dashboards"),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{cfg}");
+
+    // The folder viewer of folder `ops` does not see an unrelated folder either.
+    let (st, _, folders) = send_req(
+        &app,
+        req("GET", "/api/folders", Some("folder-viewer-token"), None),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(!folders.to_string().contains("secret-folder"));
+
+    // Organizations: creating one needs the installation admin; lookups need membership.
+    let (st, _, _) = send_req(
+        &app,
+        req("POST", "/api/orgs", None, Some(json!({ "name": "evil" }))),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _, _) = send_req(
+        &app,
+        req(
+            "POST",
+            "/api/orgs",
+            Some("admin-b-token"),
+            Some(json!({ "name": "evil" })),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _, created) = send_req(
+        &app,
+        req(
+            "POST",
+            "/api/orgs",
+            Some("admin-a-token"),
+            Some(json!({ "name": "city-two" })),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{created}");
+    let (st, _, _) = send_req(&app, req("GET", "/api/orgs/name/city-two", None, None)).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _, _) = send_req(
+        &app,
+        req(
+            "GET",
+            "/api/orgs/name/city-two",
+            Some("admin-b-token"),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _, found) = send_req(
+        &app,
+        req(
+            "GET",
+            "/api/orgs/name/city-two",
+            Some("admin-a-token"),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(found["name"], "city-two");
+
+    // A public dashboard can only be created for a dashboard that exists in the organization.
+    let (st, _, _) = send_req(
+        &app,
+        req(
+            "POST",
+            "/api/dashboards/uid/does-not-exist/public-dashboards",
+            Some("admin-a-token"),
+            Some(json!({ "isEnabled": true })),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+/// The query cache key carries the variable values: a query with `job=b` never gets `job=a`'s
+/// cached answer. A reversed time range is refused; `$batch` is capped.
+#[tokio::test]
+async fn security_cache_key_variables_time_range_and_batch_cap() {
+    let (upstream_url, call_count, _) = spawn_mock_upstream().await;
+    let (_state, _org_a, _org_b, app) = setup_world(&upstream_url).await;
+    let query = |job: &str| {
+        json!({
+            "from": "2023-11-14T22:10:00Z",
+            "to": "2023-11-14T22:20:00Z",
+            "variables": { "job": job },
+            "queries": [{
+                "refId": "A",
+                "datasource": { "type": "prometheus", "uid": "prometheus" },
+                "expr": "up{job=\"$job\"}"
+            }]
+        })
+    };
+    let before = call_count.load(Ordering::SeqCst);
+    for job in ["a", "b", "a"] {
+        let (st, _, body) = send_req(
+            &app,
+            req(
+                "POST",
+                "/odata/v4/Datasource.Query",
+                Some("admin-a-token"),
+                Some(query(job)),
+            ),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+    }
+    // a, b go upstream; the second a is a cache hit.
+    assert_eq!(call_count.load(Ordering::SeqCst), before + 2);
+
+    let (st, _, _) = send_req(
+        &app,
+        req(
+            "POST",
+            "/odata/v4/Datasource.Query",
+            Some("admin-a-token"),
+            Some(json!({
+                "from": "2023-11-14T22:20:00Z",
+                "to": "2023-11-14T22:10:00Z",
+                "queries": [{ "refId": "A", "datasource": { "uid": "prometheus" }, "expr": "up" }]
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+
+    let subs: Vec<Value> = (0..=controlroom_api::odata::MAX_BATCH_REQUESTS)
+        .map(|i| json!({ "id": i.to_string(), "method": "GET", "url": "Dashboards" }))
+        .collect();
+    let (st, _, _) = send_req(
+        &app,
+        req(
+            "POST",
+            "/odata/v4/$batch",
+            Some("admin-a-token"),
+            Some(json!({ "requests": subs })),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+}
+
+/// Without a configured exchanger no caller token leaves controlroom: the default refuses.
+#[tokio::test]
+async fn security_default_token_exchanger_never_forwards_the_caller_token() {
+    let (upstream_url, _, _) = spawn_mock_upstream().await;
+    let (state, _org_a, _org_b, _app) = setup_world(&upstream_url).await;
+    assert!(
+        state
+            .token_exchanger
+            .exchange_for_audience("user-alice-jwt", "aud")
+            .is_err()
+    );
 }
