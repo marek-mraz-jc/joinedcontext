@@ -121,8 +121,8 @@ pub async fn set_tenant_config(
 
 /// Boot check (C1): verifies that:
 /// 1. The current database role is neither `rolsuper` nor `rolbypassrls`.
-/// 2. Every table in [`REQUIRED_RLS_TABLES`] exists in schema `dataroom` and has both
-///    `relrowsecurity = true` and `relforcerowsecurity = true`.
+/// 2. Every table in schema `dataroom` has both `relrowsecurity = true` and
+///    `relforcerowsecurity = true`, and every table in [`REQUIRED_RLS_TABLES`] exists.
 pub async fn verify_rls_on_pool(pool: &PgPool) -> Result<()> {
     let (is_super, bypass_rls): (bool, bool) = sqlx::query_as(
         "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user",
@@ -137,30 +137,31 @@ pub async fn verify_rls_on_pool(pool: &PgPool) -> Result<()> {
         ));
     }
 
-    for table in REQUIRED_RLS_TABLES {
-        let row: Option<(bool, bool)> = sqlx::query_as(
-            "SELECT c.relrowsecurity, c.relforcerowsecurity
-             FROM pg_class c
-             JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE n.nspname = 'dataroom' AND c.relname = $1",
-        )
-        .bind(table)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| DataroomError::Storage(format!("failed to check RLS on {table}: {e}")))?;
+    // Every table in the schema, not only the known ones: a table added later without forced
+    // RLS refuses the boot as well (A6).
+    let tables: Vec<(String, bool, bool)> = sqlx::query_as(
+        "SELECT c.relname::text, c.relrowsecurity, c.relforcerowsecurity
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'dataroom' AND c.relkind IN ('r', 'p')
+         ORDER BY c.relname",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| DataroomError::Storage(format!("failed to check RLS in schema dataroom: {e}")))?;
 
-        match row {
-            Some((true, true)) => {}
-            Some((rls, forced)) => {
-                return Err(DataroomError::Storage(format!(
-                    "boot refused (C1): table dataroom.{table} has relrowsecurity={rls}, relforcerowsecurity={forced}"
-                )));
-            }
-            None => {
-                return Err(DataroomError::Storage(format!(
-                    "boot refused (C1): table dataroom.{table} does not exist"
-                )));
-            }
+    for (table, rls, forced) in &tables {
+        if !(*rls && *forced) {
+            return Err(DataroomError::Storage(format!(
+                "boot refused (C1): table dataroom.{table} has relrowsecurity={rls}, relforcerowsecurity={forced}"
+            )));
+        }
+    }
+    for table in REQUIRED_RLS_TABLES {
+        if !tables.iter().any(|(name, _, _)| name == table) {
+            return Err(DataroomError::Storage(format!(
+                "boot refused (C1): table dataroom.{table} does not exist"
+            )));
         }
     }
     Ok(())
@@ -1385,23 +1386,9 @@ mod tests {
         let mig_store = PgStore::from_pool_unchecked(admin_pool.clone());
         mig_store.migrate().await.expect("migrate dataroom schema");
 
-        // Test boot check refusal when a table lacks forced RLS (C1, A6)
-        sqlx::query("ALTER TABLE dataroom.cat_plugin NO FORCE ROW LEVEL SECURITY")
-            .execute(&admin_pool)
-            .await
-            .expect("disable force rls temporarily");
-        let refused = PgStore::connect_and_verify(admin_pool.clone()).await;
-        assert!(
-            refused.is_err(),
-            "boot check must refuse when a table lacks forced RLS"
-        );
-        sqlx::query("ALTER TABLE dataroom.cat_plugin FORCE ROW LEVEL SECURITY")
-            .execute(&admin_pool)
-            .await
-            .expect("restore force rls");
-
-        // Create or ensure a non-superuser, non-BYPASSRLS request role for testing RLS isolation
-        let _ = sqlx::query(
+        // A non-superuser, non-BYPASSRLS request role for the RLS isolation check and the boot
+        // check (a superuser pool is refused for being one, which proves nothing about RLS).
+        sqlx::query(
             "DO $$
             BEGIN
                 IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'dataroom_app_test') THEN
@@ -1410,15 +1397,57 @@ mod tests {
             END $$;",
         )
         .execute(&admin_pool)
-        .await;
-        let _ = sqlx::query("GRANT USAGE ON SCHEMA dataroom TO dataroom_app_test")
+        .await
+        .expect("create request role");
+        sqlx::query("GRANT USAGE ON SCHEMA dataroom TO dataroom_app_test")
             .execute(&admin_pool)
-            .await;
-        let _ = sqlx::query(
+            .await
+            .expect("grant schema usage");
+        sqlx::query(
             "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA dataroom TO dataroom_app_test",
         )
         .execute(&admin_pool)
-        .await;
+        .await
+        .expect("grant table rights");
+
+        let request_pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .after_connect(|conn, _meta| {
+                Box::pin(async move {
+                    sqlx::query("SET ROLE dataroom_app_test")
+                        .execute(&mut *conn)
+                        .await
+                        .map(|_| ())
+                })
+            })
+            .connect(&db_url)
+            .await
+            .expect("connect as request role");
+
+        // The superuser pool is refused; the request role passes on the migrated schema.
+        assert!(PgStore::connect_and_verify(admin_pool.clone()).await.is_err());
+        PgStore::connect_and_verify(request_pool.clone())
+            .await
+            .expect("request role passes the boot check on the migrated schema");
+
+        // Boot check refusal for a newly created table without forced RLS (C1, A6).
+        sqlx::query("CREATE TABLE dataroom.zz_a6_no_forced_rls (org_id uuid NOT NULL)")
+            .execute(&admin_pool)
+            .await
+            .expect("create table without forced RLS");
+        let refused = PgStore::connect_and_verify(request_pool.clone()).await;
+        sqlx::query("DROP TABLE dataroom.zz_a6_no_forced_rls")
+            .execute(&admin_pool)
+            .await
+            .expect("drop test table");
+        match refused {
+            Err(DataroomError::Storage(msg)) => assert!(
+                msg.contains("zz_a6_no_forced_rls"),
+                "refusal names the table: {msg}"
+            ),
+            Err(other) => panic!("expected a storage refusal, got {other:?}"),
+            Ok(_) => panic!("boot check must refuse a table without forced RLS"),
+        }
 
         let store = PgStore::from_pool_unchecked(admin_pool.clone());
         let org_a = OrgId::from_uuid(Uuid::now_v7());
