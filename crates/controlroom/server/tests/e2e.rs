@@ -18,7 +18,7 @@ use chrono::Utc;
 use controlroom_api::state::TokenBinding;
 use controlroom_api::{PanelTimeRange, panel_view};
 use controlroom_import::parse_dashboard_providers_yaml;
-use controlroom_mcp::call_mcp_tool;
+use controlroom_mcp::{call_mcp_tool, list_mcp_tools};
 use controlroom_model::{
     ControlroomStore, DatasourceRecord, GrafanaRole, InstallationId, InstanceId, OrgId,
     PolicyAuthorizer, RequestCtx, RoleBinding, Subject,
@@ -1523,4 +1523,152 @@ async fn security_default_token_exchanger_never_forwards_the_caller_token() {
             .exchange_for_audience("user-alice-jwt", "aud")
             .is_err()
     );
+}
+
+/// Every MCP tool runs the same authorization as OData: a subject without a role is refused by every tool,
+/// a viewer reads but cannot write, a read-only connector cannot write even as admin.
+#[tokio::test]
+async fn security_mcp_tools_authorize_like_odata() {
+    let (upstream_url, _, _) = spawn_mock_upstream().await;
+    let (state, org_a, _org_b, app) = setup_world(&upstream_url).await;
+    let (st, _, _) = send_req(
+        &app,
+        req(
+            "POST",
+            "/api/dashboards/db",
+            Some("admin-a-token"),
+            Some(json!({ "dashboard": simple_dash("mcp-dash"), "overwrite": true })),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let ctx_for = |actor: &str, read_only: bool| {
+        let mut subject = Subject::authenticated(actor, vec![org_a], vec![]);
+        subject.read_only = read_only;
+        RequestCtx::new(
+            state.installation_id,
+            org_a,
+            state.default_instance_id,
+            subject,
+        )
+    };
+    let tools = list_mcp_tools(&state);
+    assert_eq!(tools.len(), state.registry.operations.len() + 1);
+    assert!(
+        tools
+            .iter()
+            .any(|t| t.name == "controlroom_export_dashboard")
+    );
+
+    let import_args = json!({ "dashboard": simple_dash("mcp-new") });
+    let calls: Vec<(&str, Value)> = vec![
+        ("controlroom_export_dashboard", json!({ "uid": "mcp-dash" })),
+        (
+            "controlroom_render_panel",
+            json!({ "uid": "mcp-dash", "panelId": 1 }),
+        ),
+        (
+            "controlroom_datasource_health",
+            json!({ "uid": "prometheus" }),
+        ),
+        (
+            "controlroom_datasource_editor_schema",
+            json!({ "uid": "prometheus" }),
+        ),
+        (
+            "controlroom_datasource_query",
+            json!({ "queries": [{ "refId": "A", "datasource": { "uid": "prometheus" }, "expr": "up" }], "from": "1700000000000", "to": "1700003600000" }),
+        ),
+        ("controlroom_import", import_args.clone()),
+        (
+            "controlroom_rotate_public_dashboard",
+            json!({ "uid": "mcp-dash" }),
+        ),
+    ];
+
+    // A subject with no role binding in org_a: every object tool refuses, and never returns data.
+    let stranger = ctx_for("admin-b", false);
+    for (tool, args) in &calls {
+        let res = call_mcp_tool(&state, &stranger, tool, args.clone()).await;
+        match res {
+            Err(e) => assert!(
+                matches!(e.status_code(), 403 | 404),
+                "{tool}: stranger got {} {e}",
+                e.status_code()
+            ),
+            Ok(v) => panic!("{tool}: stranger got data {v}"),
+        }
+    }
+    let listed = call_mcp_tool(&state, &stranger, "controlroom_list_dashboards", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(listed["value"], json!([]));
+
+    // A viewer reads, and is refused every write.
+    let viewer = ctx_for("viewer-a", false);
+    let exported = call_mcp_tool(
+        &state,
+        &viewer,
+        "controlroom_export_dashboard",
+        json!({ "uid": "mcp-dash" }),
+    )
+    .await
+    .unwrap();
+    assert!(exported.to_string().contains("mcp-dash"));
+    let listed = call_mcp_tool(
+        &state,
+        &viewer,
+        "controlroom_list_dashboards",
+        json!({ "query": "MCP-D" }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        listed["value"].as_array().map(Vec::len),
+        Some(1),
+        "{listed}"
+    );
+    for (tool, args) in [
+        ("controlroom_import", import_args.clone()),
+        (
+            "controlroom_rotate_public_dashboard",
+            json!({ "uid": "mcp-dash" }),
+        ),
+    ] {
+        let e = call_mcp_tool(&state, &viewer, tool, args)
+            .await
+            .unwrap_err();
+        assert!(matches!(e.status_code(), 403 | 404), "{tool}: {e}");
+    }
+
+    // A read-only connector holding admin rights still cannot write.
+    let ro_admin = ctx_for("admin", true);
+    let e = call_mcp_tool(&state, &ro_admin, "controlroom_import", import_args.clone())
+        .await
+        .unwrap_err();
+    assert!(matches!(e.status_code(), 403 | 404), "{e}");
+    // The same call as a writable admin succeeds, so the refusals above are about rights.
+    call_mcp_tool(
+        &state,
+        &ctx_for("admin", false),
+        "controlroom_import",
+        import_args,
+    )
+    .await
+    .unwrap();
+
+    let e = call_mcp_tool(&state, &viewer, "controlroom_no_such_tool", json!({}))
+        .await
+        .unwrap_err();
+    assert_eq!(e.status_code(), 404);
+    let e = call_mcp_tool(
+        &state,
+        &viewer,
+        "controlroom_datasource_query",
+        json!({ "queries": "x" }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(e.status_code(), 400);
 }
