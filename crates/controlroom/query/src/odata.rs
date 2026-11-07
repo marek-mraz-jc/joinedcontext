@@ -63,6 +63,17 @@ impl ODataDatasource {
     }
 }
 
+/// OData CSDL `SimpleIdentifier`, ASCII subset: a letter or `_`, then letters, digits or `_`,
+/// at most 128 characters.
+fn is_odata_identifier(s: &str) -> bool {
+    let mut chars = s.chars();
+    s.len() <= 128
+        && chars
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 fn odata_rows_to_frame(ref_id: &str, entity_set: &str, rows: &[Value]) -> Frame {
     let mut col_names: Vec<String> = Vec::new();
     for row in rows {
@@ -143,6 +154,14 @@ impl Datasource for ODataDatasource {
                         ref_id: q.ref_id.clone(),
                         reason: "missing 'entitySet' in OData query".into(),
                     })?;
+                // The entity set becomes a path segment: only an OData simple identifier, so a
+                // query cannot walk to another path of the service (`../`, `?`, `#`, `/`).
+                if !is_odata_identifier(entity_set) {
+                    return Err(DsError::InvalidQuery {
+                        ref_id: q.ref_id.clone(),
+                        reason: "'entitySet' must be an OData simple identifier".into(),
+                    });
+                }
 
                 let mut params: Vec<String> = Vec::new();
                 for (json_key, odata_key) in [
@@ -339,5 +358,226 @@ impl Datasource for ODataDatasource {
             map.insert("hide".to_owned(), Value::Bool(true));
         }
         Value::Object(map)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DenyTokenExchanger;
+    use crate::guard::GuardConfig;
+    use controlroom_model::{InstanceId, OrgId, Subject};
+    use parking_lot::Mutex;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// One-request-per-connection HTTP server on 127.0.0.1 that records each request head and
+    /// answers `status` with `body`.
+    async fn mock(status: u16, body: &'static str) -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let mut buf = vec![0u8; 8192];
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                log.lock()
+                    .push(String::from_utf8_lossy(&buf[..n]).into_owned());
+                let resp = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+            }
+        });
+        (format!("http://127.0.0.1:{}/odata/v4", addr.port()), seen)
+    }
+
+    fn ds(url: &str) -> ODataDatasource {
+        ODataDatasource::new(
+            "od",
+            format!("{url}/"),
+            "dataroom",
+            OutboundGuard::new(GuardConfig {
+                allow_hosts: vec!["127.0.0.1".into()],
+                allow_http: true,
+                allow_loopback_for_tests: true,
+                ..GuardConfig::default()
+            }),
+            Arc::new(DenyTokenExchanger),
+        )
+    }
+
+    fn ctx() -> QueryCtx {
+        QueryCtx::new(
+            OrgId::from_u128(1),
+            InstanceId::from_u128(1),
+            Subject::authenticated("u", vec![OrgId::from_u128(1)], vec![]),
+            0,
+            60_000,
+        )
+    }
+
+    fn q(model: Value) -> Query {
+        Query {
+            ref_id: "A".into(),
+            hide: false,
+            model,
+        }
+    }
+
+    #[tokio::test]
+    async fn query_sends_encoded_options_and_types_columns() {
+        let (url, seen) = mock(
+            200,
+            r#"{"@odata.context":"x","value":[{"@odata.id":"r1","name":"a","n":1,"ok":true,"at":"2026-01-01T00:00:00Z","o":{"k":1}},{"name":"b","n":null,"extra":"e"}]}"#,
+        )
+        .await;
+        let d = ds(&url);
+        let out = d
+            .query(
+                &ctx(),
+                &[
+                    q(json!({"entitySet": "Stations", "$filter": "name eq 'a b'", "select": "name,n", "$orderby": "n desc", "$apply": "groupby((name))", "$top": 5})),
+                    Query { ref_id: "H".into(), hide: true, model: json!({"entitySet": "Stations"}) },
+                ],
+            )
+            .await
+            .unwrap();
+        let req = seen.lock()[0].clone();
+        let line = req.lines().next().unwrap();
+        assert_eq!(
+            line,
+            "GET /odata/v4/Stations?$filter=name%20eq%20%27a%20b%27&$select=name%2Cn&$orderby=n%20desc&$apply=groupby%28%28name%29%29&$top=5 HTTP/1.1"
+        );
+        assert!(req.to_ascii_lowercase().contains("odata-version: 4.01"));
+        // No caller token on the subject: no Authorization header is sent.
+        assert!(!req.to_ascii_lowercase().contains("authorization"));
+        assert_eq!(out.len(), 1, "hidden query is skipped");
+        let frame = &out[0].frames[0];
+        assert_eq!(frame.name, "Stations");
+        // serde_json without `preserve_order` sorts object keys, so columns come out in key
+        // order, not in response or `$select` order; columns first seen in later rows go last.
+        let cols: Vec<_> = frame
+            .fields
+            .iter()
+            .map(|f| (f.name.as_str(), f.field_type))
+            .collect();
+        assert_eq!(
+            cols,
+            vec![
+                ("at", FieldType::Time),
+                ("n", FieldType::Number),
+                ("name", FieldType::String),
+                ("o", FieldType::Json),
+                ("ok", FieldType::Bool),
+                ("extra", FieldType::String),
+            ]
+        );
+        assert_eq!(frame.fields[5].values, vec![Value::Null, json!("e")]);
+    }
+
+    #[tokio::test]
+    async fn entity_set_cannot_leave_the_service_path() {
+        let (url, seen) = mock(200, r#"{"value":[]}"#).await;
+        let d = ds(&url);
+        for bad in [
+            "../admin",
+            "Sets/../../x",
+            "Sets?$expand=*",
+            "Sets#x",
+            "a b",
+            "1abc",
+            "",
+            "Sets('x')/Export",
+        ] {
+            let err = d
+                .query(&ctx(), &[q(json!({"entitySet": bad}))])
+                .await
+                .unwrap_err();
+            assert!(matches!(err, DsError::InvalidQuery { .. }), "{bad}: {err}");
+        }
+        assert!(
+            seen.lock().is_empty(),
+            "no request may leave for a refused entity set"
+        );
+        assert!(
+            d.query(&ctx(), &[q(json!({"entitySet": "_Sets_2"}))])
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn upstream_errors_bad_json_health_and_token_exchange() {
+        let (url, _) = mock(500, "boom").await;
+        let err = ds(&url)
+            .query(&ctx(), &[q(json!({"entitySet": "S"}))])
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, DsError::Upstream { status: 500, .. }),
+            "{err}"
+        );
+        assert!(ds(&url).health(&ctx()).await.message.contains("500"));
+
+        let (url, seen) = mock(200, "not json").await;
+        let err = ds(&url)
+            .query(&ctx(), &[q(json!({"entitySet": "S"}))])
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, DsError::Upstream { status: 502, .. }),
+            "{err}"
+        );
+        let health = ds(&url).health(&ctx()).await;
+        assert!(
+            seen.lock()
+                .last()
+                .unwrap()
+                .starts_with("GET /odata/v4/$metadata ")
+        );
+        assert!(health.message.contains("reachable"), "{}", health.message);
+        assert_eq!(
+            ds(&url)
+                .resource(
+                    &ctx(),
+                    ResourceReq {
+                        path: "sets".into(),
+                        params: BTreeMap::new()
+                    }
+                )
+                .await
+                .unwrap()
+                .data,
+            json!({"value": []})
+        );
+
+        // A caller token is never forwarded as is: the default exchanger refuses.
+        let mut c = ctx();
+        c.subject.bearer_token = Some("caller-jwt".into());
+        let err = ds(&url)
+            .query(&c, &[q(json!({"entitySet": "S"}))])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DsError::TokenExchange { .. }), "{err}");
+        assert!(ds(&url).health(&c).await.message.contains("token exchange"));
+        assert!(!seen.lock().iter().any(|r| r.contains("caller-jwt")));
+    }
+
+    #[test]
+    fn editor_import_and_export_round_trip() {
+        let d = ds("http://127.0.0.1:1/odata/v4");
+        assert_eq!(d.kind(), "odata");
+        assert_eq!(d.service_url, "http://127.0.0.1:1/odata/v4");
+        assert_eq!(d.editor().json_schema["required"], json!(["entitySet"]));
+        let target = json!({"refId": "B", "hide": true, "entitySet": "S", "$top": 3});
+        let imported = d.import(&target).unwrap();
+        assert_eq!(imported.query.ref_id, "B");
+        assert!(imported.query.hide);
+        assert_eq!(d.export(&imported.query), target);
+        assert!(d.import(&json!("S")).is_err());
+        let missing = d.import(&json!({"entitySet": "S"})).unwrap();
+        assert_eq!(missing.query.ref_id, "A");
     }
 }
