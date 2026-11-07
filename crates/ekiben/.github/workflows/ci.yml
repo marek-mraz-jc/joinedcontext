@@ -1,0 +1,47 @@
+name: ci
+on:
+  push:
+    branches: [main, "agent/**"]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with: { components: "rustfmt, clippy" }
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace --no-fail-fast
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
+        with: { tool: "cargo-deny,cargo-audit" }
+      # supply chain last: an advisory with no eligible fix must not hide a test failure
+      - run: cargo deny check
+      - run: cargo audit
+  e2e-parity-sample:
+    # A fixed sample of 20 seed pipelines (tests/e2e-parity, frozen by scripts/e2e/parity.py freeze)
+    # run in ekiben against the replay stub, compared with Bento 1.22.0's recorded run (T-6624).
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo build --locked --release -p ekiben-server
+      - run: python3 scripts/e2e/test_parity.py
+      - run: python3 scripts/e2e/parity.py check --cases tests/e2e-parity --out "$RUNNER_TEMP/parity" --ekiben target/release/ekiben --jobs 4
+  gitleaks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }

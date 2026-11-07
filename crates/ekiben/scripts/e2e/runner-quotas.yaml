@@ -1,0 +1,7 @@
+# The org quotas a parity run gives `ekiben run` (--quotas): sized like the deployment's runner,
+# where one Bento run writes up to ~70k entities, rather than ekiben's multi-tenant defaults.
+max_in_flight_messages: 1000000
+max_messages_per_sec: 10000000
+max_memory_bytes_per_run: 1073741824
+max_cpu_time_ms_per_run: 300000
+max_http_requests_per_sec: 1000000

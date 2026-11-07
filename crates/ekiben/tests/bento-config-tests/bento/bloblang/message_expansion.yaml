@@ -1,0 +1,27 @@
+# Copied from github.com/warpstreamlabs/bento v1.22.0 config/test/bloblang/message_expansion.yaml
+# Copyright (c) 2024-present Bento contributors, MIT License: see LICENSE-bento beside this tree.
+pipeline:
+  processors:
+    - bloblang: |
+        let doc_root = this.without("items")
+        root = items.map_each($doc_root.merge(this))
+    - unarchive:
+        format: json_array
+
+tests:
+  - name: Sample object
+    target_processors: /pipeline/processors
+    input_batch:
+      - content: |
+          {
+            "id": "foobar",
+            "items": [
+              {"content":"foo"},
+              {"content":"bar"},
+              {"content":"baz"}
+            ]
+          }
+    output_batches:
+      - - content_equals: '{"content":"foo","id":"foobar"}'
+        - content_equals: '{"content":"bar","id":"foobar"}'
+        - content_equals: '{"content":"baz","id":"foobar"}'

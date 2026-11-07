@@ -1,0 +1,351 @@
+[
+  {
+    "name": "hsl-service-alerts",
+    "processor": {
+      "protobuf": {
+        "operator": "to_json",
+        "message": "transit_realtime.FeedMessage",
+        "import_paths": [
+          "proto/gtfs"
+        ]
+      }
+    },
+    "input": "data/hsl-service-alerts.pb",
+    "expected": {
+      "sha256": "0e75fb0c6f1c3c7f2d9244efc62f29c4c16caa693c6868777e424b0a7d2d4db9",
+      "len": 43502,
+      "lines": 1
+    }
+  },
+  {
+    "name": "hsl-trip-updates",
+    "processor": {
+      "protobuf": {
+        "operator": "to_json",
+        "message": "transit_realtime.FeedMessage",
+        "import_paths": [
+          "proto/gtfs"
+        ]
+      }
+    },
+    "input": "data/hsl-trip-updates-8.pb",
+    "expected": {
+      "sha256": "2f4e7eb3180a24f937d42987d7509374af1f786f0842afb6575ee205ae264176",
+      "len": 26781,
+      "lines": 1
+    }
+  },
+  {
+    "name": "hsl-trip-updates-proto-names",
+    "processor": {
+      "protobuf": {
+        "operator": "to_json",
+        "message": "transit_realtime.FeedMessage",
+        "import_paths": [
+          "proto/gtfs"
+        ],
+        "use_proto_names": true
+      }
+    },
+    "input": "data/hsl-trip-updates-8.pb",
+    "expected": {
+      "sha256": "b1235188d5c2558725bfb20db9dc3ade2a5ecc0dc7e75cfd4e073e4de480106a",
+      "len": 27215,
+      "lines": 1
+    }
+  },
+  {
+    "name": "hsl-trip-updates-from-json",
+    "processor": {
+      "protobuf": {
+        "operator": "from_json",
+        "message": "transit_realtime.FeedMessage",
+        "import_paths": [
+          "proto/gtfs"
+        ]
+      }
+    },
+    "input": "data/hsl-trip-updates-8.json",
+    "expected": {
+      "sha256": "2f4e7eb3180a24f937d42987d7509374af1f786f0842afb6575ee205ae264176",
+      "len": 26781,
+      "lines": 1
+    }
+  },
+  {
+    "name": "gtfs-missing-required",
+    "processor": {
+      "protobuf": {
+        "operator": "to_json",
+        "message": "transit_realtime.FeedMessage",
+        "import_paths": [
+          "proto/gtfs"
+        ]
+      }
+    },
+    "input": "data/gtfs-missing-required.pb",
+    "expected": {
+      "error": "failed to unmarshal protobuf message 'transit_realtime.FeedMessage': proto: required field transit_realtime.FeedHeader.gtfs_realtime_version not set"
+    }
+  },
+  {
+    "name": "gtfs-unknown-extension-and-enum",
+    "processor": {
+      "protobuf": {
+        "operator": "to_json",
+        "message": "transit_realtime.FeedMessage",
+        "import_paths": [
+          "proto/gtfs"
+        ]
+      }
+    },
+    "input": "data/gtfs-unknown-extension-enum.pb",
+    "expected": {
+      "text": "{\"header\":{\"gtfsRealtimeVersion\":\"2.0\",\"incrementality\":7}}\n"
+    }
+  },
+  {
+    "name": "gtfs-wire-garbage",
+    "processor": {
+      "protobuf": {
+        "operator": "to_json",
+        "message": "transit_realtime.FeedMessage",
+        "import_paths": [
+          "proto/gtfs"
+        ]
+      }
+    },
+    "input": "data/wire-garbage.pb",
+    "expected": {
+      "error": "failed to unmarshal protobuf message 'transit_realtime.FeedMessage': proto: cannot parse invalid wire-format data"
+    }
+  },
+  {
+    "name": "gtfs-empty-input",
+    "processor": {
+      "protobuf": {
+        "operator": "to_json",
+        "message": "transit_realtime.FeedMessage",
+        "import_paths": [
+          "proto/gtfs"
+        ]
+      }
+    },
+    "input": "data/empty.pb",
+    "expected": {
+      "error": "failed to unmarshal protobuf message 'transit_realtime.FeedMessage': proto: required field transit_realtime.FeedMessage.header not set"
+    }
+  },
+  {
+    "name": "person-1",
+    "processor": {
+      "protobuf": {
+        "operator": "to_json",
+        "message": "testing.Person",
+        "import_paths": [
+          "proto/testing"
+        ]
+      }
+    },
+    "input": "data/person-1.pb",
+    "expected": {
+      "text": "{\"firstName\":\"john\",\"lastName\":\"oates\",\"age\":10}\n"
+    }
+  },
+  {
+    "name": "person-2",
+    "processor": {
+      "protobuf": {
+        "operator": "to_json",
+        "message": "testing.Person",
+        "import_paths": [
+          "proto/testing"
+        ]
+      }
+    },
+    "input": "data/person-2.pb",
+    "expected": {
+      "text": "{\"firstName\":\"daryl\",\"lastName\":\"hall\"}\n"
+    }
+  },
+  {
+    "name": "person-3",
+    "processor": {
+      "protobuf": {
+        "operator": "to_json",
+        "message": "testing.Person",
+        "import_paths": [
+          "proto/testing"
+        ]
+      }
+    },
+    "input": "data/person-3.pb",
+    "expected": {
+      "text": "{\"firstName\":\"caleb\",\"lastName\":\"quaye\",\"email\":\"caleb@myspace.com\"}\n"
+    }
+  },
+  {
+    "name": "person-emit-unpopulated",
+    "processor": {
+      "protobuf": {
+        "operator": "to_json",
+        "message": "testing.Person",
+        "import_paths": [
+          "proto/testing"
+        ],
+        "emit_unpopulated": true
+      }
+    },
+    "input": "data/person-3.pb",
+    "expected": {
+      "text": "{\"firstName\":\"caleb\",\"lastName\":\"quaye\",\"fullName\":\"\",\"age\":0,\"id\":0,\"email\":\"caleb@myspace.com\",\"lastUpdated\":null}\n"
+    }
+  },
+  {
+    "name": "person-empty-emit-unpopulated",
+    "processor": {
+      "protobuf": {
+        "operator": "to_json",
+        "message": "testing.Person",
+        "import_paths": [
+          "proto/testing"
+        ],
+        "emit_unpopulated": true
+      }
+    },
+    "input": "data/empty.pb",
+    "expected": {
+      "text": "{\"firstName\":\"\",\"lastName\":\"\",\"fullName\":\"\",\"age\":0,\"id\":0,\"email\":\"\",\"lastUpdated\":null}\n"
+    }
+  },
+  {
+    "name": "person-proto-names",
+    "processor": {
+      "protobuf": {
+        "operator": "to_json",
+        "message": "testing.Person",
+        "import_paths": [
+          "proto/testing"
+        ],
+        "use_proto_names": true
+      }
+    },
+    "input": "data/person-3.pb",
+    "expected": {
+      "text": "{\"first_name\":\"caleb\",\"last_name\":\"quaye\",\"email\":\"caleb@myspace.com\"}\n"
+    }
+  },
+  {
+    "name": "envelope-any-person",
+    "processor": {
+      "protobuf": {
+        "operator": "to_json",
+        "message": "testing.Envelope",
+        "import_paths": [
+          "proto/testing"
+        ]
+      }
+    },
+    "input": "data/envelope-person.pb",
+    "expected": {
+      "text": "{\"id\":747,\"content\":{\"@type\":\"type.googleapis.com/testing.Person\",\"firstName\":\"bob\"}}\n"
+    }
+  },
+  {
+    "name": "envelope-any-house",
+    "processor": {
+      "protobuf": {
+        "operator": "to_json",
+        "message": "testing.Envelope",
+        "import_paths": [
+          "proto/testing"
+        ]
+      }
+    },
+    "input": "data/envelope-house.pb",
+    "expected": {
+      "text": "{\"id\":747,\"content\":{\"@type\":\"type.googleapis.com/testing.House\",\"address\":\"123\"}}\n"
+    }
+  },
+  {
+    "name": "person-from-json",
+    "processor": {
+      "protobuf": {
+        "operator": "from_json",
+        "message": "testing.Person",
+        "import_paths": [
+          "proto/testing"
+        ]
+      }
+    },
+    "input": "data/person.json",
+    "expected": {
+      "text": "{\"firstName\":\"john\",\"lastName\":\"oates\",\"age\":10,\"lastUpdated\":\"2026-11-07T08:00:00.500Z\"}\n"
+    }
+  },
+  {
+    "name": "person-from-json-unknown",
+    "processor": {
+      "protobuf": {
+        "operator": "from_json",
+        "message": "testing.Person",
+        "import_paths": [
+          "proto/testing"
+        ]
+      }
+    },
+    "input": "data/person-unknown.json",
+    "expected": {
+      "error": "failed to unmarshal JSON message 'testing.Person': proto: (line 1:40): unknown field \"ageFoo\""
+    }
+  },
+  {
+    "name": "person-from-json-discard-unknown",
+    "processor": {
+      "protobuf": {
+        "operator": "from_json",
+        "message": "testing.Person",
+        "import_paths": [
+          "proto/testing"
+        ],
+        "discard_unknown": true
+      }
+    },
+    "input": "data/person-unknown.json",
+    "expected": {
+      "text": "{\"firstName\":\"john\",\"lastName\":\"oates\"}\n"
+    }
+  },
+  {
+    "name": "person-from-json-invalid",
+    "processor": {
+      "protobuf": {
+        "operator": "from_json",
+        "message": "testing.Person",
+        "import_paths": [
+          "proto/testing"
+        ]
+      }
+    },
+    "input": "data/person-invalid.json",
+    "expected": {
+      "error": "failed to unmarshal JSON message 'testing.Person': proto: syntax error (line 1:1): invalid value not"
+    }
+  },
+  {
+    "name": "person-from-json-bad-type",
+    "processor": {
+      "protobuf": {
+        "operator": "from_json",
+        "message": "testing.Person",
+        "import_paths": [
+          "proto/testing"
+        ]
+      }
+    },
+    "input": "data/person-bad-type.json",
+    "expected": {
+      "error": "failed to unmarshal JSON message 'testing.Person': proto: (line 1:14): invalid value for string field firstName: 5"
+    }
+  }
+]

@@ -1,0 +1,9 @@
+# ekiben's own suite: the target config of passes_bento_test.yaml.
+pipeline:
+  processors:
+    - label: shout
+      mapping: 'root = this.map_each(kv -> if kv.value.type() == "string" { kv.value.uppercase() } else { kv.value })'
+    - label: remote
+      http:
+        url: http://example.invalid/enrich
+        verb: POST

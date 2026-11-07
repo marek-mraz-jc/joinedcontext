@@ -1,0 +1,16 @@
+// Copied from github.com/warpstreamlabs/bento v1.22.0 config/test/protobuf/schema/house.proto
+// Copyright (c) 2024-present Bento contributors, MIT License: see LICENSE-bento beside this tree.
+syntax = "proto3";
+package testing;
+
+import "person.proto";
+
+message House {
+  message Mailbox {
+    string color = 1;
+    string identifier = 2;
+  }
+  repeated testing.Person people = 1;
+  string address = 2;
+  Mailbox mailbox = 3;
+}

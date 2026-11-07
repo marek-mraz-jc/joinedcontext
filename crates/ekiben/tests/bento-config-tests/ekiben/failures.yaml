@@ -1,0 +1,65 @@
+# ekiben's own suite: every case fails on purpose, so `ekiben test` must print Bento's failure report.
+pipeline:
+  processors:
+    - mapping: |
+        root = content().uppercase()
+        meta seen = "yes"
+        meta n = 5
+    - mapping: 'root = if content() == "BOOM" { throw("went wrong") }'
+
+tests:
+  - name: content mismatch
+    input_batch:
+      - content: hello
+    output_batches:
+      - - content_equals: HELLO WORLD
+
+  - name: several conditions on one message
+    input_batch:
+      - content: hello
+    output_batches:
+      - - content_matches: '^h.*'
+          metadata_equals:
+            seen: "no"
+          bloblang: 'content() == "nope"'
+
+  - name: missing metadata key
+    input_batch:
+      - content: hello
+    output_batches:
+      - - metadata_equals:
+            absent: x
+
+  - name: numeric metadata mismatch
+    input_batch:
+      - content: hello
+    output_batches:
+      - - metadata_equals:
+            n: 6
+
+  - name: too few output batches
+    input_batch:
+      - content: a
+    output_batches:
+      - - content_equals: A
+      - - content_equals: B
+
+  - name: unexpected batch and message
+    input_batches:
+      - - content: a
+        - content: b
+      - - content: c
+    output_batches:
+      - - content_equals: A
+
+  - name: processor error with a failing condition
+    input_batch:
+      - content: boom
+    output_batches:
+      - - content_equals: BOOM!
+
+  - name: output that is not JSON
+    input_batch:
+      - content: '{"a":1'
+    output_batches:
+      - - json_equals: { "a": 1 }

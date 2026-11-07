@@ -1,0 +1,12 @@
+# Copied from github.com/warpstreamlabs/bento v1.22.0 config/test/files_for_content.yaml
+# Copyright (c) 2024-present Bento contributors, MIT License: see LICENSE-bento beside this tree.
+pipeline:
+  processors:
+    - bloblang: 'root = content().uppercase()'
+
+tests:
+  - name: should be uppercased
+    input_batch:
+      - file_content: ./files/input.txt
+    output_batches:
+      - - file_equals: ./files/output.txt

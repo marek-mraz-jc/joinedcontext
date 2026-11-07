@@ -1,0 +1,3782 @@
+[
+ {
+  "page": "methods.md",
+  "name": "apply",
+  "mapping": "map thing {\n  root.inner = this.first\n}\n\nroot.foo = this.doc.apply(\"thing\")",
+  "input": "{\"doc\":{\"first\":\"hello world\"}}",
+  "docs_out": "{\"foo\":{\"inner\":\"hello world\"}}",
+  "bento": {
+   "stdout": "{\"foo\":{\"inner\":\"hello world\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "apply",
+  "mapping": "map create_foo {\n  root.name = \"a foo\"\n  root.purpose = \"to be a foo\"\n}\n\nroot = this\nroot.foo = null.apply(\"create_foo\")",
+  "input": "{\"id\":\"1234\"}",
+  "docs_out": "{\"foo\":{\"name\":\"a foo\",\"purpose\":\"to be a foo\"},\"id\":\"1234\"}",
+  "bento": {
+   "stdout": "{\"foo\":{\"name\":\"a foo\",\"purpose\":\"to be a foo\"},\"id\":\"1234\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "catch",
+  "mapping": "root.url = this.url.parse_url().catch(err -> {\"error\":err,\"input\":this.url})",
+  "input": "{\"url\":\"invalid %&# url\"}",
+  "docs_out": "{\"url\":{\"error\":\"field `this.url`: parse \\\"invalid %&\\\": invalid URL escape \\\"%&\\\"\",\"input\":\"invalid %&# url\"}}",
+  "bento": {
+   "stdout": "{\"url\":{\"error\":\"field `this.url`: parse \\\"invalid %\\u0026\\\": invalid URL escape \\\"%\\u0026\\\"\",\"input\":\"invalid %\\u0026# url\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "catch",
+  "mapping": "root = this.catch(deleted())",
+  "input": "{\"doc\":{\"foo\":\"bar\"}}",
+  "docs_out": "{\"doc\":{\"foo\":\"bar\"}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"foo\":\"bar\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "catch",
+  "mapping": "root = this.catch(deleted())",
+  "input": "not structured data",
+  "docs_out": "<Message deleted>",
+  "bento": {
+   "stdout": "\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "exists",
+  "mapping": "root.result = this.foo.exists(\"bar.baz\")",
+  "input": "{\"foo\":{\"bar\":{\"baz\":\"yep, I exist\"}}}",
+  "docs_out": "{\"result\":true}",
+  "bento": {
+   "stdout": "{\"result\":true}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "exists",
+  "mapping": "root.result = this.foo.exists(\"bar.baz\")",
+  "input": "{\"foo\":{\"bar\":{}}}",
+  "docs_out": "{\"result\":false}",
+  "bento": {
+   "stdout": "{\"result\":false}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "exists",
+  "mapping": "root.result = this.foo.exists(\"bar.baz\")",
+  "input": "{\"foo\":{}}",
+  "docs_out": "{\"result\":false}",
+  "bento": {
+   "stdout": "{\"result\":false}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "capitalize",
+  "mapping": "root.title = this.title.capitalize()",
+  "input": "{\"title\":\"the foo bar\"}",
+  "docs_out": "{\"title\":\"The Foo Bar\"}",
+  "bento": {
+   "stdout": "{\"title\":\"The Foo Bar\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "compare_argon2",
+  "mapping": "root.match = this.secret.compare_argon2(\"$argon2id$v=19$m=4096,t=3,p=1$c2FsdHktbWNzYWx0ZmFjZQ$RMUMwgtS32/mbszd+ke4o4Ej1jFpYiUqY6MHWa69X7Y\")",
+  "input": "{\"secret\":\"there-are-many-blobs-in-the-sea\"}",
+  "docs_out": "{\"match\":true}",
+  "bento": {
+   "stdout": "{\"match\":true}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "compare_argon2",
+  "mapping": "root.match = this.secret.compare_argon2(\"$argon2id$v=19$m=4096,t=3,p=1$c2FsdHktbWNzYWx0ZmFjZQ$RMUMwgtS32/mbszd+ke4o4Ej1jFpYiUqY6MHWa69X7Y\")",
+  "input": "{\"secret\":\"will-i-ever-find-love\"}",
+  "docs_out": "{\"match\":false}",
+  "bento": {
+   "stdout": "{\"match\":false}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "compare_bcrypt",
+  "mapping": "root.match = this.secret.compare_bcrypt(\"$2y$10$Dtnt5NNzVtMCOZONT705tOcS8It6krJX8bEjnDJnwxiFKsz1C.3Ay\")",
+  "input": "{\"secret\":\"there-are-many-blobs-in-the-sea\"}",
+  "docs_out": "{\"match\":true}",
+  "bento": {
+   "stdout": "{\"match\":true}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "compare_bcrypt",
+  "mapping": "root.match = this.secret.compare_bcrypt(\"$2y$10$Dtnt5NNzVtMCOZONT705tOcS8It6krJX8bEjnDJnwxiFKsz1C.3Ay\")",
+  "input": "{\"secret\":\"will-i-ever-find-love\"}",
+  "docs_out": "{\"match\":false}",
+  "bento": {
+   "stdout": "{\"match\":false}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "contains",
+  "mapping": "root.has_foo = this.thing.contains(\"foo\")",
+  "input": "{\"thing\":\"this foo that\"}",
+  "docs_out": "{\"has_foo\":true}",
+  "bento": {
+   "stdout": "{\"has_foo\":true}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "contains",
+  "mapping": "root.has_foo = this.thing.contains(\"foo\")",
+  "input": "{\"thing\":\"this bar that\"}",
+  "docs_out": "{\"has_foo\":false}",
+  "bento": {
+   "stdout": "{\"has_foo\":false}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "escape_html",
+  "mapping": "root.escaped = this.value.escape_html()",
+  "input": "{\"value\":\"foo & bar\"}",
+  "docs_out": "{\"escaped\":\"foo &amp; bar\"}",
+  "bento": {
+   "stdout": "{\"escaped\":\"foo \\u0026amp; bar\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "escape_url_query",
+  "mapping": "root.escaped = this.value.escape_url_query()",
+  "input": "{\"value\":\"foo & bar\"}",
+  "docs_out": "{\"escaped\":\"foo+%26+bar\"}",
+  "bento": {
+   "stdout": "{\"escaped\":\"foo+%26+bar\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "filepath_join",
+  "mapping": "root.path = this.path_elements.filepath_join()",
+  "input": "{\"path_elements\":[\"/foo/\",\"bar.txt\"]}",
+  "docs_out": "{\"path\":\"/foo/bar.txt\"}",
+  "bento": {
+   "stdout": "{\"path\":\"/foo/bar.txt\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "filepath_split",
+  "mapping": "root.path_sep = this.path.filepath_split()",
+  "input": "{\"path\":\"/foo/bar.txt\"}",
+  "docs_out": "{\"path_sep\":[\"/foo/\",\"bar.txt\"]}",
+  "bento": {
+   "stdout": "{\"path_sep\":[\"/foo/\",\"bar.txt\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "filepath_split",
+  "mapping": "root.path_sep = this.path.filepath_split()",
+  "input": "{\"path\":\"baz.txt\"}",
+  "docs_out": "{\"path_sep\":[\"\",\"baz.txt\"]}",
+  "bento": {
+   "stdout": "{\"path_sep\":[\"\",\"baz.txt\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "format",
+  "mapping": "root.foo = \"%s(%v): %v\".format(this.name, this.age, this.fingers)",
+  "input": "{\"name\":\"lance\",\"age\":37,\"fingers\":13}",
+  "docs_out": "{\"foo\":\"lance(37): 13\"}",
+  "bento": {
+   "stdout": "{\"foo\":\"lance(37): 13\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "has_prefix",
+  "mapping": "root.t1 = this.v1.has_prefix(\"foo\")\nroot.t2 = this.v2.has_prefix(\"foo\")",
+  "input": "{\"v1\":\"foobar\",\"v2\":\"barfoo\"}",
+  "docs_out": "{\"t1\":true,\"t2\":false}",
+  "bento": {
+   "stdout": "{\"t1\":true,\"t2\":false}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "has_suffix",
+  "mapping": "root.t1 = this.v1.has_suffix(\"foo\")\nroot.t2 = this.v2.has_suffix(\"foo\")",
+  "input": "{\"v1\":\"foobar\",\"v2\":\"barfoo\"}",
+  "docs_out": "{\"t1\":false,\"t2\":true}",
+  "bento": {
+   "stdout": "{\"t1\":false,\"t2\":true}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "index_of",
+  "mapping": "root.index = this.thing.index_of(\"bar\")",
+  "input": "{\"thing\":\"foobar\"}",
+  "docs_out": "{\"index\":3}",
+  "bento": {
+   "stdout": "{\"index\":3}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "index_of",
+  "mapping": "root.index = content().index_of(\"meow\")",
+  "input": "the cat meowed, the dog woofed",
+  "docs_out": "{\"index\":8}",
+  "bento": {
+   "stdout": "{\"index\":8}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "length",
+  "mapping": "root.foo_len = this.foo.length()",
+  "input": "{\"foo\":\"hello world\"}",
+  "docs_out": "{\"foo_len\":11}",
+  "bento": {
+   "stdout": "{\"foo_len\":11}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "lowercase",
+  "mapping": "root.foo = this.foo.lowercase()",
+  "input": "{\"foo\":\"HELLO WORLD\"}",
+  "docs_out": "{\"foo\":\"hello world\"}",
+  "bento": {
+   "stdout": "{\"foo\":\"hello world\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "quote",
+  "mapping": "root.quoted = this.thing.quote()",
+  "input": "{\"thing\":\"foo\\nbar\"}",
+  "docs_out": "{\"quoted\":\"\\\"foo\\\\nbar\\\"\"}",
+  "bento": {
+   "stdout": "{\"quoted\":\"\\\"foo\\\\nbar\\\"\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "repeat",
+  "mapping": "root.fruit = this.fruit + \"na\".repeat(2)",
+  "input": "{\"fruit\":\"ba\"}",
+  "docs_out": "{\"fruit\":\"banana\"}",
+  "bento": {
+   "stdout": "{\"fruit\":\"banana\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "replace_all",
+  "mapping": "root.new_value = this.value.replace_all(\"foo\",\"dog\")",
+  "input": "{\"value\":\"The foo ate my homework\"}",
+  "docs_out": "{\"new_value\":\"The dog ate my homework\"}",
+  "bento": {
+   "stdout": "{\"new_value\":\"The dog ate my homework\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "replace_all_many",
+  "mapping": "root.new_value = this.value.replace_all_many([\n  \"<b>\", \"&lt;b&gt;\",\n  \"</b>\", \"&lt;/b&gt;\",\n  \"<i>\", \"&lt;i&gt;\",\n  \"</i>\", \"&lt;/i&gt;\",\n])",
+  "input": "{\"value\":\"<i>Hello</i> <b>World</b>\"}",
+  "docs_out": "{\"new_value\":\"&lt;i&gt;Hello&lt;/i&gt; &lt;b&gt;World&lt;/b&gt;\"}",
+  "bento": {
+   "stdout": "{\"new_value\":\"\\u0026lt;i\\u0026gt;Hello\\u0026lt;/i\\u0026gt; \\u0026lt;b\\u0026gt;World\\u0026lt;/b\\u0026gt;\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "reverse",
+  "mapping": "root.reversed = this.thing.reverse()",
+  "input": "{\"thing\":\"backwards\"}",
+  "docs_out": "{\"reversed\":\"sdrawkcab\"}",
+  "bento": {
+   "stdout": "{\"reversed\":\"sdrawkcab\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "reverse",
+  "mapping": "root = content().reverse()",
+  "input": "{\"thing\":\"backwards\"}",
+  "docs_out": "}\"sdrawkcab\":\"gniht\"{",
+  "bento": {
+   "stdout": "}\"sdrawkcab\":\"gniht\"{\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "slice",
+  "mapping": "# Method syntax\nroot.beginning = this.value.slice(0, 2)\nroot.end = this.value.slice(4)\n\n# Bracket syntax (recommended)\nroot.beginning = this.value[0:2]  \nroot.end = this.value[4:]",
+  "input": "{\"value\":\"foo bar\"}",
+  "docs_out": "{\"beginning\":\"fo\",\"end\":\"bar\"}",
+  "bento": {
+   "stdout": "{\"beginning\":\"fo\",\"end\":\"bar\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "slice",
+  "mapping": "# Method syntax\nroot.last_chunk = this.value.slice(-4)\nroot.the_rest = this.value.slice(0, -4)\n\n# Bracket syntax (recommended)\nroot.last_chunk = this.value[-4:]\nroot.the_rest = this.value[:-4]",
+  "input": "{\"value\":\"foo bar\"}",
+  "docs_out": "{\"last_chunk\":\" bar\",\"the_rest\":\"foo\"}",
+  "bento": {
+   "stdout": "{\"last_chunk\":\" bar\",\"the_rest\":\"foo\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "slug",
+  "mapping": "root.slug = this.value.slug()",
+  "input": "{\"value\":\"Gopher & Bento\"}",
+  "docs_out": "{\"slug\":\"gopher-and-bento\"}",
+  "bento": {
+   "stdout": "{\"slug\":\"gopher-and-bento\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "slug",
+  "mapping": "root.slug = this.value.slug(\"fr\")",
+  "input": "{\"value\":\"Gaufre & Poisson d'Eau Profonde\"}",
+  "docs_out": "{\"slug\":\"gaufre-et-poisson-deau-profonde\"}",
+  "bento": {
+   "stdout": "{\"slug\":\"gaufre-et-poisson-deau-profonde\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "split",
+  "mapping": "root.words = this.sentence.split(\" \")",
+  "input": "{\"sentence\":\"Hello Bento!\"}",
+  "docs_out": "{\"words\":[\"Hello\",\"Bento!\"]}",
+  "bento": {
+   "stdout": "{\"words\":[\"Hello\",\"Bento!\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "split",
+  "mapping": "root.words = this.value.split(\",\")",
+  "input": "{\"value\":\"foo,bar,baz\"}",
+  "docs_out": "{\"words\":[\"foo\",\"bar\",\"baz\"]}",
+  "bento": {
+   "stdout": "{\"words\":[\"foo\",\"bar\",\"baz\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "split_by",
+  "mapping": "root.words = this.sentence.split_by(c -> c == \" \")",
+  "input": "{\"sentence\": \"Hello Bento!\"}",
+  "docs_out": "{\"words\":[\"Hello\",\"Bento!\"]}",
+  "bento": {
+   "stdout": "{\"words\":[\"Hello\",\"Bento!\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "split_by",
+  "mapping": "root.tokens = this.text.split_by(c -> c == \",\" || c == \".\")",
+  "input": "{\"text\": \"foo,bar.baz\"}",
+  "docs_out": "{\"tokens\":[\"foo\",\"bar\",\"baz\"]}",
+  "bento": {
+   "stdout": "{\"tokens\":[\"foo\",\"bar\",\"baz\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "strip_html",
+  "mapping": "root.stripped = this.value.strip_html()",
+  "input": "{\"value\":\"<p>the plain <strong>old text</strong></p>\"}",
+  "docs_out": "{\"stripped\":\"the plain old text\"}",
+  "bento": {
+   "stdout": "{\"stripped\":\"the plain old text\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "strip_html",
+  "mapping": "root.stripped = this.value.strip_html([\"article\"])",
+  "input": "{\"value\":\"<article><p>the plain <strong>old text</strong></p></article>\"}",
+  "docs_out": "{\"stripped\":\"<article>the plain old text</article>\"}",
+  "bento": {
+   "stdout": "{\"stripped\":\"\\u003carticle\\u003ethe plain old text\\u003c/article\\u003e\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "trim",
+  "mapping": "root.title = this.title.trim(\"!?\")\nroot.description = this.description.trim()",
+  "input": "{\"description\":\"  something happened and its amazing! \",\"title\":\"!!!watch out!?\"}",
+  "docs_out": "{\"description\":\"something happened and its amazing!\",\"title\":\"watch out\"}",
+  "bento": {
+   "stdout": "{\"description\":\"something happened and its amazing!\",\"title\":\"watch out\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "trim_prefix",
+  "mapping": "root.name = this.name.trim_prefix(\"foobar_\")\nroot.description = this.description.trim_prefix(\"foobar_\")",
+  "input": "{\"description\":\"unchanged\",\"name\":\"foobar_blobton\"}",
+  "docs_out": "{\"description\":\"unchanged\",\"name\":\"blobton\"}",
+  "bento": {
+   "stdout": "{\"description\":\"unchanged\",\"name\":\"blobton\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "trim_suffix",
+  "mapping": "root.name = this.name.trim_suffix(\"_foobar\")\nroot.description = this.description.trim_suffix(\"_foobar\")",
+  "input": "{\"description\":\"unchanged\",\"name\":\"blobton_foobar\"}",
+  "docs_out": "{\"description\":\"unchanged\",\"name\":\"blobton\"}",
+  "bento": {
+   "stdout": "{\"description\":\"unchanged\",\"name\":\"blobton\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "unescape_html",
+  "mapping": "root.unescaped = this.value.unescape_html()",
+  "input": "{\"value\":\"foo &amp; bar\"}",
+  "docs_out": "{\"unescaped\":\"foo & bar\"}",
+  "bento": {
+   "stdout": "{\"unescaped\":\"foo \\u0026 bar\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "unescape_url_query",
+  "mapping": "root.unescaped = this.value.unescape_url_query()",
+  "input": "{\"value\":\"foo+%26+bar\"}",
+  "docs_out": "{\"unescaped\":\"foo & bar\"}",
+  "bento": {
+   "stdout": "{\"unescaped\":\"foo \\u0026 bar\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "unquote",
+  "mapping": "root.unquoted = this.thing.unquote()",
+  "input": "{\"thing\":\"\\\"foo\\\\nbar\\\"\"}",
+  "docs_out": "{\"unquoted\":\"foo\\nbar\"}",
+  "bento": {
+   "stdout": "{\"unquoted\":\"foo\\nbar\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "uppercase",
+  "mapping": "root.foo = this.foo.uppercase()",
+  "input": "{\"foo\":\"hello world\"}",
+  "docs_out": "{\"foo\":\"HELLO WORLD\"}",
+  "bento": {
+   "stdout": "{\"foo\":\"HELLO WORLD\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "re_find_all",
+  "mapping": "root.matches = this.value.re_find_all(\"a.\")",
+  "input": "{\"value\":\"paranormal\"}",
+  "docs_out": "{\"matches\":[\"ar\",\"an\",\"al\"]}",
+  "bento": {
+   "stdout": "{\"matches\":[\"ar\",\"an\",\"al\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "re_find_all_object",
+  "mapping": "root.matches = this.value.re_find_all_object(\"a(?P<foo>x*)b\")",
+  "input": "{\"value\":\"-axxb-ab-\"}",
+  "docs_out": "{\"matches\":[{\"0\":\"axxb\",\"foo\":\"xx\"},{\"0\":\"ab\",\"foo\":\"\"}]}",
+  "bento": {
+   "stdout": "{\"matches\":[{\"0\":\"axxb\",\"foo\":\"xx\"},{\"0\":\"ab\",\"foo\":\"\"}]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "re_find_all_object",
+  "mapping": "root.matches = this.value.re_find_all_object(\"(?m)(?P<key>\\\\w+):\\\\s+(?P<value>\\\\w+)$\")",
+  "input": "{\"value\":\"option1: value1\\noption2: value2\\noption3: value3\"}",
+  "docs_out": "{\"matches\":[{\"0\":\"option1: value1\",\"key\":\"option1\",\"value\":\"value1\"},{\"0\":\"option2: value2\",\"key\":\"option2\",\"value\":\"value2\"},{\"0\":\"option3: value3\",\"key\":\"option3\",\"value\":\"value3\"}]}",
+  "bento": {
+   "stdout": "{\"matches\":[{\"0\":\"option1: value1\",\"key\":\"option1\",\"value\":\"value1\"},{\"0\":\"option2: value2\",\"key\":\"option2\",\"value\":\"value2\"},{\"0\":\"option3: value3\",\"key\":\"option3\",\"value\":\"value3\"}]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "re_find_all_submatch",
+  "mapping": "root.matches = this.value.re_find_all_submatch(\"a(x*)b\")",
+  "input": "{\"value\":\"-axxb-ab-\"}",
+  "docs_out": "{\"matches\":[[\"axxb\",\"xx\"],[\"ab\",\"\"]]}",
+  "bento": {
+   "stdout": "{\"matches\":[[\"axxb\",\"xx\"],[\"ab\",\"\"]]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "re_find_object",
+  "mapping": "root.matches = this.value.re_find_object(\"a(?P<foo>x*)b\")",
+  "input": "{\"value\":\"-axxb-ab-\"}",
+  "docs_out": "{\"matches\":{\"0\":\"axxb\",\"foo\":\"xx\"}}",
+  "bento": {
+   "stdout": "{\"matches\":{\"0\":\"axxb\",\"foo\":\"xx\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "re_find_object",
+  "mapping": "root.matches = this.value.re_find_object(\"(?P<key>\\\\w+):\\\\s+(?P<value>\\\\w+)\")",
+  "input": "{\"value\":\"option1: value1\"}",
+  "docs_out": "{\"matches\":{\"0\":\"option1: value1\",\"key\":\"option1\",\"value\":\"value1\"}}",
+  "bento": {
+   "stdout": "{\"matches\":{\"0\":\"option1: value1\",\"key\":\"option1\",\"value\":\"value1\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "re_match",
+  "mapping": "root.matches = this.value.re_match(\"[0-9]\")",
+  "input": "{\"value\":\"there are 10 puppies\"}",
+  "docs_out": "{\"matches\":true}",
+  "bento": {
+   "stdout": "{\"matches\":true}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "re_match",
+  "mapping": "root.matches = this.value.re_match(\"[0-9]\")",
+  "input": "{\"value\":\"there are ten puppies\"}",
+  "docs_out": "{\"matches\":false}",
+  "bento": {
+   "stdout": "{\"matches\":false}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "re_replace_all",
+  "mapping": "root.new_value = this.value.re_replace_all(\"ADD ([0-9]+)\",\"+($1)\")",
+  "input": "{\"value\":\"foo ADD 70\"}",
+  "docs_out": "{\"new_value\":\"foo +(70)\"}",
+  "bento": {
+   "stdout": "{\"new_value\":\"foo +(70)\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "abs",
+  "mapping": "root.outs = this.ins.map_each(ele -> ele.abs())",
+  "input": "{\"ins\":[9,-18,1.23,-4.56]}",
+  "docs_out": "{\"outs\":[9,18,1.23,4.56]}",
+  "bento": {
+   "stdout": "{\"outs\":[9,18,1.23,4.56]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ceil",
+  "mapping": "root.new_value = this.value.ceil()",
+  "input": "{\"value\":5.3}",
+  "docs_out": "{\"new_value\":6}",
+  "bento": {
+   "stdout": "{\"new_value\":6}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ceil",
+  "mapping": "root.new_value = this.value.ceil()",
+  "input": "{\"value\":-5.9}",
+  "docs_out": "{\"new_value\":-5}",
+  "bento": {
+   "stdout": "{\"new_value\":-5}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "cos",
+  "mapping": "root.new_value = (this.value * (pi() / 180)).cos()",
+  "input": "{\"value\":45}",
+  "docs_out": "{\"new_value\":0.7071067811865476}",
+  "bento": {
+   "stdout": "{\"new_value\":0.7071067811865476}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "cos",
+  "mapping": "root.new_value = (this.value * (pi() / 180)).cos()",
+  "input": "{\"value\":0}",
+  "docs_out": "{\"new_value\":1}",
+  "bento": {
+   "stdout": "{\"new_value\":1}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "cos",
+  "mapping": "root.new_value = (this.value * (pi() / 180)).cos()",
+  "input": "{\"value\":180}",
+  "docs_out": "{\"new_value\":-1}",
+  "bento": {
+   "stdout": "{\"new_value\":-1}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "float32",
+  "mapping": "root.out = this.in.float32()",
+  "input": "{\"in\":\"6.674282313423543523453425345e-11\"}",
+  "docs_out": "{\"out\":6.674283e-11}",
+  "bento": {
+   "stdout": "{\"out\":6.674283e-11}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "float64",
+  "mapping": "root.out = this.in.float64()",
+  "input": "{\"in\":\"6.674282313423543523453425345e-11\"}",
+  "docs_out": "{\"out\":6.674282313423544e-11}",
+  "bento": {
+   "stdout": "{\"out\":6.674282313423544e-11}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "floor",
+  "mapping": "root.new_value = this.value.floor()",
+  "input": "{\"value\":5.7}",
+  "docs_out": "{\"new_value\":5}",
+  "bento": {
+   "stdout": "{\"new_value\":5}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "int16",
+  "mapping": "root.a = this.a.int16()\nroot.b = this.b.round().int16()\nroot.c = this.c.int16()\nroot.d = this.d.int16().catch(0)",
+  "input": "{\"a\":12,\"b\":12.34,\"c\":\"12\",\"d\":-12}",
+  "docs_out": "{\"a\":12,\"b\":12,\"c\":12,\"d\":-12}",
+  "bento": {
+   "stdout": "{\"a\":12,\"b\":12,\"c\":12,\"d\":-12}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "int16",
+  "mapping": "root = this.int16()",
+  "input": "\"0xDE\"",
+  "docs_out": "222",
+  "bento": {
+   "stdout": "222\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "int32",
+  "mapping": "root.a = this.a.int32()\nroot.b = this.b.round().int32()\nroot.c = this.c.int32()\nroot.d = this.d.int32().catch(0)",
+  "input": "{\"a\":12,\"b\":12.34,\"c\":\"12\",\"d\":-12}",
+  "docs_out": "{\"a\":12,\"b\":12,\"c\":12,\"d\":-12}",
+  "bento": {
+   "stdout": "{\"a\":12,\"b\":12,\"c\":12,\"d\":-12}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "int32",
+  "mapping": "root = this.int32()",
+  "input": "\"0xDEAD\"",
+  "docs_out": "57005",
+  "bento": {
+   "stdout": "57005\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "int64",
+  "mapping": "root.a = this.a.int64()\nroot.b = this.b.round().int64()\nroot.c = this.c.int64()\nroot.d = this.d.int64().catch(0)",
+  "input": "{\"a\":12,\"b\":12.34,\"c\":\"12\",\"d\":-12}",
+  "docs_out": "{\"a\":12,\"b\":12,\"c\":12,\"d\":-12}",
+  "bento": {
+   "stdout": "{\"a\":12,\"b\":12,\"c\":12,\"d\":-12}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "int64",
+  "mapping": "root = this.int64()",
+  "input": "\"0xDEADBEEF\"",
+  "docs_out": "3735928559",
+  "bento": {
+   "stdout": "3735928559\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "int8",
+  "mapping": "root.a = this.a.int8()\nroot.b = this.b.round().int8()\nroot.c = this.c.int8()\nroot.d = this.d.int8().catch(0)",
+  "input": "{\"a\":12,\"b\":12.34,\"c\":\"12\",\"d\":-12}",
+  "docs_out": "{\"a\":12,\"b\":12,\"c\":12,\"d\":-12}",
+  "bento": {
+   "stdout": "{\"a\":12,\"b\":12,\"c\":12,\"d\":-12}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "int8",
+  "mapping": "root = this.int8()",
+  "input": "\"0xD\"",
+  "docs_out": "13",
+  "bento": {
+   "stdout": "13\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "log",
+  "mapping": "root.new_value = this.value.log().round()",
+  "input": "{\"value\":1}",
+  "docs_out": "{\"new_value\":0}",
+  "bento": {
+   "stdout": "{\"new_value\":0}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "log",
+  "mapping": "root.new_value = this.value.log().round()",
+  "input": "{\"value\":2.7183}",
+  "docs_out": "{\"new_value\":1}",
+  "bento": {
+   "stdout": "{\"new_value\":1}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "log10",
+  "mapping": "root.new_value = this.value.log10()",
+  "input": "{\"value\":100}",
+  "docs_out": "{\"new_value\":2}",
+  "bento": {
+   "stdout": "{\"new_value\":2}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "log10",
+  "mapping": "root.new_value = this.value.log10()",
+  "input": "{\"value\":1000}",
+  "docs_out": "{\"new_value\":3}",
+  "bento": {
+   "stdout": "{\"new_value\":3}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "max",
+  "mapping": "root.biggest = this.values.max()",
+  "input": "{\"values\":[0,3,2.5,7,5]}",
+  "docs_out": "{\"biggest\":7}",
+  "bento": {
+   "stdout": "{\"biggest\":7}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "max",
+  "mapping": "root.new_value = [0,this.value].max()",
+  "input": "{\"value\":-1}",
+  "docs_out": "{\"new_value\":0}",
+  "bento": {
+   "stdout": "{\"new_value\":0}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "max",
+  "mapping": "root.new_value = [0,this.value].max()",
+  "input": "{\"value\":7}",
+  "docs_out": "{\"new_value\":7}",
+  "bento": {
+   "stdout": "{\"new_value\":7}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "min",
+  "mapping": "root.smallest = this.values.min()",
+  "input": "{\"values\":[0,3,-2.5,7,5]}",
+  "docs_out": "{\"smallest\":-2.5}",
+  "bento": {
+   "stdout": "{\"smallest\":-2.5}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "min",
+  "mapping": "root.new_value = [10,this.value].min()",
+  "input": "{\"value\":2}",
+  "docs_out": "{\"new_value\":2}",
+  "bento": {
+   "stdout": "{\"new_value\":2}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "min",
+  "mapping": "root.new_value = [10,this.value].min()",
+  "input": "{\"value\":23}",
+  "docs_out": "{\"new_value\":10}",
+  "bento": {
+   "stdout": "{\"new_value\":10}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "pow",
+  "mapping": "root.new_value = this.value * 10.pow(-2)",
+  "input": "{\"value\":2}",
+  "docs_out": "{\"new_value\":0.02}",
+  "bento": {
+   "stdout": "{\"new_value\":0.02}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "pow",
+  "mapping": "root.new_value = this.value.pow(-2)",
+  "input": "{\"value\":2}",
+  "docs_out": "{\"new_value\":0.25}",
+  "bento": {
+   "stdout": "{\"new_value\":0.25}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "round",
+  "mapping": "root.new_value = this.value.round()",
+  "input": "{\"value\":5.3}",
+  "docs_out": "{\"new_value\":5}",
+  "bento": {
+   "stdout": "{\"new_value\":5}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "round",
+  "mapping": "root.new_value = this.value.round()",
+  "input": "{\"value\":5.9}",
+  "docs_out": "{\"new_value\":6}",
+  "bento": {
+   "stdout": "{\"new_value\":6}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "sin",
+  "mapping": "root.new_value = (this.value * (pi() / 180)).sin()",
+  "input": "{\"value\":45}",
+  "docs_out": "{\"new_value\":0.7071067811865475}",
+  "bento": {
+   "stdout": "{\"new_value\":0.7071067811865475}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "sin",
+  "mapping": "root.new_value = (this.value * (pi() / 180)).sin()",
+  "input": "{\"value\":0}",
+  "docs_out": "{\"new_value\":0}",
+  "bento": {
+   "stdout": "{\"new_value\":0}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "sin",
+  "mapping": "root.new_value = (this.value * (pi() / 180)).sin()",
+  "input": "{\"value\":90}",
+  "docs_out": "{\"new_value\":1}",
+  "bento": {
+   "stdout": "{\"new_value\":1}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "tan",
+  "mapping": "root.new_value = \"%f\".format((this.value * (pi() / 180)).tan())",
+  "input": "{\"value\":0}",
+  "docs_out": "{\"new_value\":\"0.000000\"}",
+  "bento": {
+   "stdout": "{\"new_value\":\"0.000000\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "tan",
+  "mapping": "root.new_value = \"%f\".format((this.value * (pi() / 180)).tan())",
+  "input": "{\"value\":45}",
+  "docs_out": "{\"new_value\":\"1.000000\"}",
+  "bento": {
+   "stdout": "{\"new_value\":\"1.000000\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "tan",
+  "mapping": "root.new_value = \"%f\".format((this.value * (pi() / 180)).tan())",
+  "input": "{\"value\":180}",
+  "docs_out": "{\"new_value\":\"-0.000000\"}",
+  "bento": {
+   "stdout": "{\"new_value\":\"-0.000000\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "uint16",
+  "mapping": "root.a = this.a.uint16()\nroot.b = this.b.round().uint16()\nroot.c = this.c.uint16()\nroot.d = this.d.uint16().catch(0)",
+  "input": "{\"a\":12,\"b\":12.34,\"c\":\"12\",\"d\":-12}",
+  "docs_out": "{\"a\":12,\"b\":12,\"c\":12,\"d\":0}",
+  "bento": {
+   "stdout": "{\"a\":12,\"b\":12,\"c\":12,\"d\":0}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "uint16",
+  "mapping": "root = this.uint16()",
+  "input": "\"0xDE\"",
+  "docs_out": "222",
+  "bento": {
+   "stdout": "222\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "uint32",
+  "mapping": "root.a = this.a.uint32()\nroot.b = this.b.round().uint32()\nroot.c = this.c.uint32()\nroot.d = this.d.uint32().catch(0)",
+  "input": "{\"a\":12,\"b\":12.34,\"c\":\"12\",\"d\":-12}",
+  "docs_out": "{\"a\":12,\"b\":12,\"c\":12,\"d\":0}",
+  "bento": {
+   "stdout": "{\"a\":12,\"b\":12,\"c\":12,\"d\":0}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "uint32",
+  "mapping": "root = this.uint32()",
+  "input": "\"0xDEAD\"",
+  "docs_out": "57005",
+  "bento": {
+   "stdout": "57005\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "uint64",
+  "mapping": "root.a = this.a.uint64()\nroot.b = this.b.round().uint64()\nroot.c = this.c.uint64()\nroot.d = this.d.uint64().catch(0)",
+  "input": "{\"a\":12,\"b\":12.34,\"c\":\"12\",\"d\":-12}",
+  "docs_out": "{\"a\":12,\"b\":12,\"c\":12,\"d\":0}",
+  "bento": {
+   "stdout": "{\"a\":12,\"b\":12,\"c\":12,\"d\":0}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "uint64",
+  "mapping": "root = this.uint64()",
+  "input": "\"0xDEADBEEF\"",
+  "docs_out": "3735928559",
+  "bento": {
+   "stdout": "3735928559\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "uint8",
+  "mapping": "root.a = this.a.uint8()\nroot.b = this.b.round().uint8()\nroot.c = this.c.uint8()\nroot.d = this.d.uint8().catch(0)",
+  "input": "{\"a\":12,\"b\":12.34,\"c\":\"12\",\"d\":-12}",
+  "docs_out": "{\"a\":12,\"b\":12,\"c\":12,\"d\":0}",
+  "bento": {
+   "stdout": "{\"a\":12,\"b\":12,\"c\":12,\"d\":0}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "uint8",
+  "mapping": "root = this.uint8()",
+  "input": "\"0xD\"",
+  "docs_out": "13",
+  "bento": {
+   "stdout": "13\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_duration",
+  "mapping": "root.delay_for_ns = this.delay_for.parse_duration()",
+  "input": "{\"delay_for\":\"50us\"}",
+  "docs_out": "{\"delay_for_ns\":50000}",
+  "bento": {
+   "stdout": "{\"delay_for_ns\":50000}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_duration",
+  "mapping": "root.delay_for_s = this.delay_for.parse_duration() / 1000000000",
+  "input": "{\"delay_for\":\"2h\"}",
+  "docs_out": "{\"delay_for_s\":7200}",
+  "bento": {
+   "stdout": "{\"delay_for_s\":7200}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_duration_iso8601",
+  "mapping": "root.delay_for_ns = this.delay_for.parse_duration_iso8601()",
+  "input": "{\"delay_for\":\"P3Y6M4DT12H30M5S\"}",
+  "docs_out": "{\"delay_for_ns\":110839937000000000}",
+  "bento": {
+   "stdout": "{\"delay_for_ns\":110839937000000000}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_duration_iso8601",
+  "mapping": "root.delay_for_s = this.delay_for.parse_duration_iso8601() / 1000000000",
+  "input": "{\"delay_for\":\"PT2H\"}",
+  "docs_out": "{\"delay_for_s\":7200}",
+  "bento": {
+   "stdout": "{\"delay_for_s\":7200}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_duration_iso8601",
+  "mapping": "root.delay_for_s = this.delay_for.parse_duration_iso8601() / 1000000000",
+  "input": "{\"delay_for\":\"PT2.5S\"}",
+  "docs_out": "{\"delay_for_s\":2.5}",
+  "bento": {
+   "stdout": "{\"delay_for_s\":2.5}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_format",
+  "mapping": "root.something_at = this.created_at.ts_format(format: \"2006-Jan-02 15:04:05\", tz: \"UTC\")",
+  "input": "{\"created_at\":1597405526}",
+  "docs_out": "{\"something_at\":\"2020-Aug-14 11:45:26\"}",
+  "bento": {
+   "stdout": "{\"something_at\":\"2020-Aug-14 11:45:26\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_format",
+  "mapping": "root.something_at = this.created_at.ts_format(format: \"2006-Jan-02 15:04:05\", tz: \"UTC\")",
+  "input": "{\"created_at\":\"2020-08-14T11:50:26.371Z\"}",
+  "docs_out": "{\"something_at\":\"2020-Aug-14 11:50:26\"}",
+  "bento": {
+   "stdout": "{\"something_at\":\"2020-Aug-14 11:50:26\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_format",
+  "mapping": "root.something_at = this.created_at.ts_format(\"2006-Jan-02 15:04:05.999999\", \"UTC\")",
+  "input": "{\"created_at\":1597405526.123456}",
+  "docs_out": "{\"something_at\":\"2020-Aug-14 11:45:26.123456\"}",
+  "bento": {
+   "stdout": "{\"something_at\":\"2020-Aug-14 11:45:26.123456\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_format",
+  "mapping": "root.something_at = this.created_at.ts_format(\"2006-Jan-02 15:04:05.999999\", \"UTC\")",
+  "input": "{\"created_at\":\"2020-08-14T11:50:26.371Z\"}",
+  "docs_out": "{\"something_at\":\"2020-Aug-14 11:50:26.371\"}",
+  "bento": {
+   "stdout": "{\"something_at\":\"2020-Aug-14 11:50:26.371\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_parse",
+  "mapping": "root.doc.timestamp = this.doc.timestamp.ts_parse(\"2006-Jan-02\")",
+  "input": "{\"doc\":{\"timestamp\":\"2020-Aug-14\"}}",
+  "docs_out": "{\"doc\":{\"timestamp\":\"2020-08-14T00:00:00Z\"}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"timestamp\":\"2020-08-14T00:00:00Z\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_round",
+  "mapping": "root.created_at_hour = this.created_at.ts_round(\"1h\".parse_duration())",
+  "input": "{\"created_at\":\"2020-08-14T05:54:23Z\"}",
+  "docs_out": "{\"created_at_hour\":\"2020-08-14T06:00:00Z\"}",
+  "bento": {
+   "stdout": "{\"created_at_hour\":\"2020-08-14T06:00:00Z\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_strftime",
+  "mapping": "root.something_at = this.created_at.ts_strftime(\"%Y-%b-%d %H:%M:%S\", \"UTC\")",
+  "input": "{\"created_at\":1597405526}",
+  "docs_out": "{\"something_at\":\"2020-Aug-14 11:45:26\"}",
+  "bento": {
+   "stdout": "{\"something_at\":\"2020-Aug-14 11:45:26\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_strftime",
+  "mapping": "root.something_at = this.created_at.ts_strftime(\"%Y-%b-%d %H:%M:%S\", \"UTC\")",
+  "input": "{\"created_at\":\"2020-08-14T11:50:26.371Z\"}",
+  "docs_out": "{\"something_at\":\"2020-Aug-14 11:50:26\"}",
+  "bento": {
+   "stdout": "{\"something_at\":\"2020-Aug-14 11:50:26\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_strftime",
+  "mapping": "root.something_at = this.created_at.ts_strftime(\"%Y-%b-%d %H:%M:%S.%f\", \"UTC\")",
+  "input": "{\"created_at\":1597405526}",
+  "docs_out": "{\"something_at\":\"2020-Aug-14 11:45:26.000000\"}",
+  "bento": {
+   "stdout": "{\"something_at\":\"2020-Aug-14 11:45:26.000000\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_strftime",
+  "mapping": "root.something_at = this.created_at.ts_strftime(\"%Y-%b-%d %H:%M:%S.%f\", \"UTC\")",
+  "input": "{\"created_at\":\"2020-08-14T11:50:26.371Z\"}",
+  "docs_out": "{\"something_at\":\"2020-Aug-14 11:50:26.371000\"}",
+  "bento": {
+   "stdout": "{\"something_at\":\"2020-Aug-14 11:50:26.371000\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_strptime",
+  "mapping": "root.doc.timestamp = this.doc.timestamp.ts_strptime(\"%Y-%b-%d\")",
+  "input": "{\"doc\":{\"timestamp\":\"2020-Aug-14\"}}",
+  "docs_out": "{\"doc\":{\"timestamp\":\"2020-08-14T00:00:00Z\"}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"timestamp\":\"2020-08-14T00:00:00Z\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_strptime",
+  "mapping": "root.doc.timestamp = this.doc.timestamp.ts_strptime(\"%Y-%b-%d %H:%M:%S.%f\")",
+  "input": "{\"doc\":{\"timestamp\":\"2020-Aug-14 11:50:26.371000\"}}",
+  "docs_out": "{\"doc\":{\"timestamp\":\"2020-08-14T11:50:26.371Z\"}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"timestamp\":\"2020-08-14T11:50:26.371Z\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_sub",
+  "mapping": "root.between = this.started_at.ts_sub(\"2020-08-14T05:54:23Z\").abs()",
+  "input": "{\"started_at\":\"2020-08-13T05:54:23Z\"}",
+  "docs_out": "{\"between\":86400000000000}",
+  "bento": {
+   "stdout": "{\"between\":86400000000000}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_tz",
+  "mapping": "root.created_at_utc = this.created_at.ts_tz(\"UTC\")",
+  "input": "{\"created_at\":\"2021-02-03T17:05:06+01:00\"}",
+  "docs_out": "{\"created_at_utc\":\"2021-02-03T16:05:06Z\"}",
+  "bento": {
+   "stdout": "{\"created_at_utc\":\"2021-02-03T16:05:06Z\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_unix",
+  "mapping": "root.created_at_unix = this.created_at.ts_unix()",
+  "input": "{\"created_at\":\"2009-11-10T23:00:00Z\"}",
+  "docs_out": "{\"created_at_unix\":1257894000}",
+  "bento": {
+   "stdout": "{\"created_at_unix\":1257894000}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_unix_micro",
+  "mapping": "root.created_at_unix = this.created_at.ts_unix_micro()",
+  "input": "{\"created_at\":\"2009-11-10T23:00:00Z\"}",
+  "docs_out": "{\"created_at_unix\":1257894000000000}",
+  "bento": {
+   "stdout": "{\"created_at_unix\":1257894000000000}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_unix_milli",
+  "mapping": "root.created_at_unix = this.created_at.ts_unix_milli()",
+  "input": "{\"created_at\":\"2009-11-10T23:00:00Z\"}",
+  "docs_out": "{\"created_at_unix\":1257894000000}",
+  "bento": {
+   "stdout": "{\"created_at_unix\":1257894000000}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "ts_unix_nano",
+  "mapping": "root.created_at_unix = this.created_at.ts_unix_nano()",
+  "input": "{\"created_at\":\"2009-11-10T23:00:00Z\"}",
+  "docs_out": "{\"created_at_unix\":1257894000000000000}",
+  "bento": {
+   "stdout": "{\"created_at_unix\":1257894000000000000}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "array",
+  "mapping": "root.my_array = this.name.array()",
+  "input": "{\"name\":\"foobar bazson\"}",
+  "docs_out": "{\"my_array\":[\"foobar bazson\"]}",
+  "bento": {
+   "stdout": "{\"my_array\":[\"foobar bazson\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "bytes",
+  "mapping": "root.first_byte = this.name.bytes().index(0)",
+  "input": "{\"name\":\"foobar bazson\"}",
+  "docs_out": "{\"first_byte\":102}",
+  "bento": {
+   "stdout": "{\"first_byte\":102}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "not_empty",
+  "mapping": "root.a = this.a.not_empty()",
+  "input": "{\"a\":\"foo\"}",
+  "docs_out": "{\"a\":\"foo\"}",
+  "bento": {
+   "stdout": "{\"a\":\"foo\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "not_empty",
+  "mapping": "root.a = this.a.not_empty()",
+  "input": "{\"a\":\"\"}",
+  "docs_out": "Error(\"failed assignment (line 1): field `this.a`: string value is empty\")",
+  "bento": {
+   "stdout": "",
+   "stderr": "failed to execute map: failed assignment (line 1): field `this.a`: string value is empty\n",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "not_empty",
+  "mapping": "root.a = this.a.not_empty()",
+  "input": "{\"a\":[\"foo\",\"bar\"]}",
+  "docs_out": "{\"a\":[\"foo\",\"bar\"]}",
+  "bento": {
+   "stdout": "{\"a\":[\"foo\",\"bar\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "not_empty",
+  "mapping": "root.a = this.a.not_empty()",
+  "input": "{\"a\":[]}",
+  "docs_out": "Error(\"failed assignment (line 1): field `this.a`: array value is empty\")",
+  "bento": {
+   "stdout": "",
+   "stderr": "failed to execute map: failed assignment (line 1): field `this.a`: array value is empty\n",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "not_empty",
+  "mapping": "root.a = this.a.not_empty()",
+  "input": "{\"a\":{\"b\":\"foo\",\"c\":\"bar\"}}",
+  "docs_out": "{\"a\":{\"b\":\"foo\",\"c\":\"bar\"}}",
+  "bento": {
+   "stdout": "{\"a\":{\"b\":\"foo\",\"c\":\"bar\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "not_empty",
+  "mapping": "root.a = this.a.not_empty()",
+  "input": "{\"a\":{}}",
+  "docs_out": "Error(\"failed assignment (line 1): field `this.a`: object value is empty\")",
+  "bento": {
+   "stdout": "",
+   "stderr": "failed to execute map: failed assignment (line 1): field `this.a`: object value is empty\n",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "not_null",
+  "mapping": "root.a = this.a.not_null()",
+  "input": "{\"a\":\"foobar\",\"b\":\"barbaz\"}",
+  "docs_out": "{\"a\":\"foobar\"}",
+  "bento": {
+   "stdout": "{\"a\":\"foobar\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "not_null",
+  "mapping": "root.a = this.a.not_null()",
+  "input": "{\"b\":\"barbaz\"}",
+  "docs_out": "Error(\"failed assignment (line 1): field `this.a`: value is null\")",
+  "bento": {
+   "stdout": "",
+   "stderr": "failed to execute map: failed assignment (line 1): field `this.a`: value is null\n",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "string",
+  "mapping": "root.nested_json = this.string()",
+  "input": "{\"foo\":\"bar\"}",
+  "docs_out": "{\"nested_json\":\"{\\\"foo\\\":\\\"bar\\\"}\"}",
+  "bento": {
+   "stdout": "{\"nested_json\":\"{\\\"foo\\\":\\\"bar\\\"}\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "string",
+  "mapping": "root.id = this.id.string()",
+  "input": "{\"id\":228930314431312345}",
+  "docs_out": "{\"id\":\"228930314431312345\"}",
+  "bento": {
+   "stdout": "{\"id\":\"228930314431312345\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "type",
+  "mapping": "root.bar_type = this.bar.type()\nroot.foo_type = this.foo.type()",
+  "input": "{\"bar\":10,\"foo\":\"is a string\"}",
+  "docs_out": "{\"bar_type\":\"number\",\"foo_type\":\"string\"}",
+  "bento": {
+   "stdout": "{\"bar_type\":\"number\",\"foo_type\":\"string\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "type",
+  "mapping": "root.type = this.type()",
+  "input": "\"foobar\"",
+  "docs_out": "{\"type\":\"string\"}",
+  "bento": {
+   "stdout": "{\"type\":\"string\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "type",
+  "mapping": "root.type = this.type()",
+  "input": "666",
+  "docs_out": "{\"type\":\"number\"}",
+  "bento": {
+   "stdout": "{\"type\":\"number\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "type",
+  "mapping": "root.type = this.type()",
+  "input": "false",
+  "docs_out": "{\"type\":\"bool\"}",
+  "bento": {
+   "stdout": "{\"type\":\"bool\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "type",
+  "mapping": "root.type = this.type()",
+  "input": "[\"foo\", \"bar\"]",
+  "docs_out": "{\"type\":\"array\"}",
+  "bento": {
+   "stdout": "{\"type\":\"array\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "type",
+  "mapping": "root.type = this.type()",
+  "input": "{\"foo\": \"bar\"}",
+  "docs_out": "{\"type\":\"object\"}",
+  "bento": {
+   "stdout": "{\"type\":\"object\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "type",
+  "mapping": "root.type = this.type()",
+  "input": "null",
+  "docs_out": "{\"type\":\"null\"}",
+  "bento": {
+   "stdout": "{\"type\":\"null\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "type",
+  "mapping": "root.type = content().type()",
+  "input": "foobar",
+  "docs_out": "{\"type\":\"bytes\"}",
+  "bento": {
+   "stdout": "{\"type\":\"bytes\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "type",
+  "mapping": "root.type = this.ts_parse(\"2006-01-02\").type()",
+  "input": "\"2022-06-06\"",
+  "docs_out": "{\"type\":\"timestamp\"}",
+  "bento": {
+   "stdout": "{\"type\":\"timestamp\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "all",
+  "mapping": "root.all_over_21 = this.patrons.all(patron -> patron.age >= 21)",
+  "input": "{\"patrons\":[{\"id\":\"1\",\"age\":18},{\"id\":\"2\",\"age\":23}]}",
+  "docs_out": "{\"all_over_21\":false}",
+  "bento": {
+   "stdout": "{\"all_over_21\":false}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "all",
+  "mapping": "root.all_over_21 = this.patrons.all(patron -> patron.age >= 21)",
+  "input": "{\"patrons\":[{\"id\":\"1\",\"age\":45},{\"id\":\"2\",\"age\":23}]}",
+  "docs_out": "{\"all_over_21\":true}",
+  "bento": {
+   "stdout": "{\"all_over_21\":true}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "any",
+  "mapping": "root.any_over_21 = this.patrons.any(patron -> patron.age >= 21)",
+  "input": "{\"patrons\":[{\"id\":\"1\",\"age\":18},{\"id\":\"2\",\"age\":23}]}",
+  "docs_out": "{\"any_over_21\":true}",
+  "bento": {
+   "stdout": "{\"any_over_21\":true}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "any",
+  "mapping": "root.any_over_21 = this.patrons.any(patron -> patron.age >= 21)",
+  "input": "{\"patrons\":[{\"id\":\"1\",\"age\":10},{\"id\":\"2\",\"age\":12}]}",
+  "docs_out": "{\"any_over_21\":false}",
+  "bento": {
+   "stdout": "{\"any_over_21\":false}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "append",
+  "mapping": "root.foo = this.foo.append(\"and\", \"this\")",
+  "input": "{\"foo\":[\"bar\",\"baz\"]}",
+  "docs_out": "{\"foo\":[\"bar\",\"baz\",\"and\",\"this\"]}",
+  "bento": {
+   "stdout": "{\"foo\":[\"bar\",\"baz\",\"and\",\"this\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "assign",
+  "mapping": "root = this.foo.assign(this.bar)",
+  "input": "{\"foo\":{\"first_name\":\"fooer\",\"likes\":\"bars\"},\"bar\":{\"second_name\":\"barer\",\"likes\":\"foos\"}}",
+  "docs_out": "{\"first_name\":\"fooer\",\"likes\":\"foos\",\"second_name\":\"barer\"}",
+  "bento": {
+   "stdout": "{\"first_name\":\"fooer\",\"likes\":\"foos\",\"second_name\":\"barer\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "collapse",
+  "mapping": "root.result = this.collapse()",
+  "input": "{\"foo\":[{\"bar\":\"1\"},{\"bar\":{}},{\"bar\":\"2\"},{\"bar\":[]}]}",
+  "docs_out": "{\"result\":{\"foo.0.bar\":\"1\",\"foo.2.bar\":\"2\"}}",
+  "bento": {
+   "stdout": "{\"result\":{\"foo.0.bar\":\"1\",\"foo.2.bar\":\"2\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "collapse",
+  "mapping": "root.result = this.collapse(include_empty: true)",
+  "input": "{\"foo\":[{\"bar\":\"1\"},{\"bar\":{}},{\"bar\":\"2\"},{\"bar\":[]}]}",
+  "docs_out": "{\"result\":{\"foo.0.bar\":\"1\",\"foo.1.bar\":{},\"foo.2.bar\":\"2\",\"foo.3.bar\":[]}}",
+  "bento": {
+   "stdout": "{\"result\":{\"foo.0.bar\":\"1\",\"foo.1.bar\":{},\"foo.2.bar\":\"2\",\"foo.3.bar\":[]}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "concat",
+  "mapping": "root.foo = this.foo.concat(this.bar, this.baz)",
+  "input": "{\"foo\":[\"a\",\"b\"],\"bar\":[\"c\"],\"baz\":[\"d\",\"e\",\"f\"]}",
+  "docs_out": "{\"foo\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\"]}",
+  "bento": {
+   "stdout": "{\"foo\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "contains",
+  "mapping": "root.has_foo = this.thing.contains(\"foo\")",
+  "input": "{\"thing\":[\"this\",\"foo\",\"that\"]}",
+  "docs_out": "{\"has_foo\":true}",
+  "bento": {
+   "stdout": "{\"has_foo\":true}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "contains",
+  "mapping": "root.has_foo = this.thing.contains(\"foo\")",
+  "input": "{\"thing\":[\"this\",\"bar\",\"that\"]}",
+  "docs_out": "{\"has_foo\":false}",
+  "bento": {
+   "stdout": "{\"has_foo\":false}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "contains",
+  "mapping": "root.has_bar = this.thing.contains(20)",
+  "input": "{\"thing\":[10.3,20.0,\"huh\",3]}",
+  "docs_out": "{\"has_bar\":true}",
+  "bento": {
+   "stdout": "{\"has_bar\":true}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "contains",
+  "mapping": "root.has_bar = this.thing.contains(20)",
+  "input": "{\"thing\":[2,3,40,67]}",
+  "docs_out": "{\"has_bar\":false}",
+  "bento": {
+   "stdout": "{\"has_bar\":false}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "enumerated",
+  "mapping": "root.foo = this.foo.enumerated()",
+  "input": "{\"foo\":[\"bar\",\"baz\"]}",
+  "docs_out": "{\"foo\":[{\"index\":0,\"value\":\"bar\"},{\"index\":1,\"value\":\"baz\"}]}",
+  "bento": {
+   "stdout": "{\"foo\":[{\"index\":0,\"value\":\"bar\"},{\"index\":1,\"value\":\"baz\"}]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "explode",
+  "mapping": "root = this.explode(\"value\")",
+  "input": "{\"id\":1,\"value\":[\"foo\",\"bar\",\"baz\"]}",
+  "docs_out": "[{\"id\":1,\"value\":\"foo\"},{\"id\":1,\"value\":\"bar\"},{\"id\":1,\"value\":\"baz\"}]",
+  "bento": {
+   "stdout": "[{\"id\":1,\"value\":\"foo\"},{\"id\":1,\"value\":\"bar\"},{\"id\":1,\"value\":\"baz\"}]\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "explode",
+  "mapping": "root = this.explode(\"value\")",
+  "input": "{\"id\":1,\"value\":{\"foo\":2,\"bar\":[3,4],\"baz\":{\"bev\":5}}}",
+  "docs_out": "{\"bar\":{\"id\":1,\"value\":[3,4]},\"baz\":{\"id\":1,\"value\":{\"bev\":5}},\"foo\":{\"id\":1,\"value\":2}}",
+  "bento": {
+   "stdout": "{\"bar\":{\"id\":1,\"value\":[3,4]},\"baz\":{\"id\":1,\"value\":{\"bev\":5}},\"foo\":{\"id\":1,\"value\":2}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "filter",
+  "mapping": "root.new_nums = this.nums.filter(num -> num > 10)",
+  "input": "{\"nums\":[3,11,4,17]}",
+  "docs_out": "{\"new_nums\":[11,17]}",
+  "bento": {
+   "stdout": "{\"new_nums\":[11,17]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "filter",
+  "mapping": "root.new_dict = this.dict.filter(item -> item.value.contains(\"foo\"))",
+  "input": "{\"dict\":{\"first\":\"hello foo\",\"second\":\"world\",\"third\":\"this foo is great\"}}",
+  "docs_out": "{\"new_dict\":{\"first\":\"hello foo\",\"third\":\"this foo is great\"}}",
+  "bento": {
+   "stdout": "{\"new_dict\":{\"first\":\"hello foo\",\"third\":\"this foo is great\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "find",
+  "mapping": "root.index = this.find(\"bar\")",
+  "input": "[\"foo\", \"bar\", \"baz\"]",
+  "docs_out": "{\"index\":1}",
+  "bento": {
+   "stdout": "{\"index\":1}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "find",
+  "mapping": "root.index = this.things.find(this.goal)",
+  "input": "{\"goal\":\"bar\",\"things\":[\"foo\", \"bar\", \"baz\"]}",
+  "docs_out": "{\"index\":1}",
+  "bento": {
+   "stdout": "{\"index\":1}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "find_all",
+  "mapping": "root.index = this.find_all(\"bar\")",
+  "input": "[\"foo\", \"bar\", \"baz\", \"bar\"]",
+  "docs_out": "{\"index\":[1,3]}",
+  "bento": {
+   "stdout": "{\"index\":[1,3]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "find_all",
+  "mapping": "root.indexes = this.things.find_all(this.goal)",
+  "input": "{\"goal\":\"bar\",\"things\":[\"foo\", \"bar\", \"baz\", \"bar\", \"buz\"]}",
+  "docs_out": "{\"indexes\":[1,3]}",
+  "bento": {
+   "stdout": "{\"indexes\":[1,3]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "find_all_by",
+  "mapping": "root.index = this.find_all_by(v -> v != \"bar\")",
+  "input": "[\"foo\", \"bar\", \"baz\"]",
+  "docs_out": "{\"index\":[0,2]}",
+  "bento": {
+   "stdout": "{\"index\":[0,2]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "find_by",
+  "mapping": "root.index = this.find_by(v -> v != \"bar\")",
+  "input": "[\"foo\", \"bar\", \"baz\"]",
+  "docs_out": "{\"index\":0}",
+  "bento": {
+   "stdout": "{\"index\":0}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "flatten",
+  "mapping": "root.result = this.flatten()",
+  "input": "[\"foo\",[\"bar\",\"baz\"],\"buz\"]",
+  "docs_out": "{\"result\":[\"foo\",\"bar\",\"baz\",\"buz\"]}",
+  "bento": {
+   "stdout": "{\"result\":[\"foo\",\"bar\",\"baz\",\"buz\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "fold",
+  "mapping": "root.sum = this.foo.fold(0, item -> item.tally + item.value)",
+  "input": "{\"foo\":[3,8,11]}",
+  "docs_out": "{\"sum\":22}",
+  "bento": {
+   "stdout": "{\"sum\":22}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "fold",
+  "mapping": "root.result = this.foo.fold(\"\", item -> \"%v%v\".format(item.tally, item.value))",
+  "input": "{\"foo\":[\"hello \", \"world\"]}",
+  "docs_out": "{\"result\":\"hello world\"}",
+  "bento": {
+   "stdout": "{\"result\":\"hello world\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "fold",
+  "mapping": "root.smoothie = this.fruits.fold({}, item -> item.tally.merge(item.value))",
+  "input": "{\"fruits\":[{\"apple\":5},{\"banana\":3},{\"orange\":8}]}",
+  "docs_out": "{\"smoothie\":{\"apple\":5,\"banana\":3,\"orange\":8}}",
+  "bento": {
+   "stdout": "{\"smoothie\":{\"apple\":5,\"banana\":3,\"orange\":8}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "get",
+  "mapping": "root.result = this.foo.get(this.target)",
+  "input": "{\"foo\":{\"bar\":\"from bar\",\"baz\":\"from baz\"},\"target\":\"bar\"}",
+  "docs_out": "{\"result\":\"from bar\"}",
+  "bento": {
+   "stdout": "{\"result\":\"from bar\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "get",
+  "mapping": "root.result = this.foo.get(this.target)",
+  "input": "{\"foo\":{\"bar\":\"from bar\",\"baz\":\"from baz\"},\"target\":\"baz\"}",
+  "docs_out": "{\"result\":\"from baz\"}",
+  "bento": {
+   "stdout": "{\"result\":\"from baz\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "index",
+  "mapping": "root.last_name = this.names.index(-1)",
+  "input": "{\"names\":[\"rachel\",\"stevens\"]}",
+  "docs_out": "{\"last_name\":\"stevens\"}",
+  "bento": {
+   "stdout": "{\"last_name\":\"stevens\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "index",
+  "mapping": "root.last_byte = this.name.bytes().index(-1)",
+  "input": "{\"name\":\"foobar bazson\"}",
+  "docs_out": "{\"last_byte\":110}",
+  "bento": {
+   "stdout": "{\"last_byte\":110}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "join",
+  "mapping": "root.joined_words = this.words.join()\nroot.joined_numbers = this.numbers.map_each(this.string()).join(\",\")",
+  "input": "{\"words\":[\"hello\",\"world\"],\"numbers\":[3,8,11]}",
+  "docs_out": "{\"joined_numbers\":\"3,8,11\",\"joined_words\":\"helloworld\"}",
+  "bento": {
+   "stdout": "{\"joined_numbers\":\"3,8,11\",\"joined_words\":\"helloworld\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "json_path",
+  "mapping": "root.all_names = this.json_path(\"$..name\")",
+  "input": "{\"name\":\"alice\",\"foo\":{\"name\":\"bob\"}}",
+  "docs_out": "{\"all_names\":[\"alice\",\"bob\"]}",
+  "bento": {
+   "stdout": "{\"all_names\":[\"alice\",\"bob\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "json_path",
+  "mapping": "root.all_names = this.json_path(\"$..name\")",
+  "input": "{\"thing\":[\"this\",\"bar\",{\"name\":\"alice\"}]}",
+  "docs_out": "{\"all_names\":[\"alice\"]}",
+  "bento": {
+   "stdout": "{\"all_names\":[\"alice\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "json_path",
+  "mapping": "root.text_objects = this.json_path(\"$.body[?(@.type=='text')]\")",
+  "input": "{\"body\":[{\"type\":\"image\",\"id\":\"foo\"},{\"type\":\"text\",\"id\":\"bar\"}]}",
+  "docs_out": "{\"text_objects\":[{\"id\":\"bar\",\"type\":\"text\"}]}",
+  "bento": {
+   "stdout": "{\"text_objects\":[{\"id\":\"bar\",\"type\":\"text\"}]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "json_schema",
+  "mapping": "root = this.json_schema(\"\"\"{\n  \"type\":\"object\",\n  \"properties\":{\n    \"foo\":{\n      \"type\":\"string\"\n    }\n  }\n}\"\"\")",
+  "input": "{\"foo\":\"bar\"}",
+  "docs_out": "{\"foo\":\"bar\"}",
+  "bento": {
+   "stdout": "{\"foo\":\"bar\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "json_schema",
+  "mapping": "root = this.json_schema(\"\"\"{\n  \"type\":\"object\",\n  \"properties\":{\n    \"foo\":{\n      \"type\":\"string\"\n    }\n  }\n}\"\"\")",
+  "input": "{\"foo\":5}",
+  "docs_out": "Error(\"failed assignment (line 1): field `this`: foo invalid type. expected: string, given: integer\")",
+  "bento": {
+   "stdout": "",
+   "stderr": "failed to execute map: failed assignment (line 1): field `this`: foo invalid type. expected: string, given: integer\n",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "key_values",
+  "mapping": "root.foo_key_values = this.foo.key_values().sort_by(pair -> pair.key)",
+  "input": "{\"foo\":{\"bar\":1,\"baz\":2}}",
+  "docs_out": "{\"foo_key_values\":[{\"key\":\"bar\",\"value\":1},{\"key\":\"baz\",\"value\":2}]}",
+  "bento": {
+   "stdout": "{\"foo_key_values\":[{\"key\":\"bar\",\"value\":1},{\"key\":\"baz\",\"value\":2}]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "keys",
+  "mapping": "root.foo_keys = this.foo.keys()",
+  "input": "{\"foo\":{\"bar\":1,\"baz\":2}}",
+  "docs_out": "{\"foo_keys\":[\"bar\",\"baz\"]}",
+  "bento": {
+   "stdout": "{\"foo_keys\":[\"bar\",\"baz\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "length",
+  "mapping": "root.foo_len = this.foo.length()",
+  "input": "{\"foo\":[\"first\",\"second\"]}",
+  "docs_out": "{\"foo_len\":2}",
+  "bento": {
+   "stdout": "{\"foo_len\":2}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "length",
+  "mapping": "root.foo_len = this.foo.length()",
+  "input": "{\"foo\":{\"first\":\"bar\",\"second\":\"baz\"}}",
+  "docs_out": "{\"foo_len\":2}",
+  "bento": {
+   "stdout": "{\"foo_len\":2}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "map_each",
+  "mapping": "root.new_nums = this.nums.map_each(num -> if num < 10 {\n  deleted()\n} else {\n  num - 10\n})",
+  "input": "{\"nums\":[3,11,4,17]}",
+  "docs_out": "{\"new_nums\":[1,7]}",
+  "bento": {
+   "stdout": "{\"new_nums\":[1,7]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "map_each",
+  "mapping": "root.new_dict = this.dict.map_each(item -> item.value.uppercase())",
+  "input": "{\"dict\":{\"foo\":\"hello\",\"bar\":\"world\"}}",
+  "docs_out": "{\"new_dict\":{\"bar\":\"WORLD\",\"foo\":\"HELLO\"}}",
+  "bento": {
+   "stdout": "{\"new_dict\":{\"bar\":\"WORLD\",\"foo\":\"HELLO\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "map_each_key",
+  "mapping": "root.new_dict = this.dict.map_each_key(key -> key.uppercase())",
+  "input": "{\"dict\":{\"keya\":\"hello\",\"keyb\":\"world\"}}",
+  "docs_out": "{\"new_dict\":{\"KEYA\":\"hello\",\"KEYB\":\"world\"}}",
+  "bento": {
+   "stdout": "{\"new_dict\":{\"KEYA\":\"hello\",\"KEYB\":\"world\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "map_each_key",
+  "mapping": "root = this.map_each_key(key -> if key.contains(\"kafka\") { \"_\" + key })",
+  "input": "{\"amqp_key\":\"foo\",\"kafka_key\":\"bar\",\"kafka_topic\":\"baz\"}",
+  "docs_out": "{\"_kafka_key\":\"bar\",\"_kafka_topic\":\"baz\",\"amqp_key\":\"foo\"}",
+  "bento": {
+   "stdout": "{\"_kafka_key\":\"bar\",\"_kafka_topic\":\"baz\",\"amqp_key\":\"foo\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "merge",
+  "mapping": "root = this.foo.merge(this.bar)",
+  "input": "{\"foo\":{\"first_name\":\"fooer\",\"likes\":\"bars\"},\"bar\":{\"second_name\":\"barer\",\"likes\":\"foos\"}}",
+  "docs_out": "{\"first_name\":\"fooer\",\"likes\":[\"bars\",\"foos\"],\"second_name\":\"barer\"}",
+  "bento": {
+   "stdout": "{\"first_name\":\"fooer\",\"likes\":[\"bars\",\"foos\"],\"second_name\":\"barer\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "set",
+  "mapping": "root = this.set(\"nested.field\", \"foo\")",
+  "input": "{\"bar\":\"value\"}",
+  "docs_out": "{\"bar\":\"value\",\"nested\":{\"field\":\"foo\"}}",
+  "bento": {
+   "stdout": "{\"bar\":\"value\",\"nested\":{\"field\":\"foo\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "set",
+  "mapping": "root = this.set(\"field\", deleted())",
+  "input": "{\"bar\":\"value\", \"field\":\"foo\"}",
+  "docs_out": "{\"bar\":\"value\"}",
+  "bento": {
+   "stdout": "{\"bar\":\"value\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "set",
+  "mapping": "root = this.set(\"field\", \"foo\").set(\"another_field\", \"data\")",
+  "input": "{\"bar\":\"value\"}",
+  "docs_out": "{\"another_field\":\"data\",\"bar\":\"value\",\"field\":\"foo\"}",
+  "bento": {
+   "stdout": "{\"another_field\":\"data\",\"bar\":\"value\",\"field\":\"foo\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "set",
+  "mapping": "root = this.set(\"arr.0\", \"foo\")",
+  "input": "{\"bar\":\"value\", \"arr\": [\"value\"]}",
+  "docs_out": "{\"arr\":[\"foo\"],\"bar\":\"value\"}",
+  "bento": {
+   "stdout": "{\"arr\":[\"foo\"],\"bar\":\"value\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "slice",
+  "mapping": "# Deprecated - use bracket syntax instead\nroot.beginning = this.value.slice(0, 2)\nroot.end = this.value.slice(4)\n\n# Bracket syntax (recommended)\nroot.beginning = this.value[0:2]\nroot.end = this.value[4:]",
+  "input": "{\"value\":[\"foo\",\"bar\",\"baz\",\"buz\",\"bev\"]}",
+  "docs_out": "{\"beginning\":[\"foo\",\"bar\"],\"end\":[\"bev\"]}",
+  "bento": {
+   "stdout": "{\"beginning\":[\"foo\",\"bar\"],\"end\":[\"bev\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "slice",
+  "mapping": "# Deprecated - use bracket syntax instead\nroot.last_chunk = this.value.slice(-2)\nroot.the_rest = this.value.slice(0, -2)\n\n# New bracket syntax (recommended)\nroot.last_chunk = this.value[-2:]\nroot.the_rest = this.value[:-2]",
+  "input": "{\"value\":[\"foo\",\"bar\",\"baz\",\"buz\",\"bev\"]}",
+  "docs_out": "{\"last_chunk\":[\"buz\",\"bev\"],\"the_rest\":[\"foo\",\"bar\",\"baz\"]}",
+  "bento": {
+   "stdout": "{\"last_chunk\":[\"buz\",\"bev\"],\"the_rest\":[\"foo\",\"bar\",\"baz\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "sort",
+  "mapping": "root.sorted = this.foo.sort()",
+  "input": "{\"foo\":[\"bbb\",\"ccc\",\"aaa\"]}",
+  "docs_out": "{\"sorted\":[\"aaa\",\"bbb\",\"ccc\"]}",
+  "bento": {
+   "stdout": "{\"sorted\":[\"aaa\",\"bbb\",\"ccc\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "sort",
+  "mapping": "root.sorted = this.foo.sort(item -> item.left.v < item.right.v)",
+  "input": "{\"foo\":[{\"id\":\"foo\",\"v\":\"bbb\"},{\"id\":\"bar\",\"v\":\"ccc\"},{\"id\":\"baz\",\"v\":\"aaa\"}]}",
+  "docs_out": "{\"sorted\":[{\"id\":\"baz\",\"v\":\"aaa\"},{\"id\":\"foo\",\"v\":\"bbb\"},{\"id\":\"bar\",\"v\":\"ccc\"}]}",
+  "bento": {
+   "stdout": "{\"sorted\":[{\"id\":\"baz\",\"v\":\"aaa\"},{\"id\":\"foo\",\"v\":\"bbb\"},{\"id\":\"bar\",\"v\":\"ccc\"}]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "sort_by",
+  "mapping": "root.sorted = this.foo.sort_by(ele -> ele.id)",
+  "input": "{\"foo\":[{\"id\":\"bbb\",\"message\":\"bar\"},{\"id\":\"aaa\",\"message\":\"foo\"},{\"id\":\"ccc\",\"message\":\"baz\"}]}",
+  "docs_out": "{\"sorted\":[{\"id\":\"aaa\",\"message\":\"foo\"},{\"id\":\"bbb\",\"message\":\"bar\"},{\"id\":\"ccc\",\"message\":\"baz\"}]}",
+  "bento": {
+   "stdout": "{\"sorted\":[{\"id\":\"aaa\",\"message\":\"foo\"},{\"id\":\"bbb\",\"message\":\"bar\"},{\"id\":\"ccc\",\"message\":\"baz\"}]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "split",
+  "mapping": "root.segments = this.villains.split(\"Kraven The Hunter\")",
+  "input": "{\"villains\": [\"Doctor Octopus\", \"Electro\", \"Kraven The Hunter\", \"Mysterio\", \"Sandman\", \"Vulture\"]}",
+  "docs_out": "{\"segments\":[[\"Doctor Octopus\",\"Electro\"],[\"Mysterio\",\"Sandman\",\"Vulture\"]]}",
+  "bento": {
+   "stdout": "{\"segments\":[[\"Doctor Octopus\",\"Electro\"],[\"Mysterio\",\"Sandman\",\"Vulture\"]]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "split",
+  "mapping": "root.parts = this.mixed.split(0)",
+  "input": "{\"mixed\": [1, \"a\", 2, \"b\", 3, \"c\", 4, \"d\", 0, \"e\", 5, \"f\", 6, \"g\", 7, \"h\", 0, \"i\", 8, \"j\", 9]}",
+  "docs_out": "{\"parts\":[[1,\"a\",2,\"b\",3,\"c\",4,\"d\"],[\"e\",5,\"f\",6,\"g\",7,\"h\"],[\"i\",8,\"j\",9]]}",
+  "bento": {
+   "stdout": "{\"parts\":[[1,\"a\",2,\"b\",3,\"c\",4,\"d\"],[\"e\",5,\"f\",6,\"g\",7,\"h\"],[\"i\",8,\"j\",9]]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "split",
+  "mapping": "root.groups = this.objects.split({\"type\": \"separator\"})",
+  "input": "{\"objects\": [{\"id\": 1, \"name\": \"Spider-Man\"}, {\"type\": \"separator\"}, {\"id\": 2, \"name\": \"Daredevil\"}]}",
+  "docs_out": "{\"groups\":[[{\"id\":1,\"name\":\"Spider-Man\"}],[{\"id\":2,\"name\":\"Daredevil\"}]]}",
+  "bento": {
+   "stdout": "{\"groups\":[[{\"id\":1,\"name\":\"Spider-Man\"}],[{\"id\":2,\"name\":\"Daredevil\"}]]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "split_by",
+  "mapping": "root.authors = this.writers.split_by(x -> x.contains(\"Kafka\"))",
+  "input": "{\"writers\": [\"George Orwell\", \"Franz Kafka\", \"Anton Chekhov\"]}",
+  "docs_out": "{\"authors\":[[\"George Orwell\"],[\"Anton Chekhov\"]]}",
+  "bento": {
+   "stdout": "{\"authors\":[[\"George Orwell\"],[\"Anton Chekhov\"]]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "split_by",
+  "mapping": "root.segments = this.numbers.split_by(x -> x > 50)",
+  "input": "{\"numbers\": [1, 2, 100, 3, 4, 200, 5]}",
+  "docs_out": "{\"segments\":[[1,2],[3,4],[5]]}",
+  "bento": {
+   "stdout": "{\"segments\":[[1,2],[3,4],[5]]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "split_by",
+  "mapping": "root.groups = this.items.split_by(item -> item.type == \"separator\")",
+  "input": "{\"items\": [{\"id\": 1, \"type\": \"data\"}, {\"id\": 2, \"type\": \"separator\"}, {\"id\": 3, \"type\": \"data\"}]}",
+  "docs_out": "{\"groups\":[[{\"id\":1,\"type\":\"data\"}],[{\"id\":3,\"type\":\"data\"}]]}",
+  "bento": {
+   "stdout": "{\"groups\":[[{\"id\":1,\"type\":\"data\"}],[{\"id\":3,\"type\":\"data\"}]]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "squash",
+  "mapping": "root.locations = this.locations.map_each(loc -> {loc.state: [loc.name]}).squash()",
+  "input": "{\"locations\":[{\"name\":\"Seattle\",\"state\":\"WA\"},{\"name\":\"New York\",\"state\":\"NY\"},{\"name\":\"Bellevue\",\"state\":\"WA\"},{\"name\":\"Olympia\",\"state\":\"WA\"}]}",
+  "docs_out": "{\"locations\":{\"NY\":[\"New York\"],\"WA\":[\"Seattle\",\"Bellevue\",\"Olympia\"]}}",
+  "bento": {
+   "stdout": "{\"locations\":{\"NY\":[\"New York\"],\"WA\":[\"Seattle\",\"Bellevue\",\"Olympia\"]}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "sum",
+  "mapping": "root.sum = this.foo.sum()",
+  "input": "{\"foo\":[3,8,4]}",
+  "docs_out": "{\"sum\":15}",
+  "bento": {
+   "stdout": "{\"sum\":15}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "unique",
+  "mapping": "root.uniques = this.foo.unique()",
+  "input": "{\"foo\":[\"a\",\"b\",\"a\",\"c\"]}",
+  "docs_out": "{\"uniques\":[\"a\",\"b\",\"c\"]}",
+  "bento": {
+   "stdout": "{\"uniques\":[\"a\",\"b\",\"c\"]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "values",
+  "mapping": "root.foo_vals = this.foo.values().sort()",
+  "input": "{\"foo\":{\"bar\":1,\"baz\":2}}",
+  "docs_out": "{\"foo_vals\":[1,2]}",
+  "bento": {
+   "stdout": "{\"foo_vals\":[1,2]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "with",
+  "mapping": "root = this.with(\"inner.a\",\"inner.c\",\"d\")",
+  "input": "{\"inner\":{\"a\":\"first\",\"b\":\"second\",\"c\":\"third\"},\"d\":\"fourth\",\"e\":\"fifth\"}",
+  "docs_out": "{\"d\":\"fourth\",\"inner\":{\"a\":\"first\",\"c\":\"third\"}}",
+  "bento": {
+   "stdout": "{\"d\":\"fourth\",\"inner\":{\"a\":\"first\",\"c\":\"third\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "without",
+  "mapping": "root = this.without(\"inner.a\",\"inner.c\",\"d\")",
+  "input": "{\"inner\":{\"a\":\"first\",\"b\":\"second\",\"c\":\"third\"},\"d\":\"fourth\",\"e\":\"fifth\"}",
+  "docs_out": "{\"e\":\"fifth\",\"inner\":{\"b\":\"second\"}}",
+  "bento": {
+   "stdout": "{\"e\":\"fifth\",\"inner\":{\"b\":\"second\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "zip",
+  "mapping": "root.foo = this.foo.zip(this.bar, this.baz)",
+  "input": "{\"foo\":[\"a\",\"b\",\"c\"],\"bar\":[1,2,3],\"baz\":[4,5,6]}",
+  "docs_out": "{\"foo\":[[\"a\",1,4],[\"b\",2,5],[\"c\",3,6]]}",
+  "bento": {
+   "stdout": "{\"foo\":[[\"a\",1,4],[\"b\",2,5],[\"c\",3,6]]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "bloblang",
+  "mapping": "root.body = this.body.bloblang(this.mapping)",
+  "input": "{\"body\":{\"foo\":\"hello world\"},\"mapping\":\"root.foo = this.foo.uppercase()\"}",
+  "docs_out": "{\"body\":{\"foo\":\"HELLO WORLD\"}}",
+  "bento": {
+   "stdout": "{\"body\":{\"foo\":\"HELLO WORLD\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "bloblang",
+  "mapping": "root.body = this.body.bloblang(this.mapping)",
+  "input": "{\"body\":{\"foo\":\"hello world 2\"},\"mapping\":\"root.foo = this.foo.capitalize()\"}",
+  "docs_out": "{\"body\":{\"foo\":\"Hello World 2\"}}",
+  "bento": {
+   "stdout": "{\"body\":{\"foo\":\"Hello World 2\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "format_json",
+  "mapping": "root = this.doc.format_json()",
+  "input": "{\"doc\":{\"foo\":\"bar\"}}",
+  "docs_out": "{",
+  "bento": {
+   "stdout": "{\n    \"foo\": \"bar\"\n}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "format_json",
+  "mapping": "root = this.format_json(\"  \")",
+  "input": "{\"doc\":{\"foo\":\"bar\"}}",
+  "docs_out": "{",
+  "bento": {
+   "stdout": "{\n  \"doc\": {\n    \"foo\": \"bar\"\n  }\n}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "format_json",
+  "mapping": "root.doc = this.doc.format_json().string()",
+  "input": "{\"doc\":{\"foo\":\"bar\"}}",
+  "docs_out": "{\"doc\":\"{\\n    \\\"foo\\\": \\\"bar\\\"\\n}\"}",
+  "bento": {
+   "stdout": "{\"doc\":\"{\\n    \\\"foo\\\": \\\"bar\\\"\\n}\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "format_json",
+  "mapping": "root = this.doc.format_json(no_indent: true)",
+  "input": "{\"doc\":{\"foo\":\"bar\"}}",
+  "docs_out": "{\"foo\":\"bar\"}",
+  "bento": {
+   "stdout": "{\"foo\":\"bar\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "format_json",
+  "mapping": "root = this.doc.format_json()",
+  "input": "{\"doc\":{\"email\":\"foo&bar@bento.dev\",\"name\":\"foo>bar\"}}",
+  "docs_out": "{",
+  "bento": {
+   "stdout": "{\n    \"email\": \"foo\\u0026bar@bento.dev\",\n    \"name\": \"foo\\u003ebar\"\n}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "format_json",
+  "mapping": "root = this.doc.format_json(escape_html: false)",
+  "input": "{\"doc\":{\"email\":\"foo&bar@bento.dev\",\"name\":\"foo>bar\"}}",
+  "docs_out": "{",
+  "bento": {
+   "stdout": "{\n    \"email\": \"foo&bar@bento.dev\",\n    \"name\": \"foo>bar\"\n}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "format_msgpack",
+  "mapping": "root = this.format_msgpack().encode(\"hex\")",
+  "input": "{\"foo\":\"bar\"}",
+  "docs_out": "81a3666f6fa3626172",
+  "bento": {
+   "stdout": "81a3666f6fa3626172\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "format_msgpack",
+  "mapping": "root.encoded = this.format_msgpack().encode(\"base64\")",
+  "input": "{\"foo\":\"bar\"}",
+  "docs_out": "{\"encoded\":\"gaNmb2+jYmFy\"}",
+  "bento": {
+   "stdout": "{\"encoded\":\"gaNmb2+jYmFy\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "format_xml",
+  "mapping": "root = this.format_xml()",
+  "input": "{\"foo\":{\"bar\":{\"baz\":\"foo bar baz\"}}}",
+  "docs_out": "<foo>",
+  "bento": {
+   "stdout": "<foo>\n    <bar>\n        <baz>foo bar baz</baz>\n    </bar>\n</foo>\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "format_xml",
+  "mapping": "root = this.format_xml(\"  \")",
+  "input": "{\"foo\":{\"bar\":{\"baz\":\"foo bar baz\"}}}",
+  "docs_out": "<foo>",
+  "bento": {
+   "stdout": "<foo>\n  <bar>\n    <baz>foo bar baz</baz>\n  </bar>\n</foo>\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "format_xml",
+  "mapping": "root.doc = this.format_xml(\"\").string()",
+  "input": "{\"foo\":{\"bar\":{\"baz\":\"foo bar baz\"}}}",
+  "docs_out": "{\"doc\":\"<foo>\\n<bar>\\n<baz>foo bar baz</baz>\\n</bar>\\n</foo>\"}",
+  "bento": {
+   "stdout": "{\"doc\":\"\\u003cfoo\\u003e\\n\\u003cbar\\u003e\\n\\u003cbaz\\u003efoo bar baz\\u003c/baz\\u003e\\n\\u003c/bar\\u003e\\n\\u003c/foo\\u003e\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "format_xml",
+  "mapping": "root = this.format_xml(no_indent: true)",
+  "input": "{\"foo\":{\"bar\":{\"baz\":\"foo bar baz\"}}}",
+  "docs_out": "<foo><bar><baz>foo bar baz</baz></bar></foo>",
+  "bento": {
+   "stdout": "<foo><bar><baz>foo bar baz</baz></bar></foo>\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "format_yaml",
+  "mapping": "root = this.doc.format_yaml()",
+  "input": "{\"doc\":{\"foo\":\"bar\"}}",
+  "docs_out": "foo: bar",
+  "bento": {
+   "stdout": "foo: bar\n\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "format_yaml",
+  "mapping": "root.doc = this.doc.format_yaml().string()",
+  "input": "{\"doc\":{\"foo\":\"bar\"}}",
+  "docs_out": "{\"doc\":\"foo: bar\\n\"}",
+  "bento": {
+   "stdout": "{\"doc\":\"foo: bar\\n\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_big_decimal",
+  "mapping": "root.amount = this.amount.decode(\"base64\").parse_big_decimal(scale: 2)",
+  "input": "{\"amount\":\"MDk=\"}",
+  "docs_out": "{\"amount\":\"123.45\"}",
+  "bento": {
+   "stdout": "{\"amount\":\"123.45\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_big_decimal",
+  "mapping": "root.amount = this.amount.decode(\"base64\").parse_big_decimal(scale: 2)",
+  "input": "{\"amount\":\"/w==\"}",
+  "docs_out": "{\"amount\":\"-0.01\"}",
+  "bento": {
+   "stdout": "{\"amount\":\"-0.01\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_bytes",
+  "mapping": "root.max_bytes = this.max_bytes_str.parse_bytes()",
+  "input": "{\"max_bytes_str\":\"10MiB\"}",
+  "docs_out": "{\"max_bytes\":10485760}",
+  "bento": {
+   "stdout": "{\"max_bytes\":10485760}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_bytes",
+  "mapping": "root.byte_size_limit = this.byte_size_limit_str.parse_bytes()",
+  "input": "{\"byte_size_limit_str\":\"10MB\"}",
+  "docs_out": "{\"byte_size_limit\":10000000}",
+  "bento": {
+   "stdout": "{\"byte_size_limit\":10000000}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_csv",
+  "mapping": "root.orders = this.orders.parse_csv()",
+  "input": "{\"orders\":\"foo,bar\\nfoo 1,bar 1\\nfoo 2,bar 2\"}",
+  "docs_out": "{\"orders\":[{\"bar\":\"bar 1\",\"foo\":\"foo 1\"},{\"bar\":\"bar 2\",\"foo\":\"foo 2\"}]}",
+  "bento": {
+   "stdout": "{\"orders\":[{\"bar\":\"bar 1\",\"foo\":\"foo 1\"},{\"bar\":\"bar 2\",\"foo\":\"foo 2\"}]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_csv",
+  "mapping": "root.orders = this.orders.parse_csv(false)",
+  "input": "{\"orders\":\"foo 1,bar 1\\nfoo 2,bar 2\"}",
+  "docs_out": "{\"orders\":[[\"foo 1\",\"bar 1\"],[\"foo 2\",\"bar 2\"]]}",
+  "bento": {
+   "stdout": "{\"orders\":[[\"foo 1\",\"bar 1\"],[\"foo 2\",\"bar 2\"]]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_csv",
+  "mapping": "root.orders = this.orders.parse_csv(delimiter:\".\")",
+  "input": "{\"orders\":\"foo.bar\\nfoo 1.bar 1\\nfoo 2.bar 2\"}",
+  "docs_out": "{\"orders\":[{\"bar\":\"bar 1\",\"foo\":\"foo 1\"},{\"bar\":\"bar 2\",\"foo\":\"foo 2\"}]}",
+  "bento": {
+   "stdout": "{\"orders\":[{\"bar\":\"bar 1\",\"foo\":\"foo 1\"},{\"bar\":\"bar 2\",\"foo\":\"foo 2\"}]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_csv",
+  "mapping": "root.orders = this.orders.parse_csv(lazy_quotes:true)",
+  "input": "{\"orders\":\"foo,bar\\nfoo 1,bar 1\\nfoo\\\" \\\"2,bar\\\" \\\"2\"}",
+  "docs_out": "{\"orders\":[{\"bar\":\"bar 1\",\"foo\":\"foo 1\"},{\"bar\":\"bar\\\" \\\"2\",\"foo\":\"foo\\\" \\\"2\"}]}",
+  "bento": {
+   "stdout": "{\"orders\":[{\"bar\":\"bar 1\",\"foo\":\"foo 1\"},{\"bar\":\"bar\\\" \\\"2\",\"foo\":\"foo\\\" \\\"2\"}]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_form_url_encoded",
+  "mapping": "root.values = this.body.parse_form_url_encoded()",
+  "input": "{\"body\":\"noise=meow&animal=cat&fur=orange&fur=fluffy\"}",
+  "docs_out": "{\"values\":{\"animal\":\"cat\",\"fur\":[\"orange\",\"fluffy\"],\"noise\":\"meow\"}}",
+  "bento": {
+   "stdout": "{\"values\":{\"animal\":\"cat\",\"fur\":[\"orange\",\"fluffy\"],\"noise\":\"meow\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_json",
+  "mapping": "root.doc = this.doc.parse_json()",
+  "input": "{\"doc\":\"{\\\"foo\\\":\\\"bar\\\"}\"}",
+  "docs_out": "{\"doc\":{\"foo\":\"bar\"}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"foo\":\"bar\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_json",
+  "mapping": "root.doc = this.doc.parse_json(use_number: true)",
+  "input": "{\"doc\":\"{\\\"foo\\\":\\\"11380878173205700000000000000000000000000000000\\\"}\"}",
+  "docs_out": "{\"doc\":{\"foo\":\"11380878173205700000000000000000000000000000000\"}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"foo\":\"11380878173205700000000000000000000000000000000\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_msgpack",
+  "mapping": "root = content().decode(\"hex\").parse_msgpack()",
+  "input": "81a3666f6fa3626172",
+  "docs_out": "{\"foo\":\"bar\"}",
+  "bento": {
+   "stdout": "{\"foo\":\"bar\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_msgpack",
+  "mapping": "root = this.encoded.decode(\"base64\").parse_msgpack()",
+  "input": "{\"encoded\":\"gaNmb2+jYmFy\"}",
+  "docs_out": "{\"foo\":\"bar\"}",
+  "bento": {
+   "stdout": "{\"foo\":\"bar\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_url",
+  "mapping": "root.foo_url = this.foo_url.parse_url()",
+  "input": "{\"foo_url\":\"https://warpstreamlabs.github.io/bento/docs/guides/bloblang/about\"}",
+  "docs_out": "{\"foo_url\":{\"fragment\":\"\",\"host\":\"warpstreamlabs.github.io\",\"opaque\":\"\",\"path\":\"/bento/docs/guides/bloblang/about\",\"raw_fragment\":\"\",\"raw_path\":\"\",\"raw_query\":\"\",\"scheme\":\"https\"}}",
+  "bento": {
+   "stdout": "{\"foo_url\":{\"fragment\":\"\",\"host\":\"warpstreamlabs.github.io\",\"opaque\":\"\",\"path\":\"/bento/docs/guides/bloblang/about\",\"raw_fragment\":\"\",\"raw_path\":\"\",\"raw_query\":\"\",\"scheme\":\"https\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_url",
+  "mapping": "root.username = this.url.parse_url().user.name | \"unknown\"",
+  "input": "{\"url\":\"amqp://foo:bar@127.0.0.1:5672/\"}",
+  "docs_out": "{\"username\":\"foo\"}",
+  "bento": {
+   "stdout": "{\"username\":\"foo\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_url",
+  "mapping": "root.username = this.url.parse_url().user.name | \"unknown\"",
+  "input": "{\"url\":\"redis://localhost:6379\"}",
+  "docs_out": "{\"username\":\"unknown\"}",
+  "bento": {
+   "stdout": "{\"username\":\"unknown\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_xml",
+  "mapping": "root.doc = this.doc.parse_xml()",
+  "input": "{\"doc\":\"<root><title>This is a title</title><content>This is some content</content></root>\"}",
+  "docs_out": "{\"doc\":{\"root\":{\"content\":\"This is some content\",\"title\":\"This is a title\"}}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"root\":{\"content\":\"This is some content\",\"title\":\"This is a title\"}}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_xml",
+  "mapping": "root.doc = this.doc.parse_xml(cast: false)",
+  "input": "{\"doc\":\"<root><title>This is a title</title><number id=99>123</number><bool>True</bool></root>\"}",
+  "docs_out": "{\"doc\":{\"root\":{\"bool\":\"True\",\"number\":{\"#text\":\"123\",\"-id\":\"99\"},\"title\":\"This is a title\"}}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"root\":{\"bool\":\"True\",\"number\":{\"#text\":\"123\",\"-id\":\"99\"},\"title\":\"This is a title\"}}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_xml",
+  "mapping": "root.doc = this.doc.parse_xml(cast: true)",
+  "input": "{\"doc\":\"<root><title>This is a title</title><number id=99>123</number><bool>True</bool></root>\"}",
+  "docs_out": "{\"doc\":{\"root\":{\"bool\":true,\"number\":{\"#text\":123,\"-id\":99},\"title\":\"This is a title\"}}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"root\":{\"bool\":true,\"number\":{\"#text\":123,\"-id\":99},\"title\":\"This is a title\"}}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_yaml",
+  "mapping": "root.doc = this.doc.parse_yaml()",
+  "input": "{\"doc\":\"foo: bar\"}",
+  "docs_out": "{\"doc\":{\"foo\":\"bar\"}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"foo\":\"bar\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "compress",
+  "mapping": "let long_content = range(0, 1000).map_each(content()).join(\" \")\nroot.a_len = $long_content.length()\nroot.b_len = $long_content.compress(\"gzip\").length()",
+  "input": "hello world this is some content",
+  "docs_out": "{\"a_len\":32999,\"b_len\":161}",
+  "bento": {
+   "stdout": "{\"a_len\":32999,\"b_len\":161}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "compress",
+  "mapping": "root.compressed = content().compress(\"lz4\").encode(\"base64\")",
+  "input": "hello world I love space",
+  "docs_out": "{\"compressed\":\"BCJNGGRwuRgAAIBoZWxsbyB3b3JsZCBJIGxvdmUgc3BhY2UAAAAAGoETLg==\"}",
+  "bento": {
+   "stdout": "{\"compressed\":\"BCJNGGRwuRgAAIBoZWxsbyB3b3JsZCBJIGxvdmUgc3BhY2UAAAAAGoETLg==\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "decode",
+  "mapping": "root.decoded = this.value.decode(\"hex\").string()",
+  "input": "{\"value\":\"68656c6c6f20776f726c64\"}",
+  "docs_out": "{\"decoded\":\"hello world\"}",
+  "bento": {
+   "stdout": "{\"decoded\":\"hello world\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "decode",
+  "mapping": "root = this.encoded.decode(\"ascii85\")",
+  "input": "{\"encoded\":\"FD,B0+DGm>FDl80Ci\\\"A>F`)8BEckl6F`M&(+Cno&@/\"}",
+  "docs_out": "this is totally unstructured data",
+  "bento": {
+   "stdout": "this is totally unstructured data\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "decompress",
+  "mapping": "root = this.compressed.decode(\"base64\").decompress(\"lz4\")",
+  "input": "{\"compressed\":\"BCJNGGRwuRgAAIBoZWxsbyB3b3JsZCBJIGxvdmUgc3BhY2UAAAAAGoETLg==\"}",
+  "docs_out": "hello world I love space",
+  "bento": {
+   "stdout": "hello world I love space\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "decompress",
+  "mapping": "root.result = this.compressed.decode(\"base64\").decompress(\"lz4\").string()",
+  "input": "{\"compressed\":\"BCJNGGRwuRgAAIBoZWxsbyB3b3JsZCBJIGxvdmUgc3BhY2UAAAAAGoETLg==\"}",
+  "docs_out": "{\"result\":\"hello world I love space\"}",
+  "bento": {
+   "stdout": "{\"result\":\"hello world I love space\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "decrypt_aes",
+  "mapping": "let key = \"2b7e151628aed2a6abf7158809cf4f3c\".decode(\"hex\")\nlet vector = \"f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff\".decode(\"hex\")\nroot.decrypted = this.value.decode(\"hex\").decrypt_aes(\"ctr\", $key, $vector).string()",
+  "input": "{\"value\":\"84e9b31ff7400bdf80be7254\"}",
+  "docs_out": "{\"decrypted\":\"hello world!\"}",
+  "bento": {
+   "stdout": "{\"decrypted\":\"hello world!\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "encode",
+  "mapping": "root.encoded = this.value.encode(\"hex\")",
+  "input": "{\"value\":\"hello world\"}",
+  "docs_out": "{\"encoded\":\"68656c6c6f20776f726c64\"}",
+  "bento": {
+   "stdout": "{\"encoded\":\"68656c6c6f20776f726c64\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "encode",
+  "mapping": "root.encoded = content().encode(\"ascii85\")",
+  "input": "this is totally unstructured data",
+  "docs_out": "{\"encoded\":\"FD,B0+DGm>FDl80Ci\\\"A>F`)8BEckl6F`M&(+Cno&@/\"}",
+  "bento": {
+   "stdout": "{\"encoded\":\"FD,B0+DGm\\u003eFDl80Ci\\\"A\\u003eF`)8BEckl6F`M\\u0026(+Cno\\u0026@/\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "encrypt_aes",
+  "mapping": "let key = \"2b7e151628aed2a6abf7158809cf4f3c\".decode(\"hex\")\nlet vector = \"f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff\".decode(\"hex\")\nroot.encrypted = this.value.encrypt_aes(\"ctr\", $key, $vector).encode(\"hex\")",
+  "input": "{\"value\":\"hello world!\"}",
+  "docs_out": "{\"encrypted\":\"84e9b31ff7400bdf80be7254\"}",
+  "bento": {
+   "stdout": "{\"encrypted\":\"84e9b31ff7400bdf80be7254\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "hash",
+  "mapping": "root.h1 = this.value.hash(\"sha1\").encode(\"hex\")\nroot.h2 = this.value.hash(\"hmac_sha1\",\"static-key\").encode(\"hex\")",
+  "input": "{\"value\":\"hello world\"}",
+  "docs_out": "{\"h1\":\"2aae6c35c94fcfb415dbe95f408b9ce91ee846ed\",\"h2\":\"d87e5f068fa08fe90bb95bc7c8344cb809179d76\"}",
+  "bento": {
+   "stdout": "{\"h1\":\"2aae6c35c94fcfb415dbe95f408b9ce91ee846ed\",\"h2\":\"d87e5f068fa08fe90bb95bc7c8344cb809179d76\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "hash",
+  "mapping": "root.h1 = this.value.hash(algorithm: \"crc32\", polynomial: \"Castagnoli\").encode(\"hex\")\nroot.h2 = this.value.hash(algorithm: \"crc32\", polynomial: \"Koopman\").encode(\"hex\")",
+  "input": "{\"value\":\"hello world\"}",
+  "docs_out": "{\"h1\":\"c99465aa\",\"h2\":\"df373d3c\"}",
+  "bento": {
+   "stdout": "{\"h1\":\"c99465aa\",\"h2\":\"df373d3c\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_jwt_es256",
+  "mapping": "root.claims = this.signed.parse_jwt_es256(\"\"\"-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEGtLqIBePHmIhQcf0JLgc+F/4W/oI\ndp0Gta53G35VerNDgUUXmp78J2kfh4qLdh0XtmOMI587tCaqjvDAXfs//w==\n-----END PUBLIC KEY-----\"\"\")",
+  "input": "{\"signed\":\"eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MTYyMzkwMjIsIm1vb2QiOiJEaXNkYWluZnVsIiwic3ViIjoiMTIzNDU2Nzg5MCJ9.GIRajP9JJbpTlqSCdNEz4qpQkRvzX4Q51YnTwVyxLDM9tKjR_a8ggHWn9CWj7KG0x8J56OWtmUxn112SRTZVhQ\"}",
+  "docs_out": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}",
+  "bento": {
+   "stdout": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_jwt_es384",
+  "mapping": "root.claims = this.signed.parse_jwt_es384(\"\"\"-----BEGIN PUBLIC KEY-----\nMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAERoz74/B6SwmLhs8X7CWhnrWyRrB13AuU\n8OYeqy0qHRu9JWNw8NIavqpTmu6XPT4xcFanYjq8FbeuM11eq06C52mNmS4LLwzA\n2imlFEgn85bvJoC3bnkuq4mQjwt9VxdH\n-----END PUBLIC KEY-----\"\"\")",
+  "input": "{\"signed\":\"eyJhbGciOiJFUzM4NCIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MTYyMzkwMjIsIm1vb2QiOiJEaXNkYWluZnVsIiwic3ViIjoiMTIzNDU2Nzg5MCJ9.H2HBSlrvQBaov2tdreGonbBexxtQB-xzaPL4-tNQZ6TVh7VH8VBcSwcWHYa1lBAHmdsKOFcB2Wk0SB7QWeGT3ptSgr-_EhDMaZ8bA5spgdpq5DsKfaKHrd7DbbQlmxNq\"}",
+  "docs_out": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}",
+  "bento": {
+   "stdout": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_jwt_es512",
+  "mapping": "root.claims = this.signed.parse_jwt_es512(\"\"\"-----BEGIN PUBLIC KEY-----\nMIGbMBAGByqGSM49AgEGBSuBBAAjA4GGAAQAkHLdts9P56fFkyhpYQ31M/Stwt3w\nvpaxhlfudxnXgTO1IP4RQRgryRxZ19EUzhvWDcG3GQIckoNMY5PelsnCGnIBT2Xh\n9NQkjWF5K6xS4upFsbGSAwQ+GIyyk5IPJ2LHgOyMSCVh5gRZXV3CZLzXujx/umC9\nUeYyTt05zRRWuD+p5bY=\n-----END PUBLIC KEY-----\"\"\")",
+  "input": "{\"signed\":\"eyJhbGciOiJFUzUxMiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MTYyMzkwMjIsIm1vb2QiOiJEaXNkYWluZnVsIiwic3ViIjoiMTIzNDU2Nzg5MCJ9.ACrpLuU7TKpAnncDCpN9m85nkL55MJ45NFOBl6-nEXmNT1eIxWjiP4pwWVbFH9et_BgN14119jbL_KqEJInPYc9nAXC6dDLq0aBU-dalvNl4-O5YWpP43-Y-TBGAsWnbMTrchILJ4-AEiICe73Ck5yWPleKg9c3LtkEFWfGs7BoPRguZ\"}",
+  "docs_out": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}",
+  "bento": {
+   "stdout": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_jwt_hs256",
+  "mapping": "root.claims = this.signed.parse_jwt_hs256(\"\"\"dont-tell-anyone\"\"\")",
+  "input": "{\"signed\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MTYyMzkwMjIsIm1vb2QiOiJEaXNkYWluZnVsIiwic3ViIjoiMTIzNDU2Nzg5MCJ9.YwXOM8v3gHVWcQRRRQc_zDlhmLnM62fwhFYGpiA0J1A\"}",
+  "docs_out": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}",
+  "bento": {
+   "stdout": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_jwt_hs384",
+  "mapping": "root.claims = this.signed.parse_jwt_hs384(\"\"\"dont-tell-anyone\"\"\")",
+  "input": "{\"signed\":\"eyJhbGciOiJIUzM4NCIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MTYyMzkwMjIsIm1vb2QiOiJEaXNkYWluZnVsIiwic3ViIjoiMTIzNDU2Nzg5MCJ9.2Y8rf_ijwN4t8hOGGViON_GrirLkCQVbCOuax6EoZ3nluX0tCGezcJxbctlIfsQ2\"}",
+  "docs_out": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}",
+  "bento": {
+   "stdout": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_jwt_hs512",
+  "mapping": "root.claims = this.signed.parse_jwt_hs512(\"\"\"dont-tell-anyone\"\"\")",
+  "input": "{\"signed\":\"eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MTYyMzkwMjIsIm1vb2QiOiJEaXNkYWluZnVsIiwic3ViIjoiMTIzNDU2Nzg5MCJ9.utRb0urG6LGGyranZJVo5Dk0Fns1QNcSUYPN0TObQ-YzsGGB8jrxHwM5NAJccjJZzKectEUqmmKCaETZvuX4Fg\"}",
+  "docs_out": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}",
+  "bento": {
+   "stdout": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_jwt_rs256",
+  "mapping": "root.claims = this.signed.parse_jwt_rs256(\"\"\"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs/ibN8r68pLMR6gRzg4S\n8v8l6Q7yi8qURjkEbcNeM1rkokC7xh0I4JVTwxYSVv/JIW8qJdyspl5NIfuAVi32\nWfKvSAs+NIs+DMsNPYw3yuQals4AX8hith1YDvYpr8SD44jxhz/DR9lYKZFGhXGB\n+7NqQ7vpTWp3BceLYocazWJgusZt7CgecIq57ycM5hjM93BvlrUJ8nQ1a46wfL/8\nCy4P0et70hzZrsjjN41KFhKY0iUwlyU41yEiDHvHDDsTMBxAZosWjSREGfJL6Mfp\nXOInTHs/Gg6DZMkbxjQu6L06EdJ+Q/NwglJdAXM7Zo9rNELqRig6DdvG5JesdMsO\n+QIDAQAB\n-----END PUBLIC KEY-----\"\"\")",
+  "input": "{\"signed\":\"eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MTYyMzkwMjIsIm1vb2QiOiJEaXNkYWluZnVsIiwic3ViIjoiMTIzNDU2Nzg5MCJ9.b0lH3jEupZZ4zoaly4Y_GCvu94HH6UKdKY96zfGNsIkPZpQLHIkZ7jMWlLlNOAd8qXlsBGP_i8H2qCKI4zlWJBGyPZgxXDzNRPVrTDfFpn4t4nBcA1WK2-ntXP3ehQxsaHcQU8Z_nsogId7Pme5iJRnoHWEnWtbwz5DLSXL3ZZNnRdrHM9MdI7QSDz9mojKDCaMpGN9sG7Xl-tGdBp1XzXuUOzG8S03mtZ1IgVR1uiBL2N6oohHIAunk8DIAmNWI-zgycTgzUGU7mvPkKH43qO8Ua1-13tCUBKKa8VxcotZ67Mxm1QAvBGoDnTKwWMwghLzs6d6WViXQg6eWlJcpBA\"}",
+  "docs_out": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}",
+  "bento": {
+   "stdout": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_jwt_rs384",
+  "mapping": "root.claims = this.signed.parse_jwt_rs384(\"\"\"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs/ibN8r68pLMR6gRzg4S\n8v8l6Q7yi8qURjkEbcNeM1rkokC7xh0I4JVTwxYSVv/JIW8qJdyspl5NIfuAVi32\nWfKvSAs+NIs+DMsNPYw3yuQals4AX8hith1YDvYpr8SD44jxhz/DR9lYKZFGhXGB\n+7NqQ7vpTWp3BceLYocazWJgusZt7CgecIq57ycM5hjM93BvlrUJ8nQ1a46wfL/8\nCy4P0et70hzZrsjjN41KFhKY0iUwlyU41yEiDHvHDDsTMBxAZosWjSREGfJL6Mfp\nXOInTHs/Gg6DZMkbxjQu6L06EdJ+Q/NwglJdAXM7Zo9rNELqRig6DdvG5JesdMsO\n+QIDAQAB\n-----END PUBLIC KEY-----\"\"\")",
+  "input": "{\"signed\":\"eyJhbGciOiJSUzM4NCIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MTYyMzkwMjIsIm1vb2QiOiJEaXNkYWluZnVsIiwic3ViIjoiMTIzNDU2Nzg5MCJ9.orcXYBcjVE5DU7mvq4KKWFfNdXR4nEY_xupzWoETRpYmQZIozlZnM_nHxEk2dySvpXlAzVm7kgOPK2RFtGlOVaNRIa3x-pMMr-bhZTno4L8Hl4sYxOks3bWtjK7wql4uqUbqThSJB12psAXw2-S-I_FMngOPGIn4jDT9b802ottJSvTpXcy0-eKTjrV2PSkRRu-EYJh0CJZW55MNhqlt6kCGhAXfbhNazN3ASX-dmpd_JixyBKphrngr_zRA-FCn_Xf3QQDA-5INopb4Yp5QiJ7UxVqQEKI80X_JvJqz9WE1qiAw8pq5-xTen1t7zTP-HT1NbbD3kltcNa3G8acmNg\"}",
+  "docs_out": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}",
+  "bento": {
+   "stdout": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "parse_jwt_rs512",
+  "mapping": "root.claims = this.signed.parse_jwt_rs512(\"\"\"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs/ibN8r68pLMR6gRzg4S\n8v8l6Q7yi8qURjkEbcNeM1rkokC7xh0I4JVTwxYSVv/JIW8qJdyspl5NIfuAVi32\nWfKvSAs+NIs+DMsNPYw3yuQals4AX8hith1YDvYpr8SD44jxhz/DR9lYKZFGhXGB\n+7NqQ7vpTWp3BceLYocazWJgusZt7CgecIq57ycM5hjM93BvlrUJ8nQ1a46wfL/8\nCy4P0et70hzZrsjjN41KFhKY0iUwlyU41yEiDHvHDDsTMBxAZosWjSREGfJL6Mfp\nXOInTHs/Gg6DZMkbxjQu6L06EdJ+Q/NwglJdAXM7Zo9rNELqRig6DdvG5JesdMsO\n+QIDAQAB\n-----END PUBLIC KEY-----\"\"\")",
+  "input": "{\"signed\":\"eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MTYyMzkwMjIsIm1vb2QiOiJEaXNkYWluZnVsIiwic3ViIjoiMTIzNDU2Nzg5MCJ9.rsMp_X5HMrUqKnZJIxo27aAoscovRA6SSQYR9rq7pifIj0YHXxMyNyOBDGnvVALHKTi25VUGHpfNUW0VVMmae0A4t_ObNU6hVZHguWvetKZZq4FZpW1lgWHCMqgPGwT5_uOqwYCH6r8tJuZT3pqXeL0CY4putb1AN2w6CVp620nh3l8d3XWb4jaifycd_4CEVCqHuWDmohfug4VhmoVKlIXZkYoAQowgHlozATDssBSWdYtv107Wd2AzEoiXPu6e3pflsuXULlyqQnS4ELEKPYThFLafh1NqvZDPddqozcPZ-iODBW-xf3A4DYDdivnMYLrh73AZOGHexxu8ay6nDA\"}",
+  "docs_out": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}",
+  "bento": {
+   "stdout": "{\"claims\":{\"iat\":1516239022,\"mood\":\"Disdainful\",\"sub\":\"1234567890\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "sign_jwt_es256",
+  "mapping": "root.signed = this.claims.sign_jwt_es256(\"\"\"-----BEGIN EC PRIVATE KEY-----\n... signature data ...\n-----END EC PRIVATE KEY-----\"\"\")",
+  "input": "{\"claims\":{\"sub\":\"user123\"}}",
+  "docs_out": "{\"signed\":\"eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MTYyMzkwMjIsIm1vb2QiOiJEaXNkYWluZnVsIiwic3ViIjoiMTIzNDU2Nzg5MCJ9.-8LrOdkEiv_44ADWW08lpbq41ZmHCel58NMORPq1q4Dyw0zFhqDVLrRoSvCvuyyvgXAFb9IHfR-9MlJ_2ShA9A\"}",
+  "bento": {
+   "stdout": "",
+   "stderr": "failed to parse mapping: line 3 char 33: failed to decode signing_secret: invalid key: Key must be a PEM encoded PKCS1 or PKCS8 key\n  |\n3 | -----END EC PRIVATE KEY-----\"\"\")\n  |                                 ^---\n",
+   "code": 1
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "sign_jwt_es384",
+  "mapping": "root.signed = this.claims.sign_jwt_es384(\"\"\"-----BEGIN EC PRIVATE KEY-----\n... signature data ...\n-----END EC PRIVATE KEY-----\"\"\")",
+  "input": "{\"claims\":{\"sub\":\"user123\"}}",
+  "docs_out": "{\"signed\":\"eyJhbGciOiJFUzM4NCIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIn0.8FmTKH08dl7dyxrNu0rmvhegiIBCy-O9cddGco2e9lpZtgv5mS5qHgPkgBC5eRw1d7SRJsHwHZeehzdqT5Ba7aZJIhz9ds0sn37YQ60L7jT0j2gxCzccrt4kECHnUnLw\"}",
+  "bento": {
+   "stdout": "",
+   "stderr": "failed to parse mapping: line 3 char 33: failed to decode signing_secret: invalid key: Key must be a PEM encoded PKCS1 or PKCS8 key\n  |\n3 | -----END EC PRIVATE KEY-----\"\"\")\n  |                                 ^---\n",
+   "code": 1
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "sign_jwt_es512",
+  "mapping": "root.signed = this.claims.sign_jwt_es512(\"\"\"-----BEGIN EC PRIVATE KEY-----\n... signature data ...\n-----END EC PRIVATE KEY-----\"\"\")",
+  "input": "{\"claims\":{\"sub\":\"user123\"}}",
+  "docs_out": "{\"signed\":\"eyJhbGciOiJFUzUxMiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIn0.AQbEWymoRZxDJEJtKSFFG2k2VbDCTYSuBwAZyMqexCspr3If8aERTVGif8HXG3S7TzMBCCzxkcKr3eIU441l3DlpAMNfQbkcOlBqMvNBn-CX481WyKf3K5rFHQ-6wRonz05aIsWAxCDvAozI_9J0OWllxdQ2MBAuTPbPJ38OqXsYkCQs\"}",
+  "bento": {
+   "stdout": "",
+   "stderr": "failed to parse mapping: line 3 char 33: failed to decode signing_secret: invalid key: Key must be a PEM encoded PKCS1 or PKCS8 key\n  |\n3 | -----END EC PRIVATE KEY-----\"\"\")\n  |                                 ^---\n",
+   "code": 1
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "sign_jwt_hs256",
+  "mapping": "root.signed = this.claims.sign_jwt_hs256(\"\"\"dont-tell-anyone\"\"\")",
+  "input": "{\"claims\":{\"sub\":\"user123\"}}",
+  "docs_out": "{\"signed\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIn0.hUl-nngPMY_3h9vveWJUPsCcO5PeL6k9hWLnMYeFbFQ\"}",
+  "bento": {
+   "stdout": "{\"signed\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIn0.hUl-nngPMY_3h9vveWJUPsCcO5PeL6k9hWLnMYeFbFQ\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "sign_jwt_hs384",
+  "mapping": "root.signed = this.claims.sign_jwt_hs384(\"\"\"dont-tell-anyone\"\"\")",
+  "input": "{\"claims\":{\"sub\":\"user123\"}}",
+  "docs_out": "{\"signed\":\"eyJhbGciOiJIUzM4NCIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIn0.zGYLr83aToon1efUNq-hw7XgT20lPvZb8sYei8x6S6mpHwb433SJdXJXx0Oio8AZ\"}",
+  "bento": {
+   "stdout": "{\"signed\":\"eyJhbGciOiJIUzM4NCIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIn0.zGYLr83aToon1efUNq-hw7XgT20lPvZb8sYei8x6S6mpHwb433SJdXJXx0Oio8AZ\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "sign_jwt_hs512",
+  "mapping": "root.signed = this.claims.sign_jwt_hs512(\"\"\"dont-tell-anyone\"\"\")",
+  "input": "{\"claims\":{\"sub\":\"user123\"}}",
+  "docs_out": "{\"signed\":\"eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIn0.zBNR9o_6EDwXXKkpKLNJhG26j8Dc-mV-YahBwmEdCrmiWt5les8I9rgmNlWIowpq6Yxs4kLNAdFhqoRz3NXT3w\"}",
+  "bento": {
+   "stdout": "{\"signed\":\"eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIn0.zBNR9o_6EDwXXKkpKLNJhG26j8Dc-mV-YahBwmEdCrmiWt5les8I9rgmNlWIowpq6Yxs4kLNAdFhqoRz3NXT3w\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "sign_jwt_rs256",
+  "mapping": "root.signed = this.claims.sign_jwt_rs256(\"\"\"-----BEGIN RSA PRIVATE KEY-----\n... signature data ...\n-----END RSA PRIVATE KEY-----\"\"\")",
+  "input": "{\"claims\":{\"sub\":\"user123\"}}",
+  "docs_out": "{\"signed\":\"eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MTYyMzkwMjIsIm1vb2QiOiJEaXNkYWluZnVsIiwic3ViIjoiMTIzNDU2Nzg5MCJ9.b0lH3jEupZZ4zoaly4Y_GCvu94HH6UKdKY96zfGNsIkPZpQLHIkZ7jMWlLlNOAd8qXlsBGP_i8H2qCKI4zlWJBGyPZgxXDzNRPVrTDfFpn4t4nBcA1WK2-ntXP3ehQxsaHcQU8Z_nsogId7Pme5iJRnoHWEnWtbwz5DLSXL3ZZNnRdrHM9MdI7QSDz9mojKDCaMpGN9sG7Xl-tGdBp1XzXuUOzG8S03mtZ1IgVR1uiBL2N6oohHIAunk8DIAmNWI-zgycTgzUGU7mvPkKH43qO8Ua1-13tCUBKKa8VxcotZ67Mxm1QAvBGoDnTKwWMwghLzs6d6WViXQg6eWlJcpBA\"}",
+  "bento": {
+   "stdout": "",
+   "stderr": "failed to parse mapping: line 3 char 34: failed to decode signing_secret: invalid key: Key must be a PEM encoded PKCS1 or PKCS8 key\n  |\n3 | -----END RSA PRIVATE KEY-----\"\"\")\n  |                                  ^---\n",
+   "code": 1
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "sign_jwt_rs384",
+  "mapping": "root.signed = this.claims.sign_jwt_rs384(\"\"\"-----BEGIN RSA PRIVATE KEY-----\n... signature data ...\n-----END RSA PRIVATE KEY-----\"\"\")",
+  "input": "{\"claims\":{\"sub\":\"user123\"}}",
+  "docs_out": "{\"signed\":\"eyJhbGciOiJSUzM4NCIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MTYyMzkwMjIsIm1vb2QiOiJEaXNkYWluZnVsIiwic3ViIjoiMTIzNDU2Nzg5MCJ9.orcXYBcjVE5DU7mvq4KKWFfNdXR4nEY_xupzWoETRpYmQZIozlZnM_nHxEk2dySvpXlAzVm7kgOPK2RFtGlOVaNRIa3x-pMMr-bhZTno4L8Hl4sYxOks3bWtjK7wql4uqUbqThSJB12psAXw2-S-I_FMngOPGIn4jDT9b802ottJSvTpXcy0-eKTjrV2PSkRRu-EYJh0CJZW55MNhqlt6kCGhAXfbhNazN3ASX-dmpd_JixyBKphrngr_zRA-FCn_Xf3QQDA-5INopb4Yp5QiJ7UxVqQEKI80X_JvJqz9WE1qiAw8pq5-xTen1t7zTP-HT1NbbD3kltcNa3G8acmNg\"}",
+  "bento": {
+   "stdout": "",
+   "stderr": "failed to parse mapping: line 3 char 34: failed to decode signing_secret: invalid key: Key must be a PEM encoded PKCS1 or PKCS8 key\n  |\n3 | -----END RSA PRIVATE KEY-----\"\"\")\n  |                                  ^---\n",
+   "code": 1
+  }
+ },
+ {
+  "page": "methods.md",
+  "name": "sign_jwt_rs512",
+  "mapping": "root.signed = this.claims.sign_jwt_rs512(\"\"\"-----BEGIN RSA PRIVATE KEY-----\n... signature data ...\n-----END RSA PRIVATE KEY-----\"\"\")",
+  "input": "{\"claims\":{\"sub\":\"user123\"}}",
+  "docs_out": "{\"signed\":\"eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE1MTYyMzkwMjIsIm1vb2QiOiJEaXNkYWluZnVsIiwic3ViIjoiMTIzNDU2Nzg5MCJ9.rsMp_X5HMrUqKnZJIxo27aAoscovRA6SSQYR9rq7pifIj0YHXxMyNyOBDGnvVALHKTi25VUGHpfNUW0VVMmae0A4t_ObNU6hVZHguWvetKZZq4FZpW1lgWHCMqgPGwT5_uOqwYCH6r8tJuZT3pqXeL0CY4putb1AN2w6CVp620nh3l8d3XWb4jaifycd_4CEVCqHuWDmohfug4VhmoVKlIXZkYoAQowgHlozATDssBSWdYtv107Wd2AzEoiXPu6e3pflsuXULlyqQnS4ELEKPYThFLafh1NqvZDPddqozcPZ-iODBW-xf3A4DYDdivnMYLrh73AZOGHexxu8ay6nDA\"}",
+  "bento": {
+   "stdout": "",
+   "stderr": "failed to parse mapping: line 3 char 34: failed to decode signing_secret: invalid key: Key must be a PEM encoded PKCS1 or PKCS8 key\n  |\n3 | -----END RSA PRIVATE KEY-----\"\"\")\n  |                                  ^---\n",
+   "code": 1
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "cosine_similarity",
+  "mapping": "root.similarity = cosine_similarity([1, 2, 3], [2, 4, 6])",
+  "input": "{}",
+  "docs_out": "{\"similarity\":1}",
+  "bento": {
+   "stdout": "{\"similarity\":1}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "cosine_similarity",
+  "mapping": "root.similarity = cosine_similarity([1, 0], [0, 1])",
+  "input": "{}",
+  "docs_out": "{\"similarity\":0}",
+  "bento": {
+   "stdout": "{\"similarity\":0}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "counter",
+  "mapping": "root.id = counter()",
+  "input": "{}",
+  "docs_out": "{\"id\":1}",
+  "bento": {
+   "stdout": "{\"id\":1}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "counter",
+  "mapping": "root.id = counter()",
+  "input": "{}",
+  "docs_out": "{\"id\":2}",
+  "bento": {
+   "stdout": "{\"id\":1}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "counter",
+  "mapping": "map foos {\n  root = counter()\n}\n\nroot.meow_id = null.apply(\"foos\")\nroot.woof_id = null.apply(\"foos\")",
+  "input": "{}",
+  "docs_out": "{\"meow_id\":1,\"woof_id\":2}",
+  "bento": {
+   "stdout": "{\"meow_id\":1,\"woof_id\":2}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "counter",
+  "mapping": "map foos {\n  root = counter()\n}\n\nroot.meow_id = null.apply(\"foos\")\nroot.woof_id = null.apply(\"foos\")",
+  "input": "{}",
+  "docs_out": "{\"meow_id\":3,\"woof_id\":4}",
+  "bento": {
+   "stdout": "{\"meow_id\":1,\"woof_id\":2}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "counter",
+  "mapping": "root.consecutive_doggos = counter(min: 1, set: if !this.sound.lowercase().contains(\"woof\") { 0 })",
+  "input": "{\"sound\":\"woof woof\"}",
+  "docs_out": "{\"consecutive_doggos\":1}",
+  "bento": {
+   "stdout": "{\"consecutive_doggos\":1}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "counter",
+  "mapping": "root.consecutive_doggos = counter(min: 1, set: if !this.sound.lowercase().contains(\"woof\") { 0 })",
+  "input": "{\"sound\":\"woofer wooooo\"}",
+  "docs_out": "{\"consecutive_doggos\":2}",
+  "bento": {
+   "stdout": "{\"consecutive_doggos\":1}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "counter",
+  "mapping": "root.consecutive_doggos = counter(min: 1, set: if !this.sound.lowercase().contains(\"woof\") { 0 })",
+  "input": "{\"sound\":\"meow\"}",
+  "docs_out": "{\"consecutive_doggos\":0}",
+  "bento": {
+   "stdout": "{\"consecutive_doggos\":0}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "counter",
+  "mapping": "root.consecutive_doggos = counter(min: 1, set: if !this.sound.lowercase().contains(\"woof\") { 0 })",
+  "input": "{\"sound\":\"uuuuh uh uh woof uhhhhhh\"}",
+  "docs_out": "{\"consecutive_doggos\":1}",
+  "bento": {
+   "stdout": "{\"consecutive_doggos\":1}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "counter",
+  "mapping": "root.things = counter(set: if this.id == null { null })",
+  "input": "{\"id\":\"a\"}",
+  "docs_out": "{\"things\":1}",
+  "bento": {
+   "stdout": "{\"things\":1}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "counter",
+  "mapping": "root.things = counter(set: if this.id == null { null })",
+  "input": "{\"id\":\"b\"}",
+  "docs_out": "{\"things\":2}",
+  "bento": {
+   "stdout": "{\"things\":1}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "counter",
+  "mapping": "root.things = counter(set: if this.id == null { null })",
+  "input": "{\"what\":\"just checking\"}",
+  "docs_out": "{\"things\":2}",
+  "bento": {
+   "stdout": "{\"things\":0}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "counter",
+  "mapping": "root.things = counter(set: if this.id == null { null })",
+  "input": "{\"id\":\"c\"}",
+  "docs_out": "{\"things\":3}",
+  "bento": {
+   "stdout": "{\"things\":1}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "deleted",
+  "mapping": "root = this\nroot.bar = deleted()",
+  "input": "{\"bar\":\"bar_value\",\"baz\":\"baz_value\",\"foo\":\"foo value\"}",
+  "docs_out": "{\"baz\":\"baz_value\",\"foo\":\"foo value\"}",
+  "bento": {
+   "stdout": "{\"baz\":\"baz_value\",\"foo\":\"foo value\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "deleted",
+  "mapping": "root.new_nums = this.nums.map_each(num -> if num < 10 { deleted() } else { num - 10 })",
+  "input": "{\"nums\":[3,11,4,17]}",
+  "docs_out": "{\"new_nums\":[1,7]}",
+  "bento": {
+   "stdout": "{\"new_nums\":[1,7]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "pi",
+  "mapping": "root.radians = this.degrees * (pi() / 180)",
+  "input": "{\"degrees\":45}",
+  "docs_out": "{\"radians\":0.7853981633974483}",
+  "bento": {
+   "stdout": "{\"radians\":0.7853981633974483}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "pi",
+  "mapping": "root.degrees = this.radians * (180 / pi())",
+  "input": "{\"radians\":0.78540}",
+  "docs_out": "{\"degrees\":45.00010522957486}",
+  "bento": {
+   "stdout": "{\"degrees\":45.00010522957486}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "range",
+  "mapping": "root.a = range(0, 10)\nroot.b = range(start: 0, stop: this.max, step: 2) # Using named params\nroot.c = range(0, -this.max, -2)",
+  "input": "{\"max\":10}",
+  "docs_out": "{\"a\":[0,1,2,3,4,5,6,7,8,9],\"b\":[0,2,4,6,8],\"c\":[0,-2,-4,-6,-8]}",
+  "bento": {
+   "stdout": "{\"a\":[0,1,2,3,4,5,6,7,8,9],\"b\":[0,2,4,6,8],\"c\":[0,-2,-4,-6,-8]}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "throw",
+  "mapping": "root.doc.type = match {\n  this.exists(\"header.id\") => \"foo\"\n  this.exists(\"body.data\") => \"bar\"\n  _ => throw(\"unknown type\")\n}\nroot.doc.contents = (this.body.content | this.thing.body)",
+  "input": "{\"header\":{\"id\":\"first\"},\"thing\":{\"body\":\"hello world\"}}",
+  "docs_out": "{\"doc\":{\"contents\":\"hello world\",\"type\":\"foo\"}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"contents\":\"hello world\",\"type\":\"foo\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "throw",
+  "mapping": "root.doc.type = match {\n  this.exists(\"header.id\") => \"foo\"\n  this.exists(\"body.data\") => \"bar\"\n  _ => throw(\"unknown type\")\n}\nroot.doc.contents = (this.body.content | this.thing.body)",
+  "input": "{\"nothing\":\"matches\"}",
+  "docs_out": "Error(\"failed assignment (line 1): unknown type\")",
+  "bento": {
+   "stdout": "",
+   "stderr": "failed to execute map: failed assignment (line 1): unknown type\n",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "content",
+  "mapping": "root.doc = content().string()",
+  "input": "{\"foo\":\"bar\"}",
+  "docs_out": "{\"doc\":\"{\\\"foo\\\":\\\"bar\\\"}\"}",
+  "bento": {
+   "stdout": "{\"doc\":\"{\\\"foo\\\":\\\"bar\\\"}\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "json",
+  "mapping": "root.mapped = json(\"foo.bar\")",
+  "input": "{\"foo\":{\"bar\":\"hello world\"}}",
+  "docs_out": "{\"mapped\":\"hello world\"}",
+  "bento": {
+   "stdout": "{\"mapped\":\"hello world\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "json",
+  "mapping": "root.doc = json()",
+  "input": "{\"foo\":{\"bar\":\"hello world\"}}",
+  "docs_out": "{\"doc\":{\"foo\":{\"bar\":\"hello world\"}}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"foo\":{\"bar\":\"hello world\"}}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "tracing_span",
+  "mapping": "root.headers.traceparent = tracing_span().traceparent",
+  "input": "{\"some_stuff\":\"just can't be explained by science\"}",
+  "docs_out": "{\"headers\":{\"traceparent\":\"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\"}}",
+  "bento": {
+   "stdout": "{\"headers\":{\"traceparent\":null}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "file",
+  "mapping": "root.doc = file(env(\"BENTO_TEST_BLOBLANG_FILE\")).parse_json()",
+  "input": "{}",
+  "docs_out": "{\"doc\":{\"foo\":\"bar\"}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"foo\":\"bar\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "file",
+  "mapping": "root.doc = file(path: env(\"BENTO_TEST_BLOBLANG_FILE\"), no_cache: true).parse_json()",
+  "input": "{}",
+  "docs_out": "{\"doc\":{\"foo\":\"bar\"}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"foo\":\"bar\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "file_rel",
+  "mapping": "root.doc = file_rel(env(\"BENTO_TEST_BLOBLANG_FILE\")).parse_json()",
+  "input": "{}",
+  "docs_out": "{\"doc\":{\"foo\":\"bar\"}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"foo\":\"bar\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "file_rel",
+  "mapping": "root.doc = file_rel(path: env(\"BENTO_TEST_BLOBLANG_FILE\"), no_cache: true).parse_json()",
+  "input": "{}",
+  "docs_out": "{\"doc\":{\"foo\":\"bar\"}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"foo\":\"bar\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "file_rel_json",
+  "mapping": "root.doc = file_rel_json(env(\"BENTO_TEST_BLOBLANG_FILE\"))",
+  "input": "{}",
+  "docs_out": "{\"doc\":{\"foo\":\"bar\"}}",
+  "bento": {
+   "stdout": "{\"doc\":{\"foo\":\"bar\"}}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "count",
+  "mapping": "root = this\nroot.id = count(\"bloblang_function_example\")",
+  "input": "{\"message\":\"foo\"}",
+  "docs_out": "{\"id\":1,\"message\":\"foo\"}",
+  "bento": {
+   "stdout": "{\"id\":1,\"message\":\"foo\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ },
+ {
+  "page": "functions.md",
+  "name": "count",
+  "mapping": "root = this\nroot.id = count(\"bloblang_function_example\")",
+  "input": "{\"message\":\"bar\"}",
+  "docs_out": "{\"id\":2,\"message\":\"bar\"}",
+  "bento": {
+   "stdout": "{\"id\":1,\"message\":\"bar\"}\n",
+   "stderr": "",
+   "code": 0
+  }
+ }
+]

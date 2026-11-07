@@ -1,0 +1,17 @@
+date	query	files_fetched
+2026-11-07	bloblang "pipeline:" "processors:" language:YAML	569
+2026-11-07	benthos "pipeline:" "processors:" language:YAML	140
+2026-11-07	bento "pipeline:" "processors:" language:YAML	65
+2026-11-07	"mapping:" "pipeline:" "processors:" "output:" language:YAML	457
+2026-11-07	"bloblang:" "pipeline:" "input:" language:YAML	0
+2026-11-07	"mapping: |" "input:" "output:" "processors:" language:YAML	48
+2026-11-07	"branch:" "request_map:" "result_map:" language:YAML	93
+2026-11-07	"generate:" "mapping:" "output:" language:YAML	523
+2026-11-07	"stdin:" "pipeline:" "stdout:" language:YAML	470
+2026-11-07	"http_server:" "pipeline:" "mapping:" language:YAML	426
+2026-11-07	"redpanda" "pipeline:" "processors:" "mapping:" language:YAML	67
+2026-11-07	"unit tests" OR "tests:" "target_processors:" language:YAML	4
+2026-11-07	"input_batch:" "output_conditions:" language:YAML	0
+2026-11-07	"switch:" "check:" "pipeline:" "processors:" language:YAML	59
+2026-11-07	"root = this" "pipeline:" language:YAML	105
+2026-11-07	"meta" "root." "processors:" "input:" language:YAML	16

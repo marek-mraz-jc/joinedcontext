@@ -1,0 +1,17 @@
+# ekiben's own suite: a definition file beside its target, a label target, a pointer mock and json_contains.
+tests:
+  - name: target a processor by its label
+    target_processors: shout
+    input_batch:
+      - json_content: { "b": "<x>", "a": 1 }
+    output_batches:
+      - - json_contains: { "a": 1, "b": "<X>" }
+
+  - name: mock by pointer
+    mocks:
+      /pipeline/processors/1:
+        mapping: 'root = this.merge({"mocked": true})'
+    input_batch:
+      - json_content: { "a": 2 }
+    output_batches:
+      - - json_equals: '{"a":2,"mocked":true}'

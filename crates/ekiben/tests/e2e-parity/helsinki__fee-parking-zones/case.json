@@ -1,0 +1,266 @@
+{
+ "bento": {
+  "exit": "ok",
+  "messages": [
+   "{\"content\":\"[{\\\"category\\\":{\\\"type\\\":\\\"Property\\\",\\\"value\\\":[\\\"feeCharged\\\"]},\\\"dataProvider\\\":{\\\"type\\\":\\\"Property\\\",\\\"value\\\":\\\"City of Helsinki, parking\\\"},\\\"description\\\":{\\\"languageMap\\\":{\\\"fi\\\":\\\"Maksuvyöhykkeen sisällä pysäköinti maksaa 4 euroa tunnilta. Huomioithan, että vyöhykkeiden rajat eivät ole sijaintitarkkoja. Rajaus on piirretty alunperin opaskarttatason päälle. Maksulliset ajat tulee aina tarkistaa liikennemerkistä.\\\"},\\\"type\\\":\\\"LanguageProperty\\\"},\\\"id\\\":\\\"urn:ngsi-ld:OnStreetParking:example.org:helsinki:fee-zone-1\\\",\\\"location\\\":{\\\"type\\\":\\\"GeoProperty\\\",\\\"value\\\":{\\\"coordinates\\\":[[[24.96039556,60.1805609],[24.96038308,60.18055286],[24.95947925,60.18093051],[24.95679908,60.18213491],[24.956009,60.18241887],[24.9550555,60.18279253],[24.95460273,60.18297022],[24.95396017,60.18322064],[24.95318244,60.18353273],[24.95202035,60.18279535],[24.95158524,60.18253654],[24.94987262,60.1814594],[24.94866749,60.18111368],[24.94760858,60.18069117],[24.94647415,60.18051222],[24.93741187,60.18044601],[24.93110845,60.18386486],[24.93085824,60.18337995],[24.93077045,60.18331418],[24.93061566,60.18323959],[24.92754731,60.18214789],[24.92666092,60.1817538],[24.92540038,60.18121764],[24.9246046,60.18087947],[24.924122,60.18061608],[24.9231086,60.17961561],[24.9222919,60.17909498],[24.9223437,60.17875108],[24.9215666,60.17538185],[24.91874999,60.17361547],[24.91970583,60.17174796],[24.92023717,60.17023321],[24.92027732,60.16982654],[24.92041458,60.16725604],[24.92016983,60.16656096],[24.92034666,60.16582068],[24.92028371,60.16510367],[24.92082216,60.16323938],[24.92482002,60.16061186],[24.92681201,60.16037773],[24.92858794,60.16016033],[24.93229634,60.15899583],[24.93305484,60.15785045],[24.93322848,60.15757685],[24.93380748,60.15761779],[24.93609206,60.15770677],[24.94248895,60.15798154],[24.94882186,60.15825749],[24.95411055,60.15927868],[24.95439202,60.15930974],[24.95552706,60.15952825],[24.95784463,60.16015091],[24.95940252,60.16002207],[24.95997966,60.15989853],[24.96046843,60.15963355],[24.96059257,60.15952547],[24.96222048,60.15985204],[24.96372709,60.16274819],[24.96959673,60.16257683],[24.97143374,60.16253141],[24.97752118,60.16427953],[24.98330258,60.16592297],[24.98122665,60.16753185],[24.97890301,60.16933248],[24.97662112,60.17110053],[24.96260506,60.18195539],[24.96039556,60.1805609]]],\\\"type\\\":\\\"Polygon\\\"}},\\\"name\\\":{\\\"languageMap\\\":{\\\"fi\\\":\\\"Maksuvyöhyke 1\\\"},\\\"type\\\":\\\"LanguageProperty\\\"},\\\"source\\\":{\\\"type\\\":\\\"Property\\\",\\\"value\\\":\\\"https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:Pysakoinnin_maksuvyohykkeet_alue\\\"},\\\"type\\\":\\\"OnStreetParking\\\",\\\"url\\\":{\\\"type\\\":\\\"Property\\\",\\\"value\\\":\\\"https://www.hel.fi/pysakointi\\\"},\\\"zoneCode\\\":{\\\"type\\\":\\\"Property\\\",\\\"value\\\":\\\"1\\\"}},{\\\"category\\\":{\\\"type\\\":\\\"Property\\\",\\\"value\\\":[\\\"feeCharged\\\"]},\\\"dataProvider\\\":{\\\"type\\\":\\\"Property\\\",\\\"value\\\":\\\"City of Helsinki, parking\\\"},\\\"description\\\":{\\\"languageMap\\\":{\\\"fi\\\":\\\"Maksuvyöhykkeen sisällä pysäköinti maksaa 2 euroa tunnilta. Huomioithan, että vyöhykkeiden rajat eivät ole sijaintitarkkoja. Rajaus on piirretty alunperin opaskarttatason päälle. Maksulliset ajat tulee aina tarkistaa liikennemerkistä.\\\"},\\\"type\\\":\\\"LanguageProperty\\\"},\\\"id\\\":\\\"urn:ngsi-ld:OnStreetParking:example.org:helsinki:fee-zone-2\\\",\\\"location\\\":{\\\"type\\\":\\\"GeoProperty\\\",\\\"value\\\":{\\\"coordinates\\\":[[[24.97662142,60.17110053],[24.96260506,60.18195539],[24.96039556,60.1805609],[24.95947925,60.18093051],[24.95679908,60.18213491],[24.956009,60.18241887],[24.9550555,60.18279253],[24.95460273,60.18297022],[24.95396017,60.18322064],[24.95318244,60.18353273],[24.95202035,60.18279535],[24.95158524,60.18253654],[24.94987262,60.1814594],[24.94866749,60.18111368],[24.94760858,60.18069117],[24.94647415,60.18051222],[24.93741187,60.18044601],[24.93110845,60.18386486],[24.93085824,60.18337995],[24.93077045,60.18331418],[24.93061566,60.18323959],[24.92754731,60.18214789],[24.92666092,60.1817538],[24.92540038,60.18121764],[24.9246046,60.18087947],[24.924122,60.18061608],[24.9231086,60.17961561],[24.9222919,60.17909498],[24.9223437,60.17875108],[24.9215666,60.17538185],[24.91874999,60.17361547],[24.91970583,60.17174796],[24.92023717,60.17023321],[24.92027732,60.16982654],[24.92041458,60.16725604],[24.92016983,60.16656096],[24.92034666,60.16582068],[24.92028371,60.16510367],[24.92082216,60.16323938],[24.92482002,60.16061186],[24.92681201,60.16037773],[24.92858794,60.16016033],[24.93229634,60.15899583],[24.93305484,60.15785045],[24.93322848,60.15757685],[24.93380748,60.15761779],[24.93609206,60.15770677],[24.94248895,60.15798154],[24.94882186,60.15825749],[24.95411055,60.15927868],[24.95439202,60.15930974],[24.95552706,60.15952825],[24.95784463,60.16015091],[24.95940252,60.16002207],[24.95997966,60.15989853],[24.96046843,60.15963355],[24.96059257,60.15952547],[24.96222048,60.15985204],[24.96372709,60.16274819],[24.96959673,60.16257683],[24.97143374,60.16253141],[24.98329691,60.16591616],[24.96654283,60.14602486],[24.91564924,60.14603248],[24.90241059,60.14967989],[24.89287343,60.17407759],[24.90745185,60.18502116],[24.90673909,60.18530279],[24.89965191,60.19111467],[24.89256349,60.19373052],[24.89906062,60.19514093],[24.89871627,60.19614327],[24.89991691,60.19691018],[24.91033645,60.19722376],[24.91288294,60.2086761],[24.91532444,60.20863663],[24.9184506,60.20827842],[24.93029492,60.20635854],[24.93396638,60.20614543],[24.93774242,60.20613878],[24.94366078,60.20796136],[24.94490346,60.20810801],[24.94433822,60.20086006],[24.94465744,60.20004216],[24.94731161,60.19823999],[24.94797005,60.19870432],[24.94871006,60.19914294],[24.94952133,60.19954891],[24.95039802,60.19991932],[24.95133382,60.20025148],[24.95232196,60.20054301],[24.95335533,60.20079178],[24.95442646,60.20099602],[24.95552763,60.20115425],[24.95665089,60.20126533],[24.95778815,60.20132845],[24.95893118,60.20134316],[24.96007176,60.20130935],[24.96120164,60.20122728],[24.96228087,60.20110768],[24.96398281,60.20077525],[24.99113095,60.20076312],[24.98504873,60.18276787],[24.98031836,60.18130877],[24.97662651,60.17429095],[24.97662142,60.17110053]]],\\\"type\\\":\\\"Polygon\\\"}},\\\"name\\\":{\\\"languageMap\\\":{\\\"fi\\\":\\\"Maksuvyöhyke 2\\\"},\\\"type\\\":\\\"LanguageProperty\\\"},\\\"source\\\":{\\\"type\\\":\\\"Property\\\",\\\"value\\\":\\\"https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:Pysakoinnin_maksuvyohykkeet_alue\\\"},\\\"type\\\":\\\"OnStreetParking\\\",\\\"url\\\":{\\\"type\\\":\\\"Property\\\",\\\"value\\\":\\\"https://www.hel.fi/pysakointi\\\"},\\\"zoneCode\\\":{\\\"type\\\":\\\"Property\\\",\\\"value\\\":\\\"2\\\"}}]\",\"meta\":{\"http_status_code\":200,\"jc_refused_write_0\":\"W10=\",\"jc_run\":\"2026-11-07T09:57:38Z\"}}"
+  ],
+  "requests": [
+   "{\"body\": {\"base64\": \"\"}, \"content-type\": \"application/octet-stream\", \"method\": \"GET\", \"query\": \"service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Pysakoinnin_maksuvyohykkeet_alue\", \"route\": \"up/https/kartta.hel.fi/ws/geoserver/avoindata/wfs\"}",
+   "{\"body\": \"grant_type=client_credentials\", \"content-type\": \"application/x-www-form-urlencoded\", \"method\": \"POST\", \"query\": \"\", \"route\": \"token\"}",
+   "{\"body\": [{\"category\": {\"type\": \"Property\", \"value\": [\"feeCharged\"]}, \"dataProvider\": {\"type\": \"Property\", \"value\": \"City of Helsinki, parking\"}, \"description\": {\"languageMap\": {\"fi\": \"Maksuvyöhykkeen sisällä pysäköinti maksaa 4 euroa tunnilta. Huomioithan, että vyöhykkeiden rajat eivät ole sijaintitarkkoja. Rajaus on piirretty alunperin opaskarttatason päälle. Maksulliset ajat tulee aina tarkistaa liikennemerkistä.\"}, \"type\": \"LanguageProperty\"}, \"id\": \"urn:ngsi-ld:OnStreetParking:example.org:helsinki:fee-zone-1\", \"location\": {\"type\": \"GeoProperty\", \"value\": {\"coordinates\": [[[24.96039556, 60.1805609], [24.96038308, 60.18055286], [24.95947925, 60.18093051], [24.95679908, 60.18213491], [24.956009, 60.18241887], [24.9550555, 60.18279253], [24.95460273, 60.18297022], [24.95396017, 60.18322064], [24.95318244, 60.18353273], [24.95202035, 60.18279535], [24.95158524, 60.18253654], [24.94987262, 60.1814594], [24.94866749, 60.18111368], [24.94760858, 60.18069117], [24.94647415, 60.18051222], [24.93741187, 60.18044601], [24.93110845, 60.18386486], [24.93085824, 60.18337995], [24.93077045, 60.18331418], [24.93061566, 60.18323959], [24.92754731, 60.18214789], [24.92666092, 60.1817538], [24.92540038, 60.18121764], [24.9246046, 60.18087947], [24.924122, 60.18061608], [24.9231086, 60.17961561], [24.9222919, 60.17909498], [24.9223437, 60.17875108], [24.9215666, 60.17538185], [24.91874999, 60.17361547], [24.91970583, 60.17174796], [24.92023717, 60.17023321], [24.92027732, 60.16982654], [24.92041458, 60.16725604], [24.92016983, 60.16656096], [24.92034666, 60.16582068], [24.92028371, 60.16510367], [24.92082216, 60.16323938], [24.92482002, 60.16061186], [24.92681201, 60.16037773], [24.92858794, 60.16016033], [24.93229634, 60.15899583], [24.93305484, 60.15785045], [24.93322848, 60.15757685], [24.93380748, 60.15761779], [24.93609206, 60.15770677], [24.94248895, 60.15798154], [24.94882186, 60.15825749], [24.95411055, 60.15927868], [24.95439202, 60.15930974], [24.95552706, 60.15952825], [24.95784463, 60.16015091], [24.95940252, 60.16002207], [24.95997966, 60.15989853], [24.96046843, 60.15963355], [24.96059257, 60.15952547], [24.96222048, 60.15985204], [24.96372709, 60.16274819], [24.96959673, 60.16257683], [24.97143374, 60.16253141], [24.97752118, 60.16427953], [24.98330258, 60.16592297], [24.98122665, 60.16753185], [24.97890301, 60.16933248], [24.97662112, 60.17110053], [24.96260506, 60.18195539], [24.96039556, 60.1805609]]], \"type\": \"Polygon\"}}, \"name\": {\"languageMap\": {\"fi\": \"Maksuvyöhyke 1\"}, \"type\": \"LanguageProperty\"}, \"source\": {\"type\": \"Property\", \"value\": \"https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:Pysakoinnin_maksuvyohykkeet_alue\"}, \"type\": \"OnStreetParking\", \"url\": {\"type\": \"Property\", \"value\": \"https://www.hel.fi/pysakointi\"}, \"zoneCode\": {\"type\": \"Property\", \"value\": \"1\"}}, {\"category\": {\"type\": \"Property\", \"value\": [\"feeCharged\"]}, \"dataProvider\": {\"type\": \"Property\", \"value\": \"City of Helsinki, parking\"}, \"description\": {\"languageMap\": {\"fi\": \"Maksuvyöhykkeen sisällä pysäköinti maksaa 2 euroa tunnilta. Huomioithan, että vyöhykkeiden rajat eivät ole sijaintitarkkoja. Rajaus on piirretty alunperin opaskarttatason päälle. Maksulliset ajat tulee aina tarkistaa liikennemerkistä.\"}, \"type\": \"LanguageProperty\"}, \"id\": \"urn:ngsi-ld:OnStreetParking:example.org:helsinki:fee-zone-2\", \"location\": {\"type\": \"GeoProperty\", \"value\": {\"coordinates\": [[[24.97662142, 60.17110053], [24.96260506, 60.18195539], [24.96039556, 60.1805609], [24.95947925, 60.18093051], [24.95679908, 60.18213491], [24.956009, 60.18241887], [24.9550555, 60.18279253], [24.95460273, 60.18297022], [24.95396017, 60.18322064], [24.95318244, 60.18353273], [24.95202035, 60.18279535], [24.95158524, 60.18253654], [24.94987262, 60.1814594], [24.94866749, 60.18111368], [24.94760858, 60.18069117], [24.94647415, 60.18051222], [24.93741187, 60.18044601], [24.93110845, 60.18386486], [24.93085824, 60.18337995], [24.93077045, 60.18331418], [24.93061566, 60.18323959], [24.92754731, 60.18214789], [24.92666092, 60.1817538], [24.92540038, 60.18121764], [24.9246046, 60.18087947], [24.924122, 60.18061608], [24.9231086, 60.17961561], [24.9222919, 60.17909498], [24.9223437, 60.17875108], [24.9215666, 60.17538185], [24.91874999, 60.17361547], [24.91970583, 60.17174796], [24.92023717, 60.17023321], [24.92027732, 60.16982654], [24.92041458, 60.16725604], [24.92016983, 60.16656096], [24.92034666, 60.16582068], [24.92028371, 60.16510367], [24.92082216, 60.16323938], [24.92482002, 60.16061186], [24.92681201, 60.16037773], [24.92858794, 60.16016033], [24.93229634, 60.15899583], [24.93305484, 60.15785045], [24.93322848, 60.15757685], [24.93380748, 60.15761779], [24.93609206, 60.15770677], [24.94248895, 60.15798154], [24.94882186, 60.15825749], [24.95411055, 60.15927868], [24.95439202, 60.15930974], [24.95552706, 60.15952825], [24.95784463, 60.16015091], [24.95940252, 60.16002207], [24.95997966, 60.15989853], [24.96046843, 60.15963355], [24.96059257, 60.15952547], [24.96222048, 60.15985204], [24.96372709, 60.16274819], [24.96959673, 60.16257683], [24.97143374, 60.16253141], [24.98329691, 60.16591616], [24.96654283, 60.14602486], [24.91564924, 60.14603248], [24.90241059, 60.14967989], [24.89287343, 60.17407759], [24.90745185, 60.18502116], [24.90673909, 60.18530279], [24.89965191, 60.19111467], [24.89256349, 60.19373052], [24.89906062, 60.19514093], [24.89871627, 60.19614327], [24.89991691, 60.19691018], [24.91033645, 60.19722376], [24.91288294, 60.2086761], [24.91532444, 60.20863663], [24.9184506, 60.20827842], [24.93029492, 60.20635854], [24.93396638, 60.20614543], [24.93774242, 60.20613878], [24.94366078, 60.20796136], [24.94490346, 60.20810801], [24.94433822, 60.20086006], [24.94465744, 60.20004216], [24.94731161, 60.19823999], [24.94797005, 60.19870432], [24.94871006, 60.19914294], [24.94952133, 60.19954891], [24.95039802, 60.19991932], [24.95133382, 60.20025148], [24.95232196, 60.20054301], [24.95335533, 60.20079178], [24.95442646, 60.20099602], [24.95552763, 60.20115425], [24.95665089, 60.20126533], [24.95778815, 60.20132845], [24.95893118, 60.20134316], [24.96007176, 60.20130935], [24.96120164, 60.20122728], [24.96228087, 60.20110768], [24.96398281, 60.20077525], [24.99113095, 60.20076312], [24.98504873, 60.18276787], [24.98031836, 60.18130877], [24.97662651, 60.17429095], [24.97662142, 60.17110053]]], \"type\": \"Polygon\"}}, \"name\": {\"languageMap\": {\"fi\": \"Maksuvyöhyke 2\"}, \"type\": \"LanguageProperty\"}, \"source\": {\"type\": \"Property\", \"value\": \"https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:Pysakoinnin_maksuvyohykkeet_alue\"}, \"type\": \"OnStreetParking\", \"url\": {\"type\": \"Property\", \"value\": \"https://www.hel.fi/pysakointi\"}, \"zoneCode\": {\"type\": \"Property\", \"value\": \"2\"}}], \"content-type\": \"application/json\", \"method\": \"POST\", \"query\": \"options=update\", \"route\": \"gw/api/endpoint/si6epqkx364lprho5uaigutk274r5grb/ngsi-ld/v1/entityOperations/upsert\"}"
+  ],
+  "seconds": 0.3,
+  "started": 1794045458.0869892
+ },
+ "name": "fee-parking-zones",
+ "project": "helsinki",
+ "resources": {
+  "cache_resources": [
+   {
+    "label": "helsinki__departures",
+    "memory": {
+     "compaction_interval": "60s",
+     "default_ttl": "5m"
+    }
+   },
+   {
+    "label": "helsinki__gtfs",
+    "memory": {
+     "compaction_interval": "1h",
+     "default_ttl": "72h"
+    }
+   }
+  ],
+  "processor_resources": [
+   {
+    "label": "events_tail",
+    "processors": [
+     {
+      "mapping": "let settings = if @events.type() != \"object\" { throw(\"events_tail reads its source's settings from the metadata `events`, which the generated step before it sets (seeds/bbsk-events/generate.py)\") } else { @events }\n# The end as unix seconds: a datetime end as written, a whole-day end the next midnight\n# (CET, so up to an hour late in summer), no end the start plus a day (owner 2026-10-20).\nmap unix {\n  root = if this == null { null } else if this.re_match(\"^[0-9]{4}-[0-9]{2}-[0-9]{2}$\") { this.ts_parse(\"2006-01-02\").ts_unix() - 3600 } else { this.ts_unix().catch(null) }\n}\nlet now = timestamp_unix()\n# A notice is no event (owner 2026-10-22, T-5215): waste collection, a council session, VZN, a zámer, an\n# oznámenie, elections, a power cut, a hall's booked or free slot (T-5393). Its record is never loaded.\nlet notice = \"(?i)(vývoz|odvoz|zvoz|zber|separ)\\\\S*\\\\s.*(odpad|papier|plast|skl|kov|kartón|bio|elektro|textil|olej|nádob)|^zberný dvor|^(papier|plasty?|sklo|kovy|bioodpad|komunálny odpad)$|\\\\bVZN\\\\b|všeobecne záväzn|\\\\bzámer|oznámeni|voľby|volby|referend|zasadnut|zastupiteľstv|preruš\\\\S* (dodávky|distribúcie)|odstávk|nová webová stránka|^(svadba|oslava|rodinná oslava|súkromná akcia|oslava narodenín|kar|obsadené|obsadený|rezervované|rezervovaná|voľné|voľný termín)$|\\\\bobsaden[ýáé]|prenájom (sály|kd|kultúrn)|súkromn[áé] (akcia|oslava)|rezervácia (jedál|sál|kd|kultúrn|miestn)\"\nlet records = this.filter(r -> !r.name.or(\"\").string().unescape_html().trim().re_match($notice)).map_each(r -> r.merge({\n  \"_start\": r.start.apply(\"unix\"),\n  \"_end\": if r.end != null && r.end.apply(\"unix\") != null {\n    r.end.apply(\"unix\") + if r.end.re_match(\"^[0-9]{4}-[0-9]{2}-[0-9]{2}$\") { 86400 } else { 0 }\n  } else { r.start.apply(\"unix\").(s -> if s != null { s + 86400 } else { null }) }\n}))\n# Only upcoming events (owner 2026-10-20): one whose end (plus the store's grace, a day in the national\n# store) is past is never loaded. A record with no readable start is refused, never stored without a date\n# (owner 2026-10-22, T-5215).\nlet dated = $records.filter(r -> r._start != null && r._end + @events.grace >= $now).sort_by(r -> r._start)\nroot = $dated.slice(0, [$dated.length(), 100].min())\n"
+     },
+     {
+      "unarchive": {
+       "format": "json_array"
+      }
+     },
+     {
+      "mapping": "map key {\n  # generate.py ABBREVIATIONS: a hall's or an office's short name spelled out (T-5240).\n  root = (\" \" + this.lowercase().re_replace_all(\"\\\\([^)]*\\\\)\", \" \").re_replace_all(\"[,;]\", \" \").re_replace_all(\"\\\\s+\", \" \").trim() + \" \").replace_all(\" kd \", \" kultúrny dom \").replace_all(\" dk \", \" dom kultúry \").replace_all(\" msks \", \" mestské kultúrne stredisko \").replace_all(\" ocú \", \" obecný úrad \").replace_all(\" oú \", \" obecný úrad \").replace_all(\" msú \", \" mestský úrad \").replace_all(\" mú \", \" mestský úrad \").trim()\n}\nmap text {\n  root = if this == null { null } else { this.string().strip_html().unescape_html().re_replace_all(\"\\\\s+\", \" \").trim().(t -> if t == \"\" { null } else { t }) }\n}\nmap prop {\n  root = if this == null { null } else { { \"type\": \"Property\", \"value\": this } }\n}\nlet venues = @events.venues\nlet name = this.name.apply(\"text\")\nlet venue_text = this.venue.apply(\"text\")\nlet venue_key = if $venue_text != null { $venue_text.apply(\"key\") } else { \"\" }\nlet place = $venues.filter(v -> v.match == $venue_key).index(0).catch(null)\n# An event that names no place, or only the town or its organizer, takes its organizer's own address\n# (homes.csv, owner 2026-10-22: \"or the institution's address\"); its venue stays as the source wrote it.\nlet home = if $place == null && ($venue_key == \"\" || @events.self.contains($venue_key)) { @events.home } else { null }\nlet known = $place.or($home)\n# The feed's town, unless it names a district or a region (geocode pilot 2026-10-22: \"okres Myjava\"); a Prague\n# borough or the city in English (\"Praha 3\", \"Praha – Horní Počernice\", \"Prague, Czechia\") is the city, by its legal\n# name \"Hlavní město Praha\" (law 131/2000 Sb.; its slug \"praha\" would be the project's name, T-5666).\nlet feed_locality = this.locality.apply(\"text\").(l -> if l != null && l.re_match(\"(?i)^okres\\\\s|\\\\skraj$\") { null } else if l != null && l.re_match(\"(?i)^(praha|prague)([\\\\s,–-].*)?$\") { \"Hlavní město Praha\" } else { l })\nlet locality = $feed_locality.or($known.addressLocality.or(@events.town))\n# An event with no known venue takes its town's office, else the town's centre (towns.csv, T-5240), labelled so.\nlet hit = if $locality != null { @events.towns.filter(t -> t.index(0).lowercase() == $locality.lowercase()).index(0).catch(null) } else { null }\nlet area = if $known == null && $hit != null { { \"town\": $hit.index(1), \"lat\": $hit.index(2), \"lon\": $hit.index(3), \"precision\": $hit.index(4) } } else { null }\n# The municipality by its official name, on every event (DM-141): the town table's, the venue's, else the feed's.\nlet municipality = if $hit != null { $hit.index(0) } else { $known.addressLocality.or($locality) }\n# GPS from the feed, else from the venue table, else from the organizer's address, else from the town; the\n# precision says which (owner 2026-10-21: at least 90 % with a point; approximate points labelled).\nlet feed_lat = this.lat.number().catch(null)\nlet feed_lon = this.lon.number().catch(null)\n# The source says who placed the point: the feed, the venue table's checker, or the town table (T-5490).\nlet pick = if $feed_lat != null && $feed_lon != null { { \"lat\": $feed_lat, \"lon\": $feed_lon, \"precision\": \"source\", \"source\": \"feed\" } } else if $place != null { $place.merge({ \"precision\": \"building\", \"source\": $place.checked_by }) } else if $home != null { $home.merge({ \"precision\": \"office\", \"source\": $home.checked_by }) } else if $area != null { $area.merge({ \"source\": \"towns\" }) } else { null }\nlet lat = $pick.lat.or(null)\nlet lon = $pick.lon.or(null)\n# The store's country is the scope's first level (/SK/..., /CZ/... since T-5666); a point outside it with a margin\n# is a wrong point, never written.\nlet country = @events.scope.split(\"/\").index(1)\nlet box = if $country == \"CZ\" { [12.0, 48.5, 18.9, 51.1] } else { [16.8, 47.7, 22.6, 49.7] }\nlet point = if $lat != null && $lon != null && $lat >= $box.index(1) && $lat <= $box.index(3) && $lon >= $box.index(0) && $lon <= $box.index(2) { { \"type\": \"Point\", \"coordinates\": [$lon, $lat] } } else { null }\nlet town = $known.town.or($area.town.or(null))\n# One event announced by two sources is one entity: the id hashes the name (letters and digits only, so\n# \"Kintsugi – japonské umenie\" and \"Kintsugi: japonské umenie\" agree), the start (to the hour in UTC, so\n# 16:35 and 16:36 agree, or the day) and the town, the dedup key of the Event model (T-4895, T-5215).\nlet start_key = if this.start.re_match(\"^[0-9]{4}-[0-9]{2}-[0-9]{2}$\") { this.start } else { this._start.ts_format(\"2006-01-02T15Z\", \"UTC\") }\nlet key = if $name != null { \"%s|%s|%s\".format($name.lowercase().re_replace_all(\"[^\\\\p{L}\\\\p{N}]+\", \" \").trim(), $start_key, $locality.or(\"\").lowercase()) } else { \"source|\" + this.url.or(this.sourceId).or(\"\").string() }\n# A street with the postcode glued on (\"Bečov 96/6976 63\" is 96/6 and 976 63) or written after it, or a postcode\n# alone (\"976 63 Predajná\"): the postcode moves to its own field and the country is dropped (T-5240).\nlet street_text = this.streetAddress.apply(\"text\").(s -> if s != null { s.re_replace_all(\"(?i)[,\\\\s]*(slovensko|slovakia|slovenská republika|česká republika|česko|czech republic|czechia)$\", \"\") } else { null })\nlet glued = if $street_text != null { $street_text.re_find_object(\"^(?P<street>.*?\\\\d[a-zA-Z]?)[,\\\\s]*(?P<zip>\\\\d{3} \\\\d{2})(?:[,\\\\s]+[^\\\\d,]+)?$\") } else { {} }\nlet zip_only = if $street_text != null { $street_text.re_find_object(\"^(?P<zip>\\\\d{3} ?\\\\d{2})(?:[,\\\\s]+[^\\\\d,]+)?$\") } else { {} }\nlet street = if $zip_only.zip != null { null } else { $glued.street.or($street_text) }\nlet address = {\n  \"streetAddress\": $street.or($known.streetAddress.or(null)),\n  \"postalCode\": this.postalCode.apply(\"text\").or($zip_only.zip.or($glued.zip.or(null))),\n  \"addressLocality\": $locality,\n  \"addressRegion\": @events.region,\n  \"addressCountry\": $country\n}.filter(kv -> kv.value != null && kv.value != \"\")\nmap link {\n  root = if this == null { null } else { this.string().trim().(u -> if u.re_match(\"^https?://[^\\\\s/@]+(/\\\\S*)?$\") && u.length() <= 2000 { u } else { null }) }\n}\n# The organizer the feed names, else the body whose calendar this is (the inventory row); an aggregator's\n# row names none, so its event keeps no organizer (owner 2026-10-22: optional). Name and web site only: a feed's\n# organizer e-mail or phone may be a person's and stays on the source's page.\n# E-mails and phone numbers, Slovak and Czech: national with a leading 0 (0905 123 456), international with or\n# without a space (+421 905 123 456, +420222333444) and a Czech national number, which has no leading 0\n# (222 333 444, 777123456), for every store the tail serves (praha-akce too, F-R2BNT3-002).\nmap uncontactable {\n  root = if this == null { null } else { this.re_replace_all(\"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\\\.[A-Za-z]{2,}\", \"\").re_replace_all(\"(\\\\+42[01] ?|\\\\b0)[0-9][0-9 /]{7,}[0-9]\", \"\").re_replace_all(\"\\\\b[2-7][0-9]{2} ?[0-9]{3} ?[0-9]{3}\\\\b\", \"\") }\n}\nmap uncontact {\n  root = if this == null { null } else { this.apply(\"uncontactable\").re_replace_all(\"(?i)\\\\b(tel|mobil|e-?mail|kontakt)\\\\.?:?\", \"\").re_replace_all(\"\\\\s+\", \" \").re_replace_all(\"^[ ,;:-]+|[ ,;:-]+$\", \"\").(t -> if t == \"\" { null } else { t }) }\n}\nlet named = this.organizer.name.or(null).apply(\"text\").apply(\"uncontact\")\nlet organizer = if $named != null { { \"name\": $named.slice(0, [$named.length(), 300].min()), \"url\": this.organizer.url.or(null).apply(\"link\") }.filter(kv -> kv.value != null) } else { @events.organizer }\n# The event's own page, else the organizer's page listing its events: every event carries a link a person opens.\nlet link = this.url.apply(\"link\").or(@events.listing)\n# The main category (T-5363, docs API/12-event-categories.md): the first rule of seeds/event-categories.json\n# matching the source's own word without its audience and catch-all parts, else the name, else the whole word\n# (\"akcie pre deti\"), else the kind of body whose calendar it is (a theatre). No match: the decision model's\n# cached answer below, else none.\nlet rules = [[\"sport\", \"šport|sport|futbal|hokej|volejbal|nohejbal|basketbal|hádzan|tenis|kolky|karate|(^|\\\\s)beh|maratón|turnaj|zápas|pohár|cyklo|korčuľ|plávan|lyžov|šach|atletik|fitnes|zumba|bowling|biliard|súťaž|hasič|krampuslauf|\\\\brun\\\\b|\\\\bfk\\\\b|\\\\bmfk\\\\b|\\\\bbež(me|íme|ime|ecký)|regat\"], [\"outdoor-nature\", \"turistik|\\\\btúr|výstup|výlet|príro|vychádzk|pochod|hike|nature|outdoor|jaskyň|splav|rastlín|stromy|záhrad|vtác|zviera|chodník\"], [\"film\", \"kino|film|premietan|projekci|cinema|movie\"], [\"theatre-dance\", \"divad|činohr|činoher|opera|balet|tanec|muzikál|predstaven|inscenác|bábk|repríza|premiér|kabaret|stand-?up|komédi|kúzel|zájazd|theat|dance|sľuk|lúčnic|színház\"], [\"music\", \"hudb|hudob|koncert|music|spev|zbor|orchest|kapel|\\\\bband\\\\b|trio\\\\b|kvartet|recitál|jazz|rock|disco|disko|párty|party|karaoke|\\\\bdj\\\\b|heligón|dychov|cimbal|organ|folklór|zábava|veselic|tančiare|\\\\bples(\\\\b|y|ov)|\\\\bbál\\\\b|vivaldi|zenekar|jam session|feat\\\\.|ľudov\\\\S* (nôt|pies)|klavír\"], [\"festival-fair\", \"festival|\\\\bfest\\\\b|jarmo|\\\\bhody|hodov|dni obce|dni mesta|slávnos|oslav|karneval|maškar|fašiang|majáles|dožink|vinobran|ohňostroj|vatr|silvest|lampión|halloween|strašidel|tekvič|mikuláš\"], [\"food-market\", \"gastro|\\\\btrh|jedl|ochutnávk|degust|\\\\bvín|vinár|pivo|guláš|kapustnic|zabíjač|varen|pečen|burz|bazár|punč|kuchár|kuchyn|palacink|coffee|kávy|food|market|swap|špecialít\"], [\"exhibition-museum\", \"výstav|vernisáž|finisáž|kurátor|galéri|múze|muze|expozíc|exhibit|museum|gallery|maľb|insit|sochár|ateliér|salón|architekt|\\\\bexpo\\\\b|výtvarn\"], [\"history-heritage\", \"histor|pamiatk|hrad|kaštie|zámo|dejin|výroči|spomienk|piet|vencov|vojn|veterán|\\\\bsnp\\\\b|remesl|kódex|prehliadk|baníc|patrón|minulos|dedičstv|histór|zámk|baník|povstan\"], [\"faith-tradition\", \"cirkev|omš|bohoslužb|kostol|púť|svät|modlitb|duchovn|poklon|pobožn|evanjel|reformač|farsk|farnos|biblick|advent|vianoc|vianoč|veľkonoč|dušičk|svetlono|koled|koľad|tradíci|diecéz|kroj\"], [\"education-talk\", \"prednášk|seminár|konferenc|besed|workshop|kurz|vzdeláv|diskus|čítan|autorsk|knih|kniž|literár|poézi|poeti|básn|vedeck|\\\\bved|webinár|info dni|študent|talk|lecture|\\\\bai\\\\b|haiku|poviedk|recenzi|kvíz|inteligenc|kvíz|kviz|cestovateľ|planetári|hvezdár|filozof|dialóg|prezentáci\"], [\"children-family\", \"deti|detsk|pre najmenš|rozprávk|rodin|rodič|škôlk|mamičk|story time|kids|children|family\"], [\"hobby-workshop\", \"tvoriv|tvoren|tvoríme|dielni|ručné práce|ručných prác|háčkov|pleten|plsten|modrotlač|ikeban|vyrezáv|spoločensk[ýé]ch hier|stolov[áé] hr|chovateľ|fotograf|hobby|craft|potlač|čipk|3d tlač\"], [\"health-wellness\", \"zdrav|wellness|cvičen|pohyb|kvapka krvi|darovanie krvi|meditác|relax|somatick|masáž|medicín|jóg|joga|parkinson|ženské kruhy|open class|psych\"], [\"community-civic\", \"komunit|stretnut|posedeni|zhromažd|fórum|forum|občian|dobrovoľn|brigád|spolok|\\\\bklub|schôdz|ocenen|uvítan|jubil|prípitok|charit|zbierk|slobod|seniorov|susedia|sused\"]]\nlet word = this.category.apply(\"text\").or(\"\").lowercase()\nlet specific = $word.re_replace_all(\"trhy, výstavy, veľtrhy \\\\(ostatné\\\\)\", \"trh\").re_replace_all(\"trhy, výstavy, veľtrhy|akcie pre [^,)]*\", \"\")\nlet title = $name.or(\"\").lowercase()\nlet ruled = [$specific, $title, $word].map_each(t -> $rules.filter(r -> t.re_match(r.index(1))).map_each(r -> r.index(0))).flatten().append(@events.category_default).filter(c -> c != null).index(0).catch(null)\n# No rule: the decision model's answer scripts/events-classify.py cached for this name and venue (T-5490).\nlet decided = if $ruled == null { @events.category_cache.get(\"%s|%s\".format($title, $place.venue.or($venue_text).or(\"\").lowercase()).hash(\"sha256\").encode(\"hex\").slice(0, 16)).catch(null) } else { null }\nlet category = $ruled.or($decided)\nlet audience = if $category != \"children-family\" { null } else if ($word + \" \" + $title).re_match(\"deti|detsk|najmenš|škôlk\") { [\"children\"] } else { [\"family\"] }\nlet now = timestamp_unix()\nlet lease = @events.lease\nlet ends = if this._end == null { null } else { this._end + @events.grace }\nlet expires = if $lease == null { $ends } else if $ends == null { $now + $lease } else { [$ends, $now + $lease].min() }\nroot = {\n  \"id\": \"urn:ngsi-ld:Event:%s:%s\".format(@events.space, $key.hash(\"sha256\").encode(\"hex\").slice(0, 16)),\n  \"type\": \"Event\",\n  # The scope comes from the inventory row's region and town, never from the feed (T-4898). A\n  # scope level is letters, digits and \"_\" (CIM 009 4.18): the broker refuses a hyphen (T-5051).\n  \"scope\": if $town != null { @events.scope + \"/\" + $town.replace_all(\"-\", \"_\") } else { @events.town_scope },\n  \"name\": $name.apply(\"prop\"),\n  \"startDate\": this.start.apply(\"prop\"),\n  \"endDate\": this.end.apply(\"prop\"),\n  \"location\": if $point != null { { \"type\": \"GeoProperty\", \"value\": $point } } else { null },\n  \"locationPrecision\": if $point != null { { \"type\": \"Property\", \"value\": $pick.precision } } else { null },\n  \"locationSource\": if $point != null { { \"type\": \"Property\", \"value\": $pick.source } } else { null },\n  \"venue\": $place.venue.or($venue_text).apply(\"prop\"),\n  # The venue table's place as its PointOfInterest, which the store's miesta-podujati pipeline writes (DM-141).\n  \"refPointOfInterest\": if $place != null { { \"type\": \"Relationship\", \"object\": \"urn:ngsi-ld:PointOfInterest:%s:%s\".format(@events.space, $place.poi) } } else { null },\n  \"areaServed\": $municipality.apply(\"prop\"),\n  \"address\": { \"type\": \"Property\", \"value\": $address },\n  \"eventCategory\": this.category.apply(\"text\").apply(\"prop\"),\n  \"category\": if $category != null { { \"type\": \"Property\", \"value\": [$category] } } else { null },\n  \"categorySource\": if $ruled != null { { \"type\": \"Property\", \"value\": \"rule\" } } else if $decided != null { { \"type\": \"Property\", \"value\": \"model\" } } else { null },\n  \"audience\": $audience.apply(\"prop\"),\n  # A source that states no licence gives its facts only: what, when, where and the link back\n  # (integrator 2026-10-20, T-4894); its text stays on its own page.\n  # Contact e-mails and phone numbers stay on the source's page: they may name a person.\n  \"description\": if @events.facts_only { null } else { this.description.apply(\"text\").apply(\"uncontactable\").(d -> if d != null { d.re_replace_all(\"\\\\s+\", \" \").trim() } else { null }).(d -> if d != null && d != \"\" { d.slice(0, [d.length(), 2000].min()) } else { null }).apply(\"prop\") },\n  \"url\": $link.apply(\"prop\"),\n  \"organizer\": $organizer.apply(\"prop\"),\n  \"source\": { \"type\": \"Property\", \"value\": @events.source },\n  \"sourceId\": this.sourceId.string().catch(null).apply(\"prop\"),\n  \"dataProvider\": { \"type\": \"Property\", \"value\": @events.provider },\n  \"dateModified\": this.modified.ts_format(\"2006-01-02T15:04:05Z\", \"UTC\").catch(null).apply(\"prop\"),\n  # The event leaves the space when it is over (owner 2026-10-20, DM-130), or, in a store with a lease, when\n  # no run has seen it for the lease: an event its source dropped or cancelled ends too (T-5047).\n  \"expiresAt\": $expires.ts_format(\"2006-01-02T15:04:05Z\", \"UTC\").catch(null)\n}.filter(kv -> kv.value != null)\n"
+     },
+     {
+      "archive": {
+       "format": "json_array"
+      }
+     },
+     {
+      "mutation": "meta events = deleted()\n"
+     }
+    ]
+   }
+  ],
+  "rate_limit_resources": [
+   {
+    "label": "pipeline_egress",
+    "local": {
+     "count": 100000,
+     "interval": "1s"
+    }
+   },
+   {
+    "label": "zilina_opendata",
+    "local": {
+     "count": 100000,
+     "interval": "1s"
+    }
+   },
+   {
+    "label": "bcn_stat",
+    "local": {
+     "count": 100000,
+     "interval": "1s"
+    }
+   },
+   {
+    "label": "barcelona_opendata",
+    "local": {
+     "count": 100000,
+     "interval": "1s"
+    }
+   },
+   {
+    "label": "hel_stat",
+    "local": {
+     "count": 100000,
+     "interval": "1s"
+    }
+   },
+   {
+    "label": "hel_nuuka",
+    "local": {
+     "count": 100000,
+     "interval": "1s"
+    }
+   },
+   {
+    "label": "hfp_vehicles",
+    "local": {
+     "count": 100000,
+     "interval": "1s"
+    }
+   },
+   {
+    "label": "helsinki__pipeline_egress",
+    "local": {
+     "count": 100000,
+     "interval": "1s"
+    }
+   }
+  ]
+ },
+ "stream": {
+  "input": {
+   "generate": {
+    "interval": "168h",
+    "mapping": "root = \"\"\nmeta jc_run = now().ts_format(\"2006-01-02T15:04:05Z\", \"UTC\")"
+   },
+   "label": "input"
+  },
+  "output": {
+   "label": "output",
+   "switch": {
+    "cases": [
+     {
+      "check": "errored()",
+      "output": {
+       "reject": "${! error() }"
+      }
+     },
+     {
+      "output": {
+       "drop": {}
+      }
+     }
+    ],
+    "retry_until_success": false
+   }
+  },
+  "pipeline": {
+   "processors": [
+    {
+     "label": "processor_0",
+     "try": [
+      {
+       "http": {
+        "headers": {
+         "Accept": "application/json"
+        },
+        "timeout": "30s",
+        "tls": {
+         "enabled": true
+        },
+        "url": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&version=2.0.0&request=GetFeature&outputFormat=application/json&srsName=EPSG:4326&typeNames=avoindata:Pysakoinnin_maksuvyohykkeet_alue",
+        "verb": "GET"
+       }
+      }
+     ]
+    },
+    {
+     "label": "processor_1",
+     "mutation": "root = if errored() { deleted() }"
+    },
+    {
+     "label": "processor_2",
+     "mutation": "root = if content().length() > 33554432 { throw(\"the response body is %d bytes, over spec.http.maxBytes 33554432\".format(content().length())) }"
+    },
+    {
+     "catch": [
+      {
+       "log": {
+        "level": "ERROR",
+        "message": "http read refused: ${! error() }"
+       }
+      },
+      {
+       "mapping": "root = deleted()"
+      }
+     ],
+     "label": "processor_3"
+    },
+    {
+     "label": "processor_4",
+     "mapping": "# The WFS writes a field it has no value for as the string \"None\"; a link comes without\n# its scheme.\nmap text {\n  root = if this == null || this.string().trim() == \"\" || this.string() == \"None\" { null } else { this.string().trim() }\n}\nroot = this.features.or([]).filter(f -> f.geometry.or(null) != null && f.properties.vyohykkeen_nro.or(\"\").string().re_match(\"^[0-9A-Za-z]{1,3}$\")).map_each(f -> {\n  \"code\": f.properties.vyohykkeen_nro.string(),\n  \"name\": f.properties.nimi.apply(\"text\"),\n  \"rules\": f.properties.lisatiedot.or(\"\").apply(\"text\"),\n  \"link\": f.properties.linkki.apply(\"text\"),\n  \"geometry\": f.geometry\n}).map_each(z -> {\n  \"id\": \"urn:ngsi-ld:%v:%v:%v:fee-zone-%v\".format(\"OnStreetParking\", env(\"JC_ORG_DOMAIN\"), \"helsinki\", z.code.lowercase()),\n  \"type\": \"OnStreetParking\",\n  \"name\": if z.name == null { null } else { { \"type\": \"LanguageProperty\", \"languageMap\": { \"fi\": z.name } } },\n  \"category\": { \"type\": \"Property\", \"value\": [\"feeCharged\"] },\n  \"zoneCode\": { \"type\": \"Property\", \"value\": z.code },\n  \"description\": if z.rules == null { null } else { { \"type\": \"LanguageProperty\", \"languageMap\": { \"fi\": z.rules } } },\n  # One address or none: a register value with two links or a space is no IRI, and the\n  # broker refuses the whole zone over it (F-BNT3-018, the T-4011 culture rule).\n  \"url\": z.link.or(\"\").string().trim().(l -> if l.has_prefix(\"http\") { l } else { \"https://\" + l }).(u -> if u.re_match(\"^https?://[^\\\\s/]+\\\\.[^\\\\s]+$\") { { \"type\": \"Property\", \"value\": u } } else { null }),\n  \"location\": { \"type\": \"GeoProperty\", \"value\": z.geometry },\n  \"dataProvider\": { \"type\": \"Property\", \"value\": \"City of Helsinki, parking\" },\n  \"source\": { \"type\": \"Property\", \"value\": \"https://kartta.hel.fi/ws/geoserver/avoindata/wfs?typeNames=avoindata:Pysakoinnin_maksuvyohykkeet_alue\" }\n}.filter(entry -> entry.value != null))\n"
+    },
+    {
+     "label": "processor_5",
+     "mapping": "root = if this.type() == \"array\" { this } else { [this] }"
+    },
+    {
+     "label": "processor_6",
+     "unarchive": {
+      "format": "json_array"
+     }
+    },
+    {
+     "label": "processor_7",
+     "split": {
+      "byte_size": 1048576,
+      "size": 1000
+     }
+    },
+    {
+     "archive": {
+      "format": "json_array"
+     },
+     "label": "processor_8"
+    },
+    {
+     "branch": {
+      "processors": [
+       {
+        "http": {
+         "drop_on": [
+          400,
+          413,
+          422
+         ],
+         "headers": {
+          "Content-Type": "application/json"
+         },
+         "oauth2": {
+          "client_key": "helsinki-pipelines",
+          "client_secret": "${JC_CLIENT_SECRET_HELSINKI}",
+          "enabled": true,
+          "token_url": "${JC_TOKEN_URL}"
+         },
+         "rate_limit": "helsinki__pipeline_egress",
+         "timeout": "30s",
+         "url": "${JC_GATEWAY_URL}/api/endpoint/si6epqkx364lprho5uaigutk274r5grb/ngsi-ld/v1/entityOperations/upsert?options=update",
+         "verb": "POST"
+        }
+       }
+      ],
+      "result_map": "let errors = content().parse_json().catch({}).errors.or([])\nmeta jc_refused_write_0 = $errors.map_each(e -> { \"id\": e.entityId.or(\"\"), \"message\": e.error.detail.or(e.error.title).or(\"\") }).format_json(no_indent: true)"
+     },
+     "label": "write_0"
+    },
+    {
+     "label": "write_refused",
+     "switch": [
+      {
+       "check": "errored() && error().re_match(\"unexpected response code \\\\((400|413|422)\\\\)\")",
+       "processors": [
+        {
+         "catch": [
+          {
+           "mutation": "let problem = error().re_replace_all(\"(?s)^.*?Error: \", \"\").parse_json().catch({})\nmeta jc_failed = $problem.detail.or($problem.title).or(error())"
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "threads": 4
+  }
+ }
+}

@@ -1,0 +1,17 @@
+# Renders each deployment seed pipeline as the Portal hands it to the runner (scripts/e2e-parity.sh).
+# Outside the ekiben workspace on purpose: it links the platform's jc-core and jc-manifest at the
+# rev joinedcontext-portal pins, and ekiben's own build, deny and audit never see them.
+[package]
+name = "portal-render"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+jc-core = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a" }
+jc-manifest = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a" }
+serde = "1"
+serde_json = "1"
+serde_norway = "0.9"

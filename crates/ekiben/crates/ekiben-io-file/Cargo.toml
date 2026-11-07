@@ -1,0 +1,27 @@
+[package]
+name = "ekiben-io-file"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ekiben-bloblang = { workspace = true }
+ekiben-core = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+csv = { workspace = true }
+tar = { workspace = true }
+flate2 = { workspace = true }
+glob = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+ekiben-processors = { workspace = true }
+serde_norway = { workspace = true }

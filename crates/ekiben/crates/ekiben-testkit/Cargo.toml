@@ -1,0 +1,16 @@
+[package]
+name = "ekiben-testkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ekiben-bloblang = { workspace = true }
+ekiben-core = { workspace = true }
+ekiben-processors = { workspace = true }
+ekiben-io-http = { workspace = true }
+ekiben-io-file = { workspace = true }
+ekiben-io-nats = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+serde_json = { workspace = true }
