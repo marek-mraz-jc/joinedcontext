@@ -1,0 +1,1810 @@
+//! Building the endpoint table from the manifest repository (T-0005, EP-01, CC-08).
+//!
+//! The repository is the configuration, so the gateway's table is a projection of it and
+//! nothing else: an `Endpoint` manifest, plus every `Policy` of the same project that
+//! names the same context space — or the Policies its `spec.policyRefs` names, when several
+//! endpoints publish different slices of one space. A manifest the gateway cannot make sense of is left out
+//! rather than half-applied — an endpoint that is not in the table answers 404, which is
+//! the same thing an endpoint that does not exist answers (EP-03).
+
+use crate::auth::accounts::{accounts_of, ServiceAccounts};
+use crate::auth::dataspace_token::{agreements_of, Agreements};
+use crate::federation::{federations_of, Federations};
+use crate::mcp::server::{McpServer, McpServers};
+use crate::relationships::RelationshipRules;
+use crate::resolver::{DeclaredTypes, Endpoint, EndpointRoles, Model, Space};
+use crate::units::UnitRules;
+use crate::view_mapping::ViewMapping;
+use jc_core::kinds::mcp_server::{knowledge_source_id, Select};
+use jc_core::kinds::{
+    AssistantDeploymentSpec, Audience, ContextSpaceSpec, DataModelLifecycle, DataModelSpec,
+    EndpointSpec, EntitySelector, MappingSpec, McpServerSpec, ModelProjectionSpec, Operation,
+    OperationGroup, OperationRef, OrganizationSpec, PolicyEffect, PolicySpec, Principal,
+    PrincipalKind, ProjectSpec, RegistrationInfo, Representation,
+};
+use jc_core::reach::{resolve_connectors, EndpointFacts};
+use jc_core::Urn;
+use jc_manifest::loader::{RawManifest, Repository};
+use jc_manifest::model_schema::ModelSchema;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+/// The tables the gateway serves, in the order [`load`] returns them.
+pub type Tables = (
+    Vec<Endpoint>,
+    Vec<Space>,
+    ServiceAccounts,
+    Federations,
+    Agreements,
+    Limits,
+    McpServers,
+    SpaceBrokers,
+    crate::mqtt::Brokers,
+    crate::handlers::mappings::Mappings,
+    Publishers,
+    Provenance,
+);
+
+/// What the gateway adds to a write's provenance beside the caller (ADR-N-054 2.3, 2.8).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Provenance {
+    /// The Organization each Project names in `spec.organizationRef`, by Project.
+    pub organizations: BTreeMap<String, String>,
+    /// The slugs of the Endpoints with `spec.audit: changes` (DM-136), every preview's included
+    /// (CC-93).
+    pub audited: BTreeSet<String>,
+    /// Who reads each preview Endpoint and preview space surface, by slug (CC-91).
+    pub previews: BTreeMap<String, PreviewReaders>,
+}
+
+/// The readers of one preview surface and the audience its branch declares, which decides the
+/// roles a reader is given (CC-91).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewReaders {
+    /// The Keycloak user ids the surface answers.
+    pub readers: BTreeSet<String>,
+    /// The `audience` the branch gave the Endpoint; `public` for a space surface.
+    pub audience: Audience,
+}
+
+/// The [`Provenance`] the repository declares. A manifest whose spec does not parse adds
+/// nothing, as every kind here.
+pub fn provenance_of(repo: &Repository) -> Provenance {
+    let mut out = Provenance::default();
+    for (id, resource) in repo.iter() {
+        match id.kind.as_str() {
+            "Project" => {
+                if let Some(spec) = spec_of::<ProjectSpec>(&resource.manifest) {
+                    out.organizations
+                        .insert(id.name.clone(), spec.organization_ref.name().to_owned());
+                }
+            }
+            "Endpoint" => {
+                if let Some(spec) = spec_of::<EndpointSpec>(&resource.manifest) {
+                    if spec.audit == jc_core::kinds::Audit::Changes {
+                        out.audited.insert(spec.slug.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The body that publishes one Project's data, as its own catalogue names it (EP-127).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectPublisher {
+    /// The project's `metadata.title` per locale, the catalogue's title.
+    pub title: BTreeMap<String, String>,
+    /// The project's `metadata.description` per locale.
+    pub description: BTreeMap<String, String>,
+    /// The publishing body's domain, `spec.domain`.
+    pub domain: Option<String>,
+    /// `spec.catalog`: the publisher and the desk.
+    pub catalog: jc_core::kinds::ProjectCatalog,
+}
+
+/// Every Project that names its publisher, by name (EP-127).
+pub type Publishers = BTreeMap<String, Arc<ProjectPublisher>>;
+
+/// The Projects of the repository that name their publisher in `spec.catalog`, or whose
+/// Organization names one in its own (EP-127, ADR-N-058 section 2.3): a project without a
+/// `spec.catalog` takes its Organization's, and its domain when it sets none. A manifest whose
+/// spec does not parse is left out with a line in the log, as every kind here.
+pub fn publishers_of(repo: &Repository) -> Publishers {
+    let organizations: BTreeMap<&str, OrganizationSpec> = repo
+        .iter()
+        .filter(|(id, _)| id.kind == "Organization")
+        .filter_map(|(id, resource)| Some((id.name.as_str(), spec_of(&resource.manifest)?)))
+        .collect();
+    repo.iter()
+        .filter(|(id, _)| id.kind == "Project")
+        .filter_map(|(id, resource)| {
+            let spec = spec_of::<ProjectSpec>(&resource.manifest)?;
+            let organization = organizations.get(spec.organization_ref.name());
+            let (catalog, domain) = match spec.catalog {
+                Some(catalog) => (catalog, spec.domain),
+                None => {
+                    let organization = organization?;
+                    let domain = spec.domain.or_else(|| Some(organization.domain.clone()));
+                    (organization.catalog.clone()?, domain)
+                }
+            };
+            let metadata = &resource.manifest.metadata.rest;
+            Some((
+                id.name.clone(),
+                Arc::new(ProjectPublisher {
+                    title: language_map(metadata, "title"),
+                    description: language_map(metadata, "description"),
+                    domain,
+                    catalog,
+                }),
+            ))
+        })
+        .collect()
+}
+
+/// An Endpoint's catalogue block with its Project's publisher and desk where it names none of
+/// its own (EP-127): an Endpoint without a block gets one holding just those two.
+fn with_publisher(
+    catalog: Option<jc_core::kinds::Catalog>,
+    publisher: Option<&ProjectPublisher>,
+) -> Option<jc_core::kinds::Catalog> {
+    let Some(publisher) = publisher else {
+        return catalog;
+    };
+    let mut catalog = catalog.unwrap_or_default();
+    if catalog.publisher.is_none() {
+        catalog.publisher = Some(publisher.catalog.publisher.clone());
+    }
+    if catalog.contact_point.is_none() {
+        catalog.contact_point = publisher.catalog.contact_point.clone();
+    }
+    Some(catalog)
+}
+
+/// The broker each space lives on, by its tenant segment, and each view, by its name: an
+/// Endpoint's slug or `cs-{space}` (PF-111, ADR-N-047). A space whose `brokerRef` names no
+/// broker maps to `""`, which the proxy refuses rather than sending to `main`.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SpaceBrokers {
+    /// The broker of each space, by the tenant segment the gateway pins.
+    pub by_space: BTreeMap<String, String>,
+    /// The broker of each view, by the name in `/x/views/{view}`.
+    pub by_view: BTreeMap<String, String>,
+    /// The spaces a move job holds read-only, by tenant segment, with the views that reach
+    /// them (PF-115, ADR-N-047 §2.6).
+    pub moving: BTreeSet<String>,
+    /// Each space's own name, by its tenant segment: the Activity names a space as the Portal
+    /// does (T-5322).
+    pub names: BTreeMap<String, String>,
+}
+
+/// [`SpaceBrokers`] of a repository, through the one lookup every component shares
+/// ([`jc_core::kinds::broker_of`]).
+pub fn brokers_of(repo: &Repository, endpoints: &[Endpoint]) -> SpaceBrokers {
+    let brokers: Vec<(String, jc_core::kinds::ContextBrokerSpec)> = repo
+        .iter()
+        .filter(|(id, _)| id.kind == "ContextBroker")
+        .filter_map(|(id, resource)| Some((id.name.clone(), spec_of(&resource.manifest)?)))
+        .collect();
+    let mut table = SpaceBrokers::default();
+    for (id, resource) in repo.iter().filter(|(id, _)| id.kind == "ContextSpace") {
+        let Some(spec) = spec_of::<ContextSpaceSpec>(&resource.manifest) else {
+            continue;
+        };
+        let project = id.namespace.clone().unwrap_or_default();
+        let segment = repo.space_segment(&project, &id.name);
+        let named = brokers.iter().map(|(name, spec)| (name.as_str(), spec));
+        let broker = match jc_core::kinds::broker_of(spec.broker_ref.as_deref(), named) {
+            Ok(broker) => broker.to_owned(),
+            Err(error) => {
+                tracing::error!(space = %segment, %error, "the space's broker is not declared; its requests are refused");
+                String::new()
+            }
+        };
+        let moving = resource
+            .manifest
+            .metadata
+            .rest
+            .get("annotations")
+            .and_then(|annotations| annotations.get(jc_core::envelope::annotations::MOVING_TO))
+            .is_some();
+        if moving {
+            table.moving.insert(segment.clone());
+            table.moving.insert(format!("cs-{segment}"));
+        }
+        table
+            .by_view
+            .insert(format!("cs-{segment}"), broker.clone());
+        table.names.insert(segment.clone(), id.name.clone());
+        table.by_space.insert(segment, broker);
+    }
+    for endpoint in endpoints {
+        if let Some(broker) = table.by_space.get(&endpoint.space) {
+            table.by_view.insert(endpoint.slug.clone(), broker.clone());
+        }
+        if table.moving.contains(&endpoint.space) {
+            table.moving.insert(endpoint.slug.clone());
+        }
+    }
+    table
+}
+
+const GATEWAY_BODY: &str = "spec.limits.gateway.maxRequestBodyMegabytes";
+
+/// What the organization's manifest bounds on every request the gateway reads (ADR-N-035).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// The largest request body the gateway reads, in bytes
+    /// (`spec.limits.gateway.maxRequestBodyMegabytes`).
+    pub max_request_body: usize,
+    /// The national DCAT-AP profiles the records are served in (`spec.dcatProfiles`, T-4499).
+    pub dcat_profiles: jc_dcat::profile::Offered,
+}
+
+impl Default for Limits {
+    /// The catalog's defaults: what an organization that sets nothing gets.
+    fn default() -> Self {
+        Self::of(None)
+    }
+}
+
+impl Limits {
+    /// The value in force for `set` megabytes: the catalog's default when absent, held inside
+    /// the catalog's range. The Portal refuses a manifest past the operator's bound before it is
+    /// merged, so the range here is the last line, not the first.
+    fn of(set: Option<u32>) -> Self {
+        let entry = jc_core::kinds::org_settings::entry_at(GATEWAY_BODY);
+        let megabytes = set
+            .or_else(|| entry.and_then(|entry| entry.default))
+            .unwrap_or(8);
+        let (min, max) = entry.map_or((1, None), |entry| (entry.min, entry.max));
+        let megabytes = megabytes.min(max.unwrap_or(u32::MAX)).max(min);
+        Self {
+            max_request_body: megabytes as usize * 1024 * 1024,
+            dcat_profiles: jc_dcat::profile::Offered::default(),
+        }
+    }
+}
+
+/// The limits the repository's `Organization` sets, and the DCAT profiles it serves. Only its
+/// `spec.limits` and `spec.dcatProfiles` are read, so a field this gateway does not know yet
+/// elsewhere in the manifest never turns them back into the defaults; a value that does not
+/// parse is the default, and the log says so.
+pub fn limits_of(repo: &Repository) -> Limits {
+    // The installation's Organization, not the first one sorted: a second Organization (a
+    // federated peer, a department) never sets this gateway's limits (F-PLT2-020).
+    let spec = repo
+        .installation_organization()
+        .map(|(_, loaded)| &loaded.manifest.spec);
+    let mut limits = match spec.and_then(|spec| spec.get("limits")) {
+        None => Limits::default(),
+        Some(limits) => {
+            match serde_json::from_value::<jc_core::kinds::OrganizationLimits>(limits.clone()) {
+                Ok(limits) => Limits::of(limits.gateway.max_request_body_megabytes),
+                Err(error) => {
+                    tracing::warn!(%error, "the Organization's spec.limits do not parse; the defaults apply");
+                    Limits::default()
+                }
+            }
+        }
+    };
+    if let Some(listed) = spec.and_then(|spec| spec.get("dcatProfiles")) {
+        match serde_json::from_value::<Vec<jc_core::kinds::DcatProfile>>(listed.clone()) {
+            Ok(listed) => limits.dcat_profiles = jc_dcat::profile::Offered::of(&listed),
+            Err(error) => {
+                tracing::warn!(%error, "the Organization's spec.dcatProfiles do not parse; DCAT-AP alone is served");
+            }
+        }
+    }
+    limits
+}
+
+/// Where a layout 2 organization's projects are read and assembled (CC-86, ADR-N-029).
+///
+/// `projects` holds one checkout per registry slug at its pinned ref, which the deployment
+/// mounts; the gateway reads them and never the forge, so it holds no forge credential.
+/// `assembly` is a scratch directory the pod owns, outside both, where the render is written.
+#[derive(Debug, Clone, Default)]
+pub struct Checkouts {
+    /// The project checkouts, one directory per slug (`JC_GATEWAY_PROJECTS_DIR`).
+    pub projects: PathBuf,
+    /// Where the organization is assembled (`JC_GATEWAY_ASSEMBLY_DIR`).
+    pub assembly: PathBuf,
+    /// The last assembly's project renders: a reload renders only the projects whose checkout
+    /// moved (T-4460, R48). A clone shares them.
+    pub renders: std::sync::Arc<std::sync::Mutex<jc_manifest::assemble::Renders>>,
+}
+
+/// Loads the endpoint table and the identity table from the repository under `dir`
+/// (CC-08, PF-46).
+pub fn load(dir: &Path) -> Result<Tables, jc_manifest::loader::LoadError> {
+    let repo = Repository::load(dir)?;
+    Ok(tables(&repo, dir))
+}
+
+/// [`load`] of the organization checked out at `dir`: a layout 1 repository as it is, a
+/// layout 2 one assembled with the project checkouts of `checkouts` at their refs (CC-86). A
+/// project whose checkout is missing keeps the render the last assembly gave it; a name two
+/// projects claim refuses the whole load, so the tables that are serving keep serving.
+pub fn load_from(
+    dir: &Path,
+    checkouts: Option<&Checkouts>,
+) -> Result<Tables, jc_manifest::assemble::AssembleError> {
+    use jc_manifest::assemble::{assemble_reusing, layout_at, AssembleError, Directories};
+    if layout_at(dir, jc_core::project::RepositoryRole::Organization)? == 1 {
+        return Ok(load(dir)?);
+    }
+    let Some(checkouts) = checkouts else {
+        return Err(AssembleError::Refused {
+            path: jc_core::project::LAYOUT_FILE.to_owned(),
+            message: "the organization is layout 2 and no project checkouts were given \
+                      (JC_GATEWAY_PROJECTS_DIR)"
+                .to_owned(),
+        });
+    };
+    let listing = std::fs::read_dir(&checkouts.projects).map_err(|source| AssembleError::Io {
+        path: checkouts.projects.clone(),
+        source,
+    })?;
+    let directories = listing
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| {
+            let slug = entry.file_name().into_string().ok()?;
+            (!slug.starts_with('.')).then(|| (slug, entry.path()))
+        })
+        .collect();
+    let environment = std::env::var("JC_ENVIRONMENT")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let mut renders = checkouts
+        .renders
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let assembly = assemble_reusing(
+        dir,
+        &Directories(directories),
+        &checkouts.assembly,
+        environment.as_deref(),
+        &mut renders,
+    )?;
+    drop(renders);
+    for entry in assembly
+        .entries
+        .iter()
+        .filter(|entry| entry.error.is_some())
+    {
+        tracing::warn!(
+            project = %entry.slug,
+            git_ref = %entry.git_ref,
+            error = entry.error.as_deref().unwrap_or_default(),
+            kept = entry.rendered,
+            "a registered project has no checkout"
+        );
+    }
+    Ok(tables(&assembly.repository, &checkouts.assembly))
+}
+
+fn tables(repo: &Repository, root: &Path) -> Tables {
+    // Read and compiled once per reload, then shared by every Endpoint and Space (T-4352).
+    let models = ModelSet::of(repo, Some(root));
+    let endpoints = endpoints_from(repo, Some(root), &models);
+    let homes = brokers_of(repo, &endpoints);
+    let mappings = mappings_of(repo, Some(root), &endpoints);
+    let servers = servers_of(repo, &endpoints);
+    (
+        endpoints,
+        spaces_from(repo, &models),
+        accounts_of(repo),
+        federations_of(repo),
+        agreements_of(repo),
+        limits_of(repo),
+        servers,
+        homes,
+        crate::mqtt::brokers_of(repo),
+        mappings,
+        publishers_of(repo),
+        provenance_of(repo),
+    )
+}
+
+/// The named MCP servers the repository declares, each member resolved to its Endpoint's slug
+/// (ADR-N-043). A member that names no Endpoint here is left out with a line in the log; a
+/// server keeps serving the members that remain, which `jcctl validate` refuses before merge.
+pub fn servers_of(repo: &Repository, endpoints: &[Endpoint]) -> McpServers {
+    let slugs: BTreeMap<(String, String), String> = repo
+        .iter()
+        .filter(|(id, _)| id.kind == "Endpoint")
+        .filter_map(|(id, resource)| {
+            let spec = spec_of::<EndpointSpec>(&resource.manifest)?;
+            Some((
+                (id.namespace.clone().unwrap_or_default(), id.name.clone()),
+                spec.slug.to_string(),
+            ))
+        })
+        .collect();
+    let mut servers = Vec::new();
+    for (id, resource) in repo.iter() {
+        if id.kind != "McpServer" {
+            continue;
+        }
+        let Some(spec) = spec_of::<McpServerSpec>(&resource.manifest) else {
+            continue;
+        };
+        let project = id.namespace.clone().unwrap_or_default();
+        if let Err(error) = spec.validate(&project) {
+            tracing::warn!(server = %id.name, %error, "the McpServer is not served");
+            continue;
+        }
+        let members = spec
+            .member_ids(&project)
+            .filter_map(|(namespace, name)| {
+                let slug = slugs.get(&(namespace.to_owned(), name.to_owned()));
+                if slug.is_none() {
+                    tracing::warn!(server = %id.name, member = %name, project = %namespace, "the member names no Endpoint and is left out");
+                }
+                slug.cloned()
+            })
+            .collect();
+        let text = |key| manifest_text(&resource.manifest, key);
+        let knowledge_sources = spec
+            .knowledge_source_ids(&project)
+            .map(|(project, source)| (project.to_owned(), source.to_owned()))
+            .collect();
+        servers.push(McpServer {
+            title: text("title"),
+            description: text("description"),
+            name: id.name.clone(),
+            members,
+            select: spec.select,
+            endpoints: None,
+            audience: spec.audience,
+            knowledge_sources,
+            allowed_projects: spec.allowed_projects,
+            project,
+        });
+    }
+    let mut deployments = deployment_servers(repo, &slugs, endpoints);
+    // A publicId two deployments declare is nobody's: both answer as an unknown server (EP-137).
+    let twice: BTreeSet<String> = deployments
+        .iter()
+        .enumerate()
+        .filter(|(i, d)| deployments[..*i].iter().any(|e| e.name == d.name))
+        .map(|(_, d)| d.name.clone())
+        .collect();
+    for name in &twice {
+        tracing::warn!(public_id = %name, "two AssistantDeployments declare this publicId; neither MCP server is served");
+    }
+    deployments.retain(|d| !twice.contains(&d.name));
+    servers.extend(deployments);
+    servers
+}
+
+/// Every enabled AssistantDeployment as its own read-only server, `/api/mcp/d/{publicId}`
+/// (T-4691, EP-136): its Endpoints exactly as the one resolver gives them (connectors ∪ select ∪
+/// the named server it reads, − exclude, inside the project's reach, AG-121) and its knowledge
+/// sources. An anonymous channel resolves public Endpoints alone, and `serve` drops a narrower
+/// member again; `internal` asks for an organization token.
+fn deployment_servers(
+    repo: &Repository,
+    slugs: &BTreeMap<(String, String), String>,
+    endpoints: &[Endpoint],
+) -> McpServers {
+    let names: BTreeMap<&str, &(String, String)> =
+        slugs.iter().map(|(id, slug)| (slug.as_str(), id)).collect();
+    let facts: Vec<EndpointFacts> = endpoints
+        .iter()
+        .filter_map(|endpoint| {
+            let (_, name) = names.get(endpoint.slug.as_str())?;
+            Some(EndpointFacts {
+                name: name.clone(),
+                ..crate::mcp::server::facts(endpoint)
+            })
+        })
+        .collect();
+    let named: BTreeMap<(String, String), McpServerSpec> = repo
+        .iter()
+        .filter(|(id, _)| id.kind == "McpServer")
+        .filter_map(|(id, resource)| {
+            let spec = spec_of::<McpServerSpec>(&resource.manifest)?;
+            Some((
+                (id.namespace.clone().unwrap_or_default(), id.name.clone()),
+                spec,
+            ))
+        })
+        .collect();
+    // `org/all` has no manifest until the organization declares one (EP-122).
+    let org_all = McpServerSpec {
+        members: Vec::new(),
+        select: Some(Select::default()),
+        audience: Audience::Organization,
+        allowed_projects: Vec::new(),
+        knowledge_sources: Vec::new(),
+    };
+    let mut servers = Vec::new();
+    for (id, resource) in repo.iter() {
+        if id.kind != "AssistantDeployment" {
+            continue;
+        }
+        let Some(spec) = spec_of::<AssistantDeploymentSpec>(&resource.manifest) else {
+            continue;
+        };
+        if let Err(error) = spec.validate() {
+            tracing::warn!(deployment = %id.name, %error, "the AssistantDeployment's MCP server is not served");
+            continue;
+        }
+        if !spec.enabled {
+            continue;
+        }
+        let project = id.namespace.clone().unwrap_or_default();
+        let server = spec.mcp_server.as_deref().and_then(|reads| {
+            let (namespace, name) = reads.split_once('/')?;
+            let found = named
+                .get(&(namespace.to_owned(), name.to_owned()))
+                .or_else(|| {
+                    (namespace == jc_core::envelope::ORG_NAMESPACE
+                        && name == crate::mcp::server::ORG_ALL)
+                        .then_some(&org_all)
+                });
+            if found.is_none() {
+                tracing::warn!(deployment = %id.name, server = %reads, "the McpServer it reads is not declared");
+            }
+            Some((namespace, found?))
+        });
+        let resolution = resolve_connectors(&project, &spec, &facts, server);
+        if !resolution.omitted.is_empty() {
+            tracing::warn!(deployment = %id.name, omitted = resolution.omitted.len(), "the deployment resolves more Endpoints than it may read; the first by slug are served");
+        }
+        let members = resolution.endpoints.into_iter().map(|e| e.slug).collect();
+        // The chat's title when the manifest has none; never the system prompt, which stays
+        // the assistant's own.
+        let title = manifest_text(&resource.manifest, "title").or_else(|| {
+            let theme = spec.theme.as_ref()?.title.as_ref()?;
+            theme.texts().first().map(|(_, text)| (*text).to_owned())
+        });
+        servers.push(McpServer {
+            project: crate::mcp::server::DEPLOYMENTS.to_owned(),
+            name: spec.public_id.clone(),
+            title,
+            description: manifest_text(&resource.manifest, "description"),
+            members,
+            select: None,
+            endpoints: None,
+            audience: if spec.channel.is_anonymous() {
+                Audience::Public
+            } else {
+                Audience::Organization
+            },
+            allowed_projects: Vec::new(),
+            knowledge_sources: spec
+                .sources
+                .iter()
+                .map(|named| {
+                    let (project, source) = knowledge_source_id(named, &project);
+                    (project.to_owned(), source.to_owned())
+                })
+                .collect(),
+        });
+    }
+    servers
+}
+
+/// [`load_from`], plus every preview under `previews` rendered with its prefix (CC-78). A preview
+/// that does not render is left out with the reason in the log; a slug or a tenant `main`
+/// already serves is never taken over by one, so a preview answers beside `main` and never in
+/// its place (PF-83, T-1709).
+pub fn load_with_previews(
+    dir: &Path,
+    checkouts: Option<&Checkouts>,
+    previews: Option<&Path>,
+) -> Result<Tables, jc_manifest::assemble::AssembleError> {
+    let (
+        mut endpoints,
+        mut spaces,
+        accounts,
+        federations,
+        agreements,
+        limits,
+        servers,
+        homes,
+        brokers,
+        mappings,
+        publishers,
+        provenance,
+    ) = load_from(dir, checkouts)?;
+    let mut provenance = provenance;
+    let environment = std::env::var("JC_ENVIRONMENT")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    for (prefix, root) in previews.map(crate::previews::listed).unwrap_or_default() {
+        let access = crate::previews::access_of(&root);
+        let repo = match Repository::load_preview_salted(
+            &root,
+            environment.as_deref(),
+            &prefix,
+            &access.salt,
+        ) {
+            Ok(repo) => repo,
+            Err(error) => {
+                tracing::warn!(%prefix, %error, "the preview does not render and is not served");
+                continue;
+            }
+        };
+        let slugs: BTreeSet<String> = endpoints.iter().map(|e| e.slug.clone()).collect();
+        // Every tenant already answered for, whether a space manifest names it or an endpoint
+        // alone reaches it: a preview record on one of them would read and write data of the
+        // project the copy came from, which is the one thing a preview may never do (PF-83).
+        let segments: BTreeSet<String> = spaces
+            .iter()
+            .map(|s| s.endpoint.space.clone())
+            .chain(endpoints.iter().map(|e| e.space.clone()))
+            .collect();
+        let models = ModelSet::of(&repo, Some(&root));
+        // A preview answers its readers alone, whatever audience the branch declares (CC-91):
+        // the project-list audience of a project no caller belongs to refuses everyone the
+        // reader table does not name, and every write is kept (CC-93).
+        let mut readers_of = |slug: &str, audience: Audience| {
+            provenance.audited.insert(slug.to_owned());
+            provenance.previews.insert(
+                slug.to_owned(),
+                PreviewReaders {
+                    readers: access.readers.clone(),
+                    audience,
+                },
+            );
+        };
+        for mut endpoint in endpoints_from(&repo, Some(&root), &models) {
+            if slugs.contains(&endpoint.slug) || segments.contains(&endpoint.space) {
+                continue;
+            }
+            readers_of(&endpoint.slug, endpoint.audience);
+            endpoint.audience = Audience::ProjectList;
+            endpoint.allowed_projects.clear();
+            endpoints.push(endpoint);
+        }
+        for mut space in spaces_from(&repo, &models) {
+            if segments.contains(&space.endpoint.space) {
+                continue;
+            }
+            let surface = Arc::make_mut(&mut space.endpoint);
+            readers_of(&surface.slug, surface.audience);
+            surface.audience = Audience::ProjectList;
+            surface.allowed_projects.clear();
+            spaces.push(space);
+        }
+    }
+    Ok((
+        endpoints,
+        spaces,
+        accounts,
+        federations,
+        agreements,
+        limits,
+        servers,
+        homes,
+        brokers,
+        // A preview's Mappings are not approved, so none is published (EP-53).
+        mappings,
+        // A preview's Project publishes no catalogue: only the merged repository's do.
+        publishers,
+        // A preview's Projects name no writer's Organization: only the merged repository's do.
+        // Its Endpoints are audited and read by its readers alone (CC-91, CC-93).
+        provenance,
+    ))
+}
+
+/// The client `app-{name}` when Endpoint `endpoint` of `project` is the one the Portal generates
+/// for the App `{name}` declared in that project (ADR-N-030, AP-97).
+fn app_of(repo: &Repository, project: &str, endpoint: &str) -> Option<String> {
+    let app = endpoint.strip_prefix("app-")?;
+    repo.iter()
+        .any(|(id, _)| {
+            id.kind == "App" && id.name == app && id.namespace.as_deref() == Some(project)
+        })
+        .then(|| endpoint.to_owned())
+}
+
+/// The site of each `CkanInstance`, by (project, name), without its trailing slash.
+fn ckan_sites(repo: &Repository) -> BTreeMap<(String, String), String> {
+    repo.iter()
+        .filter(|(id, _)| id.kind == "CkanInstance")
+        .filter_map(|(id, resource)| {
+            let spec = spec_of::<jc_core::kinds::CkanInstanceSpec>(&resource.manifest)?;
+            let project = id.namespace.clone().unwrap_or_default();
+            Some(((project, id.name.clone()), spec.base_url().to_owned()))
+        })
+        .collect()
+}
+
+/// The open data portal page of a public Endpoint `name` of `project` (T-6569): the dataset its
+/// `spec.publish.ckan` names, on the site of the project's `CkanInstance` it refers to. `None`
+/// for an internal Endpoint, one that publishes none, or one naming an instance its project
+/// lacks, so the address comes from manifests alone and never from a caller.
+fn dataset_page(
+    spec: &EndpointSpec,
+    project: &str,
+    name: &str,
+    sites: &BTreeMap<(String, String), String>,
+) -> Option<String> {
+    if spec.audience != Audience::Public {
+        return None;
+    }
+    let publication = spec.publish.as_ref()?.ckan.as_ref()?;
+    let site = sites.get(&(
+        project.to_owned(),
+        publication.instance_ref.name().to_owned(),
+    ))?;
+    Some(format!("{site}/dataset/{}", publication.dataset_name(name)))
+}
+
+/// The endpoint table, with the model artifacts read from `root` when one is given (DM-02,
+/// EP-46). Deterministic: the repository is indexed by resource identity, so two runs on the same
+/// commit build the same table in the same order (CC-27).
+fn endpoints_from(repo: &Repository, root: Option<&Path>, models: &ModelSet) -> Vec<Endpoint> {
+    let ModelSet { models, declared } = models;
+    let publishers = publishers_of(repo);
+    let policies = policies_by_space(repo);
+    let views = view_mappings(repo, root);
+    let projections = projections(repo);
+    let ckan_sites = ckan_sites(repo);
+
+    let mut endpoints = Vec::new();
+    let policy_domains = policy_ref_domains(repo);
+    for (id, resource) in repo.iter() {
+        if id.kind != "Endpoint" {
+            continue;
+        }
+        let Some(spec) = spec_of::<EndpointSpec>(&resource.manifest) else {
+            continue;
+        };
+        let project = id.namespace.clone().unwrap_or_default();
+        let space_name = spec.context_space_ref.name().to_owned();
+        // Tenant, entity ids and policy URNs all carry the rendered segment (PF-84); the
+        // manifests beside the endpoint name the space locally.
+        let space = repo.space_segment(&project, &space_name);
+        let key = (project.clone(), space_name.clone());
+        let named = policies.get(&key).map(Vec::as_slice).unwrap_or_default();
+        let app_client = app_of(repo, &project, &id.name);
+        let mut bound = match spec.policy_refs() {
+            Some(refs) => bound_policies(
+                &id.name,
+                refs,
+                (policy_domains.get(&project), repo.org_domain(), &space),
+                named,
+            ),
+            None => named.to_vec(),
+        };
+        // An App's generated Endpoint evaluates its own grants and the space's prohibitions
+        // alone (AP-139), so it serves what the App declares.
+        if app_client.is_some() {
+            bound.retain(|(_, policy)| {
+                policy.effect.is_prohibition() || policy.is_endpoint_grant(&project, &id.name)
+            });
+        }
+        let (policy_names, bound): (Vec<String>, Vec<PolicySpec>) = bound.into_iter().unzip();
+        let projection = spec.projection_ref.as_ref().and_then(|reference| {
+            let named = (
+                reference
+                    .namespace
+                    .clone()
+                    .unwrap_or_else(|| project.clone()),
+                reference.name.clone(),
+            );
+            match projections.get(&named) {
+                Some(projection) if projection.context_space_ref == space_name => {
+                    Some(Arc::clone(projection))
+                }
+                Some(_) => {
+                    // A projection of another space's model would describe entities this
+                    // endpoint never serves: the endpoint stays, unprojected, and says so.
+                    tracing::warn!(
+                        endpoint = %id.name,
+                        projection = %reference.name,
+                        "the projection belongs to another space and is not applied"
+                    );
+                    None
+                }
+                None => {
+                    tracing::warn!(
+                        endpoint = %id.name,
+                        projection = %reference.name,
+                        "projectionRef names no ModelProjection; the endpoint is not narrowed by it"
+                    );
+                    None
+                }
+            }
+        });
+        let representations = spec.served_representations();
+        let calendars = spec.ical_outputs().to_vec();
+        let map_defaults = jc_core::kinds::map_defaults(spec.widget_outputs());
+        let catalog = with_publisher(
+            spec.catalog.clone(),
+            publishers.get(&project).map(Arc::as_ref),
+        )
+        .map(Arc::new);
+        let page = dataset_page(&spec, &project, &id.name, &ckan_sites);
+        endpoints.push(Endpoint {
+            roles: match app_client {
+                Some(client) => EndpointRoles::of_app(&project, &id.name, &spec, client),
+                None => EndpointRoles::of(&project, &id.name, &spec),
+            },
+            slug: spec.slug.to_string(),
+            manifest_name: id.name.clone(),
+            title: language_map(&resource.manifest.metadata.rest, "title"),
+            description: language_map(&resource.manifest.metadata.rest, "description"),
+            policies: bound,
+            policy_names,
+            models: models.get(&key).cloned().unwrap_or_default(),
+            declared_types: declared.get(&key).cloned(),
+            space,
+            project,
+            audience: spec.audience,
+            allowed_projects: spec.allowed_projects,
+            representations,
+            rate_limit: spec.rate_limits,
+            creates: spec.creates,
+            file_limits: spec.file_limits,
+            hidden_attributes: spec
+                .projection
+                .map(|projection| projection.hidden_attributes.into_iter().collect())
+                .unwrap_or_default(),
+            projection,
+            base_path: format!("/api/endpoint/{}", spec.slug),
+            catalog,
+            deprecation: spec.deprecation.clone().map(Arc::new),
+            calendars,
+            map_defaults,
+            page,
+            feeds: spec.representations.map(|r| r.feed).unwrap_or_default(),
+            view_mapping: spec.view_mapping_ref.and_then(|view| {
+                let named = (
+                    view.namespace
+                        .clone()
+                        .unwrap_or_else(|| id.namespace.clone().unwrap_or_default()),
+                    view.name.clone(),
+                );
+                match views.get(&named) {
+                    Some(mapping) => Some(Arc::clone(mapping)),
+                    None => {
+                        // Serving the source model under the target model's name is worse
+                        // than not serving a view: the endpoint stays, as the space's own.
+                        tracing::warn!(
+                            endpoint = %id.name,
+                            mapping = %view.name,
+                            "the view mapping names no Mapping with a readable gateway IR"
+                        );
+                        None
+                    }
+                }
+            }),
+        });
+    }
+    endpoints
+}
+
+/// The Mappings each Endpoint publishes beside its model, by slug (EP-53): those of its project
+/// and space whose source is a model it serves, at that major, with both compiled artifacts
+/// committed beside them. One that may not be published ([`crate::handlers::mappings::PublishedMapping::of`]) is left out
+/// with a line in the log.
+pub fn mappings_of(
+    repo: &Repository,
+    root: Option<&Path>,
+    endpoints: &[Endpoint],
+) -> crate::handlers::mappings::Mappings {
+    use crate::handlers::mappings::PublishedMapping;
+    let mut out = crate::handlers::mappings::Mappings::new();
+    for (id, resource) in repo.iter() {
+        if id.kind != "Mapping" {
+            continue;
+        }
+        let Some(spec) = spec_of::<MappingSpec>(&resource.manifest) else {
+            continue;
+        };
+        let read =
+            |relative: &Option<String>| beside_text(root, &resource.path, relative, &id.name);
+        let (Some(bloblang), Some(gateway_ir)) = (
+            read(&spec.artifacts.bloblang),
+            read(&spec.artifacts.gateway_ir),
+        ) else {
+            continue;
+        };
+        let title = resource
+            .manifest
+            .metadata
+            .rest
+            .get("title")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let Some(mapping) = PublishedMapping::of(&id.name, title, &spec, bloblang, gateway_ir)
+        else {
+            tracing::warn!(mapping = %id.name, "the mapping is not published: a native block, a secretRef or an unreadable derivation");
+            continue;
+        };
+        let project = id.namespace.clone().unwrap_or_default();
+        let space = repo.space_segment(&project, &spec.context_space_ref);
+        let mapping = Arc::new(mapping);
+        for endpoint in endpoints {
+            let serves_source = endpoint
+                .models
+                .iter()
+                .any(|model| model.name == mapping.source.0 && model.major == mapping.major);
+            if endpoint.project == project && endpoint.space == space && serves_source {
+                out.entry(endpoint.slug.clone())
+                    .or_default()
+                    .push(Arc::clone(&mapping));
+            }
+        }
+    }
+    out
+}
+
+/// Every `ModelProjection` of the repository, by project and name (MP-01).
+fn projections(repo: &Repository) -> BTreeMap<(String, String), Arc<ModelProjectionSpec>> {
+    let mut projections = BTreeMap::new();
+    for (id, resource) in repo.iter() {
+        if id.kind != "ModelProjection" {
+            continue;
+        }
+        if let Some(spec) = spec_of::<ModelProjectionSpec>(&resource.manifest) {
+            projections.insert(
+                (id.namespace.clone().unwrap_or_default(), id.name.clone()),
+                Arc::new(spec),
+            );
+        }
+    }
+    projections
+}
+
+/// The compiled mapping IR of every Mapping that carries one, by project and name (DM-52).
+///
+/// A Mapping without `spec.artifacts.gatewayIr`, or one whose IR this build cannot
+/// interpret, is left out: an endpoint that names it then serves the space's own model and
+/// says so in the log, rather than serving source data under target names.
+fn view_mappings(
+    repo: &Repository,
+    root: Option<&Path>,
+) -> BTreeMap<(String, String), Arc<ViewMapping>> {
+    let mut mappings = BTreeMap::new();
+    for (id, resource) in repo.iter() {
+        if id.kind != "Mapping" {
+            continue;
+        }
+        let Some(spec) = spec_of::<MappingSpec>(&resource.manifest) else {
+            continue;
+        };
+        let Some(document) = beside(root, &resource.path, &spec.artifacts.gateway_ir, &id.name)
+        else {
+            continue;
+        };
+        match ViewMapping::parse(&document) {
+            Ok(mapping) => {
+                mappings.insert(
+                    (id.namespace.clone().unwrap_or_default(), id.name.clone()),
+                    Arc::new(mapping),
+                );
+            }
+            Err(error) => {
+                tracing::warn!(mapping = %id.name, %error, "the gateway mapping IR is not usable")
+            }
+        }
+    }
+    mappings
+}
+
+/// The space table a loaded repository describes (SP-01, SP-10).
+///
+/// A space is served through the same enforcement record an endpoint is, built from the
+/// same policy set: `/cs/{space}/ngsi-ld/v1/` and an endpoint on the same space evaluate
+/// the same grants because they read the same `Vec<PolicySpec>`. The audience is `public`
+/// so that the decision belongs to the policy set alone: a space with no grant for the
+/// caller answers 404, which is what a space that does not exist answers (SP-06, SP-11).
+fn spaces_from(repo: &Repository, models: &ModelSet) -> Vec<Space> {
+    let ModelSet { models, declared } = models;
+    let policies = policies_by_space(repo);
+    let assigner = format!("did:web:{}", repo.org_domain().unwrap_or_default());
+
+    let mut spaces = Vec::new();
+    for (id, resource) in repo.iter() {
+        if id.kind != "ContextSpace" {
+            continue;
+        }
+        let Some(spec) = spec_of::<ContextSpaceSpec>(&resource.manifest) else {
+            continue;
+        };
+        let project = id.namespace.clone().unwrap_or_default();
+        let key = (project.clone(), id.name.clone());
+        let segment = repo.space_segment(&project, &id.name);
+        let declared_types = declared.get(&key).cloned();
+        let (mut space_policies, mut policy_names): (Vec<PolicySpec>, Vec<String>) = policies
+            .get(&key)
+            .map(|named| {
+                named
+                    .iter()
+                    .map(|(name, spec)| (spec.clone(), name.clone()))
+                    .unzip()
+            })
+            .unwrap_or_default();
+        if let Some(grant) =
+            portal_personal_data_read(&id.name, declared_types.as_deref(), &assigner)
+        {
+            space_policies.push(grant);
+            policy_names.push(PORTAL_PERSONAL_DATA_POLICY.to_owned());
+        }
+        spaces.push(Space {
+            endpoint: Arc::new(Endpoint {
+                roles: Default::default(),
+                slug: segment.clone(),
+                manifest_name: String::new(),
+                // The canonical surface is the space itself, so its record reads the
+                // space's own title and description below.
+                title: BTreeMap::new(),
+                description: BTreeMap::new(),
+                space: segment.clone(),
+                project,
+                audience: Audience::Public,
+                allowed_projects: Vec::new(),
+                representations: vec![Representation::NgsiLd, Representation::Mcp],
+                // No limit of its own: the manifest has no field for one, and the limiter
+                // counts the canonical surface in its own default bucket (T-0813).
+                rate_limit: None,
+                creates: None,
+                file_limits: None,
+                // A space is the whole space: narrowing is a decision of a published
+                // endpoint, and the canonical surface publishes nothing of its own.
+                hidden_attributes: BTreeSet::new(),
+                projection: None,
+                policies: space_policies,
+                policy_names,
+                models: models.get(&key).cloned().unwrap_or_default(),
+                declared_types,
+                // A space's canonical surface serves the space's own model; a view is a
+                // decision of a published endpoint (SP-01, EP-54).
+                view_mapping: None,
+                catalog: None,
+                deprecation: None,
+                feeds: Vec::new(),
+                calendars: Vec::new(),
+                map_defaults: Default::default(),
+                page: None,
+                base_path: format!("/cs/{segment}"),
+            }),
+            title: language_map(&resource.manifest.metadata.rest, "title"),
+            description: language_map(&resource.manifest.metadata.rest, "description"),
+            is_sandbox: spec.is_sandbox,
+            default_locale: spec.default_locale,
+        });
+    }
+    spaces
+}
+
+/// The name the Portal's derived grant is decided and logged under.
+pub const PORTAL_PERSONAL_DATA_POLICY: &str = "portal-personal-data";
+
+/// The account the Portal reads a space's data subjects as: its `portal-reconciler` client,
+/// which no ServiceAccount manifest declares, so the gateway decides its token as this user.
+pub const PORTAL_RECONCILER_USER: &str = "service-account-portal-reconciler";
+
+/// The read the Portal's export and erasure of a data subject need on a space whose model
+/// marks personal data (API/01 §46, DM-124, DM-126, T-5168): find the Entities naming the
+/// subject and read their history, on the space's own surface only, never a write. The
+/// Portal decides who may ask (an owner of the space); without this grant every such space
+/// answered the Portal 404 and no export or erasure could find anything.
+fn portal_personal_data_read(
+    space: &str,
+    declared: Option<&DeclaredTypes>,
+    assigner: &str,
+) -> Option<PolicySpec> {
+    let schema = declared?.schema.as_deref()?;
+    let personal: Vec<&String> = schema
+        .classes
+        .keys()
+        .filter(|class| !schema.personal_attributes(class).is_empty())
+        .collect();
+    if personal.is_empty() {
+        return None;
+    }
+    Some(PolicySpec {
+        rules: None,
+        context_space_ref: jc_core::envelope::Ref::Name(space.to_owned()),
+        effect: PolicyEffect::default(),
+        assigner: assigner.to_owned(),
+        assignee: Principal::new(PrincipalKind::User, PORTAL_RECONCILER_USER),
+        operations: vec![
+            OperationRef::Group(OperationGroup::RetrieveOps),
+            OperationRef::Single(Operation::QueryTemporal),
+            OperationRef::Single(Operation::RetrieveTemporal),
+        ],
+        actions: Vec::new(),
+        information: vec![RegistrationInfo {
+            entities: personal
+                .into_iter()
+                .map(|class| EntitySelector {
+                    entity_type: class.clone(),
+                    id: None,
+                    id_pattern: None,
+                })
+                .collect(),
+            property_names: Vec::new(),
+            relationship_names: Vec::new(),
+            attributes: Default::default(),
+        }],
+        q: None,
+        scope_q: None,
+        geo_q: None,
+        temporal_q: None,
+        validity: None,
+    })
+}
+
+/// One `metadata` text as a language map, or an empty one when the manifest carries none
+/// (PF-24, UI-50).
+///
+/// The loader keeps metadata beyond name and namespace as raw JSON, so this reads the
+/// shape rather than a type. A plain string, the form every new manifest writes, belongs
+/// to no locale and is kept under the empty key; the legacy `{locale: text}` map is kept
+/// as it is. Anything else is a manifest the Portal would have rejected, and here it
+/// simply describes nothing.
+/// `metadata.{key}` in the default language, else English, else the first one given.
+fn manifest_text(manifest: &RawManifest, key: &str) -> Option<String> {
+    let texts = language_map(&manifest.metadata.rest, key);
+    texts
+        .get("")
+        .or_else(|| texts.get("en"))
+        .or_else(|| texts.values().next())
+        .cloned()
+}
+
+fn language_map(
+    metadata: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> BTreeMap<String, String> {
+    match metadata.get(key) {
+        Some(serde_json::Value::String(text)) if !text.is_empty() => {
+            BTreeMap::from([(String::new(), text.clone())])
+        }
+        Some(serde_json::Value::Object(map)) => map
+            .iter()
+            .filter_map(|(locale, text)| Some((locale.clone(), text.as_str()?.to_owned())))
+            .collect(),
+        _ => BTreeMap::new(),
+    }
+}
+
+/// The policies of every space, keyed by the project and space they name (GW8).
+/// Every Policy of every space, by project and space, with the manifest name it is bound
+/// to by `spec.policyRef` (`urn:ngsi-ld:Policy:{org}:{space}:{name}`).
+#[allow(clippy::type_complexity)]
+fn policies_by_space(repo: &Repository) -> BTreeMap<(String, String), Vec<(String, PolicySpec)>> {
+    let mut policies: BTreeMap<(String, String), Vec<(String, PolicySpec)>> = BTreeMap::new();
+    for (id, resource) in repo.iter() {
+        if id.kind != "Policy" {
+            continue;
+        }
+        let Some(spec) = spec_of::<PolicySpec>(&resource.manifest) else {
+            continue;
+        };
+        // One grant per rule, named `{policy}#{n}` (ADR-N-057); an invalid shape is left out
+        // like an unreadable manifest.
+        match spec.expand(&id.name) {
+            Ok(rules) => {
+                let project = id.namespace.clone().unwrap_or_default();
+                let space = spec.context_space_ref.name().to_owned();
+                let rules = rules
+                    .into_iter()
+                    .map(|(name, rule)| (name, of_own_project(rule, &project)))
+                    .collect::<Vec<_>>();
+                policies.entry((project, space)).or_default().extend(rules);
+            }
+            Err(error) => tracing::warn!(
+                name = %id.name,
+                %error,
+                "Policy left out of the endpoint table"
+            ),
+        }
+    }
+    // Each Pipeline's Policies, granted to its own account and derived with it (PL-20).
+    for (project, derived) in jc_manifest::pipeline_identity::derived(repo) {
+        for (name, spec) in derived.policies {
+            policies
+                .entry((project.clone(), spec.context_space_ref.name().to_owned()))
+                .or_default()
+                .push((name, of_own_project(spec, &project)));
+        }
+    }
+    policies
+}
+
+/// `spec` with a bare `serviceAccount` assignee named `{project}/{name}`: a bare name means the
+/// account of the Policy's own project, never a same-named account of another project the
+/// Endpoint admits (PL-92, T-5698).
+fn of_own_project(mut spec: PolicySpec, project: &str) -> PolicySpec {
+    if spec.assignee.kind == PrincipalKind::ServiceAccount && !spec.assignee.id.contains('/') {
+        spec.assignee.id = format!("{project}/{}", spec.assignee.id);
+    }
+    spec
+}
+
+/// The domains each Project publishes under: its own `spec.domain` and its Organization's
+/// (PF-122). An installation holds several Organizations, so the one domain the load renders
+/// `{orgDomain}` with is not every Endpoint's (T-6502).
+fn policy_ref_domains(repo: &Repository) -> BTreeMap<String, BTreeSet<String>> {
+    let organizations: BTreeMap<&str, OrganizationSpec> = repo
+        .iter()
+        .filter(|(id, _)| id.kind == "Organization")
+        .filter_map(|(id, resource)| Some((id.name.as_str(), spec_of(&resource.manifest)?)))
+        .collect();
+    repo.iter()
+        .filter(|(id, _)| id.kind == "Project")
+        .filter_map(|(id, resource)| {
+            let spec = spec_of::<ProjectSpec>(&resource.manifest)?;
+            let organization = organizations.get(spec.organization_ref.name());
+            let domains: BTreeSet<String> = spec
+                .domain
+                .into_iter()
+                .chain(organization.map(|organization| organization.domain.clone()))
+                .collect();
+            (!domains.is_empty()).then(|| (id.name.clone(), domains))
+        })
+        .collect()
+}
+
+/// The Policies an endpoint with `spec.policyRefs` (or `policyRef`) evaluates, every rule of each
+/// (EP-14, GW8, ADR-N-057).
+///
+/// Without a reference an endpoint evaluates every Policy of its space; with references it
+/// evaluates the named Policies alone, which is how several endpoints over one space each publish
+/// a different slice of it. A reference to a Policy of another space or another organization's
+/// domain (the Project's own domains, else the installation's when the load knows it), or to none
+/// the repository has, binds nothing and says so: an endpoint that widened to the whole space
+/// instead would publish exactly what its author narrowed away.
+fn bound_policies(
+    endpoint: &str,
+    refs: &[Urn],
+    (domains, installation, space): (Option<&BTreeSet<String>>, Option<&str>, &str),
+    named: &[(String, PolicySpec)],
+) -> Vec<(String, PolicySpec)> {
+    let its_domain = |policy_ref: &Urn| match domains {
+        Some(domains) => policy_ref.org_domain().is_some_and(|d| domains.contains(d)),
+        None => installation.is_none_or(|domain| policy_ref.org_domain() == Some(domain)),
+    };
+    let names = |policy_ref: &Urn, name: &str| {
+        its_domain(policy_ref)
+            && policy_ref.space() == Some(space)
+            && PolicySpec::policy_of(name) == policy_ref.local_id()
+    };
+    for policy_ref in refs {
+        if !named.iter().any(|(name, _)| names(policy_ref, name)) {
+            tracing::warn!(
+                endpoint,
+                policy = %policy_ref,
+                "policyRef names no Policy of the endpoint's space; it grants nothing"
+            );
+        }
+    }
+    named
+        .iter()
+        .filter(|(name, _)| refs.iter().any(|policy_ref| names(policy_ref, name)))
+        .cloned()
+        .collect()
+}
+
+/// The data models of every space, with the artifacts the checkout carries (DM-02).
+///
+/// A mirrored foreign model is left out: it is a read-only copy of what a peer publishes, and
+/// an endpoint that served it under its own schema surface would be claiming another
+/// organisation's model as its own, which is exactly what DM-49 forbids. The reconciler
+/// commits such a model beside the reference that fetched it, and the Mappings that read it
+/// are how it reaches local data (DM-48, DM-49).
+/// Every space's models and the declared types compiled from them, built once per reload and
+/// handed to the Endpoint and the Space tables alike, so each parsed schema, `@context` and
+/// compiled rule set exists once however many records serve the space (T-4352).
+struct ModelSet {
+    models: BTreeMap<(String, String), Vec<Model>>,
+    declared: BTreeMap<(String, String), Arc<DeclaredTypes>>,
+}
+
+impl ModelSet {
+    fn of(repo: &Repository, root: Option<&Path>) -> Self {
+        let models = models_by_space(repo, root);
+        let declared = declared_types(repo, &models);
+        Self { models, declared }
+    }
+}
+
+fn models_by_space(
+    repo: &Repository,
+    root: Option<&Path>,
+) -> BTreeMap<(String, String), Vec<Model>> {
+    let mut models: BTreeMap<(String, String), Vec<Model>> = BTreeMap::new();
+    for (id, resource) in repo.iter() {
+        if id.kind != "DataModel" {
+            continue;
+        }
+        if let Some(spec) = spec_of::<DataModelSpec>(&resource.manifest) {
+            if spec.lifecycle == DataModelLifecycle::Mirrored {
+                continue;
+            }
+            // A model no space owns is served by no space; a space that imports it carries its
+            // classes in its own compiled artifacts (DM-75, DM-76).
+            let Some(space) = spec.context_space_ref.clone() else {
+                continue;
+            };
+            let project = id.namespace.clone().unwrap_or_default();
+            models.entry((project, space)).or_default().push(model_of(
+                &id.name,
+                &spec,
+                root,
+                &resource.path,
+            ));
+        }
+    }
+    models
+}
+
+/// The classes of every space's one model, for the spaces that name it (DM-61).
+///
+/// A space that names a model its repository does not hold declares nothing here and says so:
+/// `jcctl validate` refuses that before a commit, and a gateway that refused every write of the
+/// space over it would take a working surface down for a reference.
+fn declared_types(
+    repo: &Repository,
+    models: &BTreeMap<(String, String), Vec<Model>>,
+) -> BTreeMap<(String, String), Arc<DeclaredTypes>> {
+    let mut declared = BTreeMap::new();
+    for (id, resource) in repo.iter() {
+        if id.kind != "ContextSpace" {
+            continue;
+        }
+        let Some(space) = spec_of::<ContextSpaceSpec>(&resource.manifest) else {
+            continue;
+        };
+        let Some(named) = space.data_model_ref else {
+            continue;
+        };
+        let key = (id.namespace.clone().unwrap_or_default(), id.name.clone());
+        let model = models
+            .get(&key)
+            .and_then(|held| held.iter().find(|model| model.name == named.name()));
+        match model {
+            Some(model) => {
+                declared.insert(
+                    key,
+                    Arc::new(DeclaredTypes {
+                        model: model.name.clone(),
+                        classes: model.classes.iter().cloned().collect(),
+                        units: model
+                            .json_schema
+                            .as_ref()
+                            .map(|schema| UnitRules::from_schema(schema, space.missing_unit_code))
+                            .unwrap_or_default(),
+                        relationships: model
+                            .json_schema
+                            .as_deref()
+                            .map(RelationshipRules::from_schema)
+                            .unwrap_or_default(),
+                        quality: space.quality.clone(),
+                        // Open: an attribute the model does not declare is not the gateway's
+                        // to refuse (DM-86 names the slot constraints).
+                        schema: model.json_schema.as_ref().map(|schema| {
+                            Arc::new(ModelSchema::compile_for_space(
+                                &model.name,
+                                &model.version,
+                                schema,
+                                &model.classes,
+                                true,
+                                space.missing_unit_code,
+                            ))
+                        }),
+                    }),
+                );
+            }
+            None => tracing::warn!(
+                space = %id.name,
+                model = %named.name(),
+                "spec.dataModelRef names no model of the space; its writes are not narrowed to one"
+            ),
+        }
+    }
+    declared
+}
+
+/// Deserializes one manifest's `spec`, discarding a manifest the gateway cannot read.
+///
+/// The Portal and `jcctl validate` reject a malformed manifest before it is ever
+/// committed; a gateway that refused to start over one would take the whole surface down
+/// for a resource it does not serve.
+fn spec_of<T: serde::de::DeserializeOwned>(manifest: &RawManifest) -> Option<T> {
+    match serde_json::from_value(manifest.spec.clone()) {
+        Ok(spec) => Some(spec),
+        Err(error) => {
+            tracing::warn!(
+                kind = %manifest.kind,
+                name = %manifest.metadata.name,
+                %error,
+                "manifest left out of the endpoint table"
+            );
+            None
+        }
+    }
+}
+
+/// One data model, with whatever artifacts the checkout carries beside its manifest.
+///
+/// An artifact that is missing or unreadable is simply absent: the schema surface falls
+/// back to deriving the document from the endpoint's grants, which is a narrower answer
+/// but never a wrong one.
+/// One JSON artifact committed beside its manifest (DM-02, DM-52).
+///
+/// The artifacts live beside their manifest; a path that climbs out of the repository is a
+/// manifest bug and reads nothing.
+fn beside(
+    root: Option<&Path>,
+    manifest_path: &Path,
+    relative: &Option<String>,
+    owner: &str,
+) -> Option<serde_json::Value> {
+    serde_json::from_str(&beside_text(root, manifest_path, relative, owner)?).ok()
+}
+
+/// The text of the file `relative` names beside the manifest, inside the repository.
+fn beside_text(
+    root: Option<&Path>,
+    manifest_path: &Path,
+    relative: &Option<String>,
+    owner: &str,
+) -> Option<String> {
+    let (root, relative) = (root?, relative.as_deref()?);
+    let directory = manifest_path.parent().unwrap_or(Path::new(""));
+    let path = normalize(&root.join(directory).join(relative))?;
+    // A committed symlink resolves only when the file opens, so the path is judged again with
+    // every link resolved: a link out of the repository reads nothing (F-R2PLT2-006).
+    let resolved = std::fs::canonicalize(&path)
+        .ok()
+        .zip(std::fs::canonicalize(root).ok());
+    if !path.starts_with(root) || !resolved.is_some_and(|(path, root)| path.starts_with(root)) {
+        tracing::warn!(owner, "artifact path leaves the repository");
+        return None;
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(text) => Some(text),
+        Err(error) => {
+            tracing::warn!(owner, path = %path.display(), %error, "artifact not read");
+            None
+        }
+    }
+}
+
+fn model_of(name: &str, spec: &DataModelSpec, root: Option<&Path>, manifest_path: &Path) -> Model {
+    let beside =
+        |relative: &Option<String>| beside(root, manifest_path, relative, name).map(Arc::new);
+
+    Model {
+        name: name.to_owned(),
+        version: spec.version.to_string(),
+        major: spec.version.major(),
+        classes: spec.classes.clone(),
+        json_schema: beside(&spec.artifacts.json_schema),
+        context: beside(&spec.artifacts.context),
+    }
+}
+
+/// Resolves `.` and `..` without touching the filesystem, so a path that escapes the
+/// repository is visible before anything is opened.
+fn normalize(path: &Path) -> Option<std::path::PathBuf> {
+    let mut out = std::path::PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        beside_text, dataset_page, language_map, normalize, of_own_project,
+        portal_personal_data_read, PORTAL_RECONCILER_USER,
+    };
+    use crate::auth::subject::Subject;
+    use crate::pdp::evaluator::{evaluate, Request};
+    use crate::resolver::DeclaredTypes;
+    use jc_core::kinds::Operation;
+    use jc_manifest::model_schema::ModelSchema;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    /// T-6569: a public Endpoint publishing to its project's CkanInstance gets that dataset's
+    /// page on the open data portal; an internal one, one publishing none, or one naming an
+    /// instance its project lacks gets none.
+    #[test]
+    fn a_public_endpoint_publishing_to_ckan_gets_its_dataset_page() {
+        let spec = |audience: &str, publish: &str| -> jc_core::kinds::EndpointSpec {
+            serde_norway::from_str(&format!(
+                "contextSpaceRef: barcelona\nslug: qjos5uyy46rmn7hzxupmldkcwt2wzghd\n\
+                 audience: {audience}\nenabledRepresentations: [ngsi-ld, mcp]\n{publish}"
+            ))
+            .expect("an endpoint spec")
+        };
+        let named = "publish: { ckan: { instanceRef: { kind: CkanInstance, name: bcn }, name: barcelona-places } }\n";
+        let own = "publish: { ckan: { instanceRef: { kind: CkanInstance, name: bcn } } }\n";
+        let sites = BTreeMap::from([(
+            ("barcelona".to_owned(), "bcn".to_owned()),
+            "https://opendata.smartcity.example".to_owned(),
+        )]);
+        let page = |audience: &str, publish: &str, project: &str| {
+            dataset_page(&spec(audience, publish), project, "places", &sites)
+        };
+        assert_eq!(
+            page("public", named, "barcelona").as_deref(),
+            Some("https://opendata.smartcity.example/dataset/barcelona-places")
+        );
+        assert_eq!(
+            page("public", own, "barcelona").as_deref(),
+            Some("https://opendata.smartcity.example/dataset/places")
+        );
+        assert_eq!(page("organization", named, "barcelona"), None);
+        assert_eq!(page("public", "", "barcelona"), None);
+        assert_eq!(page("public", named, "praha"), None);
+    }
+
+    /// AP-139: an App's endpoint owns its caller role and each of its named roles, and nothing
+    /// that only starts like them or is not a role at all.
+    #[test]
+    fn an_endpoints_own_grant_is_one_of_its_roles_by_kind_and_exact_name() {
+        let assigned = |kind: &str, id: &str| -> jc_core::kinds::PolicySpec {
+            serde_norway::from_str(&format!(
+                "contextSpaceRef: helsinki\nassigner: did:web:hel.fi\n\
+                 assignee: {{ kind: {kind}, id: \"{id}\" }}\noperations: [queryEntity]\n"
+            ))
+            .expect("a policy spec")
+        };
+        let own =
+            |kind: &str, id: &str| assigned(kind, id).is_endpoint_grant("helsinki", "app-events");
+        assert!(own("role", "endpoint:helsinki/app-events"));
+        assert!(own("role", "endpoint:helsinki/app-events/editor"));
+        assert!(!own("role", "endpoint:helsinki/app-events-2"));
+        assert!(!own("role", "endpoint:helsinki/app-events-2/editor"));
+        assert!(!own("role", "endpoint:helsinki/app-events/"));
+        assert!(!own("role", "endpoint:helsinki/app-events/editor/x"));
+        assert!(!own("role", "endpoint:espoo/app-events"));
+        assert!(!own("role", "public"));
+        assert!(!own("user", "endpoint:helsinki/app-events"));
+        assert!(!own("group", "endpoint:helsinki/app-events"));
+    }
+
+    fn declared(rider: serde_json::Value) -> DeclaredTypes {
+        let model = json!({
+            "definitions": {
+                "Rider": { "type": "object", "properties": { "id": {"type": "string"}, "rider": rider } },
+                "Station": { "type": "object", "properties": { "id": {"type": "string"} } }
+            }
+        });
+        let classes = ["Rider".to_owned(), "Station".to_owned()];
+        DeclaredTypes {
+            model: "riders".into(),
+            classes: classes.iter().cloned().collect(),
+            units: Default::default(),
+            relationships: Default::default(),
+            quality: Vec::new(),
+            schema: Some(Arc::new(ModelSchema::compile(
+                "riders", "1.0.0", &model, &classes, true,
+            ))),
+        }
+    }
+
+    fn decided(
+        user: &str,
+        operation: Operation,
+        types: &[&str],
+        grant: &jc_core::kinds::PolicySpec,
+    ) -> bool {
+        // The gateway decides a `service-account-<client>` user only on its client's token
+        // (T-5358), so the subject carries that client as a real call's would.
+        let subject = Subject {
+            user: Some(user.to_owned()),
+            client: user.strip_prefix("service-account-").map(str::to_owned),
+            ..Subject::default()
+        };
+        let request = Request {
+            types: types.iter().map(|t| (*t).to_owned()).collect(),
+            ..Request::default()
+        };
+        !evaluate(
+            &subject,
+            operation,
+            &request,
+            "t",
+            std::slice::from_ref(grant),
+            chrono::Utc::now(),
+        )
+        .is_deny()
+    }
+
+    /// PL-92, T-5698: a bare `serviceAccount` assignee is the account of the Policy's own
+    /// project; the same-named account of another project the Endpoint admits is not granted.
+    #[test]
+    fn a_bare_service_account_assignee_grants_its_own_projects_account_alone() {
+        let grant = |id: &str| -> jc_core::kinds::PolicySpec {
+            serde_norway::from_str(&format!(
+                "contextSpaceRef: air\nassigner: did:web:hel.fi\n\
+                 assignee: {{ kind: serviceAccount, id: \"{id}\" }}\noperations: [queryEntity]\n"
+            ))
+            .expect("a policy spec")
+        };
+        let loaded = of_own_project(grant("ingest"), "city-a");
+        assert_eq!(loaded.assignee.id, "city-a/ingest");
+        assert_eq!(
+            of_own_project(grant("city-b/ingest"), "city-a").assignee.id,
+            "city-b/ingest",
+            "a qualified name is kept"
+        );
+        let ingest_of = |project: &str| Subject {
+            service_account: Some("ingest".to_owned()),
+            service_account_project: Some(project.to_owned()),
+            ..Subject::default()
+        };
+        let decided = |subject: &Subject| {
+            !evaluate(
+                subject,
+                Operation::QueryEntity,
+                &Request::default(),
+                "t",
+                std::slice::from_ref(&loaded),
+                chrono::Utc::now(),
+            )
+            .is_deny()
+        };
+        assert!(decided(&ingest_of("city-a")));
+        assert!(!decided(&ingest_of("city-b")));
+    }
+
+    /// T-5168: a space whose model marks personal data lets the Portal's own account find and
+    /// read the Entities of those classes and their history, and nothing more: no write, no
+    /// other class, no other caller.
+    #[test]
+    fn the_portal_reads_the_personal_classes_of_a_space_and_writes_nothing() {
+        let declared = declared(json!({ "type": "string", "x-personal-data": true }));
+        let grant = portal_personal_data_read("riders", Some(&declared), "did:web:hel.fi")
+            .expect("a space with personal data grants the Portal its read");
+        for operation in [
+            Operation::QueryEntity,
+            Operation::RetrieveEntity,
+            Operation::QueryTemporal,
+            Operation::RetrieveTemporal,
+        ] {
+            assert!(
+                decided(PORTAL_RECONCILER_USER, operation, &["Rider"], &grant),
+                "{operation:?}"
+            );
+        }
+        for operation in [
+            Operation::UpdateAttrs,
+            Operation::DeleteEntity,
+            Operation::CreateEntity,
+            Operation::DeleteAttrs,
+        ] {
+            assert!(
+                !decided(PORTAL_RECONCILER_USER, operation, &["Rider"], &grant),
+                "{operation:?}"
+            );
+        }
+        // a query of the space is narrowed to the personal classes: Station is never read
+        let portal = Subject {
+            user: Some(PORTAL_RECONCILER_USER.to_owned()),
+            client: Some("portal-reconciler".to_owned()),
+            ..Subject::default()
+        };
+        let verdict = evaluate(
+            &portal,
+            Operation::QueryEntity,
+            &Request::default(),
+            "t",
+            std::slice::from_ref(&grant),
+            chrono::Utc::now(),
+        );
+        assert_eq!(
+            verdict.constraints().map(|c| c.types.clone()),
+            Some(["Rider".to_owned()].into())
+        );
+        assert!(!decided("jana", Operation::QueryEntity, &["Rider"], &grant));
+        assert!(!decided(
+            "service-account-portal-api",
+            Operation::QueryEntity,
+            &["Rider"],
+            &grant
+        ));
+    }
+
+    /// A model that marks nothing personal, or a space with no model, grants the Portal nothing.
+    #[test]
+    fn a_space_without_personal_data_grants_the_portal_nothing() {
+        let plain = declared(json!({ "type": "string" }));
+        assert!(portal_personal_data_read("riders", Some(&plain), "did:web:hel.fi").is_none());
+        assert!(portal_personal_data_read("riders", None, "did:web:hel.fi").is_none());
+    }
+
+    /// A plain title reads as text of no locale, the legacy map as its locales, and a
+    /// shape no manifest may carry as nothing (UI-50).
+    #[test]
+    fn a_plain_title_and_the_legacy_map_both_read() {
+        let metadata = |title: serde_json::Value| {
+            json!({ "title": title })
+                .as_object()
+                .cloned()
+                .expect("object")
+        };
+        assert_eq!(
+            language_map(&metadata(json!("Air quality")), "title"),
+            BTreeMap::from([(String::new(), "Air quality".to_owned())])
+        );
+        assert_eq!(
+            language_map(
+                &metadata(json!({ "fi": "Ilmanlaatu", "en": "Air" })),
+                "title"
+            ),
+            BTreeMap::from([
+                ("en".to_owned(), "Air".to_owned()),
+                ("fi".to_owned(), "Ilmanlaatu".to_owned())
+            ])
+        );
+        assert!(language_map(&metadata(json!("")), "title").is_empty());
+        assert!(language_map(&metadata(json!(7)), "title").is_empty());
+        assert!(language_map(&metadata(json!({})), "description").is_empty());
+    }
+
+    /// A committed symlink out of the repository is no artifact: the path reads inside the
+    /// repository, the file it opens does not (F-R2PLT2-006).
+    #[test]
+    fn an_artifact_linked_out_of_the_repository_reads_nothing() {
+        let base = std::env::temp_dir().join(format!("gw-beside-link-{}", std::process::id()));
+        let (repo, outside) = (base.join("repo"), base.join("outside"));
+        std::fs::create_dir_all(repo.join("projects")).expect("the repository");
+        std::fs::create_dir_all(&outside).expect("a directory beside it");
+        std::fs::write(outside.join("token"), "secret").expect("the outside file");
+        std::fs::write(repo.join("projects/inside.blobl"), "root = this").expect("an artifact");
+        std::os::unix::fs::symlink(outside.join("token"), repo.join("projects/x.blobl"))
+            .expect("a link");
+        let manifest = Path::new("projects/mapping.yaml");
+        let read = |name: &str| beside_text(Some(&repo), manifest, &Some(name.to_owned()), "m");
+
+        assert_eq!(read("inside.blobl").as_deref(), Some("root = this"));
+        assert_eq!(read("x.blobl"), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// An artifact path is checked before anything is opened, so a manifest that names
+    /// `../../.secrets/x` is visible as leaving the repository rather than being read.
+    #[test]
+    fn normalize_resolves_traversal_without_touching_the_filesystem() {
+        let root = Path::new("/repo");
+        assert_eq!(
+            normalize(&root.join("projects/a/./model.schema.json")),
+            Some(PathBuf::from("/repo/projects/a/model.schema.json"))
+        );
+        assert_eq!(
+            normalize(&root.join("projects/a/../b/model.schema.json")),
+            Some(PathBuf::from("/repo/projects/b/model.schema.json"))
+        );
+
+        // Two ways out of the repository, and neither is readable: one resolves to a
+        // path outside it, the other climbs past the filesystem root and resolves to
+        // nothing at all.
+        let escaped = normalize(&root.join("projects/../../etc/passwd")).expect("resolves");
+        assert_eq!(escaped, PathBuf::from("/etc/passwd"));
+        assert!(!escaped.starts_with(root), "{}", escaped.display());
+        assert_eq!(normalize(&root.join("../../etc/passwd")), None);
+    }
+}

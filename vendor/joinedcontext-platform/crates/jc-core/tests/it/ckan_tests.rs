@@ -1,0 +1,325 @@
+//! T-0314/T-0316: `kind: CkanInstance` and `Endpoint.spec.publish.ckan` (EP-62…EP-67).
+
+use jc_core::error::Error;
+use jc_core::kinds::{CkanInstance, EndpointSpec};
+
+fn instance(yaml: &str) -> Result<CkanInstance, Error> {
+    let parsed: CkanInstance =
+        serde_norway::from_str(yaml).map_err(|e| Error::Parse(e.to_string()))?;
+    parsed.validate()?;
+    Ok(parsed)
+}
+
+fn endpoint(publish: &str) -> Result<EndpointSpec, Error> {
+    let spec: EndpointSpec = serde_norway::from_str(&format!(
+        r#"contextSpaceRef: ovzdusie
+slug: zt4qm7ge2xdv6ksb3ncf5arw2y
+audience: public
+enabledRepresentations: [ngsi-ld, csv, ogc-features]
+{publish}"#
+    ))
+    .map_err(|e| Error::Parse(e.to_string()))?;
+    spec.validate()?;
+    Ok(spec)
+}
+
+const INSTANCE: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: CkanInstance
+metadata:
+  name: open-data
+  namespace: ovzdusie
+spec:
+  url: https://data.banskabystrica.sk/
+  organizationDefault: mesto-banska-bystrica
+  apiTokenRef: { name: ckan-open-data, key: apiToken }
+"#;
+
+#[test]
+fn an_instance_names_a_catalogue_and_a_secret_reference() {
+    let parsed = instance(INSTANCE).expect("the instance validates");
+
+    assert_eq!(parsed.spec.base_url(), "https://data.banskabystrica.sk");
+    assert_eq!(parsed.spec.api_token_ref.name, "ckan-open-data");
+    assert_eq!(parsed.spec.api_token_ref.key.as_deref(), Some("apiToken"));
+}
+
+/// EP-67: plain HTTP would carry the API token in the clear on every publication.
+#[test]
+fn a_catalogue_over_plain_http_is_refused() {
+    let error = instance(&INSTANCE.replace("https://", "http://")).expect_err("http is refused");
+
+    assert!(matches!(error, Error::Name { field: "url", .. }), "{error}");
+}
+
+#[test]
+fn a_url_without_a_host_is_refused() {
+    let error = instance(&INSTANCE.replace("https://data.banskabystrica.sk/", "https://"))
+        .expect_err("no host");
+
+    assert!(matches!(error, Error::Name { field: "url", .. }), "{error}");
+}
+
+/// EP-67, CC-06: the kind has no field a token could be written into.
+#[test]
+fn an_inline_token_does_not_parse() {
+    let with_token = INSTANCE.replace(
+        "  apiTokenRef: { name: ckan-open-data, key: apiToken }\n",
+        "  apiTokenRef: { name: ckan-open-data, key: apiToken }\n  apiToken: \"pasted-by-hand\"\n",
+    );
+
+    let error = instance(&with_token).expect_err("an inline token is refused");
+
+    assert!(matches!(error, Error::Parse(_)), "{error}");
+}
+
+#[test]
+fn a_ckan_slug_is_what_ckan_accepts() {
+    for bad in [
+        "A",
+        "Mesto",
+        "mesto banska",
+        "-mesto",
+        "mesto-",
+        "m",
+        "mesto.bb",
+    ] {
+        let yaml = INSTANCE.replace("mesto-banska-bystrica", bad);
+        assert!(instance(&yaml).is_err(), "`{bad}` must not validate");
+    }
+    for good in ["bb", "mesto_banska_bystrica", "open-data-2026"] {
+        let yaml = INSTANCE.replace("mesto-banska-bystrica", good);
+        assert!(instance(&yaml).is_ok(), "`{good}` must validate");
+    }
+}
+
+/// EP-62: the publication names where the dataset goes, and nothing more.
+#[test]
+fn an_endpoint_publishes_to_a_named_instance() {
+    let spec = endpoint(
+        r#"publish:
+  ckan:
+    instanceRef: { kind: CkanInstance, name: open-data }
+    organization: mesto-banska-bystrica
+    name: kvalita-ovzdusia
+"#,
+    )
+    .expect("the endpoint validates");
+
+    let publication = spec
+        .publish
+        .as_ref()
+        .and_then(|p| p.ckan.as_ref())
+        .expect("a CKAN publication");
+    assert_eq!(
+        publication.dataset_name("ovzdusie-public"),
+        "kvalita-ovzdusia"
+    );
+}
+
+#[test]
+fn a_publication_without_a_name_is_the_endpoints_own_name() {
+    let spec = endpoint(
+        r#"publish:
+  ckan:
+    instanceRef: { kind: CkanInstance, name: open-data }
+"#,
+    )
+    .expect("the endpoint validates");
+
+    let publication = spec
+        .publish
+        .and_then(|p| p.ckan)
+        .expect("a CKAN publication");
+    assert_eq!(
+        publication.dataset_name("ovzdusie-public"),
+        "ovzdusie-public"
+    );
+}
+
+/// T-5060: CKAN holds no rows any more; an old `datastore:` block is refused with the fix,
+/// whatever it held, and never written back.
+#[test]
+fn a_datastore_block_is_refused_with_the_fix() {
+    for block in [
+        "{ representation: csv, refresh: onChange }",
+        "{ representation: sta }",
+        "{}",
+    ] {
+        let error = endpoint(&format!(
+            "publish:\n  ckan:\n    instanceRef: {{ kind: CkanInstance, name: open-data }}\n    datastore: {block}\n"
+        ))
+        .expect_err("the datastore block is gone");
+        assert!(
+            matches!(
+                error,
+                Error::Name {
+                    field: "publish.ckan.datastore",
+                    ..
+                }
+            ),
+            "{error}"
+        );
+        assert!(error.to_string().contains("delete the block"), "{error}");
+    }
+}
+
+#[test]
+fn the_publication_must_reference_a_ckan_instance() {
+    let error = endpoint(
+        r#"publish:
+  ckan:
+    instanceRef: { kind: ContextSpace, name: open-data }
+"#,
+    )
+    .expect_err("the wrong kind is refused");
+
+    assert!(
+        matches!(
+            error,
+            Error::Kind {
+                expected: "CkanInstance",
+                ..
+            }
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn an_endpoint_without_a_publish_block_publishes_nowhere() {
+    let spec = endpoint("").expect("the endpoint validates");
+
+    assert!(spec.publish.is_none());
+}
+
+/// EP-62, T-2465: the licence the organization chose travels in the publication block, as the
+/// register id CKAN stores, and comes back out of it unchanged.
+#[test]
+fn a_publication_names_its_licence_and_the_licence_round_trips() {
+    let spec = endpoint(
+        r#"publish:
+  ckan:
+    instanceRef: { kind: CkanInstance, name: open-data }
+    license: cc-by
+"#,
+    )
+    .expect("the endpoint validates");
+    let publication = spec
+        .publish
+        .as_ref()
+        .and_then(|p| p.ckan.as_ref())
+        .expect("a CKAN publication");
+    assert_eq!(publication.license.as_deref(), Some("cc-by"));
+
+    let written = serde_json::to_value(publication).expect("serializes");
+    assert_eq!(written["license"], "cc-by");
+    let back: jc_core::kinds::ckan::CkanPublication =
+        serde_json::from_value(written).expect("reads back");
+    assert_eq!(&back, publication);
+}
+
+/// EP-62: a licence is a register id, not a sentence or an address — an IRI belongs in the
+/// record's `dct:license`, and CKAN refuses an id it cannot store.
+#[test]
+fn a_licence_that_is_not_a_register_id_is_refused() {
+    for bad in [
+        "",
+        "CC BY 4.0",
+        "https://creativecommons.org/licenses/by/4.0/",
+        "cc-by;drop",
+    ] {
+        let err = endpoint(&format!(
+            "publish:\n  ckan:\n    instanceRef: open-data\n    license: {bad:?}\n"
+        ))
+        .expect_err(bad);
+        assert!(
+            err.to_string().contains("publish.ckan.license"),
+            "{bad:?}: the refusal names the field: {err}"
+        );
+    }
+    endpoint("publish:\n  ckan:\n    instanceRef: open-data\n    license: CC-BY-4.0\n")
+        .expect("a register of its own may spell ids in capitals");
+}
+
+/// deny_unknown_fields: a misspelt member is refused rather than silently ignored.
+#[test]
+fn an_unknown_member_of_the_publication_is_refused() {
+    let err = endpoint("publish:\n  ckan:\n    instanceRef: open-data\n    licence: cc-by\n")
+        .expect_err("licence is not the member's name");
+    assert!(err.to_string().contains("licence"), "{err}");
+}
+
+/// EP-139, T-4744: a door the feeds leave out is no catalogue dataset, so publishing it to CKAN
+/// beside `harvest: false` is a contradiction; unset or `true` stays harvested.
+#[test]
+fn harvest_false_keeps_a_door_out_of_the_feeds_and_out_of_ckan() {
+    let publish = "publish:\n  ckan:\n    instanceRef: { kind: CkanInstance, name: open-data }\n";
+
+    let door = endpoint("catalog: { harvest: false }\n").expect("a door without a dataset");
+    assert!(!door.catalog.as_ref().expect("a catalog block").harvested());
+    let dataset = endpoint(&format!("{publish}catalog: {{ harvest: true }}\n")).expect("harvested");
+    assert!(dataset
+        .catalog
+        .as_ref()
+        .expect("a catalog block")
+        .harvested());
+    let unset = endpoint("catalog: { themes: [ENVI] }\n").expect("unset");
+    assert!(unset.catalog.as_ref().expect("a catalog block").harvested());
+
+    let error = endpoint(&format!("{publish}catalog: {{ harvest: false }}\n"))
+        .expect_err("harvest false beside publish.ckan is refused");
+    assert!(
+        matches!(
+            error,
+            Error::Name {
+                field: "spec.catalog.harvest",
+                ..
+            }
+        ),
+        "{error}"
+    );
+    assert!(error.to_string().contains("EP-139"), "{error}");
+}
+
+#[test]
+fn harvest_is_a_boolean() {
+    assert!(endpoint("catalog: { harvest: no-thanks }\n").is_err());
+}
+
+/// The whole Endpoint manifest of project `ovzdusie` with `instance_ref`, validated as a door does.
+fn endpoint_in_ovzdusie(instance_ref: &str) -> Result<(), Error> {
+    let manifest: jc_core::kinds::Endpoint = serde_norway::from_str(&format!(
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: air-public
+  namespace: ovzdusie
+spec:
+  contextSpaceRef: ovzdusie
+  slug: zt4qm7ge2xdv6ksb3ncf5arw2y
+  audience: public
+  enabledRepresentations: [ngsi-ld]
+  publish:
+    ckan:
+      instanceRef: {instance_ref}
+"#
+    ))
+    .map_err(|e| Error::Parse(e.to_string()))?;
+    manifest.validate()
+}
+
+/// T-6292: another project's CkanInstance (its token, its catalogue) is refused by the field;
+/// a bare name or the Endpoint's own namespace is the project's instance and passes.
+#[test]
+fn a_publication_through_another_projects_instance_is_refused() {
+    let err = endpoint_in_ovzdusie("{ kind: CkanInstance, name: opendata, namespace: bratislava }")
+        .expect_err("a foreign namespace is refused");
+    let message = err.to_string();
+    assert!(message.contains("publish.ckan.instanceRef"), "{message}");
+    assert!(message.contains("bratislava"), "{message}");
+
+    endpoint_in_ovzdusie("open-data").expect("a bare name is the project's own");
+    endpoint_in_ovzdusie("{ kind: CkanInstance, name: open-data }").expect("typed, no namespace");
+    endpoint_in_ovzdusie("{ kind: CkanInstance, name: open-data, namespace: ovzdusie }")
+        .expect("the Endpoint's own namespace");
+}

@@ -276,6 +276,20 @@ pub async fn serve(config: Config) -> std::io::Result<()> {
         .await
         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
+    spawn_background(&state);
+    spawn_internal_listener(&state, shutdown_signal()).await?;
+
+    let router = app(state);
+    axum::serve(listener, router)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+}
+
+/// Starts the background work of a serving Portal on the current runtime: the workspace and
+/// grant reapers, the sync, `SyncSource` and foreign-model loops, App build pods, the agent
+/// reaper, erasures, kept-answer expiry and the Grafana restore. [`serve`] calls it; a host
+/// process that mounts [`app`] beside other modules (`jc`) calls it too.
+pub fn spawn_background(state: &AppState) {
     // A workspace outlives the Portal that made it unless something finishes its TTL: the record
     // hides at expiry, the branch does not go by itself (CC-81, T-1260).
     crate::ops::workspaces::spawn_reaper(state.clone());
@@ -327,35 +341,40 @@ pub async fn serve(config: Config) -> std::io::Result<()> {
         crate::agents::reaper::spawn_periodic(state.clone());
     }
 
-    // The internal listener runs beside the public one, on the same replica, whenever this Portal
-    // verifies tokens: every route on it answers a workload token of the realm and nothing else,
-    // so a Portal without a realm opens no second port. The gateway polls its revocations here
-    // whether or not an agent runner is deployed (T-5869, F-SEC1-024).
-    if internal_listener_opens(&state) {
-        let internal = tokio::net::TcpListener::bind(state.config.internal_bind).await?;
-        tracing::info!(bind = %state.config.internal_bind, "portal internal listener listening");
-        let internal_router = internal_app(state.clone());
-        tokio::spawn(async move {
-            if let Err(err) = axum::serve(internal, internal_router)
-                .with_graceful_shutdown(shutdown_signal())
-                .await
-            {
-                tracing::error!(error = %err, "the internal listener stopped");
-            }
-        });
-    }
-
     // A data subject's erasures, asked again each minute until every store is done (T-4668).
     crate::erasure::spawn_periodic(state.clone());
     // The assistant's kept answers, forgotten when a Policy or an Endpoint changes (T-4731).
     crate::answers::spawn_periodic(state.clone());
     // What a restart of Grafana took, put back from the Portal's rows (T-6509).
     crate::grafana::spawn_periodic(state.clone());
+}
 
-    let router = app(state);
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
+/// The internal listener runs beside the public one, on the same replica, whenever this Portal
+/// verifies tokens: every route on it answers a workload token of the realm and nothing else,
+/// so a Portal without a realm opens no second port. The gateway polls its revocations here
+/// whether or not an agent runner is deployed (T-5869, F-SEC1-024). Binds
+/// `config.internal_bind` (`JC_INTERNAL_BIND`) and serves until `shutdown` resolves; returns
+/// the bound address, or `None` when no listener opens.
+pub async fn spawn_internal_listener(
+    state: &AppState,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> std::io::Result<Option<std::net::SocketAddr>> {
+    if !internal_listener_opens(state) {
+        return Ok(None);
+    }
+    let internal = tokio::net::TcpListener::bind(state.config.internal_bind).await?;
+    let addr = internal.local_addr()?;
+    tracing::info!(bind = %addr, "portal internal listener listening");
+    let internal_router = internal_app(state.clone());
+    tokio::spawn(async move {
+        if let Err(err) = axum::serve(internal, internal_router)
+            .with_graceful_shutdown(shutdown)
+            .await
+        {
+            tracing::error!(error = %err, "the internal listener stopped");
+        }
+    });
+    Ok(Some(addr))
 }
 
 async fn shutdown_signal() {

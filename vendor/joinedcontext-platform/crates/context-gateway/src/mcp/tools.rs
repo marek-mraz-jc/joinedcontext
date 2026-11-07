@@ -1,0 +1,1220 @@
+//! The catalogue of the hub and the named servers (ADR-N-025 2.2, ADR-N-043): each tool's name,
+//! the operations that make it worth listing, its description and its published argument
+//! schema (T-3648).
+//!
+//! Discovery stays the gateway's: a tool is listed when the PDP grants one of its operations on
+//! an Endpoint of the caller's list, the same PDP that decides every call, so discovery and
+//! enforcement cannot drift (SP-15, SP-16). The call itself is the member view's at the broker
+//! (T-3808), which checks the arguments again under its own schema; the two describe tools are
+//! answered by [`crate::mcp::describe`] and their arguments are checked here first (AG-31).
+//! Every schema says `additionalProperties: false`, so an unknown field is an error rather than
+//! a parameter that is quietly dropped (AG-21).
+
+use crate::app::Gateway;
+use crate::auth::subject::Subject;
+use crate::mcp::jsonrpc::refused;
+use crate::pdp::evaluator::{Request as PolicyRequest, Verdict};
+use crate::resolver::Endpoint;
+use jc_core::kinds::Operation;
+use serde_json::{json, Map, Value};
+use std::sync::{Arc, LazyLock};
+
+/// An NGSI-LD entity type name, as the models of this platform spell it: a term, never a
+/// path, a URL or an escape sequence (AG-21).
+///
+/// A value outside this is a bad request and is refused by name. Answering it with an empty
+/// result would tell the caller the argument was accepted, which is how a traversal probe
+/// reads `[]`: as "the parameter went through and there was nothing there".
+const TYPE_NAME: &str = "^[A-Za-z][A-Za-z0-9_-]*$";
+
+/// An NGSI-LD entity id, which on this platform is always the URN of ADR 001.
+const ENTITY_URN: &str = "^urn:ngsi-ld:[^\\s]+$";
+
+/// An NGSI-LD attribute name: a term of the model, or the IRI a term expands to.
+///
+/// Wider than [`TYPE_NAME`], because an attribute may be sent expanded, and narrow enough that
+/// no separator of a query string — `&`, `=`, `;`, `%`, a newline — can ride inside one and
+/// arrive at the broker as a second parameter (AG-21, T-2299).
+const ATTR_NAME: &str = "^[A-Za-z][A-Za-z0-9_\\-.:/#]*$";
+
+/// One tool of the catalogue (Architecture/07 section 2).
+pub(crate) struct Tool {
+    pub(crate) name: &'static str,
+    /// The operations that make this tool worth advertising: the caller holding any one of
+    /// them sees it. Empty is a tool that describes the endpoint rather than its data, and
+    /// that every caller the endpoint admits may call (EP-55).
+    pub(crate) operations: &'static [Operation],
+    pub(crate) description: &'static str,
+    pub(crate) shape: Shape,
+    /// What the broker's answer is called in the structured half of the result. MCP's
+    /// `structuredContent` is an object matching the tool's output schema, so a bare list
+    /// is read as nothing by every client that reads it by name (T-0946, AG-13).
+    pub(crate) result_key: &'static str,
+}
+
+/// How a tool's arguments are published: a broker tool's from its argument table, the
+/// gateway's own describe tools from their schema.
+pub(crate) enum Shape {
+    Broker(&'static [Arg]),
+    Own(fn() -> Value),
+}
+
+impl Tool {
+    /// Whether the tool only reads, from the operations it stands for rather than from a
+    /// boolean somebody set beside them (T-1066, AG-07).
+    ///
+    /// This is what an agent runtime reads before it decides whether a person has to confirm
+    /// the call, so it has to state what the tool does. A tool that writes at all is not
+    /// read-only: *any* write is a write, and a rule that asked whether *any* operation reads
+    /// would announce a mixed tool as a read.
+    pub(crate) fn read_only(&self) -> bool {
+        !self.operations.iter().any(Operation::is_write)
+    }
+
+    /// Whether a call can remove or overwrite what is there, as the broker annotates it: the
+    /// three writes that only add are not (Antares `docs/src/mcp.md` section 2).
+    pub(crate) fn destructive(&self) -> bool {
+        !self.read_only()
+            && !matches!(
+                self.name,
+                "create_entity" | "create_subscription" | "batch_create"
+            )
+    }
+
+    /// The tool's published JSON Schema.
+    pub(crate) fn input_schema(&self) -> Value {
+        match self.shape {
+            Shape::Broker(args) => Value::Object(input_schema(args)),
+            Shape::Own(schema) => schema(),
+        }
+    }
+}
+
+/// The tools a caller without a token may list and call, on every MCP surface: the hub, a named
+/// server, an Endpoint's and a Context Space's (T-4168). An allowlist rather than
+/// [`Tool::read_only`]: a tool the catalogue or the broker gains later is a write to an anonymous
+/// caller until it is named here, so an unknown name is refused, never taken for a read.
+pub(crate) const ANONYMOUS_TOOLS: &[&str] = &[
+    "list_endpoints",
+    "get_endpoint",
+    "area_overview",
+    "search",
+    "search_documents",
+    "read_knowledge_context",
+    "list_types",
+    "get_type",
+    "list_type_details",
+    "list_attributes",
+    "list_attribute_details",
+    "get_attribute",
+    "query_entities",
+    "summarize",
+    "get_entity",
+    "get_attribute_value",
+    "query_temporal",
+    "retrieve_temporal",
+    "describe_schema",
+    "describe_access",
+];
+
+/// Whether a caller without a token may list and call `name` (T-4168).
+pub(crate) fn anonymous_may(name: &str) -> bool {
+    ANONYMOUS_TOOLS.contains(&name)
+}
+
+/// The JSON-RPC error for any other tool on a surface that reads only: a caller without a token,
+/// or anyone on a public named server (EP-141). It names what may be called instead, and where
+/// the rest is: the Endpoint's own URL, under its own Policy, with a token.
+pub(crate) fn anonymous_refusal(id: Value, name: &str) -> Value {
+    crate::mcp::jsonrpc::error(
+        id,
+        -32602,
+        &format!(
+            "`{name}` is not offered here: this surface reads only and offers {}. \
+             The other tools the Endpoint's Policy grants you are on the Endpoint's own MCP URL, \
+             with a token",
+            ANONYMOUS_TOOLS.join(", ")
+        ),
+    )
+}
+
+/// The widest history window an anonymous temporal read may ask for (T-4261).
+const ANONYMOUS_WINDOW_DAYS: i64 = 31;
+/// The shortest aggregation period an anonymous read may ask for, in seconds (`PT1H`).
+const ANONYMOUS_AGGR_SECONDS: f64 = 3600.0;
+
+/// Bounds what one anonymous temporal read makes the broker read (T-4261, Architecture/07 §2):
+/// a window of at most 31 days, `type` or `id`, `lastN` within the broker's maximum and its
+/// default when absent, `limit` within the broker's page maximum (T-4804: the owner's 1,000
+/// for every caller; the body cap and the per-caller rate stay the bound), and aggregation
+/// periods of an hour or more. Any other tool passes untouched; the error names the bound it
+/// broke.
+pub(crate) fn anonymous_bounds(
+    name: &str,
+    arguments: &mut Map<String, Value>,
+) -> Result<(), String> {
+    if !matches!(name, "query_temporal" | "retrieve_temporal") {
+        return Ok(());
+    }
+    let named = |key: &str| {
+        arguments.get(key).is_some_and(|value| match value {
+            Value::Array(items) => !items.is_empty(),
+            Value::String(text) => !text.is_empty(),
+            Value::Null => false,
+            _ => true,
+        })
+    };
+    if !named("type") && !named("id") {
+        return Err(format!(
+            "`{name}` without a token names `type` or `id`: a history read over every Entity is not offered anonymously"
+        ));
+    }
+    let instant = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(Value::as_str)
+            .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+    };
+    let window = match (
+        arguments.get("timerel").and_then(Value::as_str),
+        instant("timeAt"),
+        instant("endTimeAt"),
+    ) {
+        (Some("between"), Some(start), Some(end)) if end > start => end - start,
+        _ => {
+            return Err(format!(
+                "`{name}` without a token reads a window: timerel between, with timeAt before endTimeAt, \
+                 both ISO 8601 instants, at most {ANONYMOUS_WINDOW_DAYS} days apart"
+            ))
+        }
+    };
+    if window > chrono::Duration::days(ANONYMOUS_WINDOW_DAYS) {
+        return Err(format!(
+            "`{name}` without a token reads at most {ANONYMOUS_WINDOW_DAYS} days between timeAt and endTimeAt"
+        ));
+    }
+    // A window over a day that asks neither raw values (`format`) nor its own aggregation
+    // answers the broker's hourly or daily averages (T-4800), periods the PT1H floor below
+    // allows; every other read keeps the broker's default of newest instances.
+    let averaged = window > chrono::Duration::days(1)
+        && !arguments.contains_key("format")
+        && !arguments.contains_key("aggrMethods");
+    crate::mcp::limits::anonymous_page(arguments, averaged)?;
+    if arguments.contains_key("aggrMethods") {
+        let period = arguments
+            .get("aggrPeriodDuration")
+            .and_then(Value::as_str)
+            .and_then(duration_seconds);
+        if !period.is_some_and(|seconds| seconds >= ANONYMOUS_AGGR_SECONDS) {
+            return Err(
+                "`aggrMethods` without a token needs an aggrPeriodDuration of at least PT1H"
+                    .to_owned(),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The seconds of an ISO 8601 duration (`P1DT2H`, `PT1.5H`, `P2W`), a year taken as 365 days
+/// and a month as 30; `None` when it is not one.
+fn duration_seconds(text: &str) -> Option<f64> {
+    let rest = text.strip_prefix('P')?;
+    let (date, time) = match rest.split_once('T') {
+        Some((date, time)) if !time.is_empty() => (date, Some(time)),
+        Some(_) => return None,
+        None => (rest, None),
+    };
+    let day = 86_400.0;
+    let mut total = 0.0;
+    let mut any = false;
+    for (part, units) in [
+        (
+            date,
+            &[
+                ('Y', 365.0 * day),
+                ('M', 30.0 * day),
+                ('W', 7.0 * day),
+                ('D', day),
+            ][..],
+        ),
+        (
+            time.unwrap_or(""),
+            &[('H', 3600.0), ('M', 60.0), ('S', 1.0)][..],
+        ),
+    ] {
+        let mut number = String::new();
+        let mut next = 0;
+        for c in part.chars() {
+            if c.is_ascii_digit() || c == '.' {
+                number.push(c);
+                continue;
+            }
+            // Each unit once, in its order.
+            let at = units[next..].iter().position(|(unit, _)| *unit == c)? + next;
+            total += number.parse::<f64>().ok()? * units[at].1;
+            number.clear();
+            next = at + 1;
+            any = true;
+        }
+        if !number.is_empty() {
+            return None;
+        }
+    }
+    any.then_some(total)
+}
+
+/// Keeps in a `tools/list` answer only what [`anonymous_may`] admits; an entry without a name
+/// is dropped too.
+pub(crate) fn keep_anonymous(tools: &mut Vec<Value>) {
+    tools.retain(|tool| tool["name"].as_str().is_some_and(anonymous_may));
+}
+
+/// The words `describe_access` and the `access://` resource answer in (EP-56, EP-57, EP-58).
+pub(crate) const ACCESS_FORMATS: [&str; 3] = ["permissions", "odrl", "grant-ast"];
+
+/// One argument of a broker tool, as Antares `crates/antares-mcp/src/schema.rs` declares it.
+pub(crate) struct Arg {
+    name: &'static str,
+    kind: Kind,
+    required: bool,
+}
+
+const fn req(name: &'static str, kind: Kind) -> Arg {
+    Arg {
+        name,
+        kind,
+        required: true,
+    }
+}
+
+const fn opt(name: &'static str, kind: Kind) -> Arg {
+    Arg {
+        name,
+        kind,
+        required: false,
+    }
+}
+
+/// The broker's argument kinds (Antares `schema.rs` `Kind`). The hub spans many views, so a type
+/// or an attribute is published by its pattern, as the broker publishes one of a view with more
+/// names than an enum holds.
+#[derive(Clone, Copy)]
+enum Kind {
+    Id,
+    Ids,
+    Type,
+    Types,
+    Attr,
+    Attrs,
+    Text(usize),
+    Word(&'static [&'static str]),
+    Int(u64, u64),
+    Flag,
+    Coordinates,
+    Entity,
+    Entities,
+    Fragment,
+    Attribute,
+    Object(&'static [Arg]),
+    ListOf(&'static [Arg], usize),
+    Endpoint,
+    /// A page `limit`: the broker's default and maximum ([`crate::mcp::limits`]).
+    Limit,
+    /// `lastN`: the broker's default and maximum instances per Attribute.
+    LastN,
+}
+
+/// The broker's bounds on a list (Antares `schema.rs`).
+const MAX_ITEMS: usize = 100;
+const MAX_TYPES: usize = 50;
+/// The broker's longest cursor (Antares `cursor.rs`).
+const CURSOR_LEN: usize = 2048;
+
+fn schema_of(kind: Kind) -> Value {
+    let name = |pattern: &str| json!({"type": "string", "pattern": pattern, "maxLength": 256});
+    let members = |core: &[&str]| -> Value {
+        let mut properties = Map::new();
+        for member in core {
+            let kind = if *member == "id" {
+                Kind::Id
+            } else {
+                Kind::Type
+            };
+            properties.insert((*member).to_owned(), schema_of(kind));
+        }
+        Value::Object(properties)
+    };
+    match kind {
+        Kind::Id => json!({"type": "string", "pattern": ENTITY_URN, "maxLength": 512}),
+        Kind::Ids => json!({"type": "array", "maxItems": MAX_ITEMS, "items": schema_of(Kind::Id)}),
+        Kind::Type => name(TYPE_NAME),
+        Kind::Types => {
+            json!({"type": "array", "minItems": 1, "maxItems": MAX_TYPES, "items": schema_of(Kind::Type)})
+        }
+        Kind::Attr => name(ATTR_NAME),
+        Kind::Attrs => {
+            json!({"type": "array", "minItems": 1, "maxItems": MAX_ITEMS, "items": schema_of(Kind::Attr)})
+        }
+        Kind::Text(max) => json!({"type": "string", "maxLength": max}),
+        Kind::Word(words) => json!({"type": "string", "enum": words}),
+        Kind::Int(min, max) => json!({"type": "integer", "minimum": min, "maximum": max}),
+        Kind::Flag => json!({"type": "boolean"}),
+        Kind::Coordinates => json!({"type": "array", "maxItems": 1000}),
+        Kind::Entity => json!({
+            "type": "object",
+            "required": ["id", "type"],
+            "properties": members(&["id", "type"]),
+            "propertyNames": {"pattern": ATTR_NAME, "maxLength": 256},
+        }),
+        Kind::Entities => {
+            json!({"type": "array", "minItems": 1, "maxItems": MAX_ITEMS, "items": schema_of(Kind::Entity)})
+        }
+        Kind::Fragment => json!({
+            "type": "object",
+            "minProperties": 1,
+            "properties": members(&["type"]),
+            "propertyNames": {"pattern": ATTR_NAME, "maxLength": 256},
+        }),
+        Kind::Attribute => json!({"type": "object"}),
+        Kind::Object(args) => Value::Object(input_schema(args)),
+        Kind::ListOf(args, max) => {
+            json!({"type": "array", "maxItems": max, "items": input_schema(args)})
+        }
+        Kind::Endpoint => json!({"type": "string", "maxLength": 2048}),
+        Kind::Limit => crate::mcp::limits::current().schema(false),
+        Kind::LastN => crate::mcp::limits::current().schema(true),
+    }
+}
+
+/// The input schema of a broker tool with `args`, as the broker publishes it. The NGSI-LD grammar
+/// of each argument is said once, in the primer `initialize` answers (EP-116): a line per argument
+/// here cost every turn of every client its bytes again (T-6058).
+fn input_schema(args: &[Arg]) -> Map<String, Value> {
+    let properties: Map<String, Value> = args
+        .iter()
+        .map(|arg| (arg.name.to_owned(), schema_of(arg.kind)))
+        .collect();
+    let required: Vec<&str> = args
+        .iter()
+        .filter(|arg| arg.required)
+        .map(|arg| arg.name)
+        .collect();
+    let mut schema = Map::new();
+    schema.insert("type".into(), json!("object"));
+    schema.insert("properties".into(), Value::Object(properties));
+    if !required.is_empty() {
+        schema.insert("required".into(), json!(required));
+    }
+    schema.insert("additionalProperties".into(), json!(false));
+    schema
+}
+
+// The argument tables of Antares `crates/antares-mcp/src/tools.rs`, one to one (EP-112).
+const GEOMETRIES: &[&str] = &[
+    "Point",
+    "MultiPoint",
+    "LineString",
+    "MultiLineString",
+    "Polygon",
+    "MultiPolygon",
+];
+const JOINS: &[&str] = &["flat", "inline"];
+const TIMERELS: &[&str] = &["before", "after", "between"];
+const TIMEPROPERTIES: &[&str] = &["observedAt", "createdAt", "modifiedAt", "deletedAt"];
+/// The entity representations (CIM 009 6.3.7); `sysAttrs` is the broker's flag for
+/// `options=sysAttrs` (T-4258).
+const FORMATS: &[&str] = &["normalized", "concise", "keyValues"];
+const TEMPORAL_FORMATS: &[&str] = &["normalized", "temporalValues", "aggregatedValues"];
+
+const GET_ENTITY: &[Arg] = &[
+    req("id", Kind::Id),
+    opt("attrs", Kind::Attrs),
+    opt("pick", Kind::Attrs),
+    opt("omit", Kind::Attrs),
+    opt("lang", Kind::Text(64)),
+    opt("join", Kind::Word(JOINS)),
+    opt("joinLevel", Kind::Int(1, 3)),
+    opt("format", Kind::Word(FORMATS)),
+    opt("sysAttrs", Kind::Flag),
+];
+const QUERY: &[Arg] = &[
+    opt("type", Kind::Types),
+    opt("id", Kind::Ids),
+    opt("idPattern", Kind::Text(256)),
+    opt("attrs", Kind::Attrs),
+    opt("pick", Kind::Attrs),
+    opt("omit", Kind::Attrs),
+    opt("q", Kind::Text(4096)),
+    opt("scopeQ", Kind::Text(1024)),
+    opt("georel", Kind::Text(256)),
+    opt("geometry", Kind::Word(GEOMETRIES)),
+    opt("coordinates", Kind::Coordinates),
+    opt("geoproperty", Kind::Attr),
+    opt("local", Kind::Flag),
+    opt("lang", Kind::Text(64)),
+    opt("join", Kind::Word(JOINS)),
+    opt("joinLevel", Kind::Int(1, 3)),
+    opt("format", Kind::Word(FORMATS)),
+    opt("sysAttrs", Kind::Flag),
+    opt("orderBy", Kind::Text(1024)),
+    opt("count", Kind::Flag),
+    opt("limit", Kind::Limit),
+    opt("cursor", Kind::Text(CURSOR_LEN)),
+];
+/// The broker's `summarize` (Antares T-4680): one type and the filters of `query_entities`; it
+/// pages by itself.
+const SUMMARIZE: &[Arg] = &[
+    req("type", Kind::Types),
+    opt("q", Kind::Text(4096)),
+    opt("scopeQ", Kind::Text(1024)),
+    opt("georel", Kind::Text(256)),
+    opt("geometry", Kind::Word(GEOMETRIES)),
+    opt("coordinates", Kind::Coordinates),
+    opt("geoproperty", Kind::Attr),
+    opt("lang", Kind::Text(64)),
+];
+const AREAS: &[&str] = &["Point", "LineString", "Polygon", "MultiPolygon"];
+/// The broker's `area_overview` (Antares T-5279): one area, every type of the view or `type`.
+const AREA: &[Arg] = &[
+    req("geometry", Kind::Word(AREAS)),
+    req("coordinates", Kind::Coordinates),
+    opt("maxDistance", Kind::Int(1, 5000)),
+    opt("type", Kind::Types),
+    opt("limit", Kind::Int(1, 20)),
+    opt("lang", Kind::Text(64)),
+];
+const BATCH_QUERY: &[Arg] = &[
+    req("type", Kind::Types),
+    opt("id", Kind::Ids),
+    opt("attrs", Kind::Attrs),
+    opt("pick", Kind::Attrs),
+    opt("omit", Kind::Attrs),
+    opt("q", Kind::Text(4096)),
+    opt("scopeQ", Kind::Text(1024)),
+    opt("georel", Kind::Text(256)),
+    opt("geometry", Kind::Word(GEOMETRIES)),
+    opt("coordinates", Kind::Coordinates),
+    opt("geoproperty", Kind::Attr),
+    opt("local", Kind::Flag),
+    opt("lang", Kind::Text(64)),
+    opt("count", Kind::Flag),
+    opt("limit", Kind::Limit),
+    opt("cursor", Kind::Text(CURSOR_LEN)),
+];
+const TEMPORAL_ONE: &[Arg] = &[
+    req("id", Kind::Id),
+    opt("attrs", Kind::Attrs),
+    req("timerel", Kind::Word(TIMERELS)),
+    req("timeAt", Kind::Text(64)),
+    opt("endTimeAt", Kind::Text(64)),
+    opt("timeproperty", Kind::Word(TIMEPROPERTIES)),
+    opt("lastN", Kind::LastN),
+    opt("aggrMethods", Kind::Text(256)),
+    opt("aggrPeriodDuration", Kind::Text(64)),
+    opt("format", Kind::Word(TEMPORAL_FORMATS)),
+    opt("sysAttrs", Kind::Flag),
+];
+const TEMPORAL_QUERY: &[Arg] = &[
+    opt("type", Kind::Types),
+    opt("id", Kind::Ids),
+    opt("attrs", Kind::Attrs),
+    opt("q", Kind::Text(4096)),
+    opt("scopeQ", Kind::Text(1024)),
+    opt("georel", Kind::Text(256)),
+    opt("geometry", Kind::Word(GEOMETRIES)),
+    opt("coordinates", Kind::Coordinates),
+    opt("geoproperty", Kind::Attr),
+    req("timerel", Kind::Word(TIMERELS)),
+    req("timeAt", Kind::Text(64)),
+    opt("endTimeAt", Kind::Text(64)),
+    opt("timeproperty", Kind::Word(TIMEPROPERTIES)),
+    opt("lastN", Kind::LastN),
+    opt("aggrMethods", Kind::Text(256)),
+    opt("aggrPeriodDuration", Kind::Text(64)),
+    opt("format", Kind::Word(TEMPORAL_FORMATS)),
+    opt("sysAttrs", Kind::Flag),
+    opt("count", Kind::Flag),
+    opt("limit", Kind::Limit),
+    opt("cursor", Kind::Text(CURSOR_LEN)),
+];
+/// The POST form: its conditions go into the Query document, which has no representation.
+const BATCH_TEMPORAL_QUERY: &[Arg] = &[
+    opt("type", Kind::Types),
+    opt("id", Kind::Ids),
+    opt("attrs", Kind::Attrs),
+    opt("q", Kind::Text(4096)),
+    opt("scopeQ", Kind::Text(1024)),
+    opt("georel", Kind::Text(256)),
+    opt("geometry", Kind::Word(GEOMETRIES)),
+    opt("coordinates", Kind::Coordinates),
+    opt("geoproperty", Kind::Attr),
+    req("timerel", Kind::Word(TIMERELS)),
+    req("timeAt", Kind::Text(64)),
+    opt("endTimeAt", Kind::Text(64)),
+    opt("timeproperty", Kind::Word(TIMEPROPERTIES)),
+    opt("lastN", Kind::LastN),
+    opt("aggrMethods", Kind::Text(256)),
+    opt("aggrPeriodDuration", Kind::Text(64)),
+    opt("count", Kind::Flag),
+    opt("limit", Kind::Limit),
+    opt("cursor", Kind::Text(CURSOR_LEN)),
+];
+const ID_ONLY: &[Arg] = &[req("id", Kind::Text(512))];
+const PAGE_ONLY: &[Arg] = &[
+    opt("count", Kind::Flag),
+    opt("limit", Kind::Limit),
+    opt("cursor", Kind::Text(CURSOR_LEN)),
+];
+const NONE: &[Arg] = &[];
+const ATTR_VALUE: &[Arg] = &[req("id", Kind::Id), req("attrId", Kind::Attr)];
+const TYPE_ONLY: &[Arg] = &[req("type", Kind::Type)];
+const ATTR_ONLY: &[Arg] = &[req("attrId", Kind::Attr)];
+const ENTITY_ID: &[Arg] = &[req("id", Kind::Id)];
+const ENTITY: &[Arg] = &[req("entity", Kind::Entity)];
+const REPLACE: &[Arg] = &[req("id", Kind::Id), req("entity", Kind::Entity)];
+const ATTRIBUTES: &[Arg] = &[req("id", Kind::Id), req("attributes", Kind::Fragment)];
+const APPEND: &[Arg] = &[
+    req("id", Kind::Id),
+    req("attributes", Kind::Fragment),
+    opt("noOverwrite", Kind::Flag),
+];
+const MERGE: &[Arg] = &[req("id", Kind::Id), req("fragment", Kind::Fragment)];
+const ONE_ATTRIBUTE: &[Arg] = &[
+    req("id", Kind::Id),
+    req("attrId", Kind::Attr),
+    req("attribute", Kind::Attribute),
+];
+const DELETE_ATTRIBUTE: &[Arg] = &[
+    req("id", Kind::Id),
+    req("attrId", Kind::Attr),
+    opt("datasetId", Kind::Text(512)),
+    opt("deleteAll", Kind::Flag),
+];
+const BATCH: &[Arg] = &[req("entities", Kind::Entities)];
+const BATCH_UPSERT: &[Arg] = &[
+    req("entities", Kind::Entities),
+    opt("options", Kind::Word(&["update", "replace"])),
+];
+const BATCH_UPDATE: &[Arg] = &[
+    req("entities", Kind::Entities),
+    opt("noOverwrite", Kind::Flag),
+];
+const BATCH_DELETE: &[Arg] = &[req("ids", Kind::Ids)];
+const ENDPOINT: &[Arg] = &[
+    req("uri", Kind::Endpoint),
+    opt(
+        "accept",
+        Kind::Word(&["application/json", "application/ld+json"]),
+    ),
+];
+const NOTIFICATION: &[Arg] = &[
+    opt("attributes", Kind::Attrs),
+    opt(
+        "format",
+        Kind::Word(&["normalized", "concise", "keyValues"]),
+    ),
+    req("endpoint", Kind::Object(ENDPOINT)),
+];
+const SELECTOR: &[Arg] = &[
+    req("type", Kind::Type),
+    opt("id", Kind::Id),
+    opt("idPattern", Kind::Text(256)),
+];
+const SUBSCRIPTION: &[Arg] = &[
+    req("type", Kind::Word(&["Subscription"])),
+    opt("subscriptionName", Kind::Text(256)),
+    opt("description", Kind::Text(1024)),
+    opt("entities", Kind::ListOf(SELECTOR, 50)),
+    opt("watchedAttributes", Kind::Attrs),
+    opt("q", Kind::Text(4096)),
+    req("notification", Kind::Object(NOTIFICATION)),
+    opt("expiresAt", Kind::Text(64)),
+    opt("throttling", Kind::Int(0, 86_400)),
+    opt("isActive", Kind::Flag),
+];
+const SUBSCRIPTION_FRAGMENT: &[Arg] = &[
+    opt("subscriptionName", Kind::Text(256)),
+    opt("description", Kind::Text(1024)),
+    opt("entities", Kind::ListOf(SELECTOR, 50)),
+    opt("watchedAttributes", Kind::Attrs),
+    opt("q", Kind::Text(4096)),
+    opt("notification", Kind::Object(NOTIFICATION)),
+    opt("expiresAt", Kind::Text(64)),
+    opt("throttling", Kind::Int(0, 86_400)),
+    opt("isActive", Kind::Flag),
+];
+const CREATE_SUBSCRIPTION: &[Arg] = &[req("subscription", Kind::Object(SUBSCRIPTION))];
+const UPDATE_SUBSCRIPTION: &[Arg] = &[
+    req("id", Kind::Text(512)),
+    req("fragment", Kind::Object(SUBSCRIPTION_FRAGMENT)),
+];
+
+/// A broker tool: its name, the operation of the gateway's Policy that grants it, its
+/// description, its arguments and its result key, as the broker's view lists it (EP-112).
+const fn broker(
+    name: &'static str,
+    operations: &'static [Operation],
+    description: &'static str,
+    args: &'static [Arg],
+    result_key: &'static str,
+) -> Tool {
+    Tool {
+        name,
+        operations,
+        description,
+        shape: Shape::Broker(args),
+        result_key,
+    }
+}
+
+/// Every tool of the broker's view (Antares `crates/antares-mcp/src/tools.rs`, sorted by name),
+/// then the gateway's two describe tools. The hub and the named servers list these names with
+/// these arguments, so a call that works on an Endpoint's own MCP works on the hub with
+/// `endpoint` beside it, and the hub hands the arguments on as they came (EP-112). A description
+/// names no TS 104 175 clause: its operations do, and a model reads the text on every turn
+/// (T-6058).
+pub(crate) const TOOLS: &[Tool] = &[
+    broker(
+        "append_attributes",
+        &[Operation::AppendAttrs],
+        "Append Attributes to one Entity; noOverwrite keeps those it has. The tool asks the person to confirm before it writes.",
+        APPEND,
+        "result",
+    ),
+    broker(
+        "area_overview",
+        &[Operation::QueryEntity],
+        "Everything in one area, every Entity type at once: per type its count and the limit nearest (id, name, distance in metres, key Attributes). A Point or a LineString with maxDistance in metres, or a Polygon; at most 5000 m, 1000 positions, 100 km². Use it for \"what is here\".",
+        AREA,
+        "overview",
+    ),
+    broker(
+        "batch_create",
+        &[Operation::CreateBatch],
+        "Create several Entities. The tool asks the person to confirm before it writes.",
+        BATCH,
+        "result",
+    ),
+    broker(
+        "batch_delete",
+        &[Operation::DeleteBatch],
+        "Delete several Entities by id. The tool asks the person to confirm before it writes.",
+        BATCH_DELETE,
+        "result",
+    ),
+    broker(
+        "batch_merge",
+        &[Operation::MergeBatch],
+        "Merge into several Entities. The tool asks the person to confirm before it writes.",
+        BATCH,
+        "result",
+    ),
+    broker(
+        "batch_query",
+        &[Operation::QueryBatch],
+        "Query Entities with a Query document (POST form): the Entities of the given types that match the conditions, a page at a time.",
+        BATCH_QUERY,
+        "entities",
+    ),
+    broker(
+        "batch_query_temporal",
+        &[Operation::QueryTemporal],
+        "Query the history of Entities with a Query document (POST form), a page of Entities at a time.",
+        BATCH_TEMPORAL_QUERY,
+        "entities",
+    ),
+    broker(
+        "batch_update",
+        &[Operation::UpdateBatch],
+        "Update Attributes of several Entities. The tool asks the person to confirm before it writes.",
+        BATCH_UPDATE,
+        "result",
+    ),
+    broker(
+        "batch_upsert",
+        &[Operation::UpsertBatch],
+        "Create several Entities or update those that exist. The tool asks the person to confirm before it writes.",
+        BATCH_UPSERT,
+        "result",
+    ),
+    broker(
+        "create_entity",
+        &[Operation::CreateEntity],
+        "Create one Entity. The tool asks the person to confirm before it writes.",
+        ENTITY,
+        "created",
+    ),
+    broker(
+        "create_subscription",
+        &[Operation::CreateSubscription],
+        "Subscribe an endpoint the deployment allows to changes of Entities. The tool asks the person to confirm before it writes.",
+        CREATE_SUBSCRIPTION,
+        "created",
+    ),
+    broker(
+        "delete_attribute",
+        &[Operation::DeleteAttrs],
+        "Delete one Attribute of one Entity. The tool asks the person to confirm before it writes.",
+        DELETE_ATTRIBUTE,
+        "result",
+    ),
+    broker(
+        "delete_entity",
+        &[Operation::DeleteEntity],
+        "Delete one Entity. The tool asks the person to confirm before it writes.",
+        ENTITY_ID,
+        "result",
+    ),
+    broker(
+        "delete_subscription",
+        &[Operation::DeleteSubscription],
+        "Delete one Subscription. The tool asks the person to confirm before it writes.",
+        ID_ONLY,
+        "result",
+    ),
+    broker(
+        "get_attribute",
+        &[Operation::RetrieveAttrTypeInfo],
+        "Describe one Attribute: the types that carry it and how many instances exist.",
+        ATTR_ONLY,
+        "attribute",
+    ),
+    broker(
+        "get_attribute_value",
+        &[Operation::RetrieveEntity],
+        "Read one Attribute of one Entity.",
+        ATTR_VALUE,
+        "attribute",
+    ),
+    broker(
+        "get_entity",
+        &[Operation::RetrieveEntity],
+        "Read one Entity by its id; attrs, pick and omit narrow what it returns.",
+        GET_ENTITY,
+        "entity",
+    ),
+    broker(
+        "get_subscription",
+        &[Operation::RetrieveSubscription],
+        "Read one Subscription made through this endpoint.",
+        ID_ONLY,
+        "subscription",
+    ),
+    broker(
+        "get_type",
+        &[Operation::RetrieveEntityTypeInfo],
+        "Describe one Entity type: its Attributes and how many Entities it has.",
+        TYPE_ONLY,
+        "entityType",
+    ),
+    broker(
+        "list_attribute_details",
+        &[Operation::RetrieveAttrTypeDetails],
+        "List the Attributes with the types that carry each.",
+        NONE,
+        "attributes",
+    ),
+    broker(
+        "list_attributes",
+        &[Operation::RetrieveAttrTypes],
+        "List the names of the Attributes this endpoint serves.",
+        NONE,
+        "attributes",
+    ),
+    broker(
+        "list_subscriptions",
+        &[Operation::QuerySubscription],
+        "List the Subscriptions made through this endpoint, a page at a time.",
+        PAGE_ONLY,
+        "subscriptions",
+    ),
+    broker(
+        "list_type_details",
+        &[Operation::RetrieveEntityTypeDetails],
+        "List the Entity types with the Attributes of each.",
+        NONE,
+        "entityTypes",
+    ),
+    broker(
+        "list_types",
+        &[Operation::RetrieveEntityTypes],
+        "List the names of the Entity types this endpoint serves.",
+        NONE,
+        "entityTypes",
+    ),
+    broker(
+        "merge_entity",
+        &[Operation::MergeEntity],
+        "Merge a fragment into one Entity. The tool asks the person to confirm before it writes.",
+        MERGE,
+        "result",
+    ),
+    broker(
+        "query_entities",
+        &[Operation::QueryEntity],
+        "Query Entities: by type, id, q, scopeQ or area, a page at a time. Give at least one of type, attrs, q, georel or local.",
+        QUERY,
+        "entities",
+    ),
+    broker(
+        "query_temporal",
+        &[Operation::QueryTemporal],
+        "Query the history of Entities between timeAt and endTimeAt, a page of Entities at a time; lastN bounds each Attribute's instances. A window over a day answers hourly averages (daily past 31 days) unless format or lastN asks raw values; an answer the broker cut carries `more.next`, the window to call for the rest.",
+        TEMPORAL_QUERY,
+        "entities",
+    ),
+    broker(
+        "replace_attribute",
+        &[Operation::ReplaceAttrs],
+        "Replace one Attribute of one Entity. The tool asks the person to confirm before it writes.",
+        ONE_ATTRIBUTE,
+        "result",
+    ),
+    broker(
+        "replace_entity",
+        &[Operation::ReplaceEntity],
+        "Replace one Entity whole. The tool asks the person to confirm before it writes.",
+        REPLACE,
+        "result",
+    ),
+    broker(
+        "retrieve_temporal",
+        &[Operation::RetrieveTemporal],
+        "Read the history of one Entity between timeAt and endTimeAt; lastN bounds each Attribute's instances. A window over a day answers hourly averages (daily past 31 days) unless format or lastN asks raw values; an answer the broker cut carries `more.next`, the window to call for the rest.",
+        TEMPORAL_ONE,
+        "entity",
+    ),
+    broker(
+        "summarize",
+        &[Operation::QueryEntity],
+        "Profile one Entity type: its count and, per Attribute, statistics (min, max, mean, median, the most common values, the area) over at most 1,000 of the Entities the caller reads, and five of them. Use it for a broad question; use query_entities for specific Entities.",
+        SUMMARIZE,
+        "summary",
+    ),
+    broker(
+        "update_attribute",
+        &[Operation::UpdateAttrs],
+        "Update part of one Attribute of one Entity. The tool asks the person to confirm before it writes.",
+        ONE_ATTRIBUTE,
+        "result",
+    ),
+    broker(
+        "update_attributes",
+        &[Operation::UpdateAttrs],
+        "Update Attributes one Entity has. The tool asks the person to confirm before it writes.",
+        ATTRIBUTES,
+        "result",
+    ),
+    broker(
+        "update_subscription",
+        &[Operation::UpdateSubscription],
+        "Update one Subscription. The tool asks the person to confirm before it writes.",
+        UPDATE_SUBSCRIPTION,
+        "result",
+    ),
+    Tool {
+        name: "describe_access",
+        operations: &[],
+        description:
+            "The caller's effective grants here: operations, attributes, residual constraints. \
+             `format` picks the language: `permissions` (AuthZEN, the default), `odrl` (ODRL 2.2) \
+             or `grant-ast` (UCAST); the grants are the same in all three (EP-60).",
+        shape: Shape::Own(|| {
+            json!({
+                "type": "object",
+                "properties": {
+                    "format": { "type": "string", "enum": ACCESS_FORMATS },
+                },
+                "additionalProperties": false,
+            })
+        }),
+        result_key: "access",
+    },
+    Tool {
+        name: "describe_schema",
+        // The schema is the description of what a read returns, so any read is enough to
+        // be shown it; what it then contains is projected to the grant (EP-47).
+        operations: &[
+            Operation::QueryEntity,
+            Operation::RetrieveEntity,
+            Operation::RetrieveEntityTypes,
+        ],
+        description:
+            "Inspect the data model of this context space, narrowed to the caller's grant. \
+             Read linkml first: it carries the classes, their slots and their descriptions in \
+             one small document. The default `summary` lists every artifact with its size and \
+             digest and says which to read.",
+        shape: Shape::Own(|| {
+            json!({
+                "type": "object",
+                "properties": {
+                    "format": {
+                        "type": "string",
+                        "enum": [
+                            "summary", "json-schema", "context",
+                            "linkml", "shacl", "owl", "rdf", "markdown", "qb",
+                        ],
+                        "description": "summary (the default) lists the models and every artifact with its format, size and digest, linkml first; the others render one, the text formalisms as {format, mediaType, document}; qb only where the model is a data cube",
+                    },
+                    "entityType": {
+                        "oneOf": [
+                            schema_of(Kind::Type),
+                            {
+                                "type": "array",
+                                "items": schema_of(Kind::Type),
+                                "minItems": 1,
+                                "maxItems": 64,
+                            },
+                        ],
+                        "description": "One entity type, or the list of the classes you need",
+                    },
+                    "version": { "type": "integer", "minimum": 1, "description": "Model major version" },
+                },
+                "additionalProperties": false,
+            })
+        }),
+        result_key: "schema",
+    },
+];
+
+/// One compiled validator per tool, in the order of `TOOLS` (AG-31).
+///
+/// Compiled once rather than per call: the schemas are constants, and an agent that asks
+/// twice pays for the compilation once. A schema that does not compile leaves its tool
+/// without a validator, and `validate` then refuses every call to it rather than letting
+/// unvalidated arguments through.
+static VALIDATORS: LazyLock<Vec<Option<jsonschema::Validator>>> = LazyLock::new(|| {
+    TOOLS
+        .iter()
+        .map(|tool| jsonschema::draft7::new(&tool.input_schema()).ok())
+        .collect()
+});
+
+/// Checks one tool's arguments against its published JSON Schema before anything is built
+/// from them (AG-21, AG-31).
+///
+/// `additionalProperties: false` is in every schema, so an unknown field is an error here
+/// rather than a parameter that is silently dropped and an answer that quietly means
+/// something else.
+pub(crate) fn validate(index: usize, arguments: &Map<String, Value>) -> Result<(), String> {
+    let Some(Some(validator)) = VALIDATORS.get(index) else {
+        return Err(
+            "this tool's schema does not compile, so its arguments cannot be checked".to_owned(),
+        );
+    };
+    let instance = Value::Object(arguments.clone());
+    let problems: Vec<String> = validator
+        .iter_errors(&instance)
+        .map(|error| {
+            let at = error.instance_path().to_string();
+            let rule = broken_rule(&error);
+            match at.is_empty() {
+                true => rule,
+                false => format!("{at}: {rule}"),
+            }
+        })
+        .collect();
+    match problems.is_empty() {
+        true => Ok(()),
+        false => Err(problems.join("; ")),
+    }
+}
+
+/// Names the rule an argument broke, without repeating what the caller sent (GW31, AG-21).
+///
+/// A validator writes the offending value into its own message, and a tool error is read by a
+/// model: a refusal that quotes the argument carries whatever was typed into the next prompt.
+/// The place and the rule are what a caller needs to correct the call; the value it already has.
+fn broken_rule(error: &jsonschema::ValidationError<'_>) -> String {
+    use jsonschema::error::ValidationErrorKind as Rule;
+    match error.kind() {
+        Rule::AdditionalProperties { unexpected } => {
+            format!(
+                "no argument of this tool is called {}",
+                unexpected.join(", ")
+            )
+        }
+        Rule::Required { property } => format!("{property} is required"),
+        // A list of alternatives, each one argument the call has to name (CIM 009 5.7.2.4): the
+        // names are what the caller needs, not the keyword (T-3044).
+        Rule::AnyOf { context } => {
+            let names: Vec<&str> = context
+                .iter()
+                .filter_map(|branch| match branch.as_slice() {
+                    [only] => match only.kind() {
+                        Rule::Required { property } => property.as_str(),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect();
+            match !names.is_empty() && names.len() == context.len() {
+                true => format!(
+                    "names none of {}: one of them is required",
+                    names.join(", ")
+                ),
+                false => "matches none of the shapes the schema allows".to_owned(),
+            }
+        }
+        Rule::Type { .. } => "is not of the type the schema declares".to_owned(),
+        Rule::Pattern { pattern } => format!("does not match {pattern}"),
+        Rule::MaxLength { limit } => format!("is longer than {limit} characters"),
+        Rule::MinLength { limit } => format!("is shorter than {limit} characters"),
+        Rule::MaxItems { limit } => format!("has more than {limit} items"),
+        Rule::MinItems { limit } => format!("has fewer than {limit} items"),
+        Rule::Maximum { limit } => format!("is above {limit}"),
+        Rule::Minimum { limit } => format!("is below {limit}"),
+        Rule::Enum { options } => format!("is not one of {options}"),
+        Rule::Format { format } => format!("is not a {format}"),
+        _ => {
+            let keyword = error.schema_path().to_string();
+            let keyword = keyword.rsplit('/').next().unwrap_or_default().to_owned();
+            match keyword.is_empty() {
+                true => "is not what the schema allows".to_owned(),
+                false => format!("breaks the schema's {keyword}"),
+            }
+        }
+    }
+}
+
+/// Whether the caller holds any of the tool's operations, asked of the PDP that also
+/// enforces them, so discovery and enforcement cannot drift (SP-16).
+pub(crate) fn granted(
+    gateway: &Gateway,
+    endpoint: &Endpoint,
+    subject: &Subject,
+    operations: &[Operation],
+) -> bool {
+    operations.is_empty()
+        || operations.iter().any(|operation| {
+            !matches!(
+                gateway
+                    .pdp
+                    .decide(subject, *operation, &PolicyRequest::default(), endpoint),
+                Verdict::Deny
+            )
+        })
+}
+
+/// Whether the caller may read anything on this Endpoint: a data tool its grants cover. An
+/// Endpoint that answers only the describing tools is not one the hub lists (ADR-N-025 2.1).
+pub(crate) fn reads_anything(gateway: &Gateway, endpoint: &Endpoint, subject: &Subject) -> bool {
+    TOOLS.iter().any(|tool| {
+        !tool.operations.is_empty() && granted(gateway, endpoint, subject, tool.operations)
+    })
+}
+
+/// The hub's catalogue (ADR-N-025 2.2, 2.8): each tool once, listed when at least one Endpoint of
+/// the caller's list grants it, with the one required `endpoint` argument: a string, never an
+/// enum of the list, so `tools/list` is the same size for 10 Endpoints and for 10,000 (T-4491).
+pub(crate) fn hub_tools(gateway: &Gateway, reach: &[(Arc<Endpoint>, Subject)]) -> Vec<Value> {
+    TOOLS
+        .iter()
+        .filter(|tool| {
+            reach
+                .iter()
+                .any(|(endpoint, subject)| granted(gateway, endpoint, subject, tool.operations))
+        })
+        .map(|tool| {
+            let mut schema = tool.input_schema();
+            if let Value::Object(object) = &mut schema {
+                if let Some(Value::Object(properties)) = object.get_mut("properties") {
+                    properties.insert(
+                        "endpoint".to_owned(),
+                        json!({
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "description": "An Endpoint's slug, title or space",
+                        }),
+                    );
+                }
+                // The catalogue answers these when no Endpoint is named (T-4501).
+                if !crate::mcp::catalog::TOOLS.contains(&tool.name) {
+                    match object.get_mut("required") {
+                        Some(Value::Array(required)) => required.push(json!("endpoint")),
+                        _ => {
+                            object.insert("required".to_owned(), json!(["endpoint"]));
+                        }
+                    }
+                }
+            }
+            json!({
+                "name": tool.name,
+                // How `endpoint` is named is said once, in the hub's instructions (T-4506); the
+                // broker's default and maximum page are the schema's `default` and `maximum`
+                // (T-4804), never a sentence again (T-6058).
+                "description": tool.description,
+                "inputSchema": schema,
+                "outputSchema": output_schema(tool),
+                "annotations": {
+                    "readOnlyHint": tool.read_only(),
+                    "destructiveHint": tool.destructive(),
+                },
+            })
+        })
+        .collect()
+}
+
+/// How the hub stands with one tool on the Endpoint a call names (ADR-N-025 2.8, SP-17, SP-20).
+pub(crate) enum HubTool {
+    /// No such tool, or none of the caller's Endpoints grants it: the hub never listed it.
+    Unknown,
+    /// Listed, because another Endpoint of the caller's list grants it, and not granted here:
+    /// the tool error that names the Endpoint and the operation.
+    Ungranted(Value),
+    /// The Endpoint grants it; the call goes on as that Endpoint's own.
+    Granted,
+}
+
+/// Where `name` stands on `endpoint` for a caller whose hub list is `reach`.
+pub(crate) fn hub_tool(
+    gateway: &Gateway,
+    endpoint: &Endpoint,
+    subject: &Subject,
+    reach: &[(Arc<Endpoint>, Subject)],
+    name: &str,
+) -> HubTool {
+    let Some(tool) = TOOLS.iter().find(|tool| tool.name == name) else {
+        return HubTool::Unknown;
+    };
+    if granted(gateway, endpoint, subject, tool.operations) {
+        return HubTool::Granted;
+    }
+    let listed = reach
+        .iter()
+        .any(|(other, holder)| granted(gateway, other, holder, tool.operations));
+    if !listed {
+        return HubTool::Unknown;
+    }
+    let operations: Vec<&str> = tool.operations.iter().map(Operation::as_str).collect();
+    HubTool::Ungranted(refused(
+        &format!(
+            "the Endpoint `{}` does not grant {} to this caller; `{name}` answers only on the \
+             Endpoints whose Policy grants it (SP-17)",
+            endpoint.slug,
+            operations.join(" or ")
+        ),
+        &Value::Null,
+    ))
+}
+
+/// What a tool's `structuredContent` looks like, published beside its input schema so a
+/// client can validate the half it parses (MCP `outputSchema`).
+///
+/// The payload's own shape is the data model's, not MCP's — a schema here would be a second
+/// copy of it that drifts — so the output schema names what the object carries and leaves the
+/// value to `describe_schema`.
+pub(crate) fn output_schema(tool: &Tool) -> Value {
+    json!({
+        "type": "object",
+        // The tool's own description says what it is; what `restricted` and `jc:source` mean is
+        // said once, in the primer (T-4506, AG-13, EP-71), and the open schema admits both
+        // (T-6058).
+        "properties": { tool.result_key: {} },
+        "required": [tool.result_key],
+    })
+}
+
+#[cfg(test)]
+mod tests;

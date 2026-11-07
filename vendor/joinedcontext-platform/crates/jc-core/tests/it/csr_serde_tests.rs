@@ -1,0 +1,463 @@
+//! T-0303: the `ContextSourceRegistration` manifest (MF-36, PF-48, SP-09).
+//!
+//! Federation is the one place where a manifest changes where an answer can come from, so the
+//! things worth a test here are the refusals: a registration that says nothing about where the
+//! data is, one that says two things, one that claims no coverage and would federate silently,
+//! and an identity that has nothing to forward as.
+
+use jc_core::envelope::ResourceEnvelope;
+use jc_core::kinds::{ContextSourceRegistrationSpec, FederationIdentity, RegistrationMode};
+use jc_core::registry;
+
+type Registration = ResourceEnvelope<ContextSourceRegistrationSpec>;
+
+const LOCAL: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSourceRegistration
+metadata:
+  name: transport
+  namespace: helsinki
+  title: { fi: "Liikenne", en: "Transport" }
+spec:
+  contextSpaceRef: hub
+  endpointRef: { kind: Endpoint, name: transport-internal }
+  information:
+    - entities:
+        - type: Vehicle
+      propertyNames: [location, speed, occupancy]
+  federation:
+    identity: serviceAccount
+    serviceAccountRef: { kind: ServiceAccount, name: hub-reader }
+"#;
+
+const EXTERNAL: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSourceRegistration
+metadata:
+  name: regional-air
+  namespace: helsinki
+spec:
+  contextSpaceRef: hub
+  endpoint: https://regional.example/ngsi-ld/v1
+  mode: exclusive
+  expiresAt: '2027-01-01T00:00:00Z'
+  information:
+    - entities:
+        - type: AirQualityObserved
+  federation:
+    identity: caller
+"#;
+
+#[test]
+fn a_registration_on_this_platform_round_trips() {
+    let parsed = Registration::from_yaml(LOCAL).expect("parses");
+    parsed.validate().expect("valid");
+    assert_eq!(parsed.spec.context_space_ref.name(), "hub");
+    assert_eq!(
+        parsed.spec.endpoint_ref.as_ref().map(|r| r.name()),
+        Some("transport-internal")
+    );
+    assert_eq!(
+        parsed.spec.federation.identity,
+        FederationIdentity::ServiceAccount
+    );
+    // The default is the merging one: a source that silently became the only answer for what
+    // it covers would hide the broker's own data without the manifest saying so.
+    assert_eq!(parsed.spec.mode, RegistrationMode::Inclusive);
+
+    let again = Registration::from_yaml(&serde_norway::to_string(&parsed).expect("serialize"))
+        .expect("re-parses");
+    assert_eq!(parsed, again);
+}
+
+#[test]
+fn a_registration_elsewhere_round_trips() {
+    let parsed = Registration::from_yaml(EXTERNAL).expect("parses");
+    parsed.validate().expect("valid");
+    assert_eq!(
+        parsed.spec.endpoint.as_deref(),
+        Some("https://regional.example/ngsi-ld/v1")
+    );
+    assert_eq!(parsed.spec.mode, RegistrationMode::Exclusive);
+    assert!(parsed.spec.expires_at.is_some());
+}
+
+#[test]
+fn the_source_is_named_once_and_only_once() {
+    let neither = LOCAL.replace(
+        "  endpointRef: { kind: Endpoint, name: transport-internal }\n",
+        "",
+    );
+    assert!(
+        Registration::from_yaml(&neither)
+            .unwrap()
+            .validate()
+            .is_err(),
+        "a registration that does not say where the data is federates nothing"
+    );
+
+    let both = LOCAL.replace(
+        "  endpointRef: { kind: Endpoint, name: transport-internal }",
+        "  endpointRef: { kind: Endpoint, name: transport-internal }\n  endpoint: https://elsewhere.example/ngsi-ld/v1",
+    );
+    assert!(
+        Registration::from_yaml(&both).unwrap().validate().is_err(),
+        "two targets means the reconciler would have to choose one"
+    );
+}
+
+#[test]
+fn a_claim_of_nothing_is_refused() {
+    let empty = LOCAL.replace(
+        "  information:\n    - entities:\n        - type: Vehicle\n      propertyNames: [location, speed, occupancy]\n",
+        "  information: []\n",
+    );
+    assert!(Registration::from_yaml(&empty).unwrap().validate().is_err());
+
+    let no_entities = LOCAL.replace(
+        "    - entities:\n        - type: Vehicle\n      propertyNames: [location, speed, occupancy]",
+        "    - entities: []",
+    );
+    assert!(
+        Registration::from_yaml(&no_entities)
+            .unwrap()
+            .validate()
+            .is_err(),
+        "an information entry with no entity selector matches nothing"
+    );
+}
+
+#[test]
+fn a_registration_carries_no_attribute_capabilities() {
+    let with_block = LOCAL.replace(
+        "      propertyNames: [location, speed, occupancy]\n",
+        "      propertyNames: [location, speed, occupancy]\n      attributes: { speed: { history: true } }\n",
+    );
+    assert_ne!(with_block, LOCAL);
+    let refusal = Registration::from_yaml(&with_block)
+        .expect("parses")
+        .validate()
+        .expect_err("refused");
+    assert!(refusal.to_string().contains("Policy"), "{refusal}");
+}
+
+/// PF-48: neither identity is a grant, and neither may be arrived at by accident.
+#[test]
+fn an_identity_has_to_be_one_the_forward_can_actually_use() {
+    let no_account = LOCAL.replace(
+        "\n    serviceAccountRef: { kind: ServiceAccount, name: hub-reader }",
+        "",
+    );
+    assert!(
+        Registration::from_yaml(&no_account)
+            .unwrap()
+            .validate()
+            .is_err(),
+        "serviceAccount identity with no account would fall back to something nobody wrote"
+    );
+
+    let caller_with_account = LOCAL.replace("identity: serviceAccount", "identity: caller");
+    assert!(
+        Registration::from_yaml(&caller_with_account)
+            .unwrap()
+            .validate()
+            .is_err(),
+        "an account that would never be used reads as a grant that is not there"
+    );
+
+    let wrong_kind = LOCAL.replace(
+        "kind: ServiceAccount, name: hub-reader",
+        "kind: Policy, name: hub-reader",
+    );
+    assert!(Registration::from_yaml(&wrong_kind)
+        .unwrap()
+        .validate()
+        .is_err());
+}
+
+/// PF-48: a hub reads its members' tenants directly, so registering one is what exposes it to
+/// the hub's audience. That act stays inside the steward's own project.
+#[test]
+fn a_member_of_another_project_is_refused() {
+    for (field, yaml) in [
+        (
+            "spec.endpointRef.namespace",
+            LOCAL.replace(
+                "endpointRef: { kind: Endpoint, name: transport-internal }",
+                "endpointRef: { kind: Endpoint, name: transport-internal, namespace: espoo }",
+            ),
+        ),
+        (
+            "spec.contextSpaceRef.namespace",
+            LOCAL.replace(
+                "contextSpaceRef: hub",
+                "contextSpaceRef: { kind: ContextSpace, name: hub, namespace: espoo }",
+            ),
+        ),
+    ] {
+        let parsed = Registration::from_yaml(&yaml).expect("parses");
+        let refused = parsed.validate().expect_err("another project is refused");
+        let said = refused.to_string();
+        assert!(said.contains(field), "{field}: {said}");
+        assert!(said.contains("espoo"), "{field}: {said}");
+    }
+
+    // The project's own namespace, spelled out, is the same project and stays valid.
+    let same = LOCAL.replace(
+        "endpointRef: { kind: Endpoint, name: transport-internal }",
+        "endpointRef: { kind: Endpoint, name: transport-internal, namespace: helsinki }",
+    );
+    Registration::from_yaml(&same)
+        .expect("parses")
+        .validate()
+        .expect("the hub's own project is not a crossing");
+}
+
+#[test]
+fn an_external_source_is_a_url() {
+    let not_a_url = EXTERNAL.replace("https://regional.example/ngsi-ld/v1", "regional.example");
+    assert!(Registration::from_yaml(&not_a_url)
+        .unwrap()
+        .validate()
+        .is_err());
+}
+
+#[test]
+fn a_manifest_field_nobody_declared_is_refused() {
+    let extra = LOCAL.replace(
+        "  contextSpaceRef: hub",
+        "  contextSpaceRef: hub\n  tenant: helsinki",
+    );
+    assert!(
+        Registration::from_yaml(&extra).is_err(),
+        "the tenant is the platform's to set, never a manifest's (SP-08, SP-09)"
+    );
+}
+
+#[test]
+fn the_kind_is_in_the_catalogue_with_its_repository_path() {
+    let info = registry::by_kind("ContextSourceRegistration").expect("registered");
+    assert_eq!(info.plural, "csrs");
+    assert_eq!(
+        info.repo_path("helsinki", "hub", "transport"),
+        "projects/helsinki/spaces/hub/registrations/transport.yaml"
+    );
+    assert_eq!(
+        registry::by_plural("csrs").map(|k| k.kind),
+        Some("ContextSourceRegistration")
+    );
+    assert!(registry::validate_yaml("ContextSourceRegistration", LOCAL)
+        .expect("known kind")
+        .is_ok());
+    let schema = registry::schema_of("ContextSourceRegistration").expect("schema");
+    assert_eq!(
+        schema.get("$schema").and_then(|v| v.as_str()),
+        Some("http://json-schema.org/draft-07/schema#")
+    );
+}
+
+/// What `validate` says about `yaml`: `Ok(())` or the refusal's text.
+fn verdict(yaml: &str) -> Result<(), String> {
+    Registration::from_yaml(yaml)
+        .expect("parses")
+        .validate()
+        .map_err(|err| err.to_string())
+}
+
+/// T-2501 (MF-36, PF-48): each manifest below breaks one rule, and the refusal names the field
+/// a person has to change. Cases 1, 2, 5, 6, 7, 8, 9 and 11.
+#[test]
+fn every_broken_rule_is_refused_by_the_field_it_breaks() {
+    let cases: [(&str, String, &str); 10] = [
+        (
+            "a space of another project, with no endpointRef to catch it first",
+            EXTERNAL.replace(
+                "contextSpaceRef: hub",
+                "contextSpaceRef: { kind: ContextSpace, name: hub, namespace: espoo }",
+            ),
+            "spec.contextSpaceRef.namespace",
+        ),
+        (
+            "caller identity with a ServiceAccount of an empty name",
+            EXTERNAL.replace(
+                "    identity: caller\n",
+                "    identity: caller\n    serviceAccountRef: \"\"\n",
+            ),
+            "spec.federation.serviceAccountRef",
+        ),
+        (
+            "an operation of whitespace",
+            LOCAL.replace(
+                "  federation:",
+                "  operations: [retrieveEntity, \"  \"]\n  federation:",
+            ),
+            "spec.operations",
+        ),
+        (
+            "an information entry that selects no type",
+            LOCAL
+                .replace(
+                    "        - type: Vehicle\n      propertyNames: [location, speed, occupancy]",
+                    "        []",
+                )
+                .replace("    - entities:\n        []", "    - entities: []"),
+            "spec.information.entities",
+        ),
+        (
+            "an endpointRef to another kind",
+            LOCAL.replace(
+                "{ kind: Endpoint, name: transport-internal }",
+                "{ kind: ContextSpace, name: transport-internal }",
+            ),
+            "spec.endpointRef.kind",
+        ),
+        (
+            "a serviceAccountRef to another kind",
+            LOCAL.replace(
+                "{ kind: ServiceAccount, name: hub-reader }",
+                "{ kind: Group, name: hub-reader }",
+            ),
+            "spec.federation.serviceAccountRef.kind",
+        ),
+        (
+            "an address that is not http(s)",
+            EXTERNAL.replace(
+                "https://regional.example/ngsi-ld/v1",
+                "ftp://regional.example/ngsi-ld/v1",
+            ),
+            "spec.endpoint",
+        ),
+        (
+            "a mirror schedule driven by a webhook",
+            EXTERNAL.replace(
+                "  mode: exclusive",
+                "  mode: exclusive\n  schedule: { webhook: true }",
+            ),
+            "spec.schedule.webhook",
+        ),
+        (
+            "a mirror schedule with an interval nobody can parse",
+            EXTERNAL.replace(
+                "  mode: exclusive",
+                "  mode: exclusive\n  schedule: { interval: soon }",
+            ),
+            "spec.schedule.interval",
+        ),
+        (
+            "a mirror schedule with no interval",
+            EXTERNAL.replace("  mode: exclusive", "  mode: exclusive\n  schedule: {}"),
+            "spec.schedule",
+        ),
+    ];
+    for (what, yaml, field) in cases {
+        let said = verdict(&yaml).expect_err(what);
+        assert!(said.contains(field), "{what}: {said}");
+    }
+}
+
+/// Case 3: a ServiceAccount identity with no account is refused: a hub that fell back to the
+/// caller's token would be a widening nobody wrote down.
+#[test]
+fn service_account_identity_with_no_ref_is_refused_before_any_forward_is_attempted() {
+    let yaml = LOCAL.replace(
+        "    serviceAccountRef: { kind: ServiceAccount, name: hub-reader }\n",
+        "",
+    );
+    let said = verdict(&yaml).expect_err("no account to forward as");
+    assert!(said.contains("spec.federation.serviceAccountRef"), "{said}");
+}
+
+/// Case 10: an endpointRef without a namespace is the registration's own project.
+#[test]
+fn an_endpoint_ref_with_no_namespace_defaults_to_the_registrations_own_project() {
+    verdict(LOCAL).expect("valid");
+    let parsed = Registration::from_yaml(LOCAL).expect("parses");
+    assert_eq!(
+        parsed
+            .spec
+            .endpoint_ref
+            .as_ref()
+            .and_then(|r| r.namespace()),
+        None
+    );
+    parsed
+        .spec
+        .validate_scope(Some("helsinki"))
+        .expect("its own project");
+}
+
+/// T-2550 (PF-48): the account a hub forwards as belongs to the hub's project, like the space
+/// and the member. Another project's account would be one steward borrowing another's identity.
+#[test]
+fn a_service_account_of_another_project_is_refused() {
+    let yaml = LOCAL.replace(
+        "{ kind: ServiceAccount, name: hub-reader }",
+        "{ kind: ServiceAccount, name: hub-reader, namespace: espoo }",
+    );
+    let said = verdict(&yaml).expect_err("another project's account");
+    assert!(
+        said.contains("spec.federation.serviceAccountRef.namespace"),
+        "{said}"
+    );
+    assert!(said.contains("espoo"), "{said}");
+
+    let own = LOCAL.replace(
+        "{ kind: ServiceAccount, name: hub-reader }",
+        "{ kind: ServiceAccount, name: hub-reader, namespace: helsinki }",
+    );
+    verdict(&own).expect("the hub's own project");
+}
+
+/// T-2550 (MF-24): an address with a user and password in it is a credential committed to Git
+/// and written into the broker. It is refused, and the refusal does not repeat it.
+#[test]
+fn a_credential_in_the_endpoint_address_is_refused_and_not_repeated() {
+    for address in [
+        "https://svc-user:s3cret-pass@regional.example/ngsi-ld/v1",
+        "http://s3cret-pass@broker.members.svc:8080",
+    ] {
+        let yaml = EXTERNAL.replace("https://regional.example/ngsi-ld/v1", address);
+        let said = verdict(&yaml).expect_err(address);
+        assert!(said.contains("spec.endpoint"), "{said}");
+        assert!(
+            !said.contains("s3cret-pass"),
+            "the secret is repeated: {said}"
+        );
+    }
+    // An `@` in the path is not a credential.
+    let path = EXTERNAL.replace(
+        "https://regional.example/ngsi-ld/v1",
+        "https://regional.example/ngsi-ld/v1/@context",
+    );
+    verdict(&path).expect("an @ after the host");
+}
+
+/// T-6545 (PF-48): `anonymous` forwards no credential, so it is only for an https address
+/// outside this platform; a member Endpoint here, a plain http hop or an account it would never
+/// use is refused by the field to change.
+#[test]
+fn an_anonymous_forward_reaches_only_an_https_address_elsewhere() {
+    let anonymous = EXTERNAL.replace("identity: caller", "identity: anonymous");
+    let parsed = Registration::from_yaml(&anonymous).expect("parses");
+    parsed.validate().expect("valid");
+    assert_eq!(
+        parsed.spec.federation.identity,
+        FederationIdentity::Anonymous
+    );
+
+    let plain_http = anonymous.replace("https://regional", "http://regional");
+    let refusal = verdict(&plain_http).expect_err("http refused");
+    assert!(refusal.contains("spec.endpoint"), "{refusal}");
+
+    let with_account = anonymous.replace(
+        "identity: anonymous",
+        "identity: anonymous\n    serviceAccountRef: { kind: ServiceAccount, name: hub-reader }",
+    );
+    let refusal = verdict(&with_account).expect_err("account refused");
+    assert!(refusal.contains("serviceAccountRef"), "{refusal}");
+
+    let local = LOCAL.replace(
+        "identity: serviceAccount\n    serviceAccountRef: { kind: ServiceAccount, name: hub-reader }",
+        "identity: anonymous",
+    );
+    let refusal = verdict(&local).expect_err("a member Endpoint refused");
+    assert!(refusal.contains("spec.federation.identity"), "{refusal}");
+}

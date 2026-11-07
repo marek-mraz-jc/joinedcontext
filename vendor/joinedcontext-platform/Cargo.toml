@@ -1,0 +1,32 @@
+# Vendored into the jc monorepo (vendor/SOURCES.md): only the crates the Portal links; the kreuzberg
+# patch belongs to crates not copied here.
+[workspace]
+resolver = "2"
+members = ["crates/jc-core", "crates/jc-dcat", "crates/jc-manifest", "crates/jc-ngsi-input", "crates/jc-relationships", "crates/jc-tabular", "crates/context-gateway", "crates/jcctl"]
+
+[workspace.package]
+edition = "2021"
+license = "EUPL-1.2"
+repository = "https://github.com/marek-mraz-jc/joinedcontext-platform"
+
+[workspace.dependencies]
+# One line per crate several members share, so a bump moves every member at once (the ngsild tag
+# above all: two tags link two ngsild-ql). Members add their own `features`; reqwest stays without
+# its default TLS stack here and each member names the one it needs.
+antares-ql = { package = "ngsild-ql", git = "https://github.com/marek-mraz-jc/ngsild", tag = "v0.3.0", version = "0.3" }
+antares-jsonld = { package = "ngsild-jsonld", git = "https://github.com/marek-mraz-jc/ngsild", tag = "v0.3.0", version = "0.3" }
+antares-matcher = { package = "ngsild-matcher", git = "https://github.com/marek-mraz-jc/ngsild", tag = "v0.3.0", version = "0.3" }
+base64 = "0.22"
+jsonwebtoken = "9"
+regex = "1"
+reqwest = { version = "0.12", default-features = false }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+
+# ponytail: line tables only, no full debuginfo — several agents compile on one machine
+[profile.dev]
+debug = "line-tables-only"
+[profile.dev.package."*"]
+opt-level = 1
+debug = false

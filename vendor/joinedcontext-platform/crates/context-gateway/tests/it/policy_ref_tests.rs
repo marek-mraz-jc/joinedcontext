@@ -1,0 +1,318 @@
+//! An Endpoint with `spec.policyRef` evaluates that one Policy of its space and no other, so
+//! four endpoints over one space can each publish a different slice of it (EP-14, GW8).
+
+use context_gateway::store;
+use jc_core::kinds::{Operation, Principal, PrincipalKind};
+use std::path::{Path, PathBuf};
+
+const SPACE: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: helsinki
+  namespace: helsinki
+spec:
+  isSandbox: false
+  urnSegment: helsinki
+"#;
+
+const ALL: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-all
+  namespace: helsinki
+spec:
+  contextSpaceRef: helsinki
+  slug: aaaaaaaaaaaaaaaaaaaaaaaaaa
+  audience: public
+  enabledRepresentations: ["ngsi-ld"]
+"#;
+
+const BIKES: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-bikes
+  namespace: helsinki
+spec:
+  contextSpaceRef: helsinki
+  slug: bbbbbbbbbbbbbbbbbbbbbbbbbb
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-bikes
+  enabledRepresentations: ["ngsi-ld"]
+"#;
+
+const DANGLING: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: helsinki-nothing
+  namespace: helsinki
+spec:
+  contextSpaceRef: helsinki
+  slug: cccccccccccccccccccccccccc
+  audience: public
+  policyRef: urn:ngsi-ld:Policy:hel.fi:elsewhere:public-bikes
+  enabledRepresentations: ["ngsi-ld"]
+"#;
+
+fn policy(name: &str, entity_type: &str) -> String {
+    format!(
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: {name}
+  namespace: helsinki
+spec:
+  contextSpaceRef: {{ kind: ContextSpace, name: helsinki }}
+  assigner: did:web:hel.fi
+  assignee: {{ kind: role, id: public }}
+  operations: [retrieveOps]
+  information:
+    - entities:
+        - type: {entity_type}
+"#
+    )
+}
+
+const WRITER: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: pipelines-write
+  namespace: helsinki
+spec:
+  contextSpaceRef: { kind: ContextSpace, name: helsinki }
+  assigner: did:web:hel.fi
+  assignee: { kind: serviceAccount, id: pipelines }
+  operations: [upsertBatch]
+"#;
+
+fn repo(test_name: &str) -> PathBuf {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after the epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("gw-policy-ref-{test_name}-{now}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create the repository");
+    write(&dir, "space.yaml", SPACE);
+    write(&dir, "all.yaml", ALL);
+    write(&dir, "bikes.yaml", BIKES);
+    write(&dir, "nothing.yaml", DANGLING);
+    write(
+        &dir,
+        "public-bikes.yaml",
+        &policy("public-bikes", "BikeHireDockingStation"),
+    );
+    write(
+        &dir,
+        "public-events.yaml",
+        &policy("public-events", "Event"),
+    );
+    write(&dir, "pipelines-write.yaml", WRITER);
+    dir
+}
+
+fn write(dir: &Path, name: &str, body: &str) {
+    std::fs::write(dir.join(name), body).expect("write a manifest");
+}
+
+fn types_of(policies: &[jc_core::kinds::PolicySpec]) -> Vec<String> {
+    let mut types: Vec<String> = policies
+        .iter()
+        .flat_map(|policy| policy.information.iter())
+        .flat_map(|info| info.entities.iter())
+        .map(|entity| entity.entity_type.clone())
+        .collect();
+    types.sort();
+    types
+}
+
+#[test]
+fn an_endpoint_without_policy_ref_evaluates_every_policy_of_its_space() {
+    let dir = repo("all");
+    let (endpoints, spaces, ..) = store::load(&dir).expect("the repository loads");
+    let all = endpoints
+        .iter()
+        .find(|endpoint| endpoint.slug == "aaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .expect("the unbound endpoint");
+    assert_eq!(all.policies.len(), 3, "both public slices and the writer");
+    assert_eq!(types_of(&all.policies), ["BikeHireDockingStation", "Event"]);
+    assert!(all.policies.iter().any(|policy| {
+        policy.assignee
+            == Principal {
+                kind: PrincipalKind::ServiceAccount,
+                id: "helsinki/pipelines".to_owned(),
+            }
+            && policy.operations.iter().any(|op| {
+                matches!(
+                    op,
+                    jc_core::kinds::OperationRef::Single(Operation::UpsertBatch)
+                )
+            })
+    }));
+    // The canonical space surface is the whole space too.
+    assert_eq!(spaces[0].endpoint.policies.len(), 3);
+    // Each Policy keeps its manifest name at its own index, so an answer can name it (EP-103).
+    for endpoint in [all, &spaces[0].endpoint] {
+        let mut names = endpoint.policy_names.clone();
+        names.sort();
+        assert_eq!(names, ["pipelines-write", "public-bikes", "public-events"]);
+        for (name, policy) in endpoint.policy_names.iter().zip(&endpoint.policies) {
+            let wanted = match name.as_str() {
+                "public-bikes" => vec!["BikeHireDockingStation".to_owned()],
+                "public-events" => vec!["Event".to_owned()],
+                _ => types_of(std::slice::from_ref(policy)),
+            };
+            assert_eq!(types_of(std::slice::from_ref(policy)), wanted, "{name}");
+        }
+    }
+}
+
+#[test]
+fn an_endpoint_with_policy_ref_evaluates_that_policy_alone() {
+    let dir = repo("bikes");
+    let (endpoints, ..) = store::load(&dir).expect("the repository loads");
+    let bikes = endpoints
+        .iter()
+        .find(|endpoint| endpoint.slug == "bbbbbbbbbbbbbbbbbbbbbbbbbb")
+        .expect("the bound endpoint");
+    assert_eq!(bikes.policies.len(), 1);
+    assert_eq!(types_of(&bikes.policies), ["BikeHireDockingStation"]);
+    assert_eq!(bikes.policy_names, ["public-bikes"]);
+}
+
+#[test]
+fn a_policy_ref_into_another_space_binds_nothing_rather_than_everything() {
+    let dir = repo("dangling");
+    let (endpoints, ..) = store::load(&dir).expect("the repository loads");
+    let nothing = endpoints
+        .iter()
+        .find(|endpoint| endpoint.slug == "cccccccccccccccccccccccccc")
+        .expect("the dangling endpoint is still in the table");
+    assert!(
+        nothing.policies.is_empty(),
+        "{:?}",
+        types_of(&nothing.policies)
+    );
+}
+
+/// T-4591: a policyRef naming another organization's domain binds nothing, though space and
+/// name match a Policy of this one; its own domain still binds.
+#[test]
+fn a_policy_ref_of_another_domain_binds_nothing() {
+    for (domain, bound) in [("hel.fi", 1), ("vantaa.fi", 0)] {
+        let dir = repo(domain);
+        write(
+            &dir,
+            "org.yaml",
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Organization\nmetadata:\n  name: helsinki\n  \
+             namespace: org\nspec:\n  domain: hel.fi\n  locales: [\"fi\"]\n  defaultLocale: fi\n",
+        );
+        write(
+            &dir,
+            "bikes.yaml",
+            &BIKES.replace(":hel.fi:", &format!(":{domain}:")),
+        );
+        let (endpoints, ..) = store::load(&dir).expect("the repository loads");
+        let bikes = endpoints
+            .iter()
+            .find(|endpoint| endpoint.slug == "bbbbbbbbbbbbbbbbbbbbbbbbbb")
+            .expect("the endpoint is still in the table");
+        assert_eq!(bikes.policies.len(), bound, "{domain}");
+    }
+}
+
+/// T-6502: one installation holds several Organizations, each publishing under its own domain.
+/// A reference of a Project's Organization, or of the Project's own domain, binds; the
+/// installation's domain and any other bind nothing for that Project.
+#[test]
+fn a_policy_ref_binds_by_the_domains_of_its_project() {
+    const ORGANIZATIONS: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Organization\nmetadata:\n  \
+         name: hel\nspec:\n  domain: hel.fi\n  installation: true\n  locales: [\"fi\"]\n  \
+         defaultLocale: fi\n---\napiVersion: joinedcontext.com/v1alpha1\nkind: Organization\nmetadata:\n  \
+         name: bratislava\nspec:\n  domain: bratislava.sk\n  locales: [\"sk\"]\n  \
+         defaultLocale: sk\n";
+    let project = |organization: &str, domain: &str| {
+        format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: helsinki\nspec:\n  \
+             organizationRef: {organization}\n{domain}"
+        )
+    };
+    for (organization, own, domain, bound) in [
+        ("bratislava", "", "bratislava.sk", 1),
+        ("hel", "  domain: praha.eu\n", "praha.eu", 1),
+        ("hel", "  domain: praha.eu\n", "hel.fi", 1),
+        ("bratislava", "", "hel.fi", 0),
+        ("bratislava", "  domain: bratislava.sk\n", "vantaa.fi", 0),
+    ] {
+        let dir = repo(&format!("{organization}-{domain}-{bound}"));
+        write(&dir, "organizations.yaml", ORGANIZATIONS);
+        write(&dir, "project.yaml", &project(organization, own));
+        write(
+            &dir,
+            "bikes.yaml",
+            &BIKES.replace(":hel.fi:", &format!(":{domain}:")),
+        );
+        let (endpoints, ..) = store::load(&dir).expect("the repository loads");
+        let bikes = endpoints
+            .iter()
+            .find(|endpoint| endpoint.slug == "bbbbbbbbbbbbbbbbbbbbbbbbbb")
+            .expect("the endpoint is still in the table");
+        assert_eq!(bikes.policies.len(), bound, "{organization} {domain}");
+    }
+}
+
+/// ADR-N-057 decision 2: `policyRefs` binds exactly the Policies it lists; a reference into
+/// another space among them binds nothing and widens nothing.
+#[test]
+fn an_endpoint_with_policy_refs_evaluates_exactly_the_listed_policies() {
+    let dir = repo("refs");
+    write(
+        &dir,
+        "bikes.yaml",
+        &BIKES.replace(
+            "  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-bikes\n",
+            "  policyRefs:\n    - urn:ngsi-ld:Policy:hel.fi:helsinki:public-events\n    \
+             - urn:ngsi-ld:Policy:hel.fi:helsinki:public-bikes\n    \
+             - urn:ngsi-ld:Policy:hel.fi:elsewhere:pipelines-write\n",
+        ),
+    );
+    let (endpoints, ..) = store::load(&dir).expect("the repository loads");
+    let bikes = endpoints
+        .iter()
+        .find(|endpoint| endpoint.slug == "bbbbbbbbbbbbbbbbbbbbbbbbbb")
+        .expect("the bound endpoint");
+    assert_eq!(
+        types_of(&bikes.policies),
+        ["BikeHireDockingStation", "Event"]
+    );
+    let mut names = bikes.policy_names.clone();
+    names.sort();
+    assert_eq!(names, ["public-bikes", "public-events"]);
+}
+
+/// A `policyRefs` list whose every entry is foreign or unknown binds nothing, never the space.
+#[test]
+fn policy_refs_with_only_foreign_or_unknown_entries_bind_nothing() {
+    let dir = repo("refs-dead");
+    write(
+        &dir,
+        "org.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Organization\nmetadata:\n  name: helsinki\n  \
+         namespace: org\nspec:\n  domain: hel.fi\n  locales: [\"fi\"]\n  defaultLocale: fi\n",
+    );
+    write(
+        &dir,
+        "bikes.yaml",
+        &BIKES.replace(
+            "  policyRef: urn:ngsi-ld:Policy:hel.fi:helsinki:public-bikes\n",
+            "  policyRefs:\n    - urn:ngsi-ld:Policy:hel.fi:elsewhere:public-bikes\n    \
+             - urn:ngsi-ld:Policy:vantaa.fi:helsinki:public-events\n    \
+             - urn:ngsi-ld:Policy:hel.fi:helsinki:no-such-policy\n",
+        ),
+    );
+    let (endpoints, ..) = store::load(&dir).expect("the repository loads");
+    let bikes = endpoints
+        .iter()
+        .find(|endpoint| endpoint.slug == "bbbbbbbbbbbbbbbbbbbbbbbbbb")
+        .expect("the endpoint is still in the table");
+    assert_eq!(bikes.policies.len(), 0, "{:?}", bikes.policy_names);
+}

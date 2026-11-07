@@ -1,0 +1,264 @@
+//! The manifest kinds of `apiVersion: joinedcontext.com/v1alpha1` (MF-01, Architecture/06).
+
+pub mod agent_profile;
+pub mod app;
+pub mod app_identity;
+pub mod assistant;
+pub mod bento_inputs;
+pub mod bento_processors;
+pub mod blueprint;
+pub mod catalog;
+pub mod ckan;
+pub mod context_broker;
+pub mod csr;
+pub mod dashboard;
+pub mod data_model;
+pub mod data_source;
+pub mod dataspace;
+pub mod delegation_policy;
+pub mod endpoint;
+pub mod endpoint_deprecation;
+pub mod environment;
+pub mod feed_output;
+pub mod grid;
+pub mod group;
+pub mod ical_mapping;
+pub mod mapping;
+pub mod mcp_server;
+pub mod model_projection;
+pub mod mqtt_allowance;
+pub mod mqtt_broker;
+pub mod org_settings;
+pub mod organization;
+pub mod pipeline;
+pub mod pipeline_history;
+pub mod pipeline_identity;
+pub mod pipeline_lifetime;
+pub mod pipeline_source_deletes;
+pub mod policy;
+pub mod policy_odrl;
+pub mod role;
+pub mod service_account;
+pub mod space;
+pub mod subscription;
+pub mod sync;
+pub mod ui_schema;
+pub mod visualization;
+pub mod widget_output;
+
+pub use agent_profile::{
+    AgentEgress, AgentLimits, AgentModel, AgentProfileRole, AgentProfileSpec, AgentRuntime,
+    AgentTool, AgentWorkspace, ModelProvider, DEFAULT_EGRESS_BYTES_PER_RUN,
+};
+pub use app::{
+    AppAccess, AppBuild, AppClass, AppEgress, AppLifecycle, AppLimits, AppRole, AppService,
+    AppServiceLimits, AppSource, AppSpec, AppVisibility, ContentSecurityPolicy, DataNeed,
+    GeoConstraint, GeoWithin, GitSource, TemporalConstraint, DEFAULT_ORGANIZATION_SERVICES,
+};
+pub use assistant::{
+    AnswerSpec, AssistantDeploymentSpec, AssistantScope, Budget, Channel, ChatWidget, Connector,
+    KnowledgeSourceSpec, Localised, ModelChoice, PdfPolicy, PdfPolicyKind, ProviderRouting,
+    ProviderSort, RateLimit, ReasoningEffort, Routes, SourceType, StageReasoning, Theme,
+    TranscriptRedaction, UploadLimits, Visibility, WidgetLanguage,
+};
+pub use blueprint::{BlueprintSpec, BlueprintTemplate, RiskClass};
+pub use catalog::{
+    Catalog, ContactPoint, DataTheme, Duty, Frequency, Licence, PersonalData, ProjectCatalog,
+    Publisher, Source, Temporal,
+};
+pub use ckan::{CkanInstanceSpec, CkanPublication, Publication};
+pub use context_broker::{
+    broker_of, validate_brokers, BrokerFeature, BrokerSize, ContextBrokerSpec, IMPLICIT_BROKER,
+};
+pub use csr::{ContextSourceRegistrationSpec, Federation, FederationIdentity, RegistrationMode};
+pub use dashboard::{
+    ColorBy, DashboardSpec, DashboardVisibility, LayerFilter, LayerSpec, LayerStyle, Page, SizeBy,
+    Widget,
+};
+pub use data_model::{
+    DataModelLifecycle, DataModelSource, DataModelSpec, GeneratedArtifacts, RemoteSource, SemVer,
+};
+pub use data_source::{
+    check_class, ArchiveFormat, Authorization, DataSourceSpec, DataSourceType, GtfsFeed,
+    GtfsRtConnection, HttpArchive, HttpBodyFormat, HttpConnection, MqttConnection, TlsSettings,
+    WebSocketConnection,
+};
+pub use dataspace::{
+    AgreementConstraints, AgreementRole, AgreementState, ConnectorEngine, DataAgreementSpec,
+    DataOfferSpec, DataSpaceParticipantSpec, Did,
+};
+pub use delegation_policy::{
+    AboveCeiling, ConnectorVerb, DelegationPolicySpec, DelegationSubject, KindVerbs, Segment,
+};
+pub use endpoint::{
+    endpoint_role, Audience, Audit, Caching, Creates, EndpointRef, EndpointRole, EndpointSlug,
+    EndpointSpec, FileLimits, Projection, RateLimits, Representation, SharedSpaceReferenceSpec,
+    SurfaceRequirement, ENDPOINT_ROLE_PREFIX,
+};
+pub use environment::{EnvironmentSpec, SecretBackend};
+pub use feed_output::{
+    feed_gaps, feed_links, FeedFilter, FeedOutput, FeedPaths, FeedPreset, FeedRole, FeedSort,
+    FeedSource, FEED_FORMATS, MAX_FEED_OUTPUTS,
+};
+pub use group::{is_person_id, GroupSpec, Member};
+pub use ical_mapping::{
+    ical_links, outputs_gaps, Accepts, DateMode, FieldRemap, FieldSource, IcalField, IcalMapping,
+    IcalOutput, OutputFilter, Preset, Representations, MAX_OUTPUTS, PRESET_TYPES,
+};
+pub use mapping::{
+    DataModelRef, MappingArtifacts, MappingSpec, MappingTest, NativeBlock, NativeLanguage,
+    VocabularyAlignment,
+};
+pub use mcp_server::McpServerSpec;
+pub use model_projection::{ModelProjectionSpec, ProjectedClass, ProjectionFilter};
+pub use mqtt_allowance::{MqttAllowance, MqttHostname, MqttUsage};
+pub use mqtt_broker::{
+    MqttAddress, MqttBrokerSpec, MqttCapture, MqttDeviceAuth, MqttLimits, MqttMode, MqttRole,
+};
+pub use org_settings::{OrganizationBounds, OrganizationLimits, OrganizationPolicies, PublicApps};
+pub use organization::{
+    Contact, ContactRole, DcatProfile, OrganizationSpec, ProjectsPolicy,
+    DEFAULT_NAME_COOLDOWN_DAYS, LEGACY_ORGANIZATION_PATH,
+};
+pub use pipeline::{
+    replace_conflicts, Compute, ComputeKind, Expiry, IdMint, Mint, Output, OutputMode,
+    PipelineClass, PipelineOutput, PipelineQuotas, PipelineSource, PipelineSpec, ProcessorStep,
+    ReplaceConflict, SourceQuery, Step, SubscriptionTrigger, TemplatePart, TemporalWindow, Trigger,
+};
+pub use pipeline_history::{AttributeHistory, History, Keep};
+pub use pipeline_lifetime::{AttributeLifetime, End, Lifetime, LifetimeMode};
+pub use pipeline_source_deletes::{SourceDeleteMode, SourceDeletes};
+pub use policy::{
+    is_service_account_user, AttributeCapabilities, EntitySelector, MetadataMember, Operation,
+    OperationGroup, OperationRef, PlatformAction, PolicyEffect, PolicyRule, PolicySpec, Principal,
+    PrincipalKind, RegistrationInfo, ScopeDefinitionSpec, Validity, VersionsCapability,
+    WriteCapability,
+};
+pub use role::{
+    BindingValidity, Constraint, RoleBindingSpec, RoleSpec, Rule, Subject, SubjectSource, Verb,
+    PERSON,
+};
+pub use service_account::{
+    Credential, CredentialKind, KubernetesBinding, Owner, RoleBinding, RoleScope,
+    ServiceAccountLimits, ServiceAccountSpec, Workload,
+};
+pub use space::{
+    duration_seconds, retention_seconds, urn_segment, AttributeRecording, ContextSpaceSpec,
+    MissingUnitCode, ProjectApps, ProjectSpec, QualityKind, QualityOutcome, QualityRule, Quotas,
+    RetentionRule, SpacePersonalData, MAX_QUALITY_RULES, RECORD_EVERY, RECORD_ON_CHANGE,
+};
+pub use subscription::{
+    KeyValue, Notification, NotificationEndpoint, SubscriptionSpec, WatchedEntity,
+};
+pub use sync::{
+    BundleFile, BundleItem, BundleModel, BundleModelOrigin, BundleOrigin, BundleRepository,
+    BundleRole, BundleSchemas, BundleSpec, ConflictPolicy, GitOrigin, PlatformApiOrigin, Schedule,
+    SyncMode, SyncOrigin, SyncSourceSpec, WebhookAuth,
+};
+pub use ui_schema::{UiSchemaField, UiSchemaGroup, UiSchemaSpec};
+pub use widget_output::{
+    map_defaults, widget_gaps, MapDefaults, WidgetOutput, WidgetRoles, WidgetSource, WidgetTable,
+};
+
+/// `kind: Organization` as a whole manifest.
+pub type Organization = crate::envelope::ResourceEnvelope<OrganizationSpec>;
+/// `kind: Project` as a whole manifest.
+pub type Project = crate::envelope::ResourceEnvelope<ProjectSpec>;
+/// `kind: ContextSpace` as a whole manifest.
+pub type ContextSpace = crate::envelope::ResourceEnvelope<ContextSpaceSpec>;
+/// `kind: Endpoint` as a whole manifest.
+pub type Endpoint = crate::envelope::ResourceEnvelope<EndpointSpec>;
+/// `kind: SharedSpaceReference` as a whole manifest.
+pub type SharedSpaceReference = crate::envelope::ResourceEnvelope<SharedSpaceReferenceSpec>;
+/// `kind: Policy` as a whole manifest.
+pub type Policy = crate::envelope::ResourceEnvelope<PolicySpec>;
+/// `kind: ScopeDefinition` as a whole manifest.
+pub type ScopeDefinition = crate::envelope::ResourceEnvelope<ScopeDefinitionSpec>;
+/// `kind: ServiceAccount` as a whole manifest.
+pub type ServiceAccount = crate::envelope::ResourceEnvelope<ServiceAccountSpec>;
+/// `kind: Pipeline` as a whole manifest.
+pub type Pipeline = crate::envelope::ResourceEnvelope<PipelineSpec>;
+/// `kind: DataModel` as a whole manifest.
+pub type DataModel = crate::envelope::ResourceEnvelope<DataModelSpec>;
+/// `kind: Mapping` as a whole manifest.
+pub type Mapping = crate::envelope::ResourceEnvelope<MappingSpec>;
+/// `kind: App` as a whole manifest.
+pub type App = crate::envelope::ResourceEnvelope<AppSpec>;
+
+/// `kind: KnowledgeSource` as a whole manifest (MF-51).
+pub type KnowledgeSource = crate::envelope::ResourceEnvelope<KnowledgeSourceSpec>;
+/// `kind: AssistantDeployment` as a whole manifest (MF-52).
+pub type AssistantDeployment = crate::envelope::ResourceEnvelope<AssistantDeploymentSpec>;
+/// `kind: McpServer` as a whole manifest (MF-53).
+pub type McpServer = crate::envelope::ResourceEnvelope<McpServerSpec>;
+/// `kind: MqttBroker` as a whole manifest (MF-54).
+pub type MqttBroker = crate::envelope::ResourceEnvelope<MqttBrokerSpec>;
+/// `kind: CkanInstance` as a whole manifest.
+pub type CkanInstance = crate::envelope::ResourceEnvelope<CkanInstanceSpec>;
+/// `kind: Blueprint` as a whole manifest.
+pub type Blueprint = crate::envelope::ResourceEnvelope<BlueprintSpec>;
+/// `kind: AgentProfile` as a whole manifest.
+pub type AgentProfile = crate::envelope::ResourceEnvelope<AgentProfileSpec>;
+/// `kind: SyncSource` as a whole manifest.
+pub type SyncSource = crate::envelope::ResourceEnvelope<SyncSourceSpec>;
+/// `kind: Bundle` as a whole manifest.
+pub type Bundle = crate::envelope::ResourceEnvelope<BundleSpec>;
+/// `kind: DataSpaceParticipant` as a whole manifest.
+pub type DataSpaceParticipant = crate::envelope::ResourceEnvelope<DataSpaceParticipantSpec>;
+/// `kind: DataOffer` as a whole manifest.
+pub type DataOffer = crate::envelope::ResourceEnvelope<DataOfferSpec>;
+/// `kind: DataAgreement` as a whole manifest.
+pub type DataAgreement = crate::envelope::ResourceEnvelope<DataAgreementSpec>;
+/// `kind: Role` as a whole manifest. (`kind: RoleBinding` has no alias: `RoleBinding` is the
+/// grant inside a ServiceAccount; use `ResourceEnvelope<RoleBindingSpec>`.)
+pub type Role = crate::envelope::ResourceEnvelope<RoleSpec>;
+/// `kind: Dashboard` as a whole manifest.
+pub type Dashboard = crate::envelope::ResourceEnvelope<DashboardSpec>;
+/// `kind: Layer` as a whole manifest.
+pub type Layer = crate::envelope::ResourceEnvelope<LayerSpec>;
+/// `kind: UiSchema` as a whole manifest.
+pub type UiSchema = crate::envelope::ResourceEnvelope<UiSchemaSpec>;
+/// `kind: Environment` as a whole manifest.
+pub type Environment = crate::envelope::ResourceEnvelope<EnvironmentSpec>;
+
+/// `kind: Group` as a whole manifest.
+pub type Group = crate::envelope::ResourceEnvelope<GroupSpec>;
+/// `kind: DelegationPolicy` as a whole manifest.
+pub type DelegationPolicy = crate::envelope::ResourceEnvelope<DelegationPolicySpec>;
+/// `kind: ContextBroker` as a whole manifest.
+pub type ContextBroker = crate::envelope::ResourceEnvelope<ContextBrokerSpec>;
+
+/// The default mirror interval of DM-49, in seconds: 24 hours.
+pub const MIRROR_INTERVAL_DEFAULT_SECONDS: u64 = 24 * 60 * 60;
+
+/// Checks the schedule a reference kind mirrors a peer's schema surface on (DM-49).
+///
+/// Absent is the 24-hour default, so absence is valid. A webhook schedule is not: a peer in
+/// another organisation has no reason to call us, and a schedule that can never fire would
+/// stop mirroring silently rather than say so. An interval this crate cannot parse is refused
+/// for the same reason — it would fall back to the default and look deliberate.
+pub fn validate_mirror_schedule(schedule: Option<&Schedule>) -> crate::error::Result<()> {
+    let Some(schedule) = schedule else {
+        return Ok(());
+    };
+    if schedule.webhook == Some(true) {
+        return Err(crate::error::Error::Name {
+            field: "spec.schedule.webhook",
+            value: "true".to_owned(),
+            reason: "a mirrored peer sends no webhook; give spec.schedule.interval instead",
+        });
+    }
+    match schedule.interval.as_deref() {
+        None => Err(crate::error::Error::Name {
+            field: "spec.schedule",
+            value: String::new(),
+            reason: "a schedule with no interval never fires; leave it out for the 24h default",
+        }),
+        Some(interval) if schedule.interval_seconds().is_none() => Err(crate::error::Error::Name {
+            field: "spec.schedule.interval",
+            value: interval.to_owned(),
+            reason: "an interval is a number and one of the suffixes s, m, h, d",
+        }),
+        Some(_) => Ok(()),
+    }
+}

@@ -1,0 +1,2479 @@
+use jc_manifest::validate;
+use std::path::{Path, PathBuf};
+
+fn temp_repo(test_name: &str) -> PathBuf {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after the epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "jcctl-validate-{test_name}-{}-{now}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create temp repo");
+    dir
+}
+
+fn write(dir: &Path, rel: &str, body: &str) {
+    let path = dir.join(rel);
+    std::fs::create_dir_all(path.parent().expect("relative path has a parent"))
+        .expect("create parent directory");
+    std::fs::write(path, body).expect("write manifest");
+}
+
+/// The demo repository: an organization, its project, one space and one endpoint, each at
+/// the path its kind prescribes (MF-06).
+fn valid_repo(test_name: &str) -> PathBuf {
+    let dir = temp_repo(test_name);
+    write(
+        &dir,
+        "org.yaml",
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Organization
+metadata:
+  name: banskabystrica
+  namespace: org
+spec:
+  domain: banskabystrica.sk
+  locales: ["sk"]
+  defaultLocale: sk
+"#,
+    );
+    write(
+        &dir,
+        "projects/ovzdusie/project.yaml",
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Project
+metadata:
+  name: ovzdusie
+  namespace: org
+spec:
+  organizationRef: banskabystrica
+"#,
+    );
+    write(
+        &dir,
+        "projects/ovzdusie/spaces/ovzdusie/space.yaml",
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: ovzdusie
+  namespace: ovzdusie
+spec:
+  isSandbox: false
+"#,
+    );
+    write(&dir, ENDPOINT_PATH, ENDPOINT);
+    write(&dir, "users/roles/pipeline-developer.yaml", ROLE);
+    write(&dir, "users/groups/air-quality-team.yaml", GROUP);
+    write(&dir, ROLE_BINDING_PATH, ROLE_BINDING);
+    dir
+}
+
+/// The group the binding names: a binding to a group no manifest declares matches nobody (PF-64).
+const GROUP: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata:
+  name: air-quality-team
+  namespace: org
+spec:
+  description: The air quality domain, measurement and modelling
+  members:
+    - { user: 3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14 }
+"#;
+
+const ROLE: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: pipeline-developer
+  namespace: org
+spec:
+  rules:
+    - kinds: [Pipeline, DataSource, Mapping]
+      verbs: [propose]
+    - kinds: [Endpoint]
+      verbs: [propose]
+      constraints:
+        - { field: spec.audience, notIn: [public] }
+"#;
+
+const ROLE_BINDING_PATH: &str = "users/assignments/ovzdusie-developers.yaml";
+
+const ROLE_BINDING: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: RoleBinding
+metadata:
+  name: ovzdusie-developers
+  namespace: org
+spec:
+  subjects: [{ group: air-quality-team }, { user: 3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14 }]
+  role: pipeline-developer
+  scope: { project: ovzdusie }
+  validity: { notAfter: "2026-12-31T23:59:59Z" }
+"#;
+
+/// PF-49: `users/` is validated like everything else; a binding with two scopes is refused
+/// with the file that carries it.
+#[test]
+fn a_binding_with_two_scopes_is_refused_from_users() {
+    let dir = valid_repo("two-scopes");
+    write(
+        &dir,
+        ROLE_BINDING_PATH,
+        &ROLE_BINDING.replace(
+            "scope: { project: ovzdusie }",
+            "scope: { project: ovzdusie, organization: banskabystrica }",
+        ),
+    );
+
+    let report = validate::run(&dir);
+    assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
+    assert_eq!(report.findings[0].path, Path::new(ROLE_BINDING_PATH));
+    assert!(
+        report.findings[0].message.contains("exactly one"),
+        "{}",
+        report.findings[0].message
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+const ENDPOINT_PATH: &str = "projects/ovzdusie/spaces/ovzdusie/endpoints/public-air.yaml";
+
+const ENDPOINT: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: public-air
+  namespace: ovzdusie
+spec:
+  contextSpaceRef: ovzdusie
+  slug: zt4qm7ge2xdv6ksb3ncf5arw2y
+  audience: public
+  enabledRepresentations: ["ngsi-ld", "csv"]
+"#;
+
+#[test]
+fn a_valid_repository_has_no_findings() {
+    let dir = valid_repo("valid");
+
+    let report = validate::run(&dir);
+    assert_eq!(report.findings, vec![]);
+    assert_eq!(report.checked, 7);
+    assert!(report.is_valid());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An invariant no JSON Schema can express: a public endpoint that also lists projects
+/// would silently narrow its own audience (EP-14, EP-15).
+#[test]
+fn a_cross_field_invariant_is_reported_with_the_file_that_broke_it() {
+    let dir = valid_repo("invariant");
+    write(
+        &dir,
+        ENDPOINT_PATH,
+        &ENDPOINT.replace(
+            "  audience: public\n",
+            "  audience: public\n  allowedProjects: [\"bb-doprava\"]\n",
+        ),
+    );
+
+    let report = validate::run(&dir);
+    assert_eq!(report.checked, 6);
+    assert_eq!(report.findings.len(), 1);
+
+    let finding = &report.findings[0];
+    assert_eq!(finding.path, Path::new(ENDPOINT_PATH));
+    assert_eq!(finding.line, 1);
+    assert!(
+        finding.message.contains("allowedProjects"),
+        "{}",
+        finding.message
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `deny_unknown_fields` is the control that keeps a credential out of Git: a token
+/// written beside the `secretRef` that should carry it fails to parse at all.
+#[test]
+fn a_field_that_is_not_in_the_kind_is_refused() {
+    let dir = valid_repo("unknown-field");
+    write(
+        &dir,
+        ENDPOINT_PATH,
+        &ENDPOINT.replace(
+            "  audience: public\n",
+            "  audience: public\n  token: hunter2\n",
+        ),
+    );
+
+    let report = validate::run(&dir);
+    assert_eq!(report.checked, 6);
+    assert_eq!(report.findings.len(), 1);
+    assert!(
+        report.findings[0].message.contains("token"),
+        "{}",
+        report.findings[0].message
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A manifest that parses but sits in the wrong folder is still a defect: the path is the
+/// resource's address in the repository (MF-06).
+#[test]
+fn a_manifest_at_the_wrong_path_is_reported() {
+    let dir = valid_repo("misplaced");
+    std::fs::remove_file(dir.join(ENDPOINT_PATH)).expect("move the endpoint");
+    write(&dir, "projects/ovzdusie/public-air.yaml", ENDPOINT);
+
+    let report = validate::run(&dir);
+    assert_eq!(report.checked, 7);
+    assert_eq!(report.findings.len(), 1);
+    assert!(
+        report.findings[0].message.contains(ENDPOINT_PATH),
+        "{}",
+        report.findings[0].message
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A document that is not a manifest at all stops the walk, and the finding still points
+/// at the file, document and line.
+#[test]
+fn a_malformed_document_reports_its_line() {
+    let dir = valid_repo("malformed");
+    write(
+        &dir,
+        "projects/ovzdusie/spaces/ovzdusie/space.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata: [not, a, map]\nspec: {}\n",
+    );
+
+    let report = validate::run(&dir);
+    assert!(!report.is_valid());
+    assert_eq!(report.checked, 0);
+    assert_eq!(report.findings.len(), 1);
+    assert_eq!(report.findings[0].document, 1);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A project directory with no `project.yaml` (MF-01, PF-05): the spaces under it load, so
+/// nothing else says the project itself was never declared (T-0902).
+#[test]
+fn a_project_directory_without_its_manifest_is_reported() {
+    let dir = valid_repo("no-project-manifest");
+    write(
+        &dir,
+        "projects/mobilita/spaces/mobilita/space.yaml",
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: ContextSpace
+metadata:
+  name: mobilita
+  namespace: mobilita
+spec:
+  isSandbox: true
+"#,
+    );
+
+    let report = validate::run(&dir);
+    let finding = report
+        .findings
+        .iter()
+        .find(|f| f.path == Path::new("projects/mobilita"))
+        .unwrap_or_else(|| panic!("the directory is named: {:?}", report.findings));
+    assert!(
+        finding.message.contains("projects/mobilita/project.yaml"),
+        "{}",
+        finding.message
+    );
+    assert!(!report.is_valid());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A binding to a group no manifest declares (PF-62, PF-64): it matches nobody, and nothing but
+/// this says so.
+#[test]
+fn a_binding_to_an_undeclared_group_is_refused_and_a_declared_one_is_not() {
+    let dir = valid_repo("undeclared-group");
+    write(
+        &dir,
+        "users/roles/pipeline-developer.yaml",
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: pipeline-developer
+  namespace: org
+spec:
+  rules:
+    - kinds: [Pipeline]
+      verbs: [propose]
+"#,
+    );
+    write(
+        &dir,
+        "users/assignments/ovzdusie-developers.yaml",
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: RoleBinding
+metadata:
+  name: ovzdusie-developers
+  namespace: org
+spec:
+  subjects:
+    - group: nobody
+  role: pipeline-developer
+  scope: { project: ovzdusie }
+"#,
+    );
+
+    let report = validate::run(&dir);
+    let finding = report
+        .findings
+        .iter()
+        .find(|f| f.message.contains("group `nobody`"))
+        .unwrap_or_else(|| panic!("the group is named: {:?}", report.findings));
+    assert!(
+        finding.message.contains("users/groups/nobody.yaml"),
+        "{}",
+        finding.message
+    );
+
+    write(
+        &dir,
+        "users/groups/nobody.yaml",
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata:
+  name: nobody
+  namespace: org
+spec:
+  description: The team that maintains the air quality pipelines
+  members:
+    - { user: 3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14 }
+"#,
+    );
+    let report = validate::run(&dir);
+    assert_eq!(report.findings, vec![], "the declared group is accepted");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// T-5952, AG-150: a DelegationPolicy naming a Group no manifest declares binds nobody, so
+/// `jcctl validate` refuses it with the policy's path; declared, it passes.
+#[test]
+fn a_delegation_policy_naming_an_undeclared_group_is_refused_and_a_declared_one_is_not() {
+    let dir = valid_repo("delegation-undeclared-group");
+    write(
+        &dir,
+        "users/delegation/stewards.yaml",
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: DelegationPolicy
+metadata: { name: stewards, namespace: org }
+spec:
+  subjects:
+    - { kind: Group, name: air-stewards }
+    - { kind: User, id: 3f1c9a52-6b1e-4d0a-9a4e-0c8d1b7e2f10 }
+  projects: [ovzdusie]
+"#,
+    );
+    let report = validate::run(&dir);
+    let found = messages(&report.findings);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].contains("group `air-stewards`")
+            && found[0].contains("users/groups/air-stewards.yaml"),
+        "{found:?}"
+    );
+    assert!(report.findings[0]
+        .path
+        .ends_with("users/delegation/stewards.yaml"));
+
+    write(
+        &dir,
+        "users/groups/air-stewards.yaml",
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata: { name: air-stewards, namespace: org }
+spec:
+  members:
+    - { user: 3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14 }
+"#,
+    );
+    let report = validate::run(&dir);
+    assert_eq!(report.findings, vec![], "the declared group is accepted");
+
+    write(
+        &dir,
+        "users/delegation/stewards.yaml",
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: DelegationPolicy
+metadata: { name: stewards, namespace: org }
+spec:
+  subjects: []
+  projects: [ovzdusie]
+"#,
+    );
+    let report = validate::run(&dir);
+    let found = messages(&report.findings);
+    assert!(
+        found.iter().any(|m| m.contains("spec.subjects")),
+        "an empty subjects is refused by path: {found:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// T-1471, PF-63, PF-64: a group the identity provider owns is bound with `source: provider`
+/// and needs no manifest; marked and declared at once, it would have two owners.
+#[test]
+fn a_provider_group_needs_no_manifest_and_may_not_have_one() {
+    let dir = valid_repo("provider-group");
+    write(
+        &dir,
+        "users/roles/reader.yaml",
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: reader
+  namespace: org
+spec:
+  rules:
+    - kinds: [Project]
+      verbs: [read]
+"#,
+    );
+    write(
+        &dir,
+        "users/assignments/viewers.yaml",
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: RoleBinding
+metadata:
+  name: viewers
+  namespace: org
+spec:
+  subjects:
+    - { group: platform-readers, source: provider }
+    - { group: nobody }
+  role: reader
+  scope: { organization: org }
+"#,
+    );
+    let report = validate::run(&dir);
+    let found = messages(&report.findings);
+    assert_eq!(
+        found.len(),
+        1,
+        "only the unmarked group is undeclared: {found:?}"
+    );
+    assert!(found[0].contains("group `nobody`"), "{found:?}");
+
+    write(
+        &dir,
+        "users/groups/platform-readers.yaml",
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata:
+  name: platform-readers
+  namespace: org
+spec:
+  members:
+    - { user: 3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14 }
+"#,
+    );
+    let report = validate::run(&dir);
+    let found = messages(&report.findings);
+    assert!(
+        found.iter().any(
+            |m| m.contains("marks group `platform-readers` `source: provider`")
+                && m.contains("`users/groups/platform-readers.yaml` declares it too")
+        ),
+        "{found:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// --- T-2527: the edge cases of `run` and its reference checks (PL-39, PF-49, PF-68, PF-69) ---
+
+/// A pipeline of `project` whose source is `reference` (YAML), at `projects/{project}/…`.
+fn pipeline(dir: &Path, project: &str, reference: &str) {
+    write(
+        dir,
+        &format!("projects/{project}/pipelines/ingest.yaml"),
+        &format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: ingest\n  namespace: {project}\nspec:\n  source:\n    dataSourceRef: {reference}\n"
+        ),
+    );
+}
+
+/// A DataSource named `name` in `project`.
+fn data_source(dir: &Path, project: &str, name: &str) {
+    write(
+        dir,
+        &format!("projects/{project}/datasources/{name}.yaml"),
+        &format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: DataSource\nmetadata:\n  name: {name}\n  namespace: {project}\nspec:\n  type: http\n  http:\n    url: https://opendata.banskabystrica.sk/aq.json\n"
+        ),
+    );
+}
+
+fn with_pl39(report: &validate::Report) -> Vec<&str> {
+    report
+        .findings
+        .iter()
+        .filter(|f| f.message.contains("PL-39"))
+        .map(|f| f.message.as_str())
+        .collect()
+}
+
+/// PL-39: a connection belongs to the team holding its credentials, so a typed reference is
+/// looked up in the pipeline's own project, whatever namespace it names.
+#[test]
+fn a_typed_data_source_ref_is_scoped_to_the_pipelines_own_project() {
+    let dir = valid_repo("pl39-foreign");
+    write(&dir, "projects/doprava/project.yaml", "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: doprava\n  namespace: org\nspec:\n  organizationRef: banskabystrica\n");
+    data_source(&dir, "doprava", "aq-feed");
+    pipeline(
+        &dir,
+        "ovzdusie",
+        "{ kind: DataSource, name: aq-feed, namespace: doprava }",
+    );
+    let report = validate::run(&dir);
+    let found = with_pl39(&report);
+    assert_eq!(found.len(), 1, "{:?}", report.findings);
+    assert!(found[0].contains("aq-feed"), "{}", found[0]);
+}
+
+/// PL-39: a reference to a DataSource of the same project is not a finding, bare or typed.
+#[test]
+fn a_data_source_of_the_same_project_resolves_bare_or_typed() {
+    for (n, reference) in ["aq-feed", "{ kind: DataSource, name: aq-feed }"]
+        .iter()
+        .enumerate()
+    {
+        let dir = valid_repo(&format!("pl39-same-{n}"));
+        data_source(&dir, "ovzdusie", "aq-feed");
+        pipeline(&dir, "ovzdusie", reference);
+        let report = validate::run(&dir);
+        assert!(
+            with_pl39(&report).is_empty(),
+            "{reference}: {:?}",
+            report.findings
+        );
+    }
+}
+
+/// PL-39: a reference to a DataSource nobody declares is a finding at the pipeline, naming it.
+#[test]
+fn a_pipeline_referencing_no_such_data_source_is_reported_at_the_pipeline() {
+    let dir = valid_repo("pl39-missing");
+    pipeline(&dir, "ovzdusie", "no-such-feed");
+    let report = validate::run(&dir);
+    let finding = report
+        .findings
+        .iter()
+        .find(|f| f.message.contains("PL-39"))
+        .unwrap_or_else(|| panic!("{:?}", report.findings));
+    assert!(
+        finding.message.contains("no-such-feed"),
+        "{}",
+        finding.message
+    );
+    assert_eq!(
+        finding.path,
+        PathBuf::from("projects/ovzdusie/pipelines/ingest.yaml")
+    );
+}
+
+/// PL-39: a reference that is neither a name nor an object is the kind's finding, not a panic
+/// and not a second finding.
+#[test]
+fn a_data_source_ref_of_the_wrong_shape_is_one_finding_and_no_panic() {
+    let dir = valid_repo("pl39-shape");
+    pipeline(&dir, "ovzdusie", "42");
+    let report = validate::run(&dir);
+    assert!(with_pl39(&report).is_empty(), "{:?}", report.findings);
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.path == Path::new("projects/ovzdusie/pipelines/ingest.yaml")),
+        "{:?}",
+        report.findings
+    );
+}
+
+/// PF-49: a binding naming a role nobody declares is reported at the binding's own file.
+#[test]
+fn a_role_binding_naming_a_missing_role_is_reported_at_the_binding() {
+    let dir = valid_repo("missing-role");
+    write(
+        &dir,
+        ROLE_BINDING_PATH,
+        &ROLE_BINDING.replace("role: pipeline-developer", "role: no-such-role"),
+    );
+    let report = validate::run(&dir);
+    let finding = report
+        .findings
+        .iter()
+        .find(|f| f.message.contains("no-such-role"))
+        .unwrap_or_else(|| panic!("{:?}", report.findings));
+    assert_eq!(finding.path, PathBuf::from(ROLE_BINDING_PATH));
+}
+
+/// PF-68: one role name in `users/` and in a project is refused at the project's role.
+#[test]
+fn a_role_name_declared_twice_is_reported_at_the_project_role() {
+    let dir = valid_repo("role-clash");
+    let project_role = "projects/ovzdusie/roles/pipeline-developer.yaml";
+    write(
+        &dir,
+        project_role,
+        &ROLE.replace("namespace: org", "namespace: ovzdusie"),
+    );
+    let report = validate::run(&dir);
+    let clash: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| f.message.contains("pipeline-developer"))
+        .collect();
+    assert!(!clash.is_empty(), "{:?}", report.findings);
+    assert!(
+        clash
+            .iter()
+            .any(|f| f.path == Path::new(project_role) || f.path == Path::new("users")),
+        "{clash:?}"
+    );
+}
+
+/// PF-49: a repository without roles and bindings has no role finding, and no `users/` folder
+/// is needed for that.
+#[test]
+fn no_role_or_rolebinding_manifest_means_no_role_finding() {
+    let dir = valid_repo("no-roles");
+    std::fs::remove_dir_all(dir.join("users")).expect("remove users");
+    let report = validate::run(&dir);
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|f| !f.message.to_lowercase().contains("role")),
+        "{:?}",
+        report.findings
+    );
+}
+
+/// CC-12: a repository that does not load is exactly one finding, the one that stopped it.
+#[test]
+fn a_repository_that_fails_to_load_yields_exactly_one_finding() {
+    let dir = valid_repo("unloadable");
+    write(
+        &dir,
+        "projects/ovzdusie/broken.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: [\n",
+    );
+    pipeline(&dir, "ovzdusie", "no-such-feed");
+    let report = validate::run(&dir);
+    assert_eq!(report.findings.len(), 1, "{:?}", report.findings);
+    assert_eq!(report.checked, 0);
+}
+
+/// CC-12: every class of finding is reported in one run, none stops the others.
+#[test]
+fn run_reports_every_class_of_finding_at_once() {
+    let dir = valid_repo("everything");
+    pipeline(&dir, "ovzdusie", "no-such-feed");
+    write(
+        &dir,
+        ROLE_BINDING_PATH,
+        &ROLE_BINDING.replace("{ group: air-quality-team }", "{ group: nobody-declared }"),
+    );
+    std::fs::create_dir_all(dir.join("projects/orphan"))
+        .expect("a project folder with no manifest");
+    let report = validate::run(&dir);
+    let said = |needle: &str| report.findings.iter().any(|f| f.message.contains(needle));
+    assert!(said("PL-39"), "{:?}", report.findings);
+    assert!(said("nobody-declared"), "{:?}", report.findings);
+    assert!(said("orphan"), "{:?}", report.findings);
+}
+
+mod federation_topology {
+    //! CC-13: `jcctl validate` checks the federation topology the registrations declare.
+    use super::*;
+
+    fn space(dir: &Path, name: &str) {
+        write(
+            dir,
+            &format!("projects/ovzdusie/spaces/{name}/space.yaml"),
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: {name}\n  namespace: ovzdusie\nspec:\n  isSandbox: false\n"),
+        );
+    }
+
+    fn endpoint(dir: &Path, name: &str, space: &str, slug: &str) {
+        write(
+            dir,
+            &format!("projects/ovzdusie/spaces/{space}/endpoints/{name}.yaml"),
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: {name}\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: {space}\n  slug: {slug}\n  audience: organization\n  enabledRepresentations: [\"ngsi-ld\"]\n"),
+        );
+    }
+
+    fn registration(dir: &Path, name: &str, hub: &str, member: &str, id_pattern: Option<&str>) {
+        let pattern = id_pattern
+            .map(|p| format!("\n          idPattern: \"{p}\""))
+            .unwrap_or_default();
+        write(
+            dir,
+            &format!("projects/ovzdusie/spaces/{hub}/registrations/{name}.yaml"),
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSourceRegistration\nmetadata:\n  name: {name}\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: {hub}\n  endpointRef: {{ kind: Endpoint, name: {member} }}\n  information:\n    - entities:\n        - type: Vehicle{pattern}\n  federation:\n    identity: caller\n"),
+        );
+    }
+
+    /// A hub, served by its own Endpoint, over one member space.
+    fn hub_repo(test: &str) -> PathBuf {
+        let dir = valid_repo(test);
+        space(&dir, "hub");
+        space(&dir, "transport");
+        endpoint(&dir, "hub-read", "hub", "a2bcdefghijklmnopqrstuvwxy");
+        endpoint(
+            &dir,
+            "transport-read",
+            "transport",
+            "b2bcdefghijklmnopqrstuvwxy",
+        );
+        registration(&dir, "transport", "hub", "transport-read", None);
+        dir
+    }
+
+    fn messages(dir: &Path) -> Vec<String> {
+        validate::run(dir)
+            .findings
+            .into_iter()
+            .map(|f| f.message)
+            .collect()
+    }
+
+    /// CC-13: a hub over a member, served by its own Endpoint, is a topology with no finding.
+    #[test]
+    fn a_served_hub_over_a_declared_member_is_clean() {
+        let dir = hub_repo("cc13-clean");
+        assert_eq!(messages(&dir), Vec::<String>::new());
+    }
+
+    /// A test name, what breaks the topology, and the words its finding carries.
+    type Breakage = (&'static str, fn(&Path), &'static str);
+
+    /// CC-13: every broken edge is named where it is declared, one finding each.
+    #[test]
+    fn every_broken_edge_of_the_topology_is_a_finding() {
+        let cases: [Breakage; 5] = [
+            (
+                "cc13-dangling",
+                |dir| registration(dir, "ghost", "hub", "no-such-endpoint", None),
+                "a dangling peer",
+            ),
+            (
+                "cc13-no-hub",
+                |dir| registration(dir, "lost", "nowhere", "transport-read", None),
+                "which no ContextSpace of this project declares",
+            ),
+            (
+                "cc13-unserved",
+                |dir| {
+                    space(dir, "silent");
+                    registration(dir, "unread", "silent", "transport-read", None);
+                },
+                "no Endpoint of this project serves it",
+            ),
+            (
+                "cc13-loop",
+                |dir| registration(dir, "back", "transport", "hub-read", None),
+                "a federation loop",
+            ),
+            (
+                "cc13-unanchored",
+                |dir| {
+                    registration(
+                        dir,
+                        "wide",
+                        "hub",
+                        "transport-read",
+                        Some("urn:ngsi-ld:Vehicle:.*"),
+                    )
+                },
+                "anchored",
+            ),
+        ];
+        for (test, break_it, expected) in cases {
+            let dir = hub_repo(test);
+            break_it(&dir);
+            let said = messages(&dir);
+            assert!(
+                said.iter().any(|m| m.contains(expected)),
+                "{test}: {said:?}"
+            );
+        }
+    }
+}
+
+// --- T-2591: the roles of an App (AP-91, AP-98, PF-64) ---
+
+const ROLES_APP_PATH: &str = "projects/ovzdusie/apps/alerts/app.yaml";
+
+/// An App of ovzdusie whose editors are `members` and whose note write is gated by `gate`.
+fn roles_app(members: &str, gate: &str) -> String {
+    format!(
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: alerts
+  namespace: ovzdusie
+spec:
+  kind: static
+  source: {{ path: ./src }}
+  build: {{ node: "22" }}
+  visibility: roles
+  roles:
+    - {{ name: editor, description: "Writes the note" }}
+  access:
+    - {{ role: editor, subjects: [{members}] }}
+  dataNeeds:
+    - contextSpaceRef: {{ kind: ContextSpace, name: ovzdusie }}
+      types: [Alert]
+      operations: [queryEntity, updateAttrs]
+{gate}"#
+    )
+}
+
+fn messages(findings: &[validate::Finding]) -> Vec<&str> {
+    findings.iter().map(|f| f.message.as_str()).collect()
+}
+
+/// AP-91, PF-64: an App role's group names a Group manifest, as a binding's does; a declared
+/// group and an address of the organization pass.
+#[test]
+fn an_app_role_naming_an_undeclared_group_is_refused_and_a_declared_one_is_not() {
+    let dir = valid_repo("app-role-groups");
+    let gate = "      roles: [editor]\n";
+    write(
+        &dir,
+        ROLES_APP_PATH,
+        &roles_app(
+            "{ group: air-quality-team }, { user: 3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14 }",
+            gate,
+        ),
+    );
+    let report = validate::run(&dir);
+    assert_eq!(
+        report.findings,
+        vec![],
+        "a declared group and an address of the organization"
+    );
+
+    write(
+        &dir,
+        ROLES_APP_PATH,
+        &roles_app("{ group: nobody-declared }", gate),
+    );
+    let report = validate::run(&dir);
+    let found = messages(&report.findings);
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("group `nobody-declared`") && m.contains("PF-64")),
+        "{found:?}"
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|f| f.path.ends_with(ROLES_APP_PATH)),
+        "{found:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// AP-134: `jcctl validate` refuses an egress destination that is every address or a name,
+/// naming the entry, and passes a network with its ports.
+#[test]
+fn an_app_egress_of_every_address_or_a_host_name_is_refused() {
+    let dir = valid_repo("app-egress");
+    let with = |egress: &str| {
+        write(
+            &dir,
+            ROLES_APP_PATH,
+            &roles_app(
+                "{ group: air-quality-team }",
+                &format!("      roles: [editor]\n  egress: {egress}\n"),
+            ),
+        );
+        validate::run(&dir)
+            .findings
+            .into_iter()
+            .map(|f| f.message)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        with("[{ cidr: 203.0.113.0/24, ports: [443] }]"),
+        Vec::<String>::new()
+    );
+    for (egress, entry) in [
+        ("[{ cidr: 0.0.0.0/0, ports: [443] }]", "`0.0.0.0/0`"),
+        ("[{ cidr: \"::/0\", ports: [443] }]", "`::/0`"),
+        (
+            "[{ cidr: api.example.com/32, ports: [443] }]",
+            "`api.example.com/32`",
+        ),
+    ] {
+        let found = with(egress);
+        assert!(
+            found
+                .iter()
+                .any(|m| m.contains(entry) && m.contains("AP-134")),
+            "{egress}: {found:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// AP-98: a write every person who can open the app may make is valid and is said as a warning,
+/// naming the app, the operation and the type; gating it by a role silences it.
+#[test]
+fn a_write_open_to_everyone_is_a_warning_and_a_role_gated_one_is_not() {
+    let dir = valid_repo("app-role-writes");
+    write(
+        &dir,
+        ROLES_APP_PATH,
+        &roles_app("{ group: air-quality-team }", ""),
+    );
+    let report = validate::run(&dir);
+    assert_eq!(report.findings, vec![]);
+    let warned = messages(&report.warnings);
+    assert!(
+        warned.iter().any(
+            |m| m.contains("everyone who can open alerts can updateAttrs Alert")
+                && m.contains("AP-98")
+        ),
+        "{warned:?}"
+    );
+
+    write(
+        &dir,
+        ROLES_APP_PATH,
+        &roles_app("{ group: air-quality-team }", "      roles: [editor]\n"),
+    );
+    let report = validate::run(&dir);
+    assert!(
+        !messages(&report.warnings)
+            .iter()
+            .any(|m| m.contains("AP-98")),
+        "{:?}",
+        report.warnings
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn project(dir: &Path, name: &str) {
+    write(
+        dir,
+        &format!("projects/{name}/project.yaml"),
+        &format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: {name}\n  \
+             namespace: org\nspec:\n  organizationRef: banskabystrica\n"
+        ),
+    );
+}
+
+fn space(dir: &Path, project: &str, name: &str, pin: Option<&str>) {
+    let pin = pin.map_or(String::new(), |pin| format!("  urnSegment: {pin}\n"));
+    write(
+        dir,
+        &format!("projects/{project}/spaces/{name}/space.yaml"),
+        &format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: \
+             {name}\n  namespace: {project}\nspec:\n  isSandbox: false\n{pin}"
+        ),
+    );
+}
+
+fn segment_clashes(dir: &Path) -> Vec<String> {
+    validate::run(dir)
+        .findings
+        .into_iter()
+        .map(|f| f.message)
+        .filter(|m| m.contains("PF-44"))
+        .collect()
+}
+
+/// PF-44, AP-115: two projects' spaces rendering one id segment are refused at each manifest,
+/// naming both projects: `a-b`/`c` and `a`/`b-c` both render `a-b-c`, and so do two equal pins.
+#[test]
+fn two_projects_spaces_rendering_one_id_segment_are_refused_naming_both() {
+    let dir = valid_repo("space-segment-clash");
+    for name in ["mesto", "mesto-doprava"] {
+        project(&dir, name);
+    }
+    space(&dir, "mesto-doprava", "linky", None);
+    space(&dir, "mesto", "doprava-linky", None);
+    let found = segment_clashes(&dir);
+    assert_eq!(found.len(), 2, "each manifest is located: {found:?}");
+    for message in &found {
+        assert!(
+            message.contains("'mesto-doprava-linky'")
+                && message.contains("mesto and mesto-doprava"),
+            "names both: {message}"
+        );
+    }
+
+    // A pin moves one of them off the segment; pinning the other's segment clashes again.
+    space(&dir, "mesto", "doprava-linky", Some("mesto-linky"));
+    assert!(
+        segment_clashes(&dir).is_empty(),
+        "{:?}",
+        segment_clashes(&dir)
+    );
+    space(&dir, "ovzdusie", "ovzdusie", Some("mesto-linky"));
+    let found = segment_clashes(&dir);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found[0].contains("mesto and ovzdusie"), "{found:?}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// --- T-3051: the knowledge assistant's references, resolved in the project (MF-51, MF-52) ---
+
+fn knowledge_source(dir: &Path, name: &str, visibility: &str, ckan: Option<&str>) {
+    let source = match ckan {
+        Some(instance) => format!("source: ckan\n  ckanInstanceRef: {instance}"),
+        None => "source: website\n  startUrls: [https://www.banskabystrica.sk/]".to_owned(),
+    };
+    write(
+        dir,
+        &format!("projects/ovzdusie/assistant/sources/{name}.yaml"),
+        &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: KnowledgeSource\nmetadata:\n  name: {name}\n  namespace: ovzdusie\nspec:\n  {source}\n  visibility: {visibility}\n"),
+    );
+}
+
+fn assistant_deployment(dir: &Path, channel: &str, sources: &str, endpoint: &str) {
+    write(
+        dir,
+        "projects/ovzdusie/assistant/deployments/chat.yaml",
+        &format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: AssistantDeployment\nmetadata:\n  name: chat\n  namespace: ovzdusie\nspec:\n  publicId: bb-chat\n  channel: {channel}\n  sources: [{sources}]\n  connectors:\n    - {{ endpoint: {endpoint}, tools: [query_entities] }}\n  allowedOrigins: [https://www.banskabystrica.sk]\n  rateLimit: {{ requestsPerMinute: 60, perClientPerMinute: 10 }}\n  budget: {{ tokensPerDay: 1000000, tokensPerConversation: 20000 }}\n"
+        ),
+    );
+}
+
+fn with_assistant(report: &validate::Report) -> Vec<&str> {
+    report
+        .findings
+        .iter()
+        .filter(|f| f.message.contains("MF-51") || f.message.contains("MF-52"))
+        .map(|f| f.message.as_str())
+        .collect()
+}
+
+/// MF-51, MF-52: a deployment whose sources and Endpoint the project declares is no finding.
+#[test]
+fn an_assistant_whose_references_resolve_is_valid() {
+    let dir = valid_repo("assistant-ok");
+    knowledge_source(&dir, "web", "public", None);
+    assistant_deployment(&dir, "public", "web", "public-air");
+    let report = validate::run(&dir);
+    assert!(with_assistant(&report).is_empty(), "{:?}", report.findings);
+    assert!(report.findings.is_empty(), "{:?}", report.findings);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MF-52: an unknown source and an unknown Endpoint are each named, with the field to change.
+#[test]
+fn an_assistant_naming_what_the_project_does_not_declare_is_refused() {
+    let dir = valid_repo("assistant-dangling");
+    assistant_deployment(&dir, "internal", "nowhere", "no-such-endpoint");
+    let report = validate::run(&dir);
+    let found = with_assistant(&report);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("spec.sources") && m.contains("`nowhere`")),
+        "{found:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("spec.connectors") && m.contains("`no-such-endpoint`")),
+        "{found:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MF-52: an internal source never answers through a channel nobody signs in to; the same
+/// source behind the internal channel is fine. A source that names no visibility is internal.
+#[test]
+fn an_internal_source_is_refused_behind_a_public_channel() {
+    for (visibility, channel, refused) in [
+        ("internal", "public", true),
+        ("internal", "iframe", true),
+        ("internal", "ckan", true),
+        ("internal", "internal", false),
+        ("public", "public", false),
+    ] {
+        let dir = valid_repo(&format!("assistant-{visibility}-{channel}"));
+        knowledge_source(&dir, "intranet", visibility, None);
+        assistant_deployment(&dir, channel, "intranet", "public-air");
+        let report = validate::run(&dir);
+        let found = with_assistant(&report);
+        assert_eq!(
+            !found.is_empty(),
+            refused,
+            "{visibility} behind {channel}: {found:?}"
+        );
+        if refused {
+            assert!(
+                found[0].contains("visibility: public") && found[0].contains("channel `internal`"),
+                "{}",
+                found[0]
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    let dir = valid_repo("assistant-default-visibility");
+    write(
+        &dir,
+        "projects/ovzdusie/assistant/sources/plain.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: KnowledgeSource\nmetadata:\n  name: plain\n  namespace: ovzdusie\nspec:\n  source: website\n  startUrls: [https://www.banskabystrica.sk/]\n",
+    );
+    assistant_deployment(&dir, "public", "plain", "public-air");
+    let report = validate::run(&dir);
+    assert_eq!(with_assistant(&report).len(), 1, "{:?}", report.findings);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MF-51: a ckan source names a CkanInstance of its own project.
+#[test]
+fn a_ckan_source_names_a_catalogue_the_project_declares() {
+    let dir = valid_repo("assistant-ckan");
+    knowledge_source(&dir, "catalogue", "public", Some("open-data"));
+    let report = validate::run(&dir);
+    let found = with_assistant(&report);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].contains("spec.ckanInstanceRef") && found[0].contains("`open-data`"),
+        "{}",
+        found[0]
+    );
+    write(
+        &dir,
+        "projects/ovzdusie/ckan/open-data.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: CkanInstance\nmetadata:\n  name: open-data\n  namespace: ovzdusie\nspec:\n  url: https://data.banskabystrica.sk\n  apiTokenRef: { name: ckan-token, key: apiToken }\n",
+    );
+    let report = validate::run(&dir);
+    assert!(with_assistant(&report).is_empty(), "{:?}", report.findings);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// --- T-3155: a named MCP server's members, resolved in the repository (MF-53, ADR-N-043) ---
+
+fn mcp_server(dir: &Path, audience: &str, members: &str) {
+    write(
+        dir,
+        "projects/ovzdusie/mcp/air.yaml",
+        &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: McpServer\nmetadata:\n  name: air\n  namespace: ovzdusie\n  title: {{ en: Air in Banská Bystrica }}\nspec:\n  audience: {audience}\n  members:\n{members}"),
+    );
+}
+
+fn member(name: &str) -> String {
+    format!("    - {{ kind: Endpoint, name: {name} }}\n")
+}
+
+/// A project-list Endpoint beside the seed's public one, and one that serves no MCP.
+fn narrow_endpoints(dir: &Path) {
+    for (name, slug, extra) in [
+        (
+            "team-air",
+            "a4y7pq2mzt6vhx3nbwrs5cjd3f",
+            "audience: project-list\n  allowedProjects: [ovzdusie]",
+        ),
+        (
+            "no-mcp",
+            "b4y7pq2mzt6vhx3nbwrs5cjd3f",
+            "audience: public\n  mcp: false",
+        ),
+    ] {
+        write(
+            dir,
+            &format!("projects/ovzdusie/spaces/ovzdusie/endpoints/{name}.yaml"),
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: {name}\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  slug: {slug}\n  {extra}\n  enabledRepresentations: [\"ngsi-ld\"]\n"),
+        );
+    }
+}
+
+fn with_mcp_server(report: &validate::Report) -> Vec<&str> {
+    report
+        .findings
+        .iter()
+        .filter(|f| f.message.contains("MF-53"))
+        .map(|f| f.message.as_str())
+        .collect()
+}
+
+/// MF-53: a server over Endpoints that exist, serve MCP and admit its audience is no finding.
+#[test]
+fn a_named_mcp_server_over_its_projects_endpoints_is_valid() {
+    let dir = valid_repo("mcp-server-ok");
+    narrow_endpoints(&dir);
+    mcp_server(
+        &dir,
+        "project-list",
+        &format!("{}{}", member("public-air"), member("team-air")),
+    );
+    let report = validate::run(&dir);
+    assert!(report.findings.is_empty(), "{:?}", report.findings);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MF-53: an unknown member, a member without MCP and an audience wider than a member's are
+/// each named with the member and the rule.
+#[test]
+fn a_named_mcp_server_wider_than_its_members_or_naming_what_is_not_there_is_refused() {
+    let dir = valid_repo("mcp-server-refused");
+    narrow_endpoints(&dir);
+    mcp_server(
+        &dir,
+        "public",
+        &format!(
+            "{}{}{}",
+            member("team-air"),
+            member("no-mcp"),
+            member("nowhere")
+        ),
+    );
+    let report = validate::run(&dir);
+    let found = with_mcp_server(&report);
+    assert_eq!(found.len(), 3, "{found:?}");
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("`ovzdusie/nowhere`") && m.contains("no manifest declares")),
+        "{found:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("`ovzdusie/no-mcp`") && m.contains("serves no MCP")),
+        "{found:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("`public`, wider than member Endpoint `ovzdusie/team-air`")),
+        "{found:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MF-57 (T-4659): a server attaches declared public knowledge sources only; an unknown one and
+/// an internal one are each named with the rule.
+#[test]
+fn a_named_mcp_server_attaches_declared_public_knowledge_sources_only() {
+    let dir = valid_repo("mcp-server-knowledge");
+    knowledge_source(&dir, "web", "public", None);
+    knowledge_source(&dir, "intranet", "internal", None);
+    write(
+        &dir,
+        "projects/ovzdusie/mcp/air.yaml",
+        &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: McpServer\nmetadata:\n  name: air\n  namespace: ovzdusie\nspec:\n  audience: public\n  knowledgeSources: [web, intranet, ovzdusie/nowhere]\n  members:\n{}", member("public-air")),
+    );
+    let report = validate::run(&dir);
+    let found: Vec<&str> = report
+        .findings
+        .iter()
+        .filter(|f| f.message.contains("MF-57"))
+        .map(|f| f.message.as_str())
+        .collect();
+    assert_eq!(found.len(), 2, "{:?}", report.findings);
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("`ovzdusie/intranet`") && m.contains("not `visibility: public`")),
+        "{found:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("`ovzdusie/nowhere`") && m.contains("no manifest declares")),
+        "{found:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MF-53: the kind refuses an empty member list and a member that is not an Endpoint.
+#[test]
+fn a_named_mcp_server_without_endpoint_members_is_refused_by_its_kind() {
+    let dir = valid_repo("mcp-server-kind");
+    mcp_server(
+        &dir,
+        "public",
+        "    - { kind: Policy, name: public-read }\n",
+    );
+    let report = validate::run(&dir);
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.message.contains("a member is an Endpoint, not a Policy")),
+        "{:?}",
+        report.findings
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MF-52, T-3283: a publicId is one public address for the organization. A second deployment
+/// declaring it, in this project or another, is refused at both, each naming the two.
+#[test]
+fn a_public_id_declared_twice_is_refused_naming_both_deployments() {
+    let dir = valid_repo("assistant-public-id-twice");
+    knowledge_source(&dir, "web", "public", None);
+    assistant_deployment(&dir, "public", "web", "public-air");
+    write(
+        &dir,
+        "projects/praha/project.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: praha\n  namespace: org\nspec:\n  organizationRef: banskabystrica\n",
+    );
+    write(
+        &dir,
+        "projects/praha/assistant/sources/web.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: KnowledgeSource\nmetadata:\n  name: web\n  namespace: praha\nspec:\n  source: website\n  startUrls: [https://www.praha.eu/]\n  visibility: public\n",
+    );
+    write(
+        &dir,
+        "projects/praha/assistant/deployments/lookalike.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: AssistantDeployment\nmetadata:\n  name: lookalike\n  namespace: praha\nspec:\n  publicId: bb-chat\n  channel: public\n  sources: [web]\n  allowedOrigins: [https://www.banskabystrica.sk]\n  rateLimit: { requestsPerMinute: 60, perClientPerMinute: 10 }\n  budget: { tokensPerDay: 1000000, tokensPerConversation: 20000 }\n",
+    );
+    let report = validate::run(&dir);
+    let twice: Vec<&str> = report
+        .findings
+        .iter()
+        .filter(|f| f.message.contains("publicId `bb-chat` is declared by"))
+        .map(|f| f.message.as_str())
+        .collect();
+    assert_eq!(twice.len(), 2, "{:?}", report.findings);
+    for message in &twice {
+        assert!(
+            message.contains("ovzdusie/chat") && message.contains("praha/lookalike"),
+            "{message}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn broker(name: &str, default: bool) -> String {
+    format!(
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextBroker\nmetadata:\n  name: {name}\n  \
+         namespace: org\nspec:\n  default: {default}\n  image: ghcr.io/joinedcontext/antares@sha256:{}\n",
+        "0".repeat(64)
+    )
+}
+
+fn space_on(dir: &Path, broker_ref: &str) {
+    write(
+        dir,
+        "projects/ovzdusie/spaces/ovzdusie/space.yaml",
+        &format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: ovzdusie\n  \
+             namespace: ovzdusie\nspec:\n  isSandbox: false\n  brokerRef: {broker_ref}\n"
+        ),
+    );
+}
+
+/// PF-110, PF-111: a space names a broker the organization declares, and one broker is the
+/// default; `main` needs no manifest while the organization declares none.
+#[test]
+fn a_space_on_an_undeclared_broker_or_two_defaults_are_refused() {
+    let dir = valid_repo("brokers");
+    space_on(&dir, "main");
+    assert_eq!(validate::run(&dir).findings, vec![], "the implicit main");
+
+    space_on(&dir, "canary");
+    let report = validate::run(&dir);
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.message.contains("'canary'") && f.message.contains("brokers/canary.yaml")),
+        "{:?}",
+        report.findings
+    );
+
+    write(&dir, "brokers/main.yaml", &broker("main", true));
+    write(&dir, "brokers/canary.yaml", &broker("canary", false));
+    assert_eq!(
+        validate::run(&dir).findings,
+        vec![],
+        "both declared, one default"
+    );
+
+    write(&dir, "brokers/canary.yaml", &broker("canary", true));
+    let report = validate::run(&dir);
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.message.contains("exactly one broker")),
+        "{:?}",
+        report.findings
+    );
+}
+
+// --- T-3837: MQTT edge brokers resolved in the repository (MF-54, PL-76, ADR-N-048) ---
+
+fn camera_account(dir: &Path, name: &str) {
+    write(
+        dir,
+        &format!("projects/ovzdusie/access/serviceaccounts/{name}.yaml"),
+        &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: ServiceAccount\nmetadata:\n  name: {name}\n  namespace: ovzdusie\nspec:\n  owner:\n    user: demo.steward\n  purpose: \"a camera\"\n  roles:\n    - role: space-writer\n      scope:\n        project: ovzdusie\n  credentials:\n    - kind: oauth-client\n      name: default\n"),
+    );
+}
+
+fn mqtt_broker(dir: &Path, name: &str, accounts: &str, port: &str) {
+    write(
+        dir,
+        &format!("projects/ovzdusie/mqttbrokers/{name}.yaml"),
+        &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: MqttBroker\nmetadata:\n  name: {name}\n  namespace: ovzdusie\nspec:\n  roles:\n    - name: camera\n      serviceAccounts: [{accounts}]\n      publish: [\"cameras/${{clientid}}/#\"]\n{port}"),
+    );
+}
+
+fn broker_source(dir: &Path, broker: &str) {
+    write(
+        dir,
+        "projects/ovzdusie/datasources/cameras.yaml",
+        &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: DataSource\nmetadata:\n  name: cameras\n  namespace: ovzdusie\nspec:\n  type: mqtt\n  mqtt:\n    brokerRef: {{ kind: MqttBroker, name: {broker} }}\n    topics: [\"cameras/+/frame\"]\n"),
+    );
+}
+
+fn with_mqtt(report: &validate::Report) -> Vec<&str> {
+    report
+        .findings
+        .iter()
+        .filter(|f| {
+            ["MF-54", "MF-62", "PL-76"]
+                .iter()
+                .any(|r| f.message.contains(r))
+        })
+        .map(|f| f.message.as_str())
+        .collect()
+}
+
+fn project_with_hostname(dir: &Path, project: &str, hostname: &str) {
+    write(
+        dir,
+        &format!("projects/{project}/project.yaml"),
+        &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: {project}\n  namespace: org\nspec:\n  organizationRef: banskabystrica\n  quotas:\n    mqtt:\n      enabled: true\n      addresses: [customHostname]\n      customHostnames:\n        - name: {hostname}\n"),
+    );
+}
+
+/// MF-62: a hostname assigned to two projects, and one served by two brokers, are each named
+/// with their holder; one project and one broker per hostname is no finding.
+#[test]
+fn a_custom_hostname_is_held_by_one_project_and_one_broker() {
+    let dir = valid_repo("mqtt-hostname-ok");
+    camera_account(&dir, "cam-north");
+    project_with_hostname(&dir, "ovzdusie", "mqtt.banskabystrica.sk");
+    let hostname = "  address: customHostname\n  hostname: mqtt.banskabystrica.sk\n";
+    mqtt_broker(&dir, "cameras", "cam-north", hostname);
+    let report = validate::run(&dir);
+    assert!(report.findings.is_empty(), "{:?}", report.findings);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let dir = valid_repo("mqtt-hostname-refused");
+    camera_account(&dir, "cam-north");
+    project_with_hostname(&dir, "ovzdusie", "mqtt.banskabystrica.sk");
+    project_with_hostname(&dir, "doprava", "mqtt.banskabystrica.sk");
+    mqtt_broker(&dir, "cameras", "cam-north", hostname);
+    mqtt_broker(&dir, "meters", "cam-north", hostname);
+    let report = validate::run(&dir);
+    let found = with_mqtt(&report);
+    assert!(
+        found.iter().any(
+            |m| m.contains("mqtt.banskabystrica.sk is already assigned to")
+                && m.contains("one project at a time")
+        ),
+        "{found:?}"
+    );
+    assert!(
+        found.iter().any(|m| m
+            .contains("spec.hostname mqtt.banskabystrica.sk is already served by")
+            && m.contains("cameras")),
+        "{found:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MF-54, PL-76: two brokers of a project, each on its own port, with their cameras declared
+/// and a DataSource reading one of them, are no finding.
+#[test]
+fn brokers_with_their_accounts_ports_and_a_reading_data_source_are_valid() {
+    let dir = valid_repo("mqtt-broker-ok");
+    camera_account(&dir, "cam-north");
+    mqtt_broker(&dir, "cameras", "cam-north", "  port: 18830\n");
+    mqtt_broker(&dir, "meters", "cam-north", "  port: 18831\n");
+    broker_source(&dir, "cameras");
+    let report = validate::run(&dir);
+    assert!(report.findings.is_empty(), "{:?}", report.findings);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MF-54, PL-76: an account the project does not declare, a port another broker holds (named),
+/// and a brokerRef to no broker are each a finding.
+#[test]
+fn an_unknown_account_a_taken_port_and_a_missing_broker_are_named() {
+    let dir = valid_repo("mqtt-broker-refused");
+    mqtt_broker(&dir, "cameras", "cam-gone", "  port: 18830\n");
+    mqtt_broker(&dir, "meters", "cam-gone", "  port: 18830\n");
+    broker_source(&dir, "nowhere");
+    let report = validate::run(&dir);
+    let found = with_mqtt(&report);
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("ServiceAccount `cam-gone`")),
+        "{found:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("18830 is already held by") && m.contains("cameras")),
+        "{found:?}"
+    );
+    assert!(
+        found.iter().any(|m| m.contains("MqttBroker `nowhere`")),
+        "{found:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// PF-129: a broker's allowedSources of CIDR networks validate; one entry with host bits set
+/// refuses the manifest with the field named.
+#[test]
+fn allowed_sources_validate_and_a_bad_range_is_named() {
+    let dir = valid_repo("mqtt-broker-sources");
+    camera_account(&dir, "cam-north");
+    mqtt_broker(
+        &dir,
+        "cameras",
+        "cam-north",
+        "  allowedSources: [203.0.113.0/24, \"2001:db8::/48\"]\n",
+    );
+    let report = validate::run(&dir);
+    assert!(report.findings.is_empty(), "{:?}", report.findings);
+    mqtt_broker(
+        &dir,
+        "cameras",
+        "cam-north",
+        "  allowedSources: [203.0.113.1/24]\n",
+    );
+    let report = validate::run(&dir);
+    let found = with_mqtt(&report);
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("spec.allowedSources") && m.contains("host bits set")),
+        "{:?}",
+        report.findings
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// T-4177, MF-52: a connector reaches another project's Endpoint as `{project}/{endpoint}` when
+/// the project declares it `audience: public`; an unknown one, or one that is not public, is
+/// named with the field to change.
+#[test]
+fn an_assistant_reaches_another_projects_public_endpoint_only() {
+    let dir = valid_repo("assistant-scope");
+    // A second project, `bbsk`, with its own space and a public Endpoint of the same name.
+    for file in [
+        "projects/ovzdusie/project.yaml",
+        "projects/ovzdusie/spaces/ovzdusie/space.yaml",
+        ENDPOINT_PATH,
+    ] {
+        let text = std::fs::read_to_string(dir.join(file)).expect("fixture");
+        write(
+            &dir,
+            &file.replace("ovzdusie", "bbsk"),
+            &text
+                .replace("ovzdusie", "bbsk")
+                .replace("zt4qm7ge2xdv6ksb3ncf5arw2y", "bbsk7ge2xdv6ksb3ncf5arw2yq"),
+        );
+    }
+    knowledge_source(&dir, "web", "public", None);
+    let scoped = |endpoint: &str| {
+        assistant_deployment(&dir, "public", "web", endpoint);
+        let path = dir.join("projects/ovzdusie/assistant/deployments/chat.yaml");
+        let text = std::fs::read_to_string(&path).expect("deployment");
+        std::fs::write(&path, format!("{text}  scope: {{ projects: [bbsk] }}\n")).expect("write");
+        validate::run(&dir)
+    };
+    let report = scoped("bbsk/public-air");
+    assert!(report.findings.is_empty(), "{:?}", report.findings);
+
+    let report = scoped("bbsk/no-such");
+    let found = with_assistant(&report);
+    assert!(
+        found.len() == 1
+            && found[0].contains("`bbsk/no-such`")
+            && found[0].contains("project `bbsk`"),
+        "{found:?}"
+    );
+
+    let endpoint = dir.join(ENDPOINT_PATH.replace("ovzdusie", "bbsk"));
+    let text = std::fs::read_to_string(&endpoint).expect("endpoint");
+    std::fs::write(
+        &endpoint,
+        text.replace("audience: public", "audience: organization"),
+    )
+    .expect("write");
+    let report = scoped("bbsk/public-air");
+    let found = with_assistant(&report);
+    assert!(
+        found.len() == 1 && found[0].contains("audience: public"),
+        "{found:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// T-4281, MF-52: a source reaches another project's `KnowledgeSource` as `{project}/{source}`;
+/// one the project does not declare, or an internal one on a public channel, is named.
+#[test]
+fn an_assistant_reads_another_projects_declared_public_source_only() {
+    let dir = valid_repo("assistant-source-scope");
+    knowledge_source(&dir, "web", "public", None);
+    let bbsk = |visibility: &str| {
+        write(
+            &dir,
+            "projects/bbsk/assistant/sources/web.yaml",
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: KnowledgeSource\nmetadata:\n  name: web\n  namespace: bbsk\nspec:\n  source: website\n  startUrls: [https://www.bbsk.sk/]\n  visibility: {visibility}\n"),
+        );
+    };
+    let scoped = |sources: &str| {
+        assistant_deployment(&dir, "public", sources, "public-air");
+        let path = dir.join("projects/ovzdusie/assistant/deployments/chat.yaml");
+        let text = std::fs::read_to_string(&path).expect("deployment");
+        std::fs::write(&path, format!("{text}  scope: {{ projects: [bbsk] }}\n")).expect("write");
+        validate::run(&dir)
+    };
+    write(
+        &dir,
+        "projects/bbsk/project.yaml",
+        &std::fs::read_to_string(dir.join("projects/ovzdusie/project.yaml"))
+            .expect("project")
+            .replace("ovzdusie", "bbsk"),
+    );
+    bbsk("public");
+    let report = scoped("web, \"bbsk/web\"");
+    assert!(with_assistant(&report).is_empty(), "{:?}", report.findings);
+
+    let report = scoped("web, \"bbsk/nowhere\"");
+    let found = with_assistant(&report);
+    assert!(
+        found.len() == 1
+            && found[0].contains("`bbsk/nowhere`")
+            && found[0].contains("project `bbsk`"),
+        "{found:?}"
+    );
+
+    bbsk("internal");
+    let report = scoped("web, \"bbsk/web\"");
+    let found = with_assistant(&report);
+    assert!(
+        found.len() == 1
+            && found[0].contains("`bbsk/web`")
+            && found[0].contains("public sources only"),
+        "{found:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A scheduled Pipeline `name` of project ovzdusie writing `entity_type` through Endpoint
+/// `endpoint` in `mode`, its ids minted by `template` or, when `None`, set by its mapping.
+fn writer(
+    dir: &Path,
+    name: &str,
+    endpoint: &str,
+    entity_type: &str,
+    mode: &str,
+    template: Option<&str>,
+) {
+    data_source(dir, "ovzdusie", "feed");
+    let id = template
+        .map(|t| format!("    id:\n      mint: template\n      template: \"{t}\"\n"))
+        .unwrap_or_default();
+    write(
+        dir,
+        &format!("projects/ovzdusie/pipelines/{name}/pipeline.yaml"),
+        &format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: {name}\n  namespace: ovzdusie\nspec:\n  class: scheduled\n  schedule: \"0 * * * *\"\n  source:\n    dataSourceRef: feed\n  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:ovzdusie:{endpoint}\n  output:\n    type: {entity_type}\n    mode: {mode}\n{id}"
+        ),
+    );
+}
+
+/// T-6392: a `targetEndpoint` written `{project}:{endpoint}` is refused with the form to write, the
+/// Endpoint's name alone, which then passes the check.
+#[test]
+fn a_project_prefixed_target_endpoint_is_told_to_write_the_name_alone() {
+    let dir = valid_repo("t6392-prefixed-target");
+    let pipeline = |target: &str| {
+        format!(
+            "apiVersion: joinedcontext.com/v1alpha2\nkind: Pipeline\nmetadata:\n  name: stations\n  namespace: ovzdusie\nspec:\n  class: scheduled\n  schedule: \"0 * * * *\"\n  sources:\n    - dataSourceRef: feed\n  outputs:\n    - targetEndpoint: {target}\n      type: AirQualityObserved\n      mode: upsert\n"
+        )
+    };
+    data_source(&dir, "ovzdusie", "feed");
+    let path = "projects/ovzdusie/pipelines/stations/pipeline.yaml";
+    write(
+        &dir,
+        path,
+        &pipeline("urn:ngsi-ld:Endpoint:ovzdusie:public-air"),
+    );
+    let report = validate::run(&dir);
+    let found = citing(&report, "ADR-N-057");
+    assert!(
+        found
+            .iter()
+            .any(|f| f.contains("declares no Endpoint ovzdusie:public-air")
+                && f.contains("targetEndpoint: urn:ngsi-ld:Endpoint:public-air")),
+        "{found:?}"
+    );
+
+    write(&dir, path, &pipeline("urn:ngsi-ld:Endpoint:public-air"));
+    let report = validate::run(&dir);
+    assert!(
+        !citing(&report, "ADR-N-057")
+            .iter()
+            .any(|f| f.contains("declares no Endpoint")),
+        "{:?}",
+        report.findings
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A second space `verejne` with its Endpoint `verejne-air`.
+fn second_space(dir: &Path) {
+    write(
+        dir,
+        "projects/ovzdusie/spaces/verejne/space.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: verejne\n  namespace: ovzdusie\nspec:\n  isSandbox: false\n",
+    );
+    write(
+        dir,
+        "projects/ovzdusie/spaces/verejne/endpoints/verejne-air.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: verejne-air\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: verejne\n  slug: k4qm7ge2xdv6ksb3ncf5arw2yz\n  audience: public\n  enabledRepresentations: [\"ngsi-ld\"]\n",
+    );
+}
+
+fn with_pl79(report: &validate::Report) -> Vec<&str> {
+    report
+        .findings
+        .iter()
+        .filter(|f| f.message.contains("PL-79"))
+        .map(|f| f.message.as_str())
+        .collect()
+}
+
+const STATION_ID: &str = "urn:ngsi-ld:AirQualityObserved:{station.code}";
+
+/// PL-79, T-4408: a Pipeline in replace drops what another Pipeline writes onto the same
+/// entities, at each of its runs, so two outputs whose ids can meet are refused on the replacing
+/// one, naming both.
+#[test]
+fn a_replace_whose_ids_another_pipeline_mints_alike_is_refused_naming_both() {
+    let dir = valid_repo("pl79-refused");
+    writer(
+        &dir,
+        "stations",
+        "public-air",
+        "AirQualityObserved",
+        "replace",
+        Some(STATION_ID),
+    );
+    writer(
+        &dir,
+        "enrich",
+        "public-air",
+        "AirQualityObserved",
+        "upsert",
+        Some(STATION_ID),
+    );
+
+    let report = validate::run(&dir);
+    let found = with_pl79(&report);
+    assert_eq!(found.len(), 1, "{:?}", report.findings);
+    assert!(
+        found[0].contains("Pipeline stations") && found[0].contains("Pipeline enrich"),
+        "{}",
+        found[0]
+    );
+    assert!(
+        found[0].contains("space ovzdusie") && found[0].contains("AirQualityObserved"),
+        "{}",
+        found[0]
+    );
+    let finding = report
+        .findings
+        .iter()
+        .find(|f| f.message.contains("PL-79"))
+        .expect("finding");
+    assert_eq!(
+        finding.path,
+        PathBuf::from("projects/ovzdusie/pipelines/stations/pipeline.yaml")
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn two_upserts_with_one_id_mint_and_a_replace_alone_are_valid() {
+    let dir = valid_repo("pl79-upserts");
+    writer(
+        &dir,
+        "stations",
+        "public-air",
+        "AirQualityObserved",
+        "upsert",
+        Some(STATION_ID),
+    );
+    writer(
+        &dir,
+        "enrich",
+        "public-air",
+        "AirQualityObserved",
+        "upsert",
+        Some(STATION_ID),
+    );
+    writer(
+        &dir,
+        "weather",
+        "public-air",
+        "WeatherObserved",
+        "replace",
+        Some("urn:ngsi-ld:WeatherObserved:{code}"),
+    );
+
+    let report = validate::run(&dir);
+    assert_eq!(report.findings, vec![]);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The generated open-data pipelines (T-4407): every one writes one type into one space in
+/// replace, and each keeps its ids apart by its own slug, in its template or in its mapping.
+#[test]
+fn replace_pipelines_whose_ids_carry_their_own_literal_are_valid() {
+    let dir = valid_repo("pl79-od");
+    writer(
+        &dir,
+        "od-dotacie",
+        "public-air",
+        "KeyPerformanceIndicator",
+        "replace",
+        None,
+    );
+    writer(
+        &dir,
+        "od-rozpocet",
+        "public-air",
+        "KeyPerformanceIndicator",
+        "replace",
+        None,
+    );
+    writer(
+        &dir,
+        "od-a",
+        "public-air",
+        "Grant",
+        "replace",
+        Some("urn:ngsi-ld:Grant:od-a-{id}"),
+    );
+    writer(
+        &dir,
+        "od-b",
+        "public-air",
+        "Grant",
+        "replace",
+        Some("urn:ngsi-ld:Grant:od-b-{id}"),
+    );
+
+    let report = validate::run(&dir);
+    assert_eq!(report.findings, vec![]);
+
+    // A literal that is the start of the other's keeps nothing apart.
+    writer(
+        &dir,
+        "od-b",
+        "public-air",
+        "Grant",
+        "upsert",
+        Some("urn:ngsi-ld:Grant:od-a-x{id}"),
+    );
+    assert_eq!(with_pl79(&validate::run(&dir)).len(), 1);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_replace_into_the_same_type_of_another_space_is_valid() {
+    let dir = valid_repo("pl79-spaces");
+    second_space(&dir);
+    writer(
+        &dir,
+        "stations",
+        "public-air",
+        "AirQualityObserved",
+        "replace",
+        Some(STATION_ID),
+    );
+    writer(
+        &dir,
+        "copy",
+        "verejne-air",
+        "AirQualityObserved",
+        "replace",
+        Some(STATION_ID),
+    );
+
+    let report = validate::run(&dir);
+    assert_eq!(
+        with_pl79(&report),
+        Vec::<&str>::new(),
+        "{:?}",
+        report.findings
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// --- T-4529: a named MCP server's select and an assistant's mcpServer (MF-55, MF-56) ---
+
+fn selecting_server(dir: &Path, audience: &str, select: &str) {
+    write(
+        dir,
+        "projects/ovzdusie/mcp/air.yaml",
+        &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: McpServer\nmetadata:\n  name: air\n  namespace: ovzdusie\n  title: {{ en: Air in Banská Bystrica }}\nspec:\n  audience: {audience}\n  select: {select}\n"),
+    );
+}
+
+fn citing<'a>(report: &'a validate::Report, rule: &str) -> Vec<&'a str> {
+    report
+        .findings
+        .iter()
+        .filter(|f| f.message.contains(rule))
+        .map(|f| f.message.as_str())
+        .collect()
+}
+
+/// MF-55: a select over the repository's own project and space is no finding; an undeclared
+/// project or space is named with its field.
+#[test]
+fn a_select_names_projects_and_spaces_the_repository_declares() {
+    let dir = valid_repo("mcp-select");
+    selecting_server(
+        &dir,
+        "public",
+        "{ projects: [ovzdusie], spaces: [ovzdusie/ovzdusie], themes: [ENVI] }",
+    );
+    let report = validate::run(&dir);
+    assert!(report.findings.is_empty(), "{:?}", report.findings);
+    selecting_server(
+        &dir,
+        "public",
+        "{ projects: [nowhere], spaces: [ovzdusie/nothing] }",
+    );
+    let report = validate::run(&dir);
+    let found = citing(&report, "MF-55");
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found[0].contains("spec.select.projects") && found[0].contains("`nowhere`"));
+    assert!(found[1].contains("spec.select.spaces") && found[1].contains("`ovzdusie/nothing`"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MF-55: a public server with an organization-level selector fails validate.
+#[test]
+fn a_public_server_selecting_organization_endpoints_is_refused() {
+    let dir = valid_repo("mcp-select-wide");
+    selecting_server(&dir, "public", "{ accessLevel: [organization] }");
+    let report = validate::run(&dir);
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.message.contains("spec.select.accessLevel")),
+        "{:?}",
+        report.findings
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MF-56: an assistant names a server the repository declares, `org/all` included, and one
+/// that answers people nobody signed in names a public server only.
+#[test]
+fn an_assistant_names_a_declared_server_its_channel_may_read() {
+    let dir = valid_repo("assistant-mcp-server");
+    knowledge_source(&dir, "web", "public", None);
+    selecting_server(&dir, "public", "{}");
+    let deployment = |channel: &str, server: &str| {
+        write(
+            &dir,
+            "projects/ovzdusie/assistant/deployments/chat.yaml",
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: AssistantDeployment\nmetadata:\n  name: chat\n  namespace: ovzdusie\nspec:\n  publicId: bb-chat\n  channel: {channel}\n  sources: [web]\n  mcpServer: {server}\n  allowedOrigins: [https://www.banskabystrica.sk]\n  rateLimit: {{ requestsPerMinute: 60, perClientPerMinute: 10 }}\n  budget: {{ tokensPerDay: 1000000, tokensPerConversation: 20000 }}\n"),
+        );
+        validate::run(&dir)
+    };
+    for (channel, server) in [("public", "ovzdusie/air"), ("internal", "org/all")] {
+        let report = deployment(channel, server);
+        assert!(
+            report.findings.is_empty(),
+            "{channel} {server}: {:?}",
+            report.findings
+        );
+    }
+    let report = deployment("public", "org/all");
+    let found = citing(&report, "MF-56");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("`organization`") && found[0].contains("public server only"));
+    let report = deployment("internal", "ovzdusie/nowhere");
+    let found = citing(&report, "MF-56");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("no manifest declares"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// --- T-4690: an assistant's selector, exclusions and the 50 it serves (MF-58, MF-59, AG-122) ---
+
+fn selecting_deployment(dir: &Path, extra: &str) -> validate::Report {
+    write(
+        dir,
+        "projects/ovzdusie/assistant/deployments/chat.yaml",
+        &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: AssistantDeployment\nmetadata:\n  name: chat\n  namespace: ovzdusie\nspec:\n  publicId: bb-chat\n  channel: public\n{extra}  allowedOrigins: [https://www.banskabystrica.sk]\n  rateLimit: {{ requestsPerMinute: 60, perClientPerMinute: 10 }}\n  budget: {{ tokensPerDay: 1000000, tokensPerConversation: 20000 }}\n"),
+    );
+    validate::run(dir)
+}
+
+/// MF-58, MF-59: a selector names its own project and space, or those of `scope.projects`;
+/// an excluded Endpoint is one the repository declares.
+#[test]
+fn an_assistant_selects_inside_its_reach_and_excludes_declared_endpoints() {
+    let dir = valid_repo("assistant-select");
+    write(&dir, ENDPOINT_PATH, ENDPOINT);
+    let report = selecting_deployment(
+        &dir,
+        "  select: { projects: [ovzdusie], spaces: [ovzdusie/ovzdusie], themes: [ENVI] }\n  exclude: [public-air]\n",
+    );
+    assert!(report.findings.is_empty(), "{:?}", report.findings);
+
+    let report = selecting_deployment(
+        &dir,
+        "  scope: { projects: [doprava] }\n  select: { projects: [doprava], spaces: [ovzdusie/nothing] }\n  exclude: [missing, doprava/roads]\n",
+    );
+    let found = citing(&report, "MF-58");
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found[0].contains("`doprava`") && found[0].contains("does not declare"));
+    assert!(found[1].contains("`ovzdusie/nothing`"));
+    let found = citing(&report, "MF-59");
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found[0].contains("`missing`") && found[0].contains("project `ovzdusie`"));
+    assert!(found[1].contains("`doprava/roads`"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// AG-122: one deployment serves at most 100 Endpoints (50 before T-5786); a selector that
+/// reaches more is refused with the count and the slugs left out, and an exclusion brings it
+/// back under.
+#[test]
+fn an_assistant_resolving_more_than_a_hundred_endpoints_is_refused() {
+    let dir = valid_repo("assistant-hundred");
+    const BASE32: &[u8] = b"abcdefghijklmnopqrstuvwxyz234567";
+    // The repository's own `public-air` is the 101st.
+    for i in 0..jc_core::reach::MAX_RESOLVED {
+        let tail: String = [i / 32, i % 32]
+            .iter()
+            .map(|&k| BASE32[k] as char)
+            .collect();
+        write(
+            &dir,
+            &format!("projects/ovzdusie/spaces/ovzdusie/endpoints/e{i}.yaml"),
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: e{i}\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  slug: zt4qm7ge2xdv6ksb3ncf5ar{tail}x\n  audience: public\n"),
+        );
+    }
+    let report = selecting_deployment(&dir, "  select: {}\n");
+    let found = citing(&report, "AG-122");
+    assert_eq!(found.len(), 1, "{:?}", report.findings);
+    assert!(found[0].contains("resolves 101 Endpoints"), "{}", found[0]);
+    assert!(
+        found[0].contains("zt4qm7ge2xdv6ksb3ncf5arw2y"),
+        "{}",
+        found[0]
+    );
+    let report = selecting_deployment(&dir, "  select: {}\n  exclude: [e0]\n");
+    assert!(
+        citing(&report, "AG-122").is_empty(),
+        "{:?}",
+        report.findings
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A Policy of the space `ovzdusie` granting `operations` to `assignee` (ADR-N-057 decision 5).
+fn space_policy(dir: &Path, name: &str, assignee: &str, operations: &str) {
+    write(
+        dir,
+        &format!("projects/ovzdusie/spaces/ovzdusie/policies/{name}.yaml"),
+        &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: Policy\nmetadata:\n  name: {name}\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: {{ kind: ContextSpace, name: ovzdusie }}\n  assigner: did:web:banskabystrica.sk\n  assignee: {assignee}\n  operations: {operations}\n"),
+    );
+}
+
+/// The public Endpoint `public-air`, narrowed to the Policy `public-read` by its `policyRef`.
+fn narrow_public_air(dir: &Path) {
+    write(
+        dir,
+        ENDPOINT_PATH,
+        &format!(
+            "{ENDPOINT}  policyRef: urn:ngsi-ld:Policy:banskabystrica.sk:ovzdusie-ovzdusie:public-read\n"
+        ),
+    );
+    space_policy(
+        dir,
+        "public-read",
+        "{ kind: role, id: public }",
+        "[retrieveOps, createSubscription, deleteSubscription]",
+    );
+}
+
+/// PL-111, T-5035: the bbsk podujatia defect. A write Policy whose space's only Endpoint names another
+/// Policy by `policyRef` is bound nowhere; a read Policy that lets its reader subscribe is no write.
+#[test]
+fn a_write_policy_no_endpoint_binds_is_refused() {
+    let dir = valid_repo("adr57-unbound-write");
+    narrow_public_air(&dir);
+    space_policy(
+        &dir,
+        "sensors-write",
+        "{ kind: serviceAccount, id: sensors }",
+        "[upsertBatch]",
+    );
+
+    let report = validate::run(&dir);
+    let found = citing(&report, "ADR-N-057");
+    assert_eq!(found.len(), 1, "{:?}", report.findings);
+    assert!(
+        found[0].contains("Policy sensors-write")
+            && found[0].contains("public-air binds only its policyRef"),
+        "{}",
+        found[0]
+    );
+    let finding = report
+        .findings
+        .iter()
+        .find(|f| f.message.contains("ADR-N-057"))
+        .expect("finding");
+    assert_eq!(
+        finding.path,
+        PathBuf::from("projects/ovzdusie/spaces/ovzdusie/policies/sensors-write.yaml")
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_write_policy_an_endpoint_binds_passes() {
+    let dir = valid_repo("adr57-bound-write");
+    // `public-air` names no policyRef, so it evaluates every Policy of its space.
+    space_policy(
+        &dir,
+        "sensors-write",
+        "{ kind: serviceAccount, id: sensors }",
+        "[updateOps]",
+    );
+    // A prohibition takes away and needs no Endpoint of its own.
+    write(
+        &dir,
+        "projects/ovzdusie/spaces/ovzdusie/policies/no-deletes.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Policy\nmetadata:\n  name: no-deletes\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: { kind: ContextSpace, name: ovzdusie }\n  effect: prohibition\n  assigner: did:web:banskabystrica.sk\n  assignee: { kind: role, id: public }\n  operations: [deleteEntity]\n",
+    );
+
+    let report = validate::run(&dir);
+    assert_eq!(citing(&report, "ADR-N-057"), Vec::<&str>::new());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_write_policy_named_by_the_policy_ref_passes() {
+    let dir = valid_repo("adr57-named-write");
+    // The space pins no urnSegment, so its Policies render under `{project}-{space}` (PF-84).
+    let narrowed = |space: &str| {
+        format!(
+            "{ENDPOINT}  policyRef: urn:ngsi-ld:Policy:banskabystrica.sk:{space}:sensors-write\n"
+        )
+    };
+    write(&dir, ENDPOINT_PATH, &narrowed("ovzdusie-ovzdusie"));
+    space_policy(
+        &dir,
+        "sensors-write",
+        "{ kind: serviceAccount, id: sensors }",
+        "[redirectionOps]",
+    );
+
+    let report = validate::run(&dir);
+    assert_eq!(citing(&report, "ADR-N-057"), Vec::<&str>::new());
+
+    // The same name under the space's local name is another Policy, which the gateway never binds.
+    write(&dir, ENDPOINT_PATH, &narrowed("ovzdusie"));
+    let report = validate::run(&dir);
+    let found = citing(&report, "ADR-N-057");
+    assert_eq!(found.len(), 1, "{:?}", report.findings);
+    assert!(
+        found[0]
+            .contains("write urn:ngsi-ld:Policy:banskabystrica.sk:ovzdusie-ovzdusie:sensors-write"),
+        "{}",
+        found[0]
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// T-5036: each rule of a `rules[]` Policy is its own grant; the lint names the write rule
+/// `{policy}#{n}`, and a `policyRef` naming the Policy binds every rule of it.
+#[test]
+fn a_write_rule_no_endpoint_binds_is_refused_by_its_rule_name() {
+    let dir = valid_repo("adr57-rules-write");
+    narrow_public_air(&dir);
+    write(
+        &dir,
+        "projects/ovzdusie/spaces/ovzdusie/policies/kiosks.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Policy\nmetadata:\n  name: kiosks\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: { kind: ContextSpace, name: ovzdusie }\n  assigner: did:web:banskabystrica.sk\n  rules:\n    - assignee: { kind: role, id: public }\n      operations: [retrieveOps]\n    - assignee: { kind: serviceAccount, id: kiosk-editor }\n      operations: [updateAttrs]\n",
+    );
+
+    let report = validate::run(&dir);
+    let found = citing(&report, "ADR-N-057");
+    assert_eq!(found.len(), 1, "{:?}", report.findings);
+    assert!(
+        found[0].contains("Policy kiosks#2 grants a write"),
+        "{}",
+        found[0]
+    );
+
+    write(
+        &dir,
+        ENDPOINT_PATH,
+        &format!(
+            "{ENDPOINT}  policyRef: urn:ngsi-ld:Policy:banskabystrica.sk:ovzdusie-ovzdusie:kiosks\n"
+        ),
+    );
+    let report = validate::run(&dir);
+    assert_eq!(citing(&report, "ADR-N-057"), Vec::<&str>::new());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// PL-111, T-5035: a Pipeline writes as `pl-{pipeline}` under a Policy derived for it (PL-20), which an
+/// Endpoint with a `policyRef` never binds, so every upsert of the pipeline answered 404.
+#[test]
+fn a_pipeline_whose_target_does_not_bind_its_write_is_refused() {
+    let dir = valid_repo("adr57-pipeline-target");
+    narrow_public_air(&dir);
+    writer(
+        &dir,
+        "stations",
+        "public-air",
+        "AirQualityObserved",
+        "upsert",
+        None,
+    );
+    writer(
+        &dir,
+        "lost",
+        "no-such-endpoint",
+        "AirQualityObserved",
+        "upsert",
+        None,
+    );
+
+    let report = validate::run(&dir);
+    let found = citing(&report, "ADR-N-057");
+    assert_eq!(found.len(), 2, "{:?}", report.findings);
+    assert!(
+        found.iter().any(
+            |f| f.contains("Pipeline stations output 1 writes as pl-stations")
+                && f.contains("public-air binds only its policyRef")
+        ),
+        "{found:?}"
+    );
+    assert!(
+        found.iter().any(|f| f.contains("Pipeline lost output 1")
+            && f.contains("project ovzdusie declares no Endpoint no-such-endpoint")),
+        "{found:?}"
+    );
+
+    // T-5040: the Portal builds the repository from its mirror and reads the same sentences, each
+    // with the output's field.
+    let loaded = jc_manifest::loader::Repository::load(&dir).expect("the repository loads");
+    let manifests = loaded.iter().map(|(_, r)| r.manifest.clone()).collect();
+    let mirrored = jc_manifest::loader::Repository::from_manifests(manifests, None)
+        .expect("the manifests build a repository");
+    let unmade = validate::unmade_writes(&mirrored);
+    let mut messages: Vec<&str> = unmade.iter().map(|u| u.message.as_str()).collect();
+    messages.sort_unstable();
+    let mut expected = found.clone();
+    expected.sort_unstable();
+    assert_eq!(messages, expected);
+    for u in &unmade {
+        assert_eq!(u.id.kind, "Pipeline");
+        assert!(
+            u.field
+                .as_deref()
+                .is_some_and(|f| f.ends_with("targetEndpoint")),
+            "{u:?}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// T-5040: manifests held in memory render `{orgDomain}` with the domain they are handed.
+#[test]
+fn manifests_in_memory_render_the_org_domain() {
+    let manifest: jc_manifest::loader::RawManifest = serde_json::from_value(serde_json::json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": "Endpoint",
+        "metadata": { "name": "e", "namespace": "p" },
+        "spec": { "policyRef": "urn:ngsi-ld:Policy:{orgDomain}:p-s:w" }
+    }))
+    .expect("a manifest");
+    let repo = jc_manifest::loader::Repository::from_manifests(vec![manifest], Some("city.sk"))
+        .expect("one manifest builds a repository");
+    assert_eq!(repo.org_domain(), Some("city.sk"));
+    let (_, endpoint) = repo.iter().next().expect("the Endpoint");
+    assert_eq!(
+        endpoint.manifest.spec["policyRef"],
+        "urn:ngsi-ld:Policy:city.sk:p-s:w"
+    );
+}
+
+#[test]
+fn a_pipeline_aimed_at_an_endpoint_without_policy_ref_passes() {
+    let dir = valid_repo("adr57-pipeline-ok");
+    writer(
+        &dir,
+        "stations",
+        "public-air",
+        "AirQualityObserved",
+        "upsert",
+        None,
+    );
+
+    let report = validate::run(&dir);
+    assert_eq!(citing(&report, "ADR-N-057"), Vec::<&str>::new());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// ADR-N-057 decision 2 (T-5037): the unbound-write rule reads `policyRefs` as the gateway does,
+/// so a write Policy listed beside a read one is bound, and one left off the list is not.
+#[test]
+fn a_write_policy_listed_in_policy_refs_passes() {
+    let dir = valid_repo("adr57-policy-refs");
+    let listed = |names: &[&str]| {
+        let refs: String = names
+            .iter()
+            .map(|name| {
+                format!("\n    - urn:ngsi-ld:Policy:banskabystrica.sk:ovzdusie-ovzdusie:{name}")
+            })
+            .collect();
+        format!("{ENDPOINT}  policyRefs:{refs}\n")
+    };
+    space_policy(
+        &dir,
+        "public-read",
+        "{ kind: role, id: public }",
+        "[retrieveOps]",
+    );
+    space_policy(
+        &dir,
+        "sensors-write",
+        "{ kind: serviceAccount, id: sensors }",
+        "[upsertBatch]",
+    );
+    write(
+        &dir,
+        ENDPOINT_PATH,
+        &listed(&["public-read", "sensors-write"]),
+    );
+    let report = validate::run(&dir);
+    assert_eq!(citing(&report, "ADR-N-057"), Vec::<&str>::new());
+
+    write(&dir, ENDPOINT_PATH, &listed(&["public-read"]));
+    let report = validate::run(&dir);
+    let found = citing(&report, "ADR-N-057");
+    assert_eq!(found.len(), 1, "{:?}", report.findings);
+    assert!(
+        found[0].contains("Policy sensors-write")
+            && found[0].contains("public-air binds only its policyRefs"),
+        "{}",
+        found[0]
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// T-5872, ADR-N-048 §2.13: a binding names a broker role the project declares; one naming a
+/// broker or role nobody declares is a finding. The deprecated list and two roles granting one
+/// filter are warnings, never findings.
+#[test]
+fn an_mqtt_binding_names_a_declared_role_and_the_old_list_is_a_warning() {
+    let dir = valid_repo("mqtt-broker-bindings");
+    let fleet = |name: &str, role: &str| {
+        write(
+            &dir,
+            &format!("projects/ovzdusie/access/serviceaccounts/{name}.yaml"),
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: ServiceAccount\nmetadata:\n  name: {name}\n  namespace: ovzdusie\nspec:\n  owner:\n    user: demo.steward\n  purpose: \"air sensors\"\n  roles:\n    - role: {role}\n      scope:\n        project: ovzdusie\n  credentials:\n    - kind: oauth-client\n      name: default\n"),
+        );
+    };
+    camera_account(&dir, "cam-north");
+    mqtt_broker(&dir, "cameras", "cam-north", "");
+    write(
+        &dir,
+        "projects/ovzdusie/mqttbrokers/air.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: MqttBroker\nmetadata:\n  name: air\n  namespace: ovzdusie\nspec:\n  roles:\n    - name: sensor\n      publish: [\"air/${clientid}/pm10\"]\n    - name: sensor-all\n      publish: [\"air/${clientid}/#\"]\n",
+    );
+    fleet("air-fleet", "mqtt/air/sensor");
+    fleet("any-fleet", "mqtt/*/camera");
+    let report = validate::run(&dir);
+    assert!(report.findings.is_empty(), "{:?}", report.findings);
+    let warned: Vec<&str> = report.warnings.iter().map(|w| w.message.as_str()).collect();
+    assert!(
+        warned
+            .iter()
+            .any(|m| m.contains("deprecated") && m.contains("mqtt/cameras/camera")),
+        "{warned:?}"
+    );
+    assert!(
+        warned
+            .iter()
+            .any(|m| m
+                .contains("role `sensor-all` publish `air/${clientid}/#` covers role `sensor`")),
+        "{warned:?}"
+    );
+
+    fleet("lost-fleet", "mqtt/air/camera");
+    fleet("gone-fleet", "mqtt/nowhere/sensor");
+    let report = validate::run(&dir);
+    for name in ["lost-fleet", "gone-fleet"] {
+        assert!(
+            report.findings.iter().any(|f| f.message.contains(name)
+                && f.message.contains("no MqttBroker of this project declares")),
+            "{name}: {:?}",
+            report.findings
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -1,0 +1,53 @@
+[package]
+name = "jc-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+serde_norway = "0.9"
+schemars = { version = "0.8", features = ["chrono"] }
+thiserror.workspace = true
+regex.workspace = true
+# The broker's own `q`, `scopeQ` and geo-query parser: an output filter is refused at save exactly
+# where the broker would refuse it at serve (API/11 EP-157, T-5217); the gateway and the Portal lock it.
+antares-ql.workspace = true
+sha2 = "0.10"
+# Folds diacritics out of the NGSI-LD catalogue's searchText (T-4500); already in the graph.
+unicode-normalization = "0.1.25"
+# Reads the `type` and `q` of a CKAN resource URL into the catalogue's nextQuery (T-4746); already
+# in the graph through url.
+form_urlencoded = "1"
+zeroize = "1"
+# The pinned Vega-Lite and Vega schemas a visualization validates against (ADR-N-053, T-4642);
+# the version the gateway, jcctl and jc-manifest already lock.
+jsonschema = { version = "0.54", default-features = false }
+chrono = { version = "0.4", default-features = false, features = ["serde", "alloc"] }
+axum = { version = "0.8", optional = true, default-features = false, features = ["json"] }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter", "json"] }
+# `auth` (T-4605): the realm's token verifier and its JWKS refresh, the gateway's and the
+# functions runtime's; the versions the gateway already locks.
+arc-swap = { version = "1", optional = true }
+jsonwebtoken = { workspace = true, optional = true }
+hyper-util = { version = "0.1", optional = true, features = ["client-legacy", "http1", "tokio"] }
+tokio = { version = "1", optional = true, features = ["time"] }
+# `outbound` (T-4776): the guarded client for URLs from outside the installation; the version and
+# TLS stack every reqwest of the workspace already locks.
+reqwest = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+
+[build-dependencies]
+serde_json.workspace = true
+
+[features]
+default = []
+axum = ["dep:axum"]
+logs = ["dep:tracing", "dep:tracing-subscriber"]
+outbound = ["dep:reqwest", "dep:tokio", "tokio/net"]
+auth = ["axum", "dep:tracing", "dep:arc-swap", "dep:jsonwebtoken", "dep:hyper-util", "dep:tokio"]

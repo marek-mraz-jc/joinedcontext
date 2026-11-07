@@ -1,0 +1,289 @@
+//! The gateway's own Prometheus surface (OPS-16, TS-22).
+//!
+//! `components/monitoring` scrapes `/metrics` on the service's `http` port every fifteen
+//! seconds. The endpoint stays inside the cluster: no APISIX route, no ingress, and nothing
+//! here reads a token or a body.
+//!
+//! Every series the gateway publishes is named in this module and nowhere else, so the
+//! surface documents itself and a dashboard can be written against a list rather than a
+//! grep. Labels are bounded by configuration — a route pattern, an endpoint slug, an
+//! operation of the closed CIM 009 vocabulary — and never by anything a caller supplies: an
+//! entity id or a token in a label is an unbounded series and a disclosure at once.
+
+use std::sync::{Arc, OnceLock};
+use std::time::Instant;
+
+use axum::body::Body;
+use axum::extract::{MatchedPath, Request, State};
+use axum::http::header::{HeaderName, HeaderValue, CONTENT_TYPE};
+use axum::http::Response;
+use axum::middleware::Next;
+use axum::response::IntoResponse;
+use jc_core::kinds::Operation;
+use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+
+use crate::app::Gateway;
+
+/// The Prometheus text format, the version every scraper since 2014 reads.
+pub const TEXT_FORMAT: &str = "text/plain; version=0.0.4";
+
+/// Requests that reached the surface, by route, endpoint and status.
+const REQUESTS: &str = "jc_gateway_requests_total";
+/// How long the gateway took to answer one, the enforcement point included.
+const REQUEST_SECONDS: &str = "jc_gateway_request_duration_seconds";
+/// What the policy decision point decided, by operation and verdict (GW1).
+const DECISIONS: &str = "jc_gateway_pdp_decisions_total";
+/// The broker round trip inside one answer, which is most of a slow request.
+const BROKER_SECONDS: &str = "jc_gateway_broker_request_duration_seconds";
+const SPACE_HELD: &str = "jc_gateway_space_held";
+/// The W3C Server Timing header; the http crate names no constant for it.
+const SERVER_TIMING: HeaderName = HeaderName::from_static("server-timing");
+
+/// The paths that describe the process rather than the traffic. Counting a scrape as a
+/// request would make the rate a function of the scrape interval.
+const UNCOUNTED: &[&str] = &["/metrics", "/healthz", "/livez"];
+
+/// The bucket edges every duration here is counted into, in seconds.
+///
+/// Without them the exporter renders a duration as a *summary*: a quantile computed inside one
+/// replica, which cannot be combined with another replica's. The gateway runs behind an HPA, so
+/// the p95 a dashboard draws would be the p95 of whichever pod Prometheus happened to label —
+/// buckets can be summed, and the answer stays right however many pods are running.
+///
+/// The edges are placed for the budget the platform is held to: p95 ≤ 3ms and p99 ≤ 8ms of
+/// gateway overhead (docs Deployment/05 §2), so the resolution is where the answer is decided.
+const SECONDS: &[f64] = &[
+    0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+];
+
+fn handle() -> &'static PrometheusHandle {
+    static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
+    HANDLE.get_or_init(|| {
+        let handle = PrometheusBuilder::new()
+            .set_buckets(SECONDS)
+            .expect("the bucket list is not empty")
+            .install_recorder()
+            .expect("this process installs the one recorder");
+        describe();
+        handle
+    })
+}
+
+/// Installs the recorder and describes the series.
+///
+/// Called when the router is built rather than on the first scrape: the `metrics::` macros
+/// no-op until a recorder exists, so a surface that starts serving before this runs answers
+/// requests nobody counted.
+pub fn install() {
+    let _ = handle();
+}
+
+fn describe() {
+    metrics::describe_counter!(REQUESTS, "requests answered by the gateway surface");
+    metrics::describe_histogram!(REQUEST_SECONDS, "seconds to answer one request");
+    metrics::describe_counter!(DECISIONS, "policy decisions, by operation and verdict");
+    metrics::describe_histogram!(BROKER_SECONDS, "seconds of one broker round trip");
+    metrics::describe_gauge!(
+        SPACE_HELD,
+        "1 while a move holds the space read-only, 0 once it no longer does (PF-115)"
+    );
+    metrics::describe_counter!(
+        crate::quality::CHECKS,
+        "quality checks on writes, by space, type, rule and outcome"
+    );
+}
+
+/// The spaces a move holds read-only, as this gateway loaded them (PF-115). The Portal's move
+/// job reads the series to know the hold is in force before it exports (ADR-N-047 §2.6).
+pub fn held(before: &std::collections::HashSet<String>, now: &std::collections::HashSet<String>) {
+    for space in before.difference(now) {
+        metrics::gauge!(SPACE_HELD, "space" => space.clone()).set(0.0);
+    }
+    for space in now {
+        metrics::gauge!(SPACE_HELD, "space" => space.clone()).set(1.0);
+    }
+}
+
+/// The scrape.
+pub async fn metrics() -> Response<Body> {
+    ([(CONTENT_TYPE, TEXT_FORMAT)], handle().render()).into_response()
+}
+
+/// One decision, as the decision point made it (GW1).
+pub fn decided(operation: Operation, denied: bool) {
+    metrics::counter!(
+        DECISIONS,
+        "operation" => operation.as_str(),
+        "verdict" => if denied { "deny" } else { "rewrite" },
+    )
+    .increment(1);
+}
+
+/// One broker round trip, however it ended.
+pub fn broker_round_trip(seconds: f64, reached: bool) {
+    metrics::histogram!(BROKER_SECONDS, "reached" => if reached { "yes" } else { "no" })
+        .record(seconds);
+    let _ = SPLIT.try_with(|split| split.broker.set(split.broker.get() + seconds));
+}
+
+/// The time one decision took, for the answer's `Server-Timing` (T-5042).
+pub fn decision_time(seconds: f64) {
+    let _ = SPLIT.try_with(|split| split.pdp.set(split.pdp.get() + seconds));
+}
+
+/// The kind of caller the request's verified token names (T-6186), told by the layer that
+/// verifies it once per request (`in_flight`); a request it never reached counts as anonymous.
+pub fn caller_kind(kind: &'static str) {
+    let _ = SPLIT.try_with(|split| split.caller.set(Some(kind)));
+}
+
+/// Where one answer's time went: the decision point and the broker, each summed over the request
+/// (ADR-N-057 section 4). Read back into `Server-Timing`, so a client or a load test sees the
+/// gateway's share without a scrape.
+#[derive(Default)]
+struct Split {
+    pdp: std::cell::Cell<f64>,
+    broker: std::cell::Cell<f64>,
+    /// What [`caller_kind`] was told.
+    caller: std::cell::Cell<Option<&'static str>>,
+}
+
+tokio::task_local! {
+    static SPLIT: Split;
+}
+
+/// Counts and times every request the surface answers.
+///
+/// The `endpoint` label names only a slug or space the gateway serves: a path anyone can invent
+/// would otherwise mint one Prometheus series per guess, without a token (T-5701).
+pub async fn record(
+    State(gateway): State<Arc<Gateway>>,
+    request: Request,
+    next: Next,
+) -> axum::response::Response {
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|matched| matched.as_str().to_owned())
+        // Nothing matched, so the fallback answered. One series rather than one per path a
+        // scanner invents.
+        .unwrap_or_else(|| "unmatched".to_owned());
+    if UNCOUNTED.contains(&route.as_str()) {
+        return next.run(request).await;
+    }
+
+    let method = request.method().as_str().to_owned();
+    let endpoint = served(&gateway, request.uri().path())
+        .unwrap_or("-")
+        .to_owned();
+    let started = Instant::now();
+    let (mut response, pdp, broker, caller) = SPLIT
+        .scope(Split::default(), async {
+            let response = next.run(request).await;
+            let (pdp, broker, caller) =
+                SPLIT.with(|split| (split.pdp.get(), split.broker.get(), split.caller.get()));
+            (response, pdp, broker, caller)
+        })
+        .await;
+    let seconds = started.elapsed().as_secs_f64();
+    let timing = format!(
+        "pdp;dur={:.3}, broker;dur={:.3}, total;dur={:.3}",
+        pdp * 1000.0,
+        broker * 1000.0,
+        seconds * 1000.0
+    );
+    if let Ok(value) = HeaderValue::from_str(&timing) {
+        response.headers_mut().append(SERVER_TIMING, value);
+    }
+
+    crate::usage::count(
+        &endpoint,
+        &route,
+        response.status().as_u16(),
+        caller.unwrap_or("anonymous"),
+    );
+    metrics::counter!(
+        REQUESTS,
+        "route" => route.clone(),
+        "method" => method.clone(),
+        "endpoint" => endpoint.clone(),
+        "status" => response.status().as_u16().to_string(),
+    )
+    .increment(1);
+    metrics::histogram!(
+        REQUEST_SECONDS,
+        "route" => route,
+        "method" => method,
+        "endpoint" => endpoint,
+    )
+    .record(seconds);
+    response
+}
+
+/// The endpoint slug or space name a path belongs to.
+///
+/// Both surfaces name a configured thing in the same position, and there are as many of them
+/// as the repository declares, so the label stays bounded (EP-05, SP-03).
+fn named(path: &str) -> Option<&str> {
+    let mut segments = path.split('/').skip(1);
+    match segments.next()? {
+        "api" => match segments.next()? {
+            "endpoint" => segments.next(),
+            _ => None,
+        },
+        "cs" => segments.next(),
+        _ => None,
+    }
+    .filter(|name| !name.is_empty())
+}
+
+/// The endpoint slug or space name a path belongs to, when the gateway serves it.
+fn served<'p>(gateway: &Gateway, path: &'p str) -> Option<&'p str> {
+    named(path).filter(|name| {
+        if path.starts_with("/cs/") {
+            gateway.resolver.resolve_space(name).is_some()
+        } else {
+            gateway.resolver.resolve(name).is_some()
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_request_sums_its_decisions_and_broker_trips() {
+        let (pdp, broker) = SPLIT
+            .scope(Split::default(), async {
+                decision_time(0.001);
+                decision_time(0.002);
+                broker_round_trip(0.010, true);
+                SPLIT.with(|split| (split.pdp.get(), split.broker.get()))
+            })
+            .await;
+        assert_eq!((pdp, broker), (0.003, 0.010));
+        // Outside a request (a background follower) nothing is kept and nothing fails.
+        decision_time(1.0);
+    }
+
+    #[test]
+    fn a_series_is_named_after_the_endpoint_or_the_space_it_belongs_to() {
+        assert_eq!(
+            named("/api/endpoint/public-air/ngsi-ld/v1/entities"),
+            Some("public-air")
+        );
+        assert_eq!(named("/api/endpoint/public-air"), Some("public-air"));
+        assert_eq!(named("/cs/ovzdusie/ngsi-ld/v1/entities"), Some("ovzdusie"));
+    }
+
+    /// A path with no endpoint in it must not turn its next segment into a label, or a
+    /// scanner walking `/foo/bar` writes one series per guess.
+    #[test]
+    fn a_path_that_names_neither_carries_no_name() {
+        assert_eq!(named("/healthz"), None);
+        assert_eq!(named("/api/other/thing"), None);
+        assert_eq!(named("/api/endpoint/"), None);
+        assert_eq!(named("/"), None);
+    }
+}

@@ -1,0 +1,748 @@
+//! The query string, in and out (T-0005, GW2, GW10, GW11).
+//!
+//! NGSI-LD spreads one geo query over three parameters and one temporal query over three
+//! more, while a `Policy` writes each of them as a single string. This module is the
+//! translation in both directions, plus the rule that decides which of the caller's own
+//! parameters survive: a fixed allow list, so a parameter nobody thought about cannot
+//! reach the broker unexamined.
+
+use crate::pdp::evaluator::{Constraints, Request};
+use std::collections::BTreeSet;
+
+/// Parameters the caller controls and the gateway forwards unchanged: they shape the
+/// answer without widening it.
+const PASSTHROUGH: &[&str] = &[
+    "aggrMethods",
+    "aggrPeriodDuration",
+    "containedBy",
+    "count",
+    "csf",
+    "datasetId",
+    "details",
+    "entityMap",
+    "format",
+    "id",
+    "idPattern",
+    "join",
+    "joinLevel",
+    "lang",
+    "lastN",
+    "limit",
+    "local",
+    "offset",
+    "omit",
+    "options",
+    "scopeQ",
+    "pick",
+    "timeproperty",
+    "via",
+];
+
+/// The decoded `name=value` pairs of a query string, in the order they were sent.
+pub fn parse(query: &str) -> Vec<(String, String)> {
+    query
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| match pair.split_once('=') {
+            Some((name, value)) => (decode(name), decode(value)),
+            None => (decode(pair), String::new()),
+        })
+        .collect()
+}
+
+/// The first value of a parameter, if the caller sent one that is not empty.
+pub fn first<'a>(params: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    params
+        .iter()
+        .find(|(key, value)| key == name && !value.is_empty())
+        .map(|(_, value)| value.as_str())
+}
+
+/// Why a query of entities is one the specification refuses, before any grant narrows it
+/// (GW31): a `type` that is no NGSI-LD name or type expression, or a `q` the broker's own
+/// parser (`antares-ql`) refuses. `None` for a well-formed query.
+pub fn malformed(params: &[(String, String)]) -> Option<String> {
+    // The reason names the parameter, never its value: an agent reads it back (AG-21).
+    if let Some(types) = first(params, "type") {
+        let named = |c: char| c.is_ascii_alphanumeric() || "_-.:/#,;|()~@%+".contains(c);
+        if !types.chars().all(named) {
+            return Some("the type is not an NGSI-LD name or type expression".to_owned());
+        }
+    }
+    first(params, "q")
+        .filter(|q| antares_ql::parse_q(q).is_err())
+        .map(|_| "q is not an NGSI-LD query".to_owned())
+}
+
+/// What the caller asked for, in the dimensions a grant can narrow (GW11).
+pub fn requested(params: &[(String, String)]) -> Request {
+    Request {
+        types: split_list(first(params, "type")),
+        attrs: split_list(first(params, "attrs")),
+        q: first(params, "q").map(str::to_owned),
+        scope_q: first(params, "scopeQ").map(str::to_owned),
+        geo_q: joined(params, &["georel", "geometry", "coordinates"]),
+        temporal_q: joined(params, &["timerel", "timeAt", "endTimeAt"]),
+        referenced: referenced_attributes(params),
+    }
+}
+
+/// Every attribute name this request uses to pick or order entities (T-1862, MP-02, R9).
+///
+/// Owner's rule of 2026-09-18: "if there is a filter in q, geo, scope, etc. on an attribute that
+/// is not allowed for that entity, that entity should not be considered at all, because with this
+/// you can discover the value just by filtering." The answer was stripped afterwards, so a caller
+/// who could not read `age` could still ask `q=age>30` and bisect `N` until the list changed —
+/// which reads the value exactly, one bit at a time.
+///
+/// `pick` and `omit` only shape the answer and are not references. `attrs` is one: in CIM 009 it
+/// selects the entities that carry one of the names.
+pub fn referenced_attributes(params: &[(String, String)]) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    if let Some(q) = first(params, "q") {
+        names.extend(q_attributes(q));
+    }
+    names.extend(
+        split_list(first(params, "attrs"))
+            .into_iter()
+            .map(|name| compact(&name)),
+    );
+    for selector in ["orderBy", "geoproperty", "timeproperty"] {
+        for name in split_list(first(params, selector)) {
+            // `orderBy` takes a leading `!` for descending order; the rest is a path like q's.
+            names.insert(head_of(name.trim_start_matches('!')));
+        }
+    }
+    // A geo query with no `geoproperty` is a query on `location`, which CIM 009 makes the default.
+    if joined(params, &["georel", "geometry", "coordinates"]).is_some()
+        && first(params, "geoproperty").is_none()
+    {
+        names.insert("location".to_owned());
+    }
+    names.remove("");
+    names
+}
+
+/// The attribute names one `q` uses, read from the broker's own parse of it (`antares-ql`,
+/// CIM 009 4.9): each term's top-level attribute, or the relationship a linked-entity term
+/// follows. Only the path side of a term is a reference; a value that looks like a name is not.
+///
+/// A `q` the parser refuses references [`UNREADABLE`], a name no grant shows, so the filter can
+/// only narrow: no entity is let through on a query the gateway could not read.
+fn q_attributes(q: &str) -> BTreeSet<String> {
+    match antares_ql::parse_q(q) {
+        Ok(node) => node.attribute_paths().into_iter().map(head_of).collect(),
+        Err(_) => BTreeSet::from([UNREADABLE.to_owned()]),
+    }
+}
+
+/// The reference of a `q` the parser refuses: no NGSI-LD attribute name can contain a space.
+pub(crate) const UNREADABLE: &str = "unreadable q";
+
+/// The attribute a path names: its head, compacted.
+///
+/// `age.observedAt`, `age[value]` and `address[city]` are references to `age`, `age` and
+/// `address`; an expanded IRI is the same name as its compacted form, so `https://schema.org/age`
+/// is `age`. Case is kept: NGSI-LD attribute names are case sensitive, and folding them would let
+/// `Age` stand in for `age`.
+fn head_of(path: &str) -> String {
+    // An IRI is compacted first: its own path carries the dots and slashes a short name never
+    // does, so splitting on `.` before compacting would read `https://schema.org/age` as `https`.
+    let compacted = compact(path);
+    compacted
+        .split(['.', '['])
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
+}
+
+/// An expanded IRI written as the term it expands to: the last segment of its path.
+fn compact(name: &str) -> String {
+    let name = decode(name.trim()).trim_matches('"').to_owned();
+    match name.rsplit(['/', '#']).next() {
+        Some(last) if name.contains("://") && !last.is_empty() => last.to_owned(),
+        _ => name,
+    }
+}
+
+/// Whether the caller's own query names a selector, as CIM 009 5.7.2 requires of one.
+///
+/// This asks what the *caller* sent, not what the grants added: a grant narrows the answer to
+/// a well-formed query and never supplies the selector a malformed one is missing (GW33). An
+/// `id` list or an `idPattern` alone is exactly the case 5.7.2.4 calls `BadRequestData`, so
+/// neither counts here; nor does `limit`, `offset` or any other window.
+pub fn unselected(params: &[(String, String)]) -> bool {
+    let asked = requested(params);
+    asked.types.is_empty() && asked.attrs.is_empty() && asked.q.is_none() && asked.geo_q.is_none()
+}
+
+/// Whether the query the gateway is about to send selects anything at all.
+///
+/// CIM 009 5.7.2 refuses a query carrying none of `type`, `attrs`, `q` and `georel`, and a
+/// broker that answers one anyway is being more permissive than the specification. None of
+/// those four names is in the passthrough allow list, so the caller's own parameters can
+/// never supply a selector: after the PDP has spoken, the constraint set is the whole answer.
+pub fn selects(constraints: &Constraints) -> bool {
+    !constraints.types.is_empty()
+        // What reaches the broker as `attrs`: an identity-only set selects nothing there (T-2963).
+        || constraints
+            .attrs
+            .iter()
+            .any(|name| !IDENTITY.contains(&name.as_str()))
+        || constraints.q.is_some()
+        || constraints.geo_q.is_some()
+}
+
+/// The query string sent upstream: the caller's harmless parameters, plus the constraint
+/// set, which replaces every dimension a grant can narrow (GW2).
+///
+/// `fallback_types` is the selector of last resort, used only when nothing above selects.
+/// A file download passes the types the space holds so that asking for the dataset is itself
+/// the selection (EP-09); the NGSI-LD surface passes nothing, because an unselected query
+/// there is a `400` and should stay one.
+pub fn upstream(
+    params: &[(String, String)],
+    constraints: &Constraints,
+    fallback_types: &[String],
+) -> String {
+    let mut out = kept(params);
+
+    if !constraints.types.is_empty() {
+        out.push(("type".to_owned(), join_list(&constraints.types)));
+    }
+    // The grants' conditions are judged per entity on the answer, so whatever they read is
+    // asked for too; an empty list already returns every attribute (T-3530).
+    let mut attrs = constraints.attrs.clone();
+    if !attrs.is_empty() {
+        attrs.extend(crate::pdp::grants::condition_attributes(
+            &constraints.grants,
+        ));
+    }
+    let attrs = broker_attrs(params, &attrs);
+    if !attrs.is_empty() {
+        out.push(("attrs".to_owned(), join_list(&attrs)));
+    }
+    // The grants' scopes are not a `scopeQ` any more: each policy carries its own, folded
+    // into its own `q` term, so no expression can pair one policy's filter with another
+    // policy's scope (R12, R13). The caller's own `scopeQ` rides through untouched and the
+    // broker ANDs it, which can only narrow.
+    if let Some(q) = &constraints.q {
+        out.push(("q".to_owned(), q.clone()));
+    }
+    for compound in [&constraints.geo_q, &constraints.temporal_q]
+        .into_iter()
+        .flatten()
+    {
+        out.extend(split_compound(compound));
+    }
+
+    // The two parameters that choose an attribute rather than a window (T-2299, AG-85). They
+    // are forwarded only after [`geo_refusal`] has passed them: `geoproperty` rides with the
+    // geo compound and never alone, because alone it selects nothing and would only offer a
+    // grant's own area a second property to be tested against.
+    if let Some(property) = first(params, "geoproperty") {
+        if constraints.geo_q.is_some() {
+            out.push(("geoproperty".to_owned(), property.to_owned()));
+        }
+    }
+    if let Some(property) = first(params, "geometryProperty") {
+        out.push(("geometryProperty".to_owned(), property.to_owned()));
+    }
+
+    if !selects(constraints) && !fallback_types.is_empty() {
+        out.push(("type".to_owned(), fallback_types.join(",")));
+    }
+
+    render(&out)
+}
+
+/// The caller's selectors a read through the broker's view carries on (T-3651): the view
+/// narrows each to what the caller's grants show and never widens one, so they go as sent.
+const VIEW_SELECTORS: &[&str] = &[
+    "type",
+    "attrs",
+    "q",
+    "georel",
+    "geometry",
+    "coordinates",
+    "geoproperty",
+    "geometryProperty",
+    "timerel",
+    "timeAt",
+    "endTimeAt",
+    // The view orders by an attribute it hides as by one the entity lacks (TS 104 176 rule 2),
+    // so the order of a download reads nothing the caller may not (T-5082).
+    "orderBy",
+];
+
+/// The query string of an entity read through the broker's view (plan 5.7, T-3651): the
+/// caller's harmless parameters and their own selectors, and `fallback_types` as the selector of
+/// last resort when the caller named none (a download names a dataset, EP-09). No grant is
+/// folded in: the view decides and narrows.
+pub fn view_read(params: &[(String, String)], fallback_types: &[String]) -> String {
+    let mut out = kept(params);
+    out.extend(
+        params
+            .iter()
+            .filter(|(name, _)| VIEW_SELECTORS.contains(&name.as_str()))
+            .cloned(),
+    );
+    if unselected(params) && !fallback_types.is_empty() {
+        out.push(("type".to_owned(), fallback_types.join(",")));
+    }
+    render(&out)
+}
+
+/// The caller's own parameters that survive, in the order they were sent.
+fn kept(params: &[(String, String)]) -> Vec<(String, String)> {
+    params
+        .iter()
+        .filter(|(name, _)| PASSTHROUGH.contains(&name.as_str()))
+        .map(
+            |(name, value)| match (name.as_str(), value.parse::<u64>()) {
+                // One request cannot make the shared broker read an unbounded history (GW26).
+                ("lastN", Ok(n)) if n > LAST_N_CAP => (name.clone(), LAST_N_CAP.to_string()),
+                // Nor walk the graph as far as it likes: the same depth the tool schema
+                // publishes, and the depth the answer narrowing walks an inlined entity to
+                // (AG-25, T-1859).
+                ("joinLevel", Ok(n)) if n > JOIN_LEVEL_CAP => {
+                    (name.clone(), JOIN_LEVEL_CAP.to_string())
+                }
+                _ => (name.clone(), value.clone()),
+            },
+        )
+        .collect()
+}
+
+/// The most instances per attribute a temporal read asks the broker for (GW26).
+pub(crate) const LAST_N_CAP: u64 = 1_000;
+
+/// The deepest chain of linked entities one read walks (AG-25, CIM 009 clause 6.3.11).
+///
+/// The same bound the MCP tool schema publishes, so the two surfaces cost the broker the
+/// same, and the same depth the answer narrowing judges an inlined entity to: a level the
+/// gateway would not look at is a level it cannot narrow.
+pub(crate) const JOIN_LEVEL_CAP: u64 = 3;
+
+fn render(params: &[(String, String)]) -> String {
+    params
+        .iter()
+        .map(|(name, value)| format!("{}={}", encode(name), encode(value)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// Rebuilds a `Policy`'s single-string form from the parameters that carry it on the wire.
+fn joined(params: &[(String, String)], names: &[&str]) -> Option<String> {
+    let parts: Vec<String> = names
+        .iter()
+        .filter_map(|name| first(params, name).map(|value| format!("{name}={value}")))
+        .collect();
+    (!parts.is_empty()).then(|| parts.join(";"))
+}
+
+/// The parameters a compound geo or temporal filter is made of, and the only names a `;`
+/// may introduce inside one (CIM 009 clauses 4.10 and 4.11).
+const COMPOUND_MEMBERS: &[&str] = &[
+    "georel",
+    "geometry",
+    "coordinates",
+    "geoproperty",
+    "timerel",
+    "timeAt",
+    "endTimeAt",
+    "timeproperty",
+];
+
+/// Splits a `Policy`'s single-string form back into the wire parameters.
+///
+/// A `;` separates parameters only when a parameter name follows it. `georel` carries its
+/// own `;` inside its value — `near;maxDistance==2000` is one value, clause 4.10 — and
+/// splitting on every `;` sent `maxDistance` upstream as a query parameter of its own,
+/// which the broker rightly refused, so no `near` geoquery ever passed the gateway.
+fn split_compound(compound: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut rest = compound;
+    while !rest.is_empty() {
+        let end = rest
+            .match_indices(';')
+            .map(|(at, _)| at)
+            .find(|&at| {
+                let after = &rest[at + 1..];
+                COMPOUND_MEMBERS.iter().any(|name| {
+                    after
+                        .strip_prefix(name)
+                        .is_some_and(|tail| tail.starts_with('='))
+                })
+            })
+            .unwrap_or(rest.len());
+        if let Some((name, value)) = rest[..end].split_once('=') {
+            out.push((name.trim().to_owned(), value.trim().to_owned()));
+        }
+        rest = rest.get(end + 1..).unwrap_or_default();
+    }
+    out
+}
+
+/// An entity's identity, which CIM 009 does not count among its attributes (clause 4.5).
+const IDENTITY: [&str; 2] = ["id", "type"];
+
+/// The `attrs` the broker is given (T-2963, R9): the constraint set without `id` and `type`,
+/// which the broker refuses as attribute names. A grant names them when an App's
+/// `dataNeeds.attrs` does, and `narrow_to_identity` uses them to mean "identity only". The
+/// projection keeps them on every entity anyway, and the grant's types still select, so nothing
+/// the grant does not cover comes back. A caller whose own `attrs` named one asked the broker
+/// that question, and gets its answer.
+fn broker_attrs(params: &[(String, String)], attrs: &BTreeSet<String>) -> BTreeSet<String> {
+    let asked = split_list(first(params, "attrs"));
+    attrs
+        .iter()
+        .filter(|name| !IDENTITY.contains(&name.as_str()) || asked.contains(*name))
+        .cloned()
+        .collect()
+}
+
+fn split_list(value: Option<&str>) -> BTreeSet<String> {
+    value
+        .into_iter()
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn join_list(items: &BTreeSet<String>) -> String {
+    items.iter().cloned().collect::<Vec<_>>().join(",")
+}
+
+/// Percent-encodes everything but the unreserved set of RFC 3986, which is always safe in
+/// a query value and never needs a table of exceptions per parameter.
+///
+/// Public because the egress path carries a whole URL inside one query parameter, which is
+/// the same encoding problem this already solves.
+pub fn encode(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for byte in raw.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// Reverses the percent-encoding, and `+` for the form encoding some clients still send.
+///
+/// Public because the enforcement point has to decode the entity identifier out of the
+/// request path before it can check which organization and space it belongs to.
+pub fn decode(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            // The two digits are read out of the bytes, never out of the string: `i` walks
+            // bytes, and slicing the string by a byte index panics when the pair cuts a
+            // multi-byte character in half (T-2338).
+            b'%' if i + 2 < bytes.len() => {
+                match std::str::from_utf8(&bytes[i + 1..i + 3])
+                    .map_err(|_| ())
+                    .and_then(|pair| u8::from_str_radix(pair, 16).map_err(|_| ()))
+                {
+                    Ok(byte) => {
+                        out.push(byte);
+                        i += 3;
+                    }
+                    // Not an escape after all: a literal `%` is what the caller sent.
+                    Err(()) => {
+                        out.push(b'%');
+                        i += 1;
+                    }
+                }
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            byte => {
+                out.push(byte);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_view_read_carries_the_callers_selectors_and_falls_back_only_when_none() {
+        let read = |raw: &str, fallback: &[&str]| {
+            let fallback: Vec<String> = fallback.iter().map(|t| (*t).to_owned()).collect();
+            view_read(&parse(raw), &fallback)
+        };
+        // A caller's own selector goes as sent: the view narrows, the fallback is not added.
+        let own = read("type=Depot&attrs=capacity&limit=5", &["A", "B"]);
+        assert!(own.contains("type=Depot"), "{own}");
+        assert!(own.contains("attrs=capacity"), "{own}");
+        assert!(!own.contains("A%2CB") && !own.contains("A,B"), "{own}");
+        // The order a person sorted by goes too: a download holds the rows as they were shown.
+        let ordered = read("type=Depot&orderBy=capacity%3Bdesc", &[]);
+        assert!(ordered.contains("orderBy=capacity%3Bdesc"), "{ordered}");
+        // No selector: every type the space holds selects, as a download names a dataset.
+        let dataset = read("limit=5", &["A", "B"]);
+        assert!(dataset.contains("type=A"), "{dataset}");
+        // An empty space has no type to fall back to, and nothing is invented.
+        assert!(!read("", &[]).contains("type="));
+        // A name the reads do not have never passes: a tenant or a role is the gateway's to pin.
+        let forged = read("type=A&NGSILD-Tenant=other&x-jc-roles=admin", &[]);
+        for owned in ["Tenant", "roles", "admin"] {
+            assert!(!forged.contains(owned), "{owned} passed: {forged}");
+        }
+    }
+
+    #[test]
+    fn a_type_or_q_the_specification_refuses_is_named_before_any_grant_narrows_it() {
+        let refused = |raw: &str| malformed(&parse(raw));
+        assert!(
+            refused("idPattern=.*&limit=1").is_none(),
+            "well formed, though it selects nothing: that is `unselected`'s refusal, not this one"
+        );
+        assert!(refused(
+            "georel=near%3BmaxDistance%3D%3D100&geometry=Point&coordinates=%5B1%2C2%5D"
+        )
+        .is_none());
+
+        let hostile = "%27%3B%20DROP%20TABLE%20entities%3B%20--";
+        assert!(refused(&format!("type={hostile}"))
+            .is_some_and(|why| why.contains("not an NGSI-LD name")));
+        assert!(refused(&format!("type=A&q={hostile}"))
+            .is_some_and(|why| why.contains("not an NGSI-LD query")));
+        assert!(refused(
+            "type=(A%3BB)%7CC,https://smartdatamodels.org/dataModel.Env/AirQualityObserved"
+        )
+        .is_none());
+
+        for q in [
+            "pm10>=30",
+            "status==%22out%20of%20service%22",
+            "(a==1|b!=2);c~=%22x.*%22",
+            "dateObserved>=2026-09-01T00:00:00Z",
+            "refStation==urn:ngsi-ld:Station:hel.fi:helsinki:001",
+            "a.b[c]==1..9",
+            // The broker's parser decides (T-4479): it reads spaces around an operator, so the
+            // gateway does not refuse what the broker answers.
+            "a%20==%201",
+        ] {
+            assert!(refused(&format!("type=A&q={q}")).is_none(), "{q}");
+        }
+        for q in ["a==1)", "(a==1", "name==%22open"] {
+            assert!(refused(&format!("type=A&q={q}")).is_some(), "{q}");
+        }
+    }
+
+    /// F-SEC1-015: a q nested past the parser's depth ceiling is refused as malformed, and its
+    /// parse returns instead of exhausting the stack.
+    #[test]
+    fn a_deeply_nested_q_is_refused_without_exhausting_the_stack() {
+        let deep = format!("{}a==1{}", "(".repeat(100_000), ")".repeat(100_000));
+        let params = vec![("q".to_owned(), deep)];
+        assert_eq!(
+            malformed(&params).as_deref(),
+            Some("q is not an NGSI-LD query")
+        );
+    }
+
+    #[test]
+    fn a_query_round_trips_through_encoding() {
+        let raw = "q=pm10%3E%3D0&type=AirQualityObserved&limit=10";
+        let params = parse(raw);
+        assert_eq!(first(&params, "q"), Some("pm10>=0"));
+        assert_eq!(first(&params, "limit"), Some("10"));
+        assert_eq!(encode("pm10>=0"), "pm10%3E%3D0");
+        assert_eq!(decode("100%25%20done"), "100% done");
+        assert_eq!(decode("a%zz"), "a%zz", "a stray percent is not an escape");
+    }
+
+    #[test]
+    fn the_three_geo_parameters_are_one_policy_string() {
+        let params = parse("georel=within&geometry=Polygon&coordinates=%5B%5B0%2C0%5D%5D&limit=5");
+        let request = requested(&params);
+        assert_eq!(
+            request.geo_q.as_deref(),
+            Some("georel=within;geometry=Polygon;coordinates=[[0,0]]")
+        );
+
+        let constraints = Constraints {
+            geo_q: request.geo_q.clone(),
+            ..Constraints::default()
+        };
+        let upstream = parse(&upstream(&params, &constraints, &[]));
+        assert_eq!(first(&upstream, "georel"), Some("within"));
+        assert_eq!(first(&upstream, "geometry"), Some("Polygon"));
+        assert_eq!(first(&upstream, "coordinates"), Some("[[0,0]]"));
+        assert_eq!(
+            first(&upstream, "limit"),
+            Some("5"),
+            "the caller's paging survives"
+        );
+    }
+
+    /// GW2: the caller's own filters never reach the broker as they were sent; the
+    /// constraint set replaces every dimension a grant can narrow.
+    ///
+    /// `scopeQ` is the exception and it is not a widening: the grants' scopes travel
+    /// inside `q` now (R13), and the caller's own `scopeQ` is a filter the broker ANDs on
+    /// top, which can only narrow.
+    #[test]
+    fn a_governed_parameter_is_replaced_and_an_unknown_one_is_dropped() {
+        let params =
+            parse("q=1%3D1&type=Secret&attrs=everything&scopeQ=%2Fgeo%2FSK&danger=drop%20table");
+        let constraints = Constraints {
+            types: BTreeSet::from(["AirQualityObserved".to_owned()]),
+            attrs: BTreeSet::from(["pm10".to_owned()]),
+            q: Some("(1=1);((pm10>=0))".to_owned()),
+            granted_scopes: Some("/geo/SK/BB".to_owned()),
+            ..Constraints::default()
+        };
+        let sent = parse(&upstream(&params, &constraints, &[]));
+
+        assert_eq!(first(&sent, "type"), Some("AirQualityObserved"));
+        assert_eq!(first(&sent, "attrs"), Some("pm10"));
+        assert_eq!(first(&sent, "q"), Some("(1=1);((pm10>=0))"));
+        assert_eq!(
+            first(&sent, "scopeQ"),
+            Some("/geo/SK"),
+            "the caller's own scope filter rides through; the grants' are inside q"
+        );
+        assert_eq!(
+            first(&sent, "danger"),
+            None,
+            "an unlisted parameter is dropped"
+        );
+    }
+
+    /// T-2963, R9: `id` and `type` are an entity's identity, not attributes, and the broker
+    /// refuses them in `attrs`. A grant that names them (an App's `dataNeeds.attrs` often does)
+    /// or the identity-only set of `narrow_to_identity` reaches the broker without them; the
+    /// caller's own `attrs=id` still does, and its answer stays the broker's.
+    #[test]
+    fn a_grants_identity_members_never_reach_the_broker_as_attributes() {
+        let grant = |attrs: &[&str]| Constraints {
+            types: BTreeSet::from(["BikeHireDockingStation".to_owned()]),
+            attrs: attrs.iter().map(|name| (*name).to_owned()).collect(),
+            ..Constraints::default()
+        };
+        let sent =
+            |raw: &str, constraints: &Constraints| parse(&upstream(&parse(raw), constraints, &[]));
+
+        let named = sent("limit=10", &grant(&["id", "name", "availableBikeNumber"]));
+        assert_eq!(first(&named, "attrs"), Some("availableBikeNumber,name"));
+        assert_eq!(first(&named, "type"), Some("BikeHireDockingStation"));
+
+        // Identity alone: no attrs at all, the grant's types still select, projection keeps id/type.
+        for identity in [&["id"][..], &["id", "type"][..]] {
+            let only = sent("limit=10", &grant(identity));
+            assert_eq!(first(&only, "attrs"), None, "{identity:?}");
+            assert_eq!(
+                first(&only, "type"),
+                Some("BikeHireDockingStation"),
+                "{identity:?}"
+            );
+            let untyped = Constraints {
+                types: BTreeSet::new(),
+                ..grant(identity)
+            };
+            assert!(
+                !selects(&untyped),
+                "an identity-only set is no selector: {identity:?}"
+            );
+            // A download falls back to the space's types rather than an unselected query.
+            let fallback = parse(&upstream(
+                &parse("limit=10"),
+                &untyped,
+                &["Vehicle".to_owned()],
+            ));
+            assert_eq!(first(&fallback, "type"), Some("Vehicle"), "{identity:?}");
+        }
+
+        // The caller asked for `id` in their own words: that question is the broker's to answer.
+        let asked = sent("attrs=id&limit=10", &grant(&["id", "name"]));
+        assert_eq!(first(&asked, "attrs"), Some("id,name"));
+    }
+
+    /// T-0271, CIM 009 clause 4.10: `georel=near;maxDistance==2000` is one value with a `;`
+    /// inside it. It has to leave as one `georel` parameter, or the broker refuses the
+    /// `maxDistance` it was never meant to see and no `near` query passes the gateway.
+    #[test]
+    fn a_near_georel_keeps_its_distance_inside_the_value() {
+        let params = parse(
+            "georel=near%3BmaxDistance%3D%3D2000&geometry=Point&coordinates=%5B19.15%2C48.74%5D",
+        );
+        assert_eq!(
+            requested(&params).geo_q.as_deref(),
+            Some("georel=near;maxDistance==2000;geometry=Point;coordinates=[19.15,48.74]")
+        );
+
+        let constraints = Constraints {
+            geo_q: requested(&params).geo_q,
+            ..Constraints::default()
+        };
+        let sent = parse(&upstream(&params, &constraints, &[]));
+        assert_eq!(first(&sent, "georel"), Some("near;maxDistance==2000"));
+        assert_eq!(first(&sent, "geometry"), Some("Point"));
+        assert_eq!(first(&sent, "coordinates"), Some("[19.15,48.74]"));
+        assert_eq!(
+            first(&sent, "maxDistance"),
+            None,
+            "the distance is part of georel, never a parameter of its own"
+        );
+        assert_eq!(sent.len(), 3);
+
+        // The grant's form is the same string and splits the same way.
+        assert_eq!(
+            split_compound("georel=within;geometry=Polygon;coordinates=[[[0,0],[1,0],[1,1],[0,0]]];timerel=after;timeAt=P-1D"),
+            vec![
+                ("georel".to_owned(), "within".to_owned()),
+                ("geometry".to_owned(), "Polygon".to_owned()),
+                ("coordinates".to_owned(), "[[[0,0],[1,0],[1,1],[0,0]]]".to_owned()),
+                ("timerel".to_owned(), "after".to_owned()),
+                ("timeAt".to_owned(), "P-1D".to_owned()),
+            ]
+        );
+    }
+
+    /// GW33, CIM 009 5.7.2.4: a query names a selector, and an `id` list or an `idPattern`
+    /// alone is not one. The grants do not supply what the caller left out (T-0780).
+    #[test]
+    fn a_query_naming_no_selector_is_not_rescued_by_the_grants() {
+        for raw in [
+            "",
+            "limit=20",
+            "limit=1&offset=40",
+            "id=urn:ngsi-ld:AirQualityObserved:hel.fi:ovzdusie:station-1",
+            "id=urn:ngsi-ld:Device:hel.fi:s:a,urn:ngsi-ld:Device:hel.fi:s:b&limit=5",
+            "idPattern=.*&limit=1",
+            "options=keyValues",
+        ] {
+            assert!(unselected(&parse(raw)), "{raw} names no selector");
+        }
+
+        for raw in [
+            "type=AirQualityObserved",
+            "type=Device&id=urn:ngsi-ld:Device:hel.fi:s:a",
+            "attrs=temperature",
+            "q=temperature>20",
+            "georel=near%3BmaxDistance%3D%3D100&geometry=Point&coordinates=%5B1%2C2%5D",
+            "type=Ovzdu%C5%A1ie",
+        ] {
+            assert!(!unselected(&parse(raw)), "{raw} names a selector");
+        }
+    }
+}

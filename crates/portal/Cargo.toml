@@ -179,3 +179,15 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 opt-level = 1
 debug = false
+
+# jc monorepo: the git dependencies above resolve to the vendored copies (../../vendor/SOURCES.md).
+[patch."https://github.com/marek-mraz-jc/joinedcontext-platform.git"]
+jc-core = { path = "../../vendor/joinedcontext-platform/crates/jc-core" }
+jcctl = { path = "../../vendor/joinedcontext-platform/crates/jcctl" }
+context-gateway = { path = "../../vendor/joinedcontext-platform/crates/context-gateway" }
+
+[patch."https://github.com/marek-mraz-jc/ngsild"]
+ngsild-ql = { path = "../../vendor/ngsild/crates/antares-ql" }
+ngsild-jsonld = { path = "../../vendor/ngsild/crates/antares-jsonld" }
+ngsild-matcher = { path = "../../vendor/ngsild/crates/antares-matcher" }
+ngsild-model = { path = "../../vendor/ngsild/crates/antares-model" }

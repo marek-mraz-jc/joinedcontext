@@ -1,0 +1,2675 @@
+//! `kind: KnowledgeSource` and `kind: AssistantDeployment`, the knowledge assistant's two
+//! manifests (MF-51, MF-52, ADR-N-040, Architecture/22 §2).
+//!
+//! A source is what the assistant reads, a deployment is where it answers. Every rule that can
+//! be judged from one manifest is judged here; the references between manifests (a source's
+//! `CkanInstance`, a deployment's sources and Endpoints, an internal source on a public channel)
+//! are `jcctl validate`'s, which sees the whole project.
+
+use crate::envelope::{Kind, ObjectMeta, Scope};
+use crate::error::{Error, Result};
+use crate::kinds::catalog::DataTheme;
+use crate::kinds::mcp_server::AccessLevel;
+use crate::kinds::mcp_server::Select;
+use crate::names;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// The most start URLs one source may name.
+pub const MAX_START_URLS: usize = 20;
+/// The most include or exclude patterns one source may name.
+pub const MAX_PATTERNS: usize = 50;
+/// The longest include or exclude pattern.
+pub const MAX_PATTERN_LEN: usize = 256;
+/// The deepest a crawl may follow links from a start URL.
+pub const MAX_DEPTH: u8 = 10;
+/// The most pages one source may hold.
+pub const MAX_PAGES: u32 = 50_000;
+/// The largest PDF a source may fetch: 200 MiB.
+pub const MAX_PDF_BYTES: u64 = 200 * 1024 * 1024;
+/// The most pages of one PDF a source may extract.
+pub const MAX_PDF_PAGES: u32 = 2_000;
+/// The longest system prompt.
+pub const MAX_PROMPT_LEN: usize = 8_000;
+/// The longest greeting.
+pub const MAX_GREETING_LEN: usize = 500;
+/// The longest name in the chat's header.
+pub const MAX_TITLE_LEN: usize = 60;
+/// The longest a connector's tool call may take.
+pub const MAX_TIMEOUT_SECONDS: u16 = 120;
+/// The most WordPress post types one `website` source may list (T-4154).
+pub const MAX_WORDPRESS_TYPES: usize = 40;
+/// The most Endpoints one deployment may exclude (MF-59).
+pub const MAX_EXCLUDE: usize = 50;
+
+/// The most CKAN organizations one `ckan` source may narrow to.
+pub const MAX_ORGANIZATIONS: usize = 10;
+/// The largest file an `upload` source may hold: 50 MiB.
+pub const MAX_UPLOAD_BYTES: u64 = 50 * 1024 * 1024;
+/// The most files an `upload` source may hold.
+pub const MAX_UPLOAD_FILES: u32 = 500;
+/// The longest model id.
+pub const MAX_MODEL_ID_LEN: usize = 100;
+/// The most providers `model.provider.order` names (T-4292).
+pub const MAX_PROVIDERS: usize = 8;
+/// The longest provider slug.
+pub const MAX_PROVIDER_LEN: usize = 64;
+/// The most suggested questions per language.
+pub const MAX_SUGGESTIONS: usize = 6;
+/// The longest suggested question.
+pub const MAX_SUGGESTION_LEN: usize = 120;
+/// The longest disclaimer.
+pub const MAX_DISCLAIMER_LEN: usize = 400;
+
+/// What a suggested question may not ask about (T-4801, owner 2026-10-20: "all question that are
+/// provided needs to be positive and not aiming for something bad"): failures, damage, danger,
+/// accidents, crime, complaints, blame or a place ranked as bad, as word stems in Slovak, Czech
+/// and English, written without diacritics (a question is compared folded; `ä` folds to `ae`, so
+/// Slovak "spätne" is not Czech "špatně", and the noun "škoda" alone is no stem, so the make
+/// Škoda passes while "škody" and "poškodený" do not).
+const NEGATIVE_STEMS: &[&str] = &[
+    // sk, cs
+    "havarij",
+    "nebezpec",
+    "najhors",
+    "nejhors",
+    "nehod",
+    "stazn",
+    "stiznost",
+    "vytlk",
+    "vytluk",
+    "poruch",
+    "poskod",
+    "poskoz",
+    "skody",
+    "skodam",
+    "skodach",
+    "kriminal",
+    "kradez",
+    "zlocin",
+    "uraz",
+    "obet",
+    "trestn",
+    "zruten",
+    "zricen",
+    "rekonstruk",
+    "vandal",
+    "zlom stave",
+    "zly stav",
+    "spatn",
+    "vinnik",
+    "vinik",
+    "smrt",
+    "umrt",
+    "chatrn",
+    // en
+    "accident",
+    "danger",
+    "damage",
+    "crime",
+    "criminal",
+    "complain",
+    "worst",
+    "failure",
+    "failing",
+    "broken",
+    "collapse",
+    "pothole",
+    "blame",
+    "injur",
+    "death",
+    "deadly",
+    "unsafe",
+    "hazard",
+    "disrepair",
+    "poor condition",
+    "bad condition",
+    "theft",
+    "vandal",
+    "reconstruct",
+    "repair",
+];
+
+/// Whether a suggested question asks for something bad (one of the `NEGATIVE_STEMS`); a starter or a
+/// follow-up that does is never shown.
+pub fn negative_question(question: &str) -> bool {
+    let folded: String = question
+        .to_lowercase()
+        .replace('ä', "ae")
+        .chars()
+        .map(|c| match c {
+            'á' => 'a',
+            'č' => 'c',
+            'ď' => 'd',
+            'é' | 'ě' => 'e',
+            'í' => 'i',
+            'ĺ' | 'ľ' => 'l',
+            'ň' => 'n',
+            'ó' | 'ô' => 'o',
+            'ŕ' | 'ř' => 'r',
+            'š' => 's',
+            'ť' => 't',
+            'ú' | 'ů' => 'u',
+            'ý' => 'y',
+            'ž' => 'z',
+            other => other,
+        })
+        .collect();
+    NEGATIVE_STEMS.iter().any(|stem| folded.contains(stem))
+}
+/// The most other projects a deployment's connectors may reach.
+pub const MAX_SCOPE_PROJECTS: usize = 10;
+
+/// Where a source's knowledge comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SourceType {
+    /// Pages and the PDFs they link, crawled from `startUrls`.
+    Website,
+    /// The datasets of a `CkanInstance` of the project.
+    Ckan,
+    /// The project's own NGSI-LD catalogue: one page per Endpoint of its context spaces, with the
+    /// types and attributes of the space's model (AG-116).
+    Catalogue,
+    /// The platform's User Guide as jc-assistant ships it: one passage per section, its Portal
+    /// paths pointing into the source's own project (AG-118).
+    Guide,
+    /// Files an administrator uploads: PDF, DOCX, XLSX, CSV, Markdown or plain text (MF-51).
+    Upload,
+}
+
+/// Who may read what a source holds.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum Visibility {
+    /// Anyone, through any channel.
+    Public,
+    /// People of the organization, through the internal channel only.
+    #[default]
+    Internal,
+}
+
+/// Whether linked PDFs are read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum PdfPolicyKind {
+    /// PDFs are fetched and their text is read.
+    #[default]
+    Include,
+    /// PDFs are skipped.
+    Exclude,
+}
+
+/// What the crawler does with PDFs, and how large one may be.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PdfPolicy {
+    /// `include` (default) or `exclude`.
+    #[serde(default)]
+    pub policy: PdfPolicyKind,
+    /// The largest PDF read, in bytes; at most 200 MiB, default 50 MiB.
+    #[serde(default = "default_pdf_bytes")]
+    pub max_bytes: u64,
+    /// The most pages of one PDF read; at most 2,000, default 500.
+    #[serde(default = "default_pdf_pages")]
+    pub max_pages: u32,
+}
+
+impl Default for PdfPolicy {
+    fn default() -> Self {
+        Self {
+            policy: PdfPolicyKind::default(),
+            max_bytes: default_pdf_bytes(),
+            max_pages: default_pdf_pages(),
+        }
+    }
+}
+
+fn default_pdf_bytes() -> u64 {
+    50 * 1024 * 1024
+}
+fn default_pdf_pages() -> u32 {
+    500
+}
+fn default_true() -> bool {
+    true
+}
+fn default_depth() -> u8 {
+    3
+}
+fn default_pages() -> u32 {
+    1_000
+}
+fn default_timeout() -> u16 {
+    20
+}
+fn default_upload_bytes() -> u64 {
+    20 * 1024 * 1024
+}
+fn default_upload_files() -> u32 {
+    100
+}
+fn default_per_hour() -> u32 {
+    60
+}
+fn default_per_day() -> u32 {
+    200
+}
+fn default_per_month() -> u32 {
+    300
+}
+fn default_streams() -> u32 {
+    2
+}
+fn default_cost_per_day() -> f64 {
+    3.0
+}
+fn default_visitor_share() -> u32 {
+    10
+}
+fn default_output_tokens() -> u32 {
+    700
+}
+fn default_messages() -> u32 {
+    30
+}
+fn default_question_chars() -> u32 {
+    1_000
+}
+
+/// How large and how many the files of an `upload` source may be.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct UploadLimits {
+    /// The largest file, in bytes; at most 50 MiB, default 20 MiB.
+    #[serde(default = "default_upload_bytes")]
+    pub max_bytes: u64,
+    /// The most files; 1 to 500, default 100.
+    #[serde(default = "default_upload_files")]
+    pub max_files: u32,
+}
+
+impl Default for UploadLimits {
+    fn default() -> Self {
+        Self {
+            max_bytes: default_upload_bytes(),
+            max_files: default_upload_files(),
+        }
+    }
+}
+
+/// Desired specification of a [`KnowledgeSource`][crate::kinds::KnowledgeSource] (MF-51).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct KnowledgeSourceSpec {
+    /// `website` (pages and their PDFs), `ckan` (a catalogue's datasets), `catalogue` (the
+    /// project's own Endpoints and the models of their spaces), `guide` (the platform's User
+    /// Guide, AG-118) or `upload` (files an administrator uploads).
+    pub source: SourceType,
+    /// Where a website crawl starts: one to twenty absolute `https` URLs. Empty for `ckan`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub start_urls: Vec<String>,
+    /// The `CkanInstance` of this project a `ckan` source reads. Absent for `website`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ckan_instance_ref: Option<String>,
+    /// The context spaces of this project a `catalogue` source reads; empty reads every one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_spaces: Vec<String>,
+    /// The CKAN organizations a `ckan` source indexes, by name; empty indexes every one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub organizations: Vec<String>,
+    /// How large and how many an `upload` source's files may be; the defaults when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upload: Option<UploadLimits>,
+    /// Whether the site's `sitemap.xml` is read before links are followed; default true.
+    #[serde(default = "default_true")]
+    pub sitemap: bool,
+    /// WordPress REST bases (`pages`, `newses`, ...) whose items' links are read beside the
+    /// sitemap, from the start host's `/wp-json/wp/v2/{type}`, newest change first (T-4154).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wordpress_types: Vec<String>,
+    /// Path patterns a page must match to be read, each starting with `/`; empty reads all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<String>,
+    /// Path patterns whose pages are skipped, each starting with `/`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+    /// How many links deep a crawl follows from a start URL; 1 to 10, default 3.
+    #[serde(default = "default_depth")]
+    pub max_depth: u8,
+    /// The most pages the source holds; 1 to 50,000, default 1,000.
+    #[serde(default = "default_pages")]
+    pub max_pages: u32,
+    /// What happens to linked PDFs.
+    #[serde(default)]
+    pub pdf: PdfPolicy,
+    /// Whether a document linked from another host is read; default false, so a source never
+    /// grows into somebody else's site.
+    #[serde(default)]
+    pub off_domain_documents: bool,
+    /// When the source is read again, as five-field cron (`minute hour day month weekday`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<String>,
+    /// The languages its text is in, as ISO 639-1 codes; they choose the search stemmer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<String>,
+    /// `public` (any channel) or `internal` (the internal channel only); default `internal`.
+    #[serde(default)]
+    pub visibility: Visibility,
+    /// EU data-theme codes it is about, for the context page (MF-60, ADR-N-055 §2.4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub categories: Vec<DataTheme>,
+}
+
+impl Kind for KnowledgeSourceSpec {
+    const KIND: &'static str = "KnowledgeSource";
+    const PLURAL: &'static str = "knowledgesources";
+    const SCOPE: Scope = Scope::Project;
+    const PATH_TEMPLATE: &'static str = "projects/{project}/assistant/sources/{name}.yaml";
+
+    fn validate_spec(&self, meta: &ObjectMeta) -> Result<()> {
+        names::validate_dns1123_label(&meta.name)?;
+        self.validate()
+    }
+}
+
+impl KnowledgeSourceSpec {
+    /// The upload limits in force: the manifest's, or the defaults.
+    pub fn upload_limits(&self) -> UploadLimits {
+        self.upload.clone().unwrap_or_default()
+    }
+
+    /// Every rule of MF-51 that one manifest can be judged by, field group by field group, in the
+    /// order a manifest is read: the first broken rule is the one reported.
+    pub fn validate(&self) -> Result<()> {
+        match self.source {
+            SourceType::Website => self.website_fields()?,
+            SourceType::Ckan => self.ckan_fields()?,
+            SourceType::Catalogue => self.catalogue_fields()?,
+            SourceType::Guide => self.guide_fields()?,
+            SourceType::Upload => self.upload_source_fields()?,
+        }
+        self.organization_fields()?;
+        self.upload_limit_fields()?;
+        self.wordpress_fields()?;
+        self.space_and_pattern_fields()?;
+        self.crawl_limit_fields()?;
+        categories(&self.categories)?;
+        languages(&self.languages)
+    }
+
+    /// A website source: one to twenty https start URLs and no CkanInstance.
+    fn website_fields(&self) -> Result<()> {
+        if self.start_urls.is_empty() || self.start_urls.len() > MAX_START_URLS {
+            return Err(name(
+                "startUrls",
+                self.start_urls.len().to_string(),
+                "a website source names one to twenty start URLs",
+            ));
+        }
+        if self.ckan_instance_ref.is_some() {
+            return Err(name(
+                "ckanInstanceRef",
+                String::new(),
+                "a website source names no CkanInstance; use source: ckan",
+            ));
+        }
+        for url in &self.start_urls {
+            https_url(url).ok_or_else(|| {
+                name(
+                    "startUrls",
+                    url.clone(),
+                    "a start URL is an absolute https:// address with a host",
+                )
+            })?;
+        }
+        Ok(())
+    }
+
+    /// A ckan source: its CkanInstance by name and no start URLs.
+    fn ckan_fields(&self) -> Result<()> {
+        let instance = self.ckan_instance_ref.as_deref().unwrap_or_default();
+        if names::validate_dns1123_label(instance).is_err() {
+            return Err(name(
+                "ckanInstanceRef",
+                instance.to_owned(),
+                "a ckan source names the CkanInstance of this project it reads",
+            ));
+        }
+        if !self.start_urls.is_empty() {
+            return Err(name(
+                "startUrls",
+                self.start_urls.join(", "),
+                "a ckan source reads its CkanInstance and names no start URLs",
+            ));
+        }
+        Ok(())
+    }
+
+    /// A catalogue source: the project's own context spaces, no start URLs and no CkanInstance.
+    fn catalogue_fields(&self) -> Result<()> {
+        if !self.start_urls.is_empty() || self.ckan_instance_ref.is_some() {
+            return Err(name(
+                "source",
+                "catalogue".to_owned(),
+                "a catalogue source reads the project's own Endpoints and names no start URLs and no CkanInstance",
+            ));
+        }
+        for space in &self.context_spaces {
+            names::validate_space_name(space).map_err(|_| {
+                name(
+                    "contextSpaces",
+                    space.clone(),
+                    "a context space of this project, by its name",
+                )
+            })?;
+        }
+        Ok(())
+    }
+
+    /// A guide source names nothing to fetch.
+    fn guide_fields(&self) -> Result<()> {
+        if !self.start_urls.is_empty()
+            || self.ckan_instance_ref.is_some()
+            || !self.context_spaces.is_empty()
+        {
+            return Err(name(
+                "source",
+                "guide".to_owned(),
+                "a guide source reads the User Guide jc-assistant ships and names no start URLs, no CkanInstance and no context spaces",
+            ));
+        }
+        Ok(())
+    }
+
+    /// An upload source names nothing to fetch and has no schedule.
+    fn upload_source_fields(&self) -> Result<()> {
+        if !self.start_urls.is_empty()
+            || self.ckan_instance_ref.is_some()
+            || !self.context_spaces.is_empty()
+        {
+            return Err(name(
+                "source",
+                "upload".to_owned(),
+                "an upload source holds the files an administrator uploads and names no start URLs, no CkanInstance and no context spaces",
+            ));
+        }
+        if self.schedule.is_some() {
+            return Err(name(
+                "schedule",
+                String::new(),
+                "an upload source has nothing to fetch on a schedule; its files are read as they are uploaded",
+            ));
+        }
+        Ok(())
+    }
+
+    /// CKAN organizations: only on a ckan source, at most ten, each a CKAN name.
+    fn organization_fields(&self) -> Result<()> {
+        if self.source != SourceType::Ckan && !self.organizations.is_empty() {
+            return Err(name(
+                "organizations",
+                self.organizations.join(", "),
+                "only a ckan source names CKAN organizations",
+            ));
+        }
+        if self.organizations.len() > MAX_ORGANIZATIONS {
+            return Err(name(
+                "organizations",
+                self.organizations.len().to_string(),
+                "a ckan source names at most 10 organizations",
+            ));
+        }
+        for organization in &self.organizations {
+            if !is_ckan_name(organization) {
+                return Err(name(
+                    "organizations",
+                    organization.clone(),
+                    "a CKAN organization name: 2 to 100 lowercase letters, digits, - and _",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Upload limits: only on an upload source, each within its bounds.
+    fn upload_limit_fields(&self) -> Result<()> {
+        if let Some(upload) = &self.upload {
+            if self.source != SourceType::Upload {
+                return Err(name(
+                    "upload",
+                    String::new(),
+                    "only an upload source sets upload limits",
+                ));
+            }
+            if !(1..=MAX_UPLOAD_BYTES).contains(&upload.max_bytes) {
+                return Err(name(
+                    "upload.maxBytes",
+                    upload.max_bytes.to_string(),
+                    "upload.maxBytes is 1 byte to 50 MiB (52428800)",
+                ));
+            }
+            if !(1..=MAX_UPLOAD_FILES).contains(&upload.max_files) {
+                return Err(name(
+                    "upload.maxFiles",
+                    upload.max_files.to_string(),
+                    "upload.maxFiles is 1 to 500",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// WordPress REST bases: only on a website source, at most forty, each a plain base.
+    fn wordpress_fields(&self) -> Result<()> {
+        if self.source != SourceType::Website && !self.wordpress_types.is_empty() {
+            return Err(name(
+                "wordpressTypes",
+                self.wordpress_types.join(", "),
+                "only a website source lists WordPress types",
+            ));
+        }
+        if self.wordpress_types.len() > MAX_WORDPRESS_TYPES {
+            return Err(name(
+                "wordpressTypes",
+                self.wordpress_types.len().to_string(),
+                "at most 40 WordPress types",
+            ));
+        }
+        for base in &self.wordpress_types {
+            if base.is_empty()
+                || base.len() > 64
+                || !base
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+            {
+                return Err(name(
+                    "wordpressTypes",
+                    base.clone(),
+                    "a WordPress REST base such as pages or newses: 1 to 64 of a-z, 0-9, _ and -",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Context spaces only on a catalogue source; include and exclude path patterns.
+    fn space_and_pattern_fields(&self) -> Result<()> {
+        if self.source != SourceType::Catalogue && !self.context_spaces.is_empty() {
+            return Err(name(
+                "contextSpaces",
+                self.context_spaces.join(", "),
+                "only a catalogue source names context spaces",
+            ));
+        }
+        for (field, patterns) in [("include", &self.include), ("exclude", &self.exclude)] {
+            if patterns.len() > MAX_PATTERNS {
+                return Err(name(
+                    field,
+                    patterns.len().to_string(),
+                    "at most 50 patterns",
+                ));
+            }
+            for pattern in patterns {
+                if !pattern.starts_with('/')
+                    || pattern.len() > MAX_PATTERN_LEN
+                    || pattern.chars().any(char::is_whitespace)
+                {
+                    return Err(name(
+                        field,
+                        pattern.clone(),
+                        "a pattern is a path starting with `/`, at most 256 characters, no spaces",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Crawl depth and pages, PDF limits and the schedule.
+    fn crawl_limit_fields(&self) -> Result<()> {
+        if !(1..=MAX_DEPTH).contains(&self.max_depth) {
+            return Err(name(
+                "maxDepth",
+                self.max_depth.to_string(),
+                "maxDepth is 1 to 10",
+            ));
+        }
+        if !(1..=MAX_PAGES).contains(&self.max_pages) {
+            return Err(name(
+                "maxPages",
+                self.max_pages.to_string(),
+                "maxPages is 1 to 50000",
+            ));
+        }
+        if !(1..=MAX_PDF_BYTES).contains(&self.pdf.max_bytes) {
+            return Err(name(
+                "pdf.maxBytes",
+                self.pdf.max_bytes.to_string(),
+                "pdf.maxBytes is 1 byte to 200 MiB (209715200)",
+            ));
+        }
+        if !(1..=MAX_PDF_PAGES).contains(&self.pdf.max_pages) {
+            return Err(name(
+                "pdf.maxPages",
+                self.pdf.max_pages.to_string(),
+                "pdf.maxPages is 1 to 2000",
+            ));
+        }
+        if let Some(schedule) = &self.schedule {
+            if !crate::cron::is_valid(schedule) {
+                return Err(name(
+                    "schedule",
+                    schedule.clone(),
+                    "schedule is five-field cron: minute hour day month weekday",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Where a deployment answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum Channel {
+    /// Anyone, on the allowed origins.
+    Public,
+    /// Signed-in people of the organization, in the Portal.
+    Internal,
+    /// Visitors of the CKAN catalogue.
+    Ckan,
+    /// An iframe on the allowed origins.
+    Iframe,
+}
+
+impl Channel {
+    /// Whether the channel answers people nobody signed in (MF-52).
+    pub fn is_anonymous(self) -> bool {
+        !matches!(self, Channel::Internal)
+    }
+
+    /// Its name in a manifest.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Channel::Public => "public",
+            Channel::Internal => "internal",
+            Channel::Ckan => "ckan",
+            Channel::Iframe => "iframe",
+        }
+    }
+}
+
+/// One Endpoint of the project whose MCP tools the assistant may call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Connector {
+    /// The Endpoint's `metadata.name` in this project, or `{project}/{name}` for a public
+    /// Endpoint of a project in `scope.projects`.
+    pub endpoint: String,
+    /// The tools of its MCP surface the assistant may call; at least one.
+    pub tools: Vec<String>,
+    /// How long one tool call may take, in seconds; 1 to 120, default 20.
+    #[serde(default = "default_timeout")]
+    pub timeout_seconds: u16,
+}
+
+/// How often the deployment answers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RateLimit {
+    /// Questions per minute across everyone; 1 to 600.
+    pub requests_per_minute: u32,
+    /// Questions per minute from one client; 1 to 120.
+    pub per_client_per_minute: u32,
+    /// Questions per hour from one client; 1 to 7,200, default 60.
+    #[serde(default = "default_per_hour")]
+    pub per_client_per_hour: u32,
+    /// Questions per day from one client; 1 to 100,000, default 200.
+    #[serde(default = "default_per_day")]
+    pub per_client_per_day: u32,
+    /// Questions per UTC calendar month from one client; 1 to 100,000, default 300 (T-4286).
+    #[serde(default = "default_per_month")]
+    pub per_client_per_month: u32,
+    /// Answers one client may have streaming at once; 1 to 10, default 2.
+    #[serde(default = "default_streams")]
+    pub streams_per_client: u32,
+}
+
+/// How many model tokens the deployment may spend; `jc-agent-proxy` holds it to this.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Budget {
+    /// Tokens per day across all conversations; 1 to 100,000,000.
+    pub tokens_per_day: u64,
+    /// Tokens one conversation may spend; at least 1 and no more than a day's.
+    pub tokens_per_conversation: u64,
+    /// What the deployment's model calls may cost per day, in US dollars; 0.01 to 1,000,
+    /// default 3. Past it an answer lists the matching sources' links only (AG-107).
+    #[serde(default = "default_cost_per_day")]
+    pub cost_per_day_usd: f64,
+    /// The most tokens one answer may have; 100 to 4,000, default 700.
+    #[serde(default = "default_output_tokens")]
+    pub output_tokens_per_answer: u32,
+    /// The most questions one conversation may ask; 1 to 200, default 30.
+    #[serde(default = "default_messages")]
+    pub messages_per_conversation: u32,
+    /// The longest question, in characters; 100 to 4,000, default 1,000.
+    #[serde(default = "default_question_chars")]
+    pub question_chars: u32,
+    /// What all model calls of one conversation may cost, in US dollars; 0.01 to
+    /// `costPerDayUsd`, no cap when absent. No call starts once the conversation has spent it
+    /// (AG-107, T-4737).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_per_conversation_usd: Option<f64>,
+    /// The percent of `costPerDayUsd` one visitor, or all callers without an `Origin` together,
+    /// may spend a day; 1 to 100, default 10. Past it their questions are refused until UTC
+    /// midnight while others still get answers (T-4653, T-5928).
+    #[serde(default = "default_visitor_share")]
+    pub visitor_share_percent: u32,
+}
+
+/// The models a deployment names for `jc-agent-proxy` (MF-52): the router and answer calls.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ModelChoice {
+    /// The model that picks the tools and sources of a question, `vendor/name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub router: Option<String>,
+    /// The model that writes the answer, `vendor/name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
+    /// The OpenRouter providers both calls are asked on (T-4292); OpenRouter's fastest when
+    /// absent (T-4360).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<ProviderRouting>,
+    /// The reasoning effort of each call (T-4360); `low` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<StageReasoning>,
+}
+
+/// OpenRouter provider routing, sent as its `provider` request field (T-4292, MF-52).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ProviderRouting {
+    /// Provider slugs, tried in this order, e.g. `cerebras`, `groq`; 1 to 8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<Vec<String>>,
+    /// How OpenRouter ranks the providers `order` does not pin (T-4360).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<ProviderSort>,
+    /// Whether another provider may answer when these fail; default `true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_fallbacks: Option<bool>,
+}
+
+/// OpenRouter's `provider.sort` (T-4360).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ProviderSort {
+    /// The provider that answers first.
+    Latency,
+    /// The provider that writes the most tokens a second.
+    Throughput,
+    /// The cheapest provider.
+    Price,
+}
+
+impl ProviderRouting {
+    /// What a deployment without `model.provider` is asked on: OpenRouter's fastest provider,
+    /// another when it fails (T-4360).
+    pub fn fastest() -> Self {
+        Self {
+            sort: Some(ProviderSort::Latency),
+            ..Self::default()
+        }
+    }
+
+    /// An order, a sort or both, and an order of 1 to 8 slugs (MF-52); `field` and `order_field`
+    /// are where the manifest holds them.
+    pub fn validate(&self, field: &'static str, order_field: &'static str) -> Result<()> {
+        if self.order.is_none() && self.sort.is_none() {
+            return Err(name(field, String::new(), "names an order, a sort or both"));
+        }
+        let order = self.order.as_deref().unwrap_or_default();
+        if self.order.is_some() && (order.is_empty() || order.len() > MAX_PROVIDERS) {
+            return Err(name(
+                order_field,
+                order.len().to_string(),
+                "names 1 to 8 providers",
+            ));
+        }
+        if let Some(slug) = order.iter().find(|s| !is_provider_slug(s)) {
+            return Err(name(
+                order_field,
+                slug.clone(),
+                "a provider is at most 64 characters of a-z 0-9 . _ / -",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The field as OpenRouter reads it: `{order, sort, allow_fallbacks}`.
+    pub fn openrouter(&self) -> serde_json::Value {
+        let mut field = serde_json::json!({
+            "allow_fallbacks": self.allow_fallbacks.unwrap_or(true),
+        });
+        if let Some(order) = &self.order {
+            field["order"] = serde_json::json!(order);
+        }
+        if let Some(sort) = self.sort {
+            field["sort"] = serde_json::json!(sort);
+        }
+        field
+    }
+}
+
+/// A reasoning effort, from none to high (T-4360).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    /// No reasoning: sent as `reasoning.enabled: false`.
+    None,
+    /// The least the model allows.
+    Minimal,
+    /// Short thinking, the answer keeps its room (T-3203).
+    #[default]
+    Low,
+    /// More thinking, slower.
+    Medium,
+    /// The most thinking, the slowest.
+    High,
+}
+
+impl ReasoningEffort {
+    /// The field as OpenRouter reads it: `{effort}`, or `{enabled: false}` for none.
+    pub fn openrouter(self) -> serde_json::Value {
+        match self {
+            Self::None => serde_json::json!({"enabled": false}),
+            effort => serde_json::json!({"effort": effort}),
+        }
+    }
+}
+
+/// The reasoning effort of the router, judge and answer calls apart; each `low` when absent.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct StageReasoning {
+    /// The router call, which picks the route and the queries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub router: Option<ReasoningEffort>,
+    /// The judge call, which reads the first passages and says whether they answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<ReasoningEffort>,
+    /// The answer call, and each step of the data loop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<ReasoningEffort>,
+}
+
+/// What one answer may use (T-4281).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Routes {
+    /// The sources and the connectors, as the router picks.
+    #[default]
+    Both,
+    /// The sources alone: no connector is offered and no tool called.
+    Rag,
+    /// The connectors alone: no search round.
+    Data,
+}
+
+/// How the deployment answers.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AnswerSpec {
+    /// What one answer may use; default `both`.
+    #[serde(default)]
+    pub routes: Routes,
+    /// The most tool calls a data question's loop makes, the router's reads included; 1 to 25,
+    /// default 10 (T-4294).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_data_steps: Option<u32>,
+    /// The seconds after the question in which the loop may still call a tool; 1 to 60,
+    /// default 20 (T-4294).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_data_seconds: Option<u32>,
+}
+
+/// What a deployment reaches beyond its own project.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AssistantScope {
+    /// Other projects whose `audience: public` Endpoints its connectors, and whose
+    /// `KnowledgeSource`s its sources, may name; at most 10, never its own and never `*`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projects: Vec<String>,
+}
+
+/// How the chat looks where it is placed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Theme {
+    /// The body's name in the chat's header, beside its monogram; at most 60 characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<Localised>,
+    /// The accent colour, `#rrggbb`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_color: Option<String>,
+    /// The first line the chat shows, at most 500 characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub greeting: Option<Localised>,
+    /// The line under the title, at most 80 characters; the word Assistant when absent (T-4740).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<Localised>,
+    /// A CSS `font-family` list of family names the chat's text uses, at most 200 characters;
+    /// the system font when absent. No font file is loaded (T-4740).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+}
+
+/// A text the chat shows: one string in the deployment's first language, or one per language of
+/// `languages` (T-4365).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Localised {
+    /// One string, in the deployment's first language.
+    Text(String),
+    /// A language of `languages` to its string.
+    ByLanguage(BTreeMap<String, String>),
+}
+
+impl Localised {
+    /// Each text with the language it is keyed by, `None` for the one string.
+    pub fn texts(&self) -> Vec<(Option<&str>, &str)> {
+        match self {
+            Self::Text(text) => vec![(None, text.as_str())],
+            Self::ByLanguage(map) => map
+                .iter()
+                .map(|(language, text)| (Some(language.as_str()), text.as_str()))
+                .collect(),
+        }
+    }
+}
+
+impl From<&str> for Localised {
+    fn from(text: &str) -> Self {
+        Self::Text(text.to_owned())
+    }
+}
+
+/// How the chat picks the language it opens in (T-4343).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum WidgetLanguage {
+    /// The page's `?lang=`, the visitor's toggle pick, the browser's languages, then the first
+    /// of `languages`.
+    #[default]
+    Browser,
+    /// The panel asks on its first open in a browser.
+    Ask,
+    /// Always the first of `languages`, or the page's `?lang=`.
+    Fixed,
+}
+
+/// How the chat behaves where it is placed (T-4343).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ChatWidget {
+    /// How it picks its language; `browser` by default.
+    #[serde(default)]
+    pub language: WidgetLanguage,
+    /// Whether the header shows the language toggle; default true.
+    #[serde(default = "default_true")]
+    pub language_toggle: bool,
+}
+
+impl Default for ChatWidget {
+    fn default() -> Self {
+        ChatWidget {
+            language: WidgetLanguage::Browser,
+            language_toggle: true,
+        }
+    }
+}
+
+/// Desired specification of an [`AssistantDeployment`][crate::kinds::AssistantDeployment] (MF-52).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AssistantDeploymentSpec {
+    /// The id in the widget's address, `/w/{publicId}`; a DNS label.
+    pub public_id: String,
+    /// `public`, `internal`, `ckan` or `iframe`.
+    pub channel: Channel,
+    /// What the assistant is told before every conversation; at most 8,000 characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    /// The `KnowledgeSource`s it answers from: one of this project by its name, one of a project
+    /// in `scope.projects` as `{project}/{source}` (T-4281).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<String>,
+    /// The Endpoints of this project whose MCP tools it may call.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connectors: Vec<Connector>,
+    /// The named MCP server whose reach it reads, `{project}/{name}` or `org/{name}` (MF-56,
+    /// ADR-N-043 §7.6); on every channel but `internal` a `public` one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_server: Option<String>,
+    /// The Endpoints it reads beside its connectors, picked by the McpServer grammar (MF-58,
+    /// ADR-N-055 §2.2); resolved inside the project's reach by [`crate::reach::resolve_connectors`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub select: Option<Select>,
+    /// Endpoints it never reads, named as a connector names one (MF-59).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+    /// EU data-theme codes it is about, for display (MF-60); `theme` is the chat's look.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub categories: Vec<DataTheme>,
+    /// The pages it may be placed on, each `https://host[:port]`; no wildcard, no path.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_origins: Vec<String>,
+    /// How often it answers; required on every channel but `internal`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<RateLimit>,
+    /// How much it may spend; required on every channel but `internal`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<Budget>,
+    /// How the chat looks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<Theme>,
+    /// The languages it answers in, as ISO 639-1 codes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<String>,
+    /// Whether it may filter a large tool result with a script in `jc-functions`; default false.
+    #[serde(default)]
+    pub sandbox: bool,
+    /// The router and answer models; the service's default when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelChoice>,
+    /// Questions the chat offers before the first one, per language of `languages`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub suggestions: BTreeMap<String, Vec<String>>,
+    /// The line under the chat that says answers are machine-written, per language.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub disclaimer: BTreeMap<String, String>,
+    /// Whether it answers at all; `false` makes every chat request answer `503`. Default true.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// What it reaches beyond its own project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<AssistantScope>,
+    /// How it answers: what one answer may use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<AnswerSpec>,
+    /// Whether the chat shows the helpful/unhelpful buttons under an answer; default true.
+    #[serde(default = "default_true")]
+    pub feedback: bool,
+    /// How the chat picks its language and whether it shows the toggle (T-4343).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub widget: Option<ChatWidget>,
+    /// How long each turn of a conversation is kept, `P{n}D` with `n` 0 to 365; `P90D` when
+    /// absent, `P0D` keeps none (AG-99, T-4670, T-4681).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_retention: Option<String>,
+    /// What is masked in a turn before it is stored; `secrets` when absent (AG-99, T-4681).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_redaction: Option<TranscriptRedaction>,
+    /// Whom a visitor asks about their data (T-4670).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub privacy: Option<Privacy>,
+}
+
+/// Whom a visitor of an assistant asks about their data, shown in the widget's privacy panel
+/// (API/05 §1.6, T-4670).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Privacy {
+    /// An e-mail address, at most 254 characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contact: Option<String>,
+    /// An `https` page of the operator's privacy documents, at most 2,000 characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub documents_url: Option<String>,
+}
+
+/// What a stored turn has masked (AG-99, T-4681).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum TranscriptRedaction {
+    /// Access tokens, API keys, passwords, private keys and card numbers; the rest verbatim.
+    #[default]
+    Secrets,
+    /// Those and e-mail addresses, phone numbers, IBANs and birth numbers.
+    Personal,
+}
+
+/// The days a turn is kept when `transcriptRetention` is absent (AG-99, T-4681).
+pub const TRANSCRIPT_DAYS: u32 = 90;
+/// The most days `transcriptRetention` may name.
+pub const MAX_TRANSCRIPT_DAYS: u32 = 365;
+
+impl Kind for AssistantDeploymentSpec {
+    const KIND: &'static str = "AssistantDeployment";
+    const PLURAL: &'static str = "assistantdeployments";
+    const SCOPE: Scope = Scope::Project;
+    const PATH_TEMPLATE: &'static str = "projects/{project}/assistant/deployments/{name}.yaml";
+
+    fn validate_spec(&self, meta: &ObjectMeta) -> Result<()> {
+        names::validate_dns1123_label(&meta.name)?;
+        self.validate()?;
+        // A deployment's own project is reached without being named; naming it is a mistake.
+        let own = meta.namespace.as_deref().unwrap_or_default();
+        match self.scope_projects().iter().find(|project| *project == own) {
+            Some(project) => Err(name(
+                "scope.projects",
+                project.clone(),
+                "scope.projects names other projects; the deployment's own is reached already",
+            )),
+            None => Ok(()),
+        }
+    }
+}
+
+impl AssistantDeploymentSpec {
+    /// The other projects its connectors may reach; empty when it names none.
+    ///
+    /// A connector names one of their Endpoints as `{project}/{endpoint}` ([`connector_target`]).
+    pub fn scope_projects(&self) -> &[String] {
+        self.scope
+            .as_ref()
+            .map_or(&[], |scope| scope.projects.as_slice())
+    }
+
+    /// What one answer may use; `both` when absent.
+    pub fn routes(&self) -> Routes {
+        self.answer.as_ref().map(|a| a.routes).unwrap_or_default()
+    }
+
+    /// The most tool calls of a data question's loop; 10 when absent.
+    pub fn data_steps(&self) -> u32 {
+        self.answer
+            .as_ref()
+            .and_then(|a| a.max_data_steps)
+            .unwrap_or(10)
+    }
+
+    /// The days each turn is kept (AG-99): `transcriptRetention`'s, [`TRANSCRIPT_DAYS`] when
+    /// absent, 0 for `P0D` or a value [`Self::validate`] refuses.
+    pub fn transcript_days(&self) -> u32 {
+        self.transcript_retention
+            .as_deref()
+            .map_or(Some(TRANSCRIPT_DAYS), retention_days)
+            .unwrap_or(0)
+    }
+
+    /// The seconds a data question's loop may call tools; 20 when absent.
+    pub fn data_seconds(&self) -> u32 {
+        self.answer
+            .as_ref()
+            .and_then(|a| a.max_data_seconds)
+            .unwrap_or(20)
+    }
+
+    /// Every rule of MF-52 that one manifest can be judged by, field group by field group, in the
+    /// order a manifest is read: the first broken rule is the one reported.
+    pub fn validate(&self) -> Result<()> {
+        self.identity_fields()?;
+        self.answer_fields()?;
+        self.connector_fields()?;
+        self.channel_fields()?;
+        self.rate_limit_fields()?;
+        self.budget_fields()?;
+        self.model_fields()?;
+        self.text_fields()?;
+        self.scope_fields()?;
+        self.theme_fields()?;
+        self.privacy_fields()?;
+        languages(&self.languages)
+    }
+
+    /// `transcriptRetention` and `privacy` (T-4670).
+    fn privacy_fields(&self) -> Result<()> {
+        if let Some(retention) = &self.transcript_retention {
+            if retention_days(retention).is_none() {
+                return Err(name(
+                    "transcriptRetention",
+                    retention.clone(),
+                    "transcriptRetention is P{n}D with n from 0 to 365",
+                ));
+            }
+        }
+        let Some(privacy) = &self.privacy else {
+            return Ok(());
+        };
+        if let Some(contact) = &privacy.contact {
+            let (local, host) = contact.split_once('@').unwrap_or_default();
+            let plain = |part: &str| {
+                !part.is_empty()
+                    && part
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "._%+-".contains(c))
+            };
+            if contact.len() > 254 || !plain(local) || !plain(host) || !host.contains('.') {
+                return Err(name(
+                    "privacy.contact",
+                    contact.clone(),
+                    "privacy.contact is one e-mail address of at most 254 characters",
+                ));
+            }
+        }
+        if let Some(url) = &privacy.documents_url {
+            let host = url.strip_prefix("https://").unwrap_or_default();
+            if url.len() > 2_000 || host.is_empty() || url.chars().any(char::is_whitespace) {
+                return Err(name(
+                    "privacy.documentsUrl",
+                    url.clone(),
+                    "privacy.documentsUrl is an https address of at most 2,000 characters",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The public id, what it answers from, its MCP server and its sources (MF-52).
+    fn identity_fields(&self) -> Result<()> {
+        names::validate_dns1123_label(&self.public_id).map_err(|_| {
+            name(
+                "publicId",
+                self.public_id.clone(),
+                "publicId is a DNS label: lowercase letters, digits and dashes",
+            )
+        })?;
+        if self.sources.is_empty() && !self.reads_endpoints() {
+            return Err(name(
+                "sources",
+                String::new(),
+                "a deployment answers from at least one source, connector, select or mcpServer",
+            ));
+        }
+        if let Some(server) = &self.mcp_server {
+            match connector_target(server) {
+                (Some(project), label)
+                    if names::validate_dns1123_label(project).is_ok()
+                        && names::validate_dns1123_label(label).is_ok() => {}
+                _ => {
+                    return Err(name(
+                        "mcpServer",
+                        server.clone(),
+                        "mcpServer names a server as {project}/{name} or org/{name}",
+                    ))
+                }
+            }
+        }
+        for source in &self.sources {
+            let (project, label) = connector_target(source);
+            names::validate_dns1123_label(label).map_err(|_| {
+                name(
+                    "sources",
+                    source.clone(),
+                    "a source names a KnowledgeSource of this project, or one of a project in scope.projects as {project}/{source}",
+                )
+            })?;
+            if project.is_some_and(|project| !self.scope_projects().iter().any(|p| p == project)) {
+                return Err(name(
+                    "sources",
+                    source.clone(),
+                    "a source names another project's KnowledgeSource only when scope.projects lists that project",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// What an answer may use, and the data loop's bounds.
+    fn answer_fields(&self) -> Result<()> {
+        match self.routes() {
+            Routes::Rag if self.sources.is_empty() => {
+                return Err(name(
+                    "answer.routes",
+                    "rag".into(),
+                    "routes rag answers from the sources; name at least one",
+                ))
+            }
+            Routes::Data if !self.reads_endpoints() => {
+                return Err(name(
+                    "answer.routes",
+                    "data".into(),
+                    "routes data answers from the connectors; name at least one, a select or an mcpServer",
+                ))
+            }
+            _ => {}
+        }
+        for (field, value, most, reason) in [
+            (
+                "answer.maxDataSteps",
+                self.data_steps(),
+                25,
+                "maxDataSteps is 1 to 25",
+            ),
+            (
+                "answer.maxDataSeconds",
+                self.data_seconds(),
+                60,
+                "maxDataSeconds is 1 to 60",
+            ),
+        ] {
+            if !(1..=most).contains(&value) {
+                return Err(name(field, value.to_string(), reason));
+            }
+        }
+        Ok(())
+    }
+
+    /// Each connector: its Endpoint in scope, its tools and its timeout.
+    fn connector_fields(&self) -> Result<()> {
+        for connector in &self.connectors {
+            let (project, endpoint) = connector_target(&connector.endpoint);
+            names::validate_dns1123_label(endpoint).map_err(|_| {
+                name(
+                    "connectors[].endpoint",
+                    connector.endpoint.clone(),
+                    "a connector names an Endpoint of this project, or one of a project in scope.projects as {project}/{endpoint}",
+                )
+            })?;
+            if project.is_some_and(|project| !self.scope_projects().iter().any(|p| p == project)) {
+                return Err(name(
+                    "connectors[].endpoint",
+                    connector.endpoint.clone(),
+                    "a connector names another project's Endpoint only when scope.projects lists that project",
+                ));
+            }
+            if connector.tools.is_empty()
+                || connector.tools.iter().any(|tool| tool.trim().is_empty())
+            {
+                return Err(name(
+                    "connectors[].tools",
+                    connector.endpoint.clone(),
+                    "a connector lists the tools it may call, at least one",
+                ));
+            }
+            if !(1..=MAX_TIMEOUT_SECONDS).contains(&connector.timeout_seconds) {
+                return Err(name(
+                    "connectors[].timeoutSeconds",
+                    connector.timeout_seconds.to_string(),
+                    "timeoutSeconds is 1 to 120",
+                ));
+            }
+        }
+        self.select_fields()?;
+        categories(&self.categories)
+    }
+
+    /// Whether it names any way to reach an Endpoint.
+    fn reads_endpoints(&self) -> bool {
+        !self.connectors.is_empty() || self.select.is_some() || self.mcp_server.is_some()
+    }
+
+    /// The selector and the exclusions (MF-58, MF-59). Whether a project, space or Endpoint
+    /// exists, and whether a project is this one, is `jcctl validate`'s.
+    fn select_fields(&self) -> Result<()> {
+        if let Some(select) = &self.select {
+            if self.channel.is_anonymous() {
+                if let Some(level) = select
+                    .access_level
+                    .iter()
+                    .flatten()
+                    .find(|level| **level != AccessLevel::Public)
+                {
+                    return Err(Error::Invalid {
+                        field: "spec.select.accessLevel".into(),
+                        reason: format!(
+                            "a `{}` deployment answers people nobody signed in, so it selects `public` Endpoints only, not `{level}`; use channel `internal` (MF-58)",
+                            self.channel.as_str()
+                        ),
+                    });
+                }
+            }
+            // Every level fits a project-list audience: the channel's bound is the one above.
+            select.validate(crate::kinds::Audience::ProjectList)?;
+            let scope = self.scope_projects();
+            let foreign = select.projects.iter().flatten().map(String::as_str).chain(
+                select
+                    .spaces
+                    .iter()
+                    .flatten()
+                    .filter_map(|space| space.split_once('/').map(|(project, _)| project)),
+            );
+            // Its own project is the one name not in scope; jcctl tells the two apart.
+            let mut outside: BTreeSet<&str> = BTreeSet::new();
+            for project in foreign.filter(|p| !scope.iter().any(|s| s == p)) {
+                outside.insert(project);
+            }
+            if outside.len() > 1 {
+                return Err(Error::Invalid {
+                    field: "spec.select.projects".into(),
+                    reason: format!(
+                        "a selector reaches the deployment's own project and those of scope.projects; add {} to scope.projects or drop them (MF-58)",
+                        outside.into_iter().map(|p| format!("`{p}`")).collect::<Vec<_>>().join(", ")
+                    ),
+                });
+            }
+        }
+        if self.exclude.len() > MAX_EXCLUDE {
+            return Err(name(
+                "exclude",
+                self.exclude.len().to_string(),
+                "exclude names at most 50 Endpoints",
+            ));
+        }
+        let mut seen = BTreeSet::new();
+        for excluded in &self.exclude {
+            let (project, endpoint) = connector_target(excluded);
+            if project.is_some_and(|p| names::validate_dns1123_label(p).is_err())
+                || names::validate_dns1123_label(endpoint).is_err()
+            {
+                return Err(name(
+                    "exclude",
+                    excluded.clone(),
+                    "exclude names an Endpoint of this project, or one of another project as {project}/{endpoint}",
+                ));
+            }
+            if !seen.insert(excluded.as_str()) {
+                return Err(name(
+                    "exclude",
+                    excluded.clone(),
+                    "exclude names an Endpoint once",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Its origins, and what a deployment anyone may reach must carry.
+    fn channel_fields(&self) -> Result<()> {
+        for origin in &self.allowed_origins {
+            if !is_origin(origin) {
+                return Err(name(
+                    "allowedOrigins",
+                    origin.clone(),
+                    "an origin is https://host or https://host:port, with no path and no wildcard",
+                ));
+            }
+        }
+        if self.channel.is_anonymous() {
+            if self.allowed_origins.is_empty() {
+                return Err(name(
+                    "allowedOrigins",
+                    String::new(),
+                    "a public, ckan or iframe deployment lists the origins it may be placed on",
+                ));
+            }
+            if self.rate_limit.is_none() {
+                return Err(name(
+                    "rateLimit",
+                    String::new(),
+                    "a public, ckan or iframe deployment carries a rateLimit",
+                ));
+            }
+            if self.budget.is_none() {
+                return Err(name(
+                    "budget",
+                    String::new(),
+                    "a public, ckan or iframe deployment carries a budget",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The rate limit's windows, each within its bounds.
+    fn rate_limit_fields(&self) -> Result<()> {
+        if let Some(limit) = &self.rate_limit {
+            if !(1..=600).contains(&limit.requests_per_minute) {
+                return Err(name(
+                    "rateLimit.requestsPerMinute",
+                    limit.requests_per_minute.to_string(),
+                    "requestsPerMinute is 1 to 600",
+                ));
+            }
+            if !(1..=120).contains(&limit.per_client_per_minute)
+                || limit.per_client_per_minute > limit.requests_per_minute
+            {
+                return Err(name(
+                    "rateLimit.perClientPerMinute",
+                    limit.per_client_per_minute.to_string(),
+                    "perClientPerMinute is 1 to 120 and no more than requestsPerMinute",
+                ));
+            }
+            for (field, value, max, reason) in [
+                (
+                    "rateLimit.perClientPerHour",
+                    limit.per_client_per_hour,
+                    7_200,
+                    "perClientPerHour is 1 to 7200",
+                ),
+                (
+                    "rateLimit.perClientPerDay",
+                    limit.per_client_per_day,
+                    100_000,
+                    "perClientPerDay is 1 to 100000",
+                ),
+                (
+                    "rateLimit.perClientPerMonth",
+                    limit.per_client_per_month,
+                    100_000,
+                    "perClientPerMonth is 1 to 100000",
+                ),
+                (
+                    "rateLimit.streamsPerClient",
+                    limit.streams_per_client,
+                    10,
+                    "streamsPerClient is 1 to 10",
+                ),
+            ] {
+                if !(1..=max).contains(&value) {
+                    return Err(name(field, value.to_string(), reason));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The budget: tokens, cost and the bounds of one answer.
+    fn budget_fields(&self) -> Result<()> {
+        if let Some(budget) = &self.budget {
+            if !(1..=100_000_000).contains(&budget.tokens_per_day) {
+                return Err(name(
+                    "budget.tokensPerDay",
+                    budget.tokens_per_day.to_string(),
+                    "tokensPerDay is 1 to 100000000",
+                ));
+            }
+            if budget.tokens_per_conversation == 0
+                || budget.tokens_per_conversation > budget.tokens_per_day
+            {
+                return Err(name(
+                    "budget.tokensPerConversation",
+                    budget.tokens_per_conversation.to_string(),
+                    "tokensPerConversation is at least 1 and no more than tokensPerDay",
+                ));
+            }
+            if !(0.01..=1_000.0).contains(&budget.cost_per_day_usd) {
+                return Err(name(
+                    "budget.costPerDayUsd",
+                    budget.cost_per_day_usd.to_string(),
+                    "costPerDayUsd is 0.01 to 1000",
+                ));
+            }
+            if let Some(cap) = budget.cost_per_conversation_usd {
+                if !(0.01..=budget.cost_per_day_usd).contains(&cap) {
+                    return Err(name(
+                        "budget.costPerConversationUsd",
+                        cap.to_string(),
+                        "costPerConversationUsd is 0.01 to costPerDayUsd",
+                    ));
+                }
+            }
+            for (field, value, range, reason) in [
+                (
+                    "budget.outputTokensPerAnswer",
+                    budget.output_tokens_per_answer,
+                    100..=4_000,
+                    "outputTokensPerAnswer is 100 to 4000",
+                ),
+                (
+                    "budget.messagesPerConversation",
+                    budget.messages_per_conversation,
+                    1..=200,
+                    "messagesPerConversation is 1 to 200",
+                ),
+                (
+                    "budget.questionChars",
+                    budget.question_chars,
+                    100..=4_000,
+                    "questionChars is 100 to 4000",
+                ),
+                (
+                    "budget.visitorSharePercent",
+                    budget.visitor_share_percent,
+                    1..=100,
+                    "visitorSharePercent is 1 to 100",
+                ),
+            ] {
+                if !range.contains(&value) {
+                    return Err(name(field, value.to_string(), reason));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The system prompt's length and the models and providers it names.
+    fn model_fields(&self) -> Result<()> {
+        if self
+            .system_prompt
+            .as_deref()
+            .is_some_and(|prompt| prompt.chars().count() > MAX_PROMPT_LEN)
+        {
+            return Err(name(
+                "systemPrompt",
+                String::new(),
+                "systemPrompt is at most 8000 characters",
+            ));
+        }
+        if let Some(model) = &self.model {
+            for (field, id) in [
+                ("model.router", &model.router),
+                ("model.answer", &model.answer),
+            ] {
+                if let Some(id) = id {
+                    if !is_model_id(id) {
+                        return Err(name(
+                            field,
+                            id.clone(),
+                            "a model id is vendor/name, at most 100 characters of a-z 0-9 . _ : / -",
+                        ));
+                    }
+                }
+            }
+            if let Some(provider) = &model.provider {
+                provider.validate("model.provider", "model.provider.order")?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Suggestions and disclaimers per known language, and no credential in any visible text.
+    fn text_fields(&self) -> Result<()> {
+        for (language, questions) in &self.suggestions {
+            self.known_language("suggestions", language)?;
+            if questions.len() > MAX_SUGGESTIONS {
+                return Err(name(
+                    "suggestions",
+                    language.clone(),
+                    "at most 6 suggested questions per language",
+                ));
+            }
+            for question in questions {
+                let length = question.chars().count();
+                if question.trim().is_empty() || length > MAX_SUGGESTION_LEN {
+                    return Err(name(
+                        "suggestions",
+                        language.clone(),
+                        "a suggested question is 1 to 120 characters",
+                    ));
+                }
+                if negative_question(question) {
+                    return Err(name(
+                        "suggestions",
+                        language.clone(),
+                        "a suggested question asks what exists, where, how many or how to use it, never about failures, damage, danger, accidents, crime, complaints or blame",
+                    ));
+                }
+            }
+        }
+        for (language, text) in &self.disclaimer {
+            self.known_language("disclaimer", language)?;
+            if text.trim().is_empty() || text.chars().count() > MAX_DISCLAIMER_LEN {
+                return Err(name(
+                    "disclaimer",
+                    language.clone(),
+                    "a disclaimer is 1 to 400 characters",
+                ));
+            }
+        }
+        // A credential pasted into text every visitor reads, or every model call carries, would
+        // leak it; the refusal names the field and never repeats the value.
+        let texts = self
+            .system_prompt
+            .iter()
+            .map(|prompt| ("systemPrompt", prompt.as_str()))
+            .chain(
+                self.suggestions
+                    .values()
+                    .flatten()
+                    .map(|q| ("suggestions", q.as_str())),
+            )
+            .chain(
+                self.disclaimer
+                    .values()
+                    .map(|text| ("disclaimer", text.as_str())),
+            );
+        for (field, text) in texts {
+            if text.split_whitespace().any(names::looks_like_a_credential) {
+                return Err(name(
+                    field,
+                    String::new(),
+                    "carries the shape of a credential; a key or token never goes into the text",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// scope.projects: at most ten, each a DNS label, named once, never `*`.
+    fn scope_fields(&self) -> Result<()> {
+        let projects = self.scope_projects();
+        if projects.len() > MAX_SCOPE_PROJECTS {
+            return Err(name(
+                "scope.projects",
+                projects.len().to_string(),
+                "scope.projects names at most 10 projects",
+            ));
+        }
+        for (i, project) in projects.iter().enumerate() {
+            if project == "*" {
+                return Err(name(
+                    "scope.projects",
+                    project.clone(),
+                    "scope.projects names each project; `*` is never allowed",
+                ));
+            }
+            names::validate_dns1123_label(project).map_err(|_| {
+                name(
+                    "scope.projects",
+                    project.clone(),
+                    "a project is named by its DNS label",
+                )
+            })?;
+            if projects[..i].contains(project) {
+                return Err(name(
+                    "scope.projects",
+                    project.clone(),
+                    "each project is named once",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The theme's colour, greeting and title.
+    fn theme_fields(&self) -> Result<()> {
+        if let Some(theme) = &self.theme {
+            if let Some(colour) = &theme.primary_color {
+                let hex = colour.strip_prefix('#').unwrap_or_default();
+                if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(name(
+                        "theme.primaryColor",
+                        colour.clone(),
+                        "primaryColor is #rrggbb",
+                    ));
+                }
+            }
+            // Family names only: nothing that ends the declaration or loads a file, like url(.
+            if let Some(font) = &theme.font {
+                let names = |c: char| c.is_alphanumeric() || " -,'\"".contains(c);
+                if font.trim().is_empty() || font.chars().count() > 200 || !font.chars().all(names)
+                {
+                    return Err(name(
+                        "theme.font",
+                        font.clone(),
+                        "font is a list of family names: letters, digits, spaces, hyphens, commas and quotes, at most 200 characters",
+                    ));
+                }
+            }
+            let shown = [
+                (
+                    "theme.greeting",
+                    &theme.greeting,
+                    MAX_GREETING_LEN,
+                    "greeting is at most 500 characters",
+                ),
+                (
+                    "theme.title",
+                    &theme.title,
+                    MAX_TITLE_LEN,
+                    "title is 1 to 60 characters",
+                ),
+                (
+                    "theme.subtitle",
+                    &theme.subtitle,
+                    80,
+                    "subtitle is 1 to 80 characters",
+                ),
+            ];
+            for (field, value, max, rule) in shown {
+                let Some(value) = value else { continue };
+                let texts = value.texts();
+                if texts.is_empty() {
+                    return Err(name(field, String::new(), rule));
+                }
+                for (language, text) in texts {
+                    if let Some(language) = language {
+                        self.known_language(field, language)?;
+                    }
+                    // A one-string greeting may be empty (no greeting), as before T-4365.
+                    let blank =
+                        text.trim().is_empty() && (field != "theme.greeting" || language.is_some());
+                    if blank || text.chars().count() > max {
+                        return Err(name(field, String::new(), rule));
+                    }
+                    if text.split_whitespace().any(names::looks_like_a_credential) {
+                        return Err(name(
+                            field,
+                            String::new(),
+                            "carries the shape of a credential; a key or token never goes into the text",
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl AssistantDeploymentSpec {
+    /// A per-language map's key must be one of `languages`.
+    fn known_language(&self, field: &'static str, language: &str) -> Result<()> {
+        if self.languages.iter().any(|known| known == language) {
+            Ok(())
+        } else {
+            Err(name(
+                field,
+                language.to_owned(),
+                "each language here is one the deployment lists in languages",
+            ))
+        }
+    }
+}
+
+/// `vendor/name`: at most 100 characters of `a-z0-9._:/-`, both parts present.
+/// The project and Endpoint a connector names: `{project}/{endpoint}` for an Endpoint of a
+/// project in `scope.projects`, the deployment's own project (`None`) otherwise (MF-52, T-4177).
+/// Also how a source names another project's `KnowledgeSource`, `{project}/{source}` (T-4281).
+pub fn connector_target(endpoint: &str) -> (Option<&str>, &str) {
+    match endpoint.split_once('/') {
+        Some((project, name)) => (Some(project), name),
+        None => (None, endpoint),
+    }
+}
+
+/// An OpenRouter provider slug, `cerebras` or `deepinfra/fp8`.
+pub fn is_provider_slug(slug: &str) -> bool {
+    !slug.is_empty()
+        && slug.len() <= MAX_PROVIDER_LEN
+        && slug
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._/-".contains(c))
+}
+
+fn is_model_id(id: &str) -> bool {
+    id.len() <= MAX_MODEL_ID_LEN
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._:/-".contains(c))
+        && id
+            .split_once('/')
+            .is_some_and(|(vendor, model)| !vendor.is_empty() && !model.is_empty())
+}
+
+/// A CKAN organization name: 2 to 100 characters of `a-z0-9-_`.
+fn is_ckan_name(value: &str) -> bool {
+    (2..=100).contains(&value.len())
+        && value
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
+/// The days of a `P{n}D` retention with `n` 0 to [`MAX_TRANSCRIPT_DAYS`]; `None` otherwise.
+fn retention_days(value: &str) -> Option<u32> {
+    let days = value.strip_prefix('P')?.strip_suffix('D')?;
+    if days.is_empty() || days.len() > 3 || !days.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    days.parse()
+        .ok()
+        .filter(|days| *days <= MAX_TRANSCRIPT_DAYS)
+}
+
+fn name(field: &'static str, value: String, reason: &'static str) -> Error {
+    Error::Name {
+        field,
+        value,
+        reason,
+    }
+}
+
+/// `https://host[:port][/path]` with a host of letters, digits, dots and dashes; the host.
+fn https_url(url: &str) -> Option<&str> {
+    let rest = url.strip_prefix("https://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let host = host_and_port(authority)?;
+    (!rest[authority.len()..].contains(char::is_whitespace)).then_some(host)
+}
+
+/// `https://host[:port]` and nothing else: no path, no query, no wildcard, no user.
+fn is_origin(origin: &str) -> bool {
+    origin
+        .strip_prefix("https://")
+        .is_some_and(|authority| host_and_port(authority).is_some())
+}
+
+/// The host of `host[:port]` when both are well formed.
+fn host_and_port(authority: &str) -> Option<&str> {
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (authority, None),
+    };
+    if let Some(port) = port {
+        port.parse::<u16>().ok().filter(|port| *port > 0)?;
+    }
+    let labels_ok = !host.is_empty()
+        && host.len() <= 253
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+        });
+    labels_ok.then_some(host)
+}
+
+/// Each EU data-theme code once (MF-60); an unknown code is refused by [`DataTheme`] itself.
+fn categories(codes: &[DataTheme]) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    match codes.iter().find(|code| !seen.insert(code.code())) {
+        Some(code) => Err(name(
+            "categories",
+            code.code().to_owned(),
+            "categories names each EU data-theme code once",
+        )),
+        None => Ok(()),
+    }
+}
+
+/// ISO 639-1: two lowercase letters each.
+fn languages(codes: &[String]) -> Result<()> {
+    for code in codes {
+        if code.len() != 2 || !code.chars().all(|c| c.is_ascii_lowercase()) {
+            return Err(name(
+                "languages",
+                code.clone(),
+                "a language is a two-letter ISO 639-1 code such as sk, cs, fi or en",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod knowledge_source_tests {
+    use super::*;
+
+    fn spec(value: serde_json::Value) -> KnowledgeSourceSpec {
+        serde_json::from_value(value).expect("a KnowledgeSource spec")
+    }
+
+    /// The field a refusal names, so each piece is judged by what it reports.
+    fn refused(result: Result<()>) -> &'static str {
+        match result {
+            Err(Error::Name { field, .. }) => field,
+            other => panic!("expected a refused field, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_website_needs_one_to_twenty_https_start_urls_and_no_ckan_instance() {
+        let ok = spec(
+            serde_json::json!({"source": "website", "startUrls": ["https://hronov.example/"]}),
+        );
+        assert!(ok.website_fields().is_ok());
+        let none = spec(serde_json::json!({"source": "website"}));
+        assert_eq!(refused(none.website_fields()), "startUrls");
+        let many: Vec<String> = (0..=MAX_START_URLS)
+            .map(|i| format!("https://h{i}.example/"))
+            .collect();
+        let many = spec(serde_json::json!({"source": "website", "startUrls": many}));
+        assert_eq!(refused(many.website_fields()), "startUrls");
+        let plain =
+            spec(serde_json::json!({"source": "website", "startUrls": ["http://hronov.example/"]}));
+        assert_eq!(refused(plain.website_fields()), "startUrls");
+        let both = spec(
+            serde_json::json!({"source": "website", "startUrls": ["https://h.example/"], "ckanInstanceRef": "open"}),
+        );
+        assert_eq!(refused(both.website_fields()), "ckanInstanceRef");
+    }
+
+    #[test]
+    fn a_ckan_source_names_its_instance_and_no_start_urls() {
+        assert!(
+            spec(serde_json::json!({"source": "ckan", "ckanInstanceRef": "open"}))
+                .ckan_fields()
+                .is_ok()
+        );
+        assert_eq!(
+            refused(spec(serde_json::json!({"source": "ckan"})).ckan_fields()),
+            "ckanInstanceRef"
+        );
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "ckan", "ckanInstanceRef": "Open Data"}))
+                    .ckan_fields()
+            ),
+            "ckanInstanceRef"
+        );
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "ckan", "ckanInstanceRef": "open", "startUrls": ["https://h.example/"]}))
+                    .ckan_fields()
+            ),
+            "startUrls"
+        );
+    }
+
+    #[test]
+    fn a_catalogue_guide_and_upload_source_name_nothing_to_fetch() {
+        assert!(
+            spec(serde_json::json!({"source": "catalogue", "contextSpaces": ["air"]}))
+                .catalogue_fields()
+                .is_ok()
+        );
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "catalogue", "contextSpaces": ["Air Space"]}))
+                    .catalogue_fields()
+            ),
+            "contextSpaces"
+        );
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "catalogue", "ckanInstanceRef": "open"}))
+                    .catalogue_fields()
+            ),
+            "source"
+        );
+        assert!(spec(serde_json::json!({"source": "guide"}))
+            .guide_fields()
+            .is_ok());
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "guide", "contextSpaces": ["air"]}))
+                    .guide_fields()
+            ),
+            "source"
+        );
+        assert!(spec(serde_json::json!({"source": "upload"}))
+            .upload_source_fields()
+            .is_ok());
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "upload", "schedule": "0 3 * * *"}))
+                    .upload_source_fields()
+            ),
+            "schedule"
+        );
+    }
+
+    #[test]
+    fn organizations_and_upload_limits_belong_to_their_own_source() {
+        let ten: Vec<String> = (0..MAX_ORGANIZATIONS).map(|i| format!("org-{i}")).collect();
+        assert!(spec(
+            serde_json::json!({"source": "ckan", "ckanInstanceRef": "open", "organizations": ten})
+        )
+        .organization_fields()
+        .is_ok());
+        let eleven: Vec<String> = (0..=MAX_ORGANIZATIONS)
+            .map(|i| format!("org-{i}"))
+            .collect();
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "ckan", "organizations": eleven}))
+                    .organization_fields()
+            ),
+            "organizations"
+        );
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "website", "organizations": ["mesto"]}))
+                    .organization_fields()
+            ),
+            "organizations"
+        );
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "ckan", "organizations": ["Mesto!"]}))
+                    .organization_fields()
+            ),
+            "organizations"
+        );
+        assert!(spec(serde_json::json!({"source": "upload", "upload": {"maxBytes": MAX_UPLOAD_BYTES, "maxFiles": MAX_UPLOAD_FILES}}))
+            .upload_limit_fields()
+            .is_ok());
+        assert_eq!(
+            refused(spec(serde_json::json!({"source": "website", "upload": {"maxBytes": 1, "maxFiles": 1}})).upload_limit_fields()),
+            "upload"
+        );
+        assert_eq!(
+            refused(spec(serde_json::json!({"source": "upload", "upload": {"maxBytes": 0, "maxFiles": 1}})).upload_limit_fields()),
+            "upload.maxBytes"
+        );
+        assert_eq!(
+            refused(spec(serde_json::json!({"source": "upload", "upload": {"maxBytes": 1, "maxFiles": MAX_UPLOAD_FILES + 1}})).upload_limit_fields()),
+            "upload.maxFiles"
+        );
+    }
+
+    #[test]
+    fn wordpress_types_spaces_and_patterns_are_bounded() {
+        assert!(spec(
+            serde_json::json!({"source": "website", "wordpressTypes": ["pages", "news_2"]})
+        )
+        .wordpress_fields()
+        .is_ok());
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "ckan", "wordpressTypes": ["pages"]}))
+                    .wordpress_fields()
+            ),
+            "wordpressTypes"
+        );
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "website", "wordpressTypes": ["Pages"]}))
+                    .wordpress_fields()
+            ),
+            "wordpressTypes"
+        );
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "website", "wordpressTypes": [""]}))
+                    .wordpress_fields()
+            ),
+            "wordpressTypes"
+        );
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "website", "contextSpaces": ["air"]}))
+                    .space_and_pattern_fields()
+            ),
+            "contextSpaces"
+        );
+        assert!(spec(
+            serde_json::json!({"source": "website", "include": ["/sk/"], "exclude": ["/en/"]})
+        )
+        .space_and_pattern_fields()
+        .is_ok());
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "website", "exclude": ["en/"]}))
+                    .space_and_pattern_fields()
+            ),
+            "exclude"
+        );
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "website", "include": ["/a b"]}))
+                    .space_and_pattern_fields()
+            ),
+            "include"
+        );
+        let long = format!("/{}", "a".repeat(MAX_PATTERN_LEN));
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "website", "include": [long]}))
+                    .space_and_pattern_fields()
+            ),
+            "include"
+        );
+    }
+
+    #[test]
+    fn crawl_limits_hold_their_bounds_and_the_schedule_is_cron() {
+        assert!(spec(serde_json::json!({"source": "website", "maxDepth": MAX_DEPTH, "maxPages": MAX_PAGES, "schedule": "0 3 * * *"}))
+            .crawl_limit_fields()
+            .is_ok());
+        for (field, value) in [
+            ("maxDepth", 0),
+            ("maxDepth", u32::from(MAX_DEPTH) + 1),
+            ("maxPages", 0),
+            ("maxPages", MAX_PAGES + 1),
+        ] {
+            let mut json = serde_json::json!({"source": "website"});
+            json[field] = serde_json::json!(value);
+            assert_eq!(
+                refused(spec(json).crawl_limit_fields()),
+                field,
+                "{field} {value}"
+            );
+        }
+        assert_eq!(
+            refused(
+                spec(
+                    serde_json::json!({"source": "website", "pdf": {"maxBytes": 0, "maxPages": 1}})
+                )
+                .crawl_limit_fields()
+            ),
+            "pdf.maxBytes"
+        );
+        assert_eq!(
+            refused(
+                spec(serde_json::json!({"source": "website", "schedule": "every night"}))
+                    .crawl_limit_fields()
+            ),
+            "schedule"
+        );
+    }
+}
+
+#[cfg(test)]
+mod deployment_spec_tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    /// The documented deployment's spec, as JSON to change one field of.
+    fn golden() -> Value {
+        let manifest: Value = serde_norway::from_str(include_str!(
+            "../../tests/golden/029-AssistantDeployment-22-knowledge-assistant.yaml"
+        ))
+        .expect("the golden manifest");
+        manifest["spec"].clone()
+    }
+
+    fn with(change: impl FnOnce(&mut Value)) -> AssistantDeploymentSpec {
+        let mut spec = golden();
+        change(&mut spec);
+        serde_json::from_value(spec).expect("an AssistantDeployment spec")
+    }
+
+    fn refused(result: Result<()>) -> &'static str {
+        match result {
+            Err(Error::Name { field, .. }) => field,
+            other => panic!("expected a refused field, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn every_piece_passes_the_documented_deployment() {
+        let spec = with(|_| {});
+        for check in [
+            AssistantDeploymentSpec::identity_fields,
+            AssistantDeploymentSpec::answer_fields,
+            AssistantDeploymentSpec::connector_fields,
+            AssistantDeploymentSpec::channel_fields,
+            AssistantDeploymentSpec::rate_limit_fields,
+            AssistantDeploymentSpec::budget_fields,
+            AssistantDeploymentSpec::model_fields,
+            AssistantDeploymentSpec::text_fields,
+            AssistantDeploymentSpec::scope_fields,
+            AssistantDeploymentSpec::theme_fields,
+        ] {
+            assert!(check(&spec).is_ok());
+        }
+    }
+
+    #[test]
+    fn identity_needs_a_label_something_to_answer_from_and_sources_in_scope() {
+        assert_eq!(
+            refused(with(|s| s["publicId"] = json!("BB Public")).identity_fields()),
+            "publicId"
+        );
+        let nothing = with(|s| {
+            s["sources"] = json!([]);
+            s["connectors"] = json!([]);
+        });
+        assert_eq!(refused(nothing.identity_fields()), "sources");
+        assert_eq!(
+            refused(with(|s| s["mcpServer"] = json!("no-slash")).identity_fields()),
+            "mcpServer"
+        );
+        assert!(with(|s| s["mcpServer"] = json!("org/hub"))
+            .identity_fields()
+            .is_ok());
+        assert_eq!(
+            refused(with(|s| s["sources"] = json!(["bbsk/web"])).identity_fields()),
+            "sources"
+        );
+        assert!(with(|s| {
+            s["sources"] = json!(["bbsk/web"]);
+            s["scope"] = json!({"projects": ["bbsk"]});
+        })
+        .identity_fields()
+        .is_ok());
+    }
+
+    #[test]
+    fn answer_routes_need_what_they_read_and_the_loop_is_bounded() {
+        let rag = with(|s| {
+            s["sources"] = json!([]);
+            s["answer"] = json!({"routes": "rag"});
+        });
+        assert_eq!(refused(rag.answer_fields()), "answer.routes");
+        let data = with(|s| {
+            s["connectors"] = json!([]);
+            s["answer"] = json!({"routes": "data"});
+        });
+        assert_eq!(refused(data.answer_fields()), "answer.routes");
+        assert_eq!(
+            refused(with(|s| s["answer"] = json!({"maxDataSteps": 26})).answer_fields()),
+            "answer.maxDataSteps"
+        );
+        assert_eq!(
+            refused(with(|s| s["answer"] = json!({"maxDataSeconds": 0})).answer_fields()),
+            "answer.maxDataSeconds"
+        );
+    }
+
+    #[test]
+    fn a_connector_names_an_endpoint_in_scope_its_tools_and_a_timeout() {
+        let one = |c: Value| with(|s| s["connectors"] = json!([c]));
+        assert_eq!(
+            refused(
+                one(json!({"endpoint": "Mesto", "tools": ["query_entities"]})).connector_fields()
+            ),
+            "connectors[].endpoint"
+        );
+        assert_eq!(
+            refused(
+                one(json!({"endpoint": "bbsk/kraj", "tools": ["query_entities"]}))
+                    .connector_fields()
+            ),
+            "connectors[].endpoint"
+        );
+        assert_eq!(
+            refused(one(json!({"endpoint": "mesto", "tools": [" "]})).connector_fields()),
+            "connectors[].tools"
+        );
+        assert_eq!(
+            refused(one(json!({"endpoint": "mesto", "tools": ["q"], "timeoutSeconds": MAX_TIMEOUT_SECONDS + 1})).connector_fields()),
+            "connectors[].timeoutSeconds"
+        );
+    }
+
+    #[test]
+    fn an_anonymous_channel_carries_origins_a_rate_limit_and_a_budget() {
+        assert_eq!(
+            refused(with(|s| s["allowedOrigins"] = json!(["https://*.example"])).channel_fields()),
+            "allowedOrigins"
+        );
+        assert_eq!(
+            refused(with(|s| s["allowedOrigins"] = json!([])).channel_fields()),
+            "allowedOrigins"
+        );
+        assert_eq!(
+            refused(
+                with(|s| s
+                    .as_object_mut()
+                    .map(|o| o.remove("rateLimit"))
+                    .map(drop)
+                    .unwrap_or_default())
+                .channel_fields()
+            ),
+            "rateLimit"
+        );
+        assert_eq!(
+            refused(
+                with(|s| s
+                    .as_object_mut()
+                    .map(|o| o.remove("budget"))
+                    .map(drop)
+                    .unwrap_or_default())
+                .channel_fields()
+            ),
+            "budget"
+        );
+        let internal = with(|s| {
+            s["channel"] = json!("internal");
+            s["allowedOrigins"] = json!([]);
+        });
+        assert!(internal.channel_fields().is_ok());
+    }
+
+    #[test]
+    fn rate_limits_and_budgets_hold_their_bounds() {
+        let limit = |l: Value| with(|s| s["rateLimit"] = l);
+        assert_eq!(
+            refused(
+                limit(json!({"requestsPerMinute": 601, "perClientPerMinute": 1}))
+                    .rate_limit_fields()
+            ),
+            "rateLimit.requestsPerMinute"
+        );
+        assert_eq!(
+            refused(
+                limit(json!({"requestsPerMinute": 5, "perClientPerMinute": 6})).rate_limit_fields()
+            ),
+            "rateLimit.perClientPerMinute"
+        );
+        assert_eq!(
+            refused(
+                limit(
+                    json!({"requestsPerMinute": 5, "perClientPerMinute": 5, "streamsPerClient": 11})
+                )
+                .rate_limit_fields()
+            ),
+            "rateLimit.streamsPerClient"
+        );
+        let budget = |b: Value| with(|s| s["budget"] = b);
+        assert_eq!(
+            refused(budget(json!({"tokensPerDay": 0, "tokensPerConversation": 1})).budget_fields()),
+            "budget.tokensPerDay"
+        );
+        assert_eq!(
+            refused(
+                budget(json!({"tokensPerDay": 10, "tokensPerConversation": 11})).budget_fields()
+            ),
+            "budget.tokensPerConversation"
+        );
+        assert_eq!(
+            refused(
+                budget(
+                    json!({"tokensPerDay": 10, "tokensPerConversation": 5, "costPerDayUsd": 0.0})
+                )
+                .budget_fields()
+            ),
+            "budget.costPerDayUsd"
+        );
+        assert_eq!(
+            refused(
+                budget(
+                    json!({"tokensPerDay": 10, "tokensPerConversation": 5, "questionChars": 99})
+                )
+                .budget_fields()
+            ),
+            "budget.questionChars"
+        );
+        // T-4737: a conversation's cost is a cent at least and never more than the day's.
+        for cap in [0.0, 0.009, 1.01] {
+            assert_eq!(
+                refused(
+                    budget(json!({"tokensPerDay": 10, "tokensPerConversation": 5,
+                        "costPerDayUsd": 1, "costPerConversationUsd": cap}))
+                    .budget_fields()
+                ),
+                "budget.costPerConversationUsd",
+                "{cap}"
+            );
+        }
+        for cap in [0.01, 0.15, 1.0] {
+            assert!(
+                budget(json!({"tokensPerDay": 10, "tokensPerConversation": 5,
+                    "costPerDayUsd": 1, "costPerConversationUsd": cap}))
+                .budget_fields()
+                .is_ok(),
+                "{cap}"
+            );
+        }
+    }
+
+    #[test]
+    fn models_texts_scope_and_theme_are_checked() {
+        assert_eq!(
+            refused(
+                with(|s| s["systemPrompt"] = json!("x".repeat(MAX_PROMPT_LEN + 1))).model_fields()
+            ),
+            "systemPrompt"
+        );
+        assert_eq!(
+            refused(with(|s| s["model"] = json!({"router": "No Spaces Allowed"})).model_fields()),
+            "model.router"
+        );
+        assert_eq!(
+            refused(
+                with(|s| s["model"] = json!({"provider": {"allowFallbacks": true}})).model_fields()
+            ),
+            "model.provider"
+        );
+        assert_eq!(
+            refused(with(|s| s["suggestions"] = json!({"de": ["Wie?"]})).text_fields()),
+            "suggestions"
+        );
+        // T-4801: a starter never asks for something bad, in any case or without diacritics.
+        for bad in [
+            "Ktoré mosty sú v havarijnom stave?",
+            "KDE SU NAJHORSIE CESTY?",
+            "Kolik bylo dopravních nehod?",
+            "Where are the potholes?",
+            "Jsou silnice ve špatném stavu?",
+            "Aké škody spôsobila búrka?",
+        ] {
+            assert_eq!(
+                refused(with(|s| s["suggestions"] = json!({"sk": [bad]})).text_fields()),
+                "suggestions",
+                "{bad}"
+            );
+        }
+        for good in [
+            "Koľko mostov je pamiatkovo chránených?",
+            "Aké sú úradné hodiny Úradu BBSK a kde sídli?",
+            "Aká je kvalita ovzdušia v Banskej Bystrici?",
+            "Which schools are in Zvolen?",
+            "Aké údaje sú dostupné spätne?",
+            "Koľko autobusov Škoda jazdí v meste?",
+        ] {
+            assert!(!negative_question(good), "{good}");
+        }
+        assert_eq!(
+            refused(with(|s| s["disclaimer"] = json!({"sk": " "})).text_fields()),
+            "disclaimer"
+        );
+        assert_eq!(
+            refused(
+                with(|s| s["systemPrompt"] =
+                    json!("use sk-or-v1-0123456789abcdef0123456789abcdef0123456789abcdef"))
+                .text_fields()
+            ),
+            "systemPrompt"
+        );
+        assert_eq!(
+            refused(with(|s| s["scope"] = json!({"projects": ["*"]})).scope_fields()),
+            "scope.projects"
+        );
+        assert_eq!(
+            refused(with(|s| s["scope"] = json!({"projects": ["bbsk", "bbsk"]})).scope_fields()),
+            "scope.projects"
+        );
+        assert_eq!(
+            refused(with(|s| s["theme"]["primaryColor"] = json!("blue")).theme_fields()),
+            "theme.primaryColor"
+        );
+        assert_eq!(
+            refused(with(|s| s["theme"]["title"] = json!(" ")).theme_fields()),
+            "theme.title"
+        );
+        assert_eq!(
+            refused(with(|s| s["theme"]["greeting"] = json!({"de": "Hallo"})).theme_fields()),
+            "theme.greeting"
+        );
+        assert_eq!(
+            refused(with(|s| s["theme"]["subtitle"] = json!(" ")).theme_fields()),
+            "theme.subtitle"
+        );
+        assert_eq!(
+            refused(with(|s| s["theme"]["subtitle"] = json!("x".repeat(81))).theme_fields()),
+            "theme.subtitle"
+        );
+        // Every character outside letters, digits, space, hyphen, comma and quotes is refused.
+        let long = "a".repeat(201);
+        for font in [
+            "",
+            " ",
+            "Arial\nsans",
+            "Arial\tsans",
+            "Arial/x",
+            "Arial\\66",
+            "Arial:x",
+            "Arial !important",
+            "Arial.x",
+            "<style>",
+            "Arial*",
+            long.as_str(),
+            "Arial; color: red",
+            "url(https://evil.example/f.woff)",
+            "a{}",
+        ] {
+            assert_eq!(
+                refused(with(|s| s["theme"]["font"] = json!(font)).theme_fields()),
+                "theme.font",
+                "{font}"
+            );
+        }
+        with(|s| {
+            s["theme"]["font"] =
+                json!("\"Roboto\", \"Helvetica Neue\", Arial, system-ui, sans-serif");
+            s["theme"]["subtitle"] =
+                json!({"sk": "Ukážka · otvorené dáta BBSK a Banskej Bystrice"});
+        })
+        .theme_fields()
+        .unwrap();
+    }
+
+    #[test]
+    fn transcripts_keep_ninety_days_unless_told_and_privacy_names_a_real_address() {
+        assert_eq!(with(|_| {}).transcript_days(), 90);
+        assert_eq!(
+            with(|_| {}).transcript_redaction.unwrap_or_default(),
+            TranscriptRedaction::Secrets
+        );
+        assert_eq!(
+            with(|s| s["transcriptRedaction"] = json!("personal")).transcript_redaction,
+            Some(TranscriptRedaction::Personal)
+        );
+        for (value, days) in [("P0D", 0), ("P7D", 7), ("P365D", 365)] {
+            let spec = with(|s| s["transcriptRetention"] = json!(value));
+            assert!(spec.privacy_fields().is_ok(), "{value}");
+            assert_eq!(spec.transcript_days(), days, "{value}");
+        }
+        for value in ["P366D", "30", "P30", "PT30D", "P-1D", "P1W", "P0030D", ""] {
+            let spec = with(|s| s["transcriptRetention"] = json!(value));
+            assert_eq!(
+                refused(spec.privacy_fields()),
+                "transcriptRetention",
+                "{value}"
+            );
+            assert_eq!(
+                spec.transcript_days(),
+                0,
+                "a refused value keeps nothing: {value}"
+            );
+        }
+        let ok = with(|s| {
+            s["privacy"] = json!({"contact": "dpo@banskabystrica.sk",
+                "documentsUrl": "https://www.banskabystrica.sk/ochrana-osobnych-udajov/"})
+        });
+        assert!(ok.privacy_fields().is_ok());
+        for contact in ["dpo", "@x.sk", "dpo@sk", "a b@x.sk", "<x>@x.sk"] {
+            let spec = with(|s| s["privacy"] = json!({ "contact": contact }));
+            assert_eq!(
+                refused(spec.privacy_fields()),
+                "privacy.contact",
+                "{contact}"
+            );
+        }
+        for url in [
+            "http://x.sk/p",
+            "https://",
+            "javascript:alert(1)",
+            "https://x.sk/a b",
+        ] {
+            let spec = with(|s| s["privacy"] = json!({ "documentsUrl": url }));
+            assert_eq!(
+                refused(spec.privacy_fields()),
+                "privacy.documentsUrl",
+                "{url}"
+            );
+        }
+        let unknown: std::result::Result<AssistantDeploymentSpec, serde_json::Error> =
+            serde_json::from_value({
+                let mut s = golden();
+                s["privacy"] = json!({"phone": "+421"});
+                s
+            });
+        assert!(unknown.is_err(), "privacy refuses an unknown field");
+    }
+}

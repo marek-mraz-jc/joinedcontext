@@ -1,0 +1,1898 @@
+//! Manifest kinds for Bento data pipelines and CronJob schedules (T-0116, PL-01..PL-28).
+
+use crate::envelope::{Kind, ObjectMeta, Ref, Scope, SecretRef};
+use crate::error::{Error, Result};
+use crate::names;
+use crate::urn::Urn;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::sync::LazyLock;
+
+/// A Bento duration: a positive count and one of the units Bento accepts (PL-26, PL-27).
+static PERIOD_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^[1-9][0-9]*(ms|s|m|h)$").expect("valid regex"));
+
+/// The cadence at which a scheduled run stops being worth a pod start (PL-26).
+pub const RESIDENT_BELOW_SECONDS: u64 = 30;
+
+/// Returns whether a pipeline executes as a scheduled CronJob (PL-04, PL-26).
+///
+/// An explicit class wins; `auto` runs scheduled when `period >= 30s`.
+fn is_scheduled(spec: &PipelineSpec) -> bool {
+    match spec.class {
+        PipelineClass::Scheduled => true,
+        PipelineClass::Resident => false,
+        PipelineClass::Auto => match spec.period_seconds() {
+            Some(seconds) => seconds >= RESIDENT_BELOW_SECONDS,
+            None => false,
+        },
+    }
+}
+
+/// Desired specification of a [`Pipeline`][crate::kinds::Pipeline] resource (PL-01..PL-28).
+///
+/// Two shapes (PL-54, ADR-N-023): `v1alpha1` holds one `source`, one `compute`, one `output`
+/// and `targetEndpoint`; `v1alpha2` holds `sources`, `steps` and `outputs`. The accessors
+/// [`PipelineSpec::sources`], [`PipelineSpec::steps`] and [`PipelineSpec::outputs`] read
+/// either as the second, so nothing downstream has to know which one a file was written in.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PipelineSpec {
+    /// Operational execution class (PL-04, PL-05).
+    pub class: PipelineClass,
+    /// Whether the pipeline runs (PL-40). `false` pauses it: the reconciler leaves a resident
+    /// stream out of the runner and suspends a scheduled CronJob, the manifest stays, and a
+    /// Resume is the flag flipped back. Absent means `true`, and `true` is not written back.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub enabled: bool,
+    /// Standard cron schedule expression for scheduled runs (PL-04, PL-26..PL-28).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<String>,
+    /// How often the pipeline polls its source, as a Bento duration (`15s`, `5m`).
+    ///
+    /// The reconciler reads it to pick the class (PL-26) and copies it into the runner's
+    /// `input.generate.interval` (PL-27). Absent means push-based: an MQTT or
+    /// subscription input driven by its source rather than by a clock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub period: Option<String>,
+    /// Optional context source query or subscription trigger for derived pipelines (PL-31).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<PipelineSource>,
+    /// Optional compute execution specification (PL-33).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compute: Option<Compute>,
+    /// Target endpoint URN through which writes occur (PF-39, PL-18); `v1alpha1` only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_endpoint: Option<Urn>,
+    /// Optional output entity type and write mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<Output>,
+    /// The author knows this resident pipeline triggers itself and accepts it (PL-37).
+    ///
+    /// A derived pipeline whose output type is the type its own subscription watches feeds its
+    /// own trigger, and the reconciler refuses it. Setting this says the loop is deliberate,
+    /// which is why PL-37 puts the change in the yellow lane: a person reviews it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_feedback: bool,
+    /// The inputs, merged by a Bento `broker` when there are several (PL-52, PL-53); `v1alpha2`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<PipelineSource>,
+    /// The processors, in the order they run (PL-52); `v1alpha2`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<Step>,
+    /// Where the result is written, each through its own Endpoint (PL-52, PL-55); `v1alpha2`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<PipelineOutput>,
+    /// Routes by condition (PL-73): a message after `steps` takes the first route whose `when`
+    /// holds; one no route takes is written through `outputs`; `v1alpha2`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routes: Vec<PipelineRoute>,
+    /// Secret references injected into runner environments (PL-14..PL-16).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_refs: Vec<SecretRef>,
+    /// Resource quotas allocated to this pipeline runner (PL-11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quotas: Option<PipelineQuotas>,
+    /// Deletes the entities its source stopped sending; absent, nothing is deleted (PL-64).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expiry: Option<Expiry>,
+    /// When entities of a written type, or chosen attributes of them, end (PL-80…PL-83): the
+    /// rendered stream writes their `expiresAt` after the author's steps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lifetime: Vec<super::pipeline_lifetime::Lifetime>,
+    /// Which history rows the broker keeps of each written attribute and where the time of a
+    /// row comes from (PL-106…PL-110).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<super::pipeline_history::History>,
+    /// How the pipeline follows a record its source removed (PL-96…PL-100); absent, nothing is
+    /// deleted, as with `mode: never`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_deletes: Option<super::pipeline_source_deletes::SourceDeletes>,
+}
+
+/// The longest expiry window, in hours: a year (PL-64).
+pub const EXPIRY_MAX_HOURS: u64 = 365 * 24;
+
+/// The most entity types one expiry names (PL-64).
+pub const EXPIRY_MAX_TYPES: usize = 20;
+
+/// Stale-entity expiry: entities of `types` not modified for `after` are deleted (PL-64).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Expiry {
+    /// Whole hours or days, `1h` to `365d`.
+    pub after: String,
+    /// The entity types the sweep deletes, one to twenty.
+    pub types: Vec<String>,
+}
+
+impl Expiry {
+    /// The window in hours, `None` when `after` is not whole hours or days.
+    pub fn hours(&self) -> Option<u64> {
+        let (count, unit) = self.after.split_at(self.after.len().checked_sub(1)?);
+        if count.is_empty() || count.starts_with('0') || !count.bytes().all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        let count: u64 = count.parse().ok()?;
+        match unit {
+            "h" => Some(count),
+            "d" => count.checked_mul(24),
+            _ => None,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        if !self
+            .hours()
+            .is_some_and(|h| (1..=EXPIRY_MAX_HOURS).contains(&h))
+        {
+            return Err(Error::Invalid {
+                field: "spec.expiry.after".to_owned(),
+                reason: format!(
+                    "`{}` is not a window: write whole hours or days from `1h` to `365d`, \
+                     such as `12h` or `14d` (PL-64)",
+                    self.after
+                ),
+            });
+        }
+        if self.types.is_empty() || self.types.len() > EXPIRY_MAX_TYPES {
+            return Err(Error::Invalid {
+                field: "spec.expiry.types".to_owned(),
+                reason: format!(
+                    "name the entity types the pipeline writes, one to {EXPIRY_MAX_TYPES} (PL-64)"
+                ),
+            });
+        }
+        for (index, entity_type) in self.types.iter().enumerate() {
+            names::validate_entity_type(entity_type)?;
+            if self.types[..index].contains(entity_type) {
+                return Err(Error::Invalid {
+                    field: "spec.expiry.types".to_owned(),
+                    reason: format!("`{entity_type}` is named twice (PL-64)"),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
+/// Operational execution class of a data pipeline (PL-04, PL-05).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum PipelineClass {
+    /// Reconciler automatically determines class from cadence or input mode (PL-05, PL-26).
+    Auto,
+    /// Continuous process hosted inside project pipeline runner deployment.
+    Resident,
+    /// Ephemeral Kubernetes CronJob executed periodically.
+    Scheduled,
+}
+
+impl PipelineClass {
+    /// Returns the kebab-case wire name for this pipeline class.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Resident => "resident",
+            Self::Scheduled => "scheduled",
+        }
+    }
+}
+
+impl fmt::Display for PipelineClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Source specification for derived pipelines (PL-31).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PipelineSource {
+    /// The input's name, by which a `kpi` step's formula reads it (PL-102); a DNS label unique
+    /// among the sources.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Reference to source Endpoint for reading context entities.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint_ref: Option<Ref>,
+    /// Query parameters for pulling entities.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<SourceQuery>,
+    /// Event subscription trigger for resident processing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<Trigger>,
+    /// Reference to the `DataSource` whose connection becomes this pipeline's Bento input
+    /// (PL-39, MF-35). Excludes `endpointRef`: a pipeline reads the outside world or the
+    /// platform's own spaces, not both in one input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_source_ref: Option<Ref>,
+}
+
+impl PipelineSource {
+    /// Validates the input side of a pipeline (PL-31, PL-39).
+    ///
+    /// One input: either the platform's own spaces through an Endpoint, or the outside world
+    /// through a `DataSource`. A manifest naming both describes two inputs and the reconciler
+    /// would have to choose one, so it is refused here instead.
+    pub fn validate(&self) -> Result<()> {
+        let Some(reference) = &self.data_source_ref else {
+            return Ok(());
+        };
+        if self.endpoint_ref.is_some() {
+            return Err(Error::Name {
+                field: "spec.source.dataSourceRef",
+                value: reference.name().to_owned(),
+                reason: "a pipeline reads a DataSource or an Endpoint, not both (PL-39)",
+            });
+        }
+        if let Some(kind) = reference.kind() {
+            if kind != "DataSource" {
+                return Err(Error::Kind {
+                    expected: "DataSource",
+                    got: kind.to_string(),
+                });
+            }
+        }
+        names::validate_dns1123_label(reference.name())
+    }
+}
+
+/// NGSI-LD query parameters for pipeline source entity retrieval.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SourceQuery {
+    /// Target entity type short name.
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub entity_type: Option<String>,
+    /// Attributes projection list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attrs: Vec<String>,
+    /// The entities to read instead of the whole type (PL-42): PF-42 URNs whose `{Type}` is
+    /// `type` when both are set. Rendered as the `id=` parameter of the fetch.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ids: Vec<Urn>,
+    /// Entity query filter string.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>,
+    /// Scope query filter string.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_q: Option<String>,
+    /// Geographic query filter string.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geo_q: Option<String>,
+    /// Temporal window constraint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporal_q: Option<TemporalWindow>,
+}
+
+/// ISO 8601 temporal window for source queries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TemporalWindow {
+    /// ISO 8601 duration string (e.g. `P1D`).
+    pub window: String,
+}
+
+/// Subscription trigger for resident pipelines (PL-31).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Trigger {
+    /// Underlying context subscription details.
+    pub subscription: SubscriptionTrigger,
+}
+
+/// Subscription configuration triggering pipeline execution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SubscriptionTrigger {
+    /// Target entity type name.
+    #[serde(rename = "type")]
+    pub entity_type: String,
+    /// Whitelist of watched attribute names.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub watched_attributes: Vec<String>,
+}
+
+/// Compute execution specification (PL-33).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Compute {
+    /// Engine kind executing compute logic.
+    pub kind: ComputeKind,
+    /// Path or package of the compute module (for wasm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
+    /// Entry point function name (for wasm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub function: Option<String>,
+    /// Reference to a [`Mapping`][crate::kinds::Mapping] resource.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mapping_ref: Option<Ref>,
+    /// The inline mapping of a `bloblang` step (PL-41): the reconciler renders it as the last
+    /// `mapping` processor of the generated `bento.yaml`. Absent means the author keeps the
+    /// mapping in `bento.yaml`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bloblang: Option<String>,
+    /// The indicator of a `kpi` step over several sources (PL-102…PL-104).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kpi: Option<Box<crate::kpi_join::KpiStep>>,
+    /// The cubes of a `datacube` step (PL-112).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub datacube: Option<Box<crate::datacube::DatacubeStep>>,
+}
+
+impl Compute {
+    /// The Bloblang a step runs as a `mapping` processor: a `bloblang` step's own, a connector
+    /// step's rendered from its parameters (PL-112); `None` for a step Bento does not run.
+    pub fn mapping(&self) -> Result<Option<std::borrow::Cow<'_, str>>> {
+        match (self.kind, &self.datacube) {
+            (ComputeKind::Bloblang, _) => Ok(self
+                .bloblang
+                .as_deref()
+                .filter(|b| !b.trim().is_empty())
+                .map(std::borrow::Cow::Borrowed)),
+            (ComputeKind::Datacube, Some(step)) => {
+                crate::datacube::bloblang(step).map(|b| Some(std::borrow::Cow::Owned(b)))
+            }
+            _ => Ok(None),
+        }
+    }
+}
+
+/// Execution technology category for pipeline compute steps (PL-33).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ComputeKind {
+    /// Inline Bento Bloblang processor.
+    Bloblang,
+    /// Compiled LinkML-Map mapping processor (PL-29).
+    Mapping,
+    /// Sandboxed WebAssembly WASI module (PL-34).
+    Wasm,
+    /// Ephemeral containerized job (PL-35).
+    Container,
+    /// One indicator over several named sources (PL-102), compiled to a mapping by jc-core.
+    Kpi,
+    /// JSON-stat 2.0 statistical cubes (PL-112), rendered to a mapping by jc-core.
+    Datacube,
+}
+
+impl ComputeKind {
+    /// Whether Bento runs the step as a `mapping` processor in the stream (PL-52, PL-112).
+    pub const fn is_mapping(&self) -> bool {
+        matches!(self, Self::Bloblang | Self::Datacube)
+    }
+}
+
+impl ComputeKind {
+    /// Returns the kebab-case wire name for this compute kind.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Bloblang => "bloblang",
+            Self::Mapping => "mapping",
+            Self::Wasm => "wasm",
+            Self::Container => "container",
+            Self::Kpi => "kpi",
+            Self::Datacube => "datacube",
+        }
+    }
+}
+
+impl fmt::Display for ComputeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Output specification for derived pipeline computations (PL-32).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Output {
+    /// Target entity type name produced.
+    #[serde(rename = "type")]
+    pub entity_type: String,
+    /// Write mode applied to target context space.
+    pub mode: OutputMode,
+    /// How the renderer sets each entity's id (ADR-N-041 §3.4, PF-44); absent, the mapping
+    /// sets it itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<IdMint>,
+}
+
+/// The mint option of a pipeline's output (ADR-N-041 §3.4, Architecture/08).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct IdMint {
+    /// `prefixed`, `keep` or `template`.
+    pub mint: Mint,
+    /// The record field the id is made from (`prefixed`, `keep`): a path such as `a.b_c`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// The id with `{field}` placeholders (`template`), starting `urn:ngsi-ld:{Type}:`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+}
+
+/// How an output's ids are made (ADR-N-041 §3.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum Mint {
+    /// `urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}`.
+    Prefixed,
+    /// The source's own id, an NGSI-LD URN of the type made of it when it is not one.
+    Keep,
+    /// A template over the record's fields.
+    Template,
+}
+
+/// A record path a mint reads: dot-separated identifiers, nothing a Bloblang query could read as
+/// an operator.
+static RECORD_PATH: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^[A-Za-z_][A-Za-z0-9_]{0,63}(\.[A-Za-z_][A-Za-z0-9_]{0,63}){0,7}$")
+        .expect("a valid regex")
+});
+
+/// The literal text a template may hold: RFC 8141 characters without `$`, which Bento would
+/// read as an interpolation when it loads the config.
+static TEMPLATE_TEXT: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^[A-Za-z0-9._~!&'()*+,;=:@/%-]*$").expect("a valid regex")
+});
+
+/// A template's parts: literal text and `{field}` names, in order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TemplatePart {
+    /// Text written as it is.
+    Text(String),
+    /// A record path.
+    Field(String),
+}
+
+impl IdMint {
+    /// The mint checked against the output's `entity_type`: the field it needs, a template that
+    /// starts `urn:ngsi-ld:{Type}:` and parses, and record paths only.
+    pub fn validate(&self, entity_type: &str) -> Result<()> {
+        let refuse = |reason: &'static str, value: &str| Error::Name {
+            field: "spec.output.id",
+            value: value.to_string(),
+            reason,
+        };
+        match self.mint {
+            Mint::Prefixed | Mint::Keep => {
+                let from = self.from.as_deref().ok_or_else(|| {
+                    refuse("`from` names the record field the id is made from", "")
+                })?;
+                if !RECORD_PATH.is_match(from) {
+                    return Err(refuse(
+                        "`from` is a record path such as `station.code`",
+                        from,
+                    ));
+                }
+                if self.template.is_some() {
+                    return Err(refuse("`template` belongs to `mint: template` only", ""));
+                }
+            }
+            Mint::Template => {
+                let template = self
+                    .template
+                    .as_deref()
+                    .ok_or_else(|| refuse("`mint: template` needs a `template`", ""))?;
+                if self.from.is_some() {
+                    return Err(refuse(
+                        "`from` belongs to `mint: prefixed` or `keep`",
+                        template,
+                    ));
+                }
+                let parts = self.template_parts()?;
+                let head = format!("urn:ngsi-ld:{entity_type}:");
+                match parts.first() {
+                    Some(TemplatePart::Text(text)) if text.starts_with(&head) => {}
+                    _ => {
+                        return Err(refuse(
+                            "a template starts `urn:ngsi-ld:` and the output's type, then a colon",
+                            template,
+                        ))
+                    }
+                }
+                if !parts
+                    .iter()
+                    .any(|part| matches!(part, TemplatePart::Field(_)))
+                {
+                    return Err(refuse("a template names at least one `{field}`", template));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The template split into text and `{field}` names, each checked (ADR-N-041 §3.4).
+    pub fn template_parts(&self) -> Result<Vec<TemplatePart>> {
+        let template = self.template.as_deref().unwrap_or_default();
+        let refuse = |reason: &'static str| Error::Name {
+            field: "spec.output.id.template",
+            value: template.to_string(),
+            reason,
+        };
+        let mut parts = Vec::new();
+        let mut rest = template;
+        while let Some(open) = rest.find('{') {
+            let (text, after) = rest.split_at(open);
+            let close = after
+                .find('}')
+                .ok_or_else(|| refuse("a `{` is closed by a `}`"))?;
+            let field = &after[1..close];
+            if !text.is_empty() {
+                parts.push(TemplatePart::Text(text.to_string()));
+            }
+            if !RECORD_PATH.is_match(field) {
+                return Err(refuse(
+                    "a `{field}` is a record path such as `station.code`",
+                ));
+            }
+            parts.push(TemplatePart::Field(field.to_string()));
+            rest = &after[close + 1..];
+        }
+        if !rest.is_empty() {
+            parts.push(TemplatePart::Text(rest.to_string()));
+        }
+        if parts.iter().any(|part| matches!(part, TemplatePart::Text(text) if text.contains('}') || !TEMPLATE_TEXT.is_match(text))) {
+            return Err(refuse(
+                "the text of a template holds RFC 8141 characters only, without `$`, `{` or `}`",
+            ));
+        }
+        Ok(parts)
+    }
+}
+
+/// Mutation mode for pipeline output writers (PL-32).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum OutputMode {
+    /// Create the entity, or merge the attributes the record names into it; the rest stay
+    /// (`entityOperations/upsert?options=update`, PL-79).
+    Upsert,
+    /// Make the entity exactly the record: an attribute the record does not name is removed
+    /// (`entityOperations/upsert` without options), for a pipeline that alone writes its
+    /// entities (PL-79, T-4406).
+    Replace,
+    /// Update or append attributes onto existing entity.
+    UpdateAttrs,
+}
+
+impl OutputMode {
+    /// Returns the kebab-case wire name for this output mode.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Upsert => "upsert",
+            Self::Replace => "replace",
+            Self::UpdateAttrs => "update-attrs",
+        }
+    }
+}
+
+impl fmt::Display for OutputMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// A Pipeline output in `replace` whose ids another Pipeline of the project can also write into
+/// the same space (PL-79, T-4408): each of its runs would drop every attribute the other wrote
+/// on an entity they share. A replace rewrites only the entities its own batch names, so writing
+/// one type is no conflict while the ids are kept apart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplaceConflict {
+    /// The Pipeline whose output says `mode: replace`.
+    pub pipeline: String,
+    /// The space that output writes into.
+    pub space: String,
+    /// The entity type it writes; `None` is every type of the space.
+    pub entity_type: Option<String>,
+    /// The other Pipelines whose ids can meet its ids there, in name order.
+    pub others: Vec<String>,
+}
+
+impl fmt::Display for ReplaceConflict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let what = self
+            .entity_type
+            .as_deref()
+            .map_or_else(|| "every type".to_owned(), |t| format!("type {t}"));
+        write!(
+            f,
+            "Pipeline {} writes {what} into space {} with mode replace, and Pipeline {} can write \
+             the same ids there: their id mints are not kept apart by a literal of their own \
+             (a `template` whose text before its first field differs), so each replace would \
+             drop the attributes the other wrote. Keep the ids apart or write upsert (PL-79)",
+            self.pipeline,
+            self.space,
+            self.others.join(", ")
+        )
+    }
+}
+
+/// The literal an id mint's ids start with, when it has one of its own: a `template`'s text
+/// before its first field. A `prefixed` or `keep` mint takes its ids from the record.
+fn literal_head(mint: &IdMint) -> Option<String> {
+    match mint.mint {
+        Mint::Template => match mint.template_parts().ok()?.first() {
+            Some(TemplatePart::Text(text)) => Some(text.clone()),
+            _ => None,
+        },
+        Mint::Prefixed | Mint::Keep => None,
+    }
+}
+
+/// Whether two outputs' ids can be the same. Only a declared id mint is judged: an output without
+/// one has its ids set by its own mapping, as the generated open-data pipelines keep theirs apart
+/// by their slug, and nothing here reads a mapping.
+fn ids_can_meet(a: Option<&IdMint>, b: Option<&IdMint>) -> bool {
+    // ponytail: mapping-set ids are not judged; parse the mapping if two hand-written ones collide.
+    let (Some(a), Some(b)) = (a, b) else {
+        return false;
+    };
+    match (literal_head(a), literal_head(b)) {
+        (Some(a), Some(b)) => a.starts_with(&b) || b.starts_with(&a),
+        _ => true,
+    }
+}
+
+/// Every [`ReplaceConflict`] among `pipelines`, the (name, spec) of every Pipeline of one
+/// project. `space_of_endpoint` answers the space an Endpoint of the project serves, by the
+/// Endpoint's name; an output through an Endpoint it does not know is judged by nothing here.
+/// An output that names no type writes every type of its space.
+pub fn replace_conflicts(
+    pipelines: &[(&str, &PipelineSpec)],
+    space_of_endpoint: impl Fn(&str) -> Option<String>,
+) -> Vec<ReplaceConflict> {
+    type Write<'a> = (
+        &'a str,
+        String,
+        Option<String>,
+        Option<OutputMode>,
+        Option<IdMint>,
+    );
+    let writes: Vec<Write> = pipelines
+        .iter()
+        .flat_map(|(name, spec)| {
+            // Only the first shape's one output declares an id mint (`output.id`).
+            let mint = (!spec.is_second_shape())
+                .then(|| spec.output.as_ref().and_then(|out| out.id.clone()))
+                .flatten();
+            let space_of_endpoint = &space_of_endpoint;
+            spec.outputs()
+                .into_iter()
+                .enumerate()
+                .filter_map(move |(index, output)| {
+                    let space = space_of_endpoint(output.target_endpoint.local_id())?;
+                    let mint = if index == 0 { mint.clone() } else { None };
+                    Some((*name, space, output.entity_type, output.mode, mint))
+                })
+        })
+        .collect();
+    let mut conflicts: Vec<ReplaceConflict> = Vec::new();
+    for (name, space, entity_type, mode, mint) in &writes {
+        if *mode != Some(OutputMode::Replace) {
+            continue;
+        }
+        let mut others: Vec<String> = writes
+            .iter()
+            .filter(|(other, other_space, other_type, _, other_mint)| {
+                other != name
+                    && other_space == space
+                    && (entity_type.is_none() || other_type.is_none() || other_type == entity_type)
+                    && ids_can_meet(mint.as_ref(), other_mint.as_ref())
+            })
+            .map(|(other, ..)| (*other).to_owned())
+            .collect();
+        others.sort();
+        others.dedup();
+        let conflict = ReplaceConflict {
+            pipeline: (*name).to_owned(),
+            space: space.clone(),
+            entity_type: entity_type.clone(),
+            others,
+        };
+        if !conflict.others.is_empty() && !conflicts.contains(&conflict) {
+            conflicts.push(conflict);
+        }
+    }
+    conflicts
+}
+
+/// One step of a `v1alpha2` pipeline (PL-52): a compute kind of PL-33, or one processor the
+/// pinned runner ships, its configuration verbatim in the processor's own field names.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Step {
+    /// `processor: { <name>: <config> }`.
+    Processor(ProcessorStep),
+    /// `kind: bloblang | mapping | wasm | container` with that kind's fields.
+    Compute(Compute),
+}
+
+/// A step that names a runner processor (PL-52).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProcessorStep {
+    /// Exactly one entry: the processor's name and its configuration.
+    pub processor: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+/// One output of a `v1alpha2` pipeline (PL-52): the Endpoint written through and how.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PipelineOutput {
+    /// The Endpoint the writes go through (PF-39, PL-18).
+    pub target_endpoint: Urn,
+    /// The entity type written, when the pipeline names one.
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub entity_type: Option<String>,
+    /// Write mode; absent is `upsert`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<OutputMode>,
+}
+
+/// The most routes one pipeline holds (PL-73).
+pub const MAX_ROUTES: usize = 8;
+
+/// One route of a `v1alpha2` pipeline (PL-73): its condition, its own steps and its outputs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PipelineRoute {
+    /// A DNS label, unique among the pipeline's routes.
+    pub name: String,
+    /// A Bloblang query; the messages it is true for take this route.
+    pub when: String,
+    /// The route's own steps, after the pipeline's `steps`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<Step>,
+    /// Where the route writes, each through its own Endpoint (PL-55).
+    pub outputs: Vec<PipelineOutput>,
+}
+
+/// Resource quotas for a pipeline runner (PL-11).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PipelineQuotas {
+    /// Maximum allowed memory allocation in megabytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_memory_mb: Option<u32>,
+    /// CPU allocation in millicores.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_millicores: Option<u32>,
+}
+
+impl Kind for PipelineSpec {
+    const KIND: &'static str = "Pipeline";
+    const PLURAL: &'static str = "pipelines";
+    const SCOPE: Scope = Scope::Project;
+    const PATH_TEMPLATE: &'static str = "projects/{project}/pipelines/{name}/pipeline.yaml";
+
+    fn validate_spec(&self, meta: &ObjectMeta) -> Result<()> {
+        names::validate_dns1123_label(&meta.name)?;
+        if meta.name == crate::kinds::pipeline_identity::HARNESS {
+            return Err(Error::Name {
+                field: "metadata.name",
+                value: meta.name.clone(),
+                reason: "`pipeline-test` is the principal the Portal tests pipelines as (PL-43); \
+                         a Pipeline of that name would share it, so choose another name",
+            });
+        }
+        self.validate()
+    }
+
+    fn validate_api_version(&self, api_version: &str) -> Result<()> {
+        let second = api_version == crate::envelope::API_VERSION_V1ALPHA2;
+        match (second, self.is_second_shape(), self.has_first_shape()) {
+            (true, _, true) => Err(Error::Invalid {
+                field: "spec".to_owned(),
+                reason: "a `joinedcontext.com/v1alpha2` Pipeline carries `sources`, `steps` and \
+                         `outputs`, never `source`, `compute`, `output` or `targetEndpoint` (PL-52)"
+                    .to_owned(),
+            }),
+            (false, true, _) => Err(Error::Invalid {
+                field: "spec".to_owned(),
+                reason: "`sources`, `steps` and `outputs` need `apiVersion: joinedcontext.com/v1alpha2` (PL-54)"
+                    .to_owned(),
+            }),
+            _ => Ok(()),
+        }
+    }
+}
+
+impl PipelineSpec {
+    /// The polling period in whole seconds, `None` when the pipeline is push-based or the
+    /// period does not parse (PL-26).
+    ///
+    /// A sub-second period floors to zero, which is still shorter than thirty seconds and
+    /// therefore still resident.
+    pub fn period_seconds(&self) -> Option<u64> {
+        let period = self.period.as_deref()?;
+        let split = period.find(|c: char| !c.is_ascii_digit())?;
+        let (count, unit) = period.split_at(split);
+        let count: u64 = count.parse().ok()?;
+        match unit {
+            "ms" => Some(count / 1000),
+            "s" => Some(count),
+            "m" => Some(count * 60),
+            "h" => Some(count * 3600),
+            _ => None,
+        }
+    }
+
+    /// The shortest clock the pipeline runs on, in seconds: the smaller of its `spec.period`
+    /// and the shortest gap of its `spec.schedule`; `None` for a push-based pipeline (PL-116).
+    pub fn shortest_clock_seconds(&self) -> Option<u64> {
+        let schedule = self
+            .schedule
+            .as_deref()
+            .and_then(crate::cron::shortest_gap_minutes)
+            .map(|minutes| u64::from(minutes) * 60);
+        match (self.period_seconds(), schedule) {
+            (Some(period), Some(schedule)) => Some(period.min(schedule)),
+            (one, other) => one.or(other),
+        }
+    }
+
+    /// Returns whether this pipeline executes as a scheduled CronJob (PL-04, PL-26).
+    pub fn is_scheduled(&self) -> bool {
+        is_scheduled(self)
+    }
+
+    /// Whether the spec is written in the `v1alpha2` shape: any of `sources`, `steps`, `outputs`.
+    pub fn is_second_shape(&self) -> bool {
+        !self.sources.is_empty()
+            || !self.steps.is_empty()
+            || !self.outputs.is_empty()
+            || !self.routes.is_empty()
+    }
+
+    fn has_first_shape(&self) -> bool {
+        self.source.is_some()
+            || self.compute.is_some()
+            || self.output.is_some()
+            || self.target_endpoint.is_some()
+    }
+
+    /// The inputs, in either shape (PL-54): `v1alpha1`'s one `source`, or none when its input
+    /// lives in `bento.yaml`.
+    pub fn sources(&self) -> Vec<PipelineSource> {
+        match self.is_second_shape() {
+            true => self.sources.clone(),
+            false => self.source.clone().into_iter().collect(),
+        }
+    }
+
+    /// The steps, in either shape (PL-54): `v1alpha1`'s `compute` as the one step.
+    pub fn steps(&self) -> Vec<Step> {
+        match self.is_second_shape() {
+            true => self.steps.clone(),
+            false => self
+                .compute
+                .clone()
+                .map(Step::Compute)
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    /// Every output the pipeline writes through, in either shape (PL-54): `v1alpha1`'s
+    /// `targetEndpoint` with its `output`, or `outputs` then each route's (PL-73), so a grant
+    /// covers every Endpoint a route writes. [`Self::lane_outputs`] is the default lane alone.
+    pub fn outputs(&self) -> Vec<PipelineOutput> {
+        let mut outputs = self.lane_outputs();
+        outputs.extend(self.routes.iter().flat_map(|route| route.outputs.clone()));
+        outputs
+    }
+
+    /// The outputs of the default lane: where a message no route takes is written (PL-73).
+    pub fn lane_outputs(&self) -> Vec<PipelineOutput> {
+        match self.is_second_shape() {
+            true => self.outputs.clone(),
+            false => self
+                .target_endpoint
+                .clone()
+                .map(|target_endpoint| PipelineOutput {
+                    target_endpoint,
+                    entity_type: self.output.as_ref().map(|out| out.entity_type.clone()),
+                    mode: self.output.as_ref().map(|out| out.mode),
+                })
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    /// The first output's Endpoint: where a one-output pipeline writes.
+    pub fn target(&self) -> Option<Urn> {
+        self.outputs()
+            .into_iter()
+            .next()
+            .map(|out| out.target_endpoint)
+    }
+
+    /// Every Bloblang text and processor string of the author's steps, the routes' included:
+    /// what the lifetime's scan for `expiresAt` assignments reads (PL-83).
+    fn author_texts(&self) -> Vec<String> {
+        let mut texts = Vec::new();
+        let mut steps = self.steps();
+        steps.extend(self.routes.iter().flat_map(|route| route.steps.clone()));
+        for step in &steps {
+            match step {
+                Step::Compute(compute) => texts.extend(compute.bloblang.clone()),
+                Step::Processor(processor) => {
+                    for config in processor.processor.values() {
+                        config_strings(config, &mut texts);
+                    }
+                }
+            }
+        }
+        texts
+    }
+
+    /// The runner variables this pipeline declares for its own steps: the `envVar` of each of
+    /// its `secretRefs` (PL-15, T-3163).
+    pub fn own_variables(&self) -> Vec<&str> {
+        self.secret_refs
+            .iter()
+            .filter_map(|reference| reference.env_var.as_deref())
+            .collect()
+    }
+
+    /// Validates class scheduling, target endpoint, compute engine, and resource bounds.
+    pub fn validate(&self) -> Result<()> {
+        let own = self.own_variables();
+        if self.is_second_shape() && self.has_first_shape() {
+            return Err(Error::Invalid {
+                field: "spec".to_owned(),
+                reason: "a pipeline is written with `sources`, `steps` and `outputs` or with \
+                         `source`, `compute`, `output` and `targetEndpoint`, not both (PL-52)"
+                    .to_owned(),
+            });
+        }
+        if self.is_second_shape() {
+            self.validate_second_shape()?;
+        } else {
+            let Some(target) = &self.target_endpoint else {
+                return Err(Error::Name {
+                    field: "spec.targetEndpoint",
+                    value: String::new(),
+                    reason: "targetEndpoint is required",
+                });
+            };
+            validate_target(target)?;
+            if let Some(source) = &self.source {
+                validate_source(source)?;
+            }
+            if let Some(compute) = &self.compute {
+                if compute.kind == ComputeKind::Kpi {
+                    return Err(Error::Name {
+                        field: "spec.compute.kind",
+                        value: "kpi".to_owned(),
+                        reason: "a `kpi` step reads several named sources: write the Pipeline as joinedcontext.com/v1alpha2 (PL-102)",
+                    });
+                }
+                validate_compute(compute, &own)?;
+            }
+            if let Some(ref out) = self.output {
+                names::validate_entity_type(&out.entity_type)?;
+                if let Some(mint) = &out.id {
+                    mint.validate(&out.entity_type)?;
+                }
+            }
+        }
+
+        match self.class {
+            PipelineClass::Scheduled => {
+                if self.schedule.is_none() {
+                    return Err(Error::Name {
+                        field: "spec.schedule",
+                        value: String::new(),
+                        reason: "schedule is required when class is `scheduled`",
+                    });
+                }
+            }
+            PipelineClass::Resident => {
+                if let Some(ref s) = self.schedule {
+                    return Err(Error::Name {
+                        field: "spec.schedule",
+                        value: s.clone(),
+                        reason: "schedule must not be present when class is `resident`",
+                    });
+                }
+            }
+            PipelineClass::Auto => {}
+        }
+
+        if let Some(ref period) = self.period {
+            if !PERIOD_RE.is_match(period) {
+                return Err(Error::Name {
+                    field: "spec.period",
+                    value: period.clone(),
+                    reason: "period must be a Bento duration such as `250ms`, `15s`, `5m` or `1h`",
+                });
+            }
+        }
+
+        if let Some(ref sched) = self.schedule {
+            // The same cron rule as KnowledgeSource and App jobs: five fields, each in its range.
+            if !crate::cron::is_valid(sched) {
+                return Err(Error::Name {
+                    field: "spec.schedule",
+                    value: sched.clone(),
+                    reason: "schedule must be a five-field cron expression with every field in range, e.g. `*/15 * * * *`",
+                });
+            }
+        }
+
+        if let Some(ref q) = self.quotas {
+            if let Some(mem) = q.max_memory_mb {
+                if mem == 0 {
+                    return Err(Error::Name {
+                        field: "spec.quotas.maxMemoryMb",
+                        value: "0".to_string(),
+                        reason: "maxMemoryMb must be >= 1",
+                    });
+                }
+            }
+            if let Some(cpu) = q.cpu_millicores {
+                if cpu == 0 {
+                    return Err(Error::Name {
+                        field: "spec.quotas.cpuMillicores",
+                        value: "0".to_string(),
+                        reason: "cpuMillicores must be >= 1",
+                    });
+                }
+            }
+        }
+
+        for (index, sref) in self.secret_refs.iter().enumerate() {
+            sref.validate(&format!("spec.secretRefs[{index}]"))?;
+        }
+
+        if let Some(expiry) = &self.expiry {
+            expiry.validate()?;
+            // The sweep deletes in the one space the pipeline writes; with two it could not say
+            // which of them absence means removal in.
+            if self.outputs().len() != 1 {
+                return Err(Error::Invalid {
+                    field: "spec.expiry".to_owned(),
+                    reason: "expiry sweeps the one space a pipeline writes, and this pipeline \
+                             has more than one output (PL-64)"
+                        .to_owned(),
+                });
+            }
+        }
+        if !self.lifetime.is_empty() {
+            let outputs = self.outputs();
+            let context = super::pipeline_lifetime::Context {
+                written: outputs
+                    .iter()
+                    .map(|out| out.entity_type.as_deref())
+                    .collect(),
+                expiry_types: self.expiry.as_ref().map_or(&[], |e| e.types.as_slice()),
+                author_texts: &self.author_texts(),
+            };
+            super::pipeline_lifetime::validate(&self.lifetime, &context)?;
+        }
+        if !self.history.is_empty() {
+            let outputs = self.outputs();
+            let written: Option<std::collections::BTreeSet<&str>> = outputs
+                .iter()
+                .map(|out| out.entity_type.as_deref())
+                .collect();
+            super::pipeline_history::validate(&self.history, written.as_ref())?;
+        }
+        if let Some(source_deletes) = &self.source_deletes {
+            source_deletes.validate(&super::pipeline_source_deletes::Context {
+                has_clock: self.period.is_some() || self.schedule.is_some(),
+                has_expiry: self.expiry.is_some(),
+                has_rolling_entity_lifetime: self.lifetime.iter().any(|entry| {
+                    entry
+                        .entity
+                        .as_ref()
+                        .is_some_and(|mode| mode.rolling.is_some())
+                }),
+            })?;
+            if let Some(marker) = &source_deletes.deleted_when {
+                validate_author_bloblang("spec.sourceDeletes.deletedWhen", marker)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// A write target is an Endpoint (PF-39, PL-18).
+fn validate_target(target: &Urn) -> Result<()> {
+    if target.entity_type() != "Endpoint" {
+        return Err(Error::Kind {
+            expected: "Endpoint",
+            got: target.entity_type().to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// One input: its own rule (PL-39) and its query, trigger and reference (PL-31, PL-42).
+fn validate_source(src: &PipelineSource) -> Result<()> {
+    src.validate()?;
+    if let Some(name) = &src.name {
+        names::validate_dns1123_label(name)?;
+    }
+
+    if let Some(ref q) = src.query {
+        if let Some(ref et) = q.entity_type {
+            names::validate_entity_type(et)?;
+        }
+        // The id list is comma-separated on the wire and the gateway splits it after decoding:
+        // an RFC 8141 id may hold a comma (ADR-N-041), and that one would read as two (PL-42).
+        if let Some(listed) = q.ids.iter().find(|id| id.id().contains(',')) {
+            return Err(Error::Kind {
+                expected: "query.ids without a comma, the separator of the id list",
+                got: listed.to_string(),
+            });
+        }
+        if let Some(ref et) = q.entity_type {
+            if let Some(other) = q.ids.iter().find(|id| id.entity_type() != et) {
+                return Err(Error::Kind {
+                    expected: "query.type",
+                    got: format!("{} in query.ids ({other})", other.entity_type()),
+                });
+            }
+        }
+    }
+    if let Some(ref tr) = src.trigger {
+        names::validate_entity_type(&tr.subscription.entity_type)?;
+    }
+    if let Some(ref er) = src.endpoint_ref {
+        names::validate_dns1123_label(er.name())?;
+        if let Some(kind) = er.kind() {
+            if kind != "Endpoint" {
+                return Err(Error::Kind {
+                    expected: "Endpoint",
+                    got: kind.to_string(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One compute step (PL-33, PL-34, PL-41).
+/// The runner's processors no pipeline may run, at the top of a step or nested inside one:
+/// `command` and `subprocess` run a program in the shared runner, `file` reads, writes and
+/// deletes its files, and `wasm` is the compute kind (PL-34). `bento_processors::PROCESSORS`
+/// leaves those four out. `awk` (`getline`, `ENVIRON`, `system()`), `javascript` (`require`,
+/// `bento.v0_fetch`) and `template` (Sprig's `env`) are on that list and read the runner's files
+/// or environment all the same, measured on the pinned image (T-3833). `python` reaches no file,
+/// network or variable, but nothing caps its CPU or memory inside the one runner every project
+/// shares: `while True: pass` holds a core and the runner's streams API (T-5223).
+const REFUSED_PROCESSORS: &[&str] = &[
+    "awk",
+    "command",
+    "file",
+    "javascript",
+    "python",
+    "subprocess",
+    "template",
+    "wasm",
+];
+
+/// Checks one processor configuration the way a pipeline step is checked (PL-16, PL-50, PL-52):
+/// one processor name besides an optional `label`, a name the platform's list holds, no refused
+/// processor nested anywhere inside it (`try`, `branch`, `switch` and the others carry
+/// processors of their own), and every string through the Bloblang host check. The Portal runs
+/// the processors of an author's `bento.yaml` through it before a stream is rendered.
+///
+/// A step reads no runner variable but [`STEP_VARIABLES`]; [`validate_processor_reading`] also
+/// lets it read the variables its own pipeline declares.
+pub fn validate_processor(field: &'static str, processor: &serde_json::Value) -> Result<()> {
+    validate_processor_reading(field, processor, &[])
+}
+
+/// [`validate_processor`] for a step of a pipeline that declares `own` variables in its
+/// `secretRefs` (`envVar`), which the step may name as `${NAME}` beside [`STEP_VARIABLES`].
+pub fn validate_processor_reading(
+    field: &'static str,
+    processor: &serde_json::Value,
+    own: &[&str],
+) -> Result<()> {
+    let refused = |reason: String| Error::Invalid {
+        field: field.to_owned(),
+        reason,
+    };
+    let Some(config) = processor.as_object() else {
+        return Err(refused(
+            "a processor is a map of its name to its configuration".to_owned(),
+        ));
+    };
+    let mut names = config.keys().filter(|key| *key != "label");
+    let (Some(name), None) = (names.next(), names.next()) else {
+        return Err(Error::Name {
+            field,
+            value: config.keys().cloned().collect::<Vec<_>>().join(", "),
+            reason: "a processor step names exactly one processor (PL-52)",
+        });
+    };
+    if !super::bento_processors::PROCESSORS.contains(&name.as_str()) {
+        let accepted: Vec<&str> = super::bento_processors::PROCESSORS
+            .iter()
+            .copied()
+            .filter(|p| !REFUSED_PROCESSORS.contains(p))
+            .collect();
+        return Err(refused(format!(
+            "unknown processor `{name}`; accepted processors are: {}",
+            accepted.join(", ")
+        )));
+    }
+    if REFUSED_PROCESSORS.contains(&name.as_str()) {
+        return Err(refused(format!(
+            "processor `{name}` {} (PL-52)",
+            refused_reason(name)
+        )));
+    }
+    if let Some(nested) = nested_refused(&config[name]) {
+        return Err(refused(format!(
+            "processor `{nested}` inside `{name}` {} (PL-52)",
+            refused_reason(nested)
+        )));
+    }
+    validate_cache_names(field, processor)?;
+    // A `mapping` body and a `${! … }` interpolation are Bloblang too, and a step that reads
+    // the runner is the same escape wherever it is written.
+    let mut texts = Vec::new();
+    config_strings(&config[name], &mut texts);
+    for text in &texts {
+        validate_author_bloblang(field, text)?;
+        validate_runner_reads(field, text, own)?;
+        if let Some(reason) = super::data_source::refused_target(text) {
+            return Err(refused(reason.to_owned()));
+        }
+    }
+    if message_url(&config[name]) {
+        return Err(refused(
+            "a step's `url` starts with its scheme and host, never with `${! … }`, so where it \
+             connects is known before it runs (PL-07)"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// The processors that name a runner cache, and the field that holds its label.
+const CACHE_FIELDS: &[(&str, &str)] = &[
+    ("cache", "resource"),
+    ("cached", "cache"),
+    ("dedupe", "cache"),
+];
+
+/// Refuses a cache a step names, however deeply nested, unless it is a short name: lowercase
+/// letters and digits joined by single `_` (PL-50, T-5337). One runner may carry every project's
+/// streams; the Portal renders each name as `<project>__<name>`, so a name holding `__` (or one
+/// a prefix could end in) would reach another project's cache.
+fn validate_cache_names(field: &'static str, value: &serde_json::Value) -> Result<()> {
+    match value {
+        serde_json::Value::Array(items) => items
+            .iter()
+            .try_for_each(|item| validate_cache_names(field, item)),
+        serde_json::Value::Object(fields) => fields.iter().try_for_each(|(key, inner)| {
+            let label = CACHE_FIELDS
+                .iter()
+                .find(|(processor, _)| processor == key)
+                .and_then(|(_, at)| inner.get(*at));
+            if let Some(label) = label {
+                let short = label.as_str().is_some_and(|l| {
+                    l.split('_').all(|part| {
+                        !part.is_empty()
+                            && part
+                                .bytes()
+                                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+                    })
+                });
+                if !short {
+                    return Err(Error::Name {
+                        field,
+                        value: label.to_string(),
+                        reason: "a step names a cache by its short name, lowercase letters and \
+                                 digits joined by single `_` such as `gtfs`: the platform keeps \
+                                 it to the project's own caches (PL-50)",
+                    });
+                }
+            }
+            validate_cache_names(field, inner)
+        }),
+        _ => Ok(()),
+    }
+}
+
+/// Why a processor of [`REFUSED_PROCESSORS`] is refused, in words the author can act on.
+fn refused_reason(name: &str) -> &'static str {
+    if name == "python" {
+        "has no CPU or memory cap in the runner every project shares, so one loop stalls every \
+         pipeline; write the step as a `mapping` (Bloblang) instead"
+    } else {
+        "runs a program or reads the runner's files or environment, which no pipeline step may do"
+    }
+}
+
+/// Whether a `url` or `urls` anywhere in a configuration is taken whole from the message.
+fn message_url(value: &serde_json::Value) -> bool {
+    let from_message = |v: &serde_json::Value| {
+        v.as_str()
+            .is_some_and(|s| s.trim_start().starts_with("${!"))
+    };
+    match value {
+        serde_json::Value::Array(items) => items.iter().any(message_url),
+        serde_json::Value::Object(fields) => fields.iter().any(|(key, inner)| {
+            (key == "url" && from_message(inner))
+                || (key == "urls"
+                    && inner
+                        .as_array()
+                        .is_some_and(|urls| urls.iter().any(from_message)))
+                || message_url(inner)
+        }),
+        _ => false,
+    }
+}
+
+/// The first refused processor anywhere inside a configuration: a key of that name whose value
+/// is a configuration map (or empty). A field that only shares the name, such as `redis`'s
+/// `command: get`, holds a string and is not one.
+fn nested_refused(value: &serde_json::Value) -> Option<&'static str> {
+    match value {
+        serde_json::Value::Array(items) => items.iter().find_map(nested_refused),
+        serde_json::Value::Object(fields) => fields.iter().find_map(|(key, inner)| {
+            REFUSED_PROCESSORS
+                .iter()
+                .find(|refused| **refused == key.as_str())
+                .filter(|_| inner.is_object() || inner.is_null())
+                .copied()
+                .or_else(|| nested_refused(inner))
+        }),
+        _ => None,
+    }
+}
+
+/// Every string a processor step's configuration holds, however deeply nested.
+///
+/// A processor carries Bloblang in two places: a `mapping` or `mutation` body, and the
+/// `${! … }` interpolation any field may hold. Both are strings, so both are scanned with the
+/// same eye as an inline mapping.
+fn config_strings(value: &serde_json::Value, found: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(text) => found.push(text.clone()),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                config_strings(item, found);
+            }
+        }
+        // The runner fills `${NAME}` in keys too: it interpolates the raw configuration.
+        serde_json::Value::Object(fields) => {
+            for (key, field) in fields {
+                found.push(key.clone());
+                config_strings(field, found);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The runner variables any author's step may name as `${NAME}` (PL-16, T-3163): where the
+/// gateway and the token service are, the organisation's domain, and the pipeline credential as
+/// `${JC_CLIENT_ID}` and `${JC_CLIENT_SECRET}`, which the renderer rewrites into the stream's own
+/// project's client. Every other variable of the runner is a credential of some project.
+pub const STEP_VARIABLES: &[&str] = &[
+    "JC_GATEWAY_URL",
+    "JC_GATEWAY_HOST",
+    "JC_TOKEN_URL",
+    "JC_ORG_DOMAIN",
+    "JC_CLIENT_ID",
+    "JC_CLIENT_SECRET",
+];
+
+/// Refuses a `${NAME}` in an author's text that names a runner variable outside
+/// [`STEP_VARIABLES`], the injected space names and the pipeline's `own` declared variables.
+///
+/// The runner replaces each one with its environment when the stream is loaded, and that
+/// environment holds every project's pipeline secret and every source's credential: one name in
+/// a step's oauth2 or URL is a write as another project or a credential sent away. `${! … }` is
+/// Bloblang and is checked by [`validate_author_bloblang`].
+fn validate_runner_reads(field: &'static str, text: &str, own: &[&str]) -> Result<()> {
+    let mut rest = text;
+    while let Some(start) = rest.find("${") {
+        let tail = &rest[start + 2..];
+        if tail.starts_with('!') {
+            rest = tail;
+            continue;
+        }
+        let end = tail.find(['}', ':']).unwrap_or(tail.len());
+        let name = &tail[..end];
+        if !(STEP_VARIABLES.contains(&name) || is_injected_env(name) || own.contains(&name)) {
+            return Err(Error::Name {
+                field,
+                value: format!("${{{name}}}"),
+                reason: "a step names no runner variable but JC_GATEWAY_URL, JC_GATEWAY_HOST, \
+                         JC_TOKEN_URL, JC_ORG_DOMAIN, JC_CLIENT_ID, JC_CLIENT_SECRET, the JC_SPACE \
+                         names and the envVar of its own pipeline's secretRefs: the rest of the \
+                         runner's environment is other projects' credentials (PL-16)",
+            });
+        }
+        rest = &tail[end..];
+    }
+    Ok(())
+}
+
+/// The names an author's mapping may read out of the runner (PL-57, PF-84).
+///
+/// - `JC_ORG_DOMAIN` — the organisation's domain, a variable of the runner's process.
+/// - `JC_SPACE`, `JC_SPACE_2`, … — the space segment of each output, which the renderer writes
+///   into the stream before it reaches the runner.
+/// - `JC_SOURCE_SPACE` — the space an indicator pipeline records its provenance from.
+///
+/// None of the four names a credential, and everything else in that environment does.
+fn is_injected_env(name: &str) -> bool {
+    name == "JC_ORG_DOMAIN"
+        || name == "JC_SOURCE_SPACE"
+        || name == "JC_SPACE"
+        || name
+            .strip_prefix("JC_SPACE_")
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The Bloblang functions that read the runner's host rather than the message (PL-16, PL-50).
+/// The `cache_*` ones name a runner cache by any label, past the per-project names the `cache`
+/// processor is rendered with (T-5337).
+const HOST_FUNCTIONS: &[&str] = &[
+    "cache_add",
+    "cache_delete",
+    "cache_get",
+    "cache_set",
+    "file",
+    "file_json",
+    "file_rel",
+    "file_rel_json",
+    "hostname",
+    "env",
+];
+
+/// Refuses a mapping that reads the runner's environment or its filesystem (PL-16, PL-50, PL-18).
+///
+/// A project's runner holds every pipeline of that project in one process: the `pipeline-secrets`
+/// environment with each source's credential under its own `envVar`, the runner's own
+/// `JC_CLIENT_SECRET` for the gateway, and the `/data` volume every file source reads. A
+/// `DataSource` cannot name any of that — `${VAR}` has to name an entry of its own
+/// `spec.secrets` — and a mapping must not be the second door into it: `env("…")` reads only
+/// what the reconciler injects for it, and `file(…)` reads nothing at all, because whatever a
+/// mapping reads it writes to the pipeline's own target.
+pub(crate) fn validate_author_bloblang(field: &'static str, mapping: &str) -> Result<()> {
+    if let Some(statement) = file_statement(mapping) {
+        return Err(Error::Name {
+            field,
+            value: statement.to_owned(),
+            reason: "a mapping is written whole in the manifest: `import` and `from` load a \
+                     mapping from the runner's disk, which carries the whole project's data and \
+                     credentials (PL-16, PL-18, PL-50)",
+        });
+    }
+    for (function, argument) in host_calls(mapping) {
+        if function == "env" {
+            match argument.as_deref() {
+                Some(name) if is_injected_env(name) => continue,
+                Some(name) => {
+                    return Err(Error::Name {
+                        field,
+                        value: format!("env(\"{name}\")"),
+                        reason: "a mapping reads only the variables the platform injects for \
+                                 it: JC_ORG_DOMAIN, JC_SOURCE_SPACE and the JC_SPACE of each \
+                                 output. The rest of the runner's environment is the project's \
+                                 credentials (PL-16, PL-50)",
+                    });
+                }
+                None => {
+                    return Err(Error::Name {
+                        field,
+                        value: "env(…)".to_owned(),
+                        reason: "the name a mapping reads with env() is a literal string, so \
+                                 what it reads can be checked before it runs (PL-16, PL-50)",
+                    });
+                }
+            }
+        }
+        if function.starts_with("cache_") {
+            return Err(Error::Name {
+                field,
+                value: format!("{function}(…)"),
+                reason: "a mapping reaches a cache only through a `cache` processor step, which \
+                         the platform keeps to the project's own caches (PL-50)",
+            });
+        }
+        return Err(Error::Name {
+            field,
+            value: format!("{function}(…)"),
+            reason: "a mapping reads the message, never the runner it runs on: the runner's \
+                     files volume and its host carry the whole project's data and credentials \
+                     (PL-16, PL-18, PL-50)",
+        });
+    }
+    Ok(())
+}
+
+/// Every call an author's text makes to one of [`HOST_FUNCTIONS`], with its first argument when
+/// that argument is one plain double-quoted name.
+///
+/// The scan reads every character, comments and strings included, and never models Bloblang's
+/// lexer: a hand-written lexer that disagreed with Bento's about one quote form let a
+/// triple-quoted string hide a real `env("…")` call (T-5223). A host function's name followed by
+/// `(` is a call wherever it stands, so a comment or a string that only mentions one is refused
+/// too and the author rewords it.
+fn host_calls(mapping: &str) -> Vec<(String, Option<String>)> {
+    let bytes = mapping.as_bytes();
+    let mut calls = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !(bytes[i].is_ascii_alphabetic() || bytes[i] == b'_') {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            i += 1;
+        }
+        let name = &mapping[start..i];
+        if bytes.get(i) == Some(&b'(') && HOST_FUNCTIONS.contains(&name) {
+            calls.push((name.to_owned(), literal_argument(&mapping[i + 1..])));
+        }
+    }
+    calls
+}
+
+/// The argument list after a call's `(` when it is exactly one `"NAME"` of letters, digits and
+/// `_` between optional blanks: `env("JC_SPACE")` yields the name; `env(this.pick)`,
+/// `env("A" + "B")` and `env("""A""")` yield `None`, so a name that cannot be read here is refused
+/// rather than allowed.
+fn literal_argument(arguments: &str) -> Option<String> {
+    let inner = arguments
+        .trim_start_matches([' ', '\t'])
+        .strip_prefix('"')?;
+    let end = inner.find('"')?;
+    let name = &inner[..end];
+    let closes = inner[end + 1..]
+        .trim_start_matches([' ', '\t'])
+        .starts_with(')');
+    (closes && !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+        .then(|| name.to_owned())
+}
+
+/// The first line of an author's text that is a Bloblang `import "…"` or `from "…"` statement.
+///
+/// Both load a mapping from a path on the runner's disk (measured on the pinned Bento 1.22.0,
+/// T-5223), and Bento reads them only at the start of a line, so a line that starts with either
+/// word and a quote is refused wherever it stands, a multi-line string included.
+fn file_statement(mapping: &str) -> Option<&str> {
+    mapping.lines().map(str::trim).find(|line| {
+        ["import", "from"].iter().any(|word| {
+            line.strip_prefix(word)
+                .is_some_and(|rest| rest.trim_start().starts_with('"'))
+        })
+    })
+}
+
+fn validate_compute(c: &Compute, own: &[&str]) -> Result<()> {
+    if c.kpi.is_some() != (c.kind == ComputeKind::Kpi) {
+        return Err(Error::Name {
+            field: "spec.steps.kpi",
+            value: c.kind.to_string(),
+            reason: "a `kpi` step carries `kpi`, and only a `kpi` step does (PL-102)",
+        });
+    }
+    if c.datacube.is_some() != (c.kind == ComputeKind::Datacube) {
+        return Err(Error::Name {
+            field: "spec.steps.datacube",
+            value: c.kind.to_string(),
+            reason:
+                "a `datacube` step carries `datacube`, and only a `datacube` step does (PL-112)",
+        });
+    }
+    if let Some(step) = &c.datacube {
+        step.validate()?;
+    }
+    if let Some(ref mapping) = c.bloblang {
+        if c.kind != ComputeKind::Bloblang {
+            return Err(Error::Name {
+                field: "spec.compute.bloblang",
+                value: c.kind.to_string(),
+                reason: "bloblang is only valid when compute.kind is `bloblang`",
+            });
+        }
+        if mapping.trim().is_empty() {
+            return Err(Error::Name {
+                field: "spec.compute.bloblang",
+                value: String::new(),
+                reason: "bloblang must not be empty; leave the field out to keep the mapping in bento.yaml",
+            });
+        }
+        validate_author_bloblang("spec.compute.bloblang", mapping)?;
+        validate_runner_reads("spec.compute.bloblang", mapping, own)?;
+    }
+    match c.kind {
+        ComputeKind::Wasm => {
+            if c.module.is_none() {
+                return Err(Error::Name {
+                    field: "spec.compute.module",
+                    value: String::new(),
+                    reason: "module is required when compute.kind is `wasm`",
+                });
+            }
+            if c.function.is_none() {
+                return Err(Error::Name {
+                    field: "spec.compute.function",
+                    value: String::new(),
+                    reason: "function is required when compute.kind is `wasm`",
+                });
+            }
+        }
+        ComputeKind::Mapping => {
+            if c.mapping_ref.is_none() {
+                return Err(Error::Name {
+                    field: "spec.compute.mappingRef",
+                    value: String::new(),
+                    reason: "mappingRef is required when compute.kind is `mapping`",
+                });
+            }
+            if let Some(ref m) = c.module {
+                return Err(Error::Name {
+                    field: "spec.compute.module",
+                    value: m.clone(),
+                    reason: "module is forbidden when compute.kind is `mapping`",
+                });
+            }
+            if let Some(ref f) = c.function {
+                return Err(Error::Name {
+                    field: "spec.compute.function",
+                    value: f.clone(),
+                    reason: "function is forbidden when compute.kind is `mapping`",
+                });
+            }
+        }
+        _ => {}
+    }
+
+    if let Some(ref mr) = c.mapping_ref {
+        names::validate_dns1123_label(mr.name())?;
+        if let Some(kind) = mr.kind() {
+            if kind != "Mapping" {
+                return Err(Error::Kind {
+                    expected: "Mapping",
+                    got: kind.to_string(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+impl PipelineSpec {
+    /// The `v1alpha2` rules (PL-52, PL-55): at least one source and one output, each checked
+    /// as its `v1alpha1` counterpart is; a processor the runner ships; a `container` step alone
+    /// in a `scheduled` pipeline.
+    fn validate_second_shape(&self) -> Result<()> {
+        let own = self.own_variables();
+        if self.sources.is_empty() {
+            return Err(Error::Name {
+                field: "spec.sources",
+                value: String::new(),
+                reason: "a pipeline reads at least one source (PL-52)",
+            });
+        }
+        if self.outputs.is_empty() {
+            return Err(Error::Name {
+                field: "spec.outputs",
+                value: String::new(),
+                reason: "a pipeline writes through at least one output (PL-52)",
+            });
+        }
+        for source in &self.sources {
+            validate_source(source)?;
+        }
+        for output in &self.outputs {
+            validate_target(&output.target_endpoint)?;
+            if let Some(entity_type) = &output.entity_type {
+                names::validate_entity_type(entity_type)?;
+            }
+        }
+        validate_steps("spec.steps", &self.steps, &own, self.is_scheduled())?;
+        self.validate_kpi()?;
+        self.validate_routes()
+    }
+
+    /// A `kpi` step (PL-102, PL-103): the only step, no routes, over two to five named Endpoint
+    /// sources each reading one type, with its formula checked against their attributes. Units
+    /// from the space's model are checked where the model is at hand (the Portal's editor).
+    fn validate_kpi(&self) -> Result<()> {
+        let Some(kpi) = self.steps.iter().find_map(|step| match step {
+            Step::Compute(compute) => compute.kpi.as_ref(),
+            Step::Processor(_) => None,
+        }) else {
+            return Ok(());
+        };
+        if self.steps.len() > 1 || !self.routes.is_empty() {
+            return Err(Error::Name {
+                field: "spec.steps",
+                value: "kpi".to_owned(),
+                reason: "a `kpi` step is the pipeline's only step and takes no routes (PL-102)",
+            });
+        }
+        self.kpi_inputs()
+            .and_then(|inputs| kpi.validate(&inputs))
+            .map(|_| ())
+    }
+
+    /// What a `kpi` step knows of each source (PL-102): its name, type and attributes, without
+    /// units or Endpoint URNs, which the caller adds.
+    pub fn kpi_inputs(&self) -> Result<Vec<crate::kpi_join::Input>> {
+        self.sources
+            .iter()
+            .map(|source| {
+                let (Some(name), Some(_), Some(query)) =
+                    (&source.name, &source.endpoint_ref, &source.query)
+                else {
+                    return Err(Error::Invalid {
+                        field: "spec.sources".to_owned(),
+                        reason: "each source of a `kpi` step has a `name`, an `endpointRef` and a `query` (PL-102)".to_owned(),
+                    });
+                };
+                let Some(entity_type) = query.entity_type.clone() else {
+                    return Err(Error::Invalid {
+                        field: "spec.sources.query.type".to_owned(),
+                        reason: format!("source `{name}` reads one entity type: name it in `query.type` (PL-102)"),
+                    });
+                };
+                Ok(crate::kpi_join::Input {
+                    name: name.clone(),
+                    entity_type,
+                    attrs: query.attrs.clone(),
+                    q: query.q.clone(),
+                    ..Default::default()
+                })
+            })
+            .collect()
+    }
+
+    /// The routes (PL-73): at most [`MAX_ROUTES`], unique DNS-label names, a `when` held to the
+    /// author-Bloblang rules, one level deep (no `switch` among a route's steps), no `container`
+    /// step, and at least one output each.
+    fn validate_routes(&self) -> Result<()> {
+        if self.routes.len() > MAX_ROUTES {
+            return Err(Error::Name {
+                field: "spec.routes",
+                value: self.routes.len().to_string(),
+                reason: "a pipeline holds at most 8 routes (PL-73)",
+            });
+        }
+        let own = self.own_variables();
+        let mut seen = std::collections::BTreeSet::new();
+        for route in &self.routes {
+            names::validate_dns1123_label(&route.name)?;
+            if !seen.insert(route.name.as_str()) {
+                return Err(Error::Name {
+                    field: "spec.routes.name",
+                    value: route.name.clone(),
+                    reason: "two routes of one pipeline share a name (PL-73)",
+                });
+            }
+            if route.when.trim().is_empty() {
+                return Err(Error::Name {
+                    field: "spec.routes.when",
+                    value: route.name.clone(),
+                    reason: "a route names the condition its messages meet (PL-73)",
+                });
+            }
+            validate_author_bloblang("spec.routes.when", &route.when)?;
+            if route.outputs.is_empty() {
+                return Err(Error::Name {
+                    field: "spec.routes.outputs",
+                    value: route.name.clone(),
+                    reason: "every route ends in at least one output (PL-73)",
+                });
+            }
+            for output in &route.outputs {
+                validate_target(&output.target_endpoint)?;
+                if let Some(entity_type) = &output.entity_type {
+                    names::validate_entity_type(entity_type)?;
+                }
+            }
+            for step in &route.steps {
+                let nested = match step {
+                    Step::Processor(step) => step.processor.contains_key("switch"),
+                    Step::Compute(compute) => compute.kind == ComputeKind::Container,
+                };
+                if nested {
+                    return Err(Error::Name {
+                        field: "spec.routes.steps",
+                        value: route.name.clone(),
+                        reason: "a route's steps run inside the stream and route no further: \
+                                 no `switch` processor and no `container` step (PL-73)",
+                    });
+                }
+            }
+            validate_steps("spec.routes.steps", &route.steps, &own, false)?;
+        }
+        Ok(())
+    }
+}
+
+/// The steps of one list (PL-52): each compute checked as `v1alpha1`'s is, a processor the
+/// runner ships, and a `container` step only as the one step of a `scheduled` pipeline.
+fn validate_steps(
+    field: &'static str,
+    steps: &[Step],
+    own: &[&str],
+    scheduled: bool,
+) -> Result<()> {
+    for step in steps {
+        match step {
+            Step::Compute(compute) => {
+                validate_compute(compute, own)?;
+                if compute.kind == ComputeKind::Container && (steps.len() > 1 || !scheduled) {
+                    return Err(Error::Name {
+                        field,
+                        value: "container".to_owned(),
+                        reason: "a container step is the only step of a scheduled pipeline: it runs as a Job, not inside a Bento stream (PL-35, PL-55)",
+                    });
+                }
+            }
+            Step::Processor(step) => {
+                let mut names = step.processor.keys();
+                let (Some(name), None) = (names.next(), names.next()) else {
+                    return Err(Error::Name {
+                        field: "spec.steps.processor",
+                        value: step
+                            .processor
+                            .keys()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        reason: "a processor step names exactly one processor (PL-52)",
+                    });
+                };
+                validate_processor_reading(
+                    "spec.steps.processor",
+                    &serde_json::json!({ name: step.processor[name] }),
+                    own,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}

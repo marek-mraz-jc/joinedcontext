@@ -1,0 +1,652 @@
+//! T-0176: a peer's schema surface is mirrored as read-only foreign DataModels (DM-48, DM-49).
+//!
+//! The peer is a map from URL to document, which is all the module asks of a transport. What
+//! the tests are about is the judgement in front of it: what is fetched, what is refused, and
+//! what a second run does when the peer has published something new.
+
+use jc_manifest::foreign_models::{
+    self, FetchError, Mirror, MirrorError, Outcome, SchemaApi, CONTEXT, EXAMPLE, LINKML,
+};
+use jc_manifest::loader::{RawManifest, Repository};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+const BASE: &str = "https://peer.example/api/endpoint/zt4qm7ge2xdv6ksb3ncf5arw2y";
+const LINKML_BODY: &str =
+    "id: https://peer.example/air\nname: air\nclasses:\n  AirQualityObserved:\n";
+const CONTEXT_BODY: &str = r#"{"@context":{"pm10":"https://peer.example/air#pm10"}}"#;
+const EXAMPLE_BODY: &str = r#"{"id":"urn:ngsi-ld:AirQualityObserved:peer:air:1"}"#;
+
+/// A peer that answers from a fixed table and records what it was asked for.
+struct Peer {
+    documents: BTreeMap<String, Vec<u8>>,
+    asked: RefCell<Vec<String>>,
+}
+
+impl SchemaApi for Peer {
+    fn get(&self, url: &str) -> Result<Option<Vec<u8>>, FetchError> {
+        self.asked.borrow_mut().push(url.to_owned());
+        Ok(self.documents.get(url).cloned())
+    }
+}
+
+impl Peer {
+    /// A peer publishing one model in three documents, with a catalogue that vouches for them.
+    fn air() -> Self {
+        Self::with(LINKML_BODY, |artifacts| {
+            artifacts.insert(EXAMPLE.to_owned(), descriptor(EXAMPLE_BODY));
+        })
+    }
+
+    /// The same peer, with the catalogue and the LinkML document under the caller's control.
+    fn with(linkml: &str, extra: impl Fn(&mut serde_json::Map<String, Value>)) -> Self {
+        let mut artifacts = serde_json::Map::new();
+        artifacts.insert(LINKML.to_owned(), descriptor(linkml));
+        artifacts.insert(CONTEXT.to_owned(), descriptor(CONTEXT_BODY));
+        extra(&mut artifacts);
+
+        let index = json!({
+            "endpoint": "zt4qm7ge2xdv6ksb3ncf5arw2y",
+            "models": [{
+                "name": "air",
+                "version": 1,
+                "semver": "1.2.0",
+                "types": ["AirQualityObserved"],
+                "artifacts": artifacts,
+            }],
+        });
+
+        let mut documents = BTreeMap::new();
+        documents.insert(
+            format!("{BASE}/schema/index.json"),
+            serde_json::to_vec(&index).expect("the catalogue serializes"),
+        );
+        documents.insert(
+            format!("{BASE}/schema/v1/{LINKML}"),
+            linkml.as_bytes().to_vec(),
+        );
+        documents.insert(
+            format!("{BASE}/schema/v1/{CONTEXT}"),
+            CONTEXT_BODY.as_bytes().to_vec(),
+        );
+        documents.insert(
+            format!("{BASE}/schema/v1/{EXAMPLE}"),
+            EXAMPLE_BODY.as_bytes().to_vec(),
+        );
+        Self {
+            documents,
+            asked: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// The same peer with one document removed from the table, the catalogue untouched.
+    fn without(mut self, url: &str) -> Self {
+        self.documents.remove(url);
+        self
+    }
+}
+
+fn descriptor(body: &str) -> Value {
+    json!({ "type": "text/plain", "bytes": body.len(), "sha256": sha256(body) })
+}
+
+fn sha256(body: &str) -> String {
+    Sha256::digest(body.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The reference the mirror hangs off: a local alias for a partner's space.
+fn reference() -> RawManifest {
+    serde_norway::from_str(
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: SharedSpaceReference
+metadata:
+  name: partner
+  namespace: ovzdusie
+spec:
+  endpointSlug: zt4qm7ge2xdv6ksb3ncf5arw2y
+  alias: partner-air
+"#,
+    )
+    .expect("the reference parses")
+}
+
+/// An empty repository in its own directory.
+fn repo_dir(test: &str) -> PathBuf {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after the epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("jcctl-mirror-{test}-{now}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create the repository");
+    dir
+}
+
+fn load(dir: &Path) -> Repository {
+    Repository::load(dir).expect("the repository loads")
+}
+
+fn run(dir: &Path, peer: &Peer) -> Mirror {
+    foreign_models::mirror(&reference(), BASE, "2026-09-07T08:00:00Z", &load(dir), peer)
+        .expect("the mirror runs")
+}
+
+/// A mirror of an existing model, as a previous run would have left it.
+fn existing_mirror(dir: &Path, sha256: &str) {
+    let path = dir.join("projects/ovzdusie/spaces/partner-air/datamodels");
+    std::fs::create_dir_all(&path).expect("create the datamodel directory");
+    std::fs::write(
+        path.join("partner-air.yaml"),
+        format!(
+            r#"apiVersion: joinedcontext.com/v1alpha1
+kind: DataModel
+metadata:
+  name: partner-air
+  namespace: ovzdusie
+spec:
+  contextSpaceRef: partner-air
+  linkml: partner-air/model.linkml.yaml
+  version: 1.2.0
+  lifecycle: mirrored
+  classes: [AirQualityObserved]
+  source:
+    remote:
+      url: {BASE}/schema/v1/model.linkml.yaml
+      version: 1.2.0
+      sha256: {sha256}
+      fetchedAt: 2026-09-01T08:00:00Z
+  artifacts:
+    context: partner-air/context.jsonld
+"#
+        ),
+    )
+    .expect("write the previous mirror");
+}
+
+/// DM-48: the peer's catalogue becomes a foreign DataModel that pins what was fetched.
+#[test]
+fn a_peer_model_becomes_a_read_only_foreign_data_model() {
+    let dir = repo_dir("created");
+    let mirror = run(&dir, &Peer::air());
+
+    assert!(mirror.flags.is_empty(), "{:?}", mirror.flags);
+    assert_eq!(mirror.models.len(), 1);
+    let model = &mirror.models[0];
+    assert_eq!(model.outcome, Outcome::Created);
+    assert_eq!(model.manifest.metadata.name, "partner-air");
+    assert_eq!(
+        model.manifest.metadata.namespace.as_deref(),
+        Some("ovzdusie")
+    );
+    assert_eq!(
+        model.path,
+        PathBuf::from("projects/ovzdusie/spaces/partner-air/datamodels/partner-air.yaml")
+    );
+
+    let spec: jc_core::kinds::DataModelSpec =
+        serde_json::from_value(model.manifest.spec.clone()).expect("the mirror is a DataModel");
+    assert!(spec.validate().is_ok(), "{:?}", spec.validate());
+    assert_eq!(spec.lifecycle, jc_core::kinds::DataModelLifecycle::Mirrored);
+    assert_eq!(spec.context_space_ref.as_deref(), Some("partner-air"));
+    assert_eq!(spec.classes, vec!["AirQualityObserved".to_owned()]);
+    // DM-49: a mirror is nobody's own model, and the lifecycle says so on its own.
+    assert!(!spec.can_be_referenced());
+
+    let remote = spec.source.expect("provenance").remote.expect("remote");
+    assert_eq!(remote.url, format!("{BASE}/schema/v1/{LINKML}"));
+    assert_eq!(remote.version.as_str(), "1.2.0");
+    assert_eq!(remote.sha256, sha256(LINKML_BODY));
+    assert_eq!(remote.fetched_at.to_rfc3339(), "2026-09-07T08:00:00+00:00");
+
+    // The three documents land beside the manifest, in a directory of the mirror's own name,
+    // so a peer's file names can never collide with a local model's.
+    let beside = "projects/ovzdusie/spaces/partner-air/datamodels/partner-air";
+    let files: Vec<String> = model
+        .files
+        .keys()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        files,
+        vec![
+            format!("{beside}/{CONTEXT}"),
+            format!("{beside}/{EXAMPLE}"),
+            format!("{beside}/{LINKML}"),
+        ]
+    );
+    assert_eq!(
+        model.files[&PathBuf::from(format!("{beside}/{LINKML}"))],
+        LINKML_BODY.as_bytes()
+    );
+}
+
+/// DM-48: a peer without a schema surface is flagged, and the reference stands without a model.
+#[test]
+fn a_peer_without_a_schema_surface_is_flagged_and_still_referenced() {
+    let dir = repo_dir("no-surface");
+    let peer = Peer::air().without(&format!("{BASE}/schema/index.json"));
+    let mirror = run(&dir, &peer);
+
+    assert!(mirror.models.is_empty());
+    assert_eq!(mirror.flags.len(), 1);
+    assert!(mirror.flags[0].contains("publishes no schema/index.json"));
+}
+
+/// F-R2PLT3-007: the catalogue is the peer's text; a peer listing ten thousand models is
+/// mirrored for the first [`foreign_models::MAX_MODELS`] and flagged, never walked whole.
+#[test]
+fn a_peer_listing_thousands_of_models_is_capped_and_flagged() {
+    let dir = repo_dir("too-many");
+    let models: Vec<Value> = (0..10_000)
+        .map(|i| json!({ "name": format!("m{i}") }))
+        .collect();
+    let mut peer = Peer::air();
+    peer.documents.insert(
+        format!("{BASE}/schema/index.json"),
+        serde_json::to_vec(&json!({ "models": models })).expect("serializes"),
+    );
+    let mirror = run(&dir, &peer);
+
+    assert!(
+        mirror.flags.len() <= foreign_models::MAX_MODELS + 1,
+        "{} flags",
+        mirror.flags.len()
+    );
+    assert!(
+        mirror.flags[0].contains("lists 10000 models"),
+        "{}",
+        mirror.flags[0]
+    );
+    assert!(peer.asked.borrow().len() <= 1 + 3 * foreign_models::MAX_MODELS);
+}
+
+/// The peer's own model name reaches the filesystem, so it is checked before anything is asked
+/// for: a name that is not a DNS-1123 label costs one request and writes nothing.
+#[test]
+fn a_peer_model_name_that_is_not_a_label_never_reaches_the_filesystem() {
+    let dir = repo_dir("bad-name");
+    let mut peer = Peer::air();
+    let index = json!({
+        "endpoint": "zt4qm7ge2xdv6ksb3ncf5arw2y",
+        "models": [{ "name": "../../../etc/passwd", "version": 1, "semver": "1.0.0" }],
+    });
+    peer.documents.insert(
+        format!("{BASE}/schema/index.json"),
+        serde_json::to_vec(&index).expect("serializes"),
+    );
+
+    let mirror = run(&dir, &peer);
+    assert!(mirror.models.is_empty());
+    assert_eq!(mirror.flags.len(), 1);
+    assert!(mirror.flags[0].contains("not a DNS-1123 label"));
+    assert_eq!(
+        peer.asked.borrow().len(),
+        1,
+        "only the catalogue was fetched: {:?}",
+        peer.asked.borrow()
+    );
+}
+
+/// A document the peer's own catalogue does not vouch for is refused, not written.
+#[test]
+fn a_document_that_does_not_match_the_catalogue_is_refused() {
+    let dir = repo_dir("digest");
+    let mut peer = Peer::air();
+    peer.documents.insert(
+        format!("{BASE}/schema/v1/{LINKML}"),
+        b"name: something-else\n".to_vec(),
+    );
+
+    let mirror = run(&dir, &peer);
+    assert!(mirror.models.is_empty());
+    assert_eq!(mirror.flags.len(), 1);
+    assert!(
+        mirror.flags[0].contains("does not match the digest"),
+        "{}",
+        mirror.flags[0]
+    );
+}
+
+/// A surface in the clear is refused before a single request leaves this process.
+#[test]
+fn a_surface_in_the_clear_is_refused_before_anything_is_asked_for() {
+    let dir = repo_dir("plaintext");
+    let peer = Peer::air();
+    let error = foreign_models::mirror(
+        &reference(),
+        "http://peer.example/api/endpoint/zt4qm7ge2xdv6ksb3ncf5arw2y",
+        "2026-09-07T08:00:00Z",
+        &load(&dir),
+        &peer,
+    )
+    .expect_err("plaintext is refused");
+
+    assert!(matches!(error, MirrorError::InsecureBase(_)), "{error}");
+    assert!(peer.asked.borrow().is_empty());
+}
+
+/// CC-18: a second run over an unchanged peer writes nothing at all.
+#[test]
+fn an_unchanged_mirror_writes_nothing() {
+    let dir = repo_dir("unchanged");
+    existing_mirror(&dir, &sha256(LINKML_BODY));
+
+    let mirror = run(&dir, &Peer::air());
+    assert_eq!(mirror.models.len(), 1);
+    assert_eq!(mirror.models[0].outcome, Outcome::Unchanged);
+    assert_eq!(mirror.models[0].previous_sha256, None);
+    assert_eq!(foreign_models::write(&dir, &mirror).expect("write runs"), 0);
+}
+
+/// DM-49: a changed digest carries the one the repository pinned and the Mappings reading it,
+/// which is what the merge request the reconciler opens has to show.
+#[test]
+fn a_changed_digest_carries_the_previous_one_and_the_mappings_that_read_it() {
+    let dir = repo_dir("changed");
+    let stale = "0".repeat(64);
+    existing_mirror(&dir, &stale);
+    let mappings = dir.join("projects/ovzdusie/spaces/partner-air/datamodels/mappings");
+    std::fs::create_dir_all(&mappings).expect("create the mappings directory");
+    std::fs::write(
+        mappings.join("partner-to-local.yaml"),
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Mapping
+metadata:
+  name: partner-to-local
+  namespace: ovzdusie
+spec:
+  contextSpaceRef: partner-air
+  source: { kind: DataModel, name: partner-air, version: "1" }
+  target: { kind: DataModel, name: ovzdusie-air, version: "1" }
+  transformation: {}
+  tests: []
+"#,
+    )
+    .expect("write the mapping");
+
+    let mirror = run(&dir, &Peer::air());
+    let model = &mirror.models[0];
+    assert_eq!(model.outcome, Outcome::Changed);
+    assert_eq!(model.previous_sha256.as_deref(), Some(stale.as_str()));
+    assert_eq!(model.affected_mappings, vec!["partner-to-local".to_owned()]);
+    assert_eq!(mirror.to_json()["summary"]["changed"], json!(1));
+}
+
+/// What `write` puts on disk is what the loader reads back as a mirrored DataModel.
+#[test]
+fn what_is_written_is_what_the_loader_reads_back() {
+    let dir = repo_dir("roundtrip");
+    let mirror = run(&dir, &Peer::air());
+    assert_eq!(foreign_models::write(&dir, &mirror).expect("write runs"), 4);
+
+    let repo = load(&dir);
+    let (_, resource) = repo
+        .iter()
+        .find(|(id, _)| id.kind == "DataModel" && id.name == "partner-air")
+        .expect("the mirror is in the repository");
+    let spec: jc_core::kinds::DataModelSpec =
+        serde_json::from_value(resource.manifest.spec.clone()).expect("it is a DataModel");
+    assert_eq!(spec.lifecycle, jc_core::kinds::DataModelLifecycle::Mirrored);
+
+    let beside = dir.join("projects/ovzdusie/spaces/partner-air/datamodels/partner-air");
+    assert_eq!(
+        std::fs::read_to_string(beside.join(LINKML)).expect("the source is on disk"),
+        LINKML_BODY
+    );
+    assert_eq!(
+        std::fs::read_to_string(beside.join(EXAMPLE)).expect("the example is on disk"),
+        EXAMPLE_BODY
+    );
+    // The authoring source is not a manifest, and the loader knows it: the repository holds
+    // exactly the one resource this mirror added.
+    assert_eq!(repo.len(), 1);
+}
+
+/// DM-48 pins a sha256, so a model the peer does not publish a digest for is not mirrored.
+#[test]
+fn a_model_the_peer_does_not_vouch_for_is_skipped() {
+    let dir = repo_dir("unpinned");
+    let mut peer = Peer::air();
+    let mut artifacts = serde_json::Map::new();
+    artifacts.insert(CONTEXT.to_owned(), descriptor(CONTEXT_BODY));
+    let index = json!({
+        "models": [{
+            "name": "air", "version": 1, "semver": "1.2.0", "artifacts": artifacts,
+        }],
+    });
+    peer.documents.insert(
+        format!("{BASE}/schema/index.json"),
+        serde_json::to_vec(&index).expect("serializes"),
+    );
+
+    let mirror = run(&dir, &peer);
+    assert!(mirror.models.is_empty());
+    assert!(
+        mirror.flags[0].contains("does not publish model.linkml.yaml with a digest"),
+        "{}",
+        mirror.flags[0]
+    );
+}
+
+/// The example is not one of the seven documents an endpoint has to publish, so a peer without
+/// one is mirrored without one rather than refused.
+#[test]
+fn an_example_the_peer_does_not_publish_is_not_invented() {
+    let dir = repo_dir("no-example");
+    let peer = Peer::with(LINKML_BODY, |_| {});
+    let mirror = run(&dir, &peer);
+
+    assert!(mirror.flags.is_empty(), "{:?}", mirror.flags);
+    let model = &mirror.models[0];
+    assert_eq!(model.files.len(), 2);
+    let spec: jc_core::kinds::DataModelSpec =
+        serde_json::from_value(model.manifest.spec.clone()).expect("the mirror is a DataModel");
+    assert_eq!(spec.artifacts.example, None);
+    assert_eq!(
+        spec.artifacts.context.as_deref(),
+        Some("partner-air/context.jsonld")
+    );
+}
+
+// --- T-2530: the edge cases of `one`, one catalogue entry (DM-48, DM-49) ---
+
+/// `Peer::air()` whose catalogue lists `models` instead of its one model.
+fn peer_listing(models: Value) -> Peer {
+    let mut peer = Peer::air();
+    peer.documents.insert(
+        format!("{BASE}/schema/index.json"),
+        serde_json::to_vec(&json!({ "models": models })).expect("serializes"),
+    );
+    peer
+}
+
+/// The artifacts of `Peer::air()`'s one model, as its catalogue declares them.
+fn air_artifacts() -> Value {
+    json!({
+        LINKML: descriptor(LINKML_BODY),
+        CONTEXT: descriptor(CONTEXT_BODY),
+        EXAMPLE: descriptor(EXAMPLE_BODY),
+    })
+}
+
+/// DM-48: a peer name that is a label on its own can still make a mirror name that is not one;
+/// that is refused, and the flag names the reference to rename.
+#[test]
+fn a_combined_reference_peer_name_that_is_not_a_label_is_skipped_and_names_the_reference() {
+    let dir = repo_dir("long-name");
+    let long = "a".repeat(60);
+    let peer = peer_listing(json!([
+        { "name": long, "version": 1, "semver": "1.2.0", "artifacts": air_artifacts() }
+    ]));
+    let mirror = run(&dir, &peer);
+    assert!(mirror.models.is_empty());
+    assert!(
+        mirror.flags[0].contains("reference `partner`"),
+        "{:?}",
+        mirror.flags
+    );
+    assert_eq!(
+        peer.asked.borrow().len(),
+        1,
+        "nothing fetched past the catalogue"
+    );
+}
+
+/// DM-48: an entry without a name, a semver or a served major version is skipped with a flag
+/// and nothing of it is fetched.
+#[test]
+fn an_entry_missing_its_name_semver_or_major_is_skipped_with_a_flag() {
+    for (missing, entry) in [
+        (
+            "without a name",
+            json!({ "version": 1, "semver": "1.2.0", "artifacts": air_artifacts() }),
+        ),
+        (
+            "without a semver",
+            json!({ "name": "air", "version": 1, "artifacts": air_artifacts() }),
+        ),
+        (
+            "without a served major version",
+            json!({ "name": "air", "semver": "1.2.0", "artifacts": air_artifacts() }),
+        ),
+        (
+            "without a served major version",
+            json!({ "name": "air", "version": "1", "semver": "1.2.0", "artifacts": air_artifacts() }),
+        ),
+        (
+            "without a served major version",
+            json!({ "name": "air", "version": -1, "semver": "1.2.0", "artifacts": air_artifacts() }),
+        ),
+    ] {
+        let dir = repo_dir("missing-member");
+        let peer = peer_listing(json!([entry]));
+        let mirror = run(&dir, &peer);
+        assert!(mirror.models.is_empty(), "{entry}");
+        assert!(
+            mirror.flags[0].contains(missing),
+            "{entry}: {:?}",
+            mirror.flags
+        );
+        assert_eq!(peer.asked.borrow().len(), 1, "{entry}");
+    }
+}
+
+/// DM-49: a document the catalogue lists but the peer does not serve is skipped by URL.
+#[test]
+fn a_404_on_a_required_artifact_is_skipped_with_a_flag_naming_the_url() {
+    let dir = repo_dir("context-404");
+    let url = format!("{BASE}/schema/v1/{CONTEXT}");
+    let peer = Peer::air().without(&url);
+    let mirror = run(&dir, &peer);
+    assert!(mirror.models.is_empty());
+    assert!(mirror.flags[0].contains(&url), "{:?}", mirror.flags);
+    assert!(mirror.flags[0].contains("404"), "{:?}", mirror.flags);
+}
+
+/// DM-49: a context that does not match its digest is refused like the LinkML is.
+#[test]
+fn a_context_that_does_not_match_its_digest_is_refused() {
+    let dir = repo_dir("context-digest");
+    let mut peer = Peer::air();
+    peer.documents.insert(
+        format!("{BASE}/schema/v1/{CONTEXT}"),
+        br#"{"@context":{"pm10":"https://evil.example/pm10"}}"#.to_vec(),
+    );
+    let mirror = run(&dir, &peer);
+    assert!(mirror.models.is_empty());
+    assert!(
+        mirror.flags[0].contains("does not match the digest"),
+        "{:?}",
+        mirror.flags
+    );
+}
+
+/// DM-48: types the peer lists as anything but strings are dropped, not a failure.
+#[test]
+fn an_entrys_types_array_with_non_string_entries_drops_them_without_panicking() {
+    let dir = repo_dir("types");
+    let peer = peer_listing(json!([{
+        "name": "air", "version": 1, "semver": "1.2.0",
+        "types": ["AirQualityObserved", 7, null, { "name": "X" }],
+        "artifacts": air_artifacts(),
+    }]));
+    let mirror = run(&dir, &peer);
+    assert!(mirror.flags.is_empty(), "{:?}", mirror.flags);
+    assert_eq!(
+        mirror.models[0].manifest.spec["classes"],
+        json!(["AirQualityObserved"])
+    );
+}
+
+/// DM-49: a peer that cannot be reached stops the run; a mirror is not half a catalogue.
+#[test]
+fn a_peer_fetch_transport_error_propagates_and_stops_the_whole_run() {
+    struct Down;
+    impl SchemaApi for Down {
+        fn get(&self, _: &str) -> Result<Option<Vec<u8>>, FetchError> {
+            Err(FetchError::Unavailable("connection reset".to_owned()))
+        }
+    }
+    let dir = repo_dir("down");
+    let error = foreign_models::mirror(
+        &reference(),
+        BASE,
+        "2026-09-07T08:00:00Z",
+        &load(&dir),
+        &Down,
+    )
+    .expect_err("the peer is down");
+    assert!(matches!(error, MirrorError::Fetch(_)), "{error}");
+}
+
+/// DM-48: an entry whose assembled DataModel fails validation is skipped with the reason, and
+/// none of its documents is written.
+#[test]
+fn a_spec_that_fails_datamodel_validation_after_assembly_is_skipped_with_the_validation_error() {
+    let dir = repo_dir("bad-semver");
+    let peer = peer_listing(json!([
+        { "name": "air", "version": 1, "semver": "not-a-version", "artifacts": air_artifacts() }
+    ]));
+    let mirror = run(&dir, &peer);
+    assert!(mirror.models.is_empty());
+    assert!(
+        mirror.flags[0].contains("does not mirror into a DataModel"),
+        "{:?}",
+        mirror.flags
+    );
+}
+
+/// DM-48: one broken entry does not take the others of the catalogue down with it.
+#[test]
+fn a_broken_entry_does_not_stop_the_good_one_beside_it() {
+    let dir = repo_dir("one-of-two");
+    let peer = peer_listing(json!([
+        { "name": "../x", "version": 1, "semver": "1.2.0" },
+        { "name": "air", "version": 1, "semver": "1.2.0", "types": ["AirQualityObserved"], "artifacts": air_artifacts() }
+    ]));
+    let mirror = run(&dir, &peer);
+    assert_eq!(mirror.models.len(), 1);
+    assert_eq!(mirror.flags.len(), 1);
+}
+
+/// DM-49: a created or an unchanged mirror carries no previous digest and no mapping to review.
+#[test]
+fn previous_sha256_and_affected_mappings_are_empty_on_created_and_unchanged_outcomes() {
+    let dir = repo_dir("outcomes");
+    let created = run(&dir, &Peer::air());
+    assert_eq!(created.models[0].outcome, Outcome::Created);
+    assert_eq!(created.models[0].previous_sha256, None);
+    assert!(created.models[0].affected_mappings.is_empty());
+
+    existing_mirror(&dir, &sha256(LINKML_BODY));
+    let unchanged = run(&dir, &Peer::air());
+    assert_eq!(unchanged.models[0].outcome, Outcome::Unchanged);
+    assert_eq!(unchanged.models[0].previous_sha256, None);
+    assert!(unchanged.models[0].affected_mappings.is_empty());
+}

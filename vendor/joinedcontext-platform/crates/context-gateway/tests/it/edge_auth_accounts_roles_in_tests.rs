@@ -1,0 +1,235 @@
+//! Edge cases of `auth::accounts::Account::roles_in` (T-1891, EP-26, MP-02).
+//!
+//! Contract, in one sentence: a role reaches a call only when it is scoped to the whole
+//! organization, to the project it is asked about, or to the space segment it is asked about —
+//! and the names are compared exactly, so nothing reaches a neighbouring space or project because
+//! its name merely looks similar.
+//!
+//! The one caller (`src/auth/subject.rs`, `roles_on(endpoint.audience, account.roles_in(&endpoint.project,
+//! &endpoint.space))`) asks about the called Endpoint's project and space, behind
+//! `endpoint.admits(Some(&account.project))`. A project scope reaches only the account's own
+//! project: on another project's Endpoint neither the account's own project scope nor a scope its
+//! manifest wrote for that other project is a role (F-SEC1-001, T-5860).
+
+use context_gateway::auth::accounts::{Account, ScopedRole};
+use std::collections::BTreeSet;
+
+fn role(role: &str, space: Option<&str>, project: Option<&str>, organization: bool) -> ScopedRole {
+    ScopedRole {
+        role: role.to_owned(),
+        context_space: space.map(str::to_owned),
+        project: project.map(str::to_owned),
+        organization,
+        validity: None,
+    }
+}
+
+fn account(roles: Vec<ScopedRole>) -> Account {
+    Account {
+        name: "collector".to_owned(),
+        project: "helsinki".to_owned(),
+        roles,
+        delegates: false,
+        credentials_end: None,
+    }
+}
+
+fn set(names: &[&str]) -> BTreeSet<String> {
+    names.iter().map(|name| (*name).to_owned()).collect()
+}
+
+#[test]
+fn an_account_with_no_roles_has_no_roles_here() {
+    assert_eq!(
+        account(vec![]).roles_in("helsinki", "mobility"),
+        BTreeSet::new()
+    );
+}
+
+#[test]
+fn an_organization_role_reaches_every_project_and_space() {
+    let a = account(vec![role("reader", None, None, true)]);
+    assert_eq!(a.roles_in("helsinki", "mobility"), set(&["reader"]));
+    assert_eq!(a.roles_in("espoo", "waste"), set(&["reader"]));
+    // Including the empty names, which is what an unnamespaced repository resolves to.
+    assert_eq!(a.roles_in("", ""), set(&["reader"]));
+}
+
+#[test]
+fn a_role_scoped_to_another_space_is_not_a_role_here() {
+    let a = account(vec![role("writer", Some("waste"), None, false)]);
+    assert_eq!(a.roles_in("helsinki", "mobility"), BTreeSet::new());
+    assert_eq!(a.roles_in("helsinki", "waste"), set(&["writer"]));
+}
+
+#[test]
+fn a_role_scoped_to_another_project_is_not_a_role_here() {
+    let a = account(vec![role("writer", None, Some("espoo"), false)]);
+    assert_eq!(a.roles_in("helsinki", "mobility"), BTreeSet::new());
+}
+
+#[test]
+fn names_are_compared_exactly_so_nothing_neighbouring_gets_in() {
+    // Case, a trailing slash, a trailing space, a percent-encoded letter, an encoded one twice and
+    // a prefix of the real name: none of these is the space that was asked about.
+    for near in [
+        "Mobility",
+        "mobility/",
+        "mobility ",
+        " mobility",
+        "mobilit",
+        "mobilityy",
+        "%6dobility",
+        "%256dobility",
+        "mobility\0",
+        "mobility\n",
+    ] {
+        let a = account(vec![role("writer", Some(near), None, false)]);
+        assert_eq!(
+            a.roles_in("helsinki", "mobility"),
+            BTreeSet::new(),
+            "a role scoped to {near:?} must not reach the space `mobility`",
+        );
+    }
+    // And the same for the project.
+    for near in [
+        "Helsinki",
+        "helsinki/",
+        "helsinki ",
+        "helsink",
+        "%68elsinki",
+    ] {
+        let a = account(vec![role("writer", None, Some(near), false)]);
+        assert_eq!(
+            a.roles_in("helsinki", "mobility"),
+            BTreeSet::new(),
+            "project {near:?}"
+        );
+    }
+}
+
+#[test]
+fn an_empty_scope_name_matches_only_an_empty_name() {
+    let a = account(vec![role("writer", Some(""), None, false)]);
+    assert_eq!(a.roles_in("helsinki", "mobility"), BTreeSet::new());
+    assert_eq!(a.roles_in("helsinki", ""), set(&["writer"]));
+
+    let unnamespaced = account(vec![role("writer", None, Some(""), false)]);
+    assert_eq!(
+        unnamespaced.roles_in("helsinki", "mobility"),
+        BTreeSet::new()
+    );
+    // A repository without namespaces resolves every project to "", and then a project-scoped role
+    // does reach it: that is the same project, not a wider one.
+    let unnamespaced = Account {
+        project: String::new(),
+        ..unnamespaced
+    };
+    assert_eq!(unnamespaced.roles_in("", "mobility"), set(&["writer"]));
+}
+
+#[test]
+fn one_role_named_twice_is_one_role() {
+    let a = account(vec![
+        role("reader", Some("mobility"), None, false),
+        role("reader", None, Some("helsinki"), false),
+        role("reader", None, None, true),
+    ]);
+    assert_eq!(a.roles_in("helsinki", "mobility"), set(&["reader"]));
+}
+
+#[test]
+fn a_role_out_of_scope_does_not_carry_one_in_scope_with_it() {
+    let a = account(vec![
+        role("reader", Some("mobility"), None, false),
+        role("owner", Some("waste"), None, false),
+        role("admin", None, Some("espoo"), false),
+    ]);
+    assert_eq!(a.roles_in("helsinki", "mobility"), set(&["reader"]));
+}
+
+#[test]
+fn a_scope_naming_a_space_and_another_project_reaches_the_space() {
+    // Either scope is enough, by the `||` of the filter: this pins the behaviour so a later reading
+    // of the code cannot quietly turn it into "both must match" or "the wider one wins".
+    let a = account(vec![role("reader", Some("mobility"), Some("espoo"), false)]);
+    assert_eq!(a.roles_in("helsinki", "mobility"), set(&["reader"]));
+    // A helsinki manifest's scope naming espoo grants nothing on espoo's Endpoints (F-SEC1-001).
+    assert_eq!(a.roles_in("espoo", "waste"), BTreeSet::new());
+    assert_eq!(a.roles_in("helsinki", "waste"), BTreeSet::new());
+}
+
+#[test]
+fn a_role_name_is_returned_as_written_and_nothing_is_invented() {
+    // Whatever the manifest called the role is what the PDP is asked about: this function neither
+    // trims, lower-cases nor expands anything, and it never adds a role nobody bound.
+    let odd = "Reader-With Space\tand\ttabs";
+    let a = account(vec![role(odd, None, None, true)]);
+    let answer = a.roles_in("helsinki", "mobility");
+    assert_eq!(answer, set(&[odd]));
+    assert!(
+        !answer.contains("reader"),
+        "no role is invented from another's spelling"
+    );
+}
+
+#[test]
+fn a_hundred_bindings_answer_only_the_ones_in_scope() {
+    let mut roles: Vec<ScopedRole> = (0..100)
+        .map(|n| {
+            role(
+                &format!("role-{n}"),
+                Some(&format!("space-{n}")),
+                None,
+                false,
+            )
+        })
+        .collect();
+    roles.push(role("reader", Some("mobility"), None, false));
+    let a = account(roles);
+    assert_eq!(a.roles_in("helsinki", "mobility"), set(&["reader"]));
+}
+
+/// A grant with a validity window is a role only inside it (AG-131): an expired grant stops at
+/// its `notAfter`, before the Portal removes it from the manifest.
+#[test]
+fn a_grant_outside_its_validity_is_not_a_role() {
+    use chrono::{TimeZone, Utc};
+    use jc_core::kinds::role::BindingValidity;
+    let until = Utc.with_ymd_and_hms(2026, 10, 21, 12, 0, 0).unwrap();
+    let mut scoped = role("writer", Some("mobility"), None, false);
+    scoped.validity = Some(BindingValidity {
+        not_before: Some(Utc.with_ymd_and_hms(2026, 10, 1, 0, 0, 0).unwrap()),
+        not_after: Some(until),
+    });
+    let a = account(vec![scoped, role("reader", Some("mobility"), None, false)]);
+    assert_eq!(
+        a.roles_in_at("helsinki", "mobility", until),
+        set(&["reader", "writer"])
+    );
+    assert_eq!(
+        a.roles_in_at("helsinki", "mobility", until + chrono::Duration::seconds(1)),
+        set(&["reader"])
+    );
+    assert_eq!(
+        a.roles_in_at(
+            "helsinki",
+            "mobility",
+            Utc.with_ymd_and_hms(2026, 9, 30, 23, 59, 59).unwrap()
+        ),
+        set(&["reader"])
+    );
+}
+
+/// F-SEC1-001 (T-5860): the caller asks about the Endpoint's project. A role the account's own
+/// project scopes stops at that project, so an Endpoint of `espoo` admitting the helsinki account
+/// meets none of helsinki's project roles, and a scope a helsinki manifest wrote for `espoo`
+/// reaches espoo neither.
+#[test]
+fn a_project_scope_reaches_only_the_accounts_own_project() {
+    let own = account(vec![role("writer", None, Some("helsinki"), false)]);
+    assert_eq!(own.roles_in("helsinki", "mobility"), set(&["writer"]));
+    assert_eq!(own.roles_in("espoo", "mobility"), BTreeSet::new());
+    let other = account(vec![role("writer", None, Some("espoo"), false)]);
+    assert_eq!(other.roles_in("espoo", "mobility"), BTreeSet::new());
+}

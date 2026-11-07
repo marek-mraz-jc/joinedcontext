@@ -1,0 +1,1382 @@
+//! Manifest kinds for access policies and scope definitions (T-0114, ADR 002, ADR 005, R3, R6..R8).
+
+use crate::envelope::{Kind, ObjectMeta, Ref, Scope};
+use crate::error::{Error, Result};
+use crate::names;
+use crate::urn::Urn;
+use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::fmt;
+
+/// Table 4.20-1: every named distributed API operation in ETSI GS CIM 009 (R8).
+///
+/// Closed enum ensures no proprietary verbs (`upsertEntity`, `read`, `write`) are accepted,
+/// satisfying the strict R8 CIM 009 vocabulary guarantee.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub enum Operation {
+    /// Create entity (`POST /entities`).
+    #[serde(rename = "createEntity")]
+    CreateEntity,
+    /// Update entity (`PATCH /entities/{id}`).
+    #[serde(rename = "updateEntity")]
+    UpdateEntity,
+    /// Append entity attributes (`POST /entities/{id}/attrs`).
+    #[serde(rename = "appendAttrs")]
+    AppendAttrs,
+    /// Update entity attributes (`PATCH /entities/{id}/attrs`).
+    #[serde(rename = "updateAttrs")]
+    UpdateAttrs,
+    /// Delete entity attributes (`DELETE /entities/{id}/attrs/{attr}`).
+    #[serde(rename = "deleteAttrs")]
+    DeleteAttrs,
+    /// Delete entity (`DELETE /entities/{id}`).
+    #[serde(rename = "deleteEntity")]
+    DeleteEntity,
+    /// Batch create entities (`POST /entityOperations/create`).
+    #[serde(rename = "createBatch")]
+    CreateBatch,
+    /// Batch upsert entities (`POST /entityOperations/upsert`).
+    #[serde(rename = "upsertBatch")]
+    UpsertBatch,
+    /// Batch update entities (`POST /entityOperations/update`).
+    #[serde(rename = "updateBatch")]
+    UpdateBatch,
+    /// Batch delete entities (`POST /entityOperations/delete`).
+    #[serde(rename = "deleteBatch")]
+    DeleteBatch,
+    /// Upsert temporal entity attributes (`POST /temporal/entities/{id}/attrs`).
+    #[serde(rename = "upsertTemporal")]
+    UpsertTemporal,
+    /// Append temporal entity attributes (`POST /temporal/entities/{id}/attrs`).
+    #[serde(rename = "appendAttrsTemporal")]
+    AppendAttrsTemporal,
+    /// Delete temporal entity attributes (`DELETE /temporal/entities/{id}/attrs/{attr}`).
+    #[serde(rename = "deleteAttrsTemporal")]
+    DeleteAttrsTemporal,
+    /// Update temporal attribute instance (`PATCH /temporal/entities/{id}/attrs/{attr}/{instance}`).
+    #[serde(rename = "updateAttrInstanceTemporal")]
+    UpdateAttrInstanceTemporal,
+    /// Delete temporal attribute instance (`DELETE /temporal/entities/{id}/attrs/{attr}/{instance}`).
+    #[serde(rename = "deleteAttrInstanceTemporal")]
+    DeleteAttrInstanceTemporal,
+    /// Delete temporal entity (`DELETE /temporal/entities/{id}`).
+    #[serde(rename = "deleteTemporal")]
+    DeleteTemporal,
+    /// Merge entity (`PATCH /entities/{id}`).
+    #[serde(rename = "mergeEntity")]
+    MergeEntity,
+    /// Replace entity (`PUT /entities/{id}`).
+    #[serde(rename = "replaceEntity")]
+    ReplaceEntity,
+    /// Replace entity attributes (`PATCH /entities/{id}/attrs`).
+    #[serde(rename = "replaceAttrs")]
+    ReplaceAttrs,
+    /// Batch merge entities (`POST /entityOperations/merge`).
+    #[serde(rename = "mergeBatch")]
+    MergeBatch,
+    /// Purge entity permanently (`DELETE /entities/{id}?purge=true`).
+    #[serde(rename = "purgeEntity")]
+    PurgeEntity,
+    /// Retrieve single entity (`GET /entities/{id}`).
+    #[serde(rename = "retrieveEntity")]
+    RetrieveEntity,
+    /// Query entities (`GET /entities` or `POST /entityOperations/query`).
+    #[serde(rename = "queryEntity")]
+    QueryEntity,
+    /// Batch query entities (`POST /entityOperations/query`).
+    #[serde(rename = "queryBatch")]
+    QueryBatch,
+    /// Retrieve temporal entity (`GET /temporal/entities/{id}`).
+    #[serde(rename = "retrieveTemporal")]
+    RetrieveTemporal,
+    /// Query temporal entities (`GET /temporal/entities`).
+    #[serde(rename = "queryTemporal")]
+    QueryTemporal,
+    /// Retrieve entity types list (`GET /types`).
+    #[serde(rename = "retrieveEntityTypes")]
+    RetrieveEntityTypes,
+    /// Retrieve details of the available entity types (`GET /types?details=true`).
+    #[serde(rename = "retrieveEntityTypeDetails")]
+    RetrieveEntityTypeDetails,
+    /// Retrieve one entity type's information (`GET /types/{type}`).
+    #[serde(rename = "retrieveEntityTypeInfo")]
+    RetrieveEntityTypeInfo,
+    /// Retrieve attribute types list (`GET /attributes`).
+    #[serde(rename = "retrieveAttrTypes")]
+    RetrieveAttrTypes,
+    /// Retrieve details of the available attributes (`GET /attributes?details=true`).
+    #[serde(rename = "retrieveAttrTypeDetails")]
+    RetrieveAttrTypeDetails,
+    /// Retrieve one attribute's information (`GET /attributes/{attr}`).
+    #[serde(rename = "retrieveAttrTypeInfo")]
+    RetrieveAttrTypeInfo,
+    /// Create context subscription (`POST /subscriptions`).
+    #[serde(rename = "createSubscription")]
+    CreateSubscription,
+    /// Update context subscription (`PATCH /subscriptions/{id}`).
+    #[serde(rename = "updateSubscription")]
+    UpdateSubscription,
+    /// Retrieve context subscription (`GET /subscriptions/{id}`).
+    #[serde(rename = "retrieveSubscription")]
+    RetrieveSubscription,
+    /// Query context subscriptions (`GET /subscriptions`).
+    #[serde(rename = "querySubscription")]
+    QuerySubscription,
+    /// Delete context subscription (`DELETE /subscriptions/{id}`).
+    #[serde(rename = "deleteSubscription")]
+    DeleteSubscription,
+    /// Retrieve context entity map (`GET /entityMaps/{id}`).
+    #[serde(rename = "retrieveEntityMap")]
+    RetrieveEntityMap,
+    /// Update context entity map (`PATCH /entityMaps/{id}`).
+    #[serde(rename = "updateEntityMap")]
+    UpdateEntityMap,
+    /// Delete context entity map (`DELETE /entityMaps/{id}`).
+    #[serde(rename = "deleteEntityMap")]
+    DeleteEntityMap,
+    /// Create entity map query on entities.
+    #[serde(rename = "createEntityMapQueryEntity")]
+    CreateEntityMapQueryEntity,
+    /// Create entity map query on temporal entities.
+    #[serde(rename = "createEntityMapQueryTemporal")]
+    CreateEntityMapQueryTemporal,
+    /// Retrieve context source identity (`GET /csourceIdentity`).
+    #[serde(rename = "retrieveContextSourceIdentity")]
+    RetrieveContextSourceIdentity,
+}
+
+impl Operation {
+    /// Returns `true` if this operation modifies context or subscription state (GW15, GW16).
+    pub fn is_write(&self) -> bool {
+        matches!(
+            self,
+            Self::CreateEntity
+                | Self::UpdateEntity
+                | Self::AppendAttrs
+                | Self::UpdateAttrs
+                | Self::DeleteAttrs
+                | Self::DeleteEntity
+                | Self::CreateBatch
+                | Self::UpsertBatch
+                | Self::UpdateBatch
+                | Self::DeleteBatch
+                | Self::UpsertTemporal
+                | Self::AppendAttrsTemporal
+                | Self::DeleteAttrsTemporal
+                | Self::UpdateAttrInstanceTemporal
+                | Self::DeleteAttrInstanceTemporal
+                | Self::DeleteTemporal
+                | Self::MergeEntity
+                | Self::ReplaceEntity
+                | Self::ReplaceAttrs
+                | Self::MergeBatch
+                | Self::PurgeEntity
+                | Self::CreateSubscription
+                | Self::UpdateSubscription
+                | Self::DeleteSubscription
+        )
+    }
+
+    /// Returns the exact CIM 009 Table 4.20-1 wire name.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::CreateEntity => "createEntity",
+            Self::UpdateEntity => "updateEntity",
+            Self::AppendAttrs => "appendAttrs",
+            Self::UpdateAttrs => "updateAttrs",
+            Self::DeleteAttrs => "deleteAttrs",
+            Self::DeleteEntity => "deleteEntity",
+            Self::CreateBatch => "createBatch",
+            Self::UpsertBatch => "upsertBatch",
+            Self::UpdateBatch => "updateBatch",
+            Self::DeleteBatch => "deleteBatch",
+            Self::UpsertTemporal => "upsertTemporal",
+            Self::AppendAttrsTemporal => "appendAttrsTemporal",
+            Self::DeleteAttrsTemporal => "deleteAttrsTemporal",
+            Self::UpdateAttrInstanceTemporal => "updateAttrInstanceTemporal",
+            Self::DeleteAttrInstanceTemporal => "deleteAttrInstanceTemporal",
+            Self::DeleteTemporal => "deleteTemporal",
+            Self::MergeEntity => "mergeEntity",
+            Self::ReplaceEntity => "replaceEntity",
+            Self::ReplaceAttrs => "replaceAttrs",
+            Self::MergeBatch => "mergeBatch",
+            Self::PurgeEntity => "purgeEntity",
+            Self::RetrieveEntity => "retrieveEntity",
+            Self::QueryEntity => "queryEntity",
+            Self::QueryBatch => "queryBatch",
+            Self::RetrieveTemporal => "retrieveTemporal",
+            Self::QueryTemporal => "queryTemporal",
+            Self::RetrieveEntityTypes => "retrieveEntityTypes",
+            Self::RetrieveEntityTypeDetails => "retrieveEntityTypeDetails",
+            Self::RetrieveEntityTypeInfo => "retrieveEntityTypeInfo",
+            Self::RetrieveAttrTypes => "retrieveAttrTypes",
+            Self::RetrieveAttrTypeDetails => "retrieveAttrTypeDetails",
+            Self::RetrieveAttrTypeInfo => "retrieveAttrTypeInfo",
+            Self::CreateSubscription => "createSubscription",
+            Self::UpdateSubscription => "updateSubscription",
+            Self::RetrieveSubscription => "retrieveSubscription",
+            Self::QuerySubscription => "querySubscription",
+            Self::DeleteSubscription => "deleteSubscription",
+            Self::RetrieveEntityMap => "retrieveEntityMap",
+            Self::UpdateEntityMap => "updateEntityMap",
+            Self::DeleteEntityMap => "deleteEntityMap",
+            Self::CreateEntityMapQueryEntity => "createEntityMapQueryEntity",
+            Self::CreateEntityMapQueryTemporal => "createEntityMapQueryTemporal",
+            Self::RetrieveContextSourceIdentity => "retrieveContextSourceIdentity",
+        }
+    }
+
+    /// All 43 operations in Table 4.20-1 order.
+    pub const ALL: &'static [Operation] = &[
+        Self::CreateEntity,
+        Self::UpdateEntity,
+        Self::AppendAttrs,
+        Self::UpdateAttrs,
+        Self::DeleteAttrs,
+        Self::DeleteEntity,
+        Self::CreateBatch,
+        Self::UpsertBatch,
+        Self::UpdateBatch,
+        Self::DeleteBatch,
+        Self::UpsertTemporal,
+        Self::AppendAttrsTemporal,
+        Self::DeleteAttrsTemporal,
+        Self::UpdateAttrInstanceTemporal,
+        Self::DeleteAttrInstanceTemporal,
+        Self::DeleteTemporal,
+        Self::MergeEntity,
+        Self::ReplaceEntity,
+        Self::ReplaceAttrs,
+        Self::MergeBatch,
+        Self::PurgeEntity,
+        Self::RetrieveEntity,
+        Self::QueryEntity,
+        Self::QueryBatch,
+        Self::RetrieveTemporal,
+        Self::QueryTemporal,
+        Self::RetrieveEntityTypes,
+        Self::RetrieveEntityTypeDetails,
+        Self::RetrieveEntityTypeInfo,
+        Self::RetrieveAttrTypes,
+        Self::RetrieveAttrTypeDetails,
+        Self::RetrieveAttrTypeInfo,
+        Self::CreateSubscription,
+        Self::UpdateSubscription,
+        Self::RetrieveSubscription,
+        Self::QuerySubscription,
+        Self::DeleteSubscription,
+        Self::RetrieveEntityMap,
+        Self::UpdateEntityMap,
+        Self::DeleteEntityMap,
+        Self::CreateEntityMapQueryEntity,
+        Self::CreateEntityMapQueryTemporal,
+        Self::RetrieveContextSourceIdentity,
+    ];
+}
+
+impl fmt::Display for Operation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Table 4.20-2: the five distributed operation group names (R8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub enum OperationGroup {
+    /// Consumption, subscription, and entity map operations.
+    #[serde(rename = "federationOps")]
+    FederationOps,
+    /// Association operations without entity map support.
+    #[serde(rename = "associationOps")]
+    AssociationOps,
+    /// Entity and attribute update operations.
+    #[serde(rename = "updateOps")]
+    UpdateOps,
+    /// Retrieve and query entity operations.
+    #[serde(rename = "retrieveOps")]
+    RetrieveOps,
+    /// Full redirection operations.
+    #[serde(rename = "redirectionOps")]
+    RedirectionOps,
+}
+
+impl OperationGroup {
+    /// The operations this group stands for, CIM 009 Table 4.20-2 verbatim (R8).
+    ///
+    /// A grant naming a group grants exactly these; the list is the vocabulary's, not a
+    /// convenience shorthand, so it is never widened locally.
+    pub const fn operations(&self) -> &'static [Operation] {
+        /// The consumption and subscription operations plus the EntityMap support ones.
+        const FEDERATION: &[Operation] = &[
+            Operation::RetrieveEntity,
+            Operation::QueryEntity,
+            Operation::QueryBatch,
+            Operation::RetrieveEntityTypes,
+            Operation::RetrieveEntityTypeDetails,
+            Operation::RetrieveEntityTypeInfo,
+            Operation::RetrieveAttrTypes,
+            Operation::RetrieveAttrTypeDetails,
+            Operation::RetrieveAttrTypeInfo,
+            Operation::CreateSubscription,
+            Operation::UpdateSubscription,
+            Operation::RetrieveSubscription,
+            Operation::QuerySubscription,
+            Operation::DeleteSubscription,
+            Operation::RetrieveEntityMap,
+            Operation::UpdateEntityMap,
+            Operation::DeleteEntityMap,
+            Operation::CreateEntityMapQueryEntity,
+        ];
+        /// `federationOps` without the EntityMap support operations.
+        const ASSOCIATION: &[Operation] = &[
+            Operation::RetrieveEntity,
+            Operation::QueryEntity,
+            Operation::QueryBatch,
+            Operation::RetrieveEntityTypes,
+            Operation::RetrieveEntityTypeDetails,
+            Operation::RetrieveEntityTypeInfo,
+            Operation::RetrieveAttrTypes,
+            Operation::RetrieveAttrTypeDetails,
+            Operation::RetrieveAttrTypeInfo,
+            Operation::CreateSubscription,
+            Operation::UpdateSubscription,
+            Operation::RetrieveSubscription,
+            Operation::QuerySubscription,
+            Operation::DeleteSubscription,
+        ];
+        const UPDATE: &[Operation] = &[
+            Operation::UpdateEntity,
+            Operation::UpdateAttrs,
+            Operation::ReplaceEntity,
+            Operation::ReplaceAttrs,
+        ];
+        const RETRIEVE: &[Operation] = &[Operation::RetrieveEntity, Operation::QueryEntity];
+        const REDIRECTION: &[Operation] = &[
+            Operation::CreateEntity,
+            Operation::UpdateEntity,
+            Operation::AppendAttrs,
+            Operation::UpdateAttrs,
+            Operation::DeleteAttrs,
+            Operation::DeleteEntity,
+            Operation::MergeEntity,
+            Operation::ReplaceEntity,
+            Operation::ReplaceAttrs,
+            Operation::RetrieveEntity,
+            Operation::QueryEntity,
+            Operation::PurgeEntity,
+            Operation::RetrieveEntityTypes,
+            Operation::RetrieveEntityTypeDetails,
+            Operation::RetrieveEntityTypeInfo,
+            Operation::RetrieveAttrTypes,
+            Operation::RetrieveAttrTypeDetails,
+            Operation::RetrieveAttrTypeInfo,
+            Operation::RetrieveEntityMap,
+            Operation::UpdateEntityMap,
+            Operation::DeleteEntityMap,
+            Operation::CreateEntityMapQueryEntity,
+        ];
+
+        match self {
+            Self::FederationOps => FEDERATION,
+            Self::AssociationOps => ASSOCIATION,
+            Self::UpdateOps => UPDATE,
+            Self::RetrieveOps => RETRIEVE,
+            Self::RedirectionOps => REDIRECTION,
+        }
+    }
+
+    /// Whether the group stands for at least one operation that changes context data (R8).
+    ///
+    /// `updateOps` is the update family; `redirectionOps` forwards every operation, writes
+    /// included. The consumption groups do not write.
+    pub const fn includes_write(&self) -> bool {
+        matches!(self, Self::UpdateOps | Self::RedirectionOps)
+    }
+
+    /// Returns the exact CIM 009 Table 4.20-2 wire name.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::FederationOps => "federationOps",
+            Self::AssociationOps => "associationOps",
+            Self::UpdateOps => "updateOps",
+            Self::RetrieveOps => "retrieveOps",
+            Self::RedirectionOps => "redirectionOps",
+        }
+    }
+}
+
+impl fmt::Display for OperationGroup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Reference to a CIM 009 operation or operation group (R8).
+///
+/// Closed enum ensures no proprietary verbs (`read`, `write`, `upsertEntity`) are permitted,
+/// satisfying the strict R8 CIM 009 vocabulary guarantee.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum OperationRef {
+    /// Individual named operation from CIM 009 Table 4.20-1.
+    Single(Operation),
+    /// Operation group from CIM 009 Table 4.20-2.
+    Group(OperationGroup),
+}
+
+impl OperationRef {
+    /// Returns the wire name for this operation or group.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Single(op) => op.as_str(),
+            Self::Group(grp) => grp.as_str(),
+        }
+    }
+
+    /// Whether granting this reference lets the holder change context data (R8, AP-09).
+    ///
+    /// A group counts as a write when any operation it stands for writes; erring towards
+    /// "write" only raises the review lane, never lowers it.
+    pub fn is_write(&self) -> bool {
+        match self {
+            Self::Single(op) => op.is_write(),
+            Self::Group(grp) => grp.includes_write(),
+        }
+    }
+}
+
+impl fmt::Display for OperationRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Identity principal receiving a policy grant (ADR 002).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Principal {
+    /// Category of principal.
+    pub kind: PrincipalKind,
+    /// Identifier of the principal (username, role name, group name, DID). An `organization`
+    /// assignee has none: it is always the Policy's own Organization (ADR-N-067 2.3).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
+}
+
+impl Principal {
+    /// The assignee of a Policy that lists `rules` instead: a role with no id, which no caller holds.
+    pub fn unset() -> Self {
+        Self::new(PrincipalKind::Role, "")
+    }
+
+    /// Whether this is [`Principal::unset`].
+    pub fn is_unset(&self) -> bool {
+        self.kind == PrincipalKind::Role && self.id.is_empty()
+    }
+
+    /// Creates a new principal with kind and identifier.
+    pub fn new(kind: PrincipalKind, id: impl Into<String>) -> Self {
+        Self {
+            kind,
+            id: id.into(),
+        }
+    }
+}
+
+/// Whether `id` is a client's own service-account user, `service-account-<client>`: the one
+/// `user` assignee that is no person, so no Keycloak user id names it (PF-126, T-5358).
+pub fn is_service_account_user(id: &str) -> bool {
+    id.strip_prefix("service-account-").is_some_and(|client| {
+        !client.is_empty()
+            && client
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    })
+}
+
+/// Principal category for authorization rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum PrincipalKind {
+    /// Individual human user identity: their Keycloak user id (the token's `sub`), or a
+    /// client's own `service-account-<client>` user (PF-126).
+    User,
+    /// Group of users.
+    Group,
+    /// Platform role.
+    Role,
+    /// Non-human service account.
+    ServiceAccount,
+    /// Decentralized identifier (`did:web:...`).
+    Did,
+    /// Every member of the Policy's own Organization, the one its project belongs to: the
+    /// verified token's `jc_org` names it (ADR-N-067 2.3). It carries no id, so a manifest
+    /// cannot name another Organization.
+    Organization,
+}
+
+impl PrincipalKind {
+    /// Returns the camelCase wire name for this principal kind.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Group => "group",
+            Self::Role => "role",
+            Self::ServiceAccount => "serviceAccount",
+            Self::Did => "did",
+            Self::Organization => "organization",
+        }
+    }
+}
+
+impl fmt::Display for PrincipalKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Entity type and id/pattern selector within a policy grant (R6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct EntitySelector {
+    /// Target entity type short name in PascalCase.
+    #[serde(rename = "type")]
+    pub entity_type: String,
+    /// Explicit target entity URN.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<Urn>,
+    /// Anchored regular expression matching target entity URNs (R24, R33).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id_pattern: Option<String>,
+}
+
+impl EntitySelector {
+    /// The rules every selector keeps, in a Policy and a ContextSourceRegistration alike: a
+    /// valid type, `id` or `idPattern` but not both, and a pattern anchored at both ends that
+    /// compiles (R24, R33). An unanchored pattern matches ids nobody meant to grant or register.
+    pub fn validate(&self) -> Result<()> {
+        names::validate_entity_type(&self.entity_type)?;
+        if self.id.is_some() && self.id_pattern.is_some() {
+            return Err(Error::Name {
+                field: "entities.idPattern",
+                value: self.id_pattern.clone().unwrap_or_default(),
+                reason: "id and idPattern are mutually exclusive on an entity selector",
+            });
+        }
+        if let Some(pattern) = &self.id_pattern {
+            if !pattern.starts_with('^') || !pattern.ends_with('$') {
+                return Err(Error::Name {
+                    field: "entities.idPattern",
+                    value: pattern.clone(),
+                    reason: "idPattern must be anchored with `^` and `$` (R24, R33)",
+                });
+            }
+            if regex::Regex::new(pattern).is_err() {
+                return Err(Error::Name {
+                    field: "entities.idPattern",
+                    value: pattern.clone(),
+                    reason: "idPattern failed to compile as a valid regex",
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Whether a policy grants access or takes it away (GW4, GW8).
+///
+/// A prohibition subtracts from a grant that stays in force. It is not how a resource is
+/// kept private in the first place: the default verdict is already DENY (GW5), so a type
+/// nobody was granted is closed without any policy naming it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum PolicyEffect {
+    /// The policy grants the operations it lists (the default).
+    #[default]
+    Permission,
+    /// The policy denies them, and is evaluated before any permission (GW4).
+    Prohibition,
+}
+
+impl PolicyEffect {
+    /// Whether this is the default, a grant.
+    pub const fn is_permission(&self) -> bool {
+        matches!(self, Self::Permission)
+    }
+
+    /// Whether this policy takes access away rather than granting it.
+    pub const fn is_prohibition(self) -> bool {
+        matches!(self, Self::Prohibition)
+    }
+}
+
+/// Specification of target entity types, properties, and relationships (R6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RegistrationInfo {
+    /// Target entity selectors.
+    pub entities: Vec<EntitySelector>,
+    /// Whitelist of readable or writable property names (R6, R9).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub property_names: Vec<String>,
+    /// Whitelist of readable or writable relationship names (R6, R9).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relationship_names: Vec<String>,
+    /// What the grant lets a caller do with each attribute, keyed by attribute name or `*`
+    /// (ADR-N-066, DM-147). It only narrows what the operations and actions grant.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub attributes: std::collections::BTreeMap<String, AttributeCapabilities>,
+}
+
+/// One attribute's capabilities in a grant (ADR-N-066, DM-147). A field left unset takes the
+/// `*` entry's field, then the grant's own behaviour without the block.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AttributeCapabilities {
+    /// Whether the current value is readable, e.g. `false` to keep an attribute for history only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read: Option<bool>,
+    /// Whether its history is readable; `true` needs `queryTemporal` or `retrieveTemporal`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<bool>,
+    /// Version capabilities: `read` needs the action `readVersions`, `keep` a write operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub versions: Option<Vec<VersionsCapability>>,
+    /// The metadata members passed for this attribute, e.g. `[observedAt, unitCode]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Vec<MetadataMember>>,
+    /// The write kinds allowed on this attribute, e.g. `[update]`; needs a write operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write: Option<Vec<WriteCapability>>,
+}
+
+/// What a grant may do with an attribute's versions (ADR-N-066 2.3).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "camelCase")]
+pub enum VersionsCapability {
+    /// Read the version chain (`versions=all`).
+    Read,
+    /// Keep every allowed write of the attribute as a version, whatever the client sends.
+    Keep,
+}
+
+/// A metadata member a grant may pass for an attribute (ADR-N-066 2.4, DM-139).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+pub enum MetadataMember {
+    /// When the value was observed.
+    #[serde(rename = "observedAt")]
+    ObservedAt,
+    /// The value's unit.
+    #[serde(rename = "unitCode")]
+    UnitCode,
+    /// When the attribute was created.
+    #[serde(rename = "createdAt")]
+    CreatedAt,
+    /// When the attribute was last changed.
+    #[serde(rename = "modifiedAt")]
+    ModifiedAt,
+    /// The organization of the last change.
+    #[serde(rename = "modifiedBy.organization")]
+    ModifiedByOrganization,
+    /// Whether a person, a pipeline or a client made the last change.
+    #[serde(rename = "modifiedBy.actorKind")]
+    ModifiedByActorKind,
+    /// Who made the last change: a person's `sub` or a client id; never public (DM-140).
+    #[serde(rename = "modifiedBy.actor")]
+    ModifiedByActor,
+    /// Every provenance member of a version; never public (DM-140).
+    #[serde(rename = "provenance")]
+    Provenance,
+    /// The reason typed with a change, which can name a person (DM-151).
+    #[serde(rename = "reason")]
+    Reason,
+}
+
+/// A write kind a grant may allow on an attribute (ADR-N-066 2.1).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "camelCase")]
+pub enum WriteCapability {
+    /// Change the attribute's value.
+    Update,
+    /// Add the attribute or an instance of it.
+    Append,
+    /// Delete the attribute or an instance of it.
+    Delete,
+}
+
+/// Temporal validity window for a policy grant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Validity {
+    /// Effective start timestamp (UTC).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<DateTime<Utc>>,
+    /// Effective expiration timestamp (UTC).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<DateTime<Utc>>,
+}
+
+/// What a Policy grants beyond CIM 009's operations (ADR-N-054 2.4, 2.6; T-4666).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "camelCase")]
+pub enum PlatformAction {
+    /// `versions=all` on a temporal query (DM-114).
+    ReadVersions,
+    /// The data subject's rights on the space: export, rectification, erasure (DM-124..DM-126).
+    PersonalData,
+}
+
+/// Desired specification of a [`Policy`][crate::kinds::Policy] resource (ADR 002, R1..R9).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PolicySpec {
+    /// Reference to the target ContextSpace.
+    pub context_space_ref: Ref,
+    /// Whether this policy grants or takes away (GW4, GW8).
+    #[serde(default, skip_serializing_if = "PolicyEffect::is_permission")]
+    pub effect: PolicyEffect,
+    /// Granting data owner (e.g. `did:web:banskabystrica.sk`).
+    pub assigner: String,
+    /// Grantee principal receiving permissions; unset when the Policy lists `rules`.
+    #[serde(
+        default = "Principal::unset",
+        skip_serializing_if = "Principal::is_unset"
+    )]
+    pub assignee: Principal,
+    /// Granted CIM 009 operations or operation groups (R8); empty when the Policy grants
+    /// `actions` alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operations: Vec<OperationRef>,
+    /// Granted platform actions CIM 009 has no operation for (ADR-N-054, T-4666).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<PlatformAction>,
+    /// Target entity types and attribute whitelist (R6, R9).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub information: Vec<RegistrationInfo>,
+    /// Residual NGSI-LD query filter string (R7, EP-56).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>,
+    /// Residual scope query filter string (R7, R13, EP-56).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_q: Option<String>,
+    /// Residual geographic query filter string (R7, GW11, EP-56).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geo_q: Option<String>,
+    /// Residual temporal query filter string (R7, GW11, EP-56).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporal_q: Option<String>,
+    /// Several grants and prohibitions in one Policy (ADR-N-057 decision 1), instead of the
+    /// single rule above; [`PolicySpec::expand`] turns either shape into one grant per rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<Vec<PolicyRule>>,
+    /// Optional time validity window for this policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validity: Option<Validity>,
+}
+
+/// One rule of a Policy's `rules[]` (ADR-N-057 decision 1): the single-rule members of
+/// [`PolicySpec`], while `assigner`, `contextSpaceRef` and `validity` stay on the Policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PolicyRule {
+    /// Whether this rule grants or takes away (GW4, GW8).
+    #[serde(default, skip_serializing_if = "PolicyEffect::is_permission")]
+    pub effect: PolicyEffect,
+    /// Grantee principal of this rule.
+    pub assignee: Principal,
+    /// Granted CIM 009 operations or operation groups (R8).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operations: Vec<OperationRef>,
+    /// Granted platform actions (ADR-N-054).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<PlatformAction>,
+    /// Target entity types and attribute whitelist (R6, R9).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub information: Vec<RegistrationInfo>,
+    /// Residual NGSI-LD query filter string (R7, EP-56).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>,
+    /// Residual scope query filter string (R7, R13, EP-56).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_q: Option<String>,
+    /// Residual geographic query filter string (R7, GW11, EP-56).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geo_q: Option<String>,
+    /// Residual temporal query filter string (R7, GW11, EP-56).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporal_q: Option<String>,
+}
+
+impl Kind for PolicySpec {
+    const KIND: &'static str = "Policy";
+    const PLURAL: &'static str = "policies";
+    const SCOPE: Scope = Scope::Project;
+    const PATH_TEMPLATE: &'static str = "projects/{project}/spaces/{space}/policies/{name}.yaml";
+
+    fn validate_spec(&self, meta: &ObjectMeta) -> Result<()> {
+        names::validate_dns1123_label(&meta.name)?;
+        self.validate()
+    }
+
+    fn context_space(&self) -> Option<&str> {
+        Some(self.context_space_ref.name())
+    }
+}
+
+impl PolicySpec {
+    /// Every rule of this Policy as a single-rule spec, the one shape the PDP, the view compiler
+    /// and the lint read (ADR-N-057 decision 1). A single-rule Policy keeps its `name`; rule `n`
+    /// (from 1) of a `rules[]` Policy is named `{name}#{n}`, which `access/simulate` reports.
+    ///
+    /// Refused, like an unreadable manifest, when the shape is invalid: both shapes at once or an
+    /// empty `rules[]`.
+    pub fn expand(&self, name: &str) -> Result<Vec<(String, PolicySpec)>> {
+        self.check_shape()?;
+        let Some(rules) = &self.rules else {
+            return Ok(vec![(name.to_owned(), self.clone())]);
+        };
+        Ok(rules
+            .iter()
+            .zip(1..)
+            .map(|(rule, n)| (format!("{name}#{n}"), self.with_rule(rule)))
+            .collect())
+    }
+
+    /// The single-rule spec of `rule`, with this Policy's space, assigner and validity.
+    fn with_rule(&self, rule: &PolicyRule) -> PolicySpec {
+        let rule = rule.clone();
+        PolicySpec {
+            context_space_ref: self.context_space_ref.clone(),
+            effect: rule.effect,
+            assigner: self.assigner.clone(),
+            assignee: rule.assignee,
+            operations: rule.operations,
+            actions: rule.actions,
+            information: rule.information,
+            q: rule.q,
+            scope_q: rule.scope_q,
+            geo_q: rule.geo_q,
+            temporal_q: rule.temporal_q,
+            rules: None,
+            validity: self.validity.clone(),
+        }
+    }
+
+    /// The Policy name a rule named by [`PolicySpec::expand`] belongs to: `kiosks#2` is `kiosks`.
+    pub fn policy_of(rule_name: &str) -> &str {
+        rule_name
+            .split_once('#')
+            .map_or(rule_name, |(policy, _)| policy)
+    }
+
+    /// One shape or the other: an `assignee`, or `rules[]` with no single-rule member beside it,
+    /// never empty. Checked on every load, so a Policy with neither grants nothing.
+    fn check_shape(&self) -> Result<()> {
+        let refused = |value: &str, reason| Error::Name {
+            field: "spec.rules",
+            value: value.to_owned(),
+            reason,
+        };
+        match &self.rules {
+            None if self.assignee.is_unset() => Err(Error::Name {
+                field: "spec.assignee",
+                value: String::new(),
+                reason: "a Policy names an assignee or lists rules",
+            }),
+            None => Ok(()),
+            Some(rules) if rules.is_empty() => Err(refused(
+                "",
+                "rules must list at least one rule; omit it for a single-rule Policy",
+            )),
+            Some(_) => self.single_rule_member().map_or(Ok(()), |member| {
+                Err(refused(
+                    member,
+                    "a Policy with rules carries this member inside each rule, not beside rules",
+                ))
+            }),
+        }
+    }
+
+    /// The first single-rule member this spec sets, if any.
+    fn single_rule_member(&self) -> Option<&'static str> {
+        [
+            self.effect.is_prohibition().then_some("effect"),
+            (!self.assignee.is_unset()).then_some("assignee"),
+            (!self.operations.is_empty()).then_some("operations"),
+            (!self.actions.is_empty()).then_some("actions"),
+            (!self.information.is_empty()).then_some("information"),
+            self.q.as_ref().map(|_| "q"),
+            self.scope_q.as_ref().map(|_| "scopeQ"),
+            self.geo_q.as_ref().map(|_| "geoQ"),
+            self.temporal_q.as_ref().map(|_| "temporalQ"),
+        ]
+        .into_iter()
+        .flatten()
+        .next()
+    }
+
+    /// Validates the shape and every rule: assigner, assignee, operations, entity selectors,
+    /// and validity constraints.
+    pub fn validate(&self) -> Result<()> {
+        if self.rules.is_some() {
+            return self
+                .expand("")?
+                .iter()
+                .try_for_each(|(_, rule)| rule.validate());
+        }
+        let space_name = self.context_space_ref.name();
+        names::validate_space_name(space_name)?;
+        if let Some(kind) = self.context_space_ref.kind() {
+            if kind != "ContextSpace" {
+                return Err(Error::Kind {
+                    expected: "ContextSpace",
+                    got: kind.to_string(),
+                });
+            }
+        }
+
+        if self.assigner.trim().is_empty() {
+            return Err(Error::Name {
+                field: "spec.assigner",
+                value: self.assigner.clone(),
+                reason: "assigner must not be empty",
+            });
+        }
+        // The assigner names the organisation that grants, never a person: an AI client filled
+        // in the e-mail of the account running it (T-6391), personal data that lands in Git.
+        if !self.assigner.starts_with("did:")
+            || self.assigner.chars().any(|c| c == '@' || c.is_whitespace())
+        {
+            return Err(Error::Name {
+                field: "spec.assigner",
+                value: self.assigner.clone(),
+                reason: "the assigner is the organisation's DID, written `did:web:{orgDomain}`; \
+                         an e-mail or a person's name is no assigner",
+            });
+        }
+
+        self.validate_assignee()?;
+
+        if self.operations.is_empty() && self.actions.is_empty() {
+            return Err(Error::Name {
+                field: "spec.operations",
+                value: String::new(),
+                reason: "a policy grants at least one operation or action",
+            });
+        }
+        let mut seen_actions = std::collections::BTreeSet::new();
+        for action in &self.actions {
+            if !seen_actions.insert(*action) {
+                return Err(Error::Name {
+                    field: "spec.actions",
+                    value: format!("{action:?}"),
+                    reason: "duplicate action in actions list",
+                });
+            }
+        }
+
+        let mut seen_ops = std::collections::BTreeSet::new();
+        for op in &self.operations {
+            let wire = op.as_str();
+            if !seen_ops.insert(wire) {
+                return Err(Error::Name {
+                    field: "spec.operations",
+                    value: wire.to_string(),
+                    reason: "duplicate operation in operations list",
+                });
+            }
+        }
+
+        self.validate_information()?;
+        self.validate_narrowing()?;
+
+        if let Some(ref val) = self.validity {
+            if let (Some(from), Some(to)) = (val.from, val.to) {
+                if from > to {
+                    return Err(Error::Name {
+                        field: "spec.validity",
+                        value: format!("{from} > {to}"),
+                        reason: "validity `from` must be less than or equal to `to`",
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// The assignee names whom the Policy grants: an id for every kind but `organization`,
+    /// which is always the Policy's own Organization and names none.
+    fn validate_assignee(&self) -> Result<()> {
+        if self.assignee.kind == PrincipalKind::Organization {
+            // The Organization is the project's, never one the text names (ADR-N-041, ADR-N-067).
+            if !self.assignee.id.is_empty() {
+                return Err(Error::Name {
+                    field: "spec.assignee.id",
+                    value: self.assignee.id.clone(),
+                    reason: "an organization assignee names no id: it is always the Organization \
+                             of the Policy's own project; write `assignee: { kind: organization }`",
+                });
+            }
+        } else if self.assignee.id.trim().is_empty() {
+            return Err(Error::Name {
+                field: "spec.assignee.id",
+                value: self.assignee.id.clone(),
+                reason: "assignee id must not be empty",
+            });
+        }
+        if self.assignee.kind == PrincipalKind::User && !is_service_account_user(&self.assignee.id)
+        {
+            crate::kinds::group::validate_person_id("spec.assignee.id", &self.assignee.id)?;
+        }
+        Ok(())
+    }
+
+    /// `q`, `scopeQ` and `geoQ` parse as the broker parses them (T-6283): Antares refuses the
+    /// space's whole rule document over one that does not, so a typo is a plan-time refusal
+    /// naming its field rather than a green plan the sync then cannot apply.
+    fn validate_narrowing(&self) -> Result<()> {
+        let refused = |field: &'static str, value: &str, reason| Error::Name {
+            field,
+            value: value.to_owned(),
+            reason,
+        };
+        if let Some(q) = &self.q {
+            match antares_ql::parse_q(q) {
+                Err(_) => {
+                    return Err(refused(
+                        "spec.q",
+                        q,
+                        "q is no NGSI-LD query, e.g. `speed>50;status==\"open\"`",
+                    ))
+                }
+                Ok(node) if node.has_linked_paths() => {
+                    return Err(refused(
+                        "spec.q",
+                        q,
+                        "q reads a linked Entity (`a{b}`), which a Policy cannot follow",
+                    ))
+                }
+                Ok(_) => {}
+            }
+        }
+        if let Some(scope_q) = &self.scope_q {
+            if antares_ql::scope::check_scope_q(scope_q).is_err() {
+                return Err(refused(
+                    "spec.scopeQ",
+                    scope_q,
+                    "scopeQ is no NGSI-LD scope query, e.g. `/geo/SK/BB/#`",
+                ));
+            }
+        }
+        if let Some(geo_q) = &self.geo_q {
+            // Split as the broker's rule document splits it: `;` between members.
+            let params: std::collections::HashMap<String, String> = geo_q
+                .split(';')
+                .filter_map(|part| part.split_once('='))
+                .map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned()))
+                .collect();
+            if !matches!(antares_ql::geo::GeoQuery::from_params(&params), Ok(Some(_))) {
+                return Err(refused(
+                    "spec.geoQ",
+                    geo_q,
+                    "geoQ is no NGSI-LD geo-query: georel (near;maxDistance==…, within, contains, intersects, equals, disjoint, overlaps), geometry and coordinates joined by `;`, e.g. `georel=within;geometry=Polygon;coordinates=[[[19.1,48.7],[19.2,48.7],[19.2,48.8],[19.1,48.7]]]`",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates each `information` entry: its entity selectors and the property and
+    /// relationship name lists (non-empty, no duplicates).
+    fn validate_information(&self) -> Result<()> {
+        for info in &self.information {
+            for entity in &info.entities {
+                entity.validate()?;
+            }
+
+            let mut seen_props = std::collections::BTreeSet::new();
+            for prop in &info.property_names {
+                if prop.trim().is_empty() {
+                    return Err(Error::Name {
+                        field: "information.propertyNames",
+                        value: prop.clone(),
+                        reason: "propertyName must not be empty",
+                    });
+                }
+                if !seen_props.insert(prop.as_str()) {
+                    return Err(Error::Name {
+                        field: "information.propertyNames",
+                        value: prop.clone(),
+                        reason: "duplicate propertyName in propertyNames list",
+                    });
+                }
+            }
+
+            self.validate_capabilities(info)?;
+
+            let mut seen_rels = std::collections::BTreeSet::new();
+            for rel in &info.relationship_names {
+                if rel.trim().is_empty() {
+                    return Err(Error::Name {
+                        field: "information.relationshipNames",
+                        value: rel.clone(),
+                        reason: "relationshipName must not be empty",
+                    });
+                }
+                if !seen_rels.insert(rel.as_str()) {
+                    return Err(Error::Name {
+                        field: "information.relationshipNames",
+                        value: rel.clone(),
+                        reason: "duplicate relationshipName in relationshipNames list",
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The `attributes` block of one entry only narrows this grant (ADR-N-066, DM-148, DM-152):
+    /// each key is `*` or a listed name, and each capability is one the operations, the actions
+    /// and the assignee allow.
+    fn validate_capabilities(&self, info: &RegistrationInfo) -> Result<()> {
+        let refused = |value: String, reason| Error::Name {
+            field: "information.attributes",
+            value,
+            reason,
+        };
+        let named = |op: Operation| {
+            self.operations
+                .iter()
+                .any(|r| matches!(r, OperationRef::Single(o) if *o == op))
+        };
+        let temporal = named(Operation::QueryTemporal) || named(Operation::RetrieveTemporal);
+        let public = self.assignee.kind == PrincipalKind::Role && self.assignee.id == "public";
+        let any_name = info.property_names.is_empty() && info.relationship_names.is_empty();
+        for (name, caps) in &info.attributes {
+            let at = |reason| Err(refused(name.clone(), reason));
+            if name != "*"
+                && !any_name
+                && !info.property_names.contains(name)
+                && !info.relationship_names.contains(name)
+            {
+                return at(
+                    "an attribute here is `*` or one propertyNames or relationshipNames lists",
+                );
+            }
+            if let Some(reason) = self.capability_refusal(caps, temporal, public) {
+                return at(reason);
+            }
+        }
+        Ok(())
+    }
+
+    /// Why one attribute's capabilities exceed this grant, or `None` when they fit.
+    fn capability_refusal(
+        &self,
+        caps: &AttributeCapabilities,
+        temporal: bool,
+        public: bool,
+    ) -> Option<&'static str> {
+        let versions = caps.versions.as_deref().unwrap_or_default();
+        let write = caps.write.as_deref().unwrap_or_default();
+        let metadata = caps.metadata.as_deref().unwrap_or_default();
+        if caps.history == Some(true) && !temporal {
+            return Some("history needs queryTemporal or retrieveTemporal in operations");
+        }
+        if versions.contains(&VersionsCapability::Read)
+            && !self.actions.contains(&PlatformAction::ReadVersions)
+        {
+            return Some("versions: [read] needs the action readVersions");
+        }
+        let keep = versions.contains(&VersionsCapability::Keep);
+        if (keep || !write.is_empty()) && public {
+            return Some("a public grant never writes or keeps versions");
+        }
+        if (keep || !write.is_empty()) && !self.has_write() {
+            return Some("versions: [keep] and write need a write operation");
+        }
+        if public
+            && metadata.iter().any(|m| {
+                matches!(
+                    m,
+                    MetadataMember::ModifiedByActor | MetadataMember::Provenance
+                )
+            })
+        {
+            return Some("a public grant never passes modifiedBy.actor or provenance (DM-140)");
+        }
+        if repeats(versions) || repeats(write) || repeats(metadata) {
+            return Some("a capability list names each value once");
+        }
+        None
+    }
+
+    /// Returns `true` if any granted operation or group modifies context state: a group by
+    /// [`OperationGroup::includes_write`], so `redirectionOps` writes and `federationOps` does not.
+    pub fn has_write(&self) -> bool {
+        self.operations.iter().any(OperationRef::is_write)
+    }
+
+    /// Whether this Policy is assigned to a role the Endpoint `endpoint` of `project` hands out,
+    /// `endpoint:{project}/{endpoint}` or `endpoint:{project}/{endpoint}/{role}` (AP-96): the
+    /// only permissions an App's generated Endpoint evaluates besides the space's prohibitions.
+    pub fn is_endpoint_grant(&self, project: &str, endpoint: &str) -> bool {
+        let own = crate::kinds::endpoint_role(project, endpoint, None);
+        self.assignee.kind == PrincipalKind::Role
+            && self
+                .assignee
+                .id
+                .strip_prefix(own.as_str())
+                .is_some_and(|rest| {
+                    rest.is_empty()
+                        || rest
+                            .strip_prefix('/')
+                            .is_some_and(|role| !role.is_empty() && !role.contains('/'))
+                })
+    }
+}
+
+/// Whether `list` names one value twice.
+fn repeats<T: Ord>(list: &[T]) -> bool {
+    list.iter().collect::<std::collections::BTreeSet<_>>().len() != list.len()
+}
+
+/// Desired specification of a [`ScopeDefinition`][crate::kinds::ScopeDefinition] resource (ADR 005, R19, R29).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ScopeDefinitionSpec {
+    /// Multidimensional hierarchical scope path (e.g. `/geo/SK/BB/Radvan`).
+    pub scope_string: String,
+    /// Whether this definition represents a taxonomy root (`/geo`, `/domain`, `/admin`).
+    #[serde(default)]
+    pub is_root: bool,
+    /// Parent scope path (absent if and only if `is_root` is true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_child_of: Option<String>,
+}
+
+impl Kind for ScopeDefinitionSpec {
+    const KIND: &'static str = "ScopeDefinition";
+    // A plural of its own (R19, T-2954): a shared `policies` made every route resolve Policy.
+    // The file stays beside the project's access files, so the path template does not follow it.
+    const PLURAL: &'static str = "scopedefinitions";
+    const SCOPE: Scope = Scope::Project;
+    const PATH_TEMPLATE: &'static str = "projects/{project}/policies/{name}.yaml";
+
+    fn validate_spec(&self, meta: &ObjectMeta) -> Result<()> {
+        names::validate_dns1123_label(&meta.name)?;
+        self.validate()
+    }
+}
+
+impl ScopeDefinitionSpec {
+    /// Validates scope string taxonomy root, segment charset, and hierarchy agreement (ADR 004, ADR 005).
+    pub fn validate(&self) -> Result<()> {
+        if !self.scope_string.starts_with('/') {
+            return Err(Error::Name {
+                field: "spec.scopeString",
+                value: self.scope_string.clone(),
+                reason: "scopeString must start with `/`",
+            });
+        }
+        if self.scope_string.ends_with('/') {
+            return Err(Error::Name {
+                field: "spec.scopeString",
+                value: self.scope_string.clone(),
+                reason: "scopeString must not end with a trailing `/`",
+            });
+        }
+        if self.scope_string.contains("//") {
+            return Err(Error::Name {
+                field: "spec.scopeString",
+                value: self.scope_string.clone(),
+                reason: "scopeString must not contain empty segments (`//`)",
+            });
+        }
+
+        let segments: Vec<&str> = self.scope_string[1..].split('/').collect();
+        if segments.is_empty() || !matches!(segments[0], "geo" | "domain" | "admin") {
+            return Err(Error::Name {
+                field: "spec.scopeString",
+                value: self.scope_string.clone(),
+                reason: "scopeString must start with one of the three taxonomy roots: `/geo`, `/domain`, `/admin`",
+            });
+        }
+
+        for seg in &segments {
+            if seg.is_empty()
+                || !seg
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+            {
+                return Err(Error::Name {
+                    field: "spec.scopeString",
+                    value: self.scope_string.clone(),
+                    reason: "each segment must match ^[A-Za-z0-9._-]+$ and not be empty",
+                });
+            }
+        }
+
+        let is_root_path = segments.len() == 1;
+        if self.is_root && !is_root_path {
+            return Err(Error::Name {
+                field: "spec.isRoot",
+                value: "true".to_string(),
+                reason: "isRoot can only be true for taxonomy roots (/geo, /domain, /admin)",
+            });
+        }
+        if !self.is_root && is_root_path {
+            return Err(Error::Name {
+                field: "spec.isRoot",
+                value: "false".to_string(),
+                reason: "isRoot must be true for taxonomy roots (/geo, /domain, /admin)",
+            });
+        }
+
+        if self.is_root {
+            if let Some(ref parent) = self.is_child_of {
+                return Err(Error::Name {
+                    field: "spec.isChildOf",
+                    value: parent.clone(),
+                    reason: "isChildOf must be absent when isRoot is true",
+                });
+            }
+        } else {
+            let expected_parent = match self.scope_string.rfind('/') {
+                Some(idx) => &self.scope_string[..idx],
+                None => "",
+            };
+            match &self.is_child_of {
+                None => {
+                    return Err(Error::Name {
+                        field: "spec.isChildOf",
+                        value: String::new(),
+                        reason: "isChildOf must be present when isRoot is false",
+                    });
+                }
+                Some(parent) => {
+                    if parent != expected_parent {
+                        return Err(Error::Name {
+                            field: "spec.isChildOf",
+                            value: parent.clone(),
+                            reason:
+                                "isChildOf must match the immediate parent prefix of scopeString",
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
