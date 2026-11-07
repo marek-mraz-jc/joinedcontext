@@ -3,9 +3,9 @@
 //! read from a file in the secrets mount, rotation, and JWKS publication (W10).
 
 use aws_lc_rs::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
-use aws_lc_rs::encoding::{AsBigEndian, AsDer};
+use aws_lc_rs::encoding::AsDer;
 use aws_lc_rs::rand::{fill as lc_fill, SystemRandom};
-use aws_lc_rs::rsa::{KeySize, PrivateDecryptingKey};
+use aws_lc_rs::rsa::{KeyPair as RsaKeyPair, KeySize};
 use aws_lc_rs::signature::{
     EcdsaKeyPair, Ed25519KeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING,
 };
@@ -197,22 +197,13 @@ impl KeyManager {
 
     /// Generates an RS256 signing key via `aws-lc-rs` (W10, for `edge` / lua-resty-openidc).
     pub fn generate_rs256(realm_id: &str, kek: &Kek, priority: i32, status: &str) -> Result<SigningKeyRecord> {
-        let priv_key = PrivateDecryptingKey::generate(KeySize::Rsa2048)
+        let priv_key = RsaKeyPair::generate(KeySize::Rsa2048)
             .map_err(|_| WardkeepError::Crypto("RSA key generation failed".into()))?;
-        let pkcs8_der = priv_key
-            .as_der()
+        let pkcs8_der = AsDer::<aws_lc_rs::encoding::Pkcs8V1Der<'static>>::as_der(&priv_key)
             .map_err(|_| WardkeepError::Crypto("RSA PKCS#8 DER encode failed".into()))?;
         let pub_key = priv_key.public_key();
-        let n_bytes = pub_key
-            .modulus()
-            .as_be_bytes()
-            .map_err(|_| WardkeepError::Crypto("RSA modulus encode failed".into()))?;
-        let e_bytes = pub_key
-            .exponent()
-            .as_be_bytes()
-            .map_err(|_| WardkeepError::Crypto("RSA exponent encode failed".into()))?;
-        let n = URL_SAFE_NO_PAD.encode(n_bytes.as_ref());
-        let e = URL_SAFE_NO_PAD.encode(e_bytes.as_ref());
+        let n = URL_SAFE_NO_PAD.encode(pub_key.modulus().big_endian_without_leading_zero());
+        let e = URL_SAFE_NO_PAD.encode(pub_key.exponent().big_endian_without_leading_zero());
         let kid = format!("rs256-{}", &crate::sha256_hex(&format!("{n}.{e}"))[..16]);
         let jwk = PublicJwk {
             kid: kid.clone(),
@@ -245,7 +236,7 @@ impl KeyManager {
 
     /// Generates an EdDSA (Ed25519) signing key via `aws-lc-rs` (W10).
     pub fn generate_eddsa(realm_id: &str, kek: &Kek, priority: i32, status: &str) -> Result<SigningKeyRecord> {
-        let pkcs8 = Ed25519KeyPair::generate_pkcs8()
+        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new())
             .map_err(|_| WardkeepError::Crypto("Ed25519 key generation failed".into()))?;
         let pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref())
             .map_err(|_| WardkeepError::Crypto("Ed25519 parse failed".into()))?;

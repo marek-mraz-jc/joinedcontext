@@ -42,7 +42,7 @@ pub enum WardkeepError {
         description: String,
     },
 
-    #[error("rate limited: {0}")]
+    #[error("rate limited: {message}")]
     RateLimited {
         message: String,
         retry_after_secs: u64,

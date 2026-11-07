@@ -5,7 +5,8 @@
 //! argon2id parameters on successful login.
 
 use crate::constant_time_eq;
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::phc::PasswordHash;
+use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::engine::{general_purpose::STANDARD as B64_STD, Engine};
 use hmac::Hmac;
@@ -36,8 +37,6 @@ pub fn hash_password(password: &str) -> Result<String> {
     let mut salt_bytes = [0u8; 16];
     aws_lc_rs::rand::fill(&mut salt_bytes)
         .map_err(|_| WardkeepError::Crypto("CSPRNG failure".into()))?;
-    let salt = SaltString::encode_b64(&salt_bytes)
-        .map_err(|e| WardkeepError::Crypto(e.to_string()))?;
     let params = Params::new(
         DEFAULT_MEMORY_KIB,
         DEFAULT_ITERATIONS,
@@ -46,8 +45,8 @@ pub fn hash_password(password: &str) -> Result<String> {
     )
     .map_err(|e| WardkeepError::Crypto(e.to_string()))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let hash = argon2
-        .hash_password(password.as_bytes(), &salt)
+    let hash: PasswordHash = argon2
+        .hash_password_with_salt(password.as_bytes(), &salt_bytes)
         .map_err(|e| WardkeepError::Crypto(e.to_string()))?;
     Ok(hash.to_string())
 }

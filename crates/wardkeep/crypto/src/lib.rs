@@ -22,7 +22,7 @@ pub use totp::{
     generate_recovery_codes, generate_totp_code, verify_recovery_code, verify_totp_code,
 };
 
-use rand::RngCore;
+use rand::Rng as _;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 

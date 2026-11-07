@@ -2,7 +2,7 @@
 //! JWS signing and verification via `jsonwebtoken` 11 (`aws_lc_rs`), pinning the algorithm from the
 //! key and never from the untrusted token header (W10, W12).
 
-use crate::keys::{Kek, PublicJwk, SigningKeyRecord};
+use crate::keys::{Kek, PublicJwk};
 use jsonwebtoken::jwk::Jwk;
 use jsonwebtoken::{
     decode, decode_header, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation,
@@ -10,7 +10,7 @@ use jsonwebtoken::{
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
-use wardkeep_core::{Result, WardkeepError};
+use wardkeep_core::{Result, SigningKeyRecord, WardkeepError};
 
 pub type JwtHeader = Header;
 pub type DecodedHeader = Header;
@@ -26,6 +26,19 @@ fn parse_alg(alg: &str) -> Result<Algorithm> {
     }
 }
 
+fn pkcs8_pem(der: &[u8]) -> String {
+    use base64::engine::{Engine, general_purpose::STANDARD};
+    let b64 = STANDARD.encode(der);
+    let mut pem = String::with_capacity(b64.len() + 80);
+    pem.push_str("-----BEGIN PRIVATE KEY-----\n");
+    for chunk in b64.as_bytes().chunks(64) {
+        pem.push_str(&String::from_utf8_lossy(chunk));
+        pem.push('\n');
+    }
+    pem.push_str("-----END PRIVATE KEY-----\n");
+    pem
+}
+
 /// Signs `claims` with `key_record` after decrypting its PKCS#8 DER under `kek`.
 pub fn sign_jwt<T: Serialize>(
     key_record: &SigningKeyRecord,
@@ -38,7 +51,10 @@ pub fn sign_jwt<T: Serialize>(
     let pkcs8_der = kek.decrypt(aad.as_bytes(), &key_record.encrypted_private_key)?;
     let encoding_key = match alg {
         Algorithm::ES256 => EncodingKey::from_ec_der(&pkcs8_der),
-        Algorithm::RS256 => EncodingKey::from_rsa_der(&pkcs8_der),
+        // jsonwebtoken's aws-lc backend wants PKCS#1 DER; the stored key is PKCS#8, which its
+        // PEM reader unwraps, so hand it the PKCS#8 document as PEM.
+        Algorithm::RS256 => EncodingKey::from_rsa_pem(pkcs8_pem(&pkcs8_der).as_bytes())
+            .map_err(|_| WardkeepError::Crypto("stored RSA key is not PKCS#8".into()))?,
         Algorithm::EdDSA => EncodingKey::from_ed_der(&pkcs8_der),
         _ => return Err(WardkeepError::Crypto("forbidden algorithm".into())),
     };
@@ -126,6 +142,7 @@ pub fn verify_jwt_with_jwk<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keys::KeyManager;
     use serde_json::json;
 
     #[test]

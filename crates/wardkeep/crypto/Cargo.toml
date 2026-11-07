@@ -6,13 +6,13 @@ license.workspace = true
 
 [dependencies]
 wardkeep-core = { path = "../core" }
-argon2 = { version = "0.6", features = ["std"] }
+argon2 = "0.6"
 aws-lc-rs = "1.19"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 hmac = "0.13"
 jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc_rs", "use_pem"] }
-password-hash = { version = "0.6", features = ["std"] }
+password-hash = { version = "0.6", features = ["alloc", "phc", "getrandom"] }
 pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
 rand = "0.10"
 serde = { version = "1.0", features = ["derive"] }
@@ -21,7 +21,7 @@ sha1 = "0.11"
 sha2 = "0.11"
 subtle = "2.6"
 totp-rs = { version = "6.0", features = ["otpauth"] }
-uuid = { version = "1.29", features = ["v4", "v7", "serde"] }
+uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
 zeroize = { version = "1.9", features = ["derive"] }
 
 [dev-dependencies]

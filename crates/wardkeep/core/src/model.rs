@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 //! Domain and Keycloak Admin REST representations (W1, W2, W3, W7, W10).
 
-use crate::branding::BrandingBlock;
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

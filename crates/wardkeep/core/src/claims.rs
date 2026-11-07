@@ -8,7 +8,7 @@ use crate::model::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 /// Which token or response the mapper pipeline is building.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -547,7 +547,7 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
 
     #[test]
     fn evaluates_groups_jc_org_jc_groups_and_audience_mappers_in_ri_order() {

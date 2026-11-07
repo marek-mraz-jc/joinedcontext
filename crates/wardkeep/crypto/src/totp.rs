@@ -4,9 +4,9 @@
 
 use crate::{constant_time_str_eq, sha256_hex};
 use hmac::{Hmac, KeyInit, Mac};
-use rand::RngCore;
 use serde::Deserialize;
 use sha1::Sha1;
+use rand::Rng as _;
 use sha2::{Sha256, Sha512};
 use wardkeep_core::{CredentialRecord, Result, WardkeepError};
 
@@ -91,9 +91,9 @@ fn extract_secret_and_meta(cred: &CredentialRecord) -> Result<(Vec<u8>, OtpCrede
     };
     // RI note: "Keycloak keeps an OTP secret as the text itself and hashes its UTF-8 bytes"
     let bytes = if meta.secret_encoding.as_deref() == Some("BASE32") {
-        totp_rs::Secret::Encoded(raw_secret.clone())
-            .to_bytes()
-            .unwrap_or_else(|_| raw_secret.into_bytes())
+        let secret = totp_rs::Secret::try_from_base32(raw_secret.trim())
+            .map_err(|_| WardkeepError::Crypto("invalid BASE32 OTP secret".into()))?;
+        AsRef::<[u8]>::as_ref(&secret).to_vec()
     } else {
         raw_secret.into_bytes()
     };

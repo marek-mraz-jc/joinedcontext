@@ -14,7 +14,7 @@ odata-url = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Br
 parking_lot = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-uuid = { version = "1.29", features = ["v4", "v7", "serde"] }
+uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
 
 [dev-dependencies]
 tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }

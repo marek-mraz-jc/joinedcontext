@@ -14,6 +14,17 @@ members = [
   "crates/dataroom/mcp",
   "crates/dataroom/web",
   "crates/dataroom/server",
+  "crates/shared/jc-router",
+  "crates/wardkeep/core",
+  "crates/wardkeep/crypto",
+  "crates/wardkeep/store-pg",
+  "crates/wardkeep/store-memory",
+  "crates/wardkeep/oidc",
+  "crates/wardkeep/login",
+  "crates/wardkeep/admin",
+  "crates/wardkeep/import",
+  "crates/wardkeep/mcp",
+  "crates/wardkeep/server",
 ]
 
 [workspace.package]
