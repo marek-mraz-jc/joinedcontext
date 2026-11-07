@@ -8,6 +8,7 @@ license.workspace = true
 wardkeep-core = { path = "../core" }
 wardkeep-crypto = { path = "../crypto" }
 wardkeep-oidc = { path = "../oidc" }
+wardkeep-import = { path = "../import" }
 jc-router = { path = "../../shared/jc-router" }
 axum = { version = "0.8", features = ["json", "query"] }
 chrono = { version = "0.4", features = ["serde"] }

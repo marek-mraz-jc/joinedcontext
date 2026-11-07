@@ -10,7 +10,6 @@ use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Extension, Json, Router};
 use jc_router::Mount;
-use odata_table::QueryOptions;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wardkeep_admin::{AdminState, extract_admin_ctx};
@@ -111,42 +110,44 @@ async fn mcp_endpoint(
                 }));
             };
 
-            if let Some(set_name) = op.entity_set {
-                let ans = state
-                    .oidc
-                    .store
-                    .query_entity_set(
-                        &ctx,
-                        state.authorizer.as_ref(),
-                        set_name,
-                        &QueryOptions::default(),
-                        100,
-                    )
-                    .await?;
-                return Ok(Json(JsonRpcResponse {
+            // Same executor as OData and REST: same answer, same decision (W5).
+            let args = req.params.get("arguments").cloned().unwrap_or(Value::Null);
+            let key = args.get("id").and_then(Value::as_str).map(str::to_owned);
+            let mut params = args
+                .get("payload")
+                .cloned()
+                .filter(Value::is_object)
+                .unwrap_or_else(|| json!({}));
+            if let (Some(f), Some(obj)) = (args.get("filter"), params.as_object_mut()) {
+                obj.insert("filter".into(), f.clone());
+            }
+            match wardkeep_admin::execute(&state, &mount, &ctx, op, key.as_deref(), &params).await {
+                Ok(result) => Ok(Json(JsonRpcResponse {
                     jsonrpc: "2.0".into(),
                     id: req.id,
                     result: Some(json!({
                         "content": [{
                             "type": "text",
-                            "text": serde_json::to_string(&ans.rows).unwrap_or_default()
-                        }]
+                            "text": serde_json::to_string(&result).unwrap_or_default()
+                        }],
+                        "isError": false
                     })),
                     error: None,
-                }));
-            }
-
-            Ok(Json(JsonRpcResponse {
-                jsonrpc: "2.0".into(),
-                id: req.id,
-                result: Some(json!({
-                    "content": [{
-                        "type": "text",
-                        "text": json!({"operation": op.name, "status": "ok"}).to_string()
-                    }]
                 })),
-                error: None,
-            }))
+                Err(e) => {
+                    let problem = e.to_problem();
+                    Ok(Json(JsonRpcResponse {
+                        jsonrpc: "2.0".into(),
+                        id: req.id,
+                        result: None,
+                        error: Some(json!({
+                            "code": -32000,
+                            "message": problem.detail,
+                            "data": { "slug": problem.slug, "status": problem.status }
+                        })),
+                    }))
+                }
+            }
         }
         _ => Ok(Json(JsonRpcResponse {
             jsonrpc: "2.0".into(),

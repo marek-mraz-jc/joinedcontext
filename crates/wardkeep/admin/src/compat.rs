@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use wardkeep_core::*;
 use wardkeep_crypto::{random_handle_256, sha256_hex, verify_jwt};
-use wardkeep_oidc::{OidcState, dispatch_backchannel_logout};
+use wardkeep_oidc::OidcState;
 
 #[derive(Clone)]
 pub struct AdminState {
@@ -400,7 +400,7 @@ pub async fn extract_admin_ctx(
 /// a realm admin, or (for an ordinary application) whoever the authorizer lets update it. The
 /// admin clients (`realm-management`, `broker`, `{realm}-realm`) are realm-admin only, so neither
 /// an organization admin nor a client manager can hand out admin roles (W6).
-async fn ensure_may_map_client_roles(
+pub(crate) async fn ensure_may_map_client_roles(
     state: &AdminState,
     ctx: &RequestCtx,
     realm: &str,
@@ -434,7 +434,30 @@ async fn ensure_may_map_client_roles(
     ))
 }
 
-fn check_decision(dec: Decision) -> Result<()> {
+/// The person a PUT/PATCH stores: Keycloak's update ignores role mappings and group membership
+/// (they have their own routes, each authorized there); the service-account binding and creation
+/// facts never change; only a realm admin moves a person to another organization.
+pub(crate) fn merge_user_update(
+    existing: &UserRepresentation,
+    mut user: UserRepresentation,
+    ctx: &RequestCtx,
+) -> UserRepresentation {
+    user.id = existing.id.clone();
+    user.realm_id = existing.realm_id.clone();
+    user.realm_roles = existing.realm_roles.clone();
+    user.client_roles = existing.client_roles.clone();
+    user.groups = existing.groups.clone();
+    user.service_account_client_id = existing.service_account_client_id.clone();
+    user.created_timestamp = existing.created_timestamp;
+    user.transient = existing.transient;
+    user.managed_by = existing.managed_by.clone();
+    if user.org_id.is_none() || !ctx.principal.is_realm_admin() {
+        user.org_id = existing.org_id.clone();
+    }
+    user
+}
+
+pub(crate) fn check_decision(dec: Decision) -> Result<()> {
     if dec.allowed {
         Ok(())
     } else if !dec.visible {
@@ -444,7 +467,7 @@ fn check_decision(dec: Decision) -> Result<()> {
     }
 }
 
-async fn record_admin_write(
+pub(crate) async fn record_admin_write(
     state: &AdminState,
     ctx: &RequestCtx,
     operation_type: &str,
@@ -824,19 +847,7 @@ async fn compat_update_user(
     ))?;
     user.id = id.clone();
     user.realm_id = realm;
-    // Keycloak's PUT ignores role mappings and group membership (they have their own routes,
-    // each authorized there); the service-account binding and creation facts never change.
-    user.realm_roles = existing.realm_roles.clone();
-    user.client_roles = existing.client_roles.clone();
-    user.groups = existing.groups.clone();
-    user.service_account_client_id = existing.service_account_client_id.clone();
-    user.created_timestamp = existing.created_timestamp;
-    user.transient = existing.transient;
-    user.managed_by = existing.managed_by.clone();
-    // Moving a person to another organization is a realm-admin act.
-    if user.org_id.is_none() || !ctx.principal.is_realm_admin() {
-        user.org_id = existing.org_id;
-    }
+    let user = merge_user_update(&existing, user, &ctx);
     let updated = state.oidc.store.update_user(user).await?;
     record_admin_write(
         &state,
@@ -891,53 +902,17 @@ async fn compat_execute_actions_email(
     mount_ext: Option<Extension<Mount>>,
     Json(actions): Json<Vec<String>>,
 ) -> Result<StatusCode> {
-    let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
-    let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
-    let allowed = ctx.allowed_orgs();
-    let mut user = state
-        .oidc
-        .store
-        .get_user_by_id(&realm, allowed.as_deref(), &id)
-        .await?
-        .ok_or_else(|| WardkeepError::NotFound("user not found".into()))?;
-    check_decision(state.authorizer.check(
-        &ctx,
-        Action::Update,
-        &ObjectTarget::Person {
-            realm_id: realm.clone(),
-            org_id: user.org_id.clone(),
-            person_id: user.id.clone(),
-        },
-    ))?;
-    for a in &actions {
-        if !user.required_actions.contains(a) {
-            user.required_actions.push(a.clone());
-        }
-    }
-    state.oidc.store.update_user(user).await?;
-    let realm_cfg = state
-        .oidc
-        .store
-        .get_realm(&realm)
-        .await?
-        .ok_or_else(|| WardkeepError::NotFound("realm not found".into()))?;
-    // Per Portal `people.rs:365`: if SMTP is not configured, answer 500 so the Portal falls back
-    // to a temporary password (`PF-92`).
-    if realm_cfg.smtp_server.is_none() {
-        return Err(WardkeepError::Storage(
-            "SMTP is not configured on this realm".into(),
-        ));
-    }
-    record_admin_write(
+    run_registry_op(
         &state,
-        &ctx,
-        "ACTION",
-        "USER",
-        &format!("users/{id}/execute-actions-email"),
-        Some(json!({ "actions": actions })),
+        mount_ext,
+        &realm,
+        &headers,
+        "send_required_actions",
+        Some(&id),
+        &json!({ "actions": actions }),
     )
-    .await?;
-    Ok(StatusCode::NO_CONTENT)
+    .await
+    .map(|_| StatusCode::NO_CONTENT)
 }
 
 #[derive(Debug, Deserialize)]
@@ -955,68 +930,17 @@ async fn compat_reset_password(
     mount_ext: Option<Extension<Mount>>,
     Json(payload): Json<ResetPasswordPayload>,
 ) -> Result<StatusCode> {
-    let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
-    let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
-    let allowed = ctx.allowed_orgs();
-    let user = state
-        .oidc
-        .store
-        .get_user_by_id(&realm, allowed.as_deref(), &id)
-        .await?
-        .ok_or_else(|| WardkeepError::NotFound("user not found".into()))?;
-    check_decision(state.authorizer.check(
-        &ctx,
-        Action::Update,
-        &ObjectTarget::Person {
-            realm_id: realm.clone(),
-            org_id: user.org_id.clone(),
-            person_id: user.id.clone(),
-        },
-    ))?;
-    let realm_cfg = state
-        .oidc
-        .store
-        .get_realm(&realm)
-        .await?
-        .unwrap_or_default();
-    let creds = state.oidc.store.list_credentials(&realm, &user.id).await?;
-    let history: Vec<CredentialRecord> = creds
-        .into_iter()
-        .filter(|c| c.credential_type.starts_with("password"))
-        .collect();
-    wardkeep_crypto::check_password_policy(
-        &realm_cfg.password_policy,
-        &payload.value,
-        &user.username,
-        user.email.as_deref(),
-        &history,
-    )?;
-    let phc = wardkeep_crypto::hash_password(&payload.value)?;
-    state
-        .oidc
-        .store
-        .upsert_credential(CredentialRecord {
-            id: uuid::Uuid::now_v7().to_string(),
-            realm_id: realm.clone(),
-            user_id: user.id,
-            credential_type: "password".into(),
-            user_label: Some("Password".into()),
-            created_date: Utc::now().timestamp_millis(),
-            secret_data: phc,
-            credential_data: String::new(),
-            temporary: payload.temporary,
-        })
-        .await?;
-    record_admin_write(
+    run_registry_op(
         &state,
-        &ctx,
-        "ACTION",
-        "USER",
-        &format!("users/{id}/reset-password"),
-        Some(json!({ "temporary": payload.temporary })),
+        mount_ext,
+        &realm,
+        &headers,
+        "credential_reset",
+        Some(&id),
+        &json!({ "value": payload.value, "temporary": payload.temporary }),
     )
-    .await?;
-    Ok(StatusCode::NO_CONTENT)
+    .await
+    .map(|_| StatusCode::NO_CONTENT)
 }
 
 async fn compat_logout_user(
@@ -1025,48 +949,17 @@ async fn compat_logout_user(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<StatusCode> {
-    let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
-    let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
-    let allowed = ctx.allowed_orgs();
-    let user = state
-        .oidc
-        .store
-        .get_user_by_id(&realm, allowed.as_deref(), &id)
-        .await?
-        .ok_or_else(|| WardkeepError::NotFound("user not found".into()))?;
-    check_decision(state.authorizer.check(
-        &ctx,
-        Action::Delete,
-        &ObjectTarget::Session {
-            realm_id: realm.clone(),
-            org_id: user.org_id.clone(),
-            person_id: user.id.clone(),
-        },
-    ))?;
-    let realm_cfg = state
-        .oidc
-        .store
-        .get_realm(&realm)
-        .await?
-        .unwrap_or_default();
-    let ended = state
-        .oidc
-        .store
-        .delete_user_sso_sessions(&realm, &user.id)
-        .await?;
-    for sso in &ended {
-        let _ = dispatch_backchannel_logout(&state.oidc, &mount, &realm_cfg, sso).await;
-    }
-    record_admin_write(
+    run_registry_op(
         &state,
-        &ctx,
-        "ACTION",
-        "USER",
-        &format!("users/{id}/logout"),
-        None,
+        mount_ext,
+        &realm,
+        &headers,
+        "session_revoke",
+        Some(&id),
+        &Value::Null,
     )
-    .await?;
-    Ok(StatusCode::NO_CONTENT)
+    .await
+    .map(|_| StatusCode::NO_CONTENT)
 }
 
 async fn compat_list_user_credentials(
@@ -1282,46 +1175,17 @@ async fn compat_add_user_to_group(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<StatusCode> {
-    let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
-    let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
-    let allowed = ctx.allowed_orgs();
-    let user = state
-        .oidc
-        .store
-        .get_user_by_id(&realm, allowed.as_deref(), &id)
-        .await?
-        .ok_or_else(|| WardkeepError::NotFound("user not found".into()))?;
-    let group = state
-        .oidc
-        .store
-        .get_group(&realm, allowed.as_deref(), &group_id)
-        .await?
-        .ok_or_else(|| WardkeepError::NotFound("group not found".into()))?;
-    check_decision(state.authorizer.check(
-        &ctx,
-        Action::Update,
-        &ObjectTarget::Group {
-            realm_id: realm.clone(),
-            org_id: group.org_id.clone(),
-            group_id: group.id.clone(),
-            managed_by: group.managed_by.clone(),
-        },
-    ))?;
-    state
-        .oidc
-        .store
-        .add_user_to_group(&realm, &user.id, &group.id)
-        .await?;
-    record_admin_write(
+    run_registry_op(
         &state,
-        &ctx,
-        "CREATE",
-        "GROUP_MEMBERSHIP",
-        &format!("users/{id}/groups/{group_id}"),
-        None,
+        mount_ext,
+        &realm,
+        &headers,
+        "member_add",
+        Some(&id),
+        &json!({ "groupId": group_id }),
     )
-    .await?;
-    Ok(StatusCode::NO_CONTENT)
+    .await
+    .map(|_| StatusCode::NO_CONTENT)
 }
 
 async fn compat_remove_user_from_group(
@@ -2914,99 +2778,28 @@ async fn native_check_allowed(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Json<Value>> {
-    let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
-    let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
-    let action = match q.get("op").map_or("read", String::as_str) {
-        "create" => Action::Create,
-        "update" => Action::Update,
-        "delete" => Action::Delete,
-        "apply" => Action::Apply,
-        _ => Action::Read,
+    let set = match q.get("kind").map_or("Person", String::as_str) {
+        "Person" => "People",
+        "Group" => "Groups",
+        "Application" => "Applications",
+        _ => "Realms",
     };
-    let kind = q.get("kind").map_or("Person", String::as_str);
-    let id = q.get("id").map(String::as_str);
-    let allowed_orgs = ctx.allowed_orgs();
-
-    // Look up the object within the caller's allowed_orgs so another organization's ID and a
-    // non-existent ID produce the exact same result (W5).
-    let (exists_and_visible, target) = match (kind, id) {
-        ("Person", Some(uid)) => {
-            let found = state
-                .oidc
-                .store
-                .get_user_by_id(&realm, allowed_orgs.as_deref(), uid)
-                .await?;
-            (
-                found.is_some(),
-                ObjectTarget::Person {
-                    realm_id: realm,
-                    org_id: found.and_then(|u| u.org_id).or(ctx.active_org_id.clone()),
-                    person_id: uid.to_owned(),
-                },
-            )
-        }
-        ("Group", Some(gid)) => {
-            let found = state
-                .oidc
-                .store
-                .get_group(&realm, allowed_orgs.as_deref(), gid)
-                .await?;
-            (
-                found.is_some(),
-                ObjectTarget::Group {
-                    realm_id: realm,
-                    org_id: found
-                        .as_ref()
-                        .and_then(|g| g.org_id.clone())
-                        .or(ctx.active_org_id.clone()),
-                    group_id: gid.to_owned(),
-                    managed_by: found.and_then(|g| g.managed_by),
-                },
-            )
-        }
-        ("Application", Some(uuid)) => {
-            let found = state
-                .oidc
-                .store
-                .get_client_by_uuid(&realm, allowed_orgs.as_deref(), uuid)
-                .await?;
-            (
-                found.is_some(),
-                ObjectTarget::Application {
-                    realm_id: realm,
-                    org_id: found
-                        .as_ref()
-                        .and_then(|c| c.org_id.clone())
-                        .or(ctx.active_org_id.clone()),
-                    client_id: uuid.to_owned(),
-                    managed_by: found.and_then(|c| c.managed_by),
-                },
-            )
-        }
-        _ => (true, ObjectTarget::Realm { realm_id: realm }),
+    let object = match q.get("id") {
+        Some(id) if set != "Realms" => format!("{set}('{}')", id.replace('\'', "''")),
+        _ => String::new(),
     };
-
-    if id.is_some() && !exists_and_visible {
-        return Ok(Json(json!({
-            "allowed": false,
-            "reason": "resource not found",
-            "notFound": true,
-        })));
-    }
-
-    let dec = state.authorizer.check(&ctx, action, &target);
-    if !dec.visible {
-        return Ok(Json(json!({
-            "allowed": false,
-            "reason": "resource not found",
-            "notFound": true,
-        })));
-    }
-    Ok(Json(json!({
-        "allowed": dec.allowed,
-        "reason": dec.reason,
-        "notFound": false,
-    })))
+    let op = q.get("op").map_or("read", String::as_str);
+    let ans = run_registry_op(
+        &state,
+        mount_ext,
+        &realm,
+        &headers,
+        "allowed",
+        None,
+        &json!({ "operation": op, "object": object }),
+    )
+    .await?;
+    Ok(Json(ans.unwrap_or(Value::Null)))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -3030,43 +2823,36 @@ async fn native_rotate_keys(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
     Json(payload): Json<RotateKeysPayload>,
-) -> Result<Json<SigningKeyMetadata>> {
-    let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
-    let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
-    check_decision(state.authorizer.check(
-        &ctx,
-        Action::Update,
-        &ObjectTarget::Realm {
-            realm_id: realm.clone(),
-        },
-    ))?;
-    let realm_cfg = state
-        .oidc
-        .store
-        .get_realm(&realm)
-        .await?
-        .ok_or_else(|| WardkeepError::NotFound("realm not found".into()))?;
-    let mut existing = state.oidc.store.list_signing_keys(&realm).await?;
-    let new_key = wardkeep_crypto::KeyManager::rotate(
-        &realm,
-        &state.oidc.kek,
-        &mut existing,
-        &payload.algorithm,
-        realm_cfg.access_token_lifespan,
-        payload.immediate,
-    )?;
-    for k in existing {
-        state.oidc.store.upsert_signing_key(k).await?;
-    }
-    state.oidc.store.upsert_signing_key(new_key.clone()).await?;
-    record_admin_write(
+) -> Result<Json<Value>> {
+    let ans = run_registry_op(
         &state,
-        &ctx,
-        "ACTION",
-        "KEYS",
-        "keys/rotate",
-        Some(json!({ "kid": new_key.kid, "algorithm": new_key.algorithm })),
+        mount_ext,
+        &realm,
+        &headers,
+        "keys_rotate",
+        None,
+        &json!({ "algorithm": payload.algorithm, "immediate": payload.immediate }),
     )
     .await?;
-    Ok(Json(SigningKeyMetadata::from(&new_key)))
+    Ok(Json(ans.unwrap_or(Value::Null)))
+}
+
+/// Runs registry operation `name` through the shared executor (W5): REST, OData and MCP answer
+/// the same.
+async fn run_registry_op(
+    state: &AdminState,
+    mount_ext: Option<Extension<Mount>>,
+    realm: &str,
+    headers: &HeaderMap,
+    name: &str,
+    key: Option<&str>,
+    params: &Value,
+) -> Result<Option<Value>> {
+    let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
+    let ctx = extract_admin_ctx(state, &mount, realm, headers).await?;
+    let op = state
+        .registry
+        .find(name)
+        .ok_or_else(|| WardkeepError::NotSupported(format!("unknown operation {name}")))?;
+    crate::operations::execute(state, &mount, &ctx, op, key, params).await
 }

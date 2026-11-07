@@ -5,6 +5,190 @@ use crate::authz::Action;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+/// How an operation appears in the one OData 4.01 service (W4, W5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ODataKind {
+    /// Served by `GET {set}` (query) on the entity set named [`ODataOperation::name`].
+    EntitySetRead,
+    /// Served by `POST {set}`, `PATCH {set}(key)` or `DELETE {set}(key)`.
+    EntitySetWrite,
+    /// A CSDL `Action` (POST), bound or unbound.
+    Action,
+    /// A CSDL `Function` (GET, no side effects), bound or unbound.
+    Function,
+}
+
+/// One parameter of an OData action or function.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ODataParam {
+    pub name: &'static str,
+    /// `Edm.String`, `Edm.Boolean`, `Collection(Edm.String)`, `Edm.Untyped`, ...
+    pub edm_type: &'static str,
+    pub nullable: bool,
+}
+
+/// The OData face of a registry operation, declared with it so `$metadata`, the OData routes and
+/// MCP come from the same declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ODataOperation {
+    pub kind: ODataKind,
+    /// CSDL name (`ResetCredentials`) or, for entity set operations, the set (`People`).
+    pub name: &'static str,
+    /// Entity type the action/function is bound to (`Person`), `None` when unbound.
+    pub binding: Option<&'static str>,
+    /// Bound to the collection (`Collection(SigningKey)`) rather than one entity.
+    pub binding_collection: bool,
+    pub params: Vec<ODataParam>,
+    /// `None` for an action without a result (answers 204).
+    pub return_type: Option<&'static str>,
+}
+
+const fn p(name: &'static str, edm_type: &'static str, nullable: bool) -> ODataParam {
+    ODataParam {
+        name,
+        edm_type,
+        nullable,
+    }
+}
+
+fn bound(
+    kind: ODataKind,
+    name: &'static str,
+    binding: &'static str,
+    params: Vec<ODataParam>,
+    return_type: Option<&'static str>,
+) -> ODataOperation {
+    ODataOperation {
+        kind,
+        name,
+        binding: Some(binding),
+        binding_collection: false,
+        params,
+        return_type,
+    }
+}
+
+/// The OData face of each non-list registry operation (W5).
+fn odata_for(name: &str) -> ODataOperation {
+    use ODataKind::{Action as A, EntitySetWrite, Function as F};
+    const U: Option<&str> = Some("Edm.Untyped");
+    match name {
+        "realm_apply" => bound(
+            A,
+            "Apply",
+            "Realm",
+            vec![
+                p("configuration", "Edm.Untyped", false),
+                p("dryRun", "Edm.Boolean", true),
+                p("prune", "Edm.Boolean", true),
+            ],
+            U,
+        ),
+        "realm_export" => bound(
+            F,
+            "Export",
+            "Realm",
+            vec![p("withUsers", "Edm.Boolean", true)],
+            U,
+        ),
+        "member_add" => bound(
+            A,
+            "AddToGroup",
+            "Person",
+            vec![p("groupId", "Edm.String", false)],
+            None,
+        ),
+        "role_map" => bound(
+            A,
+            "MapClientRoles",
+            "Person",
+            vec![
+                p("clientUuid", "Edm.String", false),
+                p("roles", "Collection(Edm.String)", false),
+            ],
+            None,
+        ),
+        "credential_reset" => bound(
+            A,
+            "ResetCredentials",
+            "Person",
+            vec![
+                p("value", "Edm.String", false),
+                p("temporary", "Edm.Boolean", true),
+            ],
+            None,
+        ),
+        "send_required_actions" => bound(
+            A,
+            "SendRequiredActions",
+            "Person",
+            vec![p("actions", "Collection(Edm.String)", false)],
+            None,
+        ),
+        "session_revoke" => bound(A, "RevokeSessions", "Person", Vec::new(), None),
+        "keys_rotate" => ODataOperation {
+            kind: A,
+            name: "Rotate",
+            binding: Some("SigningKey"),
+            binding_collection: true,
+            params: vec![
+                p("algorithm", "Edm.String", true),
+                p("immediate", "Edm.Boolean", true),
+            ],
+            return_type: U,
+        },
+        "domain_verify" => bound(A, "Verify", "OrganizationDomain", Vec::new(), U),
+        "totp_enrol" => bound(
+            A,
+            "EnrolTotp",
+            "Person",
+            vec![
+                p("secret", "Edm.String", true),
+                p("code", "Edm.String", true),
+            ],
+            U,
+        ),
+        "passkey_register" => bound(
+            A,
+            "RegisterPasskey",
+            "Person",
+            vec![p("credential", "Edm.Untyped", false)],
+            U,
+        ),
+        "recovery_codes_generate" => bound(
+            A,
+            "GenerateRecoveryCodes",
+            "Person",
+            Vec::new(),
+            Some("Collection(Edm.String)"),
+        ),
+        "consent_revoke" => bound(A, "Revoke", "Consent", Vec::new(), None),
+        "allowed" => ODataOperation {
+            kind: F,
+            name: "Allowed",
+            binding: None,
+            binding_collection: false,
+            params: vec![
+                p("operation", "Edm.String", false),
+                p("object", "Edm.String", true),
+            ],
+            return_type: U,
+        },
+        // person_create / person_update / person_delete: writes on the People set.
+        _ => ODataOperation {
+            kind: EntitySetWrite,
+            name: "People",
+            binding: None,
+            binding_collection: false,
+            params: Vec::new(),
+            return_type: None,
+        },
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationDef {
@@ -20,6 +204,7 @@ pub struct OperationDef {
     pub keycloak_compat_path: Option<&'static str>,
     pub input_schema: Value,
     pub output_schema: Value,
+    pub odata: ODataOperation,
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +279,14 @@ impl OperationRegistry {
                     &["realm"],
                 ),
                 output_schema: json!({ "type": "object" }),
+                odata: ODataOperation {
+                    kind: ODataKind::EntitySetRead,
+                    name: set,
+                    binding: None,
+                    binding_collection: false,
+                    params: Vec::new(),
+                    return_type: None,
+                },
             });
         }
 
@@ -320,6 +513,7 @@ impl OperationRegistry {
                     &["realm"],
                 ),
                 output_schema: json!({ "type": "object" }),
+                odata: odata_for(name),
             });
         }
 
@@ -332,5 +526,16 @@ impl OperationRegistry {
 
     pub fn find(&self, name: &str) -> Option<&OperationDef> {
         self.ops.iter().find(|op| op.name == name)
+    }
+
+    /// The bound or unbound action/function called `odata_name` (qualified or not) on
+    /// `binding` (`None` for unbound), as the OData router resolves a URL segment.
+    pub fn find_odata(&self, odata_name: &str, binding: Option<&str>) -> Option<&OperationDef> {
+        let short = odata_name.rsplit('.').next().unwrap_or(odata_name);
+        self.ops.iter().find(|op| {
+            matches!(op.odata.kind, ODataKind::Action | ODataKind::Function)
+                && op.odata.name == short
+                && op.odata.binding == binding
+        })
     }
 }

@@ -9,7 +9,6 @@ wardkeep-core = { path = "../core" }
 wardkeep-admin = { path = "../admin" }
 wardkeep-oidc = { path = "../oidc" }
 jc-router = { path = "../../shared/jc-router" }
-odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table" }
 axum = { version = "0.8", features = ["json"] }
 http = "1.5"
 serde = { version = "1.0", features = ["derive"] }
