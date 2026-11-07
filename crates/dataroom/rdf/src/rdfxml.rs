@@ -7,11 +7,21 @@ use dataroom_core::{DataroomError, Result};
 use oxrdfxml::RdfXmlParser;
 use std::collections::BTreeMap;
 
-/// Checks XML element nesting depth before parsing so deeply nested RDF/XML trees are refused (A1).
+/// Most attributes one RDF/XML tag may carry. quick-xml 0.37 (under oxrdfxml, no fixed release
+/// yet) checks duplicate attribute names in quadratic time (RUSTSEC-2026-0194).
+pub const MAX_XML_ATTRIBUTES_PER_TAG: usize = 128;
+
+/// Most namespace declarations one RDF/XML document may carry: quick-xml 0.37 allocates for
+/// each without a bound (RUSTSEC-2026-0195).
+pub const MAX_XML_NAMESPACE_DECLARATIONS: usize = 1024;
+
+/// Checks XML element nesting depth, attributes per tag and namespace declarations before
+/// parsing, so a document that would exhaust the parser is refused (A1).
 fn check_xml_nesting_depth(bytes: &[u8], max_depth: usize) -> Result<()> {
     let text = std::str::from_utf8(bytes)
         .map_err(|e| DataroomError::Rdf(format!("invalid UTF-8 in RDF/XML: {e}")))?;
     let mut depth = 0usize;
+    let mut namespace_declarations = 0usize;
     let mut rest = text;
     while let Some(lt) = rest.find('<') {
         rest = &rest[lt + 1..];
@@ -33,6 +43,24 @@ fn check_xml_nesting_depth(bytes: &[u8], max_depth: usize) -> Result<()> {
             break;
         };
         let tag_body = rest[..gt].trim();
+        let attributes = tag_body.matches("=\"").count() + tag_body.matches("='").count();
+        if attributes > MAX_XML_ATTRIBUTES_PER_TAG {
+            return Err(DataroomError::RdfLimitExceeded {
+                kind: "attributes".into(),
+                message: format!(
+                    "RDF/XML tag with {attributes} attributes exceeds maximum of {MAX_XML_ATTRIBUTES_PER_TAG}"
+                ),
+            });
+        }
+        namespace_declarations += tag_body.matches("xmlns").count();
+        if namespace_declarations > MAX_XML_NAMESPACE_DECLARATIONS {
+            return Err(DataroomError::RdfLimitExceeded {
+                kind: "namespaces".into(),
+                message: format!(
+                    "RDF/XML declares more than {MAX_XML_NAMESPACE_DECLARATIONS} namespaces"
+                ),
+            });
+        }
         if tag_body.starts_with('/') {
             depth = depth.saturating_sub(1);
         } else if !tag_body.ends_with('/') {
@@ -190,4 +218,40 @@ fn xml_escape(s: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a1_rdfxml_refuses_attribute_and_namespace_floods() {
+        let attrs: String = (0..=MAX_XML_ATTRIBUTES_PER_TAG)
+            .map(|i| format!(" a{i}=\"x\""))
+            .collect();
+        let doc = format!(
+            "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description{attrs}/></rdf:RDF>"
+        );
+        let err = parse_rdfxml_bytes(doc.as_bytes(), &RdfLimits::default()).unwrap_err();
+        assert!(
+            matches!(&err, DataroomError::RdfLimitExceeded { kind, .. } if kind == "attributes"),
+            "{err:?}"
+        );
+
+        let decls: String = (0..=MAX_XML_NAMESPACE_DECLARATIONS)
+            .map(|i| format!("<x:e{i} xmlns:x=\"http://example.org/{i}#\"/>"))
+            .collect();
+        let doc = format!(
+            "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">{decls}</rdf:RDF>"
+        );
+        let err = parse_rdfxml_bytes(doc.as_bytes(), &RdfLimits::default()).unwrap_err();
+        assert!(
+            matches!(&err, DataroomError::RdfLimitExceeded { kind, .. } if kind == "namespaces"),
+            "{err:?}"
+        );
+
+        let ok = r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dct="http://purl.org/dc/terms/"><rdf:Description rdf:about="https://example.org/ds"><dct:title>A</dct:title></rdf:Description></rdf:RDF>"#;
+        let graph = parse_rdfxml_bytes(ok.as_bytes(), &RdfLimits::default()).unwrap();
+        assert!(!graph.is_empty());
+    }
 }
