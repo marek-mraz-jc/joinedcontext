@@ -1360,3 +1360,165 @@ impl Store for PgStore {
         Box::pin(std::future::ready(res))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dataroom_core::{
+        Catalogue, CatalogueId, OrgId, Publisher, RecordState, RequestCtx, Store, Subject,
+        ThemeTokens, Visibility,
+    };
+    use std::collections::BTreeMap;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn a6_postgres_rls_tenant_isolation_and_boot_check() {
+        let Some(db_url) = std::env::var("DATAROOM_TEST_DATABASE_URL")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+        else {
+            println!("SKIP a6_postgres_rls_tenant_isolation_and_boot_check: DATAROOM_TEST_DATABASE_URL is unset");
+            return;
+        };
+
+        let admin_pool = PgPool::connect(&db_url).await.expect("connect test db");
+        let mig_store = PgStore::from_pool_unchecked(admin_pool.clone());
+        mig_store.migrate().await.expect("migrate dataroom schema");
+
+        // Test boot check refusal when a table lacks forced RLS (C1, A6)
+        sqlx::query("ALTER TABLE dataroom.cat_plugin NO FORCE ROW LEVEL SECURITY")
+            .execute(&admin_pool)
+            .await
+            .expect("disable force rls temporarily");
+        let refused = PgStore::connect_and_verify(admin_pool.clone()).await;
+        assert!(
+            refused.is_err(),
+            "boot check must refuse when a table lacks forced RLS"
+        );
+        sqlx::query("ALTER TABLE dataroom.cat_plugin FORCE ROW LEVEL SECURITY")
+            .execute(&admin_pool)
+            .await
+            .expect("restore force rls");
+
+        // Create or ensure a non-superuser, non-BYPASSRLS request role for testing RLS isolation
+        let _ = sqlx::query(
+            "DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'dataroom_app_test') THEN
+                    CREATE ROLE dataroom_app_test NOLOGIN NOSUPERUSER NOBYPASSRLS;
+                END IF;
+            END $$;",
+        )
+        .execute(&admin_pool)
+        .await;
+        let _ = sqlx::query("GRANT USAGE ON SCHEMA dataroom TO dataroom_app_test")
+            .execute(&admin_pool)
+            .await;
+        let _ = sqlx::query(
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA dataroom TO dataroom_app_test",
+        )
+        .execute(&admin_pool)
+        .await;
+
+        let store = PgStore::from_pool_unchecked(admin_pool.clone());
+        let org_a = OrgId::from_uuid(Uuid::now_v7());
+        let cat_a = CatalogueId::from_uuid(Uuid::now_v7());
+        let org_b = OrgId::from_uuid(Uuid::now_v7());
+        let cat_b = CatalogueId::from_uuid(Uuid::now_v7());
+
+        for (org, cat, host) in [
+            (org_a, cat_a, format!("a-{}.example.org", Uuid::now_v7().simple())),
+            (org_b, cat_b, format!("b-{}.example.org", Uuid::now_v7().simple())),
+        ] {
+            store
+                .upsert_catalogue(Catalogue {
+                    org_id: org,
+branding: None,
+                    hidden_datasets: Default::default(),
+                    id: cat,
+                    name: "shared".into(),
+                    host,
+                    title: BTreeMap::from([("sk".into(), "Cat".into())]),
+                    description: BTreeMap::new(),
+                    homepage: None,
+                    default_language: "sk".into(),
+                    languages: vec!["sk".into()],
+                    main_profile: "dcat-ap-3.0.1".into(),
+                    active_profiles: Vec::new(),
+                    default_licence: Some("cc-by".into()),
+                    publisher_uri: None,
+                    publisher_name: None,
+                    contact_point: None,
+                    theme: ThemeTokens::default(),
+                    allow_cross_org_harvest: true,
+                    allowed_outbound_hosts: Vec::new(),
+                    applicable_legislation: Vec::new(),
+                    modified: Utc::now(),
+                })
+                .await
+                .expect("upsert catalogue");
+        }
+
+        let ctx_a = RequestCtx::new(
+            org_a,
+            cat_a,
+            Subject::authenticated("alice", vec![org_a], Vec::new()),
+        );
+        let ctx_b = RequestCtx::new(
+            org_b,
+            cat_b,
+            Subject::authenticated("bob", vec![org_b], Vec::new()),
+        );
+
+        store
+            .upsert_publisher(
+                &ctx_b,
+                Publisher {
+                    org_id: org_b,
+badge_initials: None,
+                    badge_colour: None,
+                    declared_by_instance: None,
+                    catalogue_id: cat_b,
+                    id: "pub-b".into(),
+                    name: "city-b".into(),
+                    title: BTreeMap::from([("sk".into(), "City B".into())]),
+                    description: BTreeMap::new(),
+                    uri: "https://b.example.org/org".into(),
+                    publisher_type: None,
+                    identifier: None,
+                    email: None,
+                    homepage: None,
+                    logo_url: None,
+                    contact_point: None,
+                    state: RecordState::Active,
+                    merged_into: None,
+                    editor_grants: Vec::new(),
+                    created: Utc::now(),
+                    modified: Utc::now(),
+                },
+            )
+            .await
+            .expect("upsert pub b");
+
+        // Verify as non-BYPASSRLS role `dataroom_app_test` that org A cannot see org B rows
+        let mut tx = admin_pool.begin().await.expect("begin tx");
+        sqlx::query("SET LOCAL ROLE dataroom_app_test")
+            .execute(&mut *tx)
+            .await
+            .expect("set role dataroom_app_test");
+        set_tenant_config(&mut tx, org_a, Some(cat_a))
+            .await
+            .expect("set tenant config A");
+
+        let count_b_from_a: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM dataroom.cat_publisher")
+                .fetch_one(&mut *tx)
+                .await
+                .expect("count publishers as A");
+        assert_eq!(count_b_from_a.0, 0, "RLS must hide org B rows from org A");
+        tx.rollback().await.ok();
+
+        assert!(store.get_publisher(&ctx_a, "city-b").await.unwrap().is_none());
+        let _ = Visibility::Internal;
+    }
+}

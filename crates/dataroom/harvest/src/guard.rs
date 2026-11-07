@@ -8,6 +8,18 @@ use url::Url;
 /// Maximum response body size read by a harvester (`32 MiB`, matching `ours/deployment/harvest-hub.py`).
 pub const MAX_HARVEST_BYTES: usize = 32 * 1024 * 1024;
 
+/// Maximum redirect hops followed during an outbound harvest fetch (A2).
+pub const MAX_REDIRECT_HOPS: usize = 5;
+
+///Validated outbound target with its pinned socket addresses so the HTTP connection uses the
+/// exact DNS answer that passed the SSRF check (A2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedTarget {
+    pub url: Url,
+    pub host: String,
+    pub pinned_addrs: Vec< std::net::SocketAddr>,
+}
+
 /// Returns `true` when `ip` is loopback, private RFC 1918, link-local, cloud metadata, CGNAT,
 /// unique local, multicast, broadcast, or unspecified.
 pub fn is_private_or_internal_ip(ip: IpAddr) -> bool {
@@ -124,18 +136,81 @@ pub fn validate_outbound_url(
     }
 
     if resolve_dns {
-        let port = parsed.port_or_known_default().unwrap_or(443);
-        if let Ok(addrs) = (host_lower.as_str(), port).to_socket_addrs() {
-            for sock in addrs {
-                if is_private_or_internal_ip(sock.ip()) {
-                    return Err(DataroomError::OutboundRefused(format!(
-                        "host '{host_str}' resolved to internal address {}",
-                        sock.ip()
-                    )));
-                }
-            }
-        }
+        let _ = resolve_and_validate_host(&host_lower, parsed.port_or_known_default().unwrap_or(443))?;
     }
 
     Ok(parsed)
+}
+
+/// Resolves a host name via the system resolver and verifies that at least one address is returned
+/// and every returned address is a public IP (not private, loopback, link-local, CGNAT, or metadata).
+pub fn resolve_and_validate_host(
+    host: &str,
+    port: u16,
+) -> Result<Vec<std::net::SocketAddr>> {
+    let addrs: Vec<std::net::SocketAddr> = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| {
+            DataroomError::OutboundRefused(format!("DNS resolution failed for '{host}': {e}"))
+        })?
+        .collect();
+    if addrs.is_empty() {
+        return Err(DataroomError::OutboundRefused(format!(
+            "DNS resolution for '{host}' returned no addresses"
+        )));
+    }
+    for sock in &addrs {
+        if is_private_or_internal_ip(sock.ip()) {
+            return Err(DataroomError::OutboundRefused(format!(
+                "host '{host}' resolved to internal address {}",
+                sock.ip()
+            )));
+        }
+    }
+    Ok(addrs)
+}
+
+/// Validates an outbound URL and returns a [`ValidatedTarget`] with pinned DNS addresses (A2).
+pub fn validate_and_pin_url(
+    raw_url: &str,
+    allowed_hosts: &[String],
+    catalogue_allowed_hosts: &[String],
+    resolve_dns: bool,
+    custom_resolver: Option<&dyn Fn(&str, u16) -> Result<Vec<std::net::SocketAddr>>>,
+) -> Result<ValidatedTarget> {
+    let parsed = validate_outbound_url(raw_url, allowed_hosts, catalogue_allowed_hosts, false)?;
+    let host = parsed
+        .host_str()
+        .unwrap_or("")
+        .trim_matches(|c| c == '[' || c == ']')
+        .to_ascii_lowercase();
+    let port = parsed.port_or_known_default().unwrap_or(443);
+
+    let pinned_addrs = if let Some(resolver) = custom_resolver {
+        let addrs = resolver(&host, port)?;
+        if addrs.is_empty() {
+            return Err(DataroomError::OutboundRefused(format!(
+                "DNS resolution for '{host}' returned no addresses"
+            )));
+        }
+        for sock in &addrs {
+            if is_private_or_internal_ip(sock.ip()) {
+                return Err(DataroomError::OutboundRefused(format!(
+                    "host '{host}' resolved to internal address {}",
+                    sock.ip()
+                )));
+            }
+        }
+        addrs
+    } else if resolve_dns {
+        resolve_and_validate_host(&host, port)?
+    } else {
+        Vec::new()
+    };
+
+    Ok(ValidatedTarget {
+        url: parsed,
+        host,
+        pinned_addrs,
+    })
 }

@@ -236,7 +236,18 @@ async fn dispatch_ckan_action(
                 .ok()
                 .flatten();
             let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
-            // Anonymous callers cannot see withdrawn datasets or datasets of withdrawn publishers.
+            // Anonymous callers cannot see withdrawn datasets or datasets of withdrawn publishers,
+            // nor hidden datasets (`jc_hide` / `after_dataset_show` in `plugin.py` line 2849, D2, G2).
+            if cat.hidden_datasets.contains_key(&ds.name) {
+                let can_update = !ctx.subject.is_anonymous()
+                    && state
+                        .authorizer
+                        .check(&ctx, Action::Propose, &target)
+                        .allowed;
+                if !can_update {
+                    return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
+                }
+            }
             if ctx.subject.is_anonymous()
                 && (ds.state != RecordState::Active
                     || pub_rec
@@ -317,10 +328,30 @@ async fn dispatch_ckan_action(
                 .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p.clone())])
                 .collect();
 
+            // Enforce `jc_hide` on `package_search`: hidden packages are hidden from anonymous callers
+            // and visible to editors of the dataset's publisher (`plugin.py` lines 168-197, D2, G2).
+            let visible_datasets: Vec<dataroom_core::Dataset> = datasets
+                .into_iter()
+                .filter(|ds| {
+                    if !cat.hidden_datasets.contains_key(&ds.name) {
+                        return true;
+                    }
+                    if ctx.subject.is_anonymous() {
+                        return false;
+                    }
+                    let pub_rec = pub_map.get(&ds.publisher_id);
+                    let target = ObjectTarget::from_dataset(ds, pub_rec);
+                    state
+                        .authorizer
+                        .check(&ctx, Action::Propose, &target)
+                        .allowed
+                })
+                .collect();
+
             let outcome = match search_datasets(
                 &ctx,
                 state.authorizer.as_ref(),
-                &datasets,
+                &visible_datasets,
                 &publishers,
                 &filter,
                 &cat.default_language,
@@ -997,6 +1028,9 @@ async fn dispatch_ckan_action(
                             .collect()
                     })
                     .unwrap_or_default(),
+                badge_initials: None,
+                badge_colour: None,
+                declared_by_instance: ctx.subject.client_id.clone(),
                 created: now,
                 modified: now,
             };
@@ -1039,9 +1073,25 @@ async fn dispatch_ckan_action(
                 return ckan_err(&base, &action, DataroomError::Forbidden(dec.reason));
             }
             if let Some(title) = payload.get("title").and_then(Value::as_str) {
-                existing
-                    .title
-                    .insert(cat.default_language.clone(), title.to_owned());
+                // G2: an organization's title comes from the CkanInstance title, and one instance
+                // never renames another's organization.
+                let caller_instance = payload
+                    .get("instance_name")
+                    .and_then(Value::as_str)
+                    .or(ctx.subject.client_id.as_deref());
+                let can_rename = match (&existing.declared_by_instance, caller_instance) {
+                    (Some(owner_inst), Some(caller_inst)) => owner_inst == caller_inst,
+                    (None, Some(caller_inst)) => {
+                        existing.declared_by_instance = Some(caller_inst.to_owned());
+                        true
+                    }
+                    _ => true,
+                };
+                if can_rename {
+                    existing
+                        .title
+                        .insert(cat.default_language.clone(), title.to_owned());
+                }
             }
             if let Some(desc) = payload
                 .get("description")

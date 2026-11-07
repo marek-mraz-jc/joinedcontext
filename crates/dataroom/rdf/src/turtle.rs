@@ -1,604 +1,189 @@
 #![forbid(unsafe_code)]
-//! Turtle (`.ttl`) and N-Triples (`.nt`) parser and serializer with resource limits.
+//! Turtle (`.ttl`) and N-Triples (`.nt`) parser (backed by `oxttl`) and serializer with
+//! streaming resource limits (A1).
 
 use crate::graph::{ns, LiteralValue, RdfGraph, RdfLimits, SubjectNode, Term, Triple};
 use dataroom_core::{DataroomError, Result};
-use std::collections::{BTreeMap, BTreeSet};
+use oxttl::{NTriplesParser, TurtleParser};
+use std::collections::BTreeMap;
 
-/// Parses a Turtle or N-Triples document into an [`RdfGraph`], enforcing [`RdfLimits`].
+/// Checks Turtle / N-Triples bracket and collection nesting depth (`[ ... ]`, `( ... )`) before
+/// or during parsing so deeply nested blank-node lists are refused (A1).
+pub fn check_turtle_nesting_depth(bytes: &[u8], max_depth: usize) -> Result<()> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut in_long_string = false;
+    let mut string_delim = b'"';
+    let mut in_iri = false;
+    let mut in_comment = false;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_comment {
+            if b == b'\n' {
+                in_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_long_string {
+            if b == b'\\' {
+                i += 2;
+                continue;
+            }
+            if i + 2 < bytes.len()
+                && bytes[i] == string_delim
+                && bytes[i + 1] == string_delim
+                && bytes[i + 2] == string_delim
+            {
+                in_long_string = false;
+                i += 3;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if in_string {
+            if b == b'\\' {
+                i += 2;
+                continue;
+            }
+            if b == string_delim {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_iri {
+            if b == b'>' {
+                in_iri = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        match b {
+            b'#' => {
+                in_comment = true;
+            }
+            b'<' => {
+                in_iri = true;
+            }
+            b'"' | b'\'' => {
+                string_delim = b;
+                if i + 2 < bytes.len() && bytes[i + 1] == b && bytes[i + 2] == b {
+                    in_long_string = true;
+                    i += 3;
+                    continue;
+                }
+                in_string = true;
+            }
+            b'[' | b'(' => {
+                depth += 1;
+                if depth > max_depth {
+                    return Err(DataroomError::RdfLimitExceeded {
+                        kind: "nesting-depth".into(),
+                        message: format!(
+                            "Turtle nesting depth {depth} exceeds maximum of {max_depth}"
+                        ),
+                    });
+                }
+            }
+            b']' | b')' => {
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Ok(())
+}
+
+/// Converts an `oxrdf::Triple` into a `dataroom_rdf::Triple`.
+pub(crate) fn from_ox_triple(t: oxrdf::Triple) -> Triple {
+    let subject = match t.subject {
+        oxrdf::Subject::NamedNode(n) => SubjectNode::Named(n.into_string()),
+        oxrdf::Subject::BlankNode(b) => SubjectNode::Blank(b.into_string()),
+    };
+    let predicate = t.predicate.into_string();
+    let object = match t.object {
+        oxrdf::Term::NamedNode(n) => Term::Iri(n.into_string()),
+        oxrdf::Term::BlankNode(b) => Term::Blank(b.into_string()),
+        oxrdf::Term::Literal(lit) => {
+            let (value, datatype, language) = lit.destruct();
+            if let Some(lang) = language {
+                Term::Literal(LiteralValue::lang(value, lang))
+            } else if let Some(dt) = datatype {
+                Term::Literal(LiteralValue::typed(value, dt.into_string()))
+            } else {
+                Term::Literal(LiteralValue::plain(value))
+            }
+        }
+    };
+    Triple {
+        subject,
+        predicate,
+        object,
+    }
+}
+
+/// Parses a Turtle document using `oxttl::TurtleParser`, enforcing [`RdfLimits`] on bytes,
+/// nesting depth, literal length and triple count while parsing (refuse, never truncate, A1).
+pub fn parse_turtle_bytes(bytes: &[u8], limits: &RdfLimits) -> Result<RdfGraph> {
+    if bytes.len() > limits.max_bytes {
+        return Err(DataroomError::RdfLimitExceeded {
+            kind: "bytes".into(),
+            message: format!(
+                "RDF input size {} exceeds maximum of {} bytes",
+                bytes.len(),
+                limits.max_bytes
+            ),
+        });
+    }
+    check_turtle_nesting_depth(bytes, limits.max_depth)?;
+
+    let parser = TurtleParser::new()
+        .with_base_iri("https://dataroom.local/")
+        .map_err(|e| DataroomError::Rdf(format!("base IRI error: {e}")))?;
+
+    let mut graph = RdfGraph::new();
+    for item in parser.for_slice(bytes) {
+        let ox_triple = item.map_err(|e| DataroomError::Rdf(format!("Turtle syntax error: {e}")))?;
+        graph.insert_checked(from_ox_triple(ox_triple), limits)?;
+    }
+    Ok(graph)
+}
+
+/// Parses an N-Triples document using `oxttl::NTriplesParser`, enforcing [`RdfLimits`] (A1).
+pub fn parse_ntriples_bytes(bytes: &[u8], limits: &RdfLimits) -> Result<RdfGraph> {
+    if bytes.len() > limits.max_bytes {
+        return Err(DataroomError::RdfLimitExceeded {
+            kind: "bytes".into(),
+            message: format!(
+                "RDF input size {} exceeds maximum of {} bytes",
+                bytes.len(),
+                limits.max_bytes
+            ),
+        });
+    }
+    let mut graph = RdfGraph::new();
+    for item in NTriplesParser::new().for_slice(bytes) {
+        let ox_triple =
+            item.map_err(|e| DataroomError::Rdf(format!("N-Triples syntax error: {e}")))?;
+        graph.insert_checked(from_ox_triple(ox_triple), limits)?;
+    }
+    Ok(graph)
+}
+
+/// Parses a Turtle string into an [`RdfGraph`], enforcing [`RdfLimits`].
 pub fn parse_turtle(input: &str, limits: &RdfLimits) -> Result<RdfGraph> {
-    if input.len() > limits.max_bytes {
-        return Err(DataroomError::Rdf(format!(
-            "RDF input size {} exceeds limit of {} bytes",
-            input.len(),
-            limits.max_bytes
-        )));
-    }
-    let mut parser = TurtleParser::new(input, *limits);
-    parser.parse_document()?;
-    Ok(parser.graph)
+    parse_turtle_bytes(input.as_bytes(), limits)
 }
 
-struct TurtleParser<'a> {
-    chars: Vec<char>,
-    pos: usize,
-    prefixes: BTreeMap<String, String>,
-    base: Option<String>,
-    graph: RdfGraph,
-    limits: RdfLimits,
-    depth: usize,
-    _marker: &'a str,
-}
-
-impl<'a> TurtleParser<'a> {
-    fn new(input: &'a str, limits: RdfLimits) -> Self {
-        Self {
-            chars: input.chars().collect(),
-            pos: 0,
-            prefixes: BTreeMap::new(),
-            base: None,
-            graph: RdfGraph::new(),
-            limits,
-            depth: 0,
-            _marker: input,
-        }
-    }
-
-    fn peek(&self) -> Option<char> {
-        self.chars.get(self.pos).copied()
-    }
-
-    fn peek_at(&self, offset: usize) -> Option<char> {
-        self.chars.get(self.pos + offset).copied()
-    }
-
-    fn next_char(&mut self) -> Option<char> {
-        let c = self.peek()?;
-        self.pos += 1;
-        Some(c)
-    }
-
-    fn skip_ws_and_comments(&mut self) {
-        while let Some(c) = self.peek() {
-            if c.is_whitespace() {
-                self.pos += 1;
-            } else if c == '#' {
-                while let Some(ch) = self.next_char() {
-                    if ch == '\n' {
-                        break;
-                    }
-                }
-            } else {
-                break;
-            }
-        }
-    }
-
-    fn starts_with_ci(&self, word: &str) -> bool {
-        let len = word.chars().count();
-        if self.pos + len > self.chars.len() {
-            return false;
-        }
-        self.chars[self.pos..self.pos + len]
-            .iter()
-            .zip(word.chars())
-            .all(|(a, b)| a.eq_ignore_ascii_case(&b))
-    }
-
-    fn parse_document(&mut self) -> Result<()> {
-        loop {
-            self.skip_ws_and_comments();
-            if self.peek().is_none() {
-                break;
-            }
-            if self.starts_with_ci("@prefix") {
-                self.pos += 7;
-                self.skip_ws_and_comments();
-                let prefix = self.read_prefix_label()?;
-                self.skip_ws_and_comments();
-                let iri = self.read_iri_ref()?;
-                self.skip_ws_and_comments();
-                self.expect_char('.')?;
-            } else if self.starts_with_ci("@base") {
-                self.pos += 5;
-                self.skip_ws_and_comments();
-                let iri = self.read_iri_ref()?;
-                self.base = Some(iri);
-                self.skip_ws_and_comments();
-                self.expect_char('.')?;
-            } else if self.starts_with_ci("PREFIX")
-                && self.peek_at(6).is_some_and(char::is_whitespace)
-            {
-                self.pos += 6;
-                self.skip_ws_and_comments();
-                let prefix = self.read_prefix_label()?;
-                self.skip_ws_and_comments();
-                let iri = self.read_iri_ref()?;
-                self.prefixes.insert(prefix, iri);
-            } else if self.starts_with_ci("BASE")
-                && self.peek_at(4).is_some_and(char::is_whitespace)
-            {
-                self.pos += 4;
-                self.skip_ws_and_comments();
-                let iri = self.read_iri_ref()?;
-                self.base = Some(iri);
-            } else {
-                self.parse_triples_statement()?;
-            }
-        }
-        Ok(())
-    }
-
-    fn expect_char(&mut self, expected: char) -> Result<()> {
-        match self.next_char() {
-            Some(c) if c == expected => Ok(()),
-            other => Err(DataroomError::Rdf(format!(
-                "expected '{expected}' at position {}, got {other:?}",
-                self.pos
-            ))),
-        }
-    }
-
-    fn read_prefix_label(&mut self) -> Result<String> {
-        let mut label = String::new();
-        while let Some(c) = self.peek() {
-            self.pos += 1;
-            if c == ':' {
-                return Ok(label.trim().to_owned());
-            }
-            if c.is_whitespace() {
-                return Err(DataroomError::Rdf(
-                    "unexpected whitespace in prefix declaration".into(),
-                ));
-            }
-            label.push(c);
-        }
-        Err(DataroomError::Rdf("unterminated prefix label".into()))
-    }
-
-    fn read_iri_ref(&mut self) -> Result<String> {
-        self.expect_char('<')?;
-        let mut iri = String::new();
-        while let Some(c) = self.next_char() {
-            if c == '>' {
-                if let Some(base) = &self.base {
-                    if !iri.contains("://") && !iri.starts_with("mailto:") {
-                        if iri.starts_with('#') {
-                            return Ok(format!("{base}{iri}"));
-                        }
-                    }
-                }
-                return Ok(iri);
-            }
-            iri.push(c);
-        }
-        Err(DataroomError::Rdf("unterminated <IRI>".into()))
-    }
-
-    fn parse_triples_statement(&mut self) -> Result<()> {
-        self.skip_ws_and_comments();
-        let subject = if self.peek() == Some('[') {
-            let bnode = self.parse_blank_node_property_list()?;
-            self.skip_ws_and_comments();
-            if self.peek() == Some('.') {
-                self.pos += 1;
-                return Ok(());
-            }
-            bnode
-        } else {
-            let term = self.parse_term()?;
-            term.as_subject()
-                .ok_or_else(|| DataroomError::Rdf("literal cannot be a triple subject".into()))?
-        };
-        self.parse_predicate_object_list(&subject)?;
-        self.skip_ws_and_comments();
-        self.expect_char('.')?;
-        Ok(())
-    }
-
-    fn parse_predicate_object_list(&mut self, subject: &SubjectNode) -> Result<()> {
-        loop {
-            self.skip_ws_and_comments();
-            if matches!(self.peek(), Some('.' | ']' | ')') | None) {
-                break;
-            }
-            let predicate = self.parse_predicate()?;
-            self.parse_object_list(subject, &predicate)?;
-            self.skip_ws_and_comments();
-            if self.peek() == Some(';') {
-                while self.peek() == Some(';') {
-                    self.pos += 1;
-                    self.skip_ws_and_comments();
-                }
-            } else {
-                break;
-            }
-        }
-        Ok(())
-    }
-
-    fn parse_predicate(&mut self) -> Result<String> {
-        self.skip_ws_and_comments();
-        if self.peek() == Some('a')
-            && self
-                .peek_at(1)
-                .is_none_or(|c| c.is_whitespace() || matches!(c, '<' | '[' | '"' | '\''))
-        {
-            self.pos += 1;
-            return Ok(ns::RDF_TYPE.to_owned());
-        }
-        let term = self.parse_term()?;
-        match term {
-            Term::Iri(iri) => Ok(iri),
-            _ => Err(DataroomError::Rdf("predicate must be an IRI".into())),
-        }
-    }
-
-    fn parse_object_list(&mut self, subject: &SubjectNode, predicate: &str) -> Result<()> {
-        loop {
-            self.skip_ws_and_comments();
-            let object = self.parse_term()?;
-            self.graph.insert_checked(
-                Triple {
-                    subject: subject.clone(),
-                    predicate: predicate.to_owned(),
-                    object,
-                },
-                &self.limits,
-            )?;
-            self.skip_ws_and_comments();
-            if self.peek() == Some(',') {
-                self.pos += 1;
-            } else {
-                break;
-            }
-        }
-        Ok(())
-    }
-
-    fn parse_blank_node_property_list(&mut self) -> Result<SubjectNode> {
-        self.depth += 1;
-        if self.depth > self.limits.max_depth {
-            return Err(DataroomError::Rdf(format!(
-                "RDF blank node nesting exceeded maximum depth of {}",
-                self.limits.max_depth
-            )));
-        }
-        self.expect_char('[')?;
-        self.skip_ws_and_comments();
-        let bnode = self.graph.fresh_blank_node();
-        if self.peek() == Some(']') {
-            self.pos += 1;
-            self.depth -= 1;
-            return Ok(bnode);
-        }
-        self.parse_predicate_object_list(&bnode)?;
-        self.skip_ws_and_comments();
-        self.expect_char(']')?;
-        self.depth -= 1;
-        Ok(bnode)
-    }
-
-    fn parse_collection(&mut self) -> Result<Term> {
-        self.depth += 1;
-        if self.depth > self.limits.max_depth {
-            return Err(DataroomError::Rdf(format!(
-                "RDF collection nesting exceeded maximum depth of {}",
-                self.limits.max_depth
-            )));
-        }
-        self.expect_char('(')?;
-        let mut items = Vec::new();
-        loop {
-            self.skip_ws_and_comments();
-            if self.peek() == Some(')') {
-                self.pos += 1;
-                break;
-            }
-            if self.peek().is_none() {
-                return Err(DataroomError::Rdf("unterminated RDF collection '('".into()));
-            }
-            items.push(self.parse_term()?);
-        }
-        self.depth -= 1;
-        if items.is_empty() {
-            return Ok(Term::Iri(ns::RDF_NIL.to_owned()));
-        }
-        let mut head: Option<SubjectNode> = None;
-        let mut prev: Option<SubjectNode> = None;
-        for item in items {
-            let node = self.graph.fresh_blank_node();
-            if head.is_none() {
-                head = Some(node.clone());
-            }
-            if let Some(p) = prev {
-                self.graph.insert_checked(
-                    Triple {
-                        subject: p,
-                        predicate: ns::RDF_REST.to_owned(),
-                        object: node.to_term(),
-                    },
-                    &self.limits,
-                )?;
-            }
-            self.graph.insert_checked(
-                Triple {
-                    subject: node.clone(),
-                    predicate: ns::RDF_FIRST.to_owned(),
-                    object: item,
-                },
-                &self.limits,
-            )?;
-            prev = Some(node);
-        }
-        if let Some(last) = prev {
-            self.graph.insert_checked(
-                Triple {
-                    subject: last,
-                    predicate: ns::RDF_REST.to_owned(),
-                    object: Term::Iri(ns::RDF_NIL.to_owned()),
-                },
-                &self.limits,
-            )?;
-        }
-        Ok(head.unwrap().to_term())
-    }
-
-    fn parse_term(&mut self) -> Result<Term> {
-        self.skip_ws_and_comments();
-        let Some(c) = self.peek() else {
-            return Err(DataroomError::Rdf("unexpected end of input".into()));
-        };
-        match c {
-            '<' => {
-                let iri = self.read_iri_ref()?;
-                Ok(Term::Iri(iri))
-            }
-            '[' => {
-                let bnode = self.parse_blank_node_property_list()?;
-                Ok(bnode.to_term())
-            }
-            '(' => self.parse_collection(),
-            '"' | '\'' => {
-                let lit = self.parse_string_literal()?;
-                Ok(Term::Literal(lit))
-            }
-            '_' if self.peek_at(1) == Some(':') => {
-                self.pos += 2;
-                let mut label = String::new();
-                while let Some(ch) = self.peek() {
-                    if ch.is_whitespace() || matches!(ch, ';' | ',' | ']' | ')') {
-                        break;
-                    }
-                    if ch == '.'
-                        && self
-                            .peek_at(1)
-                            .is_none_or(|n| n.is_whitespace() || matches!(n, ';' | ',' | ']' | ')'))
-                    {
-                        break;
-                    }
-                    label.push(ch);
-                    self.pos += 1;
-                }
-                Ok(Term::Blank(label))
-            }
-            '+' | '-' | '0'..='9' => self.parse_number_or_pname(),
-            _ => self.parse_pname_or_boolean(),
-        }
-    }
-
-    fn parse_string_literal(&mut self) -> Result<LiteralValue> {
-        let quote = self.next_char().unwrap();
-        let long = if self.peek() == Some(quote) && self.peek_at(1) == Some(quote) {
-            self.pos += 2;
-            true
-        } else {
-            false
-        };
-        let mut val = String::new();
-        loop {
-            let Some(c) = self.next_char() else {
-                return Err(DataroomError::Rdf("unterminated string literal".into()));
-            };
-            if c == '\\' {
-                match self.next_char() {
-                    Some('n') => val.push('\n'),
-                    Some('r') => val.push('\r'),
-                    Some('t') => val.push('\t'),
-                    Some('"') => val.push('"'),
-                    Some('\'') => val.push('\''),
-                    Some('\\') => val.push('\\'),
-                    Some('u') => {
-                        let mut hex = String::new();
-                        for _ in 0..4 {
-                            if let Some(h) = self.next_char() {
-                                hex.push(h);
-                            }
-                        }
-                        if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                            if let Some(ch) = char::from_u32(code) {
-                                val.push(ch);
-                            }
-                        }
-                    }
-                    Some('U') => {
-                        let mut hex = String::new();
-                        for _ in 0..8 {
-                            if let Some(h) = self.next_char() {
-                                hex.push(h);
-                            }
-                        }
-                        if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                            if let Some(ch) = char::from_u32(code) {
-                                val.push(ch);
-                            }
-                        }
-                    }
-                    Some(other) => val.push(other),
-                    None => return Err(DataroomError::Rdf("unterminated escape".into())),
-                }
-                continue;
-            }
-            if long {
-                if c == quote && self.peek() == Some(quote) && self.peek_at(1) == Some(quote) {
-                    self.pos += 2;
-                    break;
-                }
-            } else if c == quote {
-                break;
-            }
-            val.push(c);
-        }
-
-        if self.peek() == Some('@') {
-            self.pos += 1;
-            let mut lang = String::new();
-            while let Some(ch) = self.peek() {
-                if ch.is_ascii_alphanumeric() || ch == '-' {
-                    lang.push(ch);
-                    self.pos += 1;
-                } else {
-                    break;
-                }
-            }
-            return Ok(LiteralValue::lang(val, lang));
-        }
-
-        if self.peek() == Some('^') && self.peek_at(1) == Some('^') {
-            self.pos += 2;
-            let dt_term = self.parse_term()?;
-            if let Term::Iri(dt) = dt_term {
-                return Ok(LiteralValue::typed(val, dt));
-            }
-        }
-
-        Ok(LiteralValue::plain(val))
-    }
-
-    fn read_token(&mut self) -> String {
-        let mut token = String::new();
-        while let Some(c) = self.peek() {
-            if c.is_whitespace() || matches!(c, ';' | ',' | ']' | ')' | '<' | '>' | '"') {
-                break;
-            }
-            if c == '.'
-                && self
-                    .peek_at(1)
-                    .is_none_or(|n| n.is_whitespace() || matches!(n, ';' | ',' | ']' | ')'))
-            {
-                break;
-            }
-            if c == '\\' {
-                self.pos += 1;
-                if let Some(escaped) = self.next_char() {
-                    token.push(escaped);
-                }
-                continue;
-            }
-            token.push(c);
-            self.pos += 1;
-        }
-        token
-    }
-
-    fn parse_number_or_pname(&mut self) -> Result<Term> {
-        let token = self.read_token();
-        if token.contains(':') {
-            return self.expand_pname(&token);
-        }
-        if token.contains('e') || token.contains('E') {
-            return Ok(Term::Literal(LiteralValue::typed(token, ns::XSD_DOUBLE)));
-        }
-        if token.contains('.') {
-            return Ok(Term::Literal(LiteralValue::typed(token, ns::XSD_DECIMAL)));
-        }
-        Ok(Term::Literal(LiteralValue::typed(token, ns::XSD_INTEGER)))
-    }
-
-    fn parse_pname_or_boolean(&mut self) -> Result<Term> {
-        let token = self.read_token();
-        if token == "true" || token == "false" {
-            return Ok(Term::Literal(LiteralValue::typed(token, ns::XSD_BOOLEAN)));
-        }
-        if token == "a" {
-            return Ok(Term::Iri(ns::RDF_TYPE.to_owned()));
-        }
-        self.expand_pname(&token)
-    }
-
-    fn expand_pname(&self, token: &str) -> Result<Term> {
-        let Some((prefix, local)) = token.split_once(':') else {
-            return Err(DataroomError::Rdf(format!("invalid prefixed name '{token}'")));
-        };
-        let Some(ns_iri) = self.prefixes.get(prefix) else {
-            return Err(DataroomError::Rdf(format!("unknown prefix '{prefix}:'")));
-        };
-        Ok(Term::Iri(format!("{ns_iri}{local}")))
-    }
-
-    fn parse_document_with_prefixes(&mut self) -> Result<()> {
-        self.parse_document()
-    }
-}
-
-impl<'a> TurtleParser<'a> {
-    fn register_prefix(&mut self, prefix: String, iri: String) {
-        self.prefixes.insert(prefix, iri);
-    }
-}
-
-// Fix for `@prefix` branch in `parse_document` so it stores the prefix into `self.prefixes`:
+/// Alias kept for existing callers.
 pub fn parse_turtle_checked(input: &str, limits: &RdfLimits) -> Result<RdfGraph> {
-    if input.len() > limits.max_bytes {
-        return Err(DataroomError::Rdf(format!(
-            "RDF input size {} exceeds limit of {} bytes",
-            input.len(),
-            limits.max_bytes
-        )));
-    }
-    let mut parser = TurtleParser::new(input, *limits);
-    loop {
-        parser.skip_ws_and_comments();
-        if parser.peek().is_none() {
-            break;
-        }
-        if parser.starts_with_ci("@prefix") {
-            parser.pos += 7;
-            parser.skip_ws_and_comments();
-            let prefix = parser.read_prefix_label()?;
-            parser.skip_ws_and_comments();
-            let iri = parser.read_iri_ref()?;
-            parser.register_prefix(prefix, iri);
-            parser.skip_ws_and_comments();
-            parser.expect_char('.')?;
-        } else if parser.starts_with_ci("@base") {
-            parser.pos += 5;
-            parser.skip_ws_and_comments();
-            let iri = parser.read_iri_ref()?;
-            parser.base = Some(iri);
-            parser.skip_ws_and_comments();
-            parser.expect_char('.')?;
-        } else if parser.starts_with_ci("PREFIX")
-            && parser.peek_at(6).is_some_and(char::is_whitespace)
-        {
-            parser.pos += 6;
-            parser.skip_ws_and_comments();
-            let prefix = parser.read_prefix_label()?;
-            parser.skip_ws_and_comments();
-            let iri = parser.read_iri_ref()?;
-            parser.register_prefix(prefix, iri);
-        } else if parser.starts_with_ci("BASE")
-            && parser.peek_at(4).is_some_and(char::is_whitespace)
-        {
-            parser.pos += 4;
-            parser.skip_ws_and_comments();
-            let iri = parser.read_iri_ref()?;
-            parser.base = Some(iri);
-        } else {
-            parser.parse_triples_statement()?;
-        }
-    }
-    Ok(parser.graph)
+    parse_turtle_bytes(input.as_bytes(), limits)
 }
 
 /// Serializes an [`RdfGraph`] as Turtle (`.ttl`).
@@ -632,7 +217,6 @@ pub fn serialize_turtle(graph: &RdfGraph) -> String {
     }
     out.push('\n');
 
-    // Group triples by subject, then by predicate.
     let mut by_subject: BTreeMap<&SubjectNode, BTreeMap<&str, Vec<&Term>>> = BTreeMap::new();
     for triple in &graph.triples {
         by_subject
@@ -643,7 +227,6 @@ pub fn serialize_turtle(graph: &RdfGraph) -> String {
             .push(&triple.object);
     }
 
-    // Put named subjects before blank nodes.
     let mut subjects: Vec<&SubjectNode> = by_subject.keys().copied().collect();
     subjects.sort_by(|a, b| match (a, b) {
         (SubjectNode::Named(x), SubjectNode::Named(y)) => x.cmp(y),
@@ -657,7 +240,6 @@ pub fn serialize_turtle(graph: &RdfGraph) -> String {
         out.push_str(&format_subject(subj));
         let mut pred_entries: Vec<(&str, &Vec<&Term>)> =
             preds.iter().map(|(k, v)| (*k, v)).collect();
-        // Put rdf:type (`a`) first.
         pred_entries.sort_by(|(pa, _), (pb, _)| {
             if *pa == ns::RDF_TYPE && *pb != ns::RDF_TYPE {
                 std::cmp::Ordering::Less
@@ -753,10 +335,7 @@ fn format_term(term: &Term, prefixes: &[(&str, &str)]) -> String {
             } else if lit.datatype == ns::XSD_STRING {
                 format!("\"{esc}\"")
             } else {
-                format!("\"{esc}\"^^ carries_dt").replace(
-                    "carries_dt",
-                    &format_iri(&lit.datatype, prefixes),
-                )
+                format!("\"{esc}\"^^{}", format_iri(&lit.datatype, prefixes))
             }
         }
     }

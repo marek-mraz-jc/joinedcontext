@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="{{ chrome.lang }}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
+    {% if chrome.branding.noindex %}<meta name="robots" content="noindex, nofollow">{% endif %}
+    <title>{{ resource_label }} - {{ dataset_title }} - {{ chrome.site_title }}</title>
+    <link rel="shortcut icon" href="{{ chrome.favicon }}" />
+    {% for opt in chrome.lang_options %}
+    <link rel="alternate" hreflang="{{ opt.code }}" href="{{ opt.url }}" />
+    {% endfor %}
+<style nonce="{{ chrome.csp_nonce }}">
+  :root {
+    --jc-primary: {{ chrome.branding.colours.primary }};
+    --jc-primary-fg: {{ chrome.branding.primary_foreground }};
+    --jc-primary-rgb: {{ chrome.branding.primary_rgb }};
+    --jc-secondary: {{ chrome.branding.colours.secondary }};
+    --jc-accent: {{ chrome.branding.colours.accent }};
+    --jc-background: {{ chrome.branding.colours.background }};
+    --jc-text: {{ chrome.branding.colours.text }};
+    --jc-font-heading: {{ chrome.branding.fonts.heading }};
+    --jc-font-body: {{ chrome.branding.fonts.body }};
+  }
+</style>
+<link rel="stylesheet" href="{{ chrome.mount_prefix }}/jc-theme.css">
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-dock.js"></script>
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-copy.js" defer></script>
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-forms.js" defer></script>
+  </head>
+  <body data-site-root="{{ chrome.site_root }}" data-locale-root="{{ chrome.locale_root }}">
+    <div class="visually-hidden-focusable"><a href="#content">{{ labels.skip_to_content }}</a></div>
+{% if !chrome.branding.ribbon.is_empty() %}
+<div class="jc-ribbon" role="note">{{ chrome.branding.ribbon }}</div>
+{% endif %}
+<div class="account-masthead">
+  <div class="container">
+    <nav class="account not-authed" aria-label="Account">
+      <ul class="list-unstyled">
+        <li><a href="{{ chrome.lang_prefix }}/user/login">{{ labels.login }}</a></li>
+      </ul>
+    </nav>
+  </div>
+</div>
+<header class="masthead">
+  <div class="container">
+    <nav class="navbar navbar-expand-lg navbar-light">
+      <hgroup class="header-image navbar-left">
+        <a class="logo jc-brand" href="{{ chrome.lang_prefix }}/">
+          <img src="{{ chrome.site_logo }}" alt="{{ chrome.site_title }}" width="171" height="36">
+        </a>
+      </hgroup>
+      <div class="main-navbar collapse navbar-collapse" id="main-navigation-toggle">
+        <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
+          <li class="active"><a href="{{ chrome.lang_prefix }}/dataset/">{{ labels.nav_datasets }}</a></li><li><a href="{{ chrome.lang_prefix }}/organization/">{{ labels.nav_publishers }}</a></li><li><a href="{{ chrome.lang_prefix }}/about">{{ labels.nav_about }}</a></li>
+        </ul>
+      </div>
+    </nav>
+  </div>
+</header>
+  <div class="main">
+    <div id="content" class="container">
+      <div class="toolbar" role="navigation" aria-label="Breadcrumb">
+        <ol class="breadcrumb">
+          <li class="home"><a href="{{ chrome.lang_prefix }}/" aria-label="{{ labels.home }}"><i class="fa fa-home"></i><span> {{ labels.home }}</span></a></li>
+          <li><a href="{{ chrome.lang_prefix }}/organization/">{{ labels.nav_publishers }}</a></li>
+          <li><a href="{{ chrome.lang_prefix }}/organization/{{ publisher_slug }}">{{ publisher_title }}</a></li>
+          <li><a href="{{ chrome.lang_prefix }}/dataset/{{ dataset_name }}">{{ dataset_title }}</a></li>
+          <li class="active"><a href="" aria-current="page">{{ resource_label }}</a></li>
+        </ol>
+      </div>
+      <div class="row wrapper">
+        <section class="module module-resource">
+          <div class="module-content">
+            <p class="jc-eyebrow">
+              <span class="jc-chip jc-chip-primary">{{ format_chip }}</span>
+              {% if !entity_type.is_empty() %}<span>{{ labels.entity_type }}: <code>{{ entity_type }}</code></span>{% endif %}
+            </p>
+            <h1 class="page-heading">{{ resource_label }}</h1>
+            {% if !what.is_empty() %}<p class="jc-lead">{{ what }}</p>{% endif %}
+            {% if !description.is_empty() && !is_api %}
+            <div class="prose notes"><p>{{ description }}</p></div>
+            {% endif %}
+            <p>{{ labels.part_of }}: <a href="{{ chrome.lang_prefix }}/dataset/{{ dataset_name }}">{{ dataset_title }}</a></p>
+            {% if !url.is_empty() %}
+            <div class="jc-address">
+              <span class="jc-address-label">{{ labels.address }}</span>
+              <code class="jc-address-short">{% for part in short_segments %}<span>{{ part }}</span>{% if !loop.last %}/<wbr>{% endif %}{% endfor %}</code>
+              <button type="button" class="btn {% if is_api %}btn-primary{% else %}btn-default{% endif %}" data-jc-copy="jc-address-full" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}"><span class="jc-code-copy-label">{{ labels.copy_address }}</span></button>
+              <details class="jc-address-whole">
+                <summary>{{ labels.full_address }}</summary>
+                <pre id="jc-address-full" tabindex="0"><code>{{ full_breakable|safe }}</code></pre>
+              </details>
+            </div>
+            {% endif %}
+
+            {% if let Some(exp) = explorer %}
+            <div class="resource-view jc-api">
+              <section class="jc-preview jc-explorer sdk-datagrid" data-grid-config="{{ exp.grid_config }}" aria-labelledby="jc-explorer-title">
+                <div class="jc-preview-head">
+                  <h2 id="jc-explorer-title">{{ exp.title }}</h2>
+                </div>
+                <p class="jc-lead">{{ exp.lead }}</p>
+                <iframe class="jc-viz-frame jc-explorer-frame" title="{{ exp.title }}" src="{{ exp.src }}" data-jc-viz="{{ exp.origin }}"
+                        referrerpolicy="no-referrer" allow="clipboard-write" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"></iframe>
+              </section>
+            </div>
+            {% endif %}
+
+            {% if is_api %}
+            <div class="resource-view jc-api">
+              {% if let Some(prev) = preview %}
+              <section class="jc-live-rows" data-jc-preview="{{ prev.url }}" data-jc-kind="{{ prev.kind }}"
+                       data-jc-failed="{{ labels.preview_failed }}" data-jc-empty="{{ labels.preview_empty }}"
+                       data-jc-shown="{{ labels.preview_shown }}" data-jc-type-label="{{ labels.entity_type }}" aria-labelledby="jc-rows-title">
+                <h2 id="jc-rows-title">{{ prev.heading }}</h2>
+                <p class="jc-rows-status" role="status">{{ labels.preview_loading }}</p>
+                <div class="jc-rows-table" tabindex="0" hidden></div>
+              </section>
+              {% endif %}
+              {% if !examples.is_empty() %}
+              <section class="jc-examples" aria-labelledby="jc-examples-title">
+                <h2 id="jc-examples-title">{{ labels.usage }}</h2>
+                {% for ex in examples %}
+                  <h3>{{ ex.title }}</h3>
+                  {% for step in ex.steps %}<p>{{ step }}</p>{% endfor %}
+                  {% if ex.code.is_some() %}
+                  <div class="jc-copy jc-copy-code">
+                    <pre id="{{ ex.id }}" aria-label="{{ labels.snippet }}" tabindex="0"><code>{{ ex.code_breakable|safe }}</code></pre>
+                    <button type="button" class="btn btn-default" data-jc-copy="{{ ex.id }}" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}"><span class="jc-code-copy-label">{{ labels.copy }}</span></button>
+                  </div>
+                  {% endif %}
+                {% endfor %}
+                {% if let Some(ref g_url) = guide_url %}<p><a href="{{ g_url }}" rel="noreferrer">{{ labels.usage }}</a></p>{% endif %}
+                {% if let Some(ref dev_url) = developer_page_url %}<p class="jc-developer-page"><a href="{{ dev_url }}" rel="noreferrer">{{ dev_url }}</a></p>{% endif %}
+              </section>
+              {% endif %}
+            </div>
+            {% else if is_source %}
+            <div class="resource-view jc-no-view">
+              <p>{{ labels.source_lead }}</p>
+              <a class="btn btn-primary" href="{{ url }}" rel="noreferrer">{{ labels.open }}<span class="visually-hidden"> {{ resource_label }}</span></a>
+            </div>
+            {% else %}
+            <div class="resource-view jc-no-view">
+              <p>{{ labels.file_lead }}</p>
+              <a class="btn btn-primary" href="{{ url }}" rel="noreferrer">{{ labels.download }}<span class="visually-hidden"> {{ resource_label }}</span></a>
+            </div>
+            {% endif %}
+            <p class="visually-hidden" role="status" aria-live="polite" id="jc-copy-status"></p>
+          </div>
+        </section>
+
+        <div class="primary col-md-9 col-xs-12">
+          <section class="module">
+            <div class="module-content">
+              <h2>{{ labels.info }}</h2>
+              <dl class="jc-facts">
+                <div><dt>{{ labels.format }}</dt><dd>{{ format_chip }}</dd></div>
+                {% for (d_label, d_val) in dates %}<div><dt>{{ d_label }}</dt><dd>{{ d_val }}</dd></div>{% endfor %}
+                {% if !licence_title.is_empty() %}
+                <div><dt>{{ labels.licence }}</dt><dd>{% if !licence_url.is_empty() %}<a href="{{ licence_url }}" rel="noopener">{{ licence_title }}</a>{% else %}{{ licence_title }}{% endif %}</dd></div>
+                {% endif %}
+                {% if let Some((s_url, s_name)) = standard %}
+                <div><dt>{{ labels.conforms_to }}</dt><dd><a href="{{ s_url }}" rel="noreferrer">{{ s_name }}</a></dd></div>
+                {% endif %}
+                {% if let Some((m_url, m_name)) = model %}
+                <div><dt>{{ labels.section_schema }}</dt><dd><a href="{{ m_url }}" rel="noreferrer">{{ m_name }}</a></dd></div>
+                {% endif %}
+                {% if !entity_type.is_empty() %}
+                <div><dt>{{ labels.entity_type }}</dt><dd><code>{{ entity_type }}</code></dd></div>
+                {% endif %}
+                <div data-jc-count hidden><dt>{{ labels.records }}</dt><dd></dd></div>
+              </dl>
+            </div>
+          </section>
+        </div>
+
+        <aside class="secondary col-md-3">
+          <section class="module module-narrow">
+            {% for sec in resource_sections %}
+            <h3 class="jc-nav-group" id="jc-nav-{{ sec.key }}">{{ sec.title }}</h3>
+            <ul class="list-unstyled nav nav-simple jc-resource-nav" aria-labelledby="jc-nav-{{ sec.key }}">
+              {% for item in sec.items %}
+              <li class="nav-item{% if item.id == resource_id %} active{% endif %}">
+                <a href="{{ item.page_url }}"{% if item.id == resource_id %} aria-current="page"{% endif %}><span class="jc-chip">{{ item.format }}</span> <span>{{ item.label }}</span></a>
+              </li>
+              {% endfor %}
+            </ul>
+            {% endfor %}
+          </section>
+        </aside>
+      </div>
+    </div>
+  </div>
+<footer class="site-footer">
+  <div class="container">
+    <div class="row gy-4">
+      <div class="col-md-6 jc-footer-lines">
+        <div class="jc-footer-brand">
+          {% if !chrome.footer_logo.is_empty() %}<img src="{{ chrome.footer_logo }}" alt="" />{% endif %}
+          <span>{{ chrome.branding.instance_name }}</span>
+        </div>
+        {% if !chrome.branding.organisation.is_empty() %}<p>{{ chrome.branding.organisation }}</p>{% endif %}
+        {% if !chrome.branding.contact_email.is_empty() %}<p><a href="mailto:{{ chrome.branding.contact_email }}">{{ chrome.branding.contact_email }}</a></p>{% endif %}
+      </div>
+      <nav class="col-md-3 footer-links" aria-label="{{ labels.about_site }}">
+        <ul class="list-unstyled">
+          <li><a href="{{ chrome.lang_prefix }}/about">{{ labels.about_site }}</a></li>
+          {% if !chrome.portal_url.is_empty() %}<li><a href="{{ chrome.portal_url }}">{{ labels.portal }}</a></li>{% endif %}
+          <li><a href="{{ chrome.lang_prefix }}/about#api">{{ labels.catalogue_api }}</a></li>
+          {% for (p_href, p_title) in chrome.footer_pages %}
+            <li><a href="{{ p_href }}">{{ p_title }}</a></li>
+          {% endfor %}
+        </ul>
+      </nav>
+      <div class="col-md-3 attribution">
+        <form class="lang-select" action="{{ chrome.lang_prefix }}/util/redirect" method="POST">
+          <div class="form-group">
+            <label for="field-lang-select">{{ labels.language }}</label>
+            <select id="field-lang-select" name="url">
+              {% for opt in chrome.lang_options %}
+              <option value="{{ opt.url }}" lang="{{ opt.code }}"{% if opt.selected %} selected="selected"{% endif %}>
+                {{ opt.label }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <button class="btn btn-default d-none" type="submit">{{ labels.go }}</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</footer>
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-frame.js" defer></script>
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-preview.js" defer></script>
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-viz.js" defer></script>
+  </body>
+</html>

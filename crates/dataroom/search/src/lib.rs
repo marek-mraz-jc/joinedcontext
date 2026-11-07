@@ -60,6 +60,109 @@ pub fn fold_unaccent(text: &str) -> String {
         .to_lowercase()
 }
 
+/// Endings Slovak and Czech nouns and adjectives decline through, longest first (`SLAVIC_ENDINGS`
+/// in `ours/ckan-theme/plugin.py` line 2109, D2).
+pub const SLAVIC_ENDINGS: [&str; 29] = [
+    "iach", "ách", "ami", "ých", "ými", "ého", "ému", "ia", "ie", "ii", "iu", "ej", "om", "ov",
+    "ou", "ím", "ým", "a", "á", "e", "é", "ě", "i", "í", "o", "u", "ú", "y", "ý",
+];
+
+/// Endings whose vowel drops when the word declines (`FLEETING` in `plugin.py` line 2116, D2):
+/// "dôchodok" -> "dôchodky", "lekáreň" -> "lekárne", "Lučenec" -> "Lučenca".
+pub const FLEETING_ENDINGS: [(&str, &str); 4] =
+    [("ok", "k"), ("ek", "k"), ("ec", "c"), ("eň", "n")];
+
+/// Port of `jc_stem(word)` from `ours/ckan-theme/plugin.py` lines 2119-2135 (D2).
+pub fn jc_stem(word: &str) -> String {
+    let char_count = word.chars().count();
+    if !word.chars().all(char::is_alphabetic) || char_count < 4 {
+        return word.to_owned();
+    }
+    let lower = word.to_lowercase();
+    for ending in SLAVIC_ENDINGS {
+        if lower.ends_with(ending) {
+            let end_chars = ending.chars().count();
+            if char_count - end_chars >= 4 {
+                let stem: String = word.chars().take(char_count - end_chars).collect();
+                return format!("({word} OR {stem}*)");
+            }
+        }
+    }
+    for (ending, rest) in FLEETING_ENDINGS {
+        if lower.ends_with(ending) && char_count - 1 >= 5 {
+            let end_chars = ending.chars().count();
+            let base: String = word.chars().take(char_count - end_chars).collect();
+            return format!("({word} OR {word}* OR {base}{rest}*)");
+        }
+    }
+    format!("({word} OR {word}*)")
+}
+
+/// Port of `jc_search_words(q)` from `ours/ckan-theme/plugin.py` lines 2138-2146 (D2).
+pub fn jc_search_words(q: &str) -> String {
+    if q.is_empty() || q.contains('"') || q.contains(':') {
+        return q.to_owned();
+    }
+    let is_hyphenated = |w: &str| -> bool {
+        let parts: Vec<&str> = w.split('-').collect();
+        parts.len() >= 2
+            && parts
+                .iter()
+                .all(|p| !p.is_empty() && p.chars().all(|c| c.is_alphanumeric() || c == '_'))
+    };
+    q.split_whitespace()
+        .map(|w| {
+            if is_hyphenated(w) {
+                format!("\"{w}\"")
+            } else {
+                jc_stem(w)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Returns the folded prefix stems for one search word (including Slavic ending stripping and
+/// fleeting-vowel stems so "ovzdušie" matches "ovzdušia", "dôchodok" matches "dôchodky", and
+/// "Lučenec" matches "Lučenca", D2).
+pub fn word_stem_candidates(word: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let folded_full = fold_unaccent(word);
+    if !folded_full.is_empty() {
+        out.push(folded_full.clone());
+    }
+    let char_count = word.chars().count();
+    if word.chars().all(char::is_alphabetic) && char_count >= 4 {
+        let lower = word.to_lowercase();
+        for ending in SLAVIC_ENDINGS {
+            if lower.ends_with(ending) {
+                let end_chars = ending.chars().count();
+                if char_count - end_chars >= 4 {
+                    let stem: String = word.chars().take(char_count - end_chars).collect();
+                    let f = fold_unaccent(&stem);
+                    if !f.is_empty() && !out.contains(&f) {
+                        out.push(f);
+                    }
+                    break;
+                }
+            }
+        }
+        for (ending, rest) in FLEETING_ENDINGS {
+            if lower.ends_with(ending) && char_count - 1 >= 5 {
+                let end_chars = ending.chars().count();
+                let base: String = word.chars().take(char_count - end_chars).collect();
+                let alt = format!("{base}{rest}");
+                let f = fold_unaccent(&alt);
+                if !f.is_empty() && !out.contains(&f) {
+                    out.push(f);
+                }
+                break;
+            }
+        }
+    }
+    out
+}
+
 /// Tokenizes a search query into folded prefix terms, rejecting Solr local-params (`{!...}`).
 pub fn parse_search_terms(q: &str) -> Result<Vec<String>> {
     let trimmed = q.trim();
@@ -231,10 +334,17 @@ pub fn matches_full_text(dataset: &Dataset, terms: &[String]) -> (bool, usize) {
 
     let mut score = 0usize;
     for term in terms {
-        let in_name = name_words.iter().any(|w| w.starts_with(term)) || folded_name.contains(term);
-        let in_title = title_words.iter().any(|w| w.starts_with(term));
-        let in_kw = kw_words.iter().any(|w| w.starts_with(term));
-        let in_desc = desc_words.iter().any(|w| w.starts_with(term));
+        let candidates = word_stem_candidates(term);
+        let matches_any = |words: &[String]| -> bool {
+            words
+                .iter()
+                .any(|w| candidates.iter().any(|cand| w.starts_with(cand)))
+        };
+        let in_name = matches_any(&name_words)
+            || candidates.iter().any(|cand| folded_name.contains(cand));
+        let in_title = matches_any(&title_words);
+        let in_kw = matches_any(&kw_words);
+        let in_desc = matches_any(&desc_words);
         if !(in_name || in_title || in_kw || in_desc) {
             return (false, 0);
         }
@@ -557,6 +667,59 @@ pub fn search_datasets(
                 count,
             })
             .collect();
+        // Ensure every active filter value on this facet remains present in the facet list
+        // (with count 0 when other filters narrow it out), matching CKAN and Portal facet rules (A3).
+        let active_for_facet: &[String] = match facet_kind {
+            FacetKind::Publisher => &filter.publishers,
+            FacetKind::Theme => &filter.themes,
+            FacetKind::Format => &filter.formats,
+            FacetKind::Keyword => &filter.tags,
+            FacetKind::Licence => &filter.licences,
+            FacetKind::Spatial => &filter.spatial,
+            FacetKind::Year => &[],
+            FacetKind::Visibility => &[],
+        };
+        for wanted in active_for_facet {
+            if !list
+                .iter()
+                .any(|f| f.value.eq_ignore_ascii_case(wanted) || f.label.eq_ignore_ascii_case(wanted))
+            {
+                let label = match facet_kind {
+                    FacetKind::Publisher => pub_map
+                        .get(wanted)
+                        .and_then(|p| text_in_lang(&p.title, Some(lang)).map(str::to_owned))
+                        .unwrap_or_else(|| wanted.clone()),
+                    FacetKind::Theme => theme_label(wanted, lang),
+                    FacetKind::Licence => find_licence(wanted)
+                        .map(|l| l.title)
+                        .unwrap_or_else(|| wanted.clone()),
+                    _ => wanted.clone(),
+                };
+                list.push(FacetCount {
+                    value: wanted.clone(),
+                    label,
+                    count: 0,
+                });
+            }
+        }
+        // Also include all active publishers from `publishers` when filtering by publisher so that
+        // unselected publishers stay selectable even if another facet has narrowed them to 0 (A3).
+        if facet_kind == FacetKind::Publisher && !filter.publishers.is_empty() {
+            for p in publishers {
+                if p.state == RecordState::Active
+                    && !list.iter().any(|f| f.value == p.name || f.value == p.id)
+                {
+                    let label = text_in_lang(&p.title, Some(lang))
+                        .unwrap_or(&p.name)
+                        .to_owned();
+                    list.push(FacetCount {
+                        value: p.name.clone(),
+                        label,
+                        count: 0,
+                    });
+                }
+            }
+        }
         list.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.label.cmp(&b.label)));
         match facet_kind {
             FacetKind::Publisher => facets.publisher = list,
@@ -581,6 +744,20 @@ pub fn search_datasets(
         }
         Some("name desc") => {
             kept.sort_by(|a, b| b.dataset.name.cmp(&a.dataset.name));
+        }
+        Some("title_string asc") | Some("title asc") => {
+            kept.sort_by(|a, b| {
+                let ta = text_in_lang(&a.dataset.title, Some(lang)).unwrap_or(&a.dataset.name);
+                let tb = text_in_lang(&b.dataset.title, Some(lang)).unwrap_or(&b.dataset.name);
+                ta.cmp(tb).then_with(|| a.dataset.name.cmp(&b.dataset.name))
+            });
+        }
+        Some("title_string desc") | Some("title desc") => {
+            kept.sort_by(|a, b| {
+                let ta = text_in_lang(&a.dataset.title, Some(lang)).unwrap_or(&a.dataset.name);
+                let tb = text_in_lang(&b.dataset.title, Some(lang)).unwrap_or(&b.dataset.name);
+                tb.cmp(ta).then_with(|| a.dataset.name.cmp(&b.dataset.name))
+            });
         }
         Some("metadata_modified desc") | Some("modified desc") => {
             kept.sort_by(|a, b| {
@@ -828,6 +1005,9 @@ mod tests {
         let publishers = vec![
             Publisher {
                 org_id,
+badge_initials: None,
+                badge_colour: None,
+                declared_by_instance: None,
                 catalogue_id,
                 id: "pub-bb".into(),
                 name: "banskabystrica".into(),
@@ -848,6 +1028,9 @@ mod tests {
             },
             Publisher {
                 org_id,
+badge_initials: None,
+                badge_colour: None,
+                declared_by_instance: None,
                 catalogue_id,
                 id: "pub-bbsk".into(),
                 name: "bbsk".into(),
@@ -950,5 +1133,34 @@ mod tests {
         let mut filter = DatasetFilter::default();
         assert!(apply_fq_to_filter("{!knn f=vector}[1,2]", &mut filter).is_err());
         assert!(parse_search_terms("{!func}ord(id)").is_err());
+    }
+
+    #[test]
+    fn d2_slavic_stemming_and_search_words_match_plugin_py() {
+        assert_eq!(jc_stem("ovzdušie"), "(ovzdušie OR ovzduš*)");
+        assert_eq!(jc_stem("dôchodok"), "(dôchodok OR dôchodok* OR dôchodk*)");
+        assert_eq!(jc_stem("lekáreň"), "(lekáreň OR lekáreň* OR lekárn*)");
+        assert_eq!(jc_stem("Lučenec"), "(Lučenec OR Lučenec* OR Lučenc*)");
+        assert_eq!(jc_stem("most"), "(most OR most*)");
+        assert_eq!(jc_stem("sk"), "sk");
+        assert_eq!(
+            jc_search_words("bike-sharing ovzdušie"),
+            "\"bike-sharing\" (ovzdušie OR ovzduš*)"
+        );
+
+        let (org_id, catalogue_id) = test_ids();
+        let ds = make_dataset(
+            "air",
+            "banskabystrica",
+            "Kvalita ovzdušia v Lučenci a dôchodky",
+            &["ENVI"],
+            &["CSV"],
+            Visibility::Public,
+        );
+        // Searching "ovzdušie Lučenec dôchodok" finds "ovzdušia ... Lučenci ... dôchodky"!
+        let terms = parse_search_terms("ovzdušie Lučenec dôchodok").unwrap();
+        let (matched, score) = matches_full_text(&ds, &terms);
+        assert!(matched && score > 0);
+        let _ = (org_id, catalogue_id);
     }
 }

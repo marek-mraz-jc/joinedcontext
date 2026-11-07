@@ -4,11 +4,13 @@
 
 use crate::graph::{ns, LiteralValue, RdfGraph, RdfLimits, SubjectNode, Term};
 use crate::jsonld::{
-    parse_jsonld, serialize_cz_catalogue_jsonld, serialize_cz_dataset_jsonld,
+    parse_jsonld_bytes, serialize_cz_catalogue_jsonld, serialize_cz_dataset_jsonld,
     serialize_graph_jsonld, serialize_sk_catalogue_jsonld, serialize_sk_dataset_jsonld,
 };
-use crate::rdfxml::{parse_rdfxml, serialize_rdfxml};
-use crate::turtle::{parse_turtle_checked, serialize_ntriples, serialize_turtle};
+use crate::rdfxml::{parse_rdfxml_bytes, serialize_rdfxml};
+use crate::turtle::{
+    parse_ntriples_bytes, parse_turtle_bytes, serialize_ntriples, serialize_turtle,
+};
 use chrono::{DateTime, NaiveDate, Utc};
 use dataroom_core::vocab::{
     eu_iri_to_language, find_licence, format_to_eu_iri, frequency_to_eu_iri,
@@ -1235,17 +1237,28 @@ pub fn serialize_catalogue(
     }
 }
 
+/// Unified entry point `parse(bytes, format, RdfLimits)` backed by `oxttl`, `oxrdfxml`, and
+/// `oxjsonld` with streaming byte, triple, nesting-depth, and literal-length caps (A1).
+pub fn parse(
+    bytes: &[u8],
+    format: RdfFormat,
+    limits: RdfLimits,
+) -> dataroom_core::Result<RdfGraph> {
+    match format {
+        RdfFormat::Turtle => parse_turtle_bytes(bytes, &limits),
+        RdfFormat::NTriples => parse_ntriples_bytes(bytes, &limits),
+        RdfFormat::JsonLd => parse_jsonld_bytes(bytes, &limits),
+        RdfFormat::RdfXml => parse_rdfxml_bytes(bytes, &limits),
+    }
+}
+
 /// Parses an RDF document in any supported format into an [`RdfGraph`].
 pub fn parse_rdf_graph(
     input: &str,
     format: RdfFormat,
     limits: &RdfLimits,
 ) -> dataroom_core::Result<RdfGraph> {
-    match format {
-        RdfFormat::Turtle | RdfFormat::NTriples => parse_turtle_checked(input, limits),
-        RdfFormat::JsonLd => parse_jsonld(input, limits),
-        RdfFormat::RdfXml => parse_rdfxml(input, limits),
-    }
+    parse(input.as_bytes(), format, *limits)
 }
 
 /// Extracts all [`Dataset`]s (and [`DatasetSeries`]) from an [`RdfGraph`] (DCAT-AP 3.0.1, CZ, SK).
@@ -1878,6 +1891,8 @@ mod tests {
     fn sample_catalogue(org_id: OrgId, catalogue_id: CatalogueId) -> Catalogue {
         Catalogue {
             org_id,
+branding: None,
+            hidden_datasets: Default::default(),
             id: catalogue_id,
             name: "opendata".into(),
             host: "opendata.example.org".into(),
@@ -1998,5 +2013,139 @@ mod tests {
         .expect("reparse sk ttl");
         assert_eq!(sk_reparsed[0].title, ds_sk.title);
         assert_eq!(sk_reparsed[0].description, ds_sk.description);
+    }
+
+    #[test]
+    fn a1_rdf_limits_refuse_bytes_triples_nesting_literal_length_billion_laughs_and_remote_context() {
+        // 1. Byte cap refused with kind == "bytes"
+        let small_byte_limit = RdfLimits {
+            max_bytes: 32,
+            ..RdfLimits::default()
+        };
+        let ttl = "<https://example.org/s> <https://example.org/p> \"hello world\" .";
+        let err = parse(ttl.as_bytes(), RdfFormat::Turtle, small_byte_limit).unwrap_err();
+        assert!(
+            matches!(&err, DataroomError::RdfLimitExceeded { kind, .. } if kind == "bytes"),
+            "expected bytes limit error, got {err:?}"
+        );
+
+        // 2. Triple cap refused with kind == "triples"
+        let small_triple_limit = RdfLimits {
+            max_triples: 2,
+            ..RdfLimits::default()
+        };
+        let three_triples = r#"
+            <https://example.org/s> <https://example.org/p1> "v1" .
+            <https://example.org/s> <https://example.org/p2> "v2" .
+            <https://example.org/s> <https://example.org/p3> "v3" .
+        "#;
+        let err = parse(three_triples.as_bytes(), RdfFormat::Turtle, small_triple_limit).unwrap_err();
+        assert!(
+            matches!(&err, DataroomError::RdfLimitExceeded { kind, .. } if kind == "triples"),
+            "expected triples limit error, got {err:?}"
+        );
+
+        // 3. Nesting-depth cap refused with kind == "nesting-depth" (Turtle and JSON-LD and RDF/XML)
+        let small_depth_limit = RdfLimits {
+            max_depth: 3,
+            ..RdfLimits::default()
+        };
+        let deep_ttl = "<https://example.org/s> <https://example.org/p> [ <https://example.org/p> [ <https://example.org/p> [ <https://example.org/p> [ <https://example.org/p> \"deep\" ] ] ] ] .";
+        let err = parse(deep_ttl.as_bytes(), RdfFormat::Turtle, small_depth_limit).unwrap_err();
+        assert!(
+            matches!(&err, DataroomError::RdfLimitExceeded { kind, .. } if kind == "nesting-depth"),
+            "expected nesting-depth limit error in Turtle, got {err:?}"
+        );
+
+        let deep_jsonld = r#"{"@id":"https://example.org/1","http://example.org/p":{"http://example.org/p":{"http://example.org/p":{"http://example.org/p":"deep"}}}}"#;
+        let err = parse(deep_jsonld.as_bytes(), RdfFormat::JsonLd, small_depth_limit).unwrap_err();
+        assert!(
+            matches!(&err, DataroomError::RdfLimitExceeded { kind, .. } if kind == "nesting-depth"),
+            "expected nesting-depth limit error in JSON-LD, got {err:?}"
+        );
+
+        // 4. Literal-length cap refused with kind == "literal-length"
+        let small_lit_limit = RdfLimits {
+            max_literal_length: 10,
+            ..RdfLimits::default()
+        };
+        let long_lit_ttl = "<https://example.org/s> <https://example.org/p> \"0123456789abcdef\" .";
+        let err = parse(long_lit_ttl.as_bytes(), RdfFormat::Turtle, small_lit_limit).unwrap_err();
+        assert!(
+            matches!(&err, DataroomError::RdfLimitExceeded { kind, .. } if kind == "literal-length"),
+            "expected literal-length error, got {err:?}"
+        );
+
+        // 5. Billion-laughs JSON-LD context bomb refused with kind == "context-bomb"
+        let billion_laughs_jsonld = r#"{
+            "@context": {
+                "a0": "http://example.org/ns#",
+                "a1": "a0:b1",
+                "a2": "a1:b2",
+                "a3": "a2:b3",
+                "a4": "a3:b4",
+                "a5": "a4:b5"
+            },
+            "@id": "a5:node",
+            "@type": "a5:Type"
+        }"#;
+        let err = parse(
+            billion_laughs_jsonld.as_bytes(),
+            RdfFormat::JsonLd,
+            RdfLimits::default(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, DataroomError::RdfLimitExceeded { kind, .. } if kind == "context-bomb"),
+            "expected context-bomb error, got {err:?}"
+        );
+
+        // 6. Remote @context URL refused with kind == "remote-context" (no fetch)
+        let remote_ctx_jsonld = r#"{
+            "@context": "https://evil.example.org/context.jsonld",
+            "@id": "https://example.org/ds",
+            "@type": "http://www.w3.org/ns/dcat#Dataset"
+        }"#;
+        let err = parse(
+            remote_ctx_jsonld.as_bytes(),
+            RdfFormat::JsonLd,
+            RdfLimits::default(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, DataroomError::RdfLimitExceeded { kind, .. } if kind == "remote-context"),
+            "expected remote-context error, got {err:?}"
+        );
+
+        // 7. CZ and SK example files still parse in both Turtle and JSON-LD
+        for (content, fmt) in [
+            (
+                include_str!("../../specs/dcat-ap-cz/priklady-katalog/datova-sada.ttl"),
+                RdfFormat::Turtle,
+            ),
+            (
+                include_str!("../../specs/dcat-ap-cz/priklady-katalog/katalog.jsonld"),
+                RdfFormat::JsonLd,
+            ),
+            (
+                include_str!("../../specs/dcat-ap-sk/príklady/dataset.ttl"),
+                RdfFormat::Turtle,
+            ),
+            (
+                include_str!("../../specs/dcat-ap-sk/príklady/dataset.jsonld"),
+                RdfFormat::JsonLd,
+            ),
+            (
+                include_str!("../../specs/dcat-ap-sk/príklady/katalóg.ttl"),
+                RdfFormat::Turtle,
+            ),
+            (
+                include_str!("../../specs/dcat-ap-sk/príklady/katalóg.jsonld"),
+                RdfFormat::JsonLd,
+            ),
+        ] {
+            let g = parse(content.as_bytes(), fmt, RdfLimits::default()).expect("example parses");
+            assert!(!g.is_empty());
+        }
     }
 }

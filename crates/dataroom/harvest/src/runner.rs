@@ -2,7 +2,9 @@
 //! Harvest runner executing sources with SSRF protection, provenance tracking, and withdrawal
 //! of datasets no longer listed by a complete source read (C9).
 
-use crate::guard::{validate_outbound_url, MAX_HARVEST_BYTES};
+use crate::guard::{
+    validate_and_pin_url, ValidatedTarget, MAX_HARVEST_BYTES, MAX_REDIRECT_HOPS,
+};
 use crate::sources::{
     parse_arcgis_hub_items, parse_ckan_search_page, parse_dcat_page, parse_nkod_sparql_bindings,
 };
@@ -15,24 +17,69 @@ use dataroom_core::{
 };
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
+/// Response from a single HTTP hop before redirect handling.
+#[derive(Debug, Clone)]
+pub enum FetchResponse {
+    Ok {
+        content_type: Option<String>,
+        body: String,
+    },
+    Redirect {
+        status: u16,
+        location: String,
+    },
+}
+
 /// Outbound HTTP fetcher trait so both real HTTPS and deterministic test doubles go through
-/// the exact same SSRF and host-allowlist checks.
+/// the exact same SSRF, redirect-hop, DNS-pinning, byte-cap and host-allowlist checks (A2).
 pub trait OutboundFetcher: Send + Sync {
+    fn fetch_hop<'a>(
+        &'a self,
+        target: &'a ValidatedTarget,
+        accept: &'a str,
+        max_bytes: usize,
+        timeout: Duration,
+    ) -> BoxFuture<'a, Result<FetchResponse>>;
+
     fn fetch<'a>(
         &'a self,
         url: &'a str,
         accept: &'a str,
-    ) -> BoxFuture<'a, Result<(Option<String>, String)>>;
+    ) -> BoxFuture<'a, Result<(Option<String>, String)>> {
+        Box::pin(async move {
+            let parsed = url::Url::parse(url).map_err(|e| {
+                DataroomError::OutboundRefused(format!("invalid URL '{url}': {e}"))
+            })?;
+            let host = parsed.host_str().unwrap_or("").to_owned();
+            let target = ValidatedTarget {
+                url: parsed,
+                host,
+                pinned_addrs: Vec::new(),
+            };
+            match self
+                .fetch_hop(&target, accept, MAX_HARVEST_BYTES, Duration::from_secs(60))
+                .await?
+            {
+                FetchResponse::Ok { content_type, body } => Ok((content_type, body)),
+                FetchResponse::Redirect { status, location } => Err(
+                    DataroomError::OutboundRefused(format!(
+                        "unexpected redirect HTTP {status} to {location}"
+                    )),
+                ),
+            }
+        })
+    }
 }
 
-/// Production HTTPS fetcher backed by `reqwest` with size cap and timeout.
-pub struct HttpFetcher {
-    client: reqwest::Client,
-}
+/// Production HTTPS fetcher backed by `reqwest` with DNS pinning (`resolve_to_addrs`),
+/// `Policy::none()` (so `HarvestEngine` validates every redirect hop), per-source byte cap,
+/// and timeout (A2).
+pub struct HttpFetcher;
 
 impl Default for HttpFetcher {
     fn default() -> Self {
@@ -42,61 +89,109 @@ impl Default for HttpFetcher {
 
 impl HttpFetcher {
     pub fn new() -> Self {
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(60))
-            .redirect(reqwest::redirect::Policy::none())
-            .user_agent("dataroom-harvest/1.0")
-            .build()
-            .unwrap_or_default();
-        Self { client }
+        Self
     }
 }
 
 impl OutboundFetcher for HttpFetcher {
-    fn fetch<'a>(
+    fn fetch_hop<'a>(
         &'a self,
-        url: &'a str,
+        target: &'a ValidatedTarget,
         accept: &'a str,
-    ) -> BoxFuture<'a, Result<(Option<String>, String)>> {
+        max_bytes: usize,
+        timeout: Duration,
+    ) -> BoxFuture<'a, Result<FetchResponse>> {
         Box::pin(async move {
-            let resp = self
-                .client
-                .get(url)
+            let mut builder = reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(10).min(timeout))
+                .timeout(timeout)
+                .redirect(reqwest::redirect::Policy::none())
+                .user_agent("dataroom-harvest/1.0");
+
+            if !target.pinned_addrs.is_empty() {
+                builder = builder.resolve_to_addrs(&target.host, &target.pinned_addrs);
+            }
+
+            let client = builder.build().map_err(|e| {
+                DataroomError::OutboundRefused(format!("build HTTP client: {e}"))
+            })?;
+
+            let url_str = target.url.as_str();
+            let mut resp = client
+                .get(url_str)
                 .header("Accept", accept)
                 .send()
                 .await
-                .map_err(|e| DataroomError::OutboundRefused(format!("fetch {url}: {e}")))?;
-            if !resp.status().is_success() {
+                .map_err(|e| DataroomError::OutboundRefused(format!("fetch {url_str}: {e}")))?;
+
+            let status = resp.status();
+            if status.is_redirection() {
+                let loc = resp
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|v| v.to_str().ok())
+                    .ok_or_else(|| {
+                        DataroomError::OutboundRefused(format!(
+                            "{url_str} answered redirect {} without Location header",
+                            status.as_u16()
+                        ))
+                    })?;
+                return Ok(FetchResponse::Redirect {
+                    status: status.as_u16(),
+                    location: loc.to_owned(),
+                });
+            }
+
+            if !status.is_success() {
                 return Err(DataroomError::OutboundRefused(format!(
-                    "{url} answered HTTP {}",
-                    resp.status().as_u16()
+                    "{url_str} answered HTTP {}",
+                    status.as_u16()
                 )));
             }
+
+            if let Some(cl) = resp.content_length() {
+                if cl > max_bytes as u64 {
+                    return Err(DataroomError::OutboundRefused(format!(
+                        "{url_str} Content-Length {cl} exceeds cap of {max_bytes} bytes"
+                    )));
+                }
+            }
+
             let content_type = resp
                 .headers()
                 .get(reqwest::header::CONTENT_TYPE)
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_owned);
-            let bytes = resp
-                .bytes()
+
+            let mut buf = Vec::new();
+            while let Some(chunk) = resp
+                .chunk()
                 .await
-                .map_err(|e| DataroomError::OutboundRefused(format!("read {url}: {e}")))?;
-            if bytes.len() > MAX_HARVEST_BYTES {
-                return Err(DataroomError::OutboundRefused(format!(
-                    "{url} answered more than {MAX_HARVEST_BYTES} bytes"
-                )));
+                .map_err(|e| DataroomError::OutboundRefused(format!("read {url_str}: {e}")))?
+            {
+                if buf.len().saturating_add(chunk.len()) > max_bytes {
+                    return Err(DataroomError::OutboundRefused(format!(
+                        "{url_str} body exceeded cap of {max_bytes} bytes"
+                    )));
+                }
+                buf.extend_from_slice(&chunk);
             }
-            let text = String::from_utf8_lossy(&bytes).into_owned();
-            Ok((content_type, text))
+
+            let text = String::from_utf8_lossy(&buf).into_owned();
+            Ok(FetchResponse::Ok {
+                content_type,
+                body: text,
+            })
         })
     }
 }
 
-/// Deterministic in-memory map fetcher for testing harvest runs, pagination and withdrawal.
+/// Deterministic in-memory map fetcher for testing harvest runs, redirects, DNS pinning, byte caps,
+/// pagination and withdrawal (A2).
 #[derive(Clone, Default)]
 pub struct MapFetcher {
-    responses: Arc<std::sync::RwLock<BTreeMap<String, (Option<String>, String)>>>,
+    responses: Arc<std::sync::RwLock<BTreeMap<String, FetchResponse>>>,
+    pinned_seen: Arc<std::sync::RwLock<Vec<(String, Vec<SocketAddr>)>>>,
 }
 
 impl MapFetcher {
@@ -104,20 +199,59 @@ impl MapFetcher {
         Self::default()
     }
 
-    pub fn insert(&self, url: impl Into<String>, content_type: Option<&str>, body: impl Into<String>) {
+    pub fn insert(
+        &self,
+        url: impl Into<String>,
+        content_type: Option<&str>,
+        body: impl Into<String>,
+    ) {
         self.responses
             .write()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(url.into(), (content_type.map(str::to_owned), body.into()));
+            .insert(
+                url.into(),
+                FetchResponse::Ok {
+                    content_type: content_type.map(str::to_owned),
+                    body: body.into(),
+                },
+            );
+    }
+
+    pub fn insert_redirect(&self, url: impl Into<String>, status: u16, location: impl Into<String>) {
+        self.responses
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                url.into(),
+                FetchResponse::Redirect {
+                    status,
+                    location: location.into(),
+                },
+            );
+    }
+
+    pub fn pinned_seen(&self) -> Vec<(String, Vec<SocketAddr>)> {
+        self.pinned_seen
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
 impl OutboundFetcher for MapFetcher {
-    fn fetch<'a>(
+    fn fetch_hop<'a>(
         &'a self,
-        url: &'a str,
+        target: &'a ValidatedTarget,
         _accept: &'a str,
-    ) -> BoxFuture<'a, Result<(Option<String>, String)>> {
+        max_bytes: usize,
+        _timeout: Duration,
+    ) -> BoxFuture<'a, Result<FetchResponse>> {
+        self.pinned_seen
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((target.host.clone(), target.pinned_addrs.clone()));
+
+        let url = target.url.as_str();
         let found = self
             .responses
             .read()
@@ -125,14 +259,33 @@ impl OutboundFetcher for MapFetcher {
             .get(url)
             .cloned()
             .ok_or_else(|| DataroomError::OutboundRefused(format!("no response for {url}")));
-        Box::pin(std::future::ready(found))
+
+        let checked = found.and_then(|resp| match resp {
+            FetchResponse::Ok { content_type, body } => {
+                if body.len() > max_bytes {
+                    Err(DataroomError::OutboundRefused(format!(
+                        "{url} body size {} exceeded cap of {max_bytes} bytes",
+                        body.len()
+                    )))
+                } else {
+                    Ok(FetchResponse::Ok { content_type, body })
+                }
+            }
+            other => Ok(other),
+        });
+        Box::pin(std::future::ready(checked))
     }
 }
 
-/// Harvest runner engine implementing [`HarvestRunner`] (C9).
+type CustomDnsResolver = Arc<dyn Fn(&str, u16) -> Result<Vec<SocketAddr>> + Send + Sync>;
+
+/// Harvest runner engine implementing [`HarvestRunner`] (C9, A2).
 pub struct HarvestEngine {
     fetcher: Arc<dyn OutboundFetcher>,
     resolve_dns: bool,
+    custom_dns: Option<CustomDnsResolver>,
+    max_bytes: usize,
+    timeout: Duration,
 }
 
 impl HarvestEngine {
@@ -140,6 +293,9 @@ impl HarvestEngine {
         Self {
             fetcher,
             resolve_dns: true,
+            custom_dns: None,
+            max_bytes: MAX_HARVEST_BYTES,
+            timeout: Duration::from_secs(60),
         }
     }
 
@@ -148,20 +304,84 @@ impl HarvestEngine {
         self
     }
 
-    async fn checked_fetch(
+    pub fn with_custom_dns<F>(mut self, resolver: F) -> Self
+    where
+        F: Fn(&str, u16) -> Result<Vec<SocketAddr>> + Send + Sync + 'static,
+    {
+        self.custom_dns = Some(Arc::new(resolver));
+        self
+    }
+
+    pub fn with_max_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_bytes = max_bytes;
+        self
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// Fetches `url` while enforcing the SSRF guard, host allow-list, and DNS pinning on the
+    /// initial URL and on every redirect hop (max [`MAX_REDIRECT_HOPS`] = 5 hops, A2).
+    pub async fn checked_fetch(
         &self,
         url: &str,
         source: &HarvestSource,
         cat_allowed_hosts: &[String],
         accept: &str,
     ) -> Result<(Option<String>, String)> {
-        validate_outbound_url(
-            url,
-            &source.allowed_hosts,
-            cat_allowed_hosts,
-            self.resolve_dns,
-        )?;
-        self.fetcher.fetch(url, accept).await
+        let mut current_url = url.to_owned();
+        for hop in 0..=MAX_REDIRECT_HOPS {
+            let resolver_ref = self
+                .custom_dns
+                .as_ref()
+                .map(|r| r.as_ref() as &dyn Fn(&str, u16) -> Result<Vec<SocketAddr>>);
+            let target = validate_and_pin_url(
+                &current_url,
+                &source.allowed_hosts,
+                cat_allowed_hosts,
+                self.resolve_dns,
+                resolver_ref,
+            )?;
+
+            match self
+                .fetcher
+                .fetch_hop(&target, accept, self.max_bytes, self.timeout)
+                .await?
+            {
+                FetchResponse::Ok { content_type, body } => {
+                    if body.len() > self.max_bytes {
+                        return Err(DataroomError::OutboundRefused(format!(
+                            "{current_url} body size {} exceeded cap of {} bytes",
+                            body.len(),
+                            self.max_bytes
+                        )));
+                    }
+                    return Ok((content_type, body));
+                }
+                FetchResponse::Redirect { location, .. } => {
+                    if hop >= MAX_REDIRECT_HOPS {
+                        return Err(DataroomError::OutboundRefused(format!(
+                            "redirect limit of {MAX_REDIRECT_HOPS} hops exceeded from {url}"
+                        )));
+                    }
+                    let next_url = target
+                        .url
+                        .join(&location)
+                        .map_err(|e| {
+                            DataroomError::OutboundRefused(format!(
+                                "invalid redirect Location '{location}': {e}"
+                            ))
+                        })?
+                        .into();
+                    current_url = next_url;
+                }
+            }
+        }
+        Err(DataroomError::OutboundRefused(format!(
+            "redirect limit of {MAX_REDIRECT_HOPS} hops exceeded"
+        )))
     }
 
     async fn gather_items(
@@ -787,5 +1007,182 @@ mod tests {
             .collect();
         assert_eq!(active.len(), 1);
         assert_eq!(withdrawn.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a2_redirect_ssrf_guards_every_hop_pins_dns_and_enforces_caps() {
+        let (org_id, catalogue_id, _ctx, _store) = test_setup();
+        let source = HarvestSource {
+            org_id,
+            catalogue_id,
+            id: "hs-ssrf".into(),
+            name: "ssrf-test".into(),
+            kind: HarvestSourceKind::DcatAp,
+            url: "https://allowed.example.org/start.ttl".into(),
+            publisher_id: "bbsk".into(),
+            target_publisher_iri: None,
+            spatial_uri: None,
+            name_prefix: String::new(),
+            allowed_hosts: vec![
+                "allowed.example.org".into(),
+                "rebind.example.org".into(),
+                "169.254.169.254".into(),
+            ],
+            rewrite_hosts: BTreeMap::new(),
+            skip_items: BTreeMap::new(),
+            title_overrides: BTreeMap::new(),
+            spelling_fixes: BTreeMap::new(),
+            require_column: BTreeMap::new(),
+            schedule: "23 3 * * *".into(),
+            enabled: true,
+            modified: Utc::now(),
+        };
+
+        let fetcher = MapFetcher::new();
+        // 1. Redirect to cloud metadata 169.254.169.254 -> refused!
+        fetcher.insert_redirect(
+            "https://allowed.example.org/to-metadata",
+            302,
+            "https://169.254.169.254/latest/meta-data/",
+        );
+        // 2. Redirect to a DNS name that resolves to 127.0.0.1 -> refused!
+        fetcher.insert_redirect(
+            "https://allowed.example.org/to-loopback-dns",
+            302,
+            "https://rebind.example.org/secret.ttl",
+        );
+        // 3. Redirect to an unlisted host -> refused!
+        fetcher.insert_redirect(
+            "https://allowed.example.org/to-unlisted",
+            302,
+            "https://unlisted.example.org/catalog.ttl",
+        );
+        // 4. Redirect loop (> 5 hops) -> refused!
+        fetcher.insert_redirect(
+            "https://allowed.example.org/loop-a",
+            302,
+            "https://allowed.example.org/loop-b",
+        );
+        fetcher.insert_redirect(
+            "https://allowed.example.org/loop-b",
+            302,
+            "https://allowed.example.org/loop-a",
+        );
+        // 5. Body over the per-source byte cap -> refused!
+        fetcher.insert(
+            "https://allowed.example.org/huge.ttl",
+            Some("text/turtle"),
+            "x".repeat(1024),
+        );
+        // 6. Valid redirect hop pins DNS answer for the connection
+        fetcher.insert_redirect(
+            "https://allowed.example.org/valid-hop",
+            301,
+            "https://allowed.example.org/final.ttl",
+        );
+        fetcher.insert(
+            "https://allowed.example.org/final.ttl",
+            Some("text/turtle"),
+            "@prefix dcat: <http://www.w3.org/ns/dcat#> .",
+        );
+
+        let engine = HarvestEngine::new(Arc::new(fetcher.clone()))
+            .with_max_bytes(512)
+            .with_custom_dns(|host, port| match host {
+                "allowed.example.org" => Ok(vec![SocketAddr::from(([93, 184, 216, 34], port))]),
+                "rebind.example.org" => Ok(vec![SocketAddr::from(([127, 0, 0, 1], port))]),
+                other => Err(DataroomError::OutboundRefused(format!("unknown host {other}"))),
+            });
+
+        // Test 1: Redirect to 169.254.169.254 refused
+        let err_meta = engine
+            .checked_fetch(
+                "https://allowed.example.org/to-metadata",
+                &source,
+                &[],
+                "text/turtle",
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err_meta.to_string().contains("169.254.169.254"),
+            "expected metadata IP refusal, got {err_meta}"
+        );
+
+        // Test 2: Redirect to 127.0.0.1 by DNS name refused
+        let err_dns = engine
+            .checked_fetch(
+                "https://allowed.example.org/to-loopback-dns",
+                &source,
+                &[],
+                "text/turtle",
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err_dns.to_string().contains("127.0.0.1"),
+            "expected loopback DNS refusal, got {err_dns}"
+        );
+
+        // Test 3: Redirect to unlisted host refused
+        let err_unlisted = engine
+            .checked_fetch(
+                "https://allowed.example.org/to-unlisted",
+                &source,
+                &[],
+                "text/turtle",
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err_unlisted.to_string().contains("unlisted.example.org"),
+            "expected unlisted host refusal, got {err_unlisted}"
+        );
+
+        // Test 4: Redirect loop refused after 5 hops
+        let err_loop = engine
+            .checked_fetch(
+                "https://allowed.example.org/loop-a",
+                &source,
+                &[],
+                "text/turtle",
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err_loop.to_string().contains("redirect limit of 5 hops"),
+            "expected redirect loop refusal, got {err_loop}"
+        );
+
+        // Test 5: Body over the cap refused
+        let err_cap = engine
+            .checked_fetch(
+                "https://allowed.example.org/huge.ttl",
+                &source,
+                &[],
+                "text/turtle",
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err_cap.to_string().contains("exceeded cap of 512 bytes"),
+            "expected byte cap refusal, got {err_cap}"
+        );
+
+        // Test 6: Valid redirect hop succeeds and pins the resolved public IP for each hop
+        let (_, ok_body) = engine
+            .checked_fetch(
+                "https://allowed.example.org/valid-hop",
+                &source,
+                &[],
+                "text/turtle",
+            )
+            .await
+            .expect("valid hop should succeed");
+        assert!(ok_body.contains("dcat:"));
+        let pinned = fetcher.pinned_seen();
+        assert!(pinned
+            .iter()
+            .all(|(_, addrs)| addrs == &vec![SocketAddr::from(([93, 184, 216, 34], 443))]));
     }
 }

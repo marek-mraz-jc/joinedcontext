@@ -52,6 +52,13 @@ pub enum DataroomError {
     #[error("RDF error: {0}")]
     Rdf(String),
 
+    /// Specific RDF parser limit exceeded (A1).
+    #[error("RDF limit exceeded ({kind}): {message}")]
+    RdfLimitExceeded {
+        kind: String,
+        message: String,
+    },
+
     /// Underlying storage or tenant setting error.
     #[error("storage error: {0}")]
     Storage(String),
@@ -68,13 +75,38 @@ impl DataroomError {
         Self::Validation { message, fields }
     }
 
+    /// Stable machine-readable problem slug (A5).
+    pub fn slug(&self) -> &'static str {
+        match self {
+            Self::NotFound(_) => "not-found",
+            Self::Forbidden(_) => "forbidden",
+            Self::Unauthorized(_) => "unauthorized",
+            Self::Validation { .. } => "validation-error",
+            Self::ShaclViolation { .. } => "shacl-violation",
+            Self::Conflict(_) => "conflict",
+            Self::NotSupported(_) => "not-supported",
+            Self::OutboundRefused(_) => "outbound-refused",
+            Self::Rdf(_) => "rdf-error",
+            Self::RdfLimitExceeded { .. } => "rdf-limit-exceeded",
+            Self::Storage(_) => "storage-error",
+        }
+    }
+
+    /// Problem type URI (`urn:joinedcontext:problem:{slug}`, A5).
+    pub fn problem_type_uri(&self) -> String {
+        format!("urn:joinedcontext:problem:{}", self.slug())
+    }
+
     /// HTTP status code corresponding to this error.
     pub fn status_code(&self) -> u16 {
         match self {
             Self::NotFound(_) => 404,
             Self::Forbidden(_) => 403,
             Self::Unauthorized(_) => 401,
-            Self::Validation { .. } | Self::ShaclViolation { .. } | Self::Rdf(_) => 422,
+            Self::Validation { .. }
+            | Self::ShaclViolation { .. }
+            | Self::Rdf(_)
+            | Self::RdfLimitExceeded { .. } => 422,
             Self::Conflict(_) => 409,
             Self::NotSupported(_) => 501,
             Self::OutboundRefused(_) => 400,
@@ -91,7 +123,9 @@ impl DataroomError {
                 "Validation Error"
             }
             Self::NotSupported(_) => "Not Supported Error",
-            Self::OutboundRefused(_) | Self::Rdf(_) => "Validation Error",
+            Self::OutboundRefused(_) | Self::Rdf(_) | Self::RdfLimitExceeded { .. } => {
+                "Validation Error"
+            }
             Self::Storage(_) => "Internal Server Error",
         }
     }

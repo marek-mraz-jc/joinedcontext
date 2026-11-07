@@ -1,0 +1,38 @@
+  branding:
+    instanceName: joinedcontext
+    shortName: joinedcontext
+    city: Helsinki
+    organisation: joinedcontext demo
+    # The publisher's own domain, which is what a DCAT-AP record and a did:web name. The
+    # URN segment above is separate and stays until the demo data moves with it (T-0343).
+    orgDomain: hel.fi
+    domain: {{ env "JC_DEV_DOMAIN" | default "dev.joinedcontext.com" }}
+    contactEmail: {{ env "JC_DEV_CONTACT_EMAIL" | default "hello@joinedcontext.com" }}
+    # The public API and User Guide pages the Portal serves to anyone (T-4063): the catalogue's
+    # usage texts link their guides under it, the WebSocket's included (T-4064, EP-108).
+    documentationBaseUrl: https://{{ env "JC_DEV_DOMAIN" | default "dev.joinedcontext.com" }}/docs
+    licenseDefault: CC-BY-4.0
+    logo: logo.svg
+    favicon: logo.svg
+    logoSvg: |
+{{ readFile "branding/logo.svg" | indent 6 }}
+    colours:
+      primary: '#0000bf'
+      secondary: '#0072c6'
+      accent: '#ffe977'
+      background: '#ffffff'
+      text: '#1a1a1a'
+    fonts:
+      # Self-hosted or system only: nothing on a page fetches from a third-party origin.
+      # No HelsinkiGrotesk: it has no š, ž or ř, and Slovak and Czech headings fell back letter
+      # by letter to another face (T-4202).
+      heading: system-ui, sans-serif
+      body: system-ui, sans-serif
+    # English only, for now, by the owner's decision: the Portal ships no Finnish or Swedish
+    # bundle, so offering them showed a switcher that fell back to another language. The
+    # Portal and the catalogue both take this block.
+    languages:
+      default: en
+      offered:
+        - en
+

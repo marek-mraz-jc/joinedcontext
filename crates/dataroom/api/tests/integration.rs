@@ -106,6 +106,8 @@ fn make_catalogue(org_id: OrgId, cat_id: CatalogueId, name: &str, host: &str) ->
             identifier: None,
         }),
         theme: ThemeTokens::default(),
+        branding: None,
+        hidden_datasets: BTreeMap::new(),
         allow_cross_org_harvest: true,
         allowed_outbound_hosts: vec!["external.example.org".into()],
         applicable_legislation: Vec::new(),
@@ -621,6 +623,9 @@ async fn two_publishers_in_one_catalogue_with_separate_editor_grants_and_merge()
                 state: RecordState::Active,
                 merged_into: None,
                 editor_grants: vec!["editor_mesto".into()],
+                badge_initials: None,
+                badge_colour: None,
+                declared_by_instance: None,
                 created: Utc::now(),
                 modified: Utc::now(),
             },
@@ -649,6 +654,9 @@ async fn two_publishers_in_one_catalogue_with_separate_editor_grants_and_merge()
                 state: RecordState::Active,
                 merged_into: None,
                 editor_grants: vec!["editor_dp".into()],
+                badge_initials: None,
+                badge_colour: None,
+                declared_by_instance: None,
                 created: Utc::now(),
                 modified: Utc::now(),
             },
@@ -806,6 +814,9 @@ async fn dataset_rendered_under_eu_cz_and_sk_profiles_by_accept_profile() {
                 state: RecordState::Active,
                 merged_into: None,
                 editor_grants: vec!["editor".into()],
+                badge_initials: None,
+                badge_colour: None,
+                declared_by_instance: None,
                 created: Utc::now(),
                 modified: Utc::now(),
             },
@@ -1065,6 +1076,9 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
                     state: RecordState::Active,
                     merged_into: None,
                     editor_grants: Vec::new(),
+                    badge_initials: None,
+                    badge_colour: None,
+                    declared_by_instance: None,
                     created: Utc::now(),
                     modified: Utc::now(),
                 },
@@ -1202,7 +1216,11 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
             "catalogue.propose" => continue,
             "dataset.propose" => continue,
             "publisher.propose" => continue,
+            "publisher.merge" => continue,
+            "publisher.withdraw" => json!({ "publisher": "b-only-secret" }),
             "harvest_source.propose" => continue,
+            "branding.propose" => continue,
+            "profile.propose" => continue,
             "plugin.propose" => continue,
             _ => json!({}),
         };
@@ -1210,7 +1228,7 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
         let res = execute_operation(&op_ctx, &ctx_a, op.name, probe_b_input).await;
         match op.name {
             "dataset.get" | "dataset.withdraw" | "harvest_run.start" | "harvest_run.get"
-            | "harvest_run.logs" => {
+            | "harvest_run.logs" | "publisher.withdraw" => {
                 assert!(
                     matches!(res, Err(dataroom_core::DataroomError::NotFound(_))),
                     "op {} probing B id must return NotFound, got {:?}",
@@ -1251,4 +1269,1175 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
     let odata_val: Value = serde_json::from_str(&odata_body).unwrap();
     assert_eq!(odata_val["@odata.count"], 2);
     assert!(!odata_body.contains("b-only-secret"));
+}
+
+#[tokio::test]
+async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
+    let org_a = OrgId::from_uuid(Uuid::from_u128(0xB401));
+    let cat_a = CatalogueId::from_uuid(Uuid::from_u128(0xB401_1));
+    let org_b = OrgId::from_uuid(Uuid::from_u128(0xB402));
+    let cat_b = CatalogueId::from_uuid(Uuid::from_u128(0xB402_1));
+
+    let store = Arc::new(MemoryStore::new());
+    let mut c_a = make_catalogue(org_a, cat_a, "bb", "data.banskabystrica.sk");
+    c_a.branding = Some(json!({
+        "instanceName": "Banská Bystrica",
+        "colours": { "primary": "#00579c" },
+        "siteTitle": { "sk": "Otvorené dáta BB" },
+        "noindex": false
+    }));
+    store.upsert_catalogue(c_a).await.unwrap();
+
+    let mut c_b = make_catalogue(org_b, cat_b, "demo", "demo.joinedcontext.com");
+    c_b.branding = Some(json!({
+        "instanceName": "Demo Instance",
+        "colours": { "primary": "#7a1f5c" },
+        "siteTitle": { "sk": "Demo Katalóg" },
+        "ribbon": "Demo environment — not official data",
+        "noindex": true
+    }));
+    store.upsert_catalogue(c_b).await.unwrap();
+
+    let ctx_a = RequestCtx::new(
+        org_a,
+        cat_a,
+        Subject::authenticated("ed_a", vec![org_a], Vec::new()),
+    );
+    let ctx_b = RequestCtx::new(
+        org_b,
+        cat_b,
+        Subject::authenticated("ed_b", vec![org_b], Vec::new()),
+    );
+
+    for (ctx, org, cat, ds_name, title) in [
+        (&ctx_a, org_a, cat_a, "bb-rozpocet", "Rozpočet BB"),
+        (&ctx_b, org_b, cat_b, "demo-sensors", "Demo senzory"),
+    ] {
+        store
+            .upsert_publisher(
+                ctx,
+                Publisher {
+                    org_id: org,
+                    catalogue_id: cat,
+                    id: "pub-1".into(),
+                    name: "pub1".into(),
+                    title: BTreeMap::from([("sk".into(), "Pub".into())]),
+                    description: BTreeMap::new(),
+                    uri: "https://data.gov.sk/id/legal-subject/00313271".into(),
+                    publisher_type: None,
+                    identifier: None,
+                    email: None,
+                    homepage: None,
+                    logo_url: None,
+                    contact_point: None,
+                    state: RecordState::Active,
+                    merged_into: None,
+                    editor_grants: Vec::new(),
+                    badge_initials: None,
+                    badge_colour: None,
+                    declared_by_instance: None,
+                    created: Utc::now(),
+                    modified: Utc::now(),
+                },
+            )
+            .await
+            .unwrap();
+        store
+            .upsert_dataset(
+                ctx,
+                Dataset {
+                    org_id: org,
+                    catalogue_id: cat,
+                    id: format!("pkg-{ds_name}"),
+                    name: ds_name.into(),
+                    uri: None,
+                    dataset_type: "dataset".into(),
+                    title: BTreeMap::from([("sk".into(), title.into())]),
+                    description: BTreeMap::from([("sk".into(), title.into())]),
+                    publisher_id: "pub1".into(),
+                    publisher: None,
+                    creator: None,
+                    contact_point: None,
+                    visibility: Visibility::Public,
+                    state: RecordState::Active,
+                    licence_id: Some("cc-by".into()),
+                    licence_url: None,
+                    themes: vec!["GOVE".into()],
+                    eurovoc_themes: Vec::new(),
+                    keywords: BTreeMap::new(),
+                    tags: Vec::new(),
+                    spatial: Vec::new(),
+                    spatial_resolution_in_meters: None,
+                    temporal: None,
+                    temporal_resolution: None,
+                    frequency: None,
+                    landing_page: None,
+                    documentation: Vec::new(),
+                    conforms_to: Vec::new(),
+                    applicable_legislation: Vec::new(),
+                    in_series: None,
+                    relations: Vec::new(),
+                    sources: Vec::new(),
+                    languages: Vec::new(),
+                    version: None,
+                    version_notes: BTreeMap::new(),
+                    access_rights: None,
+                    provenance: BTreeMap::new(),
+                    dcat_type: None,
+                    identifier: None,
+                    alternate_identifiers: Vec::new(),
+                    endpoint_url: None,
+                    generated_by: None,
+                    harvest_source_id: None,
+                    harvest_source_item_id: None,
+                    harvest_hash: None,
+                    custom_shacl_shapes: None,
+                    distributions: Vec::new(),
+                    extras: BTreeMap::new(),
+                    restricted_grants: Vec::new(),
+                    issued: Utc::now(),
+                    modified: Utc::now(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    let app = router(DataroomState::new(
+        store,
+        Arc::new(PolicyAuthorizer::default()),
+        org_a,
+        cat_a,
+    ));
+
+    // Host A renders BB look, no noindex meta tag, and only BB's dataset
+    let (st, _, html_a) = send_json(&app, Method::GET, "/", "data.banskabystrica.sk", None, None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(html_a.contains("--jc-primary: #00579c;"));
+    assert!(html_a.contains("Otvorené dáta BB"));
+    assert!(html_a.contains("Rozpočet BB"));
+    assert!(!html_a.contains("Demo senzory"));
+    assert!(!html_a.contains("noindex, nofollow"));
+
+    let (_, _, robots_a) = send_json(&app, Method::GET, "/robots.txt", "data.banskabystrica.sk", None, None, None).await;
+    assert!(robots_a.contains("Sitemap: https://data.banskabystrica.sk/sitemap.xml"));
+
+    // Host B renders Demo look, ribbon, noindex meta tag, Disallow: / in robots.txt, and only Demo's dataset
+    let (st, _, html_b) = send_json(&app, Method::GET, "/", "demo.joinedcontext.com", None, None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(html_b.contains("--jc-primary: #7a1f5c;"));
+    assert!(html_b.contains("Demo Katalóg"));
+    assert!(html_b.contains("Demo environment — not official data"));
+    assert!(html_b.contains("noindex, nofollow"));
+    assert!(html_b.contains("Demo senzory"));
+    assert!(!html_b.contains("Rozpočet BB"));
+
+    let (_, _, robots_b) = send_json(&app, Method::GET, "/robots.txt", "demo.joinedcontext.com", None, None, None).await;
+    assert_eq!(robots_b, "User-agent: *\nDisallow: /\n");
+}
+
+#[tokio::test]
+async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
+    let org_id = OrgId::from_uuid(Uuid::from_u128(0xD001));
+    let cat_id = CatalogueId::from_uuid(Uuid::from_u128(0xD001_1));
+    let store = Arc::new(MemoryStore::new());
+    let host = "opendata.dev.joinedcontext.com";
+
+    let dev_branding = dataroom_core::BrandingBlock::from_yaml_lossy(include_str!(
+        "../../../../ours/environments/dev-branding.yaml"
+    ));
+
+    let mut cat = make_catalogue(org_id, cat_id, "dev", host);
+    cat.title = BTreeMap::from([
+        ("sk".into(), "Otvorené dáta".into()),
+        ("en".into(), "Open Data".into()),
+    ]);
+    cat.languages = vec!["sk".into(), "en".into(), "fi".into(), "hu".into()];
+    cat.branding = Some(json!({
+        "domain": "dev.joinedcontext.com",
+        "siteTitle": { "sk": "Otvorené dáta", "en": "Open Data" },
+        "samples": {
+            "sk": ["Aká je teraz kvalita ovzdušia v Helsinkách?"]
+        }
+    }));
+    store.upsert_catalogue(cat).await.unwrap();
+
+    let ctx = RequestCtx::new(
+        org_id,
+        cat_id,
+        Subject::authenticated("admin", vec![org_id], Vec::new()),
+    );
+
+    // Seed publishers matching `live/dev-organization-list.html` and `live/dev-organization-banskabystrica.html`
+    for (slug, title, desc, initials, colour) in [
+        (
+            "barcelona",
+            "Ajuntament de Barcelona",
+            "Otvorené údaje mesta Barcelona (Open Data BCN, CC BY 4.0), publikované cez endpointy joinedcontext.",
+            "BCN",
+            "#c8102e",
+        ),
+        (
+            "banskabystrica",
+            "Mesto Banská Bystrica",
+            "Otvorené údaje mesta Banská Bystrica.",
+            "BB",
+            "#00579c",
+        ),
+        (
+            "bbsk",
+            "Banskobystrický samosprávny kraj",
+            "Otvorené údaje Banskobystrického samosprávneho kraja.",
+            "BBSK",
+            "#7a1f5c",
+        ),
+        (
+            "hel-fi",
+            "Helsinki Region Context",
+            "Otvorené údaje regiónu Helsinki, naživo z verejnej dopravy HSL, parkovísk...",
+            "HEL",
+            "#0000bf",
+        ),
+    ] {
+        store
+            .upsert_publisher(
+                &ctx,
+                Publisher {
+                    org_id,
+                    catalogue_id: cat_id,
+                    id: format!("pub-{slug}"),
+                    name: slug.into(),
+                    title: BTreeMap::from([("sk".into(), title.into())]),
+                    description: BTreeMap::from([("sk".into(), desc.into())]),
+                    uri: "http://datos.gob.es/recurso/sector-publico/org/Organismo/L01080193".into(),
+                    publisher_type: None,
+                    identifier: None,
+                    email: None,
+                    homepage: None,
+                    logo_url: None,
+                    contact_point: None,
+                    state: RecordState::Active,
+                    merged_into: None,
+                    editor_grants: Vec::new(),
+                    badge_initials: Some(initials.into()),
+                    badge_colour: Some(colour.into()),
+                    declared_by_instance: None,
+                    created: Utc::now(),
+                    modified: Utc::now(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    // Seed `air-quality` dataset matching `live/dev-dataset-air-quality-sk.html`
+    store
+        .upsert_dataset(
+            &ctx,
+            Dataset {
+                org_id,
+                catalogue_id: cat_id,
+                id: "d262a2d3-17b2-4e44-afb7-1275fdbf3e4e".into(),
+                name: "air-quality".into(),
+                uri: None,
+                dataset_type: "dataset".into(),
+                title: BTreeMap::from([(
+                    "sk".into(),
+                    "Qualitat de l'aire a Barcelona".into(),
+                )]),
+                description: BTreeMap::from([(
+                    "sk".into(),
+                    "Les estacions de la xarxa de qualitat de l'aire de Barcelona i la darrera mitjana horària de cada contaminant (NO2, O3, PM10, PM2.5, SO2, CO, NO, NOx, carboni negre), amb 30 dies d'història.".into(),
+                )]),
+                publisher_id: "barcelona".into(),
+                publisher: None,
+                creator: None,
+                contact_point: Some(ContactPoint {
+                    uri: None,
+                    kind: ContactKind::Organization,
+                    name: BTreeMap::from([("sk".into(), "joinedcontext platform".into())]),
+                    email: "hello@joinedcontext.com".into(),
+                    url: None,
+                    identifier: None,
+                }),
+                visibility: Visibility::Public,
+                state: RecordState::Active,
+                licence_id: Some("cc-by".into()),
+                licence_url: Some("http://www.opendefinition.org/licenses/cc-by".into()),
+                themes: vec!["ENVI".into(), "SOCI".into()],
+                eurovoc_themes: Vec::new(),
+                keywords: BTreeMap::new(),
+                tags: vec!["NO2".into(), "PM10".into(), "air quality".into()],
+                spatial: vec!["http://data.europa.eu/nuts/code/ES511".into()],
+                spatial_resolution_in_meters: None,
+                temporal: None,
+                temporal_resolution: None,
+                frequency: Some("HOURLY".into()),
+                landing_page: None,
+                documentation: Vec::new(),
+                conforms_to: vec!["https://www.w3.org/TR/json-ld11/".into()],
+                applicable_legislation: Vec::new(),
+                in_series: None,
+                relations: Vec::new(),
+                sources: Vec::new(),
+                languages: Vec::new(),
+                version: None,
+                version_notes: BTreeMap::new(),
+                access_rights: None,
+                provenance: BTreeMap::new(),
+                dcat_type: None,
+                identifier: Some("esbxdrr7snorjsp7uus2luihr6vl5vv6".into()),
+                alternate_identifiers: Vec::new(),
+                endpoint_url: Some(
+                    "https://api.dev.joinedcontext.com/api/endpoint/esbxdrr7snorjsp7uus2luihr6vl5vv6/"
+                        .into(),
+                ),
+                generated_by: None,
+                harvest_source_id: None,
+                harvest_source_item_id: None,
+                harvest_hash: None,
+                custom_shacl_shapes: None,
+                distributions: vec![
+                    Distribution {
+                        id: "0e74d5fe-c17f-4bd7-879b-0c3bf6481817".into(),
+                        dataset_id: "d262a2d3-17b2-4e44-afb7-1275fdbf3e4e".into(),
+                        uri: None,
+                        title: BTreeMap::from([("sk".into(), "CSV".into())]),
+                        description: BTreeMap::new(),
+                        access_url: "https://api.dev.joinedcontext.com/api/endpoint/esbxdrr7snorjsp7uus2luihr6vl5vv6/file.csv".into(),
+                        download_url: None,
+                        format: Some("CSV".into()),
+                        media_type: Some("text/csv".into()),
+                        compress_format: None,
+                        package_format: None,
+                        byte_size: None,
+                        hash: None,
+                        hash_algorithm: None,
+                        licence: None,
+                        rights: BTreeMap::new(),
+                        status: None,
+                        availability: None,
+                        resource_type: None,
+                        conforms_to: Vec::new(),
+                        documentation: Vec::new(),
+                        languages: Vec::new(),
+                        applicable_legislation: Vec::new(),
+                        temporal_resolution: None,
+                        spatial_resolution_in_meters: None,
+                        terms_of_use: None,
+                        access_services: Vec::new(),
+                        issued: None,
+                        modified: None,
+                        extras: BTreeMap::new(),
+                    },
+                    Distribution {
+                        id: "ae7704f9-4a60-4510-b810-e4528f63030e".into(),
+                        dataset_id: "d262a2d3-17b2-4e44-afb7-1275fdbf3e4e".into(),
+                        uri: None,
+                        title: BTreeMap::from([("sk".into(), "NGSI-LD API".into())]),
+                        description: BTreeMap::new(),
+                        access_url: "https://api.dev.joinedcontext.com/api/endpoint/esbxdrr7snorjsp7uus2luihr6vl5vv6/ngsi-ld/v1/".into(),
+                        download_url: None,
+                        format: Some("NGSI-LD".into()),
+                        media_type: Some("application/json".into()),
+                        compress_format: None,
+                        package_format: None,
+                        byte_size: None,
+                        hash: None,
+                        hash_algorithm: None,
+                        licence: None,
+                        rights: BTreeMap::new(),
+                        status: None,
+                        availability: None,
+                        resource_type: None,
+                        conforms_to: Vec::new(),
+                        documentation: Vec::new(),
+                        languages: Vec::new(),
+                        applicable_legislation: Vec::new(),
+                        temporal_resolution: None,
+                        spatial_resolution_in_meters: None,
+                        terms_of_use: None,
+                        access_services: Vec::new(),
+                        issued: None,
+                        modified: None,
+                        extras: BTreeMap::new(),
+                    },
+                ],
+                extras: BTreeMap::from([
+                    ("rights".into(), "Font: Ajuntament de Barcelona, Open Data BCN, CC BY 4.0".into()),
+                    ("quality_pass_rate".into(), "1.0".into()),
+                    ("was_generated_by".into(), "pipeline air-quality".into()),
+                ]),
+                restricted_grants: Vec::new(),
+                issued: Utc::now(),
+                modified: Utc::now(),
+            },
+        )
+        .await
+        .unwrap();
+
+    store
+        .upsert_resource_view(
+            &ctx,
+            dataroom_core::ResourceView {
+                id: "91530f63-eb39-4f4a-b5df-e66e79e0d067".into(),
+                resource_id: "0e74d5fe-c17f-4bd7-879b-0c3bf6481817".into(),
+                view_type: "jc_visualization".into(),
+                title: "Černý uhlík".into(),
+                description: String::new(),
+                order: 1,
+                config: BTreeMap::new(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let state = DataroomState::new(
+        store,
+        Arc::new(PolicyAuthorizer::default()),
+        org_id,
+        cat_id,
+    )
+    .with_installation_branding(dev_branding);
+    let app = router(state);
+
+    // 1. Home page (`live/dev-home.html` parity)
+    let (st, hdrs, home_html) = send_json(&app, Method::GET, "/", host, None, None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    let csp = hdrs
+        .get(header::CONTENT_SECURITY_POLICY)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(csp.contains("script-src 'self' 'nonce-"));
+    assert!(csp.contains("frame-ancestors 'self'"));
+    for expected in [
+        "id=\"jc-hero-title\"",
+        "Otvorené dáta",
+        "Prezrite si ich, stiahnite alebo sa na ne opýtajte asistenta.",
+        "id=\"jc-topics-title\"",
+        "Podľa témy",
+        "id=\"jc-recent-title\"",
+        "Nedávno aktualizované",
+        "id=\"jc-publishers-title\"",
+        "Podľa vydavateľa",
+        "id=\"jc-tags-title\"",
+        "Časté kľúčové slová",
+        "href=\"/user/login\"",
+        "Prihlásiť sa",
+        "data-grid-config=",
+    ] {
+        assert!(
+            home_html.contains(expected),
+            "home_html missing expected fragment '{expected}'"
+        );
+    }
+
+    // 2. Dataset list page (`live/dev-dataset-list.html` parity)
+    let (st, _, list_html) = send_json(&app, Method::GET, "/dataset/", host, None, None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    for expected in [
+        "id=\"dataset-search-form\"",
+        "Vydavateľ",
+        "Téma",
+        "Kľúčové slová",
+        "Formát",
+        "Licencia",
+        "Zoradiť podľa",
+        "datasety nájdené",
+        "Qualitat de l&#39;aire a Barcelona",
+    ] {
+        assert!(
+            list_html.contains(expected),
+            "list_html missing expected fragment '{expected}'"
+        );
+    }
+
+    // 3. Dataset detail page (`live/dev-dataset-air-quality-sk.html` parity)
+    let (st, _, ds_html) = send_json(
+        &app,
+        Method::GET,
+        "/sk/dataset/air-quality",
+        host,
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    for expected in [
+        "id=\"jc-explorer-title\"",
+        "Živé dáta",
+        "id=\"jc-viz-title\"",
+        "Grafy",
+        "Černý uhlík",
+        "id=\"jc-about-title\"",
+        "O tomto datasete",
+        "Ajuntament de Barcelona",
+        "NUTS ES511",
+        "id=\"jc-live-title\"",
+        "Živé dáta (API)",
+        "id=\"jc-mcp-title\"",
+        "Pripojte AI asistenta",
+        "id=\"dataset-resources\"",
+        "id=\"jc-resources-title\"",
+        "Dáta na stiahnutie",
+        "id=\"jc-section-data\"",
+        "id=\"jc-section-api\"",
+        "Všetky záznamy ako tabuľka",
+        "NGSI-LD API",
+        "id=\"jc-more-title\"",
+        "Ďalšie údaje",
+        "100 %",
+        "application/ld+json",
+    ] {
+        assert!(
+            ds_html.contains(expected),
+            "ds_html missing expected fragment '{expected}'"
+        );
+    }
+
+    // 4. Resource detail page (D4)
+    let (st, _, res_html) = send_json(
+        &app,
+        Method::GET,
+        "/sk/dataset/air-quality/resource/ae7704f9-4a60-4510-b810-e4528f63030e",
+        host,
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    for expected in [
+        "NGSI-LD API",
+        "Kopírovať adresu",
+        "id=\"jc-address-full\"",
+        "id=\"jc-examples-title\"",
+        "Ako to použiť",
+        "O tomto zdroji",
+    ] {
+        assert!(
+            res_html.contains(expected),
+            "res_html missing expected fragment '{expected}'"
+        );
+    }
+
+    // 5. Organization list (`live/dev-organization-list.html` parity) & Organization page (`live/dev-organization-banskabystrica.html` parity)
+    let (st, _, org_list_html) =
+        send_json(&app, Method::GET, "/organization/", host, None, None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    for expected in [
+        "id=\"organization-search-form\"",
+        "organizácie nájdené",
+        "Ajuntament de Barcelona",
+        "Mesto Banská Bystrica",
+        "data:image/svg+xml;base64,",
+    ] {
+        assert!(
+            org_list_html.contains(expected),
+            "org_list_html missing expected fragment '{expected}'"
+        );
+    }
+
+    let (st, _, org_bb_html) = send_json(
+        &app,
+        Method::GET,
+        "/organization/banskabystrica",
+        host,
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    for expected in [
+        "id=\"organization-info\"",
+        "Mesto Banská Bystrica",
+        "Otvorené údaje mesta Banská Bystrica.",
+        "/feeds/organization/banskabystrica.atom",
+        "id=\"organization-datasets-search-form\"",
+    ] {
+        assert!(
+            org_bb_html.contains(expected),
+            "org_bb_html missing expected fragment '{expected}'"
+        );
+    }
+
+    // 6. Assistants guide page (`live/dev-assistants-claude.html` parity)
+    let (st, _, claude_html) = send_json(
+        &app,
+        Method::GET,
+        "/assistants/claude",
+        host,
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    for expected in [
+        "Claude krok za krokom",
+        "Kto to môže použiť",
+        "Postup",
+        "Joinedcontext Open Data",
+        "https://api.dev.joinedcontext.com<wbr>/api<wbr>/mcp",
+        "Použi Joinedcontext Open Data: Aká je teraz kvalita ovzdušia v Helsinkách?",
+        "Vyskúšajte",
+        "Ak to nejde",
+        "Všetci asistenti",
+    ] {
+        assert!(
+            claude_html.contains(expected),
+            "claude_html missing expected fragment '{expected}'"
+        );
+    }
+}
+
+#[tokio::test]
+async fn f1_f2_f3_operation_registry_surfaces_allowed_parity_and_admin_audit_rows() {
+    let org_a = OrgId::from_uuid(Uuid::from_u128(0xF101));
+    let cat_a = CatalogueId::from_uuid(Uuid::from_u128(0xF101_1));
+    let org_b = OrgId::from_uuid(Uuid::from_u128(0xF102));
+    let cat_b = CatalogueId::from_uuid(Uuid::from_u128(0xF102_1));
+
+    let store = Arc::new(MemoryStore::new());
+    store
+        .upsert_catalogue(make_catalogue(org_a, cat_a, "cat-a", "f1a.example.org"))
+        .await
+        .unwrap();
+    store
+        .upsert_catalogue(make_catalogue(org_b, cat_b, "cat-b", "f1b.example.org"))
+        .await
+        .unwrap();
+
+    let ctx_b = RequestCtx::new(
+        org_b,
+        cat_b,
+        Subject::authenticated("bob", vec![org_b], Vec::new()),
+    );
+    store
+        .upsert_publisher(
+            &ctx_b,
+            Publisher {
+                org_id: org_b,
+                catalogue_id: cat_b,
+                id: "pub-b-secret".into(),
+                name: "pub-b-secret".into(),
+                title: BTreeMap::from([("sk".into(), "Secret Pub B".into())]),
+                description: BTreeMap::new(),
+                uri: "https://b.example.org/pub".into(),
+                publisher_type: None,
+                identifier: None,
+                email: None,
+                homepage: None,
+                logo_url: None,
+                contact_point: None,
+                state: RecordState::Active,
+                merged_into: None,
+                editor_grants: Vec::new(),
+                badge_initials: None,
+                badge_colour: None,
+                declared_by_instance: None,
+                created: Utc::now(),
+                modified: Utc::now(),
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .upsert_dataset(
+            &ctx_b,
+            Dataset {
+                org_id: org_b,
+                catalogue_id: cat_b,
+                id: "pkg-b-secret".into(),
+                name: "b-secret-ds".into(),
+                uri: None,
+                dataset_type: "dataset".into(),
+                title: BTreeMap::from([("sk".into(), "Secret".into())]),
+                description: BTreeMap::from([("sk".into(), "Secret".into())]),
+                publisher_id: "pub-b-secret".into(),
+                publisher: None,
+                creator: None,
+                contact_point: None,
+                visibility: Visibility::Internal,
+                state: RecordState::Active,
+                licence_id: Some("cc-by".into()),
+                licence_url: None,
+                themes: vec!["GOVE".into()],
+                eurovoc_themes: Vec::new(),
+                keywords: BTreeMap::new(),
+                tags: Vec::new(),
+                spatial: Vec::new(),
+                spatial_resolution_in_meters: None,
+                temporal: None,
+                temporal_resolution: None,
+                frequency: None,
+                landing_page: None,
+                documentation: Vec::new(),
+                conforms_to: Vec::new(),
+                applicable_legislation: Vec::new(),
+                in_series: None,
+                relations: Vec::new(),
+                sources: Vec::new(),
+                languages: Vec::new(),
+                version: None,
+                version_notes: BTreeMap::new(),
+                access_rights: None,
+                provenance: BTreeMap::new(),
+                dcat_type: None,
+                identifier: None,
+                alternate_identifiers: Vec::new(),
+                endpoint_url: None,
+                generated_by: None,
+                harvest_source_id: None,
+                harvest_source_item_id: None,
+                harvest_hash: None,
+                custom_shacl_shapes: None,
+                distributions: Vec::new(),
+                extras: BTreeMap::new(),
+                restricted_grants: Vec::new(),
+                issued: Utc::now(),
+                modified: Utc::now(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let authz = Arc::new(PolicyAuthorizer::new(vec![GrantRule {
+        org_id: org_a,
+        catalogue_id: Some(cat_a),
+        principal: "alice-admin".into(),
+        actions: vec![Action::Admin],
+        publisher_id: None,
+    }]));
+
+    let state = DataroomState::new(store.clone(), authz, org_a, cat_a).with_tokens(vec![
+        TokenBinding {
+            token: "tok-alice".into(),
+            subject: Subject::authenticated("alice-admin", vec![org_a], Vec::new()),
+        },
+    ]);
+    let app = router(state.clone());
+    let host = "f1a.example.org";
+
+    // F1 & F3: Walk the registry, verify REST, MCP tool, CLI command, and OData (where it lists)
+    // and verify that branding, profile, and publisher admin operations write audit activity rows.
+    for op in dataroom_api::operations() {
+        assert!(!op.name.is_empty());
+        assert!(!op.mcp_tool.is_empty());
+        assert!(!op.cli_command.is_empty());
+    }
+
+    // Call `branding.propose`, `profile.propose`, `publisher.propose`, `publisher.merge`, `publisher.withdraw`
+    // via both REST (`/api/v1/ops/{op}`) and MCP (`/mcp`)
+    let (st, _, _) = send_json(
+        &app,
+        Method::POST,
+        "/api/v1/ops/branding.propose",
+        host,
+        Some("tok-alice"),
+        None,
+        Some(json!({ "branding": { "instanceName": "Updated Brand" } })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, _, _) = send_json(
+        &app,
+        Method::POST,
+        "/mcp",
+        host,
+        Some("tok-alice"),
+        None,
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "jc_publisher_propose",
+                "arguments": {
+                    "publisher": {
+                        "id": "pub-src",
+                        "name": "pub-src",
+                        "title": { "sk": "Source Pub" },
+                        "uri": "https://a.example.org/src",
+                        "state": "active"
+                    }
+                }
+            }
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, _, _) = send_json(
+        &app,
+        Method::POST,
+        "/api/v1/ops/publisher.propose",
+        host,
+        Some("tok-alice"),
+        None,
+        Some(json!({
+            "publisher": {
+                "id": "pub-dst",
+                "name": "pub-dst",
+                "title": { "sk": "Dest Pub" },
+                "uri": "https://a.example.org/dst",
+                "state": "active"
+            }
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, _, _) = send_json(
+        &app,
+        Method::POST,
+        "/api/v1/ops/publisher.merge",
+        host,
+        Some("tok-alice"),
+        None,
+        Some(json!({ "source": "pub-src", "target": "pub-dst" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, _, _) = send_json(
+        &app,
+        Method::POST,
+        "/api/v1/ops/publisher.withdraw",
+        host,
+        Some("tok-alice"),
+        None,
+        Some(json!({ "publisher": "pub-dst" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    // Check that activity rows were recorded for branding.propose, publisher.propose, publisher.merge, publisher.withdraw (F3, C13)
+    let (st, _, act_body) = send_json(
+        &app,
+        Method::POST,
+        "/api/v1/ops/catalogue.activity",
+        host,
+        Some("tok-alice"),
+        None,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let act_val: Value = serde_json::from_str(&act_body).unwrap();
+    let ops_logged: Vec<&str> = act_val["activity"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["operation"].as_str())
+        .collect();
+    for expected_op in [
+        "branding.propose",
+        "publisher.propose",
+        "publisher.merge",
+        "publisher.withdraw",
+    ] {
+        assert!(
+            ops_logged.contains(&expected_op),
+            "missing activity audit row for {expected_op} in {ops_logged:?}"
+        );
+    }
+
+    // F2: `allowed` for a missing id and another tenant's id (`b-secret-ds` / `pub-b-secret`)
+    // returns the exact same answer (`allowed: false`, `reason: "dataset not found"` / `"publisher not found"`).
+    let (_, _, allowed_missing) = send_json(
+        &app,
+        Method::GET,
+        "/api/v1/allowed?operation=dataset.get&object=nonexistent-id-123",
+        host,
+        Some("tok-alice"),
+        None,
+        None,
+    )
+    .await;
+    let (_, _, allowed_other_tenant) = send_json(
+        &app,
+        Method::GET,
+        "/api/v1/allowed?operation=dataset.get&object=b-secret-ds",
+        host,
+        Some("tok-alice"),
+        None,
+        None,
+    )
+    .await;
+    let v_missing: Value = serde_json::from_str(&allowed_missing).unwrap();
+    let v_other: Value = serde_json::from_str(&allowed_other_tenant).unwrap();
+    assert_eq!(
+        v_missing, v_other,
+        "F2: allowed must return identical answer for missing id and another tenant's id"
+    );
+}
+
+#[tokio::test]
+async fn g1_g2_g3_g4_mountable_router_portal_and_jcctl_parity() {
+    let org_id = OrgId::from_uuid(Uuid::from_u128(0x6100));
+    let cat_id = CatalogueId::from_uuid(Uuid::from_u128(0x6100_1));
+    let store = Arc::new(MemoryStore::new());
+    let host = "opendata.city.example";
+    store
+        .upsert_catalogue(make_catalogue(org_id, cat_id, "city", host))
+        .await
+        .unwrap();
+
+    let authz = Arc::new(PolicyAuthorizer::new(vec![GrantRule {
+        org_id,
+        catalogue_id: Some(cat_id),
+        principal: "portal-sync".into(),
+        actions: vec![
+            Action::Read,
+            Action::Propose,
+            Action::Approve,
+            Action::Delete,
+            Action::Admin,
+        ],
+        publisher_id: None,
+    }]));
+
+    let portal_branding = dataroom_core::BrandingBlock::from_yaml_lossy(include_str!(
+        "../../../../ours/environments/smartcity-branding.yaml"
+    ));
+
+    // G1: Mount `dataroom_api::router(state)` under `/catalogue` beside another router in one Axum app
+    let dr_state = DataroomState::new(store.clone(), authz.clone(), org_id, cat_id)
+        .with_installation_branding(portal_branding.clone())
+        .with_mount_prefix("/catalogue")
+        .with_tokens(vec![
+            TokenBinding {
+                token: "tok-inst-1".into(),
+                subject: Subject {
+                    actor_id: Some("portal-sync".into()),
+                    organizations: vec![org_id],
+                    groups: Vec::new(),
+                    client_id: Some("instance-alpha".into()),
+                    read_only: false,
+                },
+            },
+            TokenBinding {
+                token: "tok-inst-2".into(),
+                subject: Subject {
+                    actor_id: Some("portal-sync".into()),
+                    organizations: vec![org_id],
+                    groups: Vec::new(),
+                    client_id: Some("instance-beta".into()),
+                    read_only: false,
+                },
+            },
+        ]);
+
+    let host_app = axum::Router::new()
+        .route(
+            "/healthz",
+            axum::routing::get(|| async { "portal-host-ok" }),
+        )
+        .nest("/catalogue", router(dr_state));
+
+    // Verify sibling router and mounted dataroom routes (`/catalogue/`, `/catalogue/catalog.ttl`,
+    // `/catalogue/odata/v4/Datasets`, `/catalogue/api/v1/branding`)
+    let (st_h, _, body_h) = send_json(&host_app, Method::GET, "/healthz", host, None, None, None).await;
+    assert_eq!(st_h, StatusCode::OK);
+    assert_eq!(body_h, "portal-host-ok");
+
+    let (st_ui, _, ui_html) =
+        send_json(&host_app, Method::GET, "/catalogue/", host, None, None, None).await;
+    assert_eq!(st_ui, StatusCode::OK);
+    // Links inside mounted UI honour `/catalogue` mount prefix!
+    assert!(ui_html.contains("href=\"/catalogue/dataset/\""));
+    assert!(ui_html.contains("href=\"/catalogue/jc-theme.css\""));
+
+    let (st_ttl, _, _) = send_json(
+        &host_app,
+        Method::GET,
+        "/catalogue/catalog.ttl",
+        host,
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st_ttl, StatusCode::OK);
+
+    let (st_od, _, _) = send_json(
+        &host_app,
+        Method::GET,
+        "/catalogue/odata/v4/Datasets",
+        host,
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st_od, StatusCode::OK);
+
+    // G4: GET /api/v1/branding answers the effective block in the Portal's shape (UI-30)
+    let (st_br, _, br_body) = send_json(
+        &host_app,
+        Method::GET,
+        "/catalogue/api/v1/branding",
+        host,
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st_br, StatusCode::OK);
+    let br_val: Value = serde_json::from_str(&br_body).unwrap();
+    assert_eq!(br_val["domain"], "smartcity.joinedcontext.com");
+    assert_eq!(br_val["colours"]["primary"], "#0000bf");
+    assert_eq!(br_val["primaryForeground"], "#ffffff");
+    assert_eq!(br_val["primaryRgb"], "0, 0, 191");
+
+    // G2: Replay Portal & jcctl CKAN Action API requests:
+    // 1. Instance Alpha creates organization `shared-org` with declared title `"Alpha City"`
+    let (st, _, _) = send_json(
+        &host_app,
+        Method::POST,
+        "/catalogue/api/3/action/organization_create",
+        host,
+        Some("tok-inst-1"),
+        None,
+        Some(json!({ "name": "shared-org", "title": "Alpha City" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    // 2. Instance Beta (`tok-inst-2`) calls `organization_patch` on `shared-org` -> must NOT rename Alpha's organization!
+    let (st, _, patch_body) = send_json(
+        &host_app,
+        Method::POST,
+        "/catalogue/api/3/action/organization_patch",
+        host,
+        Some("tok-inst-2"),
+        None,
+        Some(json!({ "id": "shared-org", "title": "Beta Hijack Title" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let patched_org: Value = serde_json::from_str(&patch_body).unwrap();
+    assert_eq!(
+        patched_org["result"]["title"], "Alpha City",
+        "G2: one CkanInstance must never rename another instance's organization"
+    );
+
+    // 3. Instance Alpha (`tok-inst-1`) CAN rename its own organization
+    let (st, _, patch_alpha) = send_json(
+        &host_app,
+        Method::POST,
+        "/catalogue/api/3/action/organization_patch",
+        host,
+        Some("tok-inst-1"),
+        None,
+        Some(json!({ "id": "shared-org", "title": "Alpha City Official" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let alpha_org: Value = serde_json::from_str(&patch_alpha).unwrap();
+    assert_eq!(alpha_org["result"]["title"], "Alpha City Official");
+
+    // 4. Publish a public dataset (`generated_by: jcctl/ckan-publisher`) and a private dataset
+    for (name, private_flag) in [("city-air", false), ("city-internal", true)] {
+        let (st, _, _) = send_json(
+            &host_app,
+            Method::POST,
+            "/catalogue/api/3/action/package_create",
+            host,
+            Some("tok-inst-1"),
+            None,
+            Some(json!({
+                "name": name,
+                "owner_org": "shared-org",
+                "title": format!("Title {name}"),
+                "notes": format!("Notes {name}"),
+                "private": private_flag,
+                "license_id": "cc-by",
+                "resources": [
+                    {
+                        "name": "NGSI-LD API",
+                        "url": format!("https://api.smartcity.joinedcontext.com/api/endpoint/{name}slugzzzzzzzzzzzz/ngsi-ld/v1/"),
+                        "format": "NGSI-LD",
+                        "mimetype": "application/json"
+                    }
+                ],
+                "extras": [
+                    { "key": "generated_by", "value": "jcctl/ckan-publisher" },
+                    { "key": "endpoint", "value": format!("https://api.smartcity.joinedcontext.com/api/endpoint/{name}slugzzzzzzzzzzzz/") }
+                ]
+            })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK);
+    }
+
+    // 5. Replay `sweep_with` (`ours/portal/ckan.rs` line 495):
+    // `POST /api/3/action/package_search` with `fq: "organization:\"shared-org\""`, `include_private: true`
+    let (st, _, sweep_body) = send_json(
+        &host_app,
+        Method::POST,
+        "/catalogue/api/3/action/package_search",
+        host,
+        Some("tok-inst-1"),
+        None,
+        Some(json!({
+            "fq": "organization:\"shared-org\"",
+            "include_private": true,
+            "rows": 500,
+            "start": 0
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let sweep_val: Value = serde_json::from_str(&sweep_body).unwrap();
+    assert_eq!(sweep_val["result"]["count"], 2);
+
+    // 6. Anonymous `GET /api/3/action/package_search?rows=1000&start=0&sort=name+asc` (`ours/portal/catalog.rs` line 441)
+    // returns ONLY the public dataset (`city-air`), never `city-internal`
+    let (st, _, anon_search_body) = send_json(
+        &host_app,
+        Method::GET,
+        "/catalogue/api/3/action/package_search?rows=1000&start=0&sort=name+asc",
+        host,
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let anon_val: Value = serde_json::from_str(&anon_search_body).unwrap();
+    assert_eq!(anon_val["result"]["count"], 1);
+    assert_eq!(anon_val["result"]["results"][0]["name"], "city-air");
+
+    // G3: Fetch `/catalogue/catalog.jsonld` and verify it contains `@included` / `@graph` nodes
+    // that `ours/portal/catalog.rs` reads (`feed.get("@included").and_then(Value::as_array)`)
+    let (st, _, jsonld_feed_body) = send_json(
+        &host_app,
+        Method::GET,
+        "/catalogue/catalog.jsonld",
+        host,
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let feed_json: Value = serde_json::from_str(&jsonld_feed_body).unwrap();
+    let included = feed_json
+        .get("@included")
+        .and_then(Value::as_array)
+        .expect("G3: catalog.jsonld must carry @included array for Portal CatalogSync");
+    assert!(
+        included.iter().any(|n| {
+            n.get("@id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| id.ends_with("/dataset/city-air"))
+        }),
+        "G3: @included must contain the public dataset node"
+    );
 }

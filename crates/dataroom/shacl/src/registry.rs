@@ -900,4 +900,273 @@ mod tests {
             .upload_and_dry_run(bad_owl, &cat, &[], &BTreeMap::new())
             .is_err());
     }
+
+    #[test]
+    fn a4_sk_shapes_have_source_comments_and_fail_each_mandatory_property_mutation() {
+        // Verify header and rdfs:comment source line annotations on every shape and constraint
+        assert!(BUILTIN_SK_20_SHACL.starts_with(
+            "# Derived by Argon (2026-11-07) from DCAT-AP-SK 2.0 (index.bs, schémy/*.json): the SK profile publishes no SHACL."
+        ));
+        assert!(BUILTIN_SK_20_SHACL.contains("rdfs:comment \"Source: specs/dcat-ap-sk/"));
+
+        let (org_id, catalogue_id) = test_ids();
+        let sk_shapes =
+            parse_shapes_graph(BUILTIN_SK_20_SHACL, &RdfLimits::default()).expect("parse sk 2.0");
+
+        // Every mandatory property in DCAT-AP-SK 2.0 across Catalog, Dataset, Distribution, TermsOfUse, DataService:
+        let sk_ds_ttl = include_str!("../../specs/dcat-ap-sk/príklady/dataset.ttl");
+        let base_ds_graph =
+            parse_rdf_graph(sk_ds_ttl, RdfFormat::Turtle, &RdfLimits::default()).unwrap();
+        let sk_cat_ttl = include_str!("../../specs/dcat-ap-sk/príklady/katalóg.ttl");
+        let base_cat_graph =
+            parse_rdf_graph(sk_cat_ttl, RdfFormat::Turtle, &RdfLimits::default()).unwrap();
+
+        // 1. Mutate Catalog mandatory properties: dc:title, dc:description, dc:publisher, dcat:dataset
+        for mandatory_pred in [
+            "http://purl.org/dc/terms/title",
+            "http://purl.org/dc/terms/description",
+            "http://purl.org/dc/terms/publisher",
+            "http://www.w3.org/ns/dcat#dataset",
+        ] {
+            let mut mutated = base_cat_graph.clone();
+            mutated.triples.retain(|t| t.predicate != mandatory_pred);
+            let rep = validate_graph_against_shapes(
+                &mutated,
+                &sk_shapes,
+                org_id,
+                catalogue_id,
+                "cat-mut",
+                "dcat-ap-sk-2.0",
+                "2.0.1",
+            );
+            assert!(
+                !rep.conforms,
+                "removing mandatory Catalog property {mandatory_pred} must fail SHACL"
+            );
+            assert!(
+                rep.findings
+                    .iter()
+                    .any(|f| f.result_path.as_deref() == Some(mandatory_pred)),
+                "expected finding with result_path={mandatory_pred}, got {:?}",
+                rep.findings
+            );
+        }
+
+        // 2. Mutate Dataset, Distribution, and TermsOfUse mandatory properties:
+        for mandatory_pred in [
+            "http://purl.org/dc/terms/title",
+            "http://purl.org/dc/terms/description",
+            "http://purl.org/dc/terms/publisher",
+            "http://www.w3.org/ns/dcat#theme",
+            "http://purl.org/dc/terms/accrualPeriodicity",
+            "http://www.w3.org/ns/dcat#keyword",
+            "http://www.w3.org/ns/dcat#distribution",
+            "http://www.w3.org/ns/dcat#accessURL",
+            "https://data.gov.sk/def/ontology/legislation/termsOfUse",
+            "https://data.gov.sk/def/ontology/legislation/authorsWorkType",
+            "https://data.gov.sk/def/ontology/legislation/originalDatabaseType",
+            "https://data.gov.sk/def/ontology/legislation/databaseProtectedBySpecialRightsType",
+            "https://data.gov.sk/def/ontology/legislation/personalDataContainmentType",
+        ] {
+            let mut mutated = base_ds_graph.clone();
+            mutated.triples.retain(|t| t.predicate != mandatory_pred);
+            let rep = validate_graph_against_shapes(
+                &mutated,
+                &sk_shapes,
+                org_id,
+                catalogue_id,
+                "ds-mut",
+                "dcat-ap-sk-2.0",
+                "2.0.1",
+            );
+            assert!(
+                !rep.conforms,
+                "removing mandatory SK property {mandatory_pred} must fail SHACL"
+            );
+            assert!(
+                rep.findings
+                    .iter()
+                    .any(|f| f.result_path.as_deref() == Some(mandatory_pred)),
+                "expected finding with result_path={mandatory_pred}, got {:?}",
+                rep.findings
+            );
+        }
+    }
+
+    #[test]
+    fn e3_every_shacl_constraint_component_passes_and_fails() {
+        let (org_id, catalogue_id) = test_ids();
+        let shapes_ttl = r#"
+            @prefix ex: <https://example.org/> .
+            @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+            @prefix sh: <http://www.w3.org/ns/shacl#> .
+            @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+            ex:ChildShape a sh:NodeShape ;
+                sh:property [
+                    sh:path ex:childCode ;
+                    sh:minCount 1 ;
+                    sh:hasValue "REQUIRED_CODE"
+                ] .
+
+            ex:BranchAShape a sh:NodeShape ;
+                sh:property [
+                    sh:path ex:branchProp ;
+                    sh:minCount 1
+                ] .
+
+            ex:BranchBShape a sh:NodeShape ;
+                sh:property [
+                    sh:path ex:altProp ;
+                    sh:minCount 1
+                ] .
+
+            ex:ForbiddenShape a sh:NodeShape ;
+                sh:property [
+                    sh:path ex:forbiddenProp ;
+                    sh:minCount 1
+                ] .
+
+            ex:ItemShape a sh:NodeShape ;
+                sh:targetClass ex:Item ;
+                sh:targetNode ex:TargetedNode ;
+                sh:closed true ;
+                sh:ignoredProperties ( rdf:type ex:code ex:title ex:child ex:parent ex:seqStart ex:status ex:opt ) ;
+                sh:property [
+                    sh:path ex:code ;
+                    sh:minCount 1 ;
+                    sh:maxCount 1 ;
+                    sh:nodeKind sh:Literal ;
+                    sh:datatype xsd:string ;
+                    sh:minLength 3 ;
+                    sh:maxLength 10 ;
+                    sh:pattern "^[A-Z0-9_]+$" ;
+                    sh:severity sh:Violation ;
+                    sh:message "Invalid code"@en
+                ] ;
+                sh:property [
+                    sh:path ex:title ;
+                    sh:minCount 1 ;
+                    sh:datatype rdf:langString ;
+                    sh:languageIn ( "sk" "en" ) ;
+                    sh:uniqueLang true
+                ] ;
+                sh:property [
+                    sh:path ex:status ;
+                    sh:in ( "active" "draft" )
+                ] ;
+                sh:property [
+                    sh:path ex:child ;
+                    sh:class ex:Child ;
+                    sh:node ex:ChildShape ;
+                    sh:or ( ex:BranchAShape ex:BranchBShape ) ;
+                    sh:and ( ex:ChildShape ex:BranchAShape ) ;
+                    sh:not ex:ForbiddenShape
+                ] ;
+                sh:property [
+                    sh:path ( ex:seqStart ex:seqEnd ) ;
+                    sh:minCount 1
+                ] ;
+                sh:property [
+                    sh:path [ sh:inversePath ex:linksTo ] ;
+                    sh:minCount 1
+                ] .
+        "#;
+
+        let sg = parse_shapes_graph(shapes_ttl, &RdfLimits::default()).expect("parse e3 shapes");
+
+        let valid_data_ttl = r#"
+            @prefix ex: <https://example.org/> .
+            @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+            ex:TargetedNode a ex:Item ;
+                ex:code "ABC_1" ;
+                ex:title "Názov"@sk, "Title"@en ;
+                ex:status "active" ;
+                ex:child ex:Child1 ;
+                ex:seqStart ex:Mid .
+
+            ex:Mid ex:seqEnd "done" .
+            ex:Linker ex:linksTo ex:TargetedNode .
+
+            ex:Child1 a ex:Child ;
+                ex:childCode "REQUIRED_CODE" ;
+                ex:branchProp "ok" .
+        "#;
+        let g_valid =
+            parse_rdf_graph(valid_data_ttl, RdfFormat::Turtle, &RdfLimits::default()).unwrap();
+        let rep_ok = validate_graph_against_shapes(
+            &g_valid,
+            &sg,
+            org_id,
+            catalogue_id,
+            "e3-ok",
+            "test",
+            "1",
+        );
+        assert!(
+            rep_ok.conforms,
+            "valid graph must pass all E3 constraint components: {:?}",
+            rep_ok.findings
+        );
+
+        // Failing graph exercising each component:
+        // - ClosedConstraintComponent (ex:undeclaredPred)
+        // - MaxCountConstraintComponent / MinLength / MaxLength / Pattern / Datatype / NodeKind
+        // - LanguageInConstraintComponent (@de) & UniqueLangConstraintComponent (duplicate @sk)
+        // - InConstraintComponent ("archived")
+        // - HasValue / Class / Node / Or / And / Not
+        // - Sequence path & Inverse path minCount
+        let invalid_data_ttl = r#"
+            @prefix ex: <https://example.org/> .
+
+            ex:TargetedNode a ex:Item ;
+                ex:undeclaredPred "disallowed" ;
+                ex:code "a", "TOO_LONG_STRING_12345" ;
+                ex:title "Prvý"@sk, "Druhý"@sk, "Deutsch"@de ;
+                ex:status "archived" ;
+                ex:child ex:BadChild .
+
+            ex:BadChild a ex:WrongClass ;
+                ex:forbiddenProp "bad" .
+        "#;
+        let g_invalid =
+            parse_rdf_graph(invalid_data_ttl, RdfFormat::Turtle, &RdfLimits::default()).unwrap();
+        let rep_bad = validate_graph_against_shapes(
+            &g_invalid,
+            &sg,
+            org_id,
+            catalogue_id,
+            "e3-bad",
+            "test",
+            "1",
+        );
+        assert!(!rep_bad.conforms);
+        let components: BTreeSet<&str> = rep_bad
+            .findings
+            .iter()
+            .map(|f| f.source_constraint_component.as_str())
+            .collect();
+        for expected in [
+            "http://www.w3.org/ns/shacl#ClosedConstraintComponent",
+            "http://www.w3.org/ns/shacl#MaxCountConstraintComponent",
+            "http://www.w3.org/ns/shacl#MinLengthConstraintComponent",
+            "http://www.w3.org/ns/shacl#MaxLengthConstraintComponent",
+            "http://www.w3.org/ns/shacl#PatternConstraintComponent",
+            "http://www.w3.org/ns/shacl#LanguageInConstraintComponent",
+            "http://www.w3.org/ns/shacl#UniqueLangConstraintComponent",
+            "http://www.w3.org/ns/shacl#InConstraintComponent",
+            "http://www.w3.org/ns/shacl#ClassConstraintComponent",
+            "http://www.w3.org/ns/shacl#NodeConstraintComponent",
+            "http://www.w3.org/ns/shacl#OrConstraintComponent",
+            "http://www.w3.org/ns/shacl#AndConstraintComponent",
+            "http://www.w3.org/ns/shacl#NotConstraintComponent",
+            "http://www.w3.org/ns/shacl#MinCountConstraintComponent",
+        ] {
+            assert!(
+                components.contains(expected),
+                "missing expected SHACL violation component {expected} in {components:?}"
+            );
+        }
+    }
 }

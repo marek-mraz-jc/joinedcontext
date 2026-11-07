@@ -299,6 +299,72 @@ pub fn all_operations() -> Vec<OperationDef> {
             output_schema: json!({"type": "object"}),
         },
         OperationDef {
+            name: "branding.get",
+            mcp_tool: "jc_catalogue_branding_get",
+            cli_command: "branding-get",
+            segment: "publish",
+            permission: Action::Read,
+            target_kind: "Catalogue",
+            description: "Read the catalogue's effective branding block.",
+            input_schema: json!({"type": "object"}),
+            output_schema: json!({"type": "object"}),
+        },
+        OperationDef {
+            name: "branding.propose",
+            mcp_tool: "jc_catalogue_branding_propose",
+            cli_command: "branding-propose",
+            segment: "admin",
+            permission: Action::Admin,
+            target_kind: "Catalogue",
+            description: "Update the catalogue's branding block and write an audit activity row.",
+            input_schema: json!({"type": "object", "required": ["branding"], "properties": {"branding": {"type": "object"}}}),
+            output_schema: json!({"type": "object"}),
+        },
+        OperationDef {
+            name: "profile.list",
+            mcp_tool: "jc_catalogue_profile_list",
+            cli_command: "profile-list",
+            segment: "publish",
+            permission: Action::Read,
+            target_kind: "Profile",
+            description: "List DCAT-AP profiles available and active on the catalogue.",
+            input_schema: json!({"type": "object"}),
+            output_schema: json!({"type": "object", "properties": {"profiles": {"type": "array"}}}),
+        },
+        OperationDef {
+            name: "profile.propose",
+            mcp_tool: "jc_catalogue_profile_propose",
+            cli_command: "profile-propose",
+            segment: "admin",
+            permission: Action::Propose,
+            target_kind: "Profile",
+            description: "Upload or update a versioned DCAT-AP profile and write an audit activity row.",
+            input_schema: json!({"type": "object", "required": ["profile"], "properties": {"profile": {"type": "object"}}}),
+            output_schema: json!({"type": "object"}),
+        },
+        OperationDef {
+            name: "publisher.merge",
+            mcp_tool: "jc_publisher_merge",
+            cli_command: "publisher-merge",
+            segment: "admin",
+            permission: Action::Admin,
+            target_kind: "Publisher",
+            description: "Merge a source publisher into a target publisher, moving its datasets and recording an audit row.",
+            input_schema: json!({"type": "object", "required": ["source", "target"], "properties": {"source": {"type": "string"}, "target": {"type": "string"}}}),
+            output_schema: json!({"type": "object"}),
+        },
+        OperationDef {
+            name: "publisher.withdraw",
+            mcp_tool: "jc_publisher_withdraw",
+            cli_command: "publisher-withdraw",
+            segment: "admin",
+            permission: Action::Delete,
+            target_kind: "Publisher",
+            description: "Withdraw a publisher so its datasets leave public feeds, recording an audit row.",
+            input_schema: json!({"type": "object", "required": ["publisher"], "properties": {"publisher": {"type": "string"}}}),
+            output_schema: json!({"type": "object"}),
+        },
+        OperationDef {
             name: "allowed",
             mcp_tool: "jc_catalogue_allowed",
             cli_command: "allowed",
@@ -902,6 +968,171 @@ pub async fn execute_operation(
                 }))
             }
         }
+        "branding.get" => {
+            let target = ObjectTarget::Catalogue {
+                org_id: req_ctx.org_id,
+                catalogue_id: req_ctx.catalogue_id,
+            };
+            enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Read, &target))?;
+            let cat = op_ctx
+                .store
+                .get_catalogue(req_ctx.org_id, req_ctx.catalogue_id)
+                .await?
+                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+            let eff = cat.effective_branding(None);
+            Ok(serde_json::to_value(eff).unwrap_or(Value::Null))
+        }
+        "branding.propose" => {
+            let target = ObjectTarget::Catalogue {
+                org_id: req_ctx.org_id,
+                catalogue_id: req_ctx.catalogue_id,
+            };
+            enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Admin, &target))?;
+            let mut cat = op_ctx
+                .store
+                .get_catalogue(req_ctx.org_id, req_ctx.catalogue_id)
+                .await?
+                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+            let br_val = input.get("branding").cloned().unwrap_or(input);
+            cat.branding = Some(br_val);
+            cat.modified = Utc::now();
+            let saved = op_ctx.store.upsert_catalogue(cat).await?;
+            op_ctx
+                .store
+                .record_activity(
+                    req_ctx,
+                    ActivityRow {
+                        org_id: req_ctx.org_id,
+                        catalogue_id: req_ctx.catalogue_id,
+                        id: format!("act-{}", Uuid::now_v7()),
+                        at: Utc::now(),
+                        actor: req_ctx.actor_name().to_owned(),
+                        operation: "branding.propose".into(),
+                        object_type: "Catalogue".into(),
+                        object_id: saved.id.to_string(),
+                        summary: format!("Updated branding on catalogue {}", saved.name),
+                        details: json!({}),
+                    },
+                )
+                .await?;
+            let eff = saved.effective_branding(None);
+            Ok(serde_json::to_value(eff).unwrap_or(Value::Null))
+        }
+        "profile.list" => {
+            let target = ObjectTarget::Profile {
+                org_id: req_ctx.org_id,
+                catalogue_id: req_ctx.catalogue_id,
+                profile_id: "*".into(),
+            };
+            enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Read, &target))?;
+            let profiles = op_ctx.store.list_profiles(req_ctx).await?;
+            Ok(json!({ "profiles": profiles }))
+        }
+        "profile.propose" => {
+            let raw_pr = input.get("profile").cloned().unwrap_or(input);
+            let profile: crate::model::ProfileRecord =
+                serde_json::from_value(raw_pr).map_err(|e| {
+                    DataroomError::field_error("profile", format!("invalid profile: {e}"))
+                })?;
+            let target = ObjectTarget::Profile {
+                org_id: req_ctx.org_id,
+                catalogue_id: req_ctx.catalogue_id,
+                profile_id: profile.id.clone(),
+            };
+            enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Propose, &target))?;
+            let saved = op_ctx.store.upsert_profile(req_ctx, profile).await?;
+            op_ctx
+                .store
+                .record_activity(
+                    req_ctx,
+                    ActivityRow {
+                        org_id: req_ctx.org_id,
+                        catalogue_id: req_ctx.catalogue_id,
+                        id: format!("act-{}", Uuid::now_v7()),
+                        at: Utc::now(),
+                        actor: req_ctx.actor_name().to_owned(),
+                        operation: "profile.propose".into(),
+                        object_type: "Profile".into(),
+                        object_id: format!("{}:{}", saved.id, saved.version),
+                        summary: format!("Saved profile {} {}", saved.id, saved.version),
+                        details: json!({"id": saved.id, "version": saved.version}),
+                    },
+                )
+                .await?;
+            Ok(serde_json::to_value(saved).unwrap_or(Value::Null))
+        }
+        "publisher.merge" => {
+            let source_id = input
+                .get("source")
+                .and_then(Value::as_str)
+                .ok_or_else(|| DataroomError::field_error("source", "source is required"))?;
+            let target_id = input
+                .get("target")
+                .and_then(Value::as_str)
+                .ok_or_else(|| DataroomError::field_error("target", "target is required"))?;
+            let target_obj = ObjectTarget::Catalogue {
+                org_id: req_ctx.org_id,
+                catalogue_id: req_ctx.catalogue_id,
+            };
+            enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Admin, &target_obj))?;
+            let merged = op_ctx
+                .store
+                .merge_publishers(req_ctx, source_id, target_id)
+                .await?;
+            op_ctx
+                .store
+                .record_activity(
+                    req_ctx,
+                    ActivityRow {
+                        org_id: req_ctx.org_id,
+                        catalogue_id: req_ctx.catalogue_id,
+                        id: format!("act-{}", Uuid::now_v7()),
+                        at: Utc::now(),
+                        actor: req_ctx.actor_name().to_owned(),
+                        operation: "publisher.merge".into(),
+                        object_type: "Publisher".into(),
+                        object_id: merged.id.clone(),
+                        summary: format!("Merged publisher {source_id} into {}", merged.name),
+                        details: json!({"source": source_id, "target": merged.name}),
+                    },
+                )
+                .await?;
+            Ok(serde_json::to_value(merged).unwrap_or(Value::Null))
+        }
+        "publisher.withdraw" => {
+            let pub_id = input
+                .get("publisher")
+                .or_else(|| input.get("id"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| DataroomError::field_error("publisher", "publisher is required"))?;
+            let pub_rec = op_ctx
+                .store
+                .get_publisher(req_ctx, pub_id)
+                .await?
+                .ok_or_else(|| DataroomError::NotFound(format!("publisher '{pub_id}' not found")))?;
+            let target = ObjectTarget::from_publisher(&pub_rec);
+            enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Delete, &target))?;
+            let withdrawn = op_ctx.store.withdraw_publisher(req_ctx, &pub_rec.id).await?;
+            op_ctx
+                .store
+                .record_activity(
+                    req_ctx,
+                    ActivityRow {
+                        org_id: req_ctx.org_id,
+                        catalogue_id: req_ctx.catalogue_id,
+                        id: format!("act-{}", Uuid::now_v7()),
+                        at: Utc::now(),
+                        actor: req_ctx.actor_name().to_owned(),
+                        operation: "publisher.withdraw".into(),
+                        object_type: "Publisher".into(),
+                        object_id: withdrawn.id.clone(),
+                        summary: format!("Withdrew publisher {}", withdrawn.name),
+                        details: json!({"name": withdrawn.name}),
+                    },
+                )
+                .await?;
+            Ok(serde_json::to_value(withdrawn).unwrap_or(Value::Null))
+        }
         "allowed" => {
             let asked_op = input
                 .get("operation")
@@ -915,6 +1146,15 @@ pub async fn execute_operation(
                     "permission": Value::Null,
                 }));
             };
+            if asked_def.name == "catalogue.activity"
+                && !req_ctx.subject.is_member_of(req_ctx.org_id)
+            {
+                return Ok(json!({
+                    "allowed": false,
+                    "reason": "not found",
+                    "permission": asked_def.permission.as_str(),
+                }));
+            }
             let target = match (asked_def.target_kind, object_id) {
                 ("Dataset", Some(id)) => {
                     let Some(ds) = op_ctx.store.get_dataset(req_ctx, id).await? else {
@@ -931,7 +1171,7 @@ pub async fn execute_operation(
                     let t = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
                     let read_dec = op_ctx.authorizer.check(req_ctx, Action::Read, &t);
                     if !read_dec.allowed {
-                        // Never reveal a hidden record (C11).
+                        // Never reveal a hidden record (C11, F2).
                         return Ok(json!({
                             "allowed": false,
                             "reason": "dataset not found",
@@ -940,6 +1180,15 @@ pub async fn execute_operation(
                     }
                     t
                 }
+                ("Dataset", None) => ObjectTarget::Dataset {
+                    org_id: req_ctx.org_id,
+                    catalogue_id: req_ctx.catalogue_id,
+                    dataset_id: "*".into(),
+                    publisher_id: "*".into(),
+                    visibility: Visibility::Public,
+                    restricted_grants: Vec::new(),
+                    publisher_editor_grants: Vec::new(),
+                },
                 ("Publisher", Some(id)) => {
                     let Some(pub_rec) = op_ctx.store.get_publisher(req_ctx, id).await? else {
                         return Ok(json!({
@@ -950,10 +1199,40 @@ pub async fn execute_operation(
                     };
                     ObjectTarget::from_publisher(&pub_rec)
                 }
-                ("HarvestSource", Some(id)) => ObjectTarget::HarvestSource {
+                ("Publisher", None) => ObjectTarget::Publisher {
                     org_id: req_ctx.org_id,
                     catalogue_id: req_ctx.catalogue_id,
-                    source_id: id.to_owned(),
+                    publisher_id: "*".into(),
+                    editor_grants: Vec::new(),
+                },
+                ("HarvestSource", Some(id)) => {
+                    let Some(src) = op_ctx.store.get_harvest_source(req_ctx, id).await? else {
+                        return Ok(json!({
+                            "allowed": false,
+                            "reason": "not found",
+                            "permission": asked_def.permission.as_str(),
+                        }));
+                    };
+                    ObjectTarget::HarvestSource {
+                        org_id: req_ctx.org_id,
+                        catalogue_id: req_ctx.catalogue_id,
+                        source_id: src.id,
+                    }
+                }
+                ("HarvestSource", None) => ObjectTarget::HarvestSource {
+                    org_id: req_ctx.org_id,
+                    catalogue_id: req_ctx.catalogue_id,
+                    source_id: "*".into(),
+                },
+                ("Profile", id_opt) => ObjectTarget::Profile {
+                    org_id: req_ctx.org_id,
+                    catalogue_id: req_ctx.catalogue_id,
+                    profile_id: id_opt.unwrap_or("*").to_owned(),
+                },
+                ("CataloguePlugin", id_opt) => ObjectTarget::Plugin {
+                    org_id: req_ctx.org_id,
+                    catalogue_id: req_ctx.catalogue_id,
+                    plugin_name: id_opt.unwrap_or("*").to_owned(),
                 },
                 _ => ObjectTarget::Catalogue {
                     org_id: req_ctx.org_id,

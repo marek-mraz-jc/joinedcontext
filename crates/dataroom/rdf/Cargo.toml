@@ -6,9 +6,13 @@ license = "EUPL-1.2"
 description = "DCAT-AP 3.0.1, DCAT-AP-CZ and DCAT-AP-SK 2.0 RDF mapping and serializers (Turtle, JSON-LD, RDF/XML, N-Triples)"
 
 [dependencies]
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4.38", features = ["serde"] }
 dataroom-core = { path = "../core" }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-url = "2.5"
-uuid = { version = "1.8", features = ["v4", "v5", "v7", "serde"] }
+oxjsonld = "0.1"
+oxrdf = "0.2"
+oxrdfxml = "0.1"
+oxttl = "0.1"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+url = "2.5.4"
+uuid = { version = "1.11.0", features = ["v4", "v5", "v7", "serde"] }

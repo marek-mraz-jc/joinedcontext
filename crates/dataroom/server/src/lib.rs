@@ -103,11 +103,104 @@ pub async fn import_ckan_json(
         }
     })?;
 
+    let mut created_publishers = 0usize;
+    let mut imported_datasets = 0usize;
+
+    // 1. Import explicit `organizations` / `organization_list` entries if present in the dump (E4)
+    if let Some(orgs) = parsed
+        .get("organizations")
+        .or_else(|| parsed.get("organization_list"))
+        .and_then(Value::as_array)
+    {
+        for org_entry in orgs {
+            let (slug, title, desc, img, initials, colour) = match org_entry {
+                Value::String(s) => (s.as_str(), s.as_str(), "", None, None, None),
+                Value::Object(o) => {
+                    let s = o.get("name").and_then(Value::as_str).unwrap_or("");
+                    let t = o.get("title").and_then(Value::as_str).unwrap_or(s);
+                    let d = o.get("description").and_then(Value::as_str).unwrap_or("");
+                    let im = o.get("image_url").and_then(Value::as_str).filter(|u| !u.is_empty());
+                    let init = o.get("initials").and_then(Value::as_str).map(str::to_owned);
+                    let col = o.get("colour").and_then(Value::as_str).map(str::to_owned);
+                    (s, t, d, im, init, col)
+                }
+                _ => continue,
+            };
+            if slug.is_empty() {
+                continue;
+            }
+            if store.get_publisher(ctx, slug).await?.is_none() {
+                let now = Utc::now();
+                store
+                    .upsert_publisher(
+                        ctx,
+                        Publisher {
+                            org_id: ctx.org_id,
+                            catalogue_id: ctx.catalogue_id,
+                            id: format!("pub-{slug}"),
+                            name: slug.to_owned(),
+                            title: BTreeMap::from([(default_lang.to_owned(), title.to_owned())]),
+                            description: if desc.is_empty() {
+                                BTreeMap::new()
+                            } else {
+                                BTreeMap::from([(default_lang.to_owned(), desc.to_owned())])
+                            },
+                            uri: format!("https://data.gov.sk/id/legal-subject/{slug}"),
+                            publisher_type: None,
+                            identifier: None,
+                            email: None,
+                            homepage: None,
+                            logo_url: img.map(str::to_owned),
+                            contact_point: None,
+                            state: RecordState::Active,
+                            merged_into: None,
+                            editor_grants: Vec::new(),
+                            badge_initials: initials,
+                            badge_colour: colour,
+                            declared_by_instance: None,
+                            created: now,
+                            modified: now,
+                        },
+                    )
+                    .await?;
+                created_publishers += 1;
+            }
+        }
+    }
+
+    // 2. Import `hidden` list (`{name: reason}` or `["name1", ...]`) onto the catalogue if present (E4)
+    if let Some(hidden_val) = parsed.get("hidden") {
+        if let Some(mut cat) = store.get_catalogue(ctx.org_id, ctx.catalogue_id).await? {
+            match hidden_val {
+                Value::Object(map) => {
+                    for (k, v) in map {
+                        let reason = v.as_str().unwrap_or("hidden").to_owned();
+                        cat.hidden_datasets.insert(k.clone(), reason);
+                    }
+                }
+                Value::Array(arr) => {
+                    for item in arr.iter().filter_map(Value::as_str) {
+                        cat.hidden_datasets.insert(item.to_owned(), "hidden".into());
+                    }
+                }
+                _ => {}
+            }
+            store.upsert_catalogue(cat).await?;
+        }
+    }
+
     let packages: Vec<Value> = if let Some(arr) = parsed.as_array() {
         arr.clone()
     } else if let Some(arr) = parsed.pointer("/result/results").and_then(Value::as_array) {
         arr.clone()
+    } else if let Some(arr) = parsed
+        .pointer("/package_search/result/results")
+        .and_then(Value::as_array)
+    {
+        arr.clone()
     } else if let Some(arr) = parsed.get("results").and_then(Value::as_array) {
+        arr.clone()
+    } else if let Some(arr) = parsed.get("packages").and_then(Value::as_array) {
         arr.clone()
     } else if parsed.is_object() && parsed.get("name").is_some() {
         vec![parsed]
@@ -117,9 +210,6 @@ pub async fn import_ckan_json(
             fields: BTreeMap::new(),
         });
     };
-
-    let mut created_publishers = 0usize;
-    let mut imported_datasets = 0usize;
 
     for pkg in &packages {
         let org_slug = pkg
@@ -154,6 +244,9 @@ pub async fn import_ckan_json(
                         state: RecordState::Active,
                         merged_into: None,
                         editor_grants: Vec::new(),
+                        badge_initials: None,
+                        badge_colour: None,
+                        declared_by_instance: None,
                         created: now,
                         modified: now,
                     },
@@ -237,6 +330,8 @@ pub async fn run_cli(cli: Cli) -> Result<Value> {
                 publisher_name: None,
                 contact_point: None,
                 theme: ThemeTokens::default(),
+                branding: None,
+                hidden_datasets: BTreeMap::new(),
                 allow_cross_org_harvest: true,
                 allowed_outbound_hosts: Vec::new(),
                 applicable_legislation: Vec::new(),
@@ -357,5 +452,123 @@ mod tests {
         assert_eq!(dss, 1);
         let imported = store.get_dataset(&ctx, "bb-ovzdusie").await.unwrap().unwrap();
         assert_eq!(imported.publisher_id, "banskabystrica");
+    }
+
+    #[tokio::test]
+    async fn e4_import_ckan_preserves_names_publishers_resources_extras_and_hidden_list() {
+        let org_id = OrgId::from_uuid(Uuid::from_u128(1));
+        let cat_id = CatalogueId::from_uuid(Uuid::from_u128(10));
+        let store = MemoryStore::new();
+        store
+            .upsert_catalogue(Catalogue {
+                org_id,
+                id: cat_id,
+                name: "dev".into(),
+                host: "opendata.dev.joinedcontext.com".into(),
+                title: BTreeMap::from([("sk".into(), "Otvorené dáta".into())]),
+                description: BTreeMap::new(),
+                homepage: None,
+                default_language: "sk".into(),
+                languages: vec!["sk".into(), "en".into()],
+                main_profile: "dcat-ap-3.0.1".into(),
+                active_profiles: Vec::new(),
+                default_licence: Some("cc-by".into()),
+                publisher_uri: None,
+                publisher_name: None,
+                contact_point: None,
+                theme: ThemeTokens::default(),
+                branding: None,
+                hidden_datasets: BTreeMap::new(),
+                allow_cross_org_harvest: true,
+                allowed_outbound_hosts: Vec::new(),
+                applicable_legislation: Vec::new(),
+                modified: Utc::now(),
+            })
+            .await
+            .unwrap();
+
+        let ctx = RequestCtx::new(
+            org_id,
+            cat_id,
+            Subject::authenticated("admin", vec![org_id], Vec::new()),
+        );
+        let dump = serde_json::json!({
+            "organization_list": [
+                {
+                    "name": "banskabystrica",
+                    "title": "Mesto Banská Bystrica",
+                    "description": "Otvorené údaje mesta Banská Bystrica.",
+                    "initials": "BB",
+                    "colour": "#00579c"
+                },
+                {
+                    "name": "barcelona",
+                    "title": "Ajuntament de Barcelona",
+                    "description": "Otvorené údaje mesta Barcelona (Open Data BCN, CC BY 4.0), publikované cez endpointy joinedcontext.",
+                    "initials": "BCN",
+                    "colour": "#c8102e"
+                }
+            ],
+            "hidden": {
+                "draft-internal-pkg": "incomplete quality check"
+            },
+            "result": {
+                "count": 2,
+                "results": [
+                    {
+                        "id": "d262a2d3-17b2-4e44-afb7-1275fdbf3e4e",
+                        "name": "air-quality",
+                        "title": "Qualitat de l'aire a Barcelona",
+                        "notes": "Les estacions de la xarxa de qualitat de l'aire de Barcelona",
+                        "owner_org": "barcelona",
+                        "license_id": "cc-by",
+                        "tags": [{ "name": "NO2" }, { "name": "PM10" }],
+                        "resources": [
+                            {
+                                "id": "0e74d5fe-c17f-4bd7-879b-0c3bf6481817",
+                                "name": "CSV",
+                                "url": "https://api.dev.joinedcontext.com/api/endpoint/esbxdrr7snorjsp7uus2luihr6vl5vv6/file.csv",
+                                "format": "CSV"
+                            }
+                        ],
+                        "extras": [
+                            { "key": "endpoint", "value": "https://api.dev.joinedcontext.com/api/endpoint/esbxdrr7snorjsp7uus2luihr6vl5vv6/" },
+                            { "key": "spatial_uri", "value": "http://data.europa.eu/nuts/code/ES511" }
+                        ]
+                    },
+                    {
+                        "name": "draft-internal-pkg",
+                        "title": "Hidden package",
+                        "notes": "Should be in hidden_datasets",
+                        "owner_org": "banskabystrica"
+                    }
+                ]
+            }
+        });
+
+        let (pubs, dss) = import_ckan_json(&store, &ctx, &dump.to_string(), "sk")
+            .await
+            .expect("import full dump");
+        assert_eq!(pubs, 2);
+        assert_eq!(dss, 2);
+
+        let cat = store.get_catalogue(org_id, cat_id).await.unwrap().unwrap();
+        assert_eq!(
+            cat.hidden_datasets.get("draft-internal-pkg").map(String::as_str),
+            Some("incomplete quality check")
+        );
+
+        let ds = store.get_dataset(&ctx, "air-quality").await.unwrap().unwrap();
+        assert_eq!(ds.id, "d262a2d3-17b2-4e44-afb7-1275fdbf3e4e");
+        assert_eq!(ds.publisher_id, "barcelona");
+        assert_eq!(ds.distributions.len(), 1);
+        assert_eq!(
+            ds.distributions[0].id,
+            "0e74d5fe-c17f-4bd7-879b-0c3bf6481817"
+        );
+        assert_eq!(
+            ds.endpoint_url.as_deref(),
+            Some("https://api.dev.joinedcontext.com/api/endpoint/esbxdrr7snorjsp7uus2luihr6vl5vv6/")
+        );
     }
 }

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="{{ chrome.lang }}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
+    {% if chrome.branding.noindex %}<meta name="robots" content="noindex, nofollow">{% endif %}
+    <title>{{ labels.assistants }} - {{ chrome.site_title }}</title>
+    <link rel="shortcut icon" href="{{ chrome.favicon }}" />
+    {% for opt in chrome.lang_options %}
+    <link rel="alternate" hreflang="{{ opt.code }}" href="{{ opt.url }}" />
+    {% endfor %}
+<style nonce="{{ chrome.csp_nonce }}">
+  :root {
+    --jc-primary: {{ chrome.branding.colours.primary }};
+    --jc-primary-fg: {{ chrome.branding.primary_foreground }};
+    --jc-primary-rgb: {{ chrome.branding.primary_rgb }};
+    --jc-secondary: {{ chrome.branding.colours.secondary }};
+    --jc-accent: {{ chrome.branding.colours.accent }};
+    --jc-background: {{ chrome.branding.colours.background }};
+    --jc-text: {{ chrome.branding.colours.text }};
+    --jc-font-heading: {{ chrome.branding.fonts.heading }};
+    --jc-font-body: {{ chrome.branding.fonts.body }};
+  }
+</style>
+<link rel="stylesheet" href="{{ chrome.mount_prefix }}/jc-theme.css">
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-dock.js"></script>
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-copy.js" defer></script>
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-forms.js" defer></script>
+  </head>
+  <body data-site-root="{{ chrome.site_root }}" data-locale-root="{{ chrome.locale_root }}">
+    <div class="visually-hidden-focusable"><a href="#content">{{ labels.skip_to_content }}</a></div>
+<header class="masthead">
+  <div class="container">
+    <nav class="navbar navbar-expand-lg navbar-light">
+      <hgroup class="header-image navbar-left">
+        <a class="logo jc-brand" href="{{ chrome.lang_prefix }}/">
+          <img src="{{ chrome.site_logo }}" alt="{{ chrome.site_title }}" width="171" height="36">
+        </a>
+      </hgroup>
+      <div class="main-navbar collapse navbar-collapse" id="main-navigation-toggle">
+        <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
+          <li><a href="{{ chrome.lang_prefix }}/dataset/">{{ labels.nav_datasets }}</a></li><li><a href="{{ chrome.lang_prefix }}/organization/">{{ labels.nav_publishers }}</a></li><li><a href="{{ chrome.lang_prefix }}/about">{{ labels.nav_about }}</a></li>
+        </ul>
+      </div>
+    </nav>
+  </div>
+</header>
+  <div class="main">
+    <div id="content" class="container">
+      <div class="toolbar" role="navigation" aria-label="Breadcrumb">
+        <ol class="breadcrumb">
+          <li class="home"><a href="{{ chrome.lang_prefix }}/" aria-label="{{ labels.home }}"><i class="fa fa-home"></i><span> {{ labels.home }}</span></a></li>
+          <li class="active"><a href="{{ chrome.lang_prefix }}/assistants">{{ labels.assistants }}</a></li>
+        </ol>
+      </div>
+      <div class="row wrapper no-nav">
+        <div class="primary col-12" role="main"><article class="module-content jc-page jc-assistants">
+          <h1 class="page-heading">{{ labels.assistants }}</h1>
+          {% if let Some(ref m) = mcp %}
+            <p>{{ lead }}</p>
+            <p class="jc-connector-status">{{ labels.connector_status }}</p>
+            <div class="jc-connector-note" role="note">
+              <div>
+                <p>{{ labels.connector_note }}</p>
+                <p class="jc-note-prompt"><q id="jc-note-prompt">{{ prompt }}</q>
+                  <button type="button" class="btn btn-default" data-jc-copy="jc-note-prompt" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}"><span class="jc-code-copy-label">{{ labels.copy }}</span></button></p>
+                <p>{{ labels.connector_why }}</p>
+              </div>
+            </div>
+            <ul class="jc-assistant-cards">
+              {% for (card_id, card_name) in cards %}
+                <li class="jc-assistant-card">
+                  <h2 id="jc-card-{{ card_id }}">{{ card_name }}</h2>
+                  <p class="jc-card-links">
+                    <a class="jc-card-link" href="{{ chrome.lang_prefix }}/assistants/{{ card_id }}" aria-describedby="jc-card-{{ card_id }}">{{ labels.guide_open }}</a>
+                  </p>
+                </li>
+              {% endfor %}
+            </ul>
+            <p class="jc-store-address">{{ labels.store_address }}
+              <span id="jc-store-url" class="jc-store-url">{{ m.url_wbr|safe }}</span>
+              <button type="button" class="btn btn-default" data-jc-copy="jc-store-url" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}"><span class="jc-code-copy-label">{{ labels.copy }}</span></button>
+            </p>
+            <p class="visually-hidden" role="status" aria-live="polite" id="jc-copy-status"></p>
+            <details class="jc-developers">
+              <summary>{{ labels.for_developers }}</summary>
+              <section class="jc-live jc-mcp" aria-labelledby="jc-mcp-title">
+                <h2 id="jc-mcp-title">{{ labels.any_client }}</h2>
+                <div class="jc-mcp-body">
+                  <div>
+                    <h3 class="jc-mcp-client">{{ labels.mcp_editors }}</h3>
+                    <p class="jc-mcp-links">
+                      <a class="btn btn-default" href="{{ m.vscode }}">{{ labels.mcp_vscode }}</a>
+                      <a class="btn btn-default" href="{{ m.cursor }}">{{ labels.mcp_cursor }}</a>
+                    </p>
+                  </div>
+                </div>
+              </section>
+            </details>
+          {% endif %}
+        </article></div>
+      </div>
+    </div>
+  </div>
+  </body>
+</html>

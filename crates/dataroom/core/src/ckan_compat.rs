@@ -355,7 +355,7 @@ pub fn dataset_from_ckan(
     }
     if let Some(t) = payload.get("title").and_then(Value::as_str) {
         if !t.is_empty() {
-            title.entry(default_lang.to_owned()).or_insert_with(|| t.to_owned());
+            title.insert(default_lang.to_owned(), t.to_owned());
         }
     }
     if title.is_empty() {
@@ -376,11 +376,12 @@ pub fn dataset_from_ckan(
             }
         }
     }
+    // When `notes` is explicitly supplied in the payload (e.g. `package_update` or `package_patch`),
+    // it overrides `notes_translated[default_lang]` so patching `notes` is never clobbered by a stale
+    // `notes_translated` entry (A3).
     if let Some(n) = payload.get("notes").and_then(Value::as_str) {
         if !n.is_empty() {
-            description
-                .entry(default_lang.to_owned())
-                .or_insert_with(|| n.to_owned());
+            description.insert(default_lang.to_owned(), n.to_owned());
         }
     }
     if description.is_empty() {
@@ -776,9 +777,7 @@ pub fn distribution_from_ckan(
     }
     if let Some(d) = raw.get("description").and_then(Value::as_str) {
         if !d.is_empty() {
-            description
-                .entry(default_lang.to_owned())
-                .or_insert_with(|| d.to_owned());
+            description.insert(default_lang.to_owned(), d.to_owned());
         }
     }
 

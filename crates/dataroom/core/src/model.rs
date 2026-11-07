@@ -244,6 +244,12 @@ pub struct Catalogue {
     pub contact_point: Option<ContactPoint>,
     #[serde(default)]
     pub theme: ThemeTokens,
+    /// Optional per-catalogue branding override JSON (`global.branding` shape, B1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branding: Option<Value>,
+    /// Package names hidden by the publish gate (`jc_hide`, T-4318, D2, E4): `{name: reason}`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub hidden_datasets: BTreeMap<String, String>,
     #[serde(default = "default_true")]
     pub allow_cross_org_harvest: bool,
     #[serde(default)]
@@ -265,6 +271,63 @@ impl Catalogue {
         } else {
             format!("https://{}", self.host.trim_end_matches('/'))
         }
+    }
+
+    /// Computes the effective [`crate::branding::BrandingBlock`] for this catalogue by layering
+    /// the catalogue's `theme` and `branding` override on top of `installation_branding` (B1, G4).
+    pub fn effective_branding(
+        &self,
+        installation_branding: Option<&crate::branding::BrandingBlock>,
+    ) -> crate::branding::BrandingBlock {
+        let mut block = installation_branding.cloned().unwrap_or_default();
+        // Apply catalogue languages and title if not already overridden
+        if !self.default_language.is_empty() {
+            block.languages.default = self.default_language.clone();
+        }
+        if !self.languages.is_empty() {
+            block.languages.offered = self.languages.clone();
+        }
+        for (lang, t) in &self.title {
+            if !t.is_empty() {
+                block.site_title.insert(lang.clone(), t.clone());
+            }
+        }
+        // Apply ThemeTokens when different from default or explicitly set
+        let def_theme = ThemeTokens::default();
+        if self.theme != def_theme {
+            if !self.theme.instance_name.is_empty() && self.theme.instance_name != "dataroom" {
+                block.instance_name = self.theme.instance_name.clone();
+            }
+            if !self.theme.organisation.is_empty() && self.theme.organisation != "Open Data" {
+                block.organisation = self.theme.organisation.clone();
+            }
+            if crate::branding::is_valid_hex_colour(&self.theme.primary) {
+                block.colours.primary = self.theme.primary.clone();
+            }
+            if crate::branding::is_valid_hex_colour(&self.theme.secondary) {
+                block.colours.secondary = self.theme.secondary.clone();
+            }
+            if crate::branding::is_valid_hex_colour(&self.theme.accent) {
+                block.colours.accent = self.theme.accent.clone();
+            }
+            if crate::branding::is_valid_hex_colour(&self.theme.background) {
+                block.colours.background = self.theme.background.clone();
+            }
+            if crate::branding::is_valid_hex_colour(&self.theme.text) {
+                block.colours.text = self.theme.text.clone();
+            }
+            if let Some(ref l) = self.theme.logo {
+                block.logo = l.clone();
+            }
+            if let Some(ref tl) = self.theme.tagline {
+                block.tagline = tl.clone();
+            }
+            block.recompute_derived();
+        }
+        if let Some(ref ov) = self.branding {
+            block.apply_override_json(ov);
+        }
+        block
     }
 }
 
@@ -300,6 +363,16 @@ pub struct Publisher {
     /// Person or group IDs granted editor rights on this publisher's datasets (C16).
     #[serde(default)]
     pub editor_grants: Vec<String>,
+    /// Badge initials for `_badge` when `logo_url` is unset (B1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub badge_initials: Option<String>,
+    /// Badge background hex colour for `_badge` when `logo_url` is unset (B1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub badge_colour: Option<String>,
+    /// Last `CkanInstance` name that declared `title` for this organization (G2: one instance
+    /// never renames another's organization).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_by_instance: Option<String>,
     pub created: DateTime<Utc>,
     pub modified: DateTime<Utc>,
 }

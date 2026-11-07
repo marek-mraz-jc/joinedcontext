@@ -57,7 +57,10 @@ async fn public_feed_datasets(
 
     let mut visible = Vec::new();
     for ds in all_ds {
-        if ds.state != RecordState::Active || ds.visibility != Visibility::Public {
+        if ds.state != RecordState::Active
+            || ds.visibility != Visibility::Public
+            || cat.hidden_datasets.contains_key(&ds.name)
+        {
             continue;
         }
         let pub_rec = pub_map.get(&ds.publisher_id);

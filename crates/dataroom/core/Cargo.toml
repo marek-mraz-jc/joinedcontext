@@ -6,12 +6,14 @@ license = "EUPL-1.2"
 description = "Core domain types, Store and Authorizer traits, OData entity definitions and operation registry for dataroom"
 
 [dependencies]
-chrono = { version = "0.4", features = ["serde"] }
+base64 = { version = "0.22.1" }
+chrono = { version = "0.4.38", features = ["serde"] }
 odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table" }
-schemars = { version = "0.8", features = ["chrono", "uuid1"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-subtle = "2.5"
-thiserror = "1.0"
-url = "2.5"
-uuid = { version = "1.8", features = ["v4", "v5", "v7", "serde"] }
+schemars = { version = "0.8.21", features = ["chrono", "uuid1"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+sha2 = "0.10.8"
+subtle = "2.6.1"
+thiserror = "1.0.69"
+url = "2.5.4"
+uuid = { version = "1.11.0", features = ["v4", "v5", "v7", "serde"] }

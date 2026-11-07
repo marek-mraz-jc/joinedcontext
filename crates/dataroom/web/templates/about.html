@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="{{ chrome.lang }}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
+    {% if chrome.branding.noindex %}<meta name="robots" content="noindex, nofollow">{% endif %}
+    <title>{{ labels.about_site }} - {{ chrome.site_title }}</title>
+    <link rel="shortcut icon" href="{{ chrome.favicon }}" />
+    {% for opt in chrome.lang_options %}
+    <link rel="alternate" hreflang="{{ opt.code }}" href="{{ opt.url }}" />
+    {% endfor %}
+<style nonce="{{ chrome.csp_nonce }}">
+  :root {
+    --jc-primary: {{ chrome.branding.colours.primary }};
+    --jc-primary-fg: {{ chrome.branding.primary_foreground }};
+    --jc-primary-rgb: {{ chrome.branding.primary_rgb }};
+    --jc-secondary: {{ chrome.branding.colours.secondary }};
+    --jc-accent: {{ chrome.branding.colours.accent }};
+    --jc-background: {{ chrome.branding.colours.background }};
+    --jc-text: {{ chrome.branding.colours.text }};
+    --jc-font-heading: {{ chrome.branding.fonts.heading }};
+    --jc-font-body: {{ chrome.branding.fonts.body }};
+  }
+</style>
+<link rel="stylesheet" href="{{ chrome.mount_prefix }}/jc-theme.css">
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-dock.js"></script>
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-copy.js" defer></script>
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-forms.js" defer></script>
+  </head>
+  <body data-site-root="{{ chrome.site_root }}" data-locale-root="{{ chrome.locale_root }}">
+    <div class="visually-hidden-focusable"><a href="#content">{{ labels.skip_to_content }}</a></div>
+{% if !chrome.branding.ribbon.is_empty() %}
+<div class="jc-ribbon" role="note">{{ chrome.branding.ribbon }}</div>
+{% endif %}
+<div class="account-masthead">
+  <div class="container">
+    <nav class="account not-authed" aria-label="Account">
+      <ul class="list-unstyled">
+        <li><a href="{{ chrome.lang_prefix }}/user/login">{{ labels.login }}</a></li>
+      </ul>
+    </nav>
+  </div>
+</div>
+<header class="masthead">
+  <div class="container">
+    <nav class="navbar navbar-expand-lg navbar-light">
+      <hgroup class="header-image navbar-left">
+        <a class="logo jc-brand" href="{{ chrome.lang_prefix }}/">
+          <img src="{{ chrome.site_logo }}" alt="{{ chrome.site_title }}" width="171" height="36">
+        </a>
+      </hgroup>
+      <div class="main-navbar collapse navbar-collapse" id="main-navigation-toggle">
+        <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
+          <li><a href="{{ chrome.lang_prefix }}/dataset/">{{ labels.nav_datasets }}</a></li><li><a href="{{ chrome.lang_prefix }}/organization/">{{ labels.nav_publishers }}</a></li><li class="active"><a href="{{ chrome.lang_prefix }}/about">{{ labels.nav_about }}</a></li>
+        </ul>
+      </div>
+    </nav>
+  </div>
+</header>
+  <div class="main">
+    <div id="content" class="container">
+      <div class="toolbar" role="navigation" aria-label="Breadcrumb">
+        <ol class="breadcrumb">
+          <li class="home"><a href="{{ chrome.lang_prefix }}/" aria-label="{{ labels.home }}"><i class="fa fa-home"></i><span> {{ labels.home }}</span></a></li>
+          <li class="active"><a href="{{ chrome.lang_prefix }}/about">{{ labels.about_site }}</a></li>
+        </ol>
+      </div>
+      <div class="row wrapper no-nav">
+        <div class="primary col-12" role="main">
+          <article class="module">
+            <div class="module-content">
+              <h1 class="page-heading">{{ labels.about_site }}</h1>
+              <p class="jc-about-lead">{{ intro }}</p>
+              <p>{{ labels.about_data }}</p>
+              <p><a class="btn btn-primary" href="{{ chrome.lang_prefix }}/dataset/">{{ labels.all_datasets }}</a></p>
+              <h2 id="api">{{ labels.about_machines }}</h2>
+              <dl class="jc-about-list">
+                <dt>{{ labels.catalogue_api }}</dt>
+                <dd><a href="{{ chrome.mount_prefix }}/api/3/action/package_list">{{ api_url }}</a><br>{{ labels.about_api }}</dd>
+                <dt>{{ labels.about_dcat }}</dt>
+                <dd><a href="{{ chrome.mount_prefix }}/catalog.ttl">{{ dcat_url }}</a><br>{{ labels.about_dcat_what }}</dd>
+                {% if !email.is_empty() %}
+                <dt>{{ labels.about_contact }}</dt>
+                <dd><a href="mailto:{{ email }}">{{ email }}</a></dd>
+                {% endif %}
+              </dl>
+            </div>
+          </article>
+        </div>
+      </div>
+    </div>
+  </div>
+<footer class="site-footer">
+  <div class="container">
+    <div class="row gy-4">
+      <div class="col-md-6 jc-footer-lines">
+        <div class="jc-footer-brand">
+          {% if !chrome.footer_logo.is_empty() %}<img src="{{ chrome.footer_logo }}" alt="" />{% endif %}
+          <span>{{ chrome.branding.instance_name }}</span>
+        </div>
+        {% if !chrome.branding.organisation.is_empty() %}<p>{{ chrome.branding.organisation }}</p>{% endif %}
+        {% if !chrome.branding.contact_email.is_empty() %}<p><a href="mailto:{{ chrome.branding.contact_email }}">{{ chrome.branding.contact_email }}</a></p>{% endif %}
+      </div>
+      <nav class="col-md-3 footer-links" aria-label="{{ labels.about_site }}">
+        <ul class="list-unstyled">
+          <li><a href="{{ chrome.lang_prefix }}/about">{{ labels.about_site }}</a></li>
+          {% if !chrome.portal_url.is_empty() %}<li><a href="{{ chrome.portal_url }}">{{ labels.portal }}</a></li>{% endif %}
+          <li><a href="{{ chrome.lang_prefix }}/about#api">{{ labels.catalogue_api }}</a></li>
+          {% for (p_href, p_title) in chrome.footer_pages %}
+            <li><a href="{{ p_href }}">{{ p_title }}</a></li>
+          {% endfor %}
+        </ul>
+      </nav>
+      <div class="col-md-3 attribution">
+        <form class="lang-select" action="{{ chrome.lang_prefix }}/util/redirect" method="POST">
+          <div class="form-group">
+            <label for="field-lang-select">{{ labels.language }}</label>
+            <select id="field-lang-select" name="url">
+              {% for opt in chrome.lang_options %}
+              <option value="{{ opt.url }}" lang="{{ opt.code }}"{% if opt.selected %} selected="selected"{% endif %}>
+                {{ opt.label }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <button class="btn btn-default d-none" type="submit">{{ labels.go }}</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</footer>
+  </body>
+</html>

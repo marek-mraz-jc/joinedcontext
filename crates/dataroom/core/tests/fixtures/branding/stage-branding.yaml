@@ -1,0 +1,41 @@
+  branding:
+    instanceName: joinedcontext
+    shortName: joinedcontext
+    city: Helsinki
+    organisation: joinedcontext demo
+    # The publisher's own domain, which is what a DCAT-AP record and a did:web name. The
+    # URN segment above is separate and stays until the demo data moves with it (T-0343).
+    orgDomain: hel.fi
+    domain: stage.joinedcontext.com
+    contactEmail: hello@joinedcontext.com
+    # The public API and User Guide pages the Portal serves to anyone (T-4063): the catalogue's
+    # usage texts link their guides under it, the WebSocket's included (T-4064, EP-108).
+    documentationBaseUrl: https://stage.joinedcontext.com/docs
+    licenseDefault: CC-BY-4.0
+    logo: logo.svg
+    favicon: logo.svg
+    logoSvg: |
+{{ readFile "branding/logo.svg" | indent 6 }}
+    colours:
+      primary: '#0000bf'
+      secondary: '#0072c6'
+      accent: '#ffe977'
+      background: '#ffffff'
+      text: '#1a1a1a'
+    fonts:
+      # Self-hosted or system only: nothing on a page fetches from a third-party origin.
+      # No HelsinkiGrotesk: it has no š, ž or ř, and Slovak and Czech headings fell back letter
+      # by letter to another face (T-4202).
+      heading: system-ui, sans-serif
+      body: system-ui, sans-serif
+    # English only, for now, by the owner's decision: the Portal ships no Finnish or Swedish
+    # bundle, so offering them showed a switcher that fell back to another language. The
+    # Portal and the catalogue both take this block.
+    languages:
+      default: en
+      offered:
+        - en
+
+  # The production profile: its guards (CC-73, T-1720, T-1721), no demo people, no test objects of
+  # the seeds; with dev's values files (`valuesProfile`), whose sizes were measured
+  # on one node under this same load and which carry the seeds the owner wants here (T-4678).

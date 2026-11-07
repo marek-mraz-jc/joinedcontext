@@ -1038,10 +1038,15 @@ fn subclasses_of(class_iri: &str) -> Vec<&str> {
             "http://www.w3.org/ns/dcat#DataService",
             "http://www.w3.org/ns/dcat#Catalog",
         ],
+        // Fix A3: in DCAT-AP 3.0.1 and DCAT-AP-SK 2.0, `dcat:Catalog` is a subclass of `dcat:Resource`
+        // (and in OWL of dcat:Dataset), but SHACL shapes in `dcat-ap-SHACL.ttl` and
+        // `dcat-ap-sk-2.0.ttl` define separate `CatalogShape` (`sh:targetClass dcat:Catalog`) and
+        // `DatasetShape` (`sh:targetClass dcat:Dataset`). Treating `dcat:Catalog` as a target of
+        // `DatasetShape` wrongly applied dataset-only mandatory properties (`dcat:keyword`,
+        // `dcat:theme`, `dct:accrualPeriodicity`, `dcat:distribution`) to `dcat:Catalog` nodes,
+        // causing `specs/dcat-ap-sk/príklady/katalóg.ttl` to fail `dcat:keyword minCount 1`!
         "http://www.w3.org/ns/dcat#Dataset" => vec![
             "http://www.w3.org/ns/dcat#Dataset",
-            "http://www.w3.org/ns/dcat#DatasetSeries",
-            "http://www.w3.org/ns/dcat#Catalog",
         ],
         "http://xmlns.com/foaf/0.1/Agent" => vec![
             "http://xmlns.com/foaf/0.1/Agent",

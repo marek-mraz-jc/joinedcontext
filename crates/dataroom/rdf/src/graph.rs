@@ -49,12 +49,13 @@ pub mod ns {
     pub const XSD_HEX_BINARY: &str = "http://www.w3.org/2001/XMLSchema#hexBinary";
 }
 
-/// Safety limits for RDF parsing on uploads and harvests (00-contract.md Security).
+/// Safety limits for RDF parsing on uploads and harvests (A1, 00-contract.md Security).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RdfLimits {
     pub max_bytes: usize,
     pub max_triples: usize,
     pub max_depth: usize,
+    pub max_literal_length: usize,
     pub forbid_owl_imports: bool,
 }
 
@@ -64,6 +65,7 @@ impl Default for RdfLimits {
             max_bytes: 16 * 1024 * 1024,
             max_triples: 100_000,
             max_depth: 64,
+            max_literal_length: 65_536,
             forbid_owl_imports: false,
         }
     }
@@ -76,6 +78,7 @@ impl RdfLimits {
             max_bytes: 4 * 1024 * 1024,
             max_triples: 50_000,
             max_depth: 32,
+            max_literal_length: 32_768,
             forbid_owl_imports: true,
         }
     }
@@ -248,15 +251,31 @@ impl RdfGraph {
     pub fn insert_checked(&mut self, triple: Triple, limits: &RdfLimits) -> Result<()> {
         if limits.forbid_owl_imports && triple.predicate == "http://www.w3.org/2002/07/owl#imports"
         {
-            return Err(DataroomError::Rdf(
-                "owl:imports is forbidden in uploaded shapes (C17)".into(),
-            ));
+            return Err(DataroomError::RdfLimitExceeded {
+                kind: "owl-imports".into(),
+                message: "owl:imports is forbidden in uploaded shapes (C17)".into(),
+            });
+        }
+        if let Term::Literal(ref lit) = triple.object {
+            if lit.value.len() > limits.max_literal_length {
+                return Err(DataroomError::RdfLimitExceeded {
+                    kind: "literal-length".into(),
+                    message: format!(
+                        "RDF literal length {} exceeds maximum of {} bytes",
+                        lit.value.len(),
+                        limits.max_literal_length
+                    ),
+                });
+            }
         }
         if self.triples.len() >= limits.max_triples {
-            return Err(DataroomError::Rdf(format!(
-                "RDF graph exceeded maximum of {} triples",
-                limits.max_triples
-            )));
+            return Err(DataroomError::RdfLimitExceeded {
+                kind: "triples".into(),
+                message: format!(
+                    "RDF graph exceeded maximum of {} triples",
+                    limits.max_triples
+                ),
+            });
         }
         self.triples.insert(triple);
         Ok(())

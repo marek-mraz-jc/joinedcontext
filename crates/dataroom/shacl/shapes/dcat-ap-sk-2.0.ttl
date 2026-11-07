@@ -5,14 +5,17 @@
 @prefix foaf: <http://xmlns.com/foaf/0.1/> .
 @prefix leg: <https://data.gov.sk/def/ontology/legislation/> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix skos: <http://www.w3.org/2004/02/skos/core#> .
 @prefix vcard: <http://www.w3.org/2006/vcard/ns#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
 <https://datova-kancelaria.github.io/dcat-ap-sk-2.0#CatalogShape> a sh:NodeShape ;
+  rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:72 (#trieda-katalóg) & specs/dcat-ap-sk/schémy/katalóg.json:112" ;
   sh:targetClass dcat:Catalog ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:82 (#katalóg-názov) & specs/dcat-ap-sk/schémy/katalóg.json:112,137 (required názov)" ;
     sh:path dc:title ;
     sh:name "Názov katalógu"@sk, "Catalogue title"@en ;
     sh:group "core" ;
@@ -22,6 +25,7 @@
     sh:datatype rdf:langString
   ] ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:98 (#katalóg-popis) & specs/dcat-ap-sk/schémy/katalóg.json:112,140 (required popis)" ;
     sh:path dc:description ;
     sh:name "Popis katalógu"@sk, "Catalogue description"@en ;
     sh:group "core" ;
@@ -31,6 +35,7 @@
     sh:datatype rdf:langString
   ] ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:114 (#katalóg-poskytovateľ) & specs/dcat-ap-sk/schémy/katalóg.json:112,143 (required poskytovateľ)" ;
     sh:path dc:publisher ;
     sh:name "Poskytovateľ"@sk, "Publisher"@en ;
     sh:group "provenance" ;
@@ -40,17 +45,37 @@
     sh:nodeKind sh:BlankNodeOrIRI
   ] ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:130 (#katalóg-kontaktný-bod) & specs/dcat-ap-sk/schémy/katalóg.json:151 (optional kontaktný_bod)" ;
+    sh:path dcat:contactPoint ;
+    sh:name "Kontaktný bod"@sk, "Contact point"@en ;
+    sh:group "provenance" ;
+    sh:order 4 ;
+    sh:nodeKind sh:BlankNodeOrIRI ;
+    sh:class vcard:Kind
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:150 (#katalóg-domovská-stránka) & specs/dcat-ap-sk/schémy/katalóg.json:175 (optional domovská_stránka)" ;
+    sh:path foaf:homepage ;
+    sh:name "Domovská stránka"@sk, "Homepage"@en ;
+    sh:group "core" ;
+    sh:order 5 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:166 (#katalóg-dataset) & specs/dcat-ap-sk/schémy/katalóg.json:112,185 (required dataset)" ;
     sh:path dcat:dataset ;
     sh:name "Dataset"@sk, "Dataset"@en ;
     sh:group "datasets" ;
-    sh:order 4 ;
+    sh:order 6 ;
     sh:minCount 1 ;
     sh:nodeKind sh:BlankNodeOrIRI
   ] .
 
 <https://datova-kancelaria.github.io/dcat-ap-sk-2.0#DatasetShape> a sh:NodeShape ;
+  rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:182 (#trieda-dataset) & specs/dcat-ap-sk/schémy/dataset.json:114" ;
   sh:targetClass dcat:Dataset ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:192 (#dataset-názov) & specs/dcat-ap-sk/schémy/dataset.json:117,149 (required názov)" ;
     sh:path dc:title ;
     sh:name "Názov"@sk, "Title"@en ;
     sh:description "Táto vlastnosť obsahuje názov datasetu."@sk ;
@@ -61,6 +86,7 @@
     sh:datatype rdf:langString
   ] ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:208 (#dataset-popis) & specs/dcat-ap-sk/schémy/dataset.json:118,152 (required popis)" ;
     sh:path dc:description ;
     sh:name "Popis"@sk, "Description"@en ;
     sh:description "Táto vlastnosť obsahuje voľný text s popisom datasetu."@sk ;
@@ -71,6 +97,7 @@
     sh:datatype rdf:langString
   ] ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:224 (#dataset-poskytovateľ) & specs/dcat-ap-sk/schémy/dataset.json:119,155 (required poskytovateľ)" ;
     sh:path dc:publisher ;
     sh:name "Poskytovateľ"@sk, "Publisher"@en ;
     sh:group "provenance" ;
@@ -80,6 +107,7 @@
     sh:nodeKind sh:BlankNodeOrIRI
   ] ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:272 (#dataset-téma) & specs/dcat-ap-sk/schémy/dataset.json:120,171 (required téma)" ;
     sh:path dcat:theme ;
     sh:name "Téma"@sk, "Theme"@en ;
     sh:group "classification" ;
@@ -88,6 +116,7 @@
     sh:nodeKind sh:BlankNodeOrIRI
   ] ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:290 (#dataset-periodicita-aktualizácie) & specs/dcat-ap-sk/schémy/dataset.json:121,182 (required periodicita_aktualizácie)" ;
     sh:path dc:accrualPeriodicity ;
     sh:name "Periodicita aktualizácie"@sk, "Update frequency"@en ;
     sh:group "temporal" ;
@@ -97,6 +126,7 @@
     sh:nodeKind sh:BlankNodeOrIRI
   ] ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:307 (#dataset-kľúčové-slová) & specs/dcat-ap-sk/schémy/dataset.json:122,191 (required kľúčové_slovo)" ;
     sh:path dcat:keyword ;
     sh:name "Kľúčové slovo"@sk, "Keyword"@en ;
     sh:group "classification" ;
@@ -105,17 +135,88 @@
     sh:nodeKind sh:Literal
   ] ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:240 (#dataset-dátum-publikácie)" ;
+    sh:path dc:issued ;
+    sh:name "Dátum publikácie"@sk, "Release date"@en ;
+    sh:group "temporal" ;
+    sh:order 7 ;
+    sh:maxCount 1 ;
+    sh:nodeKind sh:Literal
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:256 (#dataset-dátum-modifikácie)" ;
+    sh:path dc:modified ;
+    sh:name "Dátum modifikácie"@sk, "Update date"@en ;
+    sh:group "temporal" ;
+    sh:order 8 ;
+    sh:maxCount 1 ;
+    sh:nodeKind sh:Literal
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:323 (#dataset-typ) & specs/dcat-ap-sk/schémy/dataset.json:163 (optional typ_datasetu)" ;
+    sh:path dc:type ;
+    sh:name "Typ datasetu"@sk, "Dataset type"@en ;
+    sh:group "classification" ;
+    sh:order 9 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:340 (#dataset-geografické-územia) & specs/dcat-ap-sk/schémy/dataset.json:194 (optional geografické_územie)" ;
+    sh:path dc:spatial ;
+    sh:name "Geografické územie"@sk, "Spatial coverage"@en ;
+    sh:group "spatial" ;
+    sh:order 10 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:368 (#dataset-časové-pokrytie) & specs/dcat-ap-sk/schémy/dataset.json:205 (optional časové_pokrytie)" ;
+    sh:path dc:temporal ;
+    sh:name "Časové pokrytie"@sk, "Temporal coverage"@en ;
+    sh:group "temporal" ;
+    sh:order 11 ;
+    sh:nodeKind sh:BlankNodeOrIRI ;
+    sh:class dc:PeriodOfTime
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:388 (#dataset-kontaktní-bod) & specs/dcat-ap-sk/schémy/dataset.json:244 (optional kontaktný_bod)" ;
+    sh:path dcat:contactPoint ;
+    sh:name "Kontaktný bod"@sk, "Contact point"@en ;
+    sh:group "provenance" ;
+    sh:order 12 ;
+    sh:nodeKind sh:BlankNodeOrIRI ;
+    sh:class vcard:Kind
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:478 (#dataset-priestorové-rozlišenie) & specs/dcat-ap-sk/schémy/dataset.json:298 (optional priestorové_rozlíšenie_v_metroch)" ;
+    sh:path dcat:spatialResolutionInMeters ;
+    sh:name "Priestorové rozlíšenie v metroch"@sk, "Spatial resolution in meters"@en ;
+    sh:group "spatial" ;
+    sh:order 13 ;
+    sh:datatype xsd:decimal
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:496 (#dataset-časové-rozlíšenie) & specs/dcat-ap-sk/schémy/dataset.json:307 (optional časové_rozlíšenie)" ;
+    sh:path dcat:temporalResolution ;
+    sh:name "Časové rozlíšenie"@sk, "Temporal resolution"@en ;
+    sh:group "temporal" ;
+    sh:order 14 ;
+    sh:datatype xsd:duration
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:531 (#dataset-distribúcia) & specs/dcat-ap-sk/schémy/dataset.json:323 (distribúcia)" ;
     sh:path dcat:distribution ;
     sh:name "Distribúcia"@sk, "Distribution"@en ;
     sh:group "distributions" ;
-    sh:order 7 ;
+    sh:order 15 ;
     sh:minCount 1 ;
     sh:nodeKind sh:BlankNodeOrIRI
   ] .
 
 <https://datova-kancelaria.github.io/dcat-ap-sk-2.0#DistributionShape> a sh:NodeShape ;
+  rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:548 (#trieda-distribúcia) & specs/dcat-ap-sk/schémy/dataset.json:326" ;
   sh:targetClass dcat:Distribution ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:596 (#distribúcia-prístupové-url) & specs/dcat-ap-sk/schémy/dataset.json:331,426 (required prístupové_url)" ;
     sh:path dcat:accessURL ;
     sh:name "Prístupové URL"@sk, "Access URL"@en ;
     sh:group "distributions" ;
@@ -124,6 +225,7 @@
     sh:nodeKind sh:BlankNodeOrIRI
   ] ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:559 (#špecifikácia-podmienok-použitia) & specs/dcat-ap-sk/schémy/dataset.json:330,360 (required podmienky_použitia)" ;
     sh:path leg:termsOfUse ;
     sh:name "Špecifikácia podmienok použitia"@sk, "Terms of use"@en ;
     sh:group "rights" ;
@@ -132,11 +234,45 @@
     sh:maxCount 1 ;
     sh:nodeKind sh:BlankNodeOrIRI ;
     sh:class leg:TermsOfUse
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:579 (#distribúcia-stiahnutie-súboru)" ;
+    sh:path dcat:downloadURL ;
+    sh:name "Súbor na stiahnutie"@sk, "Download URL"@en ;
+    sh:group "distributions" ;
+    sh:order 3 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:614 (#distribúcia-formát-súboru) & specs/dcat-ap-sk/schémy/dataset.json:436" ;
+    sh:path dc:format ;
+    sh:name "Formát"@sk, "Format"@en ;
+    sh:group "distributions" ;
+    sh:order 4 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:632 (#distribúcia-media-type) & specs/dcat-ap-sk/schémy/dataset.json:445" ;
+    sh:path dcat:mediaType ;
+    sh:name "Typ média"@sk, "Media type"@en ;
+    sh:group "distributions" ;
+    sh:order 5 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:721 (#distribúcia-služba) & specs/dcat-ap-sk/schémy/dataset.json:485" ;
+    sh:path dcat:accessService ;
+    sh:name "Prístupová služba"@sk, "Access service"@en ;
+    sh:group "distributions" ;
+    sh:order 6 ;
+    sh:nodeKind sh:BlankNodeOrIRI
   ] .
 
 <https://datova-kancelaria.github.io/dcat-ap-sk-2.0#TermsOfUseShape> a sh:NodeShape ;
+  rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:559 (#špecifikácia-podmienok-použitia) & specs/dcat-ap-sk/schémy/dataset.json:360" ;
   sh:targetClass leg:TermsOfUse ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:563 & specs/dcat-ap-sk/schémy/dataset.json:364,385 (required autorské_dielo)" ;
     sh:path leg:authorsWorkType ;
     sh:name "Autorské dielo"@sk, "Authors work type"@en ;
     sh:minCount 1 ;
@@ -144,6 +280,7 @@
     sh:nodeKind sh:BlankNodeOrIRI
   ] ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:563 & specs/dcat-ap-sk/schémy/dataset.json:365,397 (required databáza_ako_autorské_dielo)" ;
     sh:path leg:originalDatabaseType ;
     sh:name "Databáza ako autorské dielo"@sk, "Original database type"@en ;
     sh:minCount 1 ;
@@ -151,6 +288,7 @@
     sh:nodeKind sh:BlankNodeOrIRI
   ] ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:563 & specs/dcat-ap-sk/schémy/dataset.json:366,409 (required databáza_chránená_zvláštnými_právami)" ;
     sh:path leg:databaseProtectedBySpecialRightsType ;
     sh:name "Databáza chránená zvláštnymi právami"@sk, "Sui generis database rights"@en ;
     sh:minCount 1 ;
@@ -158,9 +296,63 @@
     sh:nodeKind sh:BlankNodeOrIRI
   ] ;
   sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:563 & specs/dcat-ap-sk/schémy/dataset.json:367,418 (required osobné_údaje)" ;
     sh:path leg:personalDataContainmentType ;
     sh:name "Osobné údaje"@sk, "Personal data containment"@en ;
     sh:minCount 1 ;
     sh:maxCount 1 ;
     sh:nodeKind sh:BlankNodeOrIRI
+  ] .
+
+<https://datova-kancelaria.github.io/dcat-ap-sk-2.0#DataServiceShape> a sh:NodeShape ;
+  rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:738 (#trieda-datová-služba) & specs/dcat-ap-sk/schémy/dataset.json:485" ;
+  sh:targetClass dcat:DataService ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:748 (#dátová-služba-názov) & specs/dcat-ap-sk/schémy/dataset.json:489,517 (required názov)" ;
+    sh:path dc:title ;
+    sh:name "Názov dátovej služby"@sk, "Data service title"@en ;
+    sh:minCount 1 ;
+    sh:nodeKind sh:Literal ;
+    sh:datatype rdf:langString
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:764 (#dátová-služba-prístupový-bod) & specs/dcat-ap-sk/schémy/dataset.json:520 (prístupový_bod)" ;
+    sh:path dcat:endpointURL ;
+    sh:name "Prístupový bod"@sk, "Endpoint URL"@en ;
+    sh:minCount 1 ;
+    sh:nodeKind sh:BlankNodeOrIRI
+  ] .
+
+<https://datova-kancelaria.github.io/dcat-ap-sk-2.0#PeriodOfTimeShape> a sh:NodeShape ;
+  rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:368 (#dataset-časové-pokrytie) & specs/dcat-ap-sk/schémy/dataset.json:205" ;
+  sh:targetClass dc:PeriodOfTime ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:374 & specs/dcat-ap-sk/schémy/dataset.json:226 (začiatok / dcat:startDate)" ;
+    sh:path dcat:startDate ;
+    sh:name "Začiatok"@sk, "Start date"@en ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:date
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:374 & specs/dcat-ap-sk/schémy/dataset.json:235 (koniec / dcat:endDate)" ;
+    sh:path dcat:endDate ;
+    sh:name "Koniec"@sk, "End date"@en ;
+    sh:maxCount 1 ;
+    sh:datatype xsd:date
+  ] .
+
+<https://datova-kancelaria.github.io/dcat-ap-sk-2.0#ContactPointShape> a sh:NodeShape ;
+  rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:130,388 (#dataset-kontaktní-bod) & specs/dcat-ap-sk/schémy/dataset.json:244" ;
+  sh:targetClass vcard:Kind ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:136,394 & specs/dcat-ap-sk/schémy/dataset.json:256 (vcard:fn)" ;
+    sh:path vcard:fn ;
+    sh:name "Meno"@sk, "Formatted name"@en ;
+    sh:nodeKind sh:Literal
+  ] ;
+  sh:property [
+    rdfs:comment "Source: specs/dcat-ap-sk/dcat-ap-sk-2.0.bs:136,394 & specs/dcat-ap-sk/schémy/dataset.json:259 (vcard:hasEmail)" ;
+    sh:path vcard:hasEmail ;
+    sh:name "E-mail"@sk, "Email"@en ;
+    sh:maxCount 1
   ] .

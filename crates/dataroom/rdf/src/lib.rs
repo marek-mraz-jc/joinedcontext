@@ -10,7 +10,7 @@ pub mod turtle;
 
 pub use dcat::{
     catalogue_to_graph, dataset_to_graph, graph_to_datasets, negotiate_profile,
-     negotiate_rdf_format, parse_datasets_from_rdf, parse_rdf_graph, serialize_catalogue,
+    negotiate_rdf_format, parse, parse_datasets_from_rdf, parse_rdf_graph, serialize_catalogue,
     serialize_dataset, DcatProfileKind, HydraPageInfo, RdfFormat,
 };
 pub use graph::{LiteralValue, RdfGraph, RdfLimits, SubjectNode, Term, Triple, ns};

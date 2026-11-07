@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="{{ chrome.lang }}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
+    {% if chrome.branding.noindex %}<meta name="robots" content="noindex, nofollow">{% endif %}
+    <title>{{ page.title }} - {{ chrome.site_title }}</title>
+    <link rel="shortcut icon" href="{{ chrome.favicon }}" />
+    {% for opt in chrome.lang_options %}
+    <link rel="alternate" hreflang="{{ opt.code }}" href="{{ opt.url }}" />
+    {% endfor %}
+<style nonce="{{ chrome.csp_nonce }}">
+  :root {
+    --jc-primary: {{ chrome.branding.colours.primary }};
+    --jc-primary-fg: {{ chrome.branding.primary_foreground }};
+    --jc-primary-rgb: {{ chrome.branding.primary_rgb }};
+    --jc-secondary: {{ chrome.branding.colours.secondary }};
+    --jc-accent: {{ chrome.branding.colours.accent }};
+    --jc-background: {{ chrome.branding.colours.background }};
+    --jc-text: {{ chrome.branding.colours.text }};
+    --jc-font-heading: {{ chrome.branding.fonts.heading }};
+    --jc-font-body: {{ chrome.branding.fonts.body }};
+  }
+</style>
+<link rel="stylesheet" href="{{ chrome.mount_prefix }}/jc-theme.css">
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-dock.js"></script>
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-copy.js" defer></script>
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-forms.js" defer></script>
+  </head>
+  <body data-site-root="{{ chrome.site_root }}" data-locale-root="{{ chrome.locale_root }}">
+    <div class="visually-hidden-focusable"><a href="#content">{{ labels.skip_to_content }}</a></div>
+<header class="masthead">
+  <div class="container">
+    <nav class="navbar navbar-expand-lg navbar-light">
+      <hgroup class="header-image navbar-left">
+        <a class="logo jc-brand" href="{{ chrome.lang_prefix }}/">
+          <img src="{{ chrome.site_logo }}" alt="{{ chrome.site_title }}" width="171" height="36">
+        </a>
+      </hgroup>
+      <div class="main-navbar collapse navbar-collapse" id="main-navigation-toggle">
+        <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
+          <li><a href="{{ chrome.lang_prefix }}/dataset/">{{ labels.nav_datasets }}</a></li><li><a href="{{ chrome.lang_prefix }}/organization/">{{ labels.nav_publishers }}</a></li><li><a href="{{ chrome.lang_prefix }}/about">{{ labels.nav_about }}</a></li>
+        </ul>
+      </div>
+    </nav>
+  </div>
+</header>
+  <div class="main">
+    <div id="content" class="container">
+      <div class="toolbar" role="navigation" aria-label="Breadcrumb">
+        <ol class="breadcrumb">
+          <li class="home"><a href="{{ chrome.lang_prefix }}/" aria-label="{{ labels.home }}"><i class="fa fa-home"></i><span> {{ labels.home }}</span></a></li>
+          <li class="active"><a href="{{ chrome.lang_prefix }}/{{ page.name }}">{{ page.title }}</a></li>
+        </ol>
+      </div>
+      <div class="row wrapper no-nav">
+        <div class="primary col-12" role="main"><article class="module-content jc-page">
+          <h1 class="page-heading">{{ page.title }}</h1>
+          {% if page.name == "connector" %}<p class="jc-connector-status">{{ labels.connector_status }}</p>{% endif %}
+          {% for (heading, paragraphs) in page.sections %}
+            {% if !heading.is_empty() %}<h2>{{ heading }}</h2>{% endif %}
+            {% for paragraph in paragraphs %}<p>{{ paragraph }}</p>{% endfor %}
+          {% endfor %}
+          {% if let Some(ref m) = mcp %}
+          <section class="jc-live jc-mcp" aria-labelledby="jc-mcp-title">
+            <h2 id="jc-mcp-title">{{ labels.mcp }}</h2>
+            <p id="jc-mcp-url" class="jc-code-url">{{ m.url_wbr|safe }}</p>
+          </section>
+          {% endif %}
+          {% if !page.email.is_empty() %}
+            <h2>{{ labels.contact }}</h2>
+            <p><a href="mailto:{{ page.email }}">{{ page.email }}</a></p>
+          {% endif %}
+          <nav aria-label="{{ labels.about_site }}">
+            <ul class="list-inline">
+              {% for (other_slug, other_title) in page.other_pages %}
+                <li class="list-inline-item"><a href="{{ chrome.lang_prefix }}/{{ other_slug }}">{{ other_title }}</a></li>
+              {% endfor %}
+            </ul>
+          </nav>
+        </article></div>
+      </div>
+    </div>
+  </div>
+  </body>
+</html>

@@ -22,23 +22,32 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Datelike;
+use axum::body::Bytes;
 use dataroom_core::auth::constant_time_eq;
-use dataroom_core::ops::{execute_operation, OpContext};
+use dataroom_core::ops::{all_operations, execute_operation, OpContext, OperationDef};
 use dataroom_core::{
-    text_in_lang, Action, Authorizer, Catalogue, CatalogueId, DataroomError, Dataset,
-    DatasetFilter, ObjectTarget, OrgId, ProfilePin, ProfileRecord, Publisher, RecordState,
-    RequestCtx, Result, Store, Subject, Visibility,
+    localized_text, validate_and_sanitise_logo, Action, ActivityRow, Authorizer, BrandingBlock,
+    Catalogue, CatalogueId, DataroomError, Dataset, DatasetFilter, ObjectTarget, OrgId, ProfilePin,
+    ProfileRecord, Publisher, RecordState, RequestCtx, Result, SanitisedAsset, Store, Subject,
+    Visibility,
 };
 use dataroom_harvest::{HarvestEngine, HttpFetcher};
 use dataroom_mcp::handle_mcp_jsonrpc;
 use dataroom_rdf::{negotiate_profile, negotiate_rdf_format};
 use dataroom_search::search_datasets;
 use dataroom_shacl::ProfileRegistry;
-use dataroom_web::{csp_header, render_dataset_page, render_home_page};
+use dataroom_web::helpers::{jc_robots_txt, jc_sitemap_xml};
+use dataroom_web::i18n::{resolve_request_language, LanguageResolution};
+use dataroom_web::{
+    csp_header_for_domain, render_about_page, render_assistant_guide_page, render_assistants_page,
+    render_dataset_list_page, render_dataset_page_full, render_home_page_mounted, render_map_page,
+    render_organization_list_page, render_organization_read_page, render_resource_page,
+    render_static_page, JC_ENUMS_JSON, JC_LOGO_SVG, JC_THEME_CSS,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
 /// Token entry mapping a bearer/API token to a verified [`Subject`].
@@ -47,6 +56,9 @@ pub struct TokenBinding {
     pub token: String,
     pub subject: Subject,
 }
+
+/// Optional host-supplied subject resolver when mounted in-process inside the Portal (G1).
+pub type SubjectResolver = Arc<dyn Fn(&HeaderMap) -> Option<Subject> + Send + Sync>;
 
 /// Shared application state for the Axum router.
 #[derive(Clone)]
@@ -58,6 +70,10 @@ pub struct DataroomState {
     pub default_org_id: OrgId,
     pub default_catalogue_id: CatalogueId,
     pub tokens: Arc<Vec<TokenBinding>>,
+    pub installation_branding: Arc<BrandingBlock>,
+    pub mount_prefix: String,
+    pub subject_resolver: Option<SubjectResolver>,
+    pub assets: Arc<RwLock<BTreeMap<String, SanitisedAsset>>>,
 }
 
 impl DataroomState {
@@ -77,6 +93,10 @@ impl DataroomState {
             default_org_id,
             default_catalogue_id,
             tokens: Arc::new(Vec::new()),
+            installation_branding: Arc::new(BrandingBlock::default()),
+            mount_prefix: String::new(),
+            subject_resolver: None,
+            assets: Arc::new(RwLock::new(BTreeMap::new())),
         }
     }
 
@@ -87,6 +107,29 @@ impl DataroomState {
 
     pub fn with_harvester(mut self, harvester: Arc<HarvestEngine>) -> Self {
         self.harvester = harvester;
+        self
+    }
+
+    pub fn with_installation_branding(mut self, branding: BrandingBlock) -> Self {
+        self.installation_branding = Arc::new(branding);
+        self
+    }
+
+    pub fn with_mount_prefix(mut self, prefix: impl Into<String>) -> Self {
+        let p = prefix.into();
+        self.mount_prefix = if p == "/" {
+            String::new()
+        } else {
+            p.trim_end_matches('/').to_owned()
+        };
+        self
+    }
+
+    pub fn with_subject_resolver<F>(mut self, resolver: F) -> Self
+    where
+        F: Fn(&HeaderMap) -> Option<Subject> + Send + Sync + 'static,
+    {
+        self.subject_resolver = Some(Arc::new(resolver));
         self
     }
 
@@ -130,22 +173,46 @@ impl DataroomState {
             .map(str::trim)
             .map(|t| t.strip_prefix("Bearer ").unwrap_or(t).trim());
 
-        let subject = match raw_token.filter(|t| !t.is_empty()) {
-            Some(tok) => {
-                let matched = self
-                    .tokens
-                    .iter()
-                    .find(|b| constant_time_eq(&b.token, tok));
-                match matched {
-                    Some(binding) => binding.subject.clone(),
-                    None => {
-                        return Err(DataroomError::Unauthorized(
-                            "invalid or unknown API token".into(),
-                        ));
+        let subject = if let Some(ref resolver) = self.subject_resolver {
+            if let Some(s) = resolver(headers) {
+                s
+            } else {
+                match raw_token.filter(|t| !t.is_empty()) {
+                    Some(tok) => {
+                        let matched = self
+                            .tokens
+                            .iter()
+                            .find(|b| constant_time_eq(&b.token, tok));
+                        match matched {
+                            Some(binding) => binding.subject.clone(),
+                            None => {
+                                return Err(DataroomError::Unauthorized(
+                                    "invalid or unknown API token".into(),
+                                ));
+                            }
+                        }
                     }
+                    None => Subject::anonymous(),
                 }
             }
-            None => Subject::anonymous(),
+        } else {
+            match raw_token.filter(|t| !t.is_empty()) {
+                Some(tok) => {
+                    let matched = self
+                        .tokens
+                        .iter()
+                        .find(|b| constant_time_eq(&b.token, tok));
+                    match matched {
+                        Some(binding) => binding.subject.clone(),
+                        None => {
+                            return Err(DataroomError::Unauthorized(
+                                "invalid or unknown API token".into(),
+                            ));
+                        }
+                    }
+                }
+                None => Subject::anonymous(),
+            }
         };
 
         let ctx = RequestCtx::new(cat.org_id, cat.id, subject);
@@ -153,11 +220,17 @@ impl DataroomState {
     }
 }
 
-/// Converts a [`DataroomError`] into an RFC 9457 Problem Details JSON response.
+/// Returns all registered operations in `dataroom` (G1, F1).
+pub fn operations() -> Vec<OperationDef> {
+    all_operations()
+}
+
+/// Converts a [`DataroomError`] into an RFC 9457 Problem Details JSON response with a slug (A5).
 pub fn problem_response(err: DataroomError) -> Response {
     let status = StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let body = json!({
-        "type": "about:blank",
+        "type": err.problem_type_uri(),
+        "slug": err.slug(),
         "title": err.ckan_error_type(),
         "status": status.as_u16(),
         "detail": err.to_string(),
@@ -170,7 +243,7 @@ pub fn problem_response(err: DataroomError) -> Response {
         .into_response()
 }
 
-/// Builds the complete Axum [`Router`] for `dataroom`.
+/// Builds the complete Axum [`Router`] for `dataroom` (mountable standalone or under `/catalogue`, G1).
 pub fn router(state: DataroomState) -> Router {
     Router::new()
         // CKAN Action API v3
@@ -185,6 +258,7 @@ pub fn router(state: DataroomState) -> Router {
         // DCAT-AP catalogue feeds
         .route("/catalog", get(feeds::handle_catalog_negotiated))
         .route("/catalog.ttl", get(feeds::handle_catalog_ttl))
+        .route("/catalog.n3", get(feeds::handle_catalog_ttl))
         .route("/catalog.jsonld", get(feeds::handle_catalog_jsonld))
         .route("/catalog.rdf", get(feeds::handle_catalog_rdf))
         .route("/catalog.xml", get(feeds::handle_catalog_rdf))
@@ -217,6 +291,18 @@ pub fn router(state: DataroomState) -> Router {
         .route("/api/v1/openapi.json", get(odata_routes::handle_openapi))
         .route("/odata/v4/$metadata", get(odata_routes::handle_metadata))
         .route("/odata/v4/{*rest}", get(odata_routes::handle_odata))
+        // Branding endpoint (G4) & Logo upload (B3)
+        .route(
+            "/api/v1/branding",
+            get(handle_get_branding).post(handle_post_branding),
+        )
+        .route("/api/v1/assets/logo", post(handle_upload_logo))
+        .route("/assets/{name}", get(handle_serve_asset))
+        // Built-in theme static assets
+        .route("/jc-theme.css", get(handle_jc_theme_css))
+        .route("/jc-enums.json", get(handle_jc_enums_json))
+        .route("/jc-logo.svg", get(handle_jc_logo_svg))
+        .route("/logo.svg", get(handle_jc_logo_svg))
         // Portal-compatible catalogue endpoints
         .route("/api/v1/catalogue", get(handle_portal_catalogue))
         .route(
@@ -236,16 +322,22 @@ pub fn router(state: DataroomState) -> Router {
             "/api/v1/datasets/{name}/validate-sample",
             post(handle_validate_sample),
         )
-        // Operation registry REST & allowed (C11)
+        // Operation registry REST & allowed (C11, F1-F3)
         .route("/api/v1/ops/{op}", post(handle_op_call))
         .route("/api/v1/allowed", get(handle_allowed_query))
         // MCP JSON-RPC 2.0
         .route("/mcp", post(handle_mcp))
-        // Server-rendered UI and dataset RDF content negotiation
-        .route("/", get(handle_ui_home))
-        .route("/dataset", get(handle_ui_home))
-        .route("/dataset/{name_or_ext}", get(handle_dataset_or_rdf))
-        .route("/publisher/{name}", get(handle_publisher_page))
+        // Sitemap & robots.txt (D6, B4)
+        .route("/sitemap.xml", get(handle_sitemap_xml))
+        .route("/robots.txt", get(handle_robots_txt))
+        // Language switcher redirect & Login redirect to platform identity (C2, D7)
+        .route("/util/redirect", post(handle_util_redirect))
+        .route("/{lang}/util/redirect", post(handle_util_redirect_lang))
+        .route("/user/login", get(handle_user_login))
+        .route("/{lang}/user/login", get(handle_user_login_lang))
+        // Server-rendered UI and dataset RDF content negotiation (including /{lang}/... prefix)
+        .route("/", get(handle_ui_dispatch_root))
+        .route("/{*path}", get(handle_ui_dispatch_path))
         .with_state(state)
 }
 
@@ -627,241 +719,846 @@ async fn handle_mcp(
     Json(answer).into_response()
 }
 
-#[derive(Debug, Deserialize)]
-struct UiHomeQuery {
-    q: Option<String>,
-    lang: Option<String>,
-}
-
-async fn handle_ui_home(
+async fn handle_get_branding(
     State(state): State<DataroomState>,
     headers: HeaderMap,
-    Query(params): Query<UiHomeQuery>,
 ) -> Response {
-    let (ctx, cat) = match state.resolve_context(&headers).await {
+    let (_ctx, cat) = match state.resolve_context(&headers).await {
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
-    let lang = params
-        .lang
-        .as_deref()
-        .unwrap_or(&cat.default_language);
-    let datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
-    let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
-    let filter = DatasetFilter {
-        q: params.q.clone().unwrap_or_default(),
-        limit: 50,
-        ..DatasetFilter::default()
-    };
-    let outcome = search_datasets(
-        &ctx,
-        state.authorizer.as_ref(),
-        &datasets,
-        &publishers,
-        &filter,
-        lang,
-    )
-    .unwrap_or_else(|_| dataroom_search::SearchOutcome {
-        total: 0,
-        offset: 0,
-        limit: 50,
-        datasets: Vec::new(),
-        facets: Default::default(),
-    });
-    let nonce = Uuid::now_v7().simple().to_string();
-    let html = render_home_page(
-        &cat,
-        &outcome.datasets,
-        &publishers,
-        params.q.as_deref().unwrap_or(""),
-        lang,
-        &nonce,
-    );
-    (
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "text/html; charset=utf-8".to_owned()),
-            (header::CONTENT_SECURITY_POLICY, csp_header(&nonce, false)),
-        ],
-        html,
-    )
-        .into_response()
+    let effective = cat.effective_branding(Some(&state.installation_branding));
+    Json(effective).into_response()
 }
 
-#[derive(Debug, Deserialize)]
-struct DatasetRouteQuery {
-    #[serde(rename = "_profile")]
-    profile: Option<String>,
-    lang: Option<String>,
-}
-
-async fn handle_dataset_or_rdf(
+async fn handle_post_branding(
     State(state): State<DataroomState>,
     headers: HeaderMap,
-    Path(name_or_ext): Path<String>,
-    Query(query): Query<DatasetRouteQuery>,
+    Json(override_val): Json<Value>,
 ) -> Response {
-    let (ctx, cat) = match state.resolve_context(&headers).await {
+    let (ctx, mut cat) = match state.resolve_context(&headers).await {
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
-
-    let (ds_name, ext) = match name_or_ext.rsplit_once('.') {
-        Some((stem, e)) if matches!(e, "ttl" | "jsonld" | "rdf" | "xml" | "nt") => {
-            (stem.to_owned(), Some(e))
-        }
-        _ => (name_or_ext, None),
+    let target = ObjectTarget::Catalogue {
+        org_id: ctx.org_id,
+        catalogue_id: ctx.catalogue_id,
     };
-
-    let Some(ds) = (match state.store.get_dataset(&ctx, &ds_name).await {
-        Ok(d) => d,
-        Err(e) => return problem_response(e),
-    }) else {
-        return problem_response(DataroomError::NotFound(format!(
-            "dataset '{ds_name}' not found"
-        )));
-    };
-    if ds.state == RecordState::Withdrawn {
-        return problem_response(DataroomError::NotFound(format!(
-            "dataset '{ds_name}' not found"
-        )));
+    let dec = state.authorizer.check(&ctx, Action::Admin, &target);
+    if !dec.allowed {
+        return problem_response(DataroomError::Forbidden(dec.reason));
     }
-
-    let pub_rec = state
+    cat.branding = Some(override_val);
+    cat.modified = chrono::Utc::now();
+    let saved = match state.store.upsert_catalogue(cat).await {
+        Ok(c) => c,
+        Err(e) => return problem_response(e),
+    };
+    let _ = state
         .store
-        .get_publisher(&ctx, &ds.publisher_id)
-        .await
-        .ok()
-        .flatten();
-    if pub_rec.as_ref().is_some_and(|p| p.state == RecordState::Withdrawn)
-        && ctx.subject.is_anonymous()
-    {
-        return problem_response(DataroomError::NotFound(format!(
-            "dataset '{ds_name}' not found"
-        )));
-    }
-    let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
-    if !state.authorizer.check(&ctx, Action::Read, &target).allowed {
-        return problem_response(DataroomError::NotFound(format!(
-            "dataset '{ds_name}' not found"
-        )));
-    }
-
-    let accept = headers.get(header::ACCEPT).and_then(|v| v.to_str().ok());
-    if let Some(rdf_fmt) = negotiate_rdf_format(ext, accept) {
-        let accept_profile = headers
-            .get("Accept-Profile")
-            .and_then(|v| v.to_str().ok());
-        let (prof_kind, prof_uri) =
-            negotiate_profile(query.profile.as_deref(), accept_profile, &cat.main_profile);
-        let body = dataroom_rdf::serialize_dataset(
-            &ds,
-            &cat,
-            pub_rec.as_ref(),
-            rdf_fmt,
-            prof_kind,
-        );
-        return (
-            StatusCode::OK,
-            [
-                (header::CONTENT_TYPE, rdf_fmt.content_type().to_owned()),
-                (header::LINK, format!("<{prof_uri}>; rel=\"profile\"")),
-                (
-                    header::HeaderName::from_static("content-profile"),
-                    prof_uri,
-                ),
-            ],
-            body,
+        .record_activity(
+            &ctx,
+            ActivityRow {
+                org_id: ctx.org_id,
+                catalogue_id: ctx.catalogue_id,
+                id: format!("act-{}", Uuid::now_v7()),
+                at: chrono::Utc::now(),
+                actor: ctx.actor_name().to_owned(),
+                operation: "branding.propose".into(),
+                object_type: "Catalogue".into(),
+                object_id: saved.id.to_string(),
+                summary: format!("Updated branding on catalogue {}", saved.name),
+                details: json!({}),
+            },
         )
-            .into_response();
-    }
-
-    let lang = query.lang.as_deref().unwrap_or(&cat.default_language);
-    let can_edit = state
-        .authorizer
-        .check(&ctx, Action::Propose, &target)
-        .allowed;
-    let reports = if can_edit {
-        state
-            .store
-            .list_shacl_reports(&ctx, Some(&ds.id), None)
-            .await
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    let nonce = Uuid::now_v7().simple().to_string();
-    let html = render_dataset_page(
-        &cat,
-        &ds,
-        pub_rec.as_ref(),
-        &reports,
-        can_edit,
-        lang,
-        &nonce,
-    );
-    (
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "text/html; charset=utf-8".to_owned()),
-            (header::CONTENT_SECURITY_POLICY, csp_header(&nonce, false)),
-        ],
-        html,
-    )
-        .into_response()
+        .await;
+    let effective = saved.effective_branding(Some(&state.installation_branding));
+    Json(effective).into_response()
 }
 
-async fn handle_publisher_page(
+async fn handle_upload_logo(
     State(state): State<DataroomState>,
     headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let (ctx, mut cat) = match state.resolve_context(&headers).await {
+        Ok(v) => v,
+        Err(e) => return problem_response(e),
+    };
+    let target = ObjectTarget::Catalogue {
+        org_id: ctx.org_id,
+        catalogue_id: ctx.catalogue_id,
+    };
+    let dec = state.authorizer.check(&ctx, Action::Propose, &target);
+    if !dec.allowed {
+        return problem_response(DataroomError::Forbidden(dec.reason));
+    }
+    let ct = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("image/svg+xml");
+    let asset = match validate_and_sanitise_logo(&body, ct) {
+        Ok(a) => a,
+        Err(e) => return problem_response(e),
+    };
+    let fname = asset
+        .url_path
+        .trim_start_matches("/assets/")
+        .to_owned();
+    state
+        .assets
+        .write()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(fname, asset.clone());
+    cat.theme.logo = Some(asset.url_path.clone());
+    let _ = state.store.upsert_catalogue(cat).await;
+    let full_url = format!("{}{}", state.mount_prefix, asset.url_path);
+    Json(json!({
+        "url": full_url,
+        "sha256": asset.sha256_hex,
+        "contentType": asset.content_type,
+    }))
+    .into_response()
+}
+
+async fn handle_serve_asset(
+    State(state): State<DataroomState>,
     Path(name): Path<String>,
 ) -> Response {
+    let found = state
+        .assets
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&name)
+        .cloned();
+    match found {
+        Some(asset) => (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, asset.content_type),
+                (
+                    header::CACHE_CONTROL,
+                    "public, max-age=31536000, immutable".to_owned(),
+                ),
+            ],
+            asset.bytes,
+        )
+            .into_response(),
+        None => problem_response(DataroomError::NotFound(format!("asset '{name}' not found"))),
+    }
+}
+
+async fn handle_jc_theme_css() -> Response {
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        JC_THEME_CSS,
+    )
+        .into_response()
+}
+
+async fn handle_jc_enums_json() -> Response {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
+        JC_ENUMS_JSON,
+    )
+        .into_response()
+}
+
+async fn handle_jc_logo_svg() -> Response {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "image/svg+xml; charset=utf-8")],
+        JC_LOGO_SVG,
+    )
+        .into_response()
+}
+
+async fn handle_sitemap_xml(
+    State(state): State<DataroomState>,
+    headers: HeaderMap,
+) -> Response {
     let (ctx, cat) = match state.resolve_context(&headers).await {
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
-    let all_pubs = state.store.list_publishers(&ctx).await.unwrap_or_default();
-    if let Some(raw_pub) = all_pubs.iter().find(|p| p.name == name || p.id == name) {
-        if let Some(ref target_name) = raw_pub.merged_into {
-            return Redirect::permanent(&format!("/publisher/{target_name}")).into_response();
+    let datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
+    let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
+    let xml = jc_sitemap_xml(&cat, &datasets, &publishers);
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+        xml,
+    )
+        .into_response()
+}
+
+async fn handle_robots_txt(
+    State(state): State<DataroomState>,
+    headers: HeaderMap,
+) -> Response {
+    let (_ctx, cat) = match state.resolve_context(&headers).await {
+        Ok(v) => v,
+        Err(e) => return problem_response(e),
+    };
+    let branding = cat.effective_branding(Some(&state.installation_branding));
+    let txt = jc_robots_txt(&cat, &branding);
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        txt,
+    )
+        .into_response()
+}
+
+async fn handle_util_redirect(
+    State(state): State<DataroomState>,
+    body: Bytes,
+) -> Response {
+    redirect_from_form(&state, &body)
+}
+
+async fn handle_util_redirect_lang(
+    State(state): State<DataroomState>,
+    Path(_lang): Path<String>,
+    body: Bytes,
+) -> Response {
+    redirect_from_form(&state, &body)
+}
+
+fn redirect_from_form(state: &DataroomState, body: &[u8]) -> Response {
+    let mut url_target = format!("{}/", state.mount_prefix);
+    let mut chosen_lang = None;
+    for (k, v) in url::form_urlencoded::parse(body) {
+        if k == "url" && v.starts_with('/') && !v.starts_with("//") {
+            url_target = v.into_owned();
+            let trimmed = url_target
+                .strip_prefix(&state.mount_prefix)
+                .unwrap_or(&url_target)
+                .trim_start_matches('/');
+            if let Some(seg) = trimmed.split('/').next() {
+                if seg.len() == 2 {
+                    chosen_lang = Some(seg.to_owned());
+                }
+            }
         }
     }
-    let Some(pub_rec) = (match state.store.get_publisher(&ctx, &name).await {
-        Ok(p) => p,
-        Err(e) => return problem_response(e),
-    }) else {
-        return problem_response(DataroomError::NotFound(format!(
-            "publisher '{name}' not found"
-        )));
+    let cookie_path = if state.mount_prefix.is_empty() {
+        "/"
+    } else {
+        &state.mount_prefix
     };
-    let datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
-    let pub_datasets: Vec<Dataset> = datasets
-        .into_iter()
-        .filter(|d| {
-            d.state == RecordState::Active
-                && d.visibility == Visibility::Public
-                && (d.publisher_id == pub_rec.name || d.publisher_id == pub_rec.id)
-        })
-        .collect();
-    let nonce = Uuid::now_v7().simple().to_string();
-    let title = text_in_lang(&pub_rec.title, Some(&cat.default_language))
-        .unwrap_or(&pub_rec.name)
-        .to_owned();
-    let html = render_home_page(
-        &cat,
-        &pub_datasets,
-        std::slice::from_ref(&pub_rec),
-        &title,
-        &cat.default_language,
-        &nonce,
-    );
+    if let Some(l) = chosen_lang {
+        (
+            StatusCode::SEE_OTHER,
+            [
+                (header::LOCATION, url_target),
+                (
+                    header::SET_COOKIE,
+                    format!("ckan_lang={l}; Path={cookie_path}; SameSite=Lax"),
+                ),
+            ],
+        )
+            .into_response()
+    } else {
+        Redirect::to(&url_target).into_response()
+    }
+}
+
+async fn handle_user_login(
+    State(state): State<DataroomState>,
+    headers: HeaderMap,
+) -> Response {
+    login_redirect(&state, &headers).await
+}
+
+async fn handle_user_login_lang(
+    State(state): State<DataroomState>,
+    headers: HeaderMap,
+    Path(_lang): Path<String>,
+) -> Response {
+    login_redirect(&state, &headers).await
+}
+
+async fn login_redirect(state: &DataroomState, headers: &HeaderMap) -> Response {
+    let (_, cat) = match state.resolve_context(headers).await {
+        Ok(v) => v,
+        Err(e) => return problem_response(e),
+    };
+    let branding = cat.effective_branding(Some(&state.installation_branding));
+    let target = if !branding.domain.is_empty() {
+        format!("https://portal.{}/login", branding.domain)
+    } else {
+        format!("{}/", state.mount_prefix)
+    };
+    Redirect::temporary(&target).into_response()
+}
+
+async fn handle_ui_dispatch_root(
+    State(state): State<DataroomState>,
+    headers: HeaderMap,
+    axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
+) -> Response {
+    dispatch_ui_route(state, headers, "/", raw_query).await
+}
+
+async fn handle_ui_dispatch_path(
+    State(state): State<DataroomState>,
+    headers: HeaderMap,
+    Path(path): Path<String>,
+    axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
+) -> Response {
+    let full = format!("/{}", path.trim_start_matches('/'));
+    dispatch_ui_route(state, headers, &full, raw_query).await
+}
+
+fn html_response_with_csp(html: String, nonce: &str, branding: &BrandingBlock, framable_map: bool) -> Response {
+    let domain = (!branding.domain.is_empty()).then_some(branding.domain.as_str());
+    let csp = csp_header_for_domain(nonce, domain, framable_map);
     (
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, "text/html; charset=utf-8".to_owned()),
-            (header::CONTENT_SECURITY_POLICY, csp_header(&nonce, false)),
+            (header::CONTENT_SECURITY_POLICY, csp),
         ],
         html,
     )
         .into_response()
+}
+
+async fn dispatch_ui_route(
+    state: DataroomState,
+    headers: HeaderMap,
+    raw_path: &str,
+    raw_query: Option<String>,
+) -> Response {
+    let (ctx, cat) = match state.resolve_context(&headers).await {
+        Ok(v) => v,
+        Err(e) => return problem_response(e),
+    };
+    let branding = cat.effective_branding(Some(&state.installation_branding));
+    let cookie_hdr = headers.get(header::COOKIE).and_then(|v| v.to_str().ok());
+    let accept_lang = headers
+        .get(header::ACCEPT_LANGUAGE)
+        .and_then(|v| v.to_str().ok());
+
+    let mut q_params: BTreeMap<String, String> = BTreeMap::new();
+    if let Some(ref rq) = raw_query {
+        for (k, v) in url::form_urlencoded::parse(rq.as_bytes()) {
+            q_params.insert(k.into_owned(), v.into_owned());
+        }
+    }
+
+    let (lang, stripped_path, had_url_prefix) = match resolve_request_language(
+        raw_path,
+        cookie_hdr,
+        accept_lang,
+        &branding.languages.offered,
+        &branding.languages.default,
+    ) {
+        LanguageResolution::Resolved {
+            lang,
+            stripped_path,
+            had_url_prefix,
+        } => {
+            let chosen = q_params
+                .get("lang")
+                .cloned()
+                .filter(|_| !had_url_prefix)
+                .unwrap_or(lang);
+            (chosen, stripped_path, had_url_prefix)
+        }
+        LanguageResolution::UnknownUrlPrefix(bad) => {
+            return problem_response(DataroomError::NotFound(format!(
+                "unknown language prefix '{bad}'"
+            )));
+        }
+    };
+
+    let nonce = Uuid::now_v7().simple().to_string();
+    let trimmed = stripped_path.trim_matches('/');
+    let segments: Vec<&str> = if trimmed.is_empty() {
+        Vec::new()
+    } else {
+        trimmed.split('/').collect()
+    };
+
+    match segments.as_slice() {
+        // D1: Home page (`/`, `/sk/`)
+        [] => {
+            let datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
+            let q = q_params.get("q").map(String::as_str).unwrap_or("");
+            let html = render_home_page_mounted(
+                &cat,
+                Some(&state.installation_branding),
+                &datasets,
+                &publishers,
+                q,
+                &lang,
+                had_url_prefix,
+                &state.mount_prefix,
+                &nonce,
+            );
+            html_response_with_csp(html, &nonce, &branding, false)
+        }
+        // D2: Dataset list & search (`/dataset`, `/dataset/`)
+        ["dataset"] => {
+            let all_ds = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
+            let pub_map: BTreeMap<String, Publisher> = publishers
+                .iter()
+                .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p.clone())])
+                .collect();
+
+            // `jc_hide` rule: hidden datasets are hidden from the public, visible to editors of the publisher
+            let visible_ds: Vec<Dataset> = all_ds
+                .into_iter()
+                .filter(|ds| {
+                    if !cat.hidden_datasets.contains_key(&ds.name) {
+                        return true;
+                    }
+                    if ctx.subject.is_anonymous() {
+                        return false;
+                    }
+                    let pub_rec = pub_map.get(&ds.publisher_id);
+                    let target = ObjectTarget::from_dataset(ds, pub_rec);
+                    state
+                        .authorizer
+                        .check(&ctx, Action::Propose, &target)
+                        .allowed
+                })
+                .collect();
+
+            let page = q_params
+                .get("page")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(1)
+                .max(1);
+            let q = q_params.get("q").cloned().unwrap_or_default();
+            let sort = q_params
+                .get("sort")
+                .cloned()
+                .unwrap_or_else(|| "score desc, metadata_modified desc".into());
+            let mut filter = DatasetFilter {
+                q: q.clone(),
+                sort: Some(sort.clone()),
+                offset: (page - 1) * 20,
+                limit: 20,
+                ..DatasetFilter::default()
+            };
+            if let Some(org) = q_params.get("organization").or_else(|| q_params.get("publisher")) {
+                filter.publishers.push(org.clone());
+            }
+            if let Some(topic) = q_params.get("vocab_jc_topic").or_else(|| q_params.get("theme")) {
+                filter.themes.push(topic.clone());
+            }
+            if let Some(tag) = q_params.get("tags").or_else(|| q_params.get("keyword")) {
+                filter.tags.push(tag.clone());
+            }
+            if let Some(fmt) = q_params.get("vocab_jc_format").or_else(|| q_params.get("res_format")) {
+                filter.formats.push(fmt.clone());
+            }
+            if let Some(lic) = q_params.get("license_id").or_else(|| q_params.get("licence")) {
+                filter.licences.push(lic.clone());
+            }
+            if let Some(sp) = q_params.get("spatial") {
+                filter.spatial.push(sp.clone());
+            }
+
+            let outcome = search_datasets(
+                &ctx,
+                state.authorizer.as_ref(),
+                &visible_ds,
+                &publishers,
+                &filter,
+                &lang,
+            )
+            .unwrap_or_else(|_| dataroom_search::SearchOutcome {
+                total: 0,
+                offset: 0,
+                limit: 20,
+                datasets: Vec::new(),
+                facets: Default::default(),
+            });
+
+            let html = render_dataset_list_page(
+                &cat,
+                Some(&state.installation_branding),
+                &outcome.datasets,
+                &publishers,
+                &outcome.facets,
+                outcome.total,
+                page,
+                &q,
+                &sort,
+                &q_params,
+                &lang,
+                had_url_prefix,
+                &state.mount_prefix,
+                &nonce,
+            );
+            html_response_with_csp(html, &nonce, &branding, false)
+        }
+        // D3: Dataset page or RDF (`/dataset/{name_or_ext}`)
+        ["dataset", name_or_ext] => {
+            let (ds_name, ext) = match name_or_ext.rsplit_once('.') {
+                Some((stem, e)) if matches!(e, "ttl" | "n3" | "jsonld" | "rdf" | "xml" | "nt") => {
+                    (stem.to_owned(), Some(e))
+                }
+                _ => ((*name_or_ext).to_owned(), None),
+            };
+            let Some(ds) = state.store.get_dataset(&ctx, &ds_name).await.ok().flatten() else {
+                return problem_response(DataroomError::NotFound(format!(
+                    "dataset '{ds_name}' not found"
+                )));
+            };
+            if ds.state == RecordState::Withdrawn {
+                return problem_response(DataroomError::NotFound(format!(
+                    "dataset '{ds_name}' not found"
+                )));
+            }
+            let pub_rec = state
+                .store
+                .get_publisher(&ctx, &ds.publisher_id)
+                .await
+                .ok()
+                .flatten();
+            if pub_rec.as_ref().is_some_and(|p| p.state == RecordState::Withdrawn)
+                && ctx.subject.is_anonymous()
+            {
+                return problem_response(DataroomError::NotFound(format!(
+                    "dataset '{ds_name}' not found"
+                )));
+            }
+            let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
+            if cat.hidden_datasets.contains_key(&ds.name) {
+                let can_edit = !ctx.subject.is_anonymous()
+                    && state
+                        .authorizer
+                        .check(&ctx, Action::Propose, &target)
+                        .allowed;
+                if !can_edit {
+                    return problem_response(DataroomError::NotFound(format!(
+                        "dataset '{ds_name}' not found"
+                    )));
+                }
+            }
+            if !state.authorizer.check(&ctx, Action::Read, &target).allowed {
+                return problem_response(DataroomError::NotFound(format!(
+                    "dataset '{ds_name}' not found"
+                )));
+            }
+
+            let accept = headers.get(header::ACCEPT).and_then(|v| v.to_str().ok());
+            if let Some(rdf_fmt) = negotiate_rdf_format(ext, accept) {
+                let accept_profile = headers
+                    .get("Accept-Profile")
+                    .and_then(|v| v.to_str().ok());
+                let q_prof = q_params.get("_profile").map(String::as_str);
+                let (prof_kind, prof_uri) =
+                    negotiate_profile(q_prof, accept_profile, &cat.main_profile);
+                let body = dataroom_rdf::serialize_dataset(
+                    &ds,
+                    &cat,
+                    pub_rec.as_ref(),
+                    rdf_fmt,
+                    prof_kind,
+                );
+                return (
+                    StatusCode::OK,
+                    [
+                        (header::CONTENT_TYPE, rdf_fmt.content_type().to_owned()),
+                        (header::LINK, format!("<{prof_uri}>; rel=\"profile\"")),
+                        (
+                            header::HeaderName::from_static("content-profile"),
+                            prof_uri,
+                        ),
+                    ],
+                    body,
+                )
+                    .into_response();
+            }
+
+            let mut all_views = Vec::new();
+            for d in &ds.distributions {
+                if let Ok(v) = state.store.list_resource_views(&ctx, &d.id).await {
+                    all_views.extend(v);
+                }
+            }
+            let can_edit = state
+                .authorizer
+                .check(&ctx, Action::Propose, &target)
+                .allowed;
+            let reports = if can_edit {
+                state
+                    .store
+                    .list_shacl_reports(&ctx, Some(&ds.id), None)
+                    .await
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let html = render_dataset_page_full(
+                &cat,
+                Some(&state.installation_branding),
+                &ds,
+                pub_rec.as_ref(),
+                &all_views,
+                &reports,
+                can_edit,
+                &lang,
+                had_url_prefix,
+                &state.mount_prefix,
+                &nonce,
+            );
+            html_response_with_csp(html, &nonce, &branding, false)
+        }
+        // D4: Resource page (`/dataset/{name}/resource/{id}`)
+        ["dataset", ds_name, "resource", res_id] => {
+            let Some(ds) = state.store.get_dataset(&ctx, ds_name).await.ok().flatten() else {
+                return problem_response(DataroomError::NotFound(format!(
+                    "dataset '{ds_name}' not found"
+                )));
+            };
+            let Some(dist) = ds.distributions.iter().find(|d| d.id == *res_id) else {
+                return problem_response(DataroomError::NotFound(format!(
+                    "resource '{res_id}' not found"
+                )));
+            };
+            let pub_rec = state
+                .store
+                .get_publisher(&ctx, &ds.publisher_id)
+                .await
+                .ok()
+                .flatten();
+            let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
+            if !state.authorizer.check(&ctx, Action::Read, &target).allowed {
+                return problem_response(DataroomError::NotFound(format!(
+                    "dataset '{ds_name}' not found"
+                )));
+            }
+            let html = render_resource_page(
+                &cat,
+                Some(&state.installation_branding),
+                &ds,
+                dist,
+                pub_rec.as_ref(),
+                &lang,
+                had_url_prefix,
+                &state.mount_prefix,
+                &nonce,
+            );
+            html_response_with_csp(html, &nonce, &branding, false)
+        }
+        // D5: Publisher list (`/organization`, `/publisher`)
+        ["organization"] | ["publisher"] => {
+            let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
+            let datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            let q = q_params.get("q").map(String::as_str).unwrap_or("");
+            let sort = q_params.get("sort").map(String::as_str).unwrap_or("title asc");
+            let html = render_organization_list_page(
+                &cat,
+                Some(&state.installation_branding),
+                &publishers,
+                &datasets,
+                q,
+                sort,
+                &lang,
+                had_url_prefix,
+                &state.mount_prefix,
+                &nonce,
+            );
+            html_response_with_csp(html, &nonce, &branding, false)
+        }
+        // D5: Publisher page (`/organization/{name}`, `/publisher/{name}`)
+        ["organization", name] | ["publisher", name] => {
+            let all_pubs = state.store.list_publishers(&ctx).await.unwrap_or_default();
+            if let Some(raw_pub) = all_pubs.iter().find(|p| p.name == *name || p.id == *name) {
+                if let Some(ref target_name) = raw_pub.merged_into {
+                    let prefix_part = if segments[0] == "publisher" {
+                        "publisher"
+                    } else {
+                        "organization"
+                    };
+                    return Redirect::permanent(&format!(
+                        "{}/{prefix_part}/{target_name}",
+                        state.mount_prefix
+                    ))
+                    .into_response();
+                }
+            }
+            let Some(pub_rec) = state.store.get_publisher(&ctx, name).await.ok().flatten() else {
+                return problem_response(DataroomError::NotFound(format!(
+                    "publisher '{name}' not found"
+                )));
+            };
+            if pub_rec.state == RecordState::Withdrawn && ctx.subject.is_anonymous() {
+                return problem_response(DataroomError::NotFound(format!(
+                    "publisher '{name}' not found"
+                )));
+            }
+            let all_ds = state.store.list_datasets(&ctx).await.unwrap_or_default();
+            let visible_ds: Vec<Dataset> = all_ds
+                .into_iter()
+                .filter(|d| !cat.hidden_datasets.contains_key(&d.name))
+                .collect();
+            let q = q_params.get("q").cloned().unwrap_or_default();
+            let sort = q_params
+                .get("sort")
+                .cloned()
+                .unwrap_or_else(|| "score desc, metadata_modified desc".into());
+            let mut filter = DatasetFilter {
+                q: q.clone(),
+                publishers: vec![pub_rec.name.clone()],
+                sort: Some(sort.clone()),
+                limit: 50,
+                ..DatasetFilter::default()
+            };
+            if let Some(t) = q_params.get("tags") {
+                filter.tags.push(t.clone());
+            }
+            if let Some(f) = q_params.get("res_format") {
+                filter.formats.push(f.clone());
+            }
+            if let Some(l) = q_params.get("license_id") {
+                filter.licences.push(l.clone());
+            }
+            let outcome = search_datasets(
+                &ctx,
+                state.authorizer.as_ref(),
+                &visible_ds,
+                std::slice::from_ref(&pub_rec),
+                &filter,
+                &lang,
+            )
+            .unwrap_or_else(|_| dataroom_search::SearchOutcome {
+                total: 0,
+                offset: 0,
+                limit: 50,
+                datasets: Vec::new(),
+                facets: Default::default(),
+            });
+
+            let html = render_organization_read_page(
+                &cat,
+                Some(&state.installation_branding),
+                &pub_rec,
+                &outcome.datasets,
+                &outcome.facets,
+                outcome.total,
+                &q,
+                &sort,
+                &lang,
+                had_url_prefix,
+                &state.mount_prefix,
+                &nonce,
+            );
+            html_response_with_csp(html, &nonce, &branding, false)
+        }
+        // D6: About page (`/about`)
+        ["about"] => {
+            let html = render_about_page(
+                &cat,
+                Some(&state.installation_branding),
+                &lang,
+                had_url_prefix,
+                &state.mount_prefix,
+                &nonce,
+            );
+            html_response_with_csp(html, &nonce, &branding, false)
+        }
+        // D6: Static pages (`/connector`, `/privacy`, `/terms`, `/support`, `/accessibility`)
+        [page_name] if matches!(*page_name, "connector" | "privacy" | "terms" | "support" | "accessibility") => {
+            let Some(html) = render_static_page(
+                &cat,
+                Some(&state.installation_branding),
+                page_name,
+                &lang,
+                had_url_prefix,
+                &state.mount_prefix,
+                &nonce,
+            ) else {
+                return problem_response(DataroomError::NotFound("page not found".into()));
+            };
+            html_response_with_csp(html, &nonce, &branding, false)
+        }
+        // D6: Assistants page (`/assistants`)
+        ["assistants"] => {
+            let html = render_assistants_page(
+                &cat,
+                Some(&state.installation_branding),
+                &lang,
+                had_url_prefix,
+                &state.mount_prefix,
+                &nonce,
+            );
+            html_response_with_csp(html, &nonce, &branding, false)
+        }
+        // D6: Assistant guide page (`/assistants/{id}`)
+        ["assistants", guide_id] => {
+            let Some(html) = render_assistant_guide_page(
+                &cat,
+                Some(&state.installation_branding),
+                guide_id,
+                &lang,
+                had_url_prefix,
+                &state.mount_prefix,
+                &nonce,
+            ) else {
+                return problem_response(DataroomError::NotFound(format!(
+                    "assistant guide '{guide_id}' not found"
+                )));
+            };
+            html_response_with_csp(html, &nonce, &branding, false)
+        }
+        // D6: Framable map page (`/map/{id}` and `/map/{id}/{resource_id}`)
+        ["map", ds_id] => {
+            let Some(ds) = state.store.get_dataset(&ctx, ds_id).await.ok().flatten() else {
+                return problem_response(DataroomError::NotFound(format!(
+                    "dataset '{ds_id}' not found"
+                )));
+            };
+            let Some(html) = render_map_page(
+                &cat,
+                Some(&state.installation_branding),
+                &ds,
+                None,
+                &lang,
+                had_url_prefix,
+                &state.mount_prefix,
+                &nonce,
+            ) else {
+                return problem_response(DataroomError::NotFound("map not available".into()));
+            };
+            html_response_with_csp(html, &nonce, &branding, true)
+        }
+        ["map", ds_id, res_id] => {
+            let Some(ds) = state.store.get_dataset(&ctx, ds_id).await.ok().flatten() else {
+                return problem_response(DataroomError::NotFound(format!(
+                    "dataset '{ds_id}' not found"
+                )));
+            };
+            let Some(html) = render_map_page(
+                &cat,
+                Some(&state.installation_branding),
+                &ds,
+                Some(res_id),
+                &lang,
+                had_url_prefix,
+                &state.mount_prefix,
+                &nonce,
+            ) else {
+                return problem_response(DataroomError::NotFound("map not available".into()));
+            };
+            html_response_with_csp(html, &nonce, &branding, true)
+        }
+        _ => problem_response(DataroomError::NotFound(format!(
+            "route '{raw_path}' not found"
+        ))),
+    }
 }

@@ -1,13 +1,19 @@
 #![forbid(unsafe_code)]
-//! JSON-LD parser and serializer supporting:
+//! JSON-LD parser (backed by `oxjsonld`) and serializer supporting:
 //! - Standard DCAT-AP 3.0.1 JSON-LD
 //! - Czech OFN LKOD JSON-LD (`https://ofn.gov.cz/dcat-ap-cz-rozhraní-katalogů-dat/2026-09-23/katalog/kontext.jsonld`)
 //! - Slovak DCAT-AP-SK 2.0 JSON-LD (`https://datova-kancelaria.github.io/dcat-ap-sk-2.0/kontexty/rozhranie-katalógu-otvorených-dát.jsonld`)
+//!
+//! Security (A1):
+//! - Remote `@context` URLs not in the built-in offline context map are refused without any network fetch.
+//! - Billion-laughs / recursive `@context` term expansion or excessive context size is refused.
+//! - Byte, triple, nesting-depth and literal-length caps are enforced while parsing.
 
 use crate::graph::{ns, LiteralValue, RdfGraph, RdfLimits, SubjectNode, Term, Triple};
 use dataroom_core::{
     text_in_lang, Catalogue, ContactKind, DataroomError, Dataset, Publisher, Result,
 };
+use oxjsonld::JsonLdParser;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 
@@ -18,490 +24,333 @@ pub const CZ_DATASET_CONTEXT_IRI: &str =
 pub const SK_CATALOG_CONTEXT_IRI: &str =
     "https://datova-kancelaria.github.io/dcat-ap-sk-2.0/kontexty/rozhranie-katalógu-otvorených-dát.jsonld";
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum TermKind {
-    Iri,
-    LangContainer,
-    PlainLiteral,
-    TypedLiteral(&'static str),
-}
+const SK_BUILTIN_CONTEXT_JSON: &str =
+    include_str!("../../specs/dcat-ap-sk/kontexty/rozhranie-katalógu-otvorených-dát.jsonld");
 
-/// Maps CZ and SK localized JSON-LD property terms to `(predicate_iri, TermKind)`.
-fn resolve_localized_term(key: &str) -> Option<(&'static str, TermKind)> {
-    Some(match key {
-        // Catalogue & Dataset core
-        "název" | "názov" | "dct:title" | "dcterms:title" => (ns::DCT, TermKind::LangContainer),
-        "popis" | "dct:description" | "dcterms:description" => (ns::DCT, TermKind::LangContainer),
-        "poskytovatel" | "poskytovateľ" | "dct:publisher" | "dcterms:publisher" => {
-            ("http://purl.org/dc/terms/publisher", TermKind::Iri)
-        }
-        "domovská_stránka" | "foaf:homepage" => ("http://xmlns.com/foaf/0.1/homepage", TermKind::Iri),
-        "datová_sada" | "dataset" | "dcat:dataset" => ("http://www.w3.org/ns/dcat#dataset", TermKind::Iri),
-        "přístupový_bod" | "prístupový_bod" | "dcat:endpointURL" => {
-            ("http://www.w3.org/ns/dcat#endpointURL", TermKind::Iri)
-        }
-        "popis_přístupového_bodu" | "popis_prístupového_bodu" | "dcat:endpointDescription" => {
-            ("http://www.w3.org/ns/dcat#endpointDescription", TermKind::Iri)
-        }
-        "poskytuje_datovou_sadu" | "poskytuje_dataset" | "dcat:servesDataset" => {
-            ("http://www.w3.org/ns/dcat#servesDataset", TermKind::Iri)
-        }
-        "kontaktní_bod" | "kontaktný_bod" | "dcat:contactPoint" => {
-            ("http://www.w3.org/ns/dcat#contactPoint", TermKind::Iri)
-        }
-        "jméno" | "meno" | "vcard:fn" => ("http://www.w3.org/2006/vcard/ns#fn", TermKind::LangContainer),
-        "e-mail" | "vcard:hasEmail" => ("http://www.w3.org/2006/vcard/ns#hasEmail", TermKind::Iri),
-        "dátum_publikácie" | "dct:issued" | "dcterms:issued" => (
-            "http://purl.org/dc/terms/issued",
-            TermKind::TypedLiteral(ns::XSD_DATE_TIME),
-        ),
-        "dátum_modifikácie" | "dct:modified" | "dcterms:modified" => (
-            "http://purl.org/dc/terms/modified",
-            TermKind::TypedLiteral(ns::XSD_DATE_TIME),
-        ),
-        "typ_datasetu" | "dct:type" | "dcterms:type" => ("http://purl.org/dc/terms/type", TermKind::Iri),
-        "téma" | "koncept_euroVoc" | "dcat:theme" => ("http://www.w3.org/ns/dcat#theme", TermKind::Iri),
-        "periodicita_aktualizácie" | "periodicita_aktualizace" | "dct:accrualPeriodicity" => (
-            "http://purl.org/dc/terms/accrualPeriodicity",
-            TermKind::Iri,
-        ),
-        "kľúčové_slovo" | "klíčové_slovo" | "dcat:keyword" => (
-            "http://www.w3.org/ns/dcat#keyword",
-            TermKind::LangContainer,
-        ),
-        "geografické_územie"
-        | "prvek_rúian"
-        | "prvok_registra_adries"
-        | "priestorové_pokrytie"
-        | "související_geografické_území"
-        | "dct:spatial" => ("http://purl.org/dc/terms/spatial", TermKind::Iri),
-        "časové_pokrytie" | "časové_pokrytí" | "dct:temporal" => {
-            ("http://purl.org/dc/terms/temporal", TermKind::Iri)
-        }
-        "začiatok" | "začátek" | "dcat:startDate" => (
-            "http://www.w3.org/ns/dcat#startDate",
-            TermKind::TypedLiteral(ns::XSD_DATE),
-        ),
-        "koniec" | "konec" | "dcat:endDate" => (
-            "http://www.w3.org/ns/dcat#endDate",
-            TermKind::TypedLiteral(ns::XSD_DATE),
-        ),
-        "je_súčásťou" | "dct:isPartOf" => ("http://purl.org/dc/terms/isPartOf", TermKind::Iri),
-        "je_součástí" | "dcat:inSeries" => ("http://www.w3.org/ns/dcat#inSeries", TermKind::Iri),
-        "webová_stránka_datasetu" | "vstupní_stránka" | "dcat:landingPage" => {
-            ("http://www.w3.org/ns/dcat#landingPage", TermKind::Iri)
-        }
-        "súvisiaci_zdroj_datasetu" | "dct:relation" => ("http://purl.org/dc/terms/relation", TermKind::Iri),
-        "dokumentácia" | "dokumentace" | "foaf:page" => ("http://xmlns.com/foaf/0.1/page", TermKind::Iri),
-        "špecifikácia" | "specifikace" | "schéma" | "dct:conformsTo" => {
-            ("http://purl.org/dc/terms/conformsTo", TermKind::Iri)
-        }
-        "příslušný_právní_předpis" | "dcatap:applicableLegislation" => (
-            "http://data.europa.eu/r5r/applicableLegislation",
-            TermKind::Iri,
-        ),
-        "priestorové_rozlíšenie_v_metroch"
-        | "prostorové_rozlišení_v_metrech"
-        | "dcat:spatialResolutionInMeters" => (
-            "http://www.w3.org/ns/dcat#spatialResolutionInMeters",
-            TermKind::TypedLiteral(ns::XSD_DECIMAL),
-        ),
-        "časové_rozlíšenie" | "časové_rozlišení" | "dcat:temporalResolution" => (
-            "http://www.w3.org/ns/dcat#temporalResolution",
-            TermKind::TypedLiteral(ns::XSD_DURATION),
-        ),
-        "distribúcia" | "distribuce" | "dcat:distribution" => {
-            ("http://www.w3.org/ns/dcat#distribution", TermKind::Iri)
-        }
-        "podmienky_použitia" | "leg:termsOfUse" => (
-            "https://data.gov.sk/def/ontology/legislation/termsOfUse",
-            TermKind::Iri,
-        ),
-        "podmínky_užití" => (
-            "https://data.gov.cz/slovník/podmínky-užití/specifikace",
-            TermKind::Iri,
-        ),
-        "autorské_dielo" | "leg:authorsWorkType" => (
-            "https://data.gov.sk/def/ontology/legislation/authorsWorkType",
-            TermKind::Iri,
-        ),
-        "autorské_dílo" => (
-            "https://data.gov.cz/slovník/podmínky-užití/autorské-dílo",
-            TermKind::Iri,
-        ),
-        "autor" | "leg:authorName" => (
-            "https://data.gov.sk/def/ontology/legislation/authorName",
-            TermKind::LangContainer,
-        ),
-        "databáza_ako_autorské_dielo" | "leg:originalDatabaseType" => (
-            "https://data.gov.sk/def/ontology/legislation/originalDatabaseType",
-            TermKind::Iri,
-        ),
-        "databáze_jako_autorské_dílo" => (
-            "https://data.gov.cz/slovník/podmínky-užití/databáze-jako-autorské-dílo",
-            TermKind::Iri,
-        ),
-        "autor_databázy" | "autor_databáze" | "leg:originalDatabaseAuthorName" => (
-            "https://data.gov.sk/def/ontology/legislation/originalDatabaseAuthorName",
-            TermKind::LangContainer,
-        ),
-        "databáza_chránená_zvláštnými_právami" | "leg:databaseProtectedBySpecialRightsType" => (
-            "https://data.gov.sk/def/ontology/legislation/databaseProtectedBySpecialRightsType",
-            TermKind::Iri,
-        ),
-        "databáze_chráněná_zvláštními_právy" => (
-            "https://data.gov.cz/slovník/podmínky-užití/databáze-chráněná-zvláštními-právy",
-            TermKind::Iri,
-        ),
-        "osobné_údaje" | "leg:personalDataContainmentType" => (
-            "https://data.gov.sk/def/ontology/legislation/personalDataContainmentType",
-            TermKind::Iri,
-        ),
-        "osobní_údaje" => (
-            "https://data.gov.cz/slovník/podmínky-užití/osobní-údaje",
-            TermKind::Iri,
-        ),
-        "prístupové_url" | "přístupové_url" | "dcat:accessURL" => {
-            ("http://www.w3.org/ns/dcat#accessURL", TermKind::Iri)
-        }
-        "súbor_na_stiahnutie" | "soubor_ke_stažení" | "dcat:downloadURL" => {
-            ("http://www.w3.org/ns/dcat#downloadURL", TermKind::Iri)
-        }
-        "formát" | "dct:format" => ("http://purl.org/dc/terms/format", TermKind::Iri),
-        "typ_média" | "dcat:mediaType" => ("http://www.w3.org/ns/dcat#mediaType", TermKind::Iri),
-        "typ_média_kompresie" | "dcat:compressFormat" => {
-            ("http://www.w3.org/ns/dcat#compressFormat", TermKind::Iri)
-        }
-        "typ_média_balíčka" | "dcat:packageFormat" => {
-            ("http://www.w3.org/ns/dcat#packageFormat", TermKind::Iri)
-        }
-        "prístupová_služba" | "přístupová_služba" | "dcat:accessService" => {
-            ("http://www.w3.org/ns/dcat#accessService", TermKind::Iri)
-        }
-        _ => return None,
-    })
-}
+/// Built-in CZ OFN LKOD context so CZ JSON-LD documents parse offline via `oxjsonld` with zero
+/// network fetches.
+const CZ_BUILTIN_CONTEXT_JSON: &str = r#"{
+  "@context": {
+    "@language": "cs",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "dcatap": "http://data.europa.eu/r5r/",
+    "dct": "http://purl.org/dc/terms/",
+    "foaf": "http://xmlns.com/foaf/0.1/",
+    "vcard": "http://www.w3.org/2006/vcard/ns#",
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "pu": "https://data.gov.cz/slovník/podmínky-užití/",
+    "iri": "@id",
+    "typ": "@type",
+    "Katalog": "dcat:Catalog",
+    "Datová sada": "dcat:Dataset",
+    "Série datových sad": "dcat:DatasetSeries",
+    "Distribuce": "dcat:Distribution",
+    "Datová služba": "dcat:DataService",
+    "Organizace": "vcard:Organization",
+    "Jednotlivec": "vcard:Individual",
+    "Časový interval": "dct:PeriodOfTime",
+    "Podmínky užití": "pu:Specifikace",
+    "název": { "@id": "dct:title", "@container": "@language" },
+    "popis": { "@id": "dct:description", "@container": "@language" },
+    "poskytovatel": { "@id": "dct:publisher", "@type": "@id" },
+    "domovská_stránka": { "@id": "foaf:homepage", "@type": "@id" },
+    "datová_sada": { "@id": "dcat:dataset", "@type": "@id" },
+    "přístupový_bod": { "@id": "dcat:endpointURL", "@type": "@id" },
+    "popis_přístupového_bodu": { "@id": "dcat:endpointDescription", "@type": "@id" },
+    "poskytuje_datovou_sadu": { "@id": "dcat:servesDataset", "@type": "@id" },
+    "kontaktní_bod": { "@id": "dcat:contactPoint", "@type": "@id" },
+    "jméno": { "@id": "vcard:fn", "@container": "@language" },
+    "e-mail": { "@id": "vcard:hasEmail", "@type": "@id" },
+    "téma": { "@id": "dcat:theme", "@type": "@id" },
+    "periodicita_aktualizace": { "@id": "dct:accrualPeriodicity", "@type": "@id" },
+    "klíčové_slovo": { "@id": "dcat:keyword", "@container": "@language" },
+    "prvek_rúian": { "@id": "dct:spatial", "@type": "@id" },
+    "geografické_území": { "@id": "dct:spatial", "@type": "@id" },
+    "související_geografické_území": { "@id": "dct:spatial", "@type": "@id" },
+    "časové_pokrytí": { "@id": "dct:temporal", "@type": "@id" },
+    "začátek": { "@id": "dcat:startDate", "@type": "xsd:date" },
+    "konec": { "@id": "dcat:endDate", "@type": "xsd:date" },
+    "vstupní_stránka": { "@id": "dcat:landingPage", "@type": "@id" },
+    "dokumentace": { "@id": "foaf:page", "@type": "@id" },
+    "specifikace": { "@id": "dct:conformsTo", "@type": "@id" },
+    "příslušný_právní_předpis": { "@id": "dcatap:applicableLegislation", "@type": "@id" },
+    "koncept_euroVoc": { "@id": "dcat:theme", "@type": "@id" },
+    "prostorové_rozlišení_v_metrech": { "@id": "dcat:spatialResolutionInMeters", "@type": "xsd:decimal" },
+    "časové_rozlišení": { "@id": "dcat:temporalResolution", "@type": "xsd:duration" },
+    "je_součástí": { "@id": "dcat:inSeries", "@type": "@id" },
+    "distribuce": { "@id": "dcat:distribution", "@type": "@id" },
+    "podmínky_užití": { "@id": "pu:specifikace", "@type": "@id" },
+    "autorské_dílo": { "@id": "pu:autorské-dílo", "@type": "@id" },
+    "autor": { "@id": "pu:autor", "@container": "@language" },
+    "databáze_jako_autorské_dílo": { "@id": "pu:databáze-jako-autorské-dílo", "@type": "@id" },
+    "autor_databáze": { "@id": "pu:autor-databáze", "@container": "@language" },
+    "databáze_chráněná_zvláštními_právy": { "@id": "pu:databáze-chráněná-zvláštními-právy", "@type": "@id" },
+    "osobní_údaje": { "@id": "pu:osobní-údaje", "@type": "@id" },
+    "přístupové_url": { "@id": "dcat:accessURL", "@type": "@id" },
+    "soubor_ke_stažení": { "@id": "dcat:downloadURL", "@type": "@id" },
+    "formát": { "@id": "dct:format", "@type": "@id" },
+    "typ_média": { "@id": "dcat:mediaType", "@type": "@id" },
+    "schéma": { "@id": "dct:conformsTo", "@type": "@id" },
+    "typ_média_komprese": { "@id": "dcat:compressFormat", "@type": "@id" },
+    "typ_média_balíčku": { "@id": "dcat:packageFormat", "@type": "@id" },
+    "přístupová_služba": { "@id": "dcat:accessService", "@type": "@id" }
+  }
+}"#;
 
-fn resolve_localized_class(ty: &str) -> String {
-    match ty {
-        "Katalog" | "Katalóg" | "dcat:Catalog" => "http://www.w3.org/ns/dcat#Catalog".into(),
-        "Datová sada" | "Dataset" | "dcat:Dataset" => "http://www.w3.org/ns/dcat#Dataset".into(),
-        "Série datových sad" | "dcat:DatasetSeries" => {
-            "http://www.w3.org/ns/dcat#DatasetSeries".into()
-        }
-        "Distribuce" | "Distribúcia" | "dcat:Distribution" => {
-            "http://www.w3.org/ns/dcat#Distribution".into()
-        }
-        "Datová služba" | "Dátová služba" | "dcat:DataService" => {
-            "http://www.w3.org/ns/dcat#DataService".into()
-        }
-        "Organizace" | "Organizácia" | "vcard:Organization" => {
-            "http://www.w3.org/2006/vcard/ns#Organization".into()
-        }
-        "Jednotlivec" | "vcard:Individual" => {
-            "http://www.w3.org/2006/vcard/ns#Individual".into()
-        }
-        "vcard:Kind" => "http://www.w3.org/2006/vcard/ns#Kind".into(),
-        "Časový interval" | "dct:PeriodOfTime" | "dcterms:PeriodOfTime" => {
-            "http://purl.org/dc/terms/PeriodOfTime".into()
-        }
-        "Špecifikácia podmienok použitia" | "leg:TermsOfUse" => {
-            "https://data.gov.sk/def/ontology/legislation/TermsOfUse".into()
-        }
-        "Podmínky užití" => "https://data.gov.cz/slovník/podmínky-užití/Specifikace".into(),
-        "foaf:Agent" | "foaf:Organization" => "http://xmlns.com/foaf/0.1/Agent".into(),
-        other => other.to_owned(),
-    }
-}
+/// Maximum number of terms allowed in a JSON-LD `@context` to prevent billion-laughs context bombs (A1).
+const MAX_CONTEXT_TERMS: usize = 256;
 
-/// Parses a JSON-LD document (standard DCAT-AP, CZ OFN LKOD, or SK DCAT-AP-SK 2.0) into an [`RdfGraph`].
-pub fn parse_jsonld(input: &str, limits: &RdfLimits) -> Result<RdfGraph> {
-    if input.len() > limits.max_bytes {
-        return Err(DataroomError::Rdf(format!(
-            "JSON-LD input size {} exceeds limit of {} bytes",
-            input.len(),
-            limits.max_bytes
-        )));
-    }
-    let val: Value = serde_json::from_str(input)
-        .map_err(|e| DataroomError::Rdf(format!("invalid JSON-LD: {e}")))?;
-    let mut graph = RdfGraph::new();
-    parse_node_value(&val, &mut graph, limits, 0)?;
-    Ok(graph)
-}
-
-fn parse_node_value(
-    val: &Value,
-    graph: &mut RdfGraph,
-    limits: &RdfLimits,
-    depth: usize,
-) -> Result<Option<SubjectNode>> {
-    if depth > limits.max_depth {
-        return Err(DataroomError::Rdf(format!(
-            "JSON-LD nesting exceeded maximum depth of {}",
-            limits.max_depth
-        )));
-    }
-    match val {
-        Value::Array(items) => {
-            let mut last = None;
-            for item in items {
-                last = parse_node_value(item, graph, limits, depth + 1)?;
-            }
-            Ok(last)
-        }
-        Value::Object(obj) => {
-            if let Some(Value::Array(graph_items)) = obj.get("@graph").or_else(|| obj.get("@included")) {
-                for item in graph_items {
-                    parse_node_value(item, graph, limits, depth + 1)?;
-                }
-            }
-            let subj = if let Some(id) = obj
-                .get("@id")
-                .or_else(|| obj.get("iri"))
-                .and_then(Value::as_str)
-            {
-                if let Some(b) = id.strip_prefix("_:") {
-                    SubjectNode::Blank(b.to_owned())
-                } else {
-                    SubjectNode::Named(id.to_owned())
-                }
-            } else {
-                graph.fresh_blank_node()
-            };
-
-            if let Some(ty_val) = obj.get("@type").or_else(|| obj.get("typ")) {
-                let types: Vec<&str> = match ty_val {
-                    Value::String(s) => vec![s.as_str()],
-                    Value::Array(arr) => arr.iter().filter_map(Value::as_str).collect(),
-                    _ => Vec::new(),
-                };
-                for t in types {
-                    let class_iri = resolve_localized_class(t);
-                    graph.insert_checked(
-                        Triple {
-                            subject: subj.clone(),
-                            predicate: ns::RDF_TYPE.to_owned(),
-                            object: Term::Iri(class_iri),
-                        },
-                        limits,
-                    )?;
-                }
-            }
-
-            for (key, prop_val) in obj {
-                if matches!(
-                    key.as_str(),
-                    "@context" | "@id" | "iri" | "@type" | "typ" | "@graph" | "@included"
-                ) {
-                    continue;
-                }
-                let (pred_iri, kind) = match key.as_str() {
-                    "název" | "názov" | "dct:title" | "dcterms:title" => {
-                        ("http://purl.org/dc/terms/title".to_owned(), TermKind::LangContainer)
-                    }
-                    "popis" | "dct:description" | "dcterms:description" => (
-                        "http://purl.org/dc/terms/description".to_owned(),
-                        TermKind::LangContainer,
-                    ),
-                    other => match resolve_localized_term(other) {
-                        Some((p, k)) => (p.to_owned(), k),
-                        None => (expand_common_prefix(other), TermKind::PlainLiteral),
-                    },
-                };
-
-                add_jsonld_property(
-                    &subj,
-                    &pred_iri,
-                    kind,
-                    prop_val,
-                    graph,
-                    limits,
-                    depth + 1,
-                )?;
-            }
-
-            Ok(Some(subj))
-        }
-        _ => Ok(None),
-    }
-}
-
-fn add_jsonld_property(
-    subj: &SubjectNode,
-    pred: &str,
-    kind: TermKind,
-    val: &Value,
-    graph: &mut RdfGraph,
+/// Resolves a known built-in `@context` URL to its local inline `@context` Value, or refuses any
+/// unknown remote `@context` URL without fetching (A1).
+fn inline_and_check_jsonld(
+    val: &mut Value,
     limits: &RdfLimits,
     depth: usize,
 ) -> Result<()> {
-    match (kind, val) {
-        (TermKind::LangContainer, Value::Object(lang_map))
-            if !lang_map.contains_key("@value") && !lang_map.contains_key("@id") =>
-        {
-            for (lang, text_or_arr) in lang_map {
-                match text_or_arr {
-                    Value::String(s) => {
-                        graph.insert_checked(
-                            Triple {
-                                subject: subj.clone(),
-                                predicate: pred.to_owned(),
-                                object: Term::Literal(LiteralValue::lang(s.clone(), lang.clone())),
-                            },
-                            limits,
-                        )?;
-                    }
-                    Value::Array(items) => {
-                        for item in items {
-                            if let Some(s) = item.as_str() {
-                                graph.insert_checked(
-                                    Triple {
-                                        subject: subj.clone(),
-                                        predicate: pred.to_owned(),
-                                        object: Term::Literal(LiteralValue::lang(
-                                            s.to_owned(),
-                                            lang.clone(),
-                                        )),
-                                    },
-                                    limits,
-                                )?;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            Ok(())
-        }
-        (_, Value::Array(items)) => {
+    if depth > limits.max_depth {
+        return Err(DataroomError::RdfLimitExceeded {
+            kind: "nesting-depth".into(),
+            message: format!(
+                "JSON-LD nesting depth {depth} exceeds maximum of {}",
+                limits.max_depth
+            ),
+        });
+    }
+    match val {
+        Value::Array(items) => {
             for item in items {
-                add_jsonld_property(subj, pred, kind, item, graph, limits, depth)?;
+                inline_and_check_jsonld(item, limits, depth + 1)?;
             }
             Ok(())
         }
-        (_, Value::Object(obj)) if obj.contains_key("@value") => {
-            let v = obj
-                .get("@value")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let lit = if let Some(lang) = obj.get("@language").and_then(Value::as_str) {
-                LiteralValue::lang(v, lang)
-            } else if let Some(dt) = obj.get("@type").and_then(Value::as_str) {
-                LiteralValue::typed(v, expand_common_prefix(dt))
-            } else {
-                LiteralValue::plain(v)
-            };
-            graph.insert_checked(
-                Triple {
-                    subject: subj.clone(),
-                    predicate: pred.to_owned(),
-                    object: Term::Literal(lit),
-                },
-                limits,
-            )
-        }
-        (_, Value::Object(_)) => {
-            if let Some(child_subj) = parse_node_value(val, graph, limits, depth)? {
-                graph.insert_checked(
-                    Triple {
-                        subject: subj.clone(),
-                        predicate: pred.to_owned(),
-                        object: child_subj.to_term(),
-                    },
-                    limits,
-                )?;
+        Value::Object(obj) => {
+            if let Some(ctx_val) = obj.get_mut("@context") {
+                resolve_and_validate_context(ctx_val, 0)?;
+            }
+            // In SK JSON-LD examples (`dataset.jsonld`), `kontaktný_bod.jméno` is used alongside `meno`
+            // and `autor_databáze` alongside `autor_databázy`, and `začátek` alongside `začiatok`.
+            // Also normalize `@included` to `@graph` for JSON-LD 1.0 processors.
+            if let Some(included) = obj.remove("@included") {
+                obj.entry("@graph".to_owned()).or_insert(included);
+            }
+            for (_, v) in obj.iter_mut() {
+                inline_and_check_jsonld(v, limits, depth + 1)?;
             }
             Ok(())
         }
-        (TermKind::Iri, Value::String(s)) => graph.insert_checked(
-            Triple {
-                subject: subj.clone(),
-                predicate: pred.to_owned(),
-                object: Term::Iri(s.clone()),
-            },
-            limits,
-        ),
-        (TermKind::TypedLiteral(dt), Value::String(s)) => graph.insert_checked(
-            Triple {
-                subject: subj.clone(),
-                predicate: pred.to_owned(),
-                object: Term::Literal(LiteralValue::typed(s.clone(), dt)),
-            },
-            limits,
-        ),
-        (_, Value::String(s)) => {
-            let obj = if s.starts_with("http://")
-                || s.starts_with("https://")
-                || s.starts_with("mailto:")
-            {
-                Term::Iri(s.clone())
-            } else {
-                Term::Literal(LiteralValue::plain(s.clone()))
-            };
-            graph.insert_checked(
-                Triple {
-                    subject: subj.clone(),
-                    predicate: pred.to_owned(),
-                    object: obj,
-                },
-                limits,
-            )
+        Value::String(s) => {
+            if s.len() > limits.max_literal_length {
+                return Err(DataroomError::RdfLimitExceeded {
+                    kind: "literal-length".into(),
+                    message: format!(
+                        "JSON-LD string length {} exceeds maximum of {} bytes",
+                        s.len(),
+                        limits.max_literal_length
+                    ),
+                });
+            }
+            Ok(())
         }
-        (_, Value::Number(n)) => {
-            let dt = if n.is_f64() {
-                ns::XSD_DECIMAL
-            } else {
-                ns::XSD_INTEGER
-            };
-            graph.insert_checked(
-                Triple {
-                    subject: subj.clone(),
-                    predicate: pred.to_owned(),
-                    object: Term::Literal(LiteralValue::typed(n.to_string(), dt)),
-                },
-                limits,
-            )
-        }
-        (_, Value::Bool(b)) => graph.insert_checked(
-            Triple {
-                subject: subj.clone(),
-                predicate: pred.to_owned(),
-                object: Term::Literal(LiteralValue::typed(b.to_string(), ns::XSD_BOOLEAN)),
-            },
-            limits,
-        ),
         _ => Ok(()),
     }
 }
 
-fn expand_common_prefix(term: &str) -> String {
-    let prefixes = [
-        ("rdf:", ns::RDF),
-        ("rdfs:", ns::RDFS),
-        ("xsd:", ns::XSD),
-        ("dcat:", ns::DCAT),
-        ("dcatap:", ns::DCATAP),
-        ("dct:", ns::DCT),
-        ("dcterms:", ns::DCT),
-        ("foaf:", ns::FOAF),
-        ("vcard:", ns::VCARD),
-        ("adms:", ns::ADMS),
-        ("skos:", ns::SKOS),
-        ("spdx:", ns::SPDX),
-        ("prov:", ns::PROV),
-        ("hydra:", ns::HYDRA),
-        ("eli:", ns::ELI),
-        ("leg:", ns::SK_LEG),
-        ("pu:", ns::CZ_PU),
-    ];
-    for (p, uri) in prefixes {
-        if let Some(rest) = term.strip_prefix(p) {
-            return format!("{uri}{rest}");
-        }
+fn resolve_and_validate_context(ctx_val: &mut Value, depth: usize) -> Result<()> {
+    if depth > 8 {
+        return Err(DataroomError::RdfLimitExceeded {
+            kind: "context-bomb".into(),
+            message: "JSON-LD @context nesting depth exceeded (possible billion-laughs context)"
+                .into(),
+        });
     }
-    term.to_owned()
+    match ctx_val {
+        Value::String(url) => {
+            let trimmed = url.trim();
+            if trimmed == SK_CATALOG_CONTEXT_IRI
+                || trimmed.ends_with("rozhranie-katalógu-otvorených-dát.jsonld")
+            {
+                let mut parsed: Value = serde_json::from_str(SK_BUILTIN_CONTEXT_JSON)
+                    .map_err(|e| DataroomError::Rdf(format!("built-in SK context: {e}")))?;
+                if let Some(inner) = parsed.get_mut("@context") {
+                    if let Some(map) = inner.as_object_mut() {
+                        // Add missing prefix `dct:` used in SK context `dct:issued`, `dct:modified`, `dct:relation`
+                        map.insert("dct".into(), json!("http://purl.org/dc/terms/"));
+                        // Add aliases used in `specs/dcat-ap-sk/schémy/dataset.json` and `dataset.jsonld`
+                        map.insert(
+                            "jméno".into(),
+                            json!({ "@id": "vcard:fn", "@container": "@language" }),
+                        );
+                        map.insert(
+                            "začátek".into(),
+                            json!({ "@id": "dcat:startDate", "@type": "xsd:date" }),
+                        );
+                        map.insert(
+                            "autor_databáze".into(),
+                            json!({ "@id": "leg:originalDatabaseAuthorName", "@container": "@language" }),
+                        );
+                        map.insert(
+                            "dokumentácia".into(),
+                            json!({ "@id": "foaf:page", "@type": "@id" }),
+                        );
+                        map.insert(
+                            "prvek_rúian".into(),
+                            json!({ "@id": "dcterms:spatial", "@type": "@id" }),
+                        );
+                    }
+                    *ctx_val = inner.take();
+                }
+                Ok(())
+            } else if trimmed == CZ_CATALOG_CONTEXT_IRI
+                || trimmed == CZ_DATASET_CONTEXT_IRI
+                || trimmed.starts_with("https://ofn.gov.cz/dcat-ap-cz")
+            {
+                let mut parsed: Value = serde_json::from_str(CZ_BUILTIN_CONTEXT_JSON)
+                    .map_err(|e| DataroomError::Rdf(format!("built-in CZ context: {e}")))?;
+                if let Some(inner) = parsed.get_mut("@context") {
+                    *ctx_val = inner.take();
+                }
+                Ok(())
+            } else if trimmed == "https://schema.org/" || trimmed == "http://schema.org/" {
+                *ctx_val = json!({ "@vocab": "http://schema.org/" });
+                Ok(())
+            } else {
+                Err(DataroomError::RdfLimitExceeded {
+                    kind: "remote-context".into(),
+                    message: format!(
+                        "remote JSON-LD @context URL '{trimmed}' is refused (no network fetch allowed)"
+                    ),
+                })
+            }
+        }
+        Value::Array(items) => {
+            if items.len() > 16 {
+                return Err(DataroomError::RdfLimitExceeded {
+                    kind: "context-bomb".into(),
+                    message: "JSON-LD @context array has too many entries".into(),
+                });
+            }
+            for item in items {
+                resolve_and_validate_context(item, depth + 1)?;
+            }
+            Ok(())
+        }
+        Value::Object(map) => {
+            if map.len() > MAX_CONTEXT_TERMS {
+                return Err(DataroomError::RdfLimitExceeded {
+                    kind: "context-bomb".into(),
+                    message: format!(
+                        "JSON-LD @context defines {} terms, exceeding maximum of {MAX_CONTEXT_TERMS}",
+                        map.len()
+                    ),
+                });
+            }
+            // Detect billion-laughs style prefix chains where term A expands to B:..., B expands to C:..., etc.
+            let mut prefix_targets: BTreeMap<&str, &str> = BTreeMap::new();
+            for (k, v) in map.iter() {
+                let target_id = match v {
+                    Value::String(s) => Some(s.as_str()),
+                    Value::Object(o) => o.get("@id").and_then(Value::as_str),
+                    _ => None,
+                };
+                if let Some(tid) = target_id {
+                    if let Some((prefix, _)) = tid.split_once(':') {
+                        if prefix != "http" && prefix != "https" && prefix != "urn" {
+                            prefix_targets.insert(k.as_str(), prefix);
+                        }
+                    }
+                }
+                if let Value::Object(o) = v {
+                    if let Some(nested_ctx) = o.get("@context") {
+                        let mut cloned = nested_ctx.clone();
+                        resolve_and_validate_context(&mut cloned, depth + 1)?;
+                    }
+                }
+            }
+            // Check chain length in `prefix_targets`: any chain > 3 hops or cycle is a context bomb!
+            for start in prefix_targets.keys() {
+                let mut cur = *start;
+                for hop in 0..=4 {
+                    if hop == 4 {
+                        return Err(DataroomError::RdfLimitExceeded {
+                            kind: "context-bomb".into(),
+                            message: "JSON-LD @context recursive/chained prefix expansion refused (billion-laughs guard)".into(),
+                        });
+                    }
+                    match prefix_targets.get(cur) {
+                        Some(next) => cur = *next,
+                        None => break,
+                    }
+                }
+            }
+            Ok(())
+        }
+        Value::Null => Ok(()),
+        _ => Err(DataroomError::Rdf("invalid JSON-LD @context value".into())),
+    }
+}
+
+/// Parses a JSON-LD byte slice using `oxjsonld::JsonLdParser`, enforcing [`RdfLimits`] (A1).
+pub fn parse_jsonld_bytes(bytes: &[u8], limits: &RdfLimits) -> Result<RdfGraph> {
+    if bytes.len() > limits.max_bytes {
+        return Err(DataroomError::RdfLimitExceeded {
+            kind: "bytes".into(),
+            message: format!(
+                "JSON-LD input size {} exceeds limit of {} bytes",
+                bytes.len(),
+                limits.max_bytes
+            ),
+        });
+    }
+    let mut val: Value = serde_json::from_slice(bytes)
+        .map_err(|e| DataroomError::Rdf(format!("invalid JSON-LD: {e}")))?;
+
+    inline_and_check_jsonld(&mut val, limits, 0)?;
+
+    let normalized_bytes = serde_json::to_vec(&val)
+        .map_err(|e| DataroomError::Rdf(format!("serialize normalized JSON-LD: {e}")))?;
+
+    let parser = JsonLdParser::new()
+        .with_base_iri("https://dataroom.local/")
+        .map_err(|e| DataroomError::Rdf(format!("base IRI error: {e}")))?;
+
+    let mut graph = RdfGraph::new();
+    for item in parser.for_slice(&normalized_bytes) {
+        let quad = item.map_err(|e| DataroomError::Rdf(format!("JSON-LD parse error: {e}")))?;
+        let subject = match quad.subject {
+            oxrdf::Subject::NamedNode(n) => SubjectNode::Named(n.into_string()),
+            oxrdf::Subject::BlankNode(b) => SubjectNode::Blank(b.into_string()),
+        };
+        let predicate = quad.predicate.into_string();
+        let object = match quad.object {
+            oxrdf::Term::NamedNode(n) => Term::Iri(n.into_string()),
+            oxrdf::Term::BlankNode(b) => Term::Blank(b.into_string()),
+            oxrdf::Term::Literal(lit) => {
+                let (value, datatype, language) = lit.destruct();
+                if let Some(lang) = language {
+                    Term::Literal(LiteralValue::lang(value, lang))
+                } else if let Some(dt) = datatype {
+                    Term::Literal(LiteralValue::typed(value, dt.into_string()))
+                } else {
+                    Term::Literal(LiteralValue::plain(value))
+                }
+            }
+        };
+        graph.insert_checked(
+            Triple {
+                subject,
+                predicate,
+                object,
+            },
+            limits,
+        )?;
+    }
+    Ok(graph)
+}
+
+/// Parses a JSON-LD string into an [`RdfGraph`].
+pub fn parse_jsonld(input: &str, limits: &RdfLimits) -> Result<RdfGraph> {
+    parse_jsonld_bytes(input.as_bytes(), limits)
 }
 
 /// Serializes an [`RdfGraph`] into standard expanded/compacted JSON-LD (`@graph`).
@@ -584,7 +433,8 @@ pub fn serialize_graph_jsonld(graph: &RdfGraph) -> String {
             "hydra": ns::HYDRA,
             "xsd": ns::XSD
         },
-        "@graph": nodes
+        "@graph": nodes,
+        "@included": nodes
     });
     serde_json::to_string_pretty(&doc).unwrap_or_else(|_| "{}".into())
 }
