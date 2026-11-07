@@ -3,7 +3,9 @@
 //! - `/.well-known/openid-configuration` and `/.well-known/oauth-authorization-server`
 //! - `/protocol/openid-connect/{auth,token,certs,userinfo,logout,revoke,token/introspect,ext/par/request}`
 
+use crate::brute_force::BruteForceProtector;
 use crate::cimd::fetch_cimd_client;
+use crate::client_ip::ClientIp;
 use crate::dpop::verify_dpop_proof;
 use crate::guard::OutboundGuard;
 use crate::redirect::{validate_post_logout_redirect_uri, validate_redirect_uri};
@@ -331,6 +333,7 @@ async fn par_endpoint(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
     headers: HeaderMap,
+    mount_ext: Option<Extension<Mount>>,
     Form(mut params): Form<BTreeMap<String, String>>,
 ) -> Result<Response> {
     let realm = state
@@ -338,7 +341,8 @@ async fn par_endpoint(
         .get_realm(&realm_name)
         .await?
         .ok_or_else(|| WardkeepError::NotFound("realm not found".into()))?;
-    let client = authenticate_client(&state, &realm, &headers, &params).await?;
+    let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
+    let client = authenticate_client(&state, &realm, &mount, &headers, &params).await?;
     params.remove("client_secret");
     params.remove("client_assertion");
     params.remove("client_assertion_type");
@@ -779,6 +783,7 @@ async fn authorize_get(
         dpop_jkt: params.get("dpop_jkt").cloned(),
         csrf_token,
         step_state_json: initial_step_json,
+        pending_totp_secret: None,
         user_id: pre_user_id,
         amr: pre_amr,
         acr_achieved: pre_acr,
@@ -820,6 +825,7 @@ async fn authorize_get(
 pub async fn authenticate_client(
     state: &OidcState,
     realm: &RealmConfig,
+    mount: &Mount,
     headers: &HeaderMap,
     form: &BTreeMap<String, String>,
 ) -> Result<ClientRepresentation> {
@@ -837,6 +843,7 @@ pub async fn authenticate_client(
         return verify_client_assertion(
             state,
             realm,
+            mount,
             assertion,
             form.get("client_id").map(String::as_str),
         )
@@ -860,14 +867,11 @@ pub async fn authenticate_client(
         let (cid, csec) = text
             .split_once(':')
             .ok_or_else(|| WardkeepError::invalid_client("malformed Basic auth pair"))?;
-        let cid_dec = url::form_urlencoded::parse(cid.as_bytes())
-            .next()
-            .map(|(k, _)| k.into_owned())
-            .unwrap_or_else(|| cid.to_owned());
-        let csec_dec = url::form_urlencoded::parse(csec.as_bytes())
-            .next()
-            .map(|(k, _)| k.into_owned())
-            .unwrap_or_else(|| csec.to_owned());
+        // RFC 6749 §2.3.1: each half is form-urlencoded as a whole; '&' and '=' are data.
+        let cid_dec = form_urldecode(cid)
+            .ok_or_else(|| WardkeepError::invalid_client("malformed Basic auth encoding"))?;
+        let csec_dec = form_urldecode(csec)
+            .ok_or_else(|| WardkeepError::invalid_client("malformed Basic auth encoding"))?;
         if let Some(form_cid) = &client_id_opt
             && form_cid != &cid_dec
         {
@@ -899,16 +903,51 @@ pub async fn authenticate_client(
     let expected = client
         .secret
         .as_deref()
-        .ok_or_else(|| WardkeepError::invalid_client("client has no secret configured"))?;
-    if !constant_time_str_eq(&presented, expected) {
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| WardkeepError::invalid_client("invalid client_secret"))?;
+    if presented.is_empty() || !constant_time_str_eq(&presented, expected) {
         return Err(WardkeepError::invalid_client("invalid client_secret"));
     }
     Ok(client)
 }
 
+/// Decodes one `application/x-www-form-urlencoded` value (`+` is a space, `%XX` a byte) without
+/// splitting on `&` or `=`; `None` on a broken escape or non-UTF-8 result.
+fn form_urldecode(raw: &str) -> Option<String> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => out.push(b' '),
+            b'%' => {
+                let hex = raw.get(i + 1..i + 3)?;
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                i += 2;
+            }
+            b => out.push(b),
+        }
+        i += 1;
+    }
+    String::from_utf8(out).ok()
+}
+
+/// True when the JWT `aud` claim (a string or an array) names one of `allowed`.
+fn audience_matches(claims: &Value, allowed: &[String]) -> bool {
+    match claims.get("aud") {
+        Some(Value::String(a)) => allowed.iter().any(|x| x == a),
+        Some(Value::Array(list)) => list
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|a| allowed.iter().any(|x| x == a)),
+        _ => false,
+    }
+}
+
 async fn verify_client_assertion(
     state: &OidcState,
     realm: &RealmConfig,
+    mount: &Mount,
     assertion: &str,
     form_client_id: Option<&str>,
 ) -> Result<ClientRepresentation> {
@@ -930,6 +969,7 @@ async fn verify_client_assertion(
         .and_then(Value::as_str)
         .unwrap_or(assertion);
 
+    let realm_issuer = mount.realm_issuer(&realm.realm);
     let all_clients = state
         .store
         .list_clients(&realm.id, None, None, false)
@@ -940,6 +980,9 @@ async fn verify_client_assertion(
         c.client_authenticator_type == "federated-jwt"
             && c.attributes.get("jwt.credential.sub").map(String::as_str) == Some(sub)
     }) {
+        if !fed_client.enabled {
+            return Err(WardkeepError::invalid_client("client is disabled"));
+        }
         // PF-47 / Portal client_auth.rs: Keycloak refuses `client_id` if it does not match
         if let Some(fcid) = form_client_id
             && fcid != fed_client.client_id
@@ -972,13 +1015,12 @@ async fn verify_client_assertion(
             .get("keys")
             .and_then(Value::as_array)
             .ok_or_else(|| WardkeepError::invalid_client("cluster JWKS has no keys"))?;
-        let mut verified = false;
-        for jwk in keys {
-            if verify_jwt_with_jwk::<Value>(assertion, jwk, Some(expected_iss), None).is_ok() {
-                verified = true;
-                break;
-            }
-        }
+        // The projected token must be minted for this realm: `aud` is the realm issuer, so a
+        // token the cluster minted for another audience (the API server, another realm) fails.
+        let verified = keys.iter().any(|jwk| {
+            verify_jwt_with_jwk::<Value>(assertion, jwk, Some(expected_iss), Some(&realm_issuer))
+                .is_ok()
+        });
         if !verified {
             return Err(WardkeepError::invalid_client(
                 "federated client_assertion signature verification failed",
@@ -993,6 +1035,7 @@ async fn verify_client_assertion(
         .store
         .get_client_by_client_id(&realm.id, target_cid)
         .await?
+        .filter(|c| c.enabled)
         .ok_or_else(|| WardkeepError::invalid_client("unknown client for assertion"))?;
     if client.client_id != sub {
         return Err(WardkeepError::invalid_client(
@@ -1009,13 +1052,20 @@ async fn verify_client_assertion(
         .get("keys")
         .and_then(Value::as_array)
         .ok_or_else(|| WardkeepError::invalid_client("client jwks has no keys"))?;
-    let mut verified = false;
-    for jwk in keys {
-        if verify_jwt_with_jwk::<Value>(assertion, jwk, Some(sub), None).is_ok() {
-            verified = true;
-            break;
-        }
-    }
+    // RFC 7523 §3: `iss` and `sub` are the client, `aud` names this server (the realm issuer or
+    // one of its endpoints that take client authentication).
+    let endpoints = format!("{realm_issuer}/protocol/openid-connect");
+    let allowed_aud = [
+        realm_issuer.clone(),
+        format!("{endpoints}/token"),
+        format!("{endpoints}/token/introspect"),
+        format!("{endpoints}/revoke"),
+        format!("{endpoints}/ext/par/request"),
+    ];
+    let verified = keys.iter().any(|jwk| {
+        verify_jwt_with_jwk::<Value>(assertion, jwk, Some(sub), None)
+            .is_ok_and(|(_, claims)| audience_matches(&claims, &allowed_aud))
+    });
     if !verified {
         return Err(WardkeepError::invalid_client(
             "client_assertion signature verification failed",
@@ -1263,6 +1313,7 @@ async fn token_endpoint(
     OriginalUri(orig_uri): OriginalUri,
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
+    client_ip: ClientIp,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> Result<Response> {
     let realm = state
@@ -1271,7 +1322,7 @@ async fn token_endpoint(
         .await?
         .ok_or_else(|| WardkeepError::NotFound("realm not found".into()))?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
-    let client = authenticate_client(&state, &realm, &headers, &form).await?;
+    let client = authenticate_client(&state, &realm, &mount, &headers, &form).await?;
 
     // Verify optional DPoP header (RFC 9449)
     let dpop_jkt = if let Some(dpop_hdr) = headers.get("dpop").and_then(|v| v.to_str().ok()) {
@@ -1311,12 +1362,21 @@ async fn token_endpoint(
                 &client,
                 &form,
                 dpop_jkt.as_deref(),
+                &client_ip,
             )
             .await?
         }
         "refresh_token" => {
-            handle_refresh_token_grant(&state, &mount, &realm, &client, &form, dpop_jkt.as_deref())
-                .await?
+            handle_refresh_token_grant(
+                &state,
+                &mount,
+                &realm,
+                &client,
+                &form,
+                dpop_jkt.as_deref(),
+                &client_ip,
+            )
+            .await?
         }
         "client_credentials" => {
             handle_client_credentials_grant(
@@ -1326,20 +1386,45 @@ async fn token_endpoint(
                 &client,
                 &form,
                 dpop_jkt.as_deref(),
+                &client_ip,
             )
             .await?
         }
         "urn:ietf:params:oauth:grant-type:token-exchange" => {
-            handle_token_exchange_grant(&state, &mount, &realm, &client, &form, dpop_jkt.as_deref())
-                .await?
+            handle_token_exchange_grant(
+                &state,
+                &mount,
+                &realm,
+                &client,
+                &form,
+                dpop_jkt.as_deref(),
+                &client_ip,
+            )
+            .await?
         }
         "urn:ietf:params:oauth:grant-type:jwt-bearer" => {
-            handle_jwt_bearer_grant(&state, &mount, &realm, &client, &form, dpop_jkt.as_deref())
-                .await?
+            handle_jwt_bearer_grant(
+                &state,
+                &mount,
+                &realm,
+                &client,
+                &form,
+                dpop_jkt.as_deref(),
+                &client_ip,
+            )
+            .await?
         }
         "password" => {
-            handle_password_grant(&state, &mount, &realm, &client, &form, dpop_jkt.as_deref())
-                .await?
+            handle_password_grant(
+                &state,
+                &mount,
+                &realm,
+                &client,
+                &form,
+                dpop_jkt.as_deref(),
+                &client_ip,
+            )
+            .await?
         }
         _ => {
             return Err(WardkeepError::unsupported_grant_type(format!(
@@ -1367,6 +1452,7 @@ async fn handle_authorization_code_grant(
     client: &ClientRepresentation,
     form: &BTreeMap<String, String>,
     dpop_jkt: Option<&str>,
+    client_ip: &ClientIp,
 ) -> Result<Value> {
     let raw_code = form
         .get("code")
@@ -1468,7 +1554,7 @@ async fn handle_authorization_code_grant(
             client_id: Some(client.client_id.clone()),
             user_id: Some(user.id.clone()),
             session_id: Some(code_rec.sso_session_id.clone()),
-            ip_address: "127.0.0.1".into(),
+            ip_address: client_ip.for_audit(),
             error: None,
             details: BTreeMap::new(),
         })
@@ -1502,6 +1588,7 @@ async fn handle_refresh_token_grant(
     client: &ClientRepresentation,
     form: &BTreeMap<String, String>,
     dpop_jkt: Option<&str>,
+    _client_ip: &ClientIp,
 ) -> Result<Value> {
     let raw_refresh = form
         .get("refresh_token")
@@ -1632,6 +1719,7 @@ async fn handle_client_credentials_grant(
     client: &ClientRepresentation,
     form: &BTreeMap<String, String>,
     dpop_jkt: Option<&str>,
+    client_ip: &ClientIp,
 ) -> Result<Value> {
     if client.public_client || !client.service_accounts_enabled {
         return Err(WardkeepError::unauthorized_client(
@@ -1644,7 +1732,21 @@ async fn handle_client_credentials_grant(
         .get_user_by_username_or_email(&realm.id, None, &sa_username)
         .await?
     {
-        Some(u) => u,
+        // Only the client's own service account: a person who happens to hold the name (or an
+        // e-mail equal to it) is never the principal of a client_credentials token.
+        Some(u) if u.service_account_client_id.as_deref() == Some(client.client_id.as_str()) => {
+            if !u.enabled {
+                return Err(WardkeepError::unauthorized_client(
+                    "service account is disabled",
+                ));
+            }
+            u
+        }
+        Some(_) => {
+            return Err(WardkeepError::unauthorized_client(
+                "service account name is held by another user",
+            ));
+        }
         None => {
             state
                 .store
@@ -1681,7 +1783,7 @@ async fn handle_client_credentials_grant(
             client_id: Some(client.client_id.clone()),
             user_id: Some(user.id.clone()),
             session_id: None,
-            ip_address: "127.0.0.1".into(),
+            ip_address: client_ip.for_audit(),
             error: None,
             details: BTreeMap::new(),
         })
@@ -1724,12 +1826,14 @@ async fn handle_token_exchange_grant(
     requester: &ClientRepresentation,
     form: &BTreeMap<String, String>,
     dpop_jkt: Option<&str>,
+    client_ip: &ClientIp,
 ) -> Result<Value> {
-    if requester
-        .attributes
-        .get("standard.token.exchange.enabled")
-        .map(String::as_str)
-        != Some("true")
+    if requester.public_client
+        || requester
+            .attributes
+            .get("standard.token.exchange.enabled")
+            .map(String::as_str)
+            != Some("true")
     {
         return Err(WardkeepError::invalid_request(
             "Standard token exchange is not enabled for the requested client",
@@ -1864,7 +1968,7 @@ async fn handle_token_exchange_grant(
             client_id: Some(requester.client_id.clone()),
             user_id: Some(user.id.clone()),
             session_id: sid.map(str::to_owned),
-            ip_address: "127.0.0.1".into(),
+            ip_address: client_ip.for_audit(),
             error: None,
             details: BTreeMap::new(),
         })
@@ -1895,6 +1999,11 @@ async fn handle_token_exchange_grant(
 }
 
 /// RFC 7523 JWT Authorization Grant (`urn:ietf:params:oauth:grant-type:jwt-bearer`, W1).
+///
+/// Trust anchor is the requesting client's own `jwks.string`, so the assertion can only speak for
+/// that client: `iss` is the `client_id`, `sub` is the client's own service account (its user id
+/// or the `client_id`), `aud` is the realm issuer, `jti` is single-use. A confidential client
+/// can never name a person or another client's account as `sub` (that would be impersonation).
 async fn handle_jwt_bearer_grant(
     state: &OidcState,
     mount: &Mount,
@@ -1902,7 +2011,13 @@ async fn handle_jwt_bearer_grant(
     client: &ClientRepresentation,
     form: &BTreeMap<String, String>,
     dpop_jkt: Option<&str>,
+    client_ip: &ClientIp,
 ) -> Result<Value> {
+    if client.public_client || !client.service_accounts_enabled {
+        return Err(WardkeepError::unauthorized_client(
+            "client is not enabled for jwt-bearer",
+        ));
+    }
     let assertion = form
         .get("assertion")
         .filter(|s| !s.is_empty())
@@ -1920,32 +2035,46 @@ async fn handle_jwt_bearer_grant(
         .ok_or_else(|| WardkeepError::invalid_grant("client jwks has no keys"))?;
 
     let issuer = mount.realm_issuer(&realm.realm);
-    let mut verified_claims: Option<Value> = None;
-    for jwk in keys {
-        if let Ok((_, claims)) = verify_jwt_with_jwk::<Value>(assertion, jwk, None, Some(&issuer)) {
-            verified_claims = Some(claims);
-            break;
-        }
-    }
-    let claims = verified_claims
+    let claims = keys
+        .iter()
+        .find_map(|jwk| {
+            verify_jwt_with_jwk::<Value>(assertion, jwk, Some(&client.client_id), Some(&issuer))
+                .ok()
+                .map(|(_, c)| c)
+        })
         .ok_or_else(|| WardkeepError::invalid_grant("jwt-bearer assertion did not verify"))?;
     let sub = claims
         .get("sub")
         .and_then(Value::as_str)
         .ok_or_else(|| WardkeepError::invalid_grant("assertion missing sub"))?;
+    let jti = claims
+        .get("jti")
+        .and_then(Value::as_str)
+        .ok_or_else(|| WardkeepError::invalid_grant("assertion missing jti"))?;
 
-    let user = match state.store.get_user_by_id(&realm.id, None, sub).await? {
-        Some(u) => u,
-        None => state
-            .store
-            .get_user_by_username_or_email(
-                &realm.id,
-                None,
-                &format!("service-account-{}", client.client_id),
-            )
-            .await?
-            .ok_or_else(|| WardkeepError::invalid_grant("subject not found"))?,
-    };
+    let sa_username = format!("service-account-{}", client.client_id);
+    let user = state
+        .store
+        .get_user_by_username_or_email(&realm.id, None, &sa_username)
+        .await?
+        .filter(|u| {
+            u.enabled && u.service_account_client_id.as_deref() == Some(client.client_id.as_str())
+        })
+        .ok_or_else(|| WardkeepError::invalid_grant("client has no service account"))?;
+    if sub != user.id && sub != client.client_id {
+        return Err(WardkeepError::invalid_grant(
+            "assertion sub must be the client's own service account",
+        ));
+    }
+    state
+        .store
+        .mark_token_revoked(RevokedTokenRecord {
+            jti_hash: sha256_hex(&format!("jwt-bearer:{}:{jti}", client.client_id)),
+            realm_id: realm.id.clone(),
+            expires_at: Utc::now() + Duration::hours(1),
+        })
+        .await
+        .map_err(|_| WardkeepError::invalid_grant("replayed jwt-bearer assertion"))?;
 
     let (active_scopes, granted_scope_str) = resolve_scopes_for_client(
         &state.store,
@@ -1954,6 +2083,23 @@ async fn handle_jwt_bearer_grant(
         form.get("scope").map(String::as_str),
     )
     .await?;
+
+    state
+        .store
+        .append_event(AuditEvent {
+            id: uuid::Uuid::now_v7().to_string(),
+            realm_id: realm.id.clone(),
+            org_id: client.org_id.clone(),
+            time: Utc::now().timestamp_millis(),
+            event_type: "CLIENT_LOGIN".into(),
+            client_id: Some(client.client_id.clone()),
+            user_id: Some(user.id.clone()),
+            session_id: None,
+            ip_address: client_ip.for_audit(),
+            error: None,
+            details: BTreeMap::new(),
+        })
+        .await?;
 
     mint_tokens_for_principal(
         state,
@@ -1988,6 +2134,7 @@ async fn handle_password_grant(
     client: &ClientRepresentation,
     form: &BTreeMap<String, String>,
     dpop_jkt: Option<&str>,
+    client_ip: &ClientIp,
 ) -> Result<Value> {
     if !client.direct_access_grants_enabled
         || client.is_cimd
@@ -2002,24 +2149,35 @@ async fn handle_password_grant(
     let username = form.get("username").map(String::as_str).unwrap_or_default();
     let password = form.get("password").map(String::as_str).unwrap_or_default();
 
+    let bf = BruteForceProtector::new(state.store.clone());
+    let ip = client_ip.as_deref();
     let Some(user) = state
         .store
         .get_user_by_username_or_email(&realm.id, None, username)
         .await?
-        .filter(|u| u.enabled)
+        .filter(|u| u.enabled && u.service_account_client_id.is_none())
     else {
         wardkeep_crypto::password::dummy_verify_password(password);
+        let _ = bf.record_failure(realm, None, ip).await;
+        return Err(WardkeepError::invalid_grant("Invalid user credentials"));
+    };
+    // Same brute-force protector as the login pages (RI `bruteForceProtected`): a locked person
+    // gets the same answer as a wrong password, after the same hashing work.
+    if bf.is_locked(realm, Some(&user.id), ip).await? {
+        wardkeep_crypto::password::dummy_verify_password(password);
+        return Err(WardkeepError::invalid_grant("Invalid user credentials"));
+    }
+
+    let creds = state.store.list_credentials(&realm.id, &user.id).await?;
+    let Some(pw_cred) = creds.iter().find(|c| c.credential_type == "password") else {
+        wardkeep_crypto::password::dummy_verify_password(password);
+        let _ = bf.record_failure(realm, Some(&user.id), ip).await;
         return Err(WardkeepError::invalid_grant("Invalid user credentials"));
     };
 
-    let creds = state.store.list_credentials(&realm.id, &user.id).await?;
-    let pw_cred = creds
-        .iter()
-        .find(|c| c.credential_type == "password")
-        .ok_or_else(|| WardkeepError::invalid_grant("Invalid user credentials"))?;
-
     let outcome = verify_and_maybe_rehash(password, pw_cred)?;
     if !outcome.valid {
+        let _ = bf.record_failure(realm, Some(&user.id), ip).await;
         return Err(WardkeepError::invalid_grant("Invalid user credentials"));
     }
     if let Some(new_phc) = outcome.rehashed_phc {
@@ -2061,13 +2219,16 @@ async fn handle_password_grant(
             .map(String::as_str)
             .ok_or_else(|| WardkeepError::invalid_grant("Missing totp code"))?;
         let now_secs = Utc::now().timestamp() as u64;
-        let matched_step = verify_totp_code(
+        let Some(matched_step) = verify_totp_code(
             otp_cred,
             submitted_totp,
             realm.otp_policy_look_ahead_window,
             now_secs,
         )?
-        .ok_or_else(|| WardkeepError::invalid_grant("Invalid totp code"))?;
+        else {
+            let _ = bf.record_failure(realm, Some(&user.id), ip).await;
+            return Err(WardkeepError::invalid_grant("Invalid totp code"));
+        };
 
         // Refuse replay of a used TOTP code in the same step window (W7)
         let step_key = sha256_hex(&format!("totp:{}:{}:{matched_step}", user.id, otp_cred.id));
@@ -2084,6 +2245,7 @@ async fn handle_password_grant(
         amr.push("otp".into());
         acr = "mfa".into();
     }
+    bf.record_success(realm, &user.id).await?;
 
     let now = Utc::now();
     let sso_id = uuid::Uuid::now_v7().to_string();
@@ -2094,7 +2256,7 @@ async fn handle_password_grant(
         handle_hash: sha256_hex(&random_handle_256()),
         user_id: user.id.clone(),
         username: user.username.clone(),
-        ip_address: "127.0.0.1".into(),
+        ip_address: client_ip.for_audit(),
         start: now.timestamp_millis(),
         last_access: now.timestamp_millis(),
         auth_time: now.timestamp(),
@@ -2151,7 +2313,7 @@ async fn introspect_endpoint(
         .await?
         .ok_or_else(|| WardkeepError::NotFound("realm not found".into()))?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
-    let client = authenticate_client(&state, &realm, &headers, &form).await?;
+    let client = authenticate_client(&state, &realm, &mount, &headers, &form).await?;
     if client.public_client {
         return Err(WardkeepError::unauthorized_client(
             "public clients may not call token introspection (W1)",
@@ -2205,7 +2367,7 @@ async fn revoke_endpoint(
         .await?
         .ok_or_else(|| WardkeepError::NotFound("realm not found".into()))?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
-    let client = authenticate_client(&state, &realm, &headers, &form).await?;
+    let client = authenticate_client(&state, &realm, &mount, &headers, &form).await?;
 
     let Some(token) = form.get("token").filter(|s| !s.is_empty()) else {
         return Ok(StatusCode::OK);
@@ -2264,6 +2426,21 @@ async fn userinfo_endpoint(
     let (_, claims): (_, Value) = verify_jwt(raw_token, &keys, Some(&issuer), None)?;
     if claims.get("typ").and_then(Value::as_str) != Some("Bearer") {
         return Err(WardkeepError::Unauthorized("not an access token".into()));
+    }
+    // A revoked token, or one whose SSO session ended (logout, code replay, refresh reuse),
+    // gets no claims, as at introspection.
+    if let Some(jti) = claims.get("jti").and_then(Value::as_str)
+        && state
+            .store
+            .is_token_revoked(&realm.id, &sha256_hex(jti))
+            .await?
+    {
+        return Err(WardkeepError::Unauthorized("token is not active".into()));
+    }
+    if let Some(sid) = claims.get("sid").and_then(Value::as_str)
+        && state.store.get_sso_session(&realm.id, sid).await?.is_none()
+    {
+        return Err(WardkeepError::Unauthorized("token is not active".into()));
     }
     let sub = claims
         .get("sub")

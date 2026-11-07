@@ -161,11 +161,23 @@ pub fn verify_dpop_proof(
     }
 
     // Verify signature using `jsonwebtoken`
-    let mut validation = jsonwebtoken::Validation::new(
-        decode_header(proof_jwt)
-            .map_err(|_| WardkeepError::invalid_dpop_proof("bad header"))?
-            .alg,
-    );
+    let alg = decode_header(proof_jwt)
+        .map_err(|_| WardkeepError::invalid_dpop_proof("bad header"))?
+        .alg;
+    // RFC 9449 §4.2: asymmetric algorithms only; a MAC (`HS*`) proof is refused outright.
+    if !matches!(
+        alg,
+        jsonwebtoken::Algorithm::ES256
+            | jsonwebtoken::Algorithm::ES384
+            | jsonwebtoken::Algorithm::RS256
+            | jsonwebtoken::Algorithm::PS256
+            | jsonwebtoken::Algorithm::EdDSA
+    ) {
+        return Err(WardkeepError::invalid_dpop_proof(
+            "DPoP proof algorithm must be asymmetric",
+        ));
+    }
+    let mut validation = jsonwebtoken::Validation::new(alg);
     validation.validate_exp = false;
     validation.validate_aud = false;
     validation.required_spec_claims.clear();

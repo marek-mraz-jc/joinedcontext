@@ -838,6 +838,9 @@ pub struct AuthSession {
     pub dpop_jkt: Option<String>,
     pub csrf_token: String,
     pub step_state_json: String,
+    /// BASE32 TOTP secret generated for an enrolment page and shown once; cleared on enrolment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_totp_secret: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     #[serde(default)]

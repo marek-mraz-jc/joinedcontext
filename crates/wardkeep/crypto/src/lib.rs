@@ -19,7 +19,8 @@ pub use password::{
     verify_keycloak_credential,
 };
 pub use totp::{
-    generate_recovery_codes, generate_totp_code, verify_recovery_code, verify_totp_code,
+    generate_recovery_codes, generate_totp_code, generate_totp_code_for_credential,
+    generate_totp_secret, verify_recovery_code, verify_totp_code,
 };
 
 use rand::Rng as _;

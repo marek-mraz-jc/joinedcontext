@@ -100,6 +100,18 @@ fn extract_secret_and_meta(cred: &CredentialRecord) -> Result<(Vec<u8>, OtpCrede
     Ok((bytes, meta))
 }
 
+/// Generates a fresh 160-bit TOTP secret, BASE32 without padding (RFC 4226 §4 minimum 128 bits),
+/// for an enrolment the server shows once and stores with `secretEncoding: "BASE32"`.
+#[must_use]
+pub fn generate_totp_secret() -> String {
+    let mut bytes = [0u8; 20];
+    rand::rng().fill_bytes(&mut bytes);
+    totp_rs::Secret::from(bytes)
+        .to_base32()
+        .trim_end_matches('=')
+        .to_owned()
+}
+
 /// Generates the current TOTP code for `unix_secs` (for tests and enrolment verification).
 pub fn generate_totp_code(
     secret: &str,
@@ -110,6 +122,21 @@ pub fn generate_totp_code(
 ) -> Result<String> {
     let step = unix_secs / period.max(1);
     compute_hotp_at(secret.as_bytes(), step, digits, algorithm)
+}
+
+/// Generates the code `cred` (raw or BASE32 secret, its digits, period and algorithm) shows at
+/// `unix_secs`, as an authenticator app would.
+pub fn generate_totp_code_for_credential(
+    cred: &CredentialRecord,
+    unix_secs: u64,
+) -> Result<String> {
+    let (secret_bytes, meta) = extract_secret_and_meta(cred)?;
+    compute_hotp_at(
+        &secret_bytes,
+        unix_secs / meta.period.max(1),
+        meta.digits,
+        &meta.algorithm,
+    )
 }
 
 /// Verifies `submitted_code` against `cred` within `look_ahead_window` steps around `unix_secs`.
@@ -174,6 +201,48 @@ pub fn verify_recovery_code(submitted: &str, stored_hashes: &[String]) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_secret_is_160_bit_base32_and_round_trips_through_a_credential() {
+        let a = generate_totp_secret();
+        let b = generate_totp_secret();
+        assert_ne!(a, b);
+        assert_eq!(a.len(), 32); // 20 bytes -> 32 BASE32 characters, no padding
+        assert!(
+            a.bytes()
+                .all(|c| c.is_ascii_uppercase() || (b'2'..=b'7').contains(&c))
+        );
+        let cred = CredentialRecord {
+            credential_type: "otp".into(),
+            secret_data: serde_json::json!({ "value": a }).to_string(),
+            credential_data:
+                r#"{"digits":6,"period":30,"algorithm":"HmacSHA1","secretEncoding":"BASE32"}"#
+                    .into(),
+            ..Default::default()
+        };
+        let code = generate_totp_code_for_credential(&cred, 1_700_000_000).unwrap();
+        assert_eq!(
+            verify_totp_code(&cred, &code, 0, 1_700_000_000).unwrap(),
+            Some(1_700_000_000 / 30)
+        );
+        // RFC 6238 test vector: SHA1, secret "12345678901234567890", T=59 -> 94287082 (8 digits)
+        let rfc = CredentialRecord {
+            credential_type: "otp".into(),
+            secret_data: "12345678901234567890".into(),
+            credential_data: r#"{"digits":8,"period":30,"algorithm":"HmacSHA1"}"#.into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            generate_totp_code_for_credential(&rfc, 59).unwrap(),
+            "94287082"
+        );
+        let bad = CredentialRecord {
+            secret_data: "not base32 !!".into(),
+            credential_data: r#"{"secretEncoding":"BASE32"}"#.into(),
+            ..Default::default()
+        };
+        assert!(generate_totp_code_for_credential(&bad, 59).is_err());
+    }
 
     #[test]
     fn totp_hmac_sha256_matches_ri_and_recovery_codes_work_once() {

@@ -79,9 +79,30 @@ impl OutboundGuard {
     }
 
     /// Checks whether an IP address is private, loopback, link-local, metadata (`169.254.169.254`),
-    /// unspecified, or documentation/reserved (W12).
+    /// unspecified, or documentation/reserved (W12). IPv6 forms that embed an IPv4 address
+    /// (mapped, compatible, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`) are judged by that address.
     #[must_use]
     pub fn is_forbidden_ip(ip: IpAddr) -> bool {
+        const V4_RESERVED: &[&str] = &[
+            "0.0.0.0/8",     // "this network"
+            "100.64.0.0/10", // CGNAT
+            "192.0.0.0/24",  // IETF protocol assignments
+            "198.18.0.0/15", // benchmarking
+            "240.0.0.0/4",   // reserved, includes broadcast
+        ];
+        const V6_RESERVED: &[&str] = &[
+            "fc00::/7",      // unique local
+            "fe80::/10",     // link-local
+            "fec0::/10",     // site-local (deprecated, still routed by some stacks)
+            "100::/64",      // discard
+            "2001:db8::/32", // documentation
+            "2001::/32",     // Teredo
+        ];
+        let in_any = |list: &[&str]| {
+            list.iter()
+                .filter_map(|n| n.parse::<IpNet>().ok())
+                .any(|net| net.contains(&ip))
+        };
         match ip {
             IpAddr::V4(v4) => {
                 v4.is_private()
@@ -91,19 +112,36 @@ impl OutboundGuard {
                     || v4.is_documentation()
                     || v4.is_unspecified()
                     || v4.is_multicast()
-                    || v4.octets()[0] == 100 && (v4.octets()[1] & 0b1100_0000) == 64 // 100.64.0.0/10 CGNAT
-                    || v4.octets() == [169, 254, 169, 254] // Cloud metadata service
+                    || in_any(V4_RESERVED)
             }
             IpAddr::V6(v6) => {
                 if let Some(mapped) = v6.to_ipv4_mapped() {
                     return Self::is_forbidden_ip(IpAddr::V4(mapped));
                 }
                 let segs = v6.segments();
-                v6.is_loopback()
-                    || v6.is_unspecified()
-                    || v6.is_multicast()
-                    || (segs[0] & 0xfe00) == 0xfc00 // fc00::/7 Unique Local
-                    || (segs[0] & 0xffc0) == 0xfe80 // fe80::/10 Link-Local
+                let embedded_low = std::net::Ipv4Addr::new(
+                    (segs[6] >> 8) as u8,
+                    segs[6] as u8,
+                    (segs[7] >> 8) as u8,
+                    segs[7] as u8,
+                );
+                // ::a.b.c.d (IPv4-compatible) and 64:ff9b::a.b.c.d (NAT64)
+                if segs[..6] == [0, 0, 0, 0, 0, 0] && !v6.is_loopback() && !v6.is_unspecified()
+                    || segs[..6] == [0x64, 0xff9b, 0, 0, 0, 0]
+                {
+                    return Self::is_forbidden_ip(IpAddr::V4(embedded_low));
+                }
+                // 2002:AABB:CCDD::/48 (6to4)
+                if segs[0] == 0x2002 {
+                    let v4 = std::net::Ipv4Addr::new(
+                        (segs[1] >> 8) as u8,
+                        segs[1] as u8,
+                        (segs[2] >> 8) as u8,
+                        segs[2] as u8,
+                    );
+                    return Self::is_forbidden_ip(IpAddr::V4(v4));
+                }
+                v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() || in_any(V6_RESERVED)
             }
         }
     }
@@ -147,8 +185,32 @@ impl OutboundGuard {
                 "outbound IP {ip} is private/loopback/metadata and refused by SSRF guard"
             )));
         }
-        let _ = IpNet::default();
         Ok(parsed)
+    }
+
+    /// Reads at most [`MAX_OUTBOUND_BYTES`] of `resp`, refusing before buffering more (a declared
+    /// `Content-Length` over the cap is refused without reading the body at all).
+    async fn read_capped(mut resp: reqwest::Response) -> Result<Vec<u8>> {
+        let too_big =
+            || WardkeepError::OutboundRefused("upstream response exceeds 1 MiB cap".into());
+        if resp
+            .content_length()
+            .is_some_and(|n| n > MAX_OUTBOUND_BYTES as u64)
+        {
+            return Err(too_big());
+        }
+        let mut out = Vec::new();
+        while let Some(chunk) = resp
+            .chunk()
+            .await
+            .map_err(|e| WardkeepError::OutboundRefused(e.without_url().to_string()))?
+        {
+            if out.len() + chunk.len() > MAX_OUTBOUND_BYTES {
+                return Err(too_big());
+            }
+            out.extend_from_slice(&chunk);
+        }
+        Ok(out)
     }
 
     /// Resolves DNS, checks every resolved address against `is_forbidden_ip`, pins the address on
@@ -224,15 +286,7 @@ impl OutboundGuard {
                 resp.status()
             )));
         }
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| WardkeepError::OutboundRefused(e.without_url().to_string()))?;
-        if bytes.len() > MAX_OUTBOUND_BYTES {
-            return Err(WardkeepError::OutboundRefused(
-                "upstream response exceeds 1 MiB cap".into(),
-            ));
-        }
+        let bytes = Self::read_capped(resp).await?;
         serde_json::from_slice(&bytes)
             .map_err(|_| WardkeepError::OutboundRefused("invalid JSON from upstream".into()))
     }
@@ -285,22 +339,64 @@ impl OutboundGuard {
             .await
             .map_err(|e| WardkeepError::OutboundRefused(e.without_url().to_string()))?;
         let status = resp.status().as_u16();
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| WardkeepError::OutboundRefused(e.without_url().to_string()))?;
-        if bytes.len() > MAX_OUTBOUND_BYTES {
-            return Err(WardkeepError::OutboundRefused(
-                "upstream response exceeds 1 MiB cap".into(),
-            ));
-        }
-        Ok((status, bytes.to_vec()))
+        let bytes = Self::read_capped(resp).await?;
+        Ok((status, bytes))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_addresses_stay_allowed() {
+        for ok in [
+            "1.1.1.1",
+            "2606:4700:4700::1111",
+            "64:ff9b::808:808",
+            "2002:808:808::1",
+        ] {
+            assert!(
+                !OutboundGuard::is_forbidden_ip(ok.parse().unwrap()),
+                "{ok} is public and must stay reachable"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn mocked_upstream_errors_and_oversized_bodies_are_refused() {
+        let guard = OutboundGuard::default();
+        guard.insert_mock("https://idp.example/jwks", 500, b"{}".to_vec());
+        assert!(
+            guard
+                .get_json::<serde_json::Value>("https://idp.example/jwks", None, None)
+                .await
+                .is_err()
+        );
+        guard.insert_mock(
+            "https://idp.example/big",
+            200,
+            vec![b' '; MAX_OUTBOUND_BYTES + 1],
+        );
+        assert!(
+            guard
+                .get_json::<serde_json::Value>("https://idp.example/big", None, None)
+                .await
+                .is_err()
+        );
+        guard.insert_mock("https://idp.example/ok", 200, br#"{"keys":[]}"#.to_vec());
+        let v: serde_json::Value = guard
+            .get_json("https://idp.example/ok", None, None)
+            .await
+            .unwrap();
+        assert_eq!(v["keys"], serde_json::json!([]));
+        let allow = vec!["claude.ai".to_owned()];
+        assert!(
+            guard
+                .validate_url("https://evil.example/x", Some(&allow))
+                .is_err()
+        );
+    }
 
     #[test]
     fn refuses_metadata_private_loopback_and_http_urls() {
@@ -313,6 +409,18 @@ mod tests {
             "https://[::1]/metadata",
             "http://claude.ai/oauth/mcp-oauth-client-metadata",
             "https://user:pass@claude.ai/oauth/mcp-oauth-client-metadata",
+            "https://0.0.0.0/",
+            "https://0.1.2.3/",
+            "https://198.18.0.1/",
+            "https://240.0.0.1/",
+            "https://100.64.0.1/",
+            "https://[::ffff:169.254.169.254]/",
+            "https://[::169.254.169.254]/",
+            "https://[64:ff9b::a9fe:a9fe]/",
+            "https://[2002:a9fe:a9fe::1]/",
+            "https://[fec0::1]/",
+            "https://[fd00::1]/",
+            "https://[fe80::1]/",
         ] {
             assert!(
                 guard.validate_url(bad, None).is_err(),

@@ -19,14 +19,18 @@
 //!   Logout, JWKS (`/certs`), and Outbound Guard (W12).
 
 pub mod broker;
+pub mod brute_force;
 pub mod cimd;
+pub mod client_ip;
 pub mod dpop;
 pub mod guard;
 pub mod handlers;
 pub mod redirect;
 
 pub use broker::UpstreamOidcBroker;
+pub use brute_force::BruteForceProtector;
 pub use cimd::{CimdMetadata, validate_and_build_cimd_client};
+pub use client_ip::ClientIp;
 pub use dpop::{DpopProof, verify_dpop_proof};
 pub use guard::{OutboundGuard, OutboundPolicy};
 pub use handlers::{OidcState, dispatch_backchannel_logout, oidc_router};

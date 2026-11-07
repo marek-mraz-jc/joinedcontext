@@ -1461,8 +1461,12 @@ impl Store for MemoryStore {
             }
             let removed = st.clients.remove(pos);
             let sa_user = format!("service-account-{}", removed.client_id);
-            st.users
-                .retain(|u| !(u.realm_id == realm_id && u.username.eq_ignore_ascii_case(&sa_user)));
+            // Only the client's own service account goes with it, never a person of that name.
+            st.users.retain(|u| {
+                !(u.realm_id == realm_id
+                    && u.username.eq_ignore_ascii_case(&sa_user)
+                    && u.service_account_client_id.as_deref() == Some(removed.client_id.as_str()))
+            });
             Ok(true)
         })
     }

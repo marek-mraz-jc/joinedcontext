@@ -6,8 +6,8 @@
 //! - Strips the path prefix before handing the request to the module router, and injects [`Mount`]
 //!   into the request extensions so every absolute URL, redirect, issuer, cookie path, CSP and
 //!   CORS origin honours the mount.
-//! - Trusts `X-Forwarded-Proto` and `X-Forwarded-Host` only when the peer IP is in the configured
-//!   trusted proxy list.
+//! - Trusts `X-Forwarded-Proto`, `X-Forwarded-Host` and `X-Forwarded-For` only when the peer IP is
+//!   in the configured trusted proxy list, and injects the resolved [`ClientAddr`].
 //! - Answers 404 for unmounted paths.
 
 use axum::Router;
@@ -19,6 +19,12 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::Arc;
 use tower::ServiceExt;
+
+/// The client's address as the router resolved it: the TCP peer, or, when the peer is a trusted
+/// proxy, the right-most `X-Forwarded-For` hop that is not itself a trusted proxy. Modules key
+/// per-address rate limits on it; it is absent when the peer is unknown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClientAddr(pub IpAddr);
 
 /// Resolved mount context passed to a module router via request extensions and at router build time (W9).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -241,6 +247,27 @@ impl JcRouter {
         self.trusted_proxies.iter().any(|net| net.contains(&ip))
     }
 
+    fn resolve_client_addr(&self, req: &Request<Body>, peer: Option<IpAddr>) -> Option<IpAddr> {
+        let peer = peer?;
+        if !self.is_trusted_proxy(Some(peer)) {
+            return Some(peer);
+        }
+        let hops: Vec<IpAddr> = req
+            .headers()
+            .get_all("x-forwarded-for")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .flat_map(|v| v.split(','))
+            .filter_map(|h| h.trim().parse::<IpAddr>().ok())
+            .collect();
+        hops.iter()
+            .rev()
+            .find(|ip| !self.is_trusted_proxy(Some(**ip)))
+            .or_else(|| hops.first())
+            .copied()
+            .or(Some(peer))
+    }
+
     fn resolve_scheme_and_host(
         &self,
         req: &Request<Body>,
@@ -285,6 +312,12 @@ impl JcRouter {
     }
 
     pub async fn dispatch(&self, mut req: Request<Body>, peer: Option<IpAddr>) -> Response<Body> {
+        let peer = peer.or_else(|| {
+            req.extensions()
+                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                .map(|c| c.0.ip())
+        });
+        let client = self.resolve_client_addr(&req, peer);
         let (scheme, host_with_port) = self.resolve_scheme_and_host(&req, peer);
         let host_only = host_with_port
             .split_once(':')
@@ -336,6 +369,14 @@ impl JcRouter {
             path_prefix: entry.prefix.clone(),
         };
         req.extensions_mut().insert(mount);
+        match client {
+            Some(ip) => {
+                req.extensions_mut().insert(ClientAddr(ip));
+            }
+            None => {
+                req.extensions_mut().remove::<ClientAddr>();
+            }
+        }
 
         entry
             .router
@@ -369,6 +410,60 @@ mod tests {
             mount.cookie_name("sso"),
             uri.path()
         )
+    }
+
+    async fn echo_client(client: Option<Extension<ClientAddr>>) -> String {
+        client.map_or_else(|| "none".to_owned(), |c| c.0.0.to_string())
+    }
+
+    async fn client_of(router: &JcRouter, peer: Option<&str>, xff: Option<&str>) -> String {
+        let mut b = Request::builder().uri("/ip").header("host", "city.example");
+        if let Some(x) = xff {
+            b = b.header("x-forwarded-for", x);
+        }
+        let resp = router
+            .dispatch(
+                b.body(Body::empty()).unwrap(),
+                peer.map(|p| p.parse().unwrap()),
+            )
+            .await;
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn client_addr_trusts_forwarded_for_only_from_trusted_proxies() {
+        let router = JcRouterBuilder::new("https", "city.example")
+            .trust_proxy("10.0.0.0/8".parse().unwrap())
+            .mount(
+                MountSpec {
+                    module: "m".into(),
+                    host: None,
+                    path_prefix: None,
+                },
+                Router::new().route("/ip", get(echo_client)),
+            )
+            .build()
+            .unwrap();
+        // Untrusted peer: its forged header is ignored.
+        assert_eq!(
+            client_of(&router, Some("203.0.113.9"), Some("198.51.100.1")).await,
+            "203.0.113.9"
+        );
+        // Trusted proxy: the right-most hop that is not a proxy.
+        assert_eq!(
+            client_of(
+                &router,
+                Some("10.0.0.5"),
+                Some("198.51.100.1, 203.0.113.7, 10.1.1.1")
+            )
+            .await,
+            "203.0.113.7"
+        );
+        // Trusted proxy without a header: the peer itself.
+        assert_eq!(client_of(&router, Some("10.0.0.5"), None).await, "10.0.0.5");
+        // Unknown peer: no address, never a shared placeholder.
+        assert_eq!(client_of(&router, None, Some("198.51.100.1")).await, "none");
     }
 
     #[tokio::test]

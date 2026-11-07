@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use wardkeep_core::*;
 use wardkeep_crypto::*;
-use wardkeep_oidc::OidcState;
+use wardkeep_oidc::{ClientIp, OidcState};
 
 #[derive(Clone, Debug)]
 pub struct FormField {
@@ -285,6 +285,29 @@ async fn render_state_page(
                 } else {
                     bundle.get("loginAccountTitle").to_owned()
                 };
+                let instruction = if is_enrol {
+                    let secret = match &auth_session.pending_totp_secret {
+                        Some(existing) => existing.clone(),
+                        None => {
+                            let fresh = generate_totp_secret();
+                            let mut updated = auth_session.clone();
+                            updated.pending_totp_secret = Some(fresh.clone());
+                            state.store.put_auth_session(updated).await?;
+                            fresh
+                        }
+                    };
+                    bundle.format(
+                        "otpEnrolInstruction",
+                        &[
+                            &secret,
+                            &realm.otp_policy_algorithm,
+                            &realm.otp_policy_digits.to_string(),
+                            &realm.otp_policy_period.to_string(),
+                        ],
+                    )
+                } else {
+                    String::new()
+                };
                 let f = vec![FormField {
                     name: "otp".into(),
                     label: bundle.get("otpLabel").to_owned(),
@@ -297,7 +320,7 @@ async fn render_state_page(
                 (
                     "login-otp".to_owned(),
                     title,
-                    String::new(),
+                    instruction,
                     f,
                     bundle.get("doLogIn").to_owned(),
                     String::new(),
@@ -472,6 +495,7 @@ async fn authenticate_page_post(
     Query(query): Query<AuthPageQuery>,
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
+    client_ip: ClientIp,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> Result<Response> {
     let realm = state
@@ -551,7 +575,7 @@ async fn authenticate_page_post(
             .filter(|u| u.enabled)
         else {
             wardkeep_crypto::password::dummy_verify_password(password);
-            let _ = bf.record_failure(&realm, None, "127.0.0.1").await;
+            let _ = bf.record_failure(&realm, None, client_ip.as_deref()).await;
             return render_state_page(
                 &state,
                 &mount,
@@ -564,7 +588,10 @@ async fn authenticate_page_post(
             .await;
         };
 
-        if bf.is_locked(&realm, Some(&user.id), "127.0.0.1").await? {
+        if bf
+            .is_locked(&realm, Some(&user.id), client_ip.as_deref())
+            .await?
+        {
             wardkeep_crypto::password::dummy_verify_password(password);
             return render_state_page(
                 &state,
@@ -581,7 +608,9 @@ async fn authenticate_page_post(
         let creds = state.store.list_credentials(&realm.id, &user.id).await?;
         let Some(pw_cred) = creds.iter().find(|c| c.credential_type == "password") else {
             wardkeep_crypto::password::dummy_verify_password(password);
-            let _ = bf.record_failure(&realm, Some(&user.id), "127.0.0.1").await;
+            let _ = bf
+                .record_failure(&realm, Some(&user.id), client_ip.as_deref())
+                .await;
             return render_state_page(
                 &state,
                 &mount,
@@ -596,7 +625,9 @@ async fn authenticate_page_post(
 
         let outcome = verify_and_maybe_rehash(password, pw_cred)?;
         if !outcome.valid {
-            let _ = bf.record_failure(&realm, Some(&user.id), "127.0.0.1").await;
+            let _ = bf
+                .record_failure(&realm, Some(&user.id), client_ip.as_deref())
+                .await;
             return render_state_page(
                 &state,
                 &mount,
@@ -608,7 +639,8 @@ async fn authenticate_page_post(
             )
             .await;
         }
-        bf.record_success(&realm, &user.id).await?;
+        // The person's counter is cleared only when the whole login completes (in
+        // `advance_or_render` at `Code`), so a known password cannot reset OTP guessing.
         if let Some(new_phc) = outcome.rehashed_phc {
             let mut updated = pw_cred.clone();
             updated.secret_data = new_phc;
@@ -639,6 +671,7 @@ async fn authenticate_page_post(
                 auth_session,
                 current_state,
                 &headers,
+                &client_ip,
             )
             .await;
         }
@@ -658,11 +691,38 @@ async fn authenticate_page_post(
             .unwrap_or_default()
             .trim();
 
+        // A locked person gets the same answer as a wrong code, before any code is checked.
+        if bf
+            .is_locked(&realm, Some(&user.id), client_ip.as_deref())
+            .await?
+        {
+            return render_state_page(
+                &state,
+                &mount,
+                &realm,
+                &auth_session,
+                &current_state,
+                &headers,
+                bundle.get("invalidUserMessage"),
+            )
+            .await;
+        }
+
         if let LoginState::EnrolTotp { .. } = current_state {
-            let new_secret = form
-                .get("totp_secret")
-                .cloned()
-                .unwrap_or_else(|| "enrol-seed-secret-256".into());
+            // The secret is the one the server generated and showed on the enrolment page; a
+            // missing one (page never rendered) re-renders the page, which generates it.
+            let Some(new_secret) = auth_session.pending_totp_secret.clone() else {
+                return render_state_page(
+                    &state,
+                    &mount,
+                    &realm,
+                    &auth_session,
+                    &current_state,
+                    &headers,
+                    "",
+                )
+                .await;
+            };
             let cred = CredentialRecord {
                 id: uuid::Uuid::now_v7().to_string(),
                 realm_id: realm.id.clone(),
@@ -676,6 +736,7 @@ async fn authenticate_page_post(
                     "digits": realm.otp_policy_digits,
                     "period": realm.otp_policy_period,
                     "algorithm": realm.otp_policy_algorithm,
+                    "secretEncoding": "BASE32",
                 })
                 .to_string(),
                 temporary: false,
@@ -689,6 +750,9 @@ async fn authenticate_page_post(
             )?
             .is_none()
             {
+                let _ = bf
+                    .record_failure(&realm, Some(&user.id), client_ip.as_deref())
+                    .await;
                 return render_state_page(
                     &state,
                     &mount,
@@ -701,10 +765,21 @@ async fn authenticate_page_post(
                 .await;
             }
             state.store.upsert_credential(cred).await?;
+            let mut auth_session = auth_session;
+            auth_session.pending_totp_secret = None;
             let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
             let next = transition(current_state, LoginInput::CompleteEnrolTotpOk, &ctx)
                 .map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
-            return advance_or_render(&state, &mount, &realm, auth_session, next, &headers).await;
+            return advance_or_render(
+                &state,
+                &mount,
+                &realm,
+                auth_session,
+                next,
+                &headers,
+                &client_ip,
+            )
+            .await;
         }
 
         let creds = state.store.list_credentials(&realm.id, &user.id).await?;
@@ -720,7 +795,9 @@ async fn authenticate_page_post(
             now_secs,
         )?
         else {
-            let _ = bf.record_failure(&realm, Some(&user.id), "127.0.0.1").await;
+            let _ = bf
+                .record_failure(&realm, Some(&user.id), client_ip.as_deref())
+                .await;
             return render_state_page(
                 &state,
                 &mount,
@@ -759,7 +836,16 @@ async fn authenticate_page_post(
         let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
         let next = transition(current_state, LoginInput::VerifyOtpOk, &ctx)
             .map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
-        return advance_or_render(&state, &mount, &realm, auth_session, next, &headers).await;
+        return advance_or_render(
+            &state,
+            &mount,
+            &realm,
+            auth_session,
+            next,
+            &headers,
+            &client_ip,
+        )
+        .await;
     }
 
     if let LoginState::Consent { ref user_id, .. } = current_state {
@@ -789,7 +875,16 @@ async fn authenticate_page_post(
         let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
         let next = transition(current_state, LoginInput::GrantConsent, &ctx)
             .map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
-        return advance_or_render(&state, &mount, &realm, auth_session, next, &headers).await;
+        return advance_or_render(
+            &state,
+            &mount,
+            &realm,
+            auth_session,
+            next,
+            &headers,
+            &client_ip,
+        )
+        .await;
     }
 
     if let LoginState::OrganizationChoice { ref user_id, .. } = current_state {
@@ -806,7 +901,16 @@ async fn authenticate_page_post(
             &ctx,
         )
         .map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
-        return advance_or_render(&state, &mount, &realm, auth_session, next, &headers).await;
+        return advance_or_render(
+            &state,
+            &mount,
+            &realm,
+            auth_session,
+            next,
+            &headers,
+            &client_ip,
+        )
+        .await;
     }
 
     Err(WardkeepError::BadRequest("unsupported login action".into()))
@@ -819,6 +923,7 @@ async fn advance_or_render(
     mut auth_session: AuthSession,
     next_state: LoginState,
     headers: &HeaderMap,
+    client_ip: &ClientIp,
 ) -> Result<Response> {
     if let LoginState::Code {
         user_id,
@@ -832,6 +937,10 @@ async fn advance_or_render(
             .get_user_by_id(&realm.id, None, &user_id)
             .await?
             .ok_or_else(|| WardkeepError::Unauthorized("user not found".into()))?;
+        // Every required factor passed: the person's failure counter starts over (RI).
+        BruteForceProtector::new(state.store.clone())
+            .record_success(realm, &user.id)
+            .await?;
         let now = Utc::now();
         let sso_id = uuid::Uuid::now_v7().to_string();
         let sso_handle = random_handle_256();
@@ -842,7 +951,7 @@ async fn advance_or_render(
             handle_hash: sha256_hex(&sso_handle),
             user_id: user.id.clone(),
             username: user.username.clone(),
-            ip_address: "127.0.0.1".into(),
+            ip_address: client_ip.for_audit(),
             start: now.timestamp_millis(),
             last_access: now.timestamp_millis(),
             auth_time: now.timestamp(),
@@ -895,7 +1004,7 @@ async fn advance_or_render(
                 client_id: Some(auth_session.client_id),
                 user_id: Some(user.id),
                 session_id: Some(sso_id),
-                ip_address: "127.0.0.1".into(),
+                ip_address: client_ip.for_audit(),
                 error: None,
                 details: BTreeMap::new(),
             })

@@ -10,16 +10,17 @@
 //!   i18n bundles for `en`, `sk`, `cs`, `de`, and `hu` (no literal user-facing strings in templates).
 //! - Outbound e-mail sender via `lettre` over TLS with signed single-use 15-min action links.
 
-pub mod brute_force;
 pub mod email;
 pub mod handlers;
 pub mod i18n;
 pub mod machine;
 
-pub use brute_force::BruteForceProtector;
 pub use email::{EmailSender, SignedActionToken};
 pub use handlers::login_router;
 pub use i18n::{Bundle, SUPPORTED_LOCALES, negotiate_locale};
 pub use machine::{
     FactorRequirement, LoginInput, LoginPolicyContext, LoginState, TransitionError, transition,
 };
+/// The protector lives in `wardkeep-oidc` so the password grant shares it with the login pages.
+pub use wardkeep_oidc::brute_force;
+pub use wardkeep_oidc::brute_force::BruteForceProtector;

@@ -2,7 +2,7 @@
 //! `wardkeep` CLI binary: `serve`, `migrate`, `apply`, `check`, `plan`, `diff`, `export`, `keys rotate` (W1b, W9).
 
 use clap::{Parser, Subcommand};
-use jc_router::Mount;
+use jc_router::{JcRouterBuilder, Mount, MountSpec};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -40,6 +40,10 @@ enum Commands {
         host: String,
         #[arg(long, default_value = "")]
         path_prefix: String,
+        /// Proxy network (CIDR) whose `X-Forwarded-For/-Proto/-Host` headers are trusted; repeat
+        /// for several. Without it the TCP peer is the client address the brute-force counter uses.
+        #[arg(long = "trusted-proxy")]
+        trusted_proxy: Vec<String>,
     },
     /// Run database migrations as `wardkeep_migrate`.
     Migrate {
@@ -237,6 +241,7 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
             scheme,
             host,
             path_prefix,
+            trusted_proxy,
         } => {
             let kek = Kek::from_file(&kek_file).map_err(|_| EXIT_INVALID_INPUT)?;
             let mem_store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek.clone()));
@@ -246,8 +251,13 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
                     .await
                     .map_err(|_| EXIT_INVALID_INPUT)?;
             }
-            let mount = Mount::new("wardkeep", scheme, host, path_prefix)
-                .map_err(|_| EXIT_INVALID_INPUT)?;
+            let mount = Mount::new(
+                "wardkeep",
+                scheme.clone(),
+                host.clone(),
+                path_prefix.clone(),
+            )
+            .map_err(|_| EXIT_INVALID_INPUT)?;
             let state = WardkeepState::new(
                 mem_store,
                 kek,
@@ -255,12 +265,34 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
                 Arc::new(LocalAuthorizer),
             );
             let app = router(state, mount);
+            // Served through the mount router so the client address (trusted proxies honoured)
+            // and the forwarded scheme/host reach every handler (W9, W7 brute force per address).
+            let mut builder = JcRouterBuilder::new(scheme, host);
+            for cidr in &trusted_proxy {
+                let net: ipnet::IpNet = cidr.parse().map_err(|_| EXIT_INVALID_INPUT)?;
+                builder = builder.trust_proxy(net);
+            }
+            let jc = builder
+                .mount(
+                    MountSpec {
+                        module: "wardkeep".into(),
+                        host: None,
+                        path_prefix: (!path_prefix.is_empty()).then_some(path_prefix),
+                    },
+                    app,
+                )
+                .build()
+                .map_err(|_| EXIT_INVALID_INPUT)?;
             let listener = tokio::net::TcpListener::bind(&listen)
                 .await
                 .map_err(|_| EXIT_INVALID_INPUT)?;
-            axum::serve(listener, app)
-                .await
-                .map_err(|_| EXIT_INVALID_INPUT)?;
+            axum::serve(
+                listener,
+                jc.into_axum_router()
+                    .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+            .map_err(|_| EXIT_INVALID_INPUT)?;
             Ok(EXIT_NO_CHANGE)
         }
     }
