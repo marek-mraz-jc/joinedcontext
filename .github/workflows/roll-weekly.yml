@@ -1,0 +1,109 @@
+name: roll-weekly
+
+# The rolling-update proof on a CADENCE, not only on v* tags: the
+# roll-under-suite job — the FULL ETSI suite through the haproxy while dev/rolling-update.sh rolls the two broker1
+# replicas underneath it, postgres mode (shared state + bus=nats) — runs
+# weekly so the "zero-downtime rolling update" README claim is continuously
+# proven, and its badge goes red the week it stops being true. This is the
+# roll job's ONLY home (full.yml's copy was removed);
+# the image build is the shared build-image.yml and shares its type=gha
+# layer cache, so a quiet week rebuilds only the antares-* crates.
+
+on:
+  schedule:
+    # Tue 10:17 UTC — after the dailies' 02-05 UTC window and 4 h after
+    # external-suites, so two walls never queue at once (T-5639).
+    - cron: "17 10 * * 2"
+  workflow_dispatch:
+
+concurrency:
+  group: roll-weekly
+  cancel-in-progress: false
+
+env:
+  MEM_LIMIT_MB: 350
+
+# Every job names its own grants; one without them reads the repository and nothing more.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    permissions:
+      contents: read
+    name: Build the image under test
+    uses: ./.github/workflows/build-image.yml
+    with:
+      arch: amd64
+
+  etsi-roll:
+    # The suite has no retries and asserts exact single responses, so ANY
+    # red TP is a real drain bug.
+    name: roll-under-suite (postgres)
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+
+      - name: Load the image built for this run
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: antares-image
+
+      - run: docker load < antares-image.tgz
+
+      - name: Full suite through the LB while the brokers roll
+        env:
+          STORE: postgres
+          HA: "1"
+          ROLL_DURING_RUN: "1"
+          SKIP_BUILD: "1"
+          STOP_ON_ERROR: "0"
+          CALLBACK_HOST: localhost
+          RESULTS_DIR: results/roll-postgres
+        run: ./dev/etsi-pipeline.sh || true
+
+      - name: Upload roll results
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ETSI-roll-weekly
+          path: |
+            results/roll-postgres/run-summary.md
+            results/roll-postgres/gate-status.txt
+            results/roll-postgres/failures.csv
+            results/roll-postgres/roll-loop.log
+            results/roll-postgres/**/log.html
+            results/roll-postgres/**/report.html
+          retention-days: 14
+
+      - name: Gate — green under continuous rolls
+        run: |
+          gate=$(cat results/roll-postgres/gate-status.txt 2>/dev/null || echo MISSING)
+          echo "roll gate = $gate"
+          cat results/roll-postgres/run-summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          [ "$gate" = PASS ]
+
+  alarm:
+    # The week the zero-downtime claim stops being true, an issue says so —
+    # not just a badge (the shared failure-issue action, deduped).
+    name: File an issue on a red scheduled run
+    if: failure() && github.event_name == 'schedule'
+    needs: [build, etsi-roll]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/failure-issue
+        with:
+          title: roll-under-suite drill failed
+          body: >-
+            The weekly rolling-update drill went red — the suite has no
+            retries, so this is a real drain/exactly-once bug. Start with
+            failures.csv and roll-loop.log in the ETSI-roll-weekly artifact.

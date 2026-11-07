@@ -1,0 +1,108 @@
+name: sweep
+
+# The weekly sweep (T-6151, owner 2026-10-30): every check of workspace.yml
+# that left the per-push gate so a push reaches dev in minutes. Each feature
+# alone and the binary size per surface feature, no-default-features and the
+# file store, MSRV, the shared crates standalone, package and semver, the
+# OData CSDL schemas, the wasm32 and fuzz builds, the vanilla symbol gate, the
+# new-surface smoke, the fuzz smoke of every target, the SBOM, cargo-audit
+# and cargo-deny. Nothing was dropped and no threshold moved: these checks
+# run here, on
+#   - schedule: once a week on dev, and only when dev moved since the last
+#     green sweep (a sweep of the same commit proves nothing new);
+#   - dispatch with `sha`: the Antares commit a prod release pins. The
+#     deployment's release gate (scripts/standards-gate.py, stage
+#     antares-sweep) refuses a release whose broker commit has no green run
+#     of this workflow, dispatches one when there is none, and names the run
+#     it relied on in its record.
+# A red scheduled run files an issue (.github/actions/failure-issue).
+#
+# The run name carries the commit, so the release gate finds a sweep by it.
+run-name: sweep ${{ inputs.sha || github.sha }}
+
+on:
+  schedule:
+    - cron: "17 6 * * 5" # Friday 06:17 UTC, the heavy weekly of Friday (T-5639)
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Antares commit on dev to sweep (7-40 hex; empty: the tip of the ref)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# one sweep per commit at a time; a sweep is never cancelled by a newer one
+concurrency:
+  group: sweep-${{ inputs.sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  commit:
+    name: Commit to sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      sha: ${{ steps.pick.outputs.sha }}
+      run: ${{ steps.pick.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WANT: ${{ inputs.sha }}
+        run: |
+          set -eu
+          want=${WANT:-$GITHUB_SHA}
+          # the input reaches git and the run name only: hex, 7 to 40 digits
+          if ! printf '%s' "$want" | grep -qxE '[0-9a-f]{7,40}'; then
+            echo "::error::sha '$want' is not 7-40 lowercase hex digits"; exit 1
+          fi
+          sha=$(git rev-parse --verify -q "$want^{commit}") || { echo "::error::no commit $want in this repository"; exit 1; }
+          # a release pins a commit dev carried; anything else is not this repository's code under test
+          git merge-base --is-ancestor "$sha" origin/dev || { echo "::error::$sha is not on dev"; exit 1; }
+          run=true
+          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+            green=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/sweep.yml/runs?status=success&per_page=50" \
+              --jq "[.workflow_runs[] | select(.display_title == \"sweep $sha\") | .id] | first // empty") || green=
+            if [ -n "$green" ]; then
+              run=false
+              echo "::notice title=sweep skipped::dev has not moved since green sweep run $green of $sha"
+            fi
+          fi
+          { echo "sha=$sha"; echo "run=$run"; } | tee -a "$GITHUB_OUTPUT"
+
+  workspace:
+    name: Sweep
+    needs: commit
+    if: needs.commit.outputs.run == 'true'
+    uses: ./.github/workflows/workspace.yml
+    with:
+      scope: sweep
+      ref: ${{ needs.commit.outputs.sha }}
+      # leave the account's job slots to the trains (T-5639, T-6046)
+      max_parallel: 6
+
+  issue:
+    name: File an issue on failure
+    needs: [commit, workspace]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/actions
+      - uses: ./.github/actions/failure-issue
+        with:
+          title: Weekly sweep failed
+          body: "The weekly sweep (sweep.yml, T-6151) went red on ${{ needs.commit.outputs.sha }}: a check that left the per-push gate failed on dev."

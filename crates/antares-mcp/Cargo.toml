@@ -1,0 +1,64 @@
+[package]
+name = "antares-mcp"
+description = "The MCP surface of a view: /x/views/{view}/mcp, its read tools and resources over the view's operations (T-3442, ADR-0027)."
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+
+# ADR-0027 section 2, surfaces-threat-model 9.3: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "surface"
+feature = "mcp"
+
+[dependencies]
+antares-ops = { workspace = true }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+axum = { version = "0.8", default-features = false, features = ["json"] }
+metrics = { version = "0.24", default-features = false }
+rmcp = { version = "=3.5.1", default-features = false, features = ["request-state", "server", "transport-streamable-http-server"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+uuid = { version = "1", default-features = false, features = ["v4"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "sync", "time"] }
+
+[features]
+# `antares_mcp::fuzzing`: the argument and cursor parsers, reachable by the
+# fuzz targets only; never on in a broker build.
+fuzzing = []
+
+[dev-dependencies]
+antares-ops = { workspace = true, features = ["test-kit"] }
+axum = { version = "0.8", default-features = false }
+http-body-util = { version = "0.1", default-features = false }
+tokio = { version = "1", default-features = false, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+tracing-subscriber = { workspace = true }
+
+[[bench]]
+name = "call"
+harness = false
+
+# surfaces-threat-model 10.1: the full table, not the workspace's.
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"

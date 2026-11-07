@@ -1,0 +1,26 @@
+{
+  "data": {
+    "feed_contact_email": "open@hel.example",
+    "languages": [
+      "en",
+      "fi",
+      "sv"
+    ],
+    "name": [
+      {
+        "language": "en",
+        "text": "City bikes"
+      },
+      {
+        "language": "fi",
+        "text": "Kaupunkipyörät"
+      }
+    ],
+    "opening_hours": "Apr 1-Oct 31",
+    "system_id": "hsl-citybikes",
+    "timezone": "Europe/Helsinki"
+  },
+  "last_updated": "2026-10-23T10:00:00Z",
+  "ttl": 60,
+  "version": "3.0"
+}

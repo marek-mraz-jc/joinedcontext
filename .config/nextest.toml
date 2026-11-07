@@ -1,0 +1,36 @@
+# cargo-nextest config. The `ci` profile is the ONE thing that makes the
+# unit half of the test story machine-readable: every workspace/feature
+# config writes a JUnit file, dev/unit-junit.sh keeps it under a per-config
+# name, and dev/unit-report-site.py folds them all into one page next to the
+# ETSI report. Robot HTML stays the drill-down for the ETSI half.
+
+[profile.ci]
+# A red config must still report EVERY test it ran, otherwise the page shows
+# "12 passed" for a run that stopped at the first failure and reads green-ish.
+fail-fast = false
+failure-output = "immediate-final"
+status-level = "fail"
+
+[profile.ci.junit]
+# relative to target/nextest/ci/
+path = "junit.xml"
+# without this a failure's <failure> body is empty and the report page has
+# nothing to show but the test name
+store-success-output = false
+store-failure-output = true
+
+# nextest runs each test in its OWN PROCESS, so the in-process serialization
+# these integration suites carry (nats_e2e's SERIAL mutex, pg_temporal's
+# PARTITION_DDL lock) serializes nothing here — and the pentest/outbox tests
+# assert EXCLUSIVE database state that a concurrently running broker's outbox
+# drain legitimately destroys — it publishes the rows the sigkill drill and
+# the RLS pentest have just seeded, out from under them. One serial group
+# restores the sequencing `cargo test`'s one-binary-at-a-time execution used
+# to provide. `ws` is here because its api pods drain the same outbox (T-4916).
+# Defined on the default profile; ci inherits.
+[test-groups]
+db-exclusive = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'binary(nats_e2e) or binary(pg_rls_pentest) or binary(pg_outbox) or binary(pg_temporal) or binary(pg_doc) or binary(pg_entity) or binary(pg) or binary(ws)'
+test-group = 'db-exclusive'

@@ -1,0 +1,398 @@
+{
+  "id": "https://uri.etsi.org/ngsi-ld/default-context",
+  "name": "odata-compliance",
+  "prefixes": {
+    "ngsild": {
+      "prefix_prefix": "ngsild",
+      "prefix_reference": "https://uri.etsi.org/ngsi-ld/default-context/"
+    }
+  },
+  "default_prefix": "ngsild",
+  "classes": {
+    "Products": {
+      "slots": [
+        "ID",
+        "Name",
+        "Description",
+        "Price",
+        "Rating",
+        "Temperature",
+        "Quantity",
+        "Weight",
+        "Data",
+        "ReleaseDate",
+        "OpenTime",
+        "ShippingTime",
+        "ProcessingTime",
+        "Offset",
+        "CategoryID",
+        "Status",
+        "Version",
+        "CreatedAt",
+        "SerialNumber",
+        "ProductType",
+        "SpecialProperty",
+        "SpecialFeature",
+        "ShippingAddress",
+        "Dimensions",
+        "Location",
+        "Route",
+        "Area",
+        "Category",
+        "Descriptions",
+        "RelatedProducts"
+      ],
+      "slot_usage": {
+        "Name": {
+          "description": "Product display name",
+          "required": true
+        },
+        "Description": {
+          "description": "Detailed product description"
+        },
+        "Price": {
+          "required": true
+        }
+      }
+    },
+    "Categories": {
+      "slots": [
+        "ID",
+        "Name",
+        "Description"
+      ]
+    },
+    "ProductDescriptions": {
+      "slots": [
+        "ProductID",
+        "LanguageKey",
+        "Description",
+        "LongText",
+        "CustomName",
+        "Product"
+      ],
+      "slot_usage": {
+        "Description": {
+          "required": true
+        }
+      }
+    },
+    "MediaItems": {
+      "slots": [
+        "ID",
+        "Name",
+        "ContentType",
+        "Size"
+      ]
+    },
+    "ReadOnlyItems": {
+      "slots": [
+        "ID",
+        "Name"
+      ],
+      "annotations": {
+        "odata_insertable": {
+          "tag": "odata_insertable",
+          "value": "false"
+        },
+        "odata_updatable": {
+          "tag": "odata_updatable",
+          "value": "false"
+        },
+        "odata_deletable": {
+          "tag": "odata_deletable",
+          "value": "false"
+        }
+      }
+    },
+    "DecimalSamples": {
+      "slots": [
+        "ID",
+        "Name",
+        "Amount"
+      ]
+    },
+    "Address": {
+      "slots": [
+        "Street",
+        "City",
+        "State",
+        "PostalCode",
+        "Country"
+      ]
+    },
+    "DimensionsType": {
+      "slots": [
+        "Length",
+        "Width",
+        "Height",
+        "Unit"
+      ]
+    }
+  },
+  "slots": {
+    "ID": {
+      "range": "string",
+      "identifier": true,
+      "annotations": {
+        "edm_type": {
+          "tag": "edm_type",
+          "value": "Edm.Guid"
+        }
+      }
+    },
+    "Name": {
+      "range": "string"
+    },
+    "Description": {
+      "range": "string"
+    },
+    "Price": {
+      "range": "float"
+    },
+    "Rating": {
+      "range": "integer",
+      "annotations": {
+        "edm_type": {
+          "tag": "edm_type",
+          "value": "Edm.Byte"
+        }
+      }
+    },
+    "Temperature": {
+      "range": "integer",
+      "annotations": {
+        "edm_type": {
+          "tag": "edm_type",
+          "value": "Edm.SByte"
+        }
+      }
+    },
+    "Quantity": {
+      "range": "integer",
+      "annotations": {
+        "edm_type": {
+          "tag": "edm_type",
+          "value": "Edm.Int16"
+        }
+      }
+    },
+    "Weight": {
+      "range": "float",
+      "annotations": {
+        "edm_type": {
+          "tag": "edm_type",
+          "value": "Edm.Single"
+        }
+      }
+    },
+    "Data": {
+      "range": "string",
+      "annotations": {
+        "edm_type": {
+          "tag": "edm_type",
+          "value": "Edm.Binary"
+        }
+      }
+    },
+    "ReleaseDate": {
+      "range": "date"
+    },
+    "OpenTime": {
+      "range": "time"
+    },
+    "ShippingTime": {
+      "range": "string",
+      "annotations": {
+        "edm_type": {
+          "tag": "edm_type",
+          "value": "Edm.Duration"
+        }
+      }
+    },
+    "ProcessingTime": {
+      "range": "string",
+      "annotations": {
+        "edm_type": {
+          "tag": "edm_type",
+          "value": "Edm.Duration"
+        }
+      }
+    },
+    "Offset": {
+      "range": "string",
+      "annotations": {
+        "edm_type": {
+          "tag": "edm_type",
+          "value": "Edm.Duration"
+        }
+      }
+    },
+    "CategoryID": {
+      "range": "string",
+      "annotations": {
+        "edm_type": {
+          "tag": "edm_type",
+          "value": "Edm.Guid"
+        }
+      }
+    },
+    "Status": {
+      "range": "integer",
+      "annotations": {
+        "edm_type": {
+          "tag": "edm_type",
+          "value": "Edm.Int32"
+        }
+      }
+    },
+    "Version": {
+      "range": "integer"
+    },
+    "CreatedAt": {
+      "range": "datetime",
+      "annotations": {
+        "odata_computed": {
+          "tag": "odata_computed",
+          "value": "true"
+        }
+      }
+    },
+    "SerialNumber": {
+      "range": "string",
+      "annotations": {
+        "odata_immutable": {
+          "tag": "odata_immutable",
+          "value": "true"
+        }
+      }
+    },
+    "ProductType": {
+      "range": "string",
+      "annotations": {
+        "odata_immutable": {
+          "tag": "odata_immutable",
+          "value": "true"
+        }
+      }
+    },
+    "SpecialProperty": {
+      "range": "string"
+    },
+    "SpecialFeature": {
+      "range": "string"
+    },
+    "ShippingAddress": {
+      "range": "Address",
+      "inlined": true
+    },
+    "Dimensions": {
+      "range": "DimensionsType",
+      "inlined": true
+    },
+    "Street": {
+      "range": "string"
+    },
+    "City": {
+      "range": "string"
+    },
+    "State": {
+      "range": "string"
+    },
+    "PostalCode": {
+      "range": "string"
+    },
+    "Country": {
+      "range": "string"
+    },
+    "Length": {
+      "range": "float"
+    },
+    "Width": {
+      "range": "float"
+    },
+    "Height": {
+      "range": "float"
+    },
+    "Unit": {
+      "range": "string"
+    },
+    "ProductID": {
+      "range": "string",
+      "annotations": {
+        "edm_type": {
+          "tag": "edm_type",
+          "value": "Edm.Guid"
+        }
+      }
+    },
+    "LanguageKey": {
+      "range": "string"
+    },
+    "LongText": {
+      "range": "string"
+    },
+    "CustomName": {
+      "range": "string"
+    },
+    "ContentType": {
+      "range": "string"
+    },
+    "Size": {
+      "range": "integer"
+    },
+    "Amount": {
+      "range": "decimal"
+    },
+    "Category": {
+      "range": "Categories",
+      "annotations": {
+        "odata_referential_constraint": {
+          "tag": "odata_referential_constraint",
+          "value": "CategoryID"
+        }
+      }
+    },
+    "Descriptions": {
+      "range": "ProductDescriptions",
+      "multivalued": true
+    },
+    "RelatedProducts": {
+      "range": "Products",
+      "multivalued": true
+    },
+    "Product": {
+      "range": "Products",
+      "annotations": {
+        "odata_referential_constraint": {
+          "tag": "odata_referential_constraint",
+          "value": "ProductID"
+        }
+      }
+    },
+    "Location": {
+      "annotations": {
+        "ngsi_ld_kind": {
+          "tag": "ngsi_ld_kind",
+          "value": "GeoProperty"
+        }
+      }
+    },
+    "Route": {
+      "annotations": {
+        "ngsi_ld_kind": {
+          "tag": "ngsi_ld_kind",
+          "value": "GeoProperty"
+        }
+      }
+    },
+    "Area": {
+      "annotations": {
+        "ngsi_ld_kind": {
+          "tag": "ngsi_ld_kind",
+          "value": "GeoProperty"
+        }
+      }
+    }
+  }
+}

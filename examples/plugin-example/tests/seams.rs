@@ -1,0 +1,305 @@
+// SPDX-License-Identifier: EUPL-1.2
+//! The three seams the driver contract does not cover: the HTTP surface,
+//! the notification binding, and the store standing behind a live
+//! `AppState`. Everything here is exercised through the broker's own
+//! router, so a seam that changes shape breaks this file rather than
+//! silently leaving the plugin behind.
+
+use antares_api::AppState;
+use antares_model::TenantId;
+use antares_notifier::NotificationSink;
+use antares_plugin_example::{ExampleStore, ExampleSurface, MemorySink};
+use antares_store::{CurrentStateDriver, Kind};
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use http_body_util::BodyExt;
+use serde_json::{json, Value};
+use std::sync::Arc;
+use tower::ServiceExt;
+
+fn state() -> (AppState, Arc<ExampleStore>) {
+    let store = Arc::new(ExampleStore::new());
+    let st = AppState::with_drivers(
+        "plugin".into(),
+        store.clone(),
+        store.clone(),
+        antares_plugin_example::NAME,
+    )
+    .with_surface(Box::new(ExampleSurface))
+    .expect("/x/example is a reserved prefix");
+    (st, store)
+}
+
+async fn get_as(st: &AppState, path: &str, tenant: Option<&str>) -> (StatusCode, String) {
+    let mut req = Request::get(path);
+    if let Some(t) = tenant {
+        req = req.header("NGSILD-Tenant", t);
+    }
+    let resp = antares_api::router(st.clone())
+        .oneshot(req.body(Body::empty()).expect("req"))
+        .await
+        .expect("resp");
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.expect("body").to_bytes();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// A driver from outside the workspace backs a live `AppState`, and
+/// `/q/health` names it on both seams — the state carries what its store is
+/// called, never an enumeration of the built-in ones.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_plugin_driver_backs_a_live_state() {
+    let (st, _) = state();
+    let (code, body) = get_as(&st, "/q/health", None).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let v: Value = serde_json::from_str(&body).expect("health json");
+    assert_eq!(v["store"], "example", "{v}");
+    assert_eq!(v["temporal"], "example", "one instance serves both: {v}");
+    assert_eq!(
+        v["surfaces"]["example"]["prefix"], "/x/example",
+        "the surface reports itself: {v}"
+    );
+}
+
+/// 6.3.14: the surface answers for the tenant that asked, and for no other.
+/// A surface reading a default tenant instead of the request's would report
+/// one deployment's data to another.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_surface_answers_only_for_the_requesting_tenant() {
+    let (st, store) = state();
+    let (a, b) = (
+        TenantId::new("plugintenanta").expect("tenant"),
+        TenantId::new("plugintenantb").expect("tenant"),
+    );
+    for i in 0..3 {
+        store
+            .create(
+                &a,
+                Kind::Entity,
+                &format!("urn:ngsi-ld:Seam:a{i}"),
+                json!({"id": format!("urn:ngsi-ld:Seam:a{i}")}),
+            )
+            .await
+            .expect("create");
+    }
+    store
+        .create(
+            &b,
+            Kind::Entity,
+            "urn:ngsi-ld:Seam:b0",
+            json!({"id": "urn:ngsi-ld:Seam:b0"}),
+        )
+        .await
+        .expect("create");
+
+    let count = |body: &str| -> Value { serde_json::from_str(body).expect("json") };
+    let (code, body) = get_as(&st, "/x/example/entities/count", Some(a.as_str())).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(count(&body)["entities"], 3, "{body}");
+    assert_eq!(count(&body)["tenant"], a.as_str(), "{body}");
+
+    let (code, body) = get_as(&st, "/x/example/entities/count", Some(b.as_str())).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(
+        count(&body)["entities"],
+        1,
+        "the other tenant's three rows are not this tenant's: {body}"
+    );
+
+    // No header at all is the default tenant, which holds nothing here.
+    let (code, body) = get_as(&st, "/x/example/entities/count", None).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(count(&body)["entities"], 0, "{body}");
+}
+
+/// A repeated `NGSILD-Tenant` reaches the surface as the error the spec
+/// mandates, not as a silently chosen first value: the surface validates
+/// through the same helper every NGSI-LD handler uses.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_repeated_tenant_header_is_refused_at_the_surface() {
+    let (st, _) = state();
+    let req = Request::get("/x/example/entities/count")
+        .header("NGSILD-Tenant", "one")
+        .header("NGSILD-Tenant", "two")
+        .body(Body::empty())
+        .expect("req");
+    let resp = antares_api::router(st.clone())
+        .oneshot(req)
+        .await
+        .expect("resp");
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+/// 5.2.15 / 5.8.1.4: a binding validates its own endpoints when the
+/// subscription is created. `memory://<name>` is the whole grammar this
+/// sink serves; anything else is `BadRequestData`, never a delivery-time
+/// surprise.
+#[test]
+fn the_binding_validates_its_endpoints_up_front() {
+    let sink = MemorySink::new();
+    assert_eq!(sink.schemes(), &["memory"]);
+    sink.parse_endpoint("memory://inbox", &[])
+        .expect("memory://<name> is the shape this sink serves");
+    for bad in ["memory://", "memory:/inbox", "http://a.b/c", ""] {
+        assert!(
+            sink.parse_endpoint(bad, &[]).is_err(),
+            "{bad:?} is not an endpoint this sink can deliver to"
+        );
+    }
+}
+
+/// A sink that opens no socket says so, and that is the ONLY way the
+/// egress guard is skipped — a binding that stays silent about it is
+/// policed like every network one.
+#[test]
+fn a_socketless_binding_declares_itself() {
+    assert!(
+        !MemorySink::new().network(),
+        "this sink keeps notifications in memory; it opens nothing"
+    );
+}
+
+/// The store's ranges must hold for any id the seam accepts, not for the
+/// alphabet the demo happens to use. A tenant's rows of one kind are read as
+/// a range over `(tenant, kind, id)`, and an upper bound written as the
+/// largest id anyone expects is a bound some id sorts above: that row is
+/// stored, retrievable by id, and invisible to every listing, query and page
+/// — a silent partial answer, which is the one thing a driver may never give.
+#[tokio::test]
+async fn a_row_is_listed_whatever_its_id_sorts_next_to() {
+    let store = ExampleStore::new();
+    let t = TenantId::new("pluginrange").expect("tenant");
+    let ids = [
+        "urn:ngsi-ld:Seam:plain",
+        "\u{10FFFF}",
+        "\u{10FFFF}\u{10FFFF}",
+        "\u{10FFFF}z",
+        "\u{fffd}",
+    ];
+    for id in ids {
+        store
+            .create(&t, Kind::Entity, id, json!({"id": id}))
+            .await
+            .expect("create");
+        assert!(
+            store
+                .get(&t, Kind::Entity, id)
+                .await
+                .expect("get")
+                .is_some(),
+            "{id:?} is stored"
+        );
+    }
+
+    let listed = store.list(&t, Kind::Entity).await.expect("list").len();
+    assert_eq!(listed, ids.len(), "every stored row is listed");
+
+    let mut walked = 0;
+    let mut after: Option<String> = None;
+    loop {
+        let page = store
+            .list_page(&t, Kind::Entity, after.as_deref(), 2)
+            .await
+            .expect("page");
+        if page.is_empty() {
+            break;
+        }
+        walked += page.len();
+        after = page
+            .last()
+            .and_then(|d| d["id"].as_str())
+            .map(str::to_owned);
+    }
+    assert_eq!(walked, ids.len(), "the cursor walk sees every row too");
+
+    let purged = store.purge_tenant(&t).await.expect("purge");
+    assert!(purged);
+    assert_eq!(
+        store.list(&t, Kind::Entity).await.expect("list").len(),
+        0,
+        "and the purge leaves nothing behind"
+    );
+}
+
+/// DM-97 (owner 2026-10-18), 4.22: an Entity its own `expiresAt` ends takes
+/// its history with it, as the built-in stores do; one without keeps its own.
+#[tokio::test]
+async fn an_expired_entity_goes_with_its_history() {
+    let store = ExampleStore::new();
+    let t = TenantId::new("pluginexpiry").expect("tenant");
+    for (id, expires) in [
+        ("urn:ngsi-ld:Seam:gone", Some("2000-01-01T00:00:00Z")),
+        ("urn:ngsi-ld:Seam:stays", None),
+    ] {
+        let mut doc = json!({"id": id, "type": ["Seam"]});
+        if let Some(at) = expires {
+            doc["expiresAt"] = json!(at);
+        }
+        store
+            .create(&t, Kind::Entity, id, doc)
+            .await
+            .expect("create");
+        let hist = json!({"id": id, "type": ["Seam"], "speed": [
+            {"type": "Property", "value": 1, "observedAt": "2026-01-01T00:00:00Z"}]});
+        store
+            .create(&t, Kind::Temporal, id, hist)
+            .await
+            .expect("history");
+    }
+    assert!(store.sweep_expired().await >= 1);
+    for kind in [Kind::Entity, Kind::Temporal] {
+        let gone = store.get(&t, kind, "urn:ngsi-ld:Seam:gone").await;
+        assert!(
+            gone.expect("store").is_none(),
+            "{kind:?} of the expired one"
+        );
+    }
+    let kept = store
+        .get(&t, Kind::Temporal, "urn:ngsi-ld:Seam:stays")
+        .await;
+    assert!(
+        kept.expect("store").is_some(),
+        "the other keeps its history"
+    );
+}
+
+/// T-4665: `@provenance` rides each instance from the API to the temporal
+/// store, which keeps none of it as data: no read answers it, whether it came
+/// by an append or by a rewrite of the document (a delete's null instance).
+#[tokio::test]
+async fn provenance_is_never_kept_as_history() {
+    use antares_store::TemporalDriver;
+    let store = ExampleStore::new();
+    let t = TenantId::new("pluginprov").expect("tenant");
+    let id = "urn:ngsi-ld:Seam:prov";
+    let doc = json!({"id": id, "type": ["Seam"]});
+    CurrentStateDriver::create(&store, &t, Kind::Entity, id, doc.clone())
+        .await
+        .expect("create");
+    let inst = json!({"type": "Property", "value": 1, "instanceId": "urn:i:1",
+        "@provenance": {"operation": "create"}});
+    store
+        .temporal_append(&t, id, &doc, &json!({"speed": [inst]}))
+        .await
+        .expect("append");
+    TemporalDriver::mutate_boxed(
+        &store,
+        &t,
+        id,
+        Box::new(|d| {
+            let deleted = json!({"type": "Property", "value": "urn:ngsi-ld:null",
+                "instanceId": "urn:i:2", "@provenance": {"operation": "delete"}});
+            d["speed"].as_array_mut().ok_or(())?.push(deleted);
+            Ok(())
+        }),
+    )
+    .await
+    .expect("mutate");
+    let kept = TemporalDriver::get(&store, &t, id).await.expect("get");
+    let kept = kept.expect("history");
+    assert_eq!(kept["speed"].as_array().map(Vec::len), Some(2));
+    assert!(
+        !kept.to_string().contains("@provenance"),
+        "provenance is no attribute member: {kept}"
+    );
+}

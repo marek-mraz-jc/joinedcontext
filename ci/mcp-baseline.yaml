@@ -1,0 +1,52 @@
+# Expected failures of @modelcontextprotocol/conformance 0.1.16 against
+# /x/views/all/mcp (surfaces-conformance.md 3.2, job mcp-conformance in
+# .github/workflows/surfaces-conformance.yml). Every entry names why the
+# broker's view MCP is not the server that scenario expects, and the
+# scenario's upstream source. A scenario that starts passing turns the job
+# red until its entry goes (the tool's stale-baseline rule).
+server:
+  # The scenario calls a fixture tool of the SDKs' conformance test server
+  # (test_simple_text, test_image_content, ...): the broker's tools are the
+  # view's NGSI-LD operations, so "unknown tool" is the right answer.
+  # https://github.com/modelcontextprotocol/conformance/blob/v0.1.16/src/scenarios/server/tools.ts
+  - tools-call-simple-text
+  - tools-call-image
+  - tools-call-audio
+  - tools-call-embedded-resource
+  - tools-call-mixed-content
+  - tools-call-error
+  - tools-call-with-progress
+  - tools-call-sampling
+  - tools-call-elicitation
+  # The same, with the fixture tools of the elicitation scenarios.
+  # https://github.com/modelcontextprotocol/conformance/blob/v0.1.16/src/scenarios/server/elicitation-defaults.ts
+  - elicitation-sep1034-defaults
+  # https://github.com/modelcontextprotocol/conformance/blob/v0.1.16/src/scenarios/server/elicitation-enums.ts
+  - elicitation-sep1330-enums
+  # The broker declares no `logging` capability: its log lines go to the
+  # process log (docs/src/mcp.md section 8), never to the client, so
+  # logging/setLevel is -32601.
+  # https://github.com/modelcontextprotocol/conformance/blob/v0.1.16/src/scenarios/server/tools.ts and https://github.com/modelcontextprotocol/conformance/blob/v0.1.16/src/scenarios/server/lifecycle.ts
+  - logging-set-level
+  - tools-call-with-logging
+  # The broker serves no prompts (prompts/list answers an empty list).
+  # https://github.com/modelcontextprotocol/conformance/blob/v0.1.16/src/scenarios/server/prompts.ts
+  - prompts-get-simple
+  - prompts-get-with-args
+  - prompts-get-embedded-resource
+  - prompts-get-with-image
+  # Fixture resources (test://static-text, ...): the broker's resources are
+  # the view's types and Entities (ngsi-ld://{view}/...).
+  # https://github.com/modelcontextprotocol/conformance/blob/v0.1.16/src/scenarios/server/resources.ts
+  - resources-read-text
+  - resources-read-binary
+  - resources-templates-read
+  # Legacy resources/subscribe is not served (mcp-surface.md D-8): resource
+  # subscriptions go through subscriptions/listen of 2026-07-28 (T-3515).
+  # https://github.com/modelcontextprotocol/conformance/blob/v0.1.16/src/scenarios/server/resources.ts
+  - resources-subscribe
+  - resources-unsubscribe
+  # The endpoint keeps no session (mcp-surface.md D-8, stateless), so the
+  # scenario's Mcp-Session-Id never comes.
+  # https://github.com/modelcontextprotocol/conformance/blob/v0.1.16/src/scenarios/server/sse-multiple-streams.ts
+  - server-sse-multiple-streams

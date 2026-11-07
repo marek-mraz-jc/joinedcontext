@@ -1,0 +1,187 @@
+{
+ "about": "V3 drives into A and shows more under the per-area rule. Temporally (ADR-0023 rule 11), V3's speed and its old location were recorded outside A, so only its new location and vehicleType instances show.",
+ "view": {
+  "selector": [
+   "Vehicle"
+  ],
+  "rules": [
+   {
+    "types": [
+     "Vehicle"
+    ],
+    "geoQ": {
+     "georel": "within",
+     "geometry": "Polygon",
+     "coordinates": [
+      [
+       [
+        0,
+        0
+       ],
+       [
+        10,
+        0
+       ],
+       [
+        10,
+        10
+       ],
+       [
+        0,
+        10
+       ],
+       [
+        0,
+        0
+       ]
+      ]
+     ]
+    },
+    "attributes": [
+     "location",
+     "speed",
+     "vehicleType"
+    ]
+   },
+   {
+    "types": [
+     "Vehicle"
+    ],
+    "attributes": [
+     "vehicleType"
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "urn:ngsi-ld:Vehicle:V1": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V2": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V4": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V7": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V8": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V3": [
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V5": [
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V6": [
+   "vehicleType"
+  ]
+ },
+ "steps": [
+  {
+   "set": "urn:ngsi-ld:Vehicle:V3",
+   "attrs": {
+    "location": {
+     "type": "GeoProperty",
+     "value": {
+      "type": "Point",
+      "coordinates": [
+       3,
+       7
+      ]
+     }
+    }
+   },
+   "expect": {
+    "urn:ngsi-ld:Vehicle:V1": [
+     "location",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V2": [
+     "location",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V3": [
+     "location",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V4": [
+     "location",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V7": [
+     "location",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V8": [
+     "location",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V5": [
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V6": [
+     "vehicleType"
+    ]
+   },
+   "temporal": {
+    "urn:ngsi-ld:Vehicle:V1": [
+     "location",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V2": [
+     "location",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V3": [
+     "location",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V4": [
+     "location",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V7": [
+     "location",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V8": [
+     "location",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V5": [
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V6": [
+     "vehicleType"
+    ]
+   }
+  }
+ ],
+ "caller": {
+  "x-jc-roles": "public"
+ }
+}

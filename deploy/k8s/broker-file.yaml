@@ -1,0 +1,93 @@
+# `file`-mode broker: ONE replica, strategy Recreate — HARD-CODED, not a
+# preference: redb takes an exclusive file lock per volume
+# and refuses a second opener, so a RollingUpdate would spawn a pod that
+# dies on "Database already open. Cannot acquire lock." forever. The restart
+# gap is the price of this rung and it is small: rebuild measured at 257k
+# entities/s + ~1 s process start.
+apiVersion: v1
+kind: Service
+metadata:
+  name: antares-file
+  namespace: antares
+spec:
+  selector: { app: antares-file }
+  ports:
+    - { port: 9090 }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: antares-file-data
+  namespace: antares
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 5Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: antares-file
+  namespace: antares
+spec:
+  replicas: 1 # the redb lock makes >1 structurally impossible
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: antares-file }
+  template:
+    metadata:
+      labels: { app: antares-file }
+    spec:
+      # The `antares*` Services make kubelet inject ANTARES_PORT/
+      # ANTARES_SERVICE_* into every pod — fatal under the unknown-key
+      # check. Belt at main.rs skips the injected shapes; this is braces.
+      enableServiceLinks: false
+      # Must exceed ANTARES_DRAIN_DELAY_MS + ANTARES_DRAIN_DEADLINE_SECS,
+      # or the kubelet turns a drain into a kill.
+      terminationGracePeriodSeconds: 30
+      # Runtime hardening, the same set the postgres-mode manifest carries:
+      # non-root (the image is uid 65532), read-only rootfs — file mode
+      # writes to the PVC at /data and nowhere else, with /tmp a tmpfs — all
+      # capabilities dropped, no privilege escalation.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: antares
+          image: antares-local:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          env:
+            - { name: ANTARES_STORE, value: file }
+            - { name: ANTARES_DATA_DIR, value: /data }
+            # Paired with the memory limit below, as in the postgres-mode
+            # manifest: one forwarded read in flight measures about 1.8 MiB.
+            - { name: ANTARES_MAX_CONNECTIONS, value: "512" }
+          ports:
+            - { containerPort: 9090 }
+          readinessProbe:
+            httpGet: { path: /q/ready, port: 9090 }
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: { path: /q/health, port: 9090 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            # One pod runs every role, so it carries the widest measured
+            # envelope: 786 MiB at 500 updates/s against 10 000
+            # subscriptions, 809 MiB at the highest federated rate answered
+            # within a second.
+            requests: { memory: 128Mi, cpu: 100m }
+            limits: { memory: 1Gi }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: antares-file-data }
+        - name: tmp
+          emptyDir: {}

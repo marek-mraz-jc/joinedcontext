@@ -1,0 +1,36 @@
+{
+  "data": {
+    "stations": [
+      {
+        "capacity": 10,
+        "lat": 60.169,
+        "lon": 24.9316,
+        "name": [
+          {
+            "language": "fi",
+            "text": "Kamppi"
+          },
+          {
+            "language": "sv",
+            "text": "Kampen"
+          }
+        ],
+        "station_id": "urn:ngsi-ld:BikeHireDockingStation:kamppi"
+      },
+      {
+        "lat": 60.185,
+        "lon": 24.923,
+        "name": [
+          {
+            "language": "fi",
+            "text": "Töölöntori"
+          }
+        ],
+        "station_id": "urn:ngsi-ld:BikeHireDockingStation:toolo"
+      }
+    ]
+  },
+  "last_updated": "2026-10-23T10:00:00Z",
+  "ttl": 60,
+  "version": "3.0"
+}

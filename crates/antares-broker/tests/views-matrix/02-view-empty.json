@@ -1,0 +1,27 @@
+{
+ "about": "A view whose q admits nothing: an empty answer, counts 0.",
+ "view": {
+  "selector": [
+   "Vehicle"
+  ],
+  "rules": [
+   {
+    "types": [
+     "Vehicle"
+    ],
+    "attributes": [
+     "location",
+     "operator",
+     "speed",
+     "vehicleType"
+    ]
+   }
+  ],
+  "q": "speed>1000"
+ },
+ "expect": {},
+ "caller": {
+  "x-jc-roles": "public"
+ },
+ "linkml": {"Vehicle": ["location", "operator", "speed", "vehicleType"]}
+}

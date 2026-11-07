@@ -1,0 +1,24 @@
+{
+  "id": "ogc-cube",
+  "tenant": "ogc",
+  "selector": [
+    "Reading"
+  ],
+  "rules": [
+    {
+      "types": [
+        "Reading"
+      ],
+      "attributes": [
+        "district",
+        "month",
+        "pm25"
+      ]
+    }
+  ],
+  "operations": [
+    "retrieve_entity",
+    "query_entities",
+    "query_entities_post"
+  ]
+}

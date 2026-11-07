@@ -1,0 +1,9 @@
+# T-3834: an exception to the trivy gate (image-jc.yml, vulnerabilities.yml) is one advisory id
+# with its reason, task and expiry; never a lowered severity.
+
+# rustls-webpki 0.102.8, panic on a malformed CRL BIT STRING (= RUSTSEC-2026-0104, excused in
+# deny.toml with the same reasoning). rumqttc pins webpki ^0.102.8 on every release and on
+# upstream main; no fixed 0.102 exists. Reach: mqtts notification egress only, and the panic
+# needs CRLs, which rumqttc's TlsConfiguration::default() never configures. T-3926. Re-review
+# at each rumqttc release or at expiry.
+GHSA-82j2-j2ch-gfr8 exp:2027-01-11

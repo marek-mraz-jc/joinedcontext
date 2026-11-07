@@ -1,0 +1,54 @@
+[package]
+name = "antares-linkml"
+description = "The LinkML surface of a view: /x/views/{view}/linkml, the view's schema narrowed to what the caller may see and rendered as LinkML, JSON Schema, @context, SHACL, OWL, RDFS and Markdown (T-3511, ADR-0027)."
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+
+# ADR-0027 section 2, surfaces-threat-model 9.3: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "surface"
+feature = "linkml"
+protocols = ["linkml-model"]
+
+[dependencies]
+antares-ops = { workspace = true }
+axum = { version = "0.8", default-features = false }
+linkml-model = { path = "../linkml-model" }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+sha2 = { version = "0.10", default-features = false }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+antares-ops = { workspace = true, features = ["test-kit"] }
+http-body-util = { version = "0.1", default-features = false }
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+
+[[bench]]
+name = "schema"
+harness = false
+
+# surfaces-threat-model 10.1: the full table, not the workspace's.
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"

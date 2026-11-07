@@ -1,0 +1,345 @@
+asyncapi: 3.0.0
+info:
+  title: Antares NGSI-LD WebSocket notification channel
+  version: 0.1.0
+  description: |
+    Notifications of NGSI-LD Subscriptions over one WebSocket connection
+    (ADR-0026, cargo feature `surface-ws`). Every message is one text
+    frame holding the TS 104 243 V1.1.1 clause 5.2 envelope
+    `{ "metadata": {...}, "body": ... }`. `body` is unmodified NGSI-LD
+    (Subscription, Notification, ProblemDetails of TS 104 175 V1.1.1);
+    `metadata` carries the TS 104 243 Table 5.2-2 keys, one key per
+    `receiverInfo` entry, and Antares extensions prefixed `x-`. No ETSI
+    WebSocket binding exists; this channel claims conformance for the
+    envelope and the bodies only.
+  license:
+    name: Apache-2.0
+defaultContentType: application/json
+
+servers:
+  broker:
+    host: localhost:9090
+    protocol: ws
+    description: An Antares broker built with `surface-ws`, behind the deployment's gateway.
+
+channels:
+  tenantConnection:
+    address: /x/ws/ngsi-ld/v1
+    title: Connection for one tenant
+    description: |
+      The tenant is the one the upgrade request names in `NGSILD-Tenant`
+      (the default tenant when absent).
+    servers:
+      - $ref: '#/servers/broker'
+    bindings:
+      ws:
+        method: GET
+        headers:
+          type: object
+          properties:
+            NGSILD-Tenant:
+              type: string
+              pattern: '^[A-Za-z0-9_-]{1,64}$'
+    messages:
+      welcome: { $ref: '#/components/messages/welcome' }
+      subscribe: { $ref: '#/components/messages/subscribe' }
+      update: { $ref: '#/components/messages/update' }
+      unsubscribe: { $ref: '#/components/messages/unsubscribe' }
+      resume: { $ref: '#/components/messages/resume' }
+      result: { $ref: '#/components/messages/result' }
+      notification: { $ref: '#/components/messages/notification' }
+      gap: { $ref: '#/components/messages/gap' }
+      closing: { $ref: '#/components/messages/closing' }
+  viewConnection:
+    address: /x/views/{view}/ws
+    title: Connection bound to one endpoint view
+    description: |
+      Requires the `views` feature as well (ADR-0023). The view pins the
+      tenant; an `NGSILD-Tenant` naming another tenant is refused with 400.
+    parameters:
+      view:
+        description: The view id, `[a-z0-9-]{1,63}`.
+    servers:
+      - $ref: '#/servers/broker'
+    messages:
+      welcome: { $ref: '#/components/messages/welcome' }
+      subscribe: { $ref: '#/components/messages/subscribe' }
+      update: { $ref: '#/components/messages/update' }
+      unsubscribe: { $ref: '#/components/messages/unsubscribe' }
+      resume: { $ref: '#/components/messages/resume' }
+      result: { $ref: '#/components/messages/result' }
+      notification: { $ref: '#/components/messages/notification' }
+      gap: { $ref: '#/components/messages/gap' }
+      closing: { $ref: '#/components/messages/closing' }
+
+operations:
+  sendCommandsTenant:
+    action: receive
+    title: Client commands on a tenant connection
+    channel: { $ref: '#/channels/tenantConnection' }
+    messages:
+      - $ref: '#/channels/tenantConnection/messages/subscribe'
+      - $ref: '#/channels/tenantConnection/messages/update'
+      - $ref: '#/channels/tenantConnection/messages/unsubscribe'
+      - $ref: '#/channels/tenantConnection/messages/resume'
+  pushTenant:
+    action: send
+    title: Server messages on a tenant connection
+    channel: { $ref: '#/channels/tenantConnection' }
+    messages:
+      - $ref: '#/channels/tenantConnection/messages/welcome'
+      - $ref: '#/channels/tenantConnection/messages/result'
+      - $ref: '#/channels/tenantConnection/messages/notification'
+      - $ref: '#/channels/tenantConnection/messages/gap'
+      - $ref: '#/channels/tenantConnection/messages/closing'
+  sendCommandsView:
+    action: receive
+    title: Client commands on a view connection
+    channel: { $ref: '#/channels/viewConnection' }
+    messages:
+      - $ref: '#/channels/viewConnection/messages/subscribe'
+      - $ref: '#/channels/viewConnection/messages/update'
+      - $ref: '#/channels/viewConnection/messages/unsubscribe'
+      - $ref: '#/channels/viewConnection/messages/resume'
+  pushView:
+    action: send
+    title: Server messages on a view connection
+    channel: { $ref: '#/channels/viewConnection' }
+    messages:
+      - $ref: '#/channels/viewConnection/messages/welcome'
+      - $ref: '#/channels/viewConnection/messages/result'
+      - $ref: '#/channels/viewConnection/messages/notification'
+      - $ref: '#/channels/viewConnection/messages/gap'
+      - $ref: '#/channels/viewConnection/messages/closing'
+
+components:
+  messages:
+    welcome:
+      name: x-welcome
+      summary: First server message; names the connection and its resume token.
+      payload:
+        type: object
+        additionalProperties: false
+        required: [metadata]
+        properties:
+          metadata:
+            type: object
+            additionalProperties: false
+            required: [x-op, x-connection, x-resume-token]
+            properties:
+              x-op: { const: x-welcome }
+              x-connection: { $ref: '#/components/schemas/connectionId' }
+              x-resume-token:
+                type: string
+                description: 256 random bits, base32. Never logged.
+                pattern: '^[a-z2-7]{52}$'
+    subscribe:
+      name: x-subscribe
+      summary: Create Subscription (TS 104 175 10.5.2) delivered on this connection.
+      description: |
+        The broker sets `body.notification.endpoint.uri` to
+        `urn:antares:ws:<connection-id>`; a body that names any other
+        endpoint URI is refused with `x-status` 400 (BadRequestData).
+      payload:
+        $ref: '#/components/schemas/clientEnvelopeWithBody'
+    update:
+      name: x-update
+      summary: Update Subscription (TS 104 175 10.5.3) of a Subscription this connection created.
+      payload:
+        type: object
+        additionalProperties: false
+        required: [metadata, body]
+        properties:
+          metadata:
+            type: object
+            additionalProperties: false
+            required: [x-op, x-subscription]
+            properties:
+              x-op: { const: x-update }
+              x-id: { $ref: '#/components/schemas/correlationId' }
+              x-subscription: { type: string, format: uri }
+          body: { $ref: '#/components/schemas/SubscriptionFragment' }
+    unsubscribe:
+      name: x-unsubscribe
+      summary: Delete Subscription (TS 104 175 10.5.5) of a Subscription this connection created.
+      payload:
+        type: object
+        additionalProperties: false
+        required: [metadata]
+        properties:
+          metadata:
+            type: object
+            additionalProperties: false
+            required: [x-op, x-subscription]
+            properties:
+              x-op: { const: x-unsubscribe }
+              x-id: { $ref: '#/components/schemas/correlationId' }
+              x-subscription: { type: string, format: uri }
+    resume:
+      name: x-resume
+      summary: Take over a closed connection within its grace period (ADR-0026 rule 7).
+      payload:
+        type: object
+        additionalProperties: false
+        required: [metadata]
+        properties:
+          metadata:
+            type: object
+            additionalProperties: false
+            required: [x-op, x-connection, x-resume-token, x-seq]
+            properties:
+              x-op: { const: x-resume }
+              x-id: { $ref: '#/components/schemas/correlationId' }
+              x-connection: { $ref: '#/components/schemas/connectionId' }
+              x-resume-token: { type: string, pattern: '^[a-z2-7]{52}$' }
+              x-seq:
+                type: integer
+                minimum: 0
+                description: The last `x-seq` the client processed; 0 for none.
+    result:
+      name: x-result
+      summary: The answer to one client message, with the HTTP status the same request would have had.
+      payload:
+        type: object
+        additionalProperties: false
+        required: [metadata]
+        properties:
+          metadata:
+            type: object
+            additionalProperties: false
+            required: [x-op, x-status]
+            properties:
+              x-op: { const: x-result }
+              x-id: { $ref: '#/components/schemas/correlationId' }
+              x-status: { type: integer, minimum: 200, maximum: 599 }
+          body:
+            oneOf:
+              - $ref: '#/components/schemas/Subscription'
+              - $ref: '#/components/schemas/ProblemDetails'
+    notification:
+      name: x-notification
+      summary: One NGSI-LD Notification (TS 104 175 5.2.6.9.1) in the TS 104 243 envelope.
+      payload:
+        type: object
+        additionalProperties: false
+        required: [metadata, body]
+        properties:
+          metadata:
+            type: object
+            description: |
+              TS 104 243 Table 5.2-2 keys, one key per
+              `notification.endpoint.receiverInfo` entry, and the `x-` members.
+            required: [Content-Type, x-op, x-seq, x-subscription]
+            properties:
+              Content-Type:
+                type: string
+                enum: [application/json, application/ld+json]
+              Link:
+                type: string
+                description: The JSON-LD context link, present when Content-Type is application/json.
+              x-op: { const: x-notification }
+              x-seq: { type: integer, minimum: 1 }
+              x-subscription: { type: string, format: uri }
+              x-coalesced:
+                type: integer
+                minimum: 1
+                description: Present when this notification replaced that many queued, unsent ones of the same Entity (back-pressure, ADR-0026 rule 6); the replaced changes are not delivered.
+            additionalProperties:
+              type: string
+          body: { $ref: '#/components/schemas/Notification' }
+    gap:
+      name: x-gap
+      summary: Notifications in [x-from, x-to] are lost; re-read with Query Entities.
+      payload:
+        type: object
+        additionalProperties: false
+        required: [metadata]
+        properties:
+          metadata:
+            type: object
+            additionalProperties: false
+            required: [x-op, x-from, x-to]
+            properties:
+              x-op: { const: x-gap }
+              x-from: { type: integer, minimum: 1 }
+              x-to: { type: integer, minimum: 1 }
+    closing:
+      name: x-closing
+      summary: Sent before the server closes the connection.
+      payload:
+        type: object
+        additionalProperties: false
+        required: [metadata]
+        properties:
+          metadata:
+            type: object
+            additionalProperties: false
+            required: [x-op, x-reason]
+            properties:
+              x-op: { const: x-closing }
+              x-reason:
+                type: string
+                enum: [lifetime, overflow, view-removed, shutdown, idle, rate]
+
+  schemas:
+    connectionId:
+      type: string
+      description: 128 random bits, base32, minted at upgrade.
+      pattern: '^[a-z2-7]{26}$'
+    correlationId:
+      type: string
+      description: |
+        Chosen by the client and echoed on the `x-result`; optional on every
+        client message. At most 256 bytes of UTF-8 (`MAX_ID_BYTES`); the
+        schema counts characters, so a multi-byte id may pass it and still be
+        refused with 400.
+      minLength: 1
+      maxLength: 256
+    clientEnvelopeWithBody:
+      type: object
+      additionalProperties: false
+      required: [metadata, body]
+      properties:
+        metadata:
+          type: object
+          additionalProperties: false
+          required: [x-op]
+          properties:
+            x-op: { const: x-subscribe }
+            x-id: { $ref: '#/components/schemas/correlationId' }
+        body: { $ref: '#/components/schemas/Subscription' }
+    Subscription:
+      type: object
+      description: |
+        NGSI-LD Subscription, TS 104 175 V1.1.1 clause 5.2.12; validated by the
+        broker exactly as Create Subscription over HTTP validates it.
+      required: [type]
+      properties:
+        type: { const: Subscription }
+    SubscriptionFragment:
+      type: object
+      description: Subscription members to update, TS 104 175 V1.1.1 clause 10.5.3.
+    Notification:
+      type: object
+      description: NGSI-LD Notification, TS 104 175 V1.1.1 clause 5.2.6.9.1.
+      required: [id, type, subscriptionId, notifiedAt, data]
+      properties:
+        id: { type: string, format: uri }
+        type: { const: Notification }
+        subscriptionId: { type: string, format: uri }
+        notifiedAt: { type: string, format: date-time }
+        data:
+          type: array
+          items: { type: object }
+    ProblemDetails:
+      type: object
+      description: |
+        TS 104 175 V1.1.1 clause 5.5.3 (IETF RFC 9457). The broker writes
+        `title` and `status` on every one, which keeps it apart from a
+        Subscription in `x-result`.
+      required: [type, title, status]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }

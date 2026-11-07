@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 18174e20c9f207841a85b0e11dace0a4ac3ef37063035324316efd10d4890175 # shrinks to model = Model { version: V4_01, references: [Reference { uri: "https://oasis-tcs.github.io/odata-vocabularies/vocabularies/Org.OData.Core.V1.xml", includes: [Include { namespace: "Org.OData.Core.V1", alias: Some("Core") }] }], schemas: [Schema { namespace: "p", alias: None, entity_types: [EntityType { name: "Base", base_type: None, is_abstract: true, open: false, key: ["id"], properties: [Property { name: "id", ty: TypeRef { name: "Edm.String", collection: false }, nullable: false, precision: None, scale: None, srid: None, annotations: [] }], navigation_properties: [], annotations: [] }, EntityType { name: "T0", base_type: Some("p.Base"), is_abstract: false, open: false, key: [], properties: [], navigation_properties: [], annotations: [] }], complex_types: [], terms: [Term { name: "Term0", ty: TypeRef { name: "Edm.Decimal", collection: false }, nullable: false, precision: None, applies_to: [], annotations: [] }], entity_container: Some(EntityContainer { name: "C", entity_sets: [EntitySet { name: "ST0", entity_type: "p.T0", bindings: [], annotations: [] }], annotations: [] }), annotations: [] }] }

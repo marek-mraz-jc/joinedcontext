@@ -1,0 +1,112 @@
+# Rows dev/security.cypher may return, checked by dev/cg-invariants.py (T-3587).
+# name | key | reason. An entry without a reason, or one that matches no row, fails the job.
+# Reviewed like code: a new row says why the invariant does not apply there.
+
+routes-without-decision | GET /q/health | antares_api::ops::health | public liveness probe, open even with an admin secret (docs/analysis/operation-matrix.md 7.2, T-3569)
+routes-without-decision | GET /q/ready | antares_api::ops::ready | public readiness probe (docs/analysis/operation-matrix.md 7.2, T-3569)
+routes-without-decision | GET /q/metrics | antares_api::ops::metrics_endpoint | admin secret route layer (admin_auth.rs, ANTARES_ADMIN_METRICS); a layer is not a call (docs/analysis/operation-matrix.md 7.2)
+routes-without-decision | GET /q/tenants | antares_api::ops::tenants_list | admin secret route layer (admin_auth.rs, T-3569) (docs/analysis/operation-matrix.md 7.2)
+routes-without-decision | GET /q/tenants/{} | antares_api::ops::tenant_get | admin secret route layer (admin_auth.rs, T-3569) (docs/analysis/operation-matrix.md 7.2)
+routes-without-decision | DELETE /q/tenants/{} | antares_api::ops::tenant_purge | admin secret route layer (admin_auth.rs, T-3569) (docs/analysis/operation-matrix.md 7.2)
+routes-without-decision | GET /q/tenants/{}/digest | antares_api::tenant_move::digest | admin secret route layer (admin_auth.rs; ADR-0030 tenant move); every method on it refuses without the secret in crates/antares-icsr/tests/q_admin_sweep.rs (T-3855); pinned in .cg/links/admin.toml by T-3590
+routes-without-decision | GET /q/tenants/{}/export | antares_api::tenant_move::export | admin secret route layer (admin_auth.rs; ADR-0030 tenant move); every method on it refuses without the secret in crates/antares-icsr/tests/q_admin_sweep.rs (T-3855); pinned in .cg/links/admin.toml by T-3590
+routes-without-decision | POST /q/tenants/{}/import | antares_api::tenant_move::import | admin secret route layer (admin_auth.rs; ADR-0030 tenant move); every method on it refuses without the secret in crates/antares-icsr/tests/q_admin_sweep.rs (T-3855); pinned in .cg/links/admin.toml by T-3590
+routes-without-decision | GET /q/dead-letters | antares_api::ops::dead_letters_list | admin secret route layer (admin_auth.rs, T-3569) (docs/analysis/operation-matrix.md 7.2)
+routes-without-decision | DELETE /q/dead-letters/{} | antares_api::ops::dead_letter_delete | admin secret route layer (admin_auth.rs, T-3569) (docs/analysis/operation-matrix.md 7.2)
+routes-without-decision | POST /q/dead-letters/{}/replay | antares_api::ops::dead_letter_replay | admin secret route layer (admin_auth.rs, T-3569) (docs/analysis/operation-matrix.md 7.2)
+routes-without-decision | PATCH /ngsi-ld/v1/entities | antares_api::router::missing_entity_id | 400 BadRequestData, no store access (docs/analysis/operation-matrix.md 7.2)
+routes-without-decision | PUT /ngsi-ld/v1/entities | antares_api::router::missing_entity_id | 400 BadRequestData, no store access (docs/analysis/operation-matrix.md 7.2)
+routes-without-decision | POST /ex/v1/remote-notify | antares_api::distsub::remote_notify | public to peers by key: a per-copy random subscriptionId (ADR-0019, docs/analysis/operation-matrix.md 7.2)
+routes-without-decision | ANY /x/views/{}/ngsi-ld/v1/{} | antares_views::serve | runs each request through ViewOps::run -> AppState::call, the NGSI-LD router whose handlers call policy::gate inside through_view; cg cannot follow the in-process router call. Proof: crates/antares-views/tests/views/views_decision.rs (every operation kind through a view is 403 under an engine that grants nothing there, decided in the view's Tenant) (T-5012)
+
+identity-headers | antares_api::negotiate::tenant_from | the one reader of the request's Tenant (5.5.3), validated or 400
+identity-headers | antares_api::negotiate::echo_tenant | echoes the validated Tenant on the answer (5.5.3)
+identity-headers | antares_api::router::tenant_exists_layer | tenancy layer: refuses a reserved or doubled Tenant (6.3.14) and a read of a non-existing one (5.5.10) before the handler
+identity-headers | antares_api::router::echo_tenant_layer | tenancy layer: the conditional echo of 5.5.3
+identity-headers | antares_api::router::cors_layer | lists the header in CORS allow/expose, reads no value
+identity-headers | antares_api::state::PROPAGATED | the internal-call header copy of threat F2: copied only when the internal request sets none (state.rs AppState::call)
+identity-headers | antares_api::csource::check_context_source_info | refuses a Registration's contextSourceInfo that would set the Tenant on forwards
+identity-headers | antares_api::federation::CSI_SKIP | contextSourceInfo pairs never sent on a forward (the Tenant is the registration's)
+identity-headers | antares_api::federation::build_forward | a forward carries the registration's Tenant (5.6, 5.7 distributed operations)
+identity-headers | antares_api::notify::delivery::deliver_as | a notification names the Subscription's Tenant (6.3.8, Table 7.2-2)
+identity-headers | antares_api::notify::delivery::strip_reserved_markers | drops a subscriber's own Tenant marker from receiverInfo
+identity-headers | antares_api::snapshots::run_temporal_query | the snapshot's internal temporal read in the snapshot's own Tenant
+identity-headers | antares_api::snapshots::scoped | runs a snapshot request in its internal Tenant and restores the caller's on the answer
+identity-headers | crates/antares-api/src/fuzzing.rs | fuzz harness (feature fuzzing), never in a release build
+identity-headers | antares_ops::OUTER_ONLY | the headers a surface cannot set on the operation it runs (ADR-0023)
+identity-headers | antares_ops::TENANT | ViewOps::run: the view's own Tenant on every operation it runs, another named one is refused (ADR-0023)
+identity-headers | antares_ws::upgrade | the WebSocket's Tenant: one NGSILD-Tenant or 400; a view's socket refuses another Tenant than the view's, a root socket's operations carry the header into AppState::call, where negotiate::tenant_from validates it (T-3844)
+identity-headers | antares_ws::hub::Forwarded::of | reads the delivering broker's marker: notify::deliver_as strips every subscriber-supplied NGSILD-Tenant pair and appends its own last, which .rev().find takes (T-3844)
+identity-headers | antares_ops::views::preview::preview | the draft view's Tenant on its preview query (T-3635)
+identity-headers | antares_views::union::Ask::of | refuses a union request that carries any NGSILD-Tenant (400) and reads no value: each view of the union runs in its own Tenant (views_union.rs writes_and_what_a_union_cannot_honour_are_refused, T-5012)
+
+sql-from-text | antares_sql::store::any::AnyStore::purge_tenant | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::connect_with | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::doc::PgDocStore::delete | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::doc::PgDocStore::every_row | pg driver dynamic SQL, reviewed in T-5012: the select list is kind.doc_column() or the list_digests expression over it (closed &'static str), the table DocKind::table; tenant and ceiling are $1/$2 binds under set_tenant (RLS)
+sql-from-text | antares_sql::store::pg::doc::PgDocStore::get | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::doc::PgDocStore::list_page | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::doc::PgDocStore::list_slice | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::doc::PgDocStore::matching_registrations | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::doc::PgDocStore::mutate | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::doc::PgDocStore::record_delivery | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::doc::PgDocStore::status_row | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::doc::insert_doc | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::entity::PgEntityStore::query | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::maintenance::plain_retention | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::maintenance::drop_partitions | pg driver dynamic SQL, reviewed in T-5012: the only built statement is drop_partition_sql(name), name a pg_class.relname of an attr_instances partition the catalog query returned, double-quoted with "" escaping and schema-qualified; floors are binds; runs under set_service from the retention loop, no route
+sql-from-text | antares_sql::store::pg::maintenance::droppable | pg driver dynamic SQL, reviewed in T-5012: the DROPPABLE constant with {p} replaced by the catalog partition name, double-quoted with "" escaping and schema-qualified; tenants, cuts and the bound are $1..$3 binds
+sql-from-text | antares_sql::store::pg::maintenance::retain | pg driver dynamic SQL, reviewed in T-3590: both parts are the ROWS/DELETE string constants of its two callers (entity and attribute retention); tenant, type, cutoff and batch are $1..$4 binds
+sql-from-text | antares_sql::store::pg::maintenance::temporal_maintenance | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::temporal::PgTemporalStore::create | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::temporal::PgTemporalStore::delete | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::temporal::PgTemporalStore::get_range | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::temporal::PgTemporalStore::mutate | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::temporal::PgTemporalStore::query_inner | pg driver dynamic SQL as of T-3587: identifiers from closed tables (DocKind::table, the aggregation table of T-3464), $n placeholders, catalog names quoted (drop_partition_sql); RLS: tests/pg_rls_pentest.rs
+sql-from-text | antares_sql::store::pg::temporal::insert_rows | pg driver dynamic SQL, reviewed in T-5012: format! interpolates only the constants STAMPS, CORRECTED, GEO_VALUE, NEWEST_REPEATS and the literal `same`; tenant, entity id, rows and bounds are $1..$6 binds; the tenant predicate is checked by tests/attr_instances_tenant_predicate.rs
+
+identity-headers | antares_ws::upgrade | the WebSocket upgrade (ADR-0026) reads the root connection's Tenant for its per-Tenant cap and notification routing; every operation on the socket goes through the NGSI-LD router, whose tenant_from and tenant_exists_layer validate it (T-3914)
+identity-headers | antares_ws::hub::Forwarded::of | reads the Tenant the notifier stamped on its own receiverInfo, never a client's header, to deliver a notification only to sockets of that Tenant (T-3914)
+
+# T-3914: every row classified in docs/analysis/tenant-isolation.md section 2.
+store-method-without-tenant | CurrentStateDriver | close | lifecycle: closes the pool at shutdown, reads no row
+store-method-without-tenant | CurrentStateDriver | commit_queue | metrics: the group-commit queue depth, no row
+store-method-without-tenant | CurrentStateDriver | history_overrides | DM-97 retention: the Entities across every Tenant with a historyRetention Property, each returned with its Tenant; called by the retention loop only (views/retention.rs), Postgres under the service role (T-5012)
+store-method-without-tenant | CurrentStateDriver | outbox_ack | the outbox drain acks rows by the seq outbox_peek handed out; each row carries its Tenant (outbox_retain and outbox_event take it)
+store-method-without-tenant | CurrentStateDriver | outbox_peek | the outbox drain is cross-Tenant by design: each row is (seq, tenant, event) and the relay dispatches under that Tenant
+store-method-without-tenant | CurrentStateDriver | ping | readiness probe, no row
+store-method-without-tenant | CurrentStateDriver | set_change_hook | installs the change feed once at boot; the hook is called with (tenant, before, after)
+store-method-without-tenant | CurrentStateDriver | set_outbox | boot switch for the outbox, no row
+store-method-without-tenant | CurrentStateDriver | subscription_tenants | the Tenant inventory the interval sweep and the mirror hydration iterate; names only, each Tenant then read on its own
+store-method-without-tenant | CurrentStateDriver | sweep_expired | 4.22 reap of expired rows, cross-Tenant maintenance by design (Postgres runs it under the service role)
+store-method-without-tenant | CurrentStateDriver | tenant_ids | the /q/tenants inventory behind the admin secret, names only
+store-method-without-tenant | CurrentStateDriver | version_info | /q/health versions, no row
+store-method-without-tenant | TemporalDriver | close | lifecycle: closes the pool at shutdown, reads no row
+store-method-without-tenant | TemporalDriver | drop_retained_history | T-4906 retention by partition: floors are (tenant, cut) pairs, a slice holding a row of any Tenant not in floors stays (DROPPABLE); called by the retention loop only (views/retention.rs) (T-5012)
+store-method-without-tenant | TemporalDriver | event_list | each TemporalEvent carries its Tenant, and the default fold groups by (tenant, entity id); run_tenant_isolation_contract drains one event and checks the other Tenant's history
+store-method-without-tenant | TemporalDriver | ping | readiness probe, no row
+store-method-without-tenant | TemporalDriver | q_pushdown_exact | a capability question about a q expression, reads no row
+store-method-without-tenant | TemporalDriver | supported | capability flag, no row
+store-method-without-tenant | TemporalDriver | version_info | /q/health versions, no row
+
+tenant-not-from-header | DELETE /q/dead-letters/{} | antares_api::ops::dead_letter_delete | admin secret route layer; the Tenant is the operator's ?tenant=, parsed by admin_tenant (TenantId::new, reserved names refused)
+tenant-not-from-header | GET /q/dead-letters | antares_api::ops::dead_letters_list | admin secret route layer; the Tenant is the operator's ?tenant=, parsed by admin_tenant (TenantId::new, reserved names refused)
+tenant-not-from-header | POST /q/dead-letters/{}/replay | antares_api::ops::dead_letter_replay | admin secret route layer; the Tenant is the operator's ?tenant=, parsed by admin_tenant (TenantId::new, reserved names refused)
+tenant-not-from-header | GET /q/tenants/{} | antares_api::ops::tenant_get | admin secret route layer; the Tenant is the path segment, parsed by TenantId::new
+tenant-not-from-header | DELETE /q/tenants/{} | antares_api::ops::tenant_purge | admin secret route layer; the Tenant is the path segment, parsed by TenantId::new
+tenant-not-from-header | GET /q/tenants/{}/digest | antares_api::tenant_move::digest | admin secret route layer; the Tenant is the path segment, parsed by tenant_move::tenant_of (TenantId::new, reserved names refused)
+tenant-not-from-header | GET /q/tenants/{}/export | antares_api::tenant_move::export | admin secret route layer; the Tenant is the path segment, parsed by tenant_move::tenant_of (TenantId::new, reserved names refused)
+tenant-not-from-header | POST /q/tenants/{}/import | antares_api::tenant_move::import | admin secret route layer; the Tenant is the path segment, parsed by tenant_move::tenant_of (TenantId::new, reserved names refused)
+tenant-not-from-header | POST /ex/v1/remote-notify | antares_api::distsub::remote_notify | the Tenant is read back from the broker's own inbound index under the peer's random subscriptionId, never from the request (ADR-0019)
+tenant-not-from-header | ANY /x/views/{}/ngsi-ld/v1/{} | antares_views::serve | the Tenant is the view's own (ViewOps::run_unmapped sets NGSILD-Tenant from the view table, refuses another or a doubled one with 400), and the inner NGSI-LD route reads it through negotiate::tenant_from; proof: views_read.rs views_pin_their_tenant and views_decision.rs a_client_cannot_move_a_view_decision_to_another_tenant (T-5012)
+
+# T-3915: secrets, child processes, files a route writes, panics a route reaches.
+secret-exposed | antares_api::admin_auth::AdminAuth::admits | the presented bearer is compared with the admin token in constant time (constant_time_eq); the value goes nowhere else
+secret-exposed | antares_broker::build_builtin | the database URL goes to the Postgres pool's connect (connect_with) and nowhere else; the retry loop keeps the error text, which names no URL (tests/secret_logs.rs)
+fs-write-from-a-server | antares_sql::store::mem::redb::Shadow::write | the file store's one redb file, opened at boot under ANTARES_DATA_DIR (operator config, Store::open_file); a request only supplies the key bytes of a row inside it (tenant NUL id), never a path
+
+# T-3590: every outbound HTTP request, and the egress check its URL passes before it.
+outbound-http-send | antares_api::federation::send_http | calls Egress::check_url and check_destination on the registration's endpoint before the send (metadata and private ranges refused unless the deployment allows private)
+outbound-http-send | antares_api::snapshots::send_notification | calls Egress::check_url and check_destination on the snapshot's notification endpoint before the send
+outbound-http-send | antares_notifier::http::HttpSink::deliver | reached only through notify::send_outbound, whose callers (deliver, deliver_as, deliver_csource, send_csource_jobs, replay_dead_letter, dead_letter_replay) call Egress::check_destination on the endpoint first; retries resend the same checked URI
+outbound-http-send | ngsild_jsonld::loader::Loader::fetch | calls EgressPolicy::check_host on the @context URL's host before the send; redirects are re-checked by client_builder's redirect policy

@@ -1,0 +1,1145 @@
+name: surfaces-conformance
+
+# The surfaces' conformance jobs (docs/analysis/surfaces-conformance.md
+# section 7). This file holds the MCP pair (T-3516), the OData suites
+# (T-3510, T-3714), the OGC ETS (T-3747), etsi-iop (T-3675),
+# ws-conformance (T-3518), linkml-conformance (T-3512) and etsi-full-all
+# (T-3501); the other surfaces add their jobs here.
+#
+#   mcp-conformance  the official @modelcontextprotocol/conformance 0.1.16
+#                    against /x/views/all/mcp, both revisions it knows that
+#                    the surface serves, with ci/mcp-baseline.yaml (every
+#                    entry has its reason and upstream link)
+#   mcp-suites       joinedcontext-conformance tests/mcp (protocol,
+#                    isolation, read parity) with MCP_SURFACE=broker, the
+#                    platform_only cases deselected; parity under view `all`
+#                    and under `parity-restricted`
+#   odata-conformance joinedcontext-conformance tests/odata (ABNF cases
+#                    live, both $metadata validations, $filter/q parity,
+#                    Capabilities, linked-entity checks) against views
+#                    `all` and `parity-restricted`
+#   odata-compliance-external  the independent NLstn odata-compliance-suite
+#                    v1.0.3 (pinned by checksum) against view `compliance`
+#                    (its reference model, ci/odata-compliance), red on any
+#                    test ci/odata-compliance-baseline.json passes (T-3714)
+#   ogc-compliance-external  the OGC CITE ets-ogcapi-features10 (TEAM
+#                    Engine image pinned by digest) against view `all` and
+#                    each Endpoint kind of ci/views/ogc, red on any test
+#                    ci/ogc-compliance/<view>.json passes (T-3747, T-3831)
+#   ogc-tiles-external  the OGC CITE ets-ogcapi-tiles10 1.2 (TEAM Engine
+#                    image pinned by digest) against the AirQualityObserved
+#                    tileset of view ogc-public, red on any test
+#                    ci/ogc-tiles-compliance-baseline.json passes (T-5195)
+#   sta-compliance-external  the OGC CITE ets-sta10 1.5 (TEAM Engine image
+#                    pinned by digest) against view `sta` of ci/views/sta,
+#                    red on any test ci/sta-compliance-baseline.json passes
+#                    (T-4878); then the same image with the jar of the
+#                    ets-sta10 fork (pinned commit, @iot.id read as ANY,
+#                    T-5916; Level 3 setup writes nothing, T-5918) against
+#                    view `sta-ets` of ci/views/sta-ets, red on any test
+#                    ci/sta-compliance-fork-baseline.json or the official run
+#                    passes (T-5919)
+#   ws-conformance   docs/api/asyncapi-ws.yaml validated by @asyncapi/cli
+#                    2.16.0, then joinedcontext-conformance tests/ws: the
+#                    scripted sessions of /x/views/all/ws, every message
+#                    held against that document
+#   linkml-conformance joinedcontext-conformance tests/linkml: the schema
+#                    views `all` and `parity-restricted` serve, judged by
+#                    linkml 1.12.0 (lint, gen-json-schema, gen-shacl) and
+#                    pyshacl 0.40.1, the view's Entities validated against
+#                    the served JSON Schema and SHACL
+#   etsi-full-all    the serial ETSI suites on the full image, at the plain
+#                    root (E1) and through view `all` (E2), TP by TP: a
+#                    difference passes only as a refusal the view owes
+#                    (dev/etsi-view-diff.py) or a TP dev/etsi-view-known.json
+#                    names with its task (T-3501)
+#   etsi-full-restricted  nightly: the same suites through view
+#                    `etsi-restricted` (E4: Building and City, airQualityLevel
+#                    hidden, reads only), diffed with etsi-full-all's E1: a
+#                    difference passes only as a refusal the view owes, a
+#                    write, a hidden type or a hidden Attribute (T-3787)
+#   etsi-icsr        the ETSI DistributedOperations directory on broker1 of
+#                    the internal-csr image with ANTARES_SELF_URLS set to
+#                    its own URL, compared TP by TP with the vanilla image
+#                    (ADR-0025 equivalence layer 3, T-3521); not per pull
+#                    request
+#   etsi-iop         the ETSI IOP suite over five brokers on the
+#                    all-features image (mqtt, views, mcp, odata, ws),
+#                    compared TP by TP with the vanilla image of the same
+#                    commit (dev/etsi-baseline.py compare); not per pull
+#                    request
+#
+# The fast lane (fast.yml) calls this file with `fast: true` on a push to
+# dev that touches a surface crate: build, odata-conformance (the
+# merge-request subset) and odata-compliance-external.
+#
+# Pull requests to dev run the merge-request subset (both official
+# revisions, the parity suite trimmed to MCP_PARITY_CASES=5, the OData ABNF
+# and $metadata cases); the nightly run, v* tags and dispatch run
+# everything. The broker is the `full` build (views, mcp, odata, ogc, ws) with
+# `linkml`,
+# loaded with ci/views (views, LinkML schemas, seed) by dev/views-rig.sh.
+on:
+  pull_request:
+    branches: [dev]
+  schedule:
+    - cron: "17 2 * * *"
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  # fast.yml (T-3765): the OData jobs only, on a push to dev that touches a
+  # surface crate; every job without `!inputs.fast` belongs to that subset
+  workflow_call:
+    inputs:
+      fast:
+        type: boolean
+        default: false
+
+concurrency:
+  # under workflow_call github.workflow is the caller's name, so the fast
+  # lane's call never cancels a nightly or pull-request run of this file
+  group: surfaces-conformance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # joinedcontext-conformance (public) at the commit that carries the
+  # broker's MCP parity table, the platform_only marker, tests/odata and
+  # its client checks, tests/ws, the F21/F29 parity rows (T-3686), the
+  # bind-to-an-absent-target 400 (T-3760), tests/linkml (T-3512) and the
+  # OData parity rows the residual serves (T-3981), the last two together on
+  # conformance main since its merge of T-3512 (T-4003); plus the broker parity
+  # cases for T-4258's format/sysAttrs/orderBy, one commit on top (branch
+  # pin/antares-surfaces, same change as conformance main 494cd93), and the
+  # describe_type parity case (T-4537, T-4559; conformance main 2594d95)
+  # conformance main d581c6d since T-4879: tests/ws/test_rfc6455.py (RFC 6455
+  # close handshake and protocol-error codes) joins ws-conformance;
+  # conformance main 4ab75bd since T-5905: the duration/binary literals move
+  # from REJECTED (501) to MISMATCHED (400) in tests/odata/test_parity.py
+  CONFORMANCE_REF: 4ab75bdae432ebc1ca67ad17d6b9dc8ac2a46d90
+  NIGHTLY: ${{ github.event_name != 'pull_request' && !inputs.fast }}
+
+jobs:
+  build:
+    name: Build the surfaces broker
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: surfaces-conformance
+          save-if: ${{ github.ref == 'refs/heads/dev' }}
+      - run: cargo build --locked -p antares-broker --features full,linkml
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: broker-surfaces
+          path: target/debug/antares
+          retention-days: 1
+
+  mcp-conformance:
+    name: mcp-conformance
+    if: ${{ !inputs.fast }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: broker-surfaces
+      - name: Start the broker and load the views
+        run: |
+          chmod +x antares
+          # the scenario dns-rebinding-protection sends the deployment's own
+          # origin, which a deployment names here
+          ANTARES_HTTP_PORT=8080 ANTARES_API_SURFACES=admin,views,mcp \
+            ANTARES_SCHEMA_MAX_BYTES=1048576 \
+            ANTARES_MCP_ALLOWED_ORIGINS=http://localhost:8080 ./antares > broker.log 2>&1 &
+          for _ in $(seq 1 100); do curl -sf -o /dev/null localhost:8080/q/health && break; sleep 0.2; done
+          dev/views-rig.sh http://localhost:8080
+      - name: Official MCP conformance, 2025-11-25 and 2025-06-18
+        # 0.1.16 knows 2025-03-26, 2025-06-18, 2025-11-25 and draft (no
+        # server scenario); the 2026-07-28 era is the crate's own tests
+        run: |
+          for version in 2025-11-25 2025-06-18; do
+            npx --yes @modelcontextprotocol/conformance@0.1.16 server \
+              --url http://localhost:8080/x/views/all/mcp --spec-version "$version" \
+              --expected-failures ci/mcp-baseline.yaml -o "results/$version"
+          done
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: mcp-conformance
+          path: |
+            results/
+            broker.log
+          retention-days: 14
+      - name: File an issue on nightly failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: mcp-conformance went red
+          body: The official MCP conformance run against /x/views/all/mcp failed.
+          log-file: broker.log
+
+  mcp-suites:
+    name: mcp-suites
+    if: ${{ !inputs.fast }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: marek-mraz-jc/joinedcontext-conformance
+          ref: ${{ env.CONFORMANCE_REF }}
+          path: conformance
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: broker-surfaces
+      - name: Install the suites' pinned Python
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --require-hashes -r conformance/requirements.txt
+      - name: Start the broker and load the views
+        run: |
+          chmod +x antares
+          ANTARES_HTTP_PORT=8080 ANTARES_API_SURFACES=admin,views,mcp \
+            ANTARES_SCHEMA_MAX_BYTES=1048576 ./antares > broker.log 2>&1 &
+          for _ in $(seq 1 100); do curl -sf -o /dev/null localhost:8080/q/health && break; sleep 0.2; done
+          dev/views-rig.sh http://localhost:8080
+      - name: The MCP suites, platform_only deselected
+        env:
+          MCP_SURFACE: broker
+          MCP_URL: http://localhost:8080/x/views/all/mcp
+          ENDPOINT_MCP_URL: http://localhost:8080/x/views/all/mcp
+          MCP_NARROWED_URL: http://localhost:8080/x/views/parity-restricted/mcp
+          OTHER_SPACE_MCP_URL: http://localhost:8080/x/views/other/mcp
+          OTHER_SPACE_TYPE: Device
+        run: |
+          mkdir -p reports
+          if [ "$NIGHTLY" = true ]; then
+            suites="test_mcp_protocol.py test_mcp_isolation.py test_mcp_read_parity.py"
+          else
+            suites=test_mcp_read_parity.py
+            export MCP_PARITY_CASES=5
+          fi
+          cd conformance/tests/mcp
+          # shellcheck disable=SC2086 # one word per suite file
+          ../../../.venv/bin/python -m pytest -q -m "not platform_only" \
+            --junitxml=../../../reports/mcp-suites.xml $suites
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: mcp-suites
+          path: |
+            reports/
+            broker.log
+          retention-days: 14
+      - name: File an issue on nightly failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: mcp-suites went red
+          body: The joinedcontext-conformance MCP suites against the broker failed.
+          log-file: broker.log
+
+  odata-conformance:
+    name: odata-conformance
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: marek-mraz-jc/joinedcontext-conformance
+          ref: ${{ env.CONFORMANCE_REF }}
+          path: conformance
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: broker-surfaces
+      - name: Install the suite's pinned Python and xmllint
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --require-hashes -r conformance/requirements.txt
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends libxml2-utils
+      - name: Start the broker and load the views
+        run: |
+          chmod +x antares
+          ANTARES_HTTP_PORT=8080 ANTARES_API_SURFACES=admin,views,odata \
+            ANTARES_SCHEMA_MAX_BYTES=1048576 ./antares > broker.log 2>&1 &
+          for _ in $(seq 1 100); do curl -sf -o /dev/null localhost:8080/q/health && break; sleep 0.2; done
+          dev/views-rig.sh http://localhost:8080
+      - name: The OData suite, the merge-request subset on pull requests
+        env:
+          ODATA_URL: http://localhost:8080/x/views/all/odata/v4
+          ODATA_RESTRICTED_URL: http://localhost:8080/x/views/parity-restricted/odata/v4
+          JC_REPORTS_DIR: reports
+        run: |
+          export PATH="$PWD/.venv/bin:$PATH"
+          if [ "$NIGHTLY" = true ]; then
+            conformance/tests/odata/run.sh
+          else
+            conformance/tests/odata/run.sh -k "abnf or metadata"
+          fi
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: odata-conformance
+          path: |
+            reports/
+            broker.log
+          retention-days: 14
+      - name: File an issue on nightly failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: odata-conformance went red
+          body: The joinedcontext-conformance OData suite against /x/views/all/odata/v4 failed.
+          log-file: broker.log
+
+  odata-compliance-external:
+    name: odata-compliance-external
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    env:
+      OCS_URL: https://github.com/NLstn/odata-compliance-suite/releases/download/v1.0.3/odata-compliance-suite_linux_amd64
+      OCS_SHA256: c89dd48bf58623b2b651a750a4c8ba7d1179cf4257b23464dbf508afe0a7cec6
+      ROOT: /x/views/compliance/odata/v4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: broker-surfaces
+      - name: Fetch the pinned suite
+        run: |
+          curl -fsSL -o ocs "$OCS_URL"
+          echo "$OCS_SHA256  ocs" | sha256sum -c -
+          chmod +x ocs
+      - name: Start the broker, the reference model and the Reseed harness
+        run: |
+          chmod +x antares
+          # The job's own admin token, outside the workspace and the artifact;
+          # curl reads the header from a file so it is never an argument.
+          umask 077
+          token=$(openssl rand -hex 32)
+          echo "::add-mask::$token"
+          printf '%s' "$token" > "$RUNNER_TEMP/admin-token"
+          printf 'Authorization: Bearer %s\n' "$token" > "$RUNNER_TEMP/admin-header"
+          ANTARES_HTTP_PORT=8080 ANTARES_API_SURFACES=admin,views,odata \
+            ANTARES_ADMIN_TOKEN_FILE="$RUNNER_TEMP/admin-token" \
+            ANTARES_SCHEMA_MAX_BYTES=1048576 ./antares > broker.log 2>&1 &
+          for _ in $(seq 1 100); do curl -sf -o /dev/null localhost:8080/q/health && break; sleep 0.2; done
+          tenant=$(jq -r .tenant ci/odata-compliance/view.json)
+          curl -fsS -X PUT -H @"$RUNNER_TEMP/admin-header" -H 'Content-Type: application/json' \
+            --data-binary @ci/odata-compliance/view.json localhost:8080/q/views/compliance
+          curl -fsS -X PUT -H @"$RUNNER_TEMP/admin-header" -H 'Content-Type: application/json' \
+            --data-binary @ci/odata-compliance/schema.json "localhost:8080/q/schemas/$tenant"
+          dev/odata-compliance/reseed-proxy.py 8081 http://localhost:8080 "$ROOT" > proxy.log 2>&1 &
+          for _ in $(seq 1 50); do curl -sf -o /dev/null "localhost:8081$ROOT/" && break; sleep 0.2; done
+          curl -fsS -X POST "localhost:8081$ROOT/Reseed"
+      - name: The suite, gated by ci/odata-compliance-baseline.json
+        run: |
+          dev/odata-compliance/baseline.py --self-test
+          ./ocs -server "http://localhost:8081$ROOT" -verbose -format junit -output ocs-junit.xml \
+            > ocs-run.txt 2>&1 || true
+          set +e
+          dev/odata-compliance/baseline.py check ocs-run.txt ci/odata-compliance-baseline.json > gate.md
+          rc=$?
+          { echo "## OData compliance (NLstn odata-compliance-suite v1.0.3)"; cat gate.md; } >> "$GITHUB_STEP_SUMMARY"
+          cat gate.md
+          exit $rc
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: odata-compliance-external
+          path: |
+            ocs-run.txt
+            ocs-junit.xml
+            gate.md
+            broker.log
+            proxy.log
+          retention-days: 14
+      - name: File an issue on nightly failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: odata-compliance-external went red
+          body: A test the NLstn OData compliance suite passed in ci/odata-compliance-baseline.json fails now.
+          log-file: gate.md
+
+  ogc-compliance-external:
+    name: ogc-compliance-external
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # One ETS run per Endpoint kind (T-3831): `all` is the conformance Tenant's
+    # star view; the others read the `ogc` Tenant of ci/views/ogc (public,
+    # internal with the Part 4 writes, filtered by q, star, projection, a data
+    # cube, the history collections of T-5100 over ci/views/ogc/history).
+    # One job for the eight views (T-6046): each ETS run takes ~7 s and its
+    # setup ~15 s, so eight matrix cells held eight of the account's 20
+    # runners for 30 s each. TEAM Engine starts once; every view gets a fresh
+    # broker (in-memory store) and a fresh rig, so the Part 4 writes of
+    # ogc-internal never reach another view's run. Any red view turns the job red.
+    permissions:
+      contents: read
+      issues: write
+    env:
+      # ets-ogcapi-features10 1.8 on TEAM Engine 5.7, the last release (1.9 is a
+      # release candidate), pinned by digest; it tests Part 1 and Part 2 (CRS),
+      # no ETS tests Part 4 or Part 5 yet (docs/src/ogc-compliance.md)
+      TE_IMAGE: ogccite/ets-ogcapi-features10:1.8-teamengine-5.7@sha256:d884de89ac8dae6ea153766886c706f9ddf6ce172de0c4bd4bdd591d28bdaffe
+      VIEWS: all ogc-public ogc-internal ogc-filtered ogc-star ogc-projection ogc-cube ogc-history
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: broker-surfaces
+      - name: Start TEAM Engine
+        run: |
+          chmod +x antares
+          # host network: TEAM Engine on 8080 reaches the broker at localhost:9090
+          docker run -d --name teamengine --network host "$TE_IMAGE"
+          # the image's own public test account (ogctest), not a secret
+          for _ in $(seq 1 60); do
+            curl -fsS -m 5 -u ogctest:ogctest -o /dev/null localhost:8080/teamengine/rest/suites && break
+            sleep 5
+          done
+      - name: The ETS per view, gated by ci/ogc-compliance/<view>.json
+        run: |
+          dev/ogc-compliance/baseline.py --self-test
+          red=
+          for view in $VIEWS; do
+            out=out/$view
+            mkdir -p "$out"
+            ANTARES_HTTP_PORT=9090 ANTARES_API_SURFACES=admin,views,ogc \
+              ANTARES_SCHEMA_MAX_BYTES=1048576 ./antares > "$out/broker.log" 2>&1 &
+            broker=$!
+            for _ in $(seq 1 100); do curl -sf -o /dev/null localhost:9090/q/health && break; sleep 0.2; done
+            dev/views-rig.sh http://localhost:9090
+            dev/views-rig.sh http://localhost:9090 ci/views/ogc
+            iut=$(jq -rn --arg u "http://localhost:9090/x/views/$view/ogc/features" '$u|@uri')
+            curl -sS -m 1500 -u ogctest:ogctest -H 'Accept: application/xml' -o "$out/testng-results.xml" \
+              "localhost:8080/teamengine/rest/suites/ogcapi-features-1.0/run?iut=$iut&noofcollections=-1" || true
+            rc=0
+            dev/ogc-compliance/baseline.py check "$out/testng-results.xml" "ci/ogc-compliance/$view.json" > "$out/gate.md" 2>&1 || rc=$?
+            { echo "## OGC API - Features ETS (ets-ogcapi-features10 1.8), view $view"; cat "$out/gate.md"; } >> "$GITHUB_STEP_SUMMARY"
+            echo "== view $view: exit $rc"
+            cat "$out/gate.md"
+            [ "$rc" = 0 ] || red="$red $view"
+            kill "$broker" 2>/dev/null || true
+            wait "$broker" || true
+            # the next view's broker binds 9090 again
+            for _ in $(seq 1 50); do curl -sf -o /dev/null localhost:9090/q/health || break; sleep 0.2; done
+          done
+          { echo "Red views:${red:- none}"; for v in $red; do echo "- $v"; done; } | tee out/red.md
+          [ -z "$red" ]
+      - name: TEAM Engine log
+        if: always()
+        run: docker logs teamengine > out/teamengine.log 2>&1 || true
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: ogc-compliance-external
+          path: out/
+          retention-days: 14
+      - name: File an issue on nightly failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: ogc-compliance-external went red
+          body: A test the OGC API - Features ETS passed in ci/ogc-compliance/<view>.json fails now (views listed below).
+          log-file: out/red.md
+
+  ogc-tiles-external:
+    name: ogc-tiles-external
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # OGC API - Tiles Part 1 (T-5121, T-5195): the vector tileset of the
+    # AirQualityObserved collection of view ogc-public (ci/views/ogc), tile
+    # matrix 0 of WebMercatorQuad, whose one tile holds every seeded entity
+    permissions:
+      contents: read
+      issues: write
+    env:
+      # ets-ogcapi-tiles10 1.2, the last release and its only image tag, on
+      # TEAM Engine 6.0.0-RC2, pinned by digest; it tests the Core class
+      TE_IMAGE: ogccite/ets-ogcapi-tiles10:1.2-teamengine-6.0.0-RC2@sha256:af8e8ab4f8c131c71ca02a4b05419007657e49cef6c668ecfdbe02b58c002ffc
+      IUT: http://localhost:9090/x/views/ogc-public/ogc/features
+      COLLECTION: AirQualityObserved
+      BASELINE: ci/ogc-tiles-compliance-baseline.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: broker-surfaces
+      - name: Start TEAM Engine, the broker and the views
+        run: |
+          chmod +x antares
+          # host network: TEAM Engine on 8080 reaches the broker at localhost:9090
+          docker run -d --name teamengine --network host "$TE_IMAGE"
+          ANTARES_HTTP_PORT=9090 ANTARES_API_SURFACES=admin,views,ogc \
+            ANTARES_SCHEMA_MAX_BYTES=1048576 ./antares > broker.log 2>&1 &
+          for _ in $(seq 1 100); do curl -sf -o /dev/null localhost:9090/q/health && break; sleep 0.2; done
+          dev/views-rig.sh http://localhost:9090
+          dev/views-rig.sh http://localhost:9090 ci/views/ogc
+          # the image's own public test account (ogctest), not a secret
+          for _ in $(seq 1 60); do
+            curl -fsS -m 5 -u ogctest:ogctest -o /dev/null localhost:8080/teamengine/rest/suites && break
+            sleep 5
+          done
+      - name: The ETS, gated by ci/ogc-tiles-compliance-baseline.json
+        run: |
+          dev/ogc-compliance/baseline.py --self-test
+          enc() { jq -rn --arg u "$1" '$u|@uri'; }
+          tms=http://www.opengis.net/def/tilematrixset/OGC/1.0/WebMercatorQuad
+          template="$IUT/collections/$COLLECTION/tiles/WebMercatorQuad/{tileMatrix}/{tileRow}/{tileCol}"
+          args="iut=$(enc "$IUT")&tilematrixsetdefinitionuri=$(enc "$tms")&urltemplatefortiles=$(enc "$template")"
+          args="$args&tilematrix=0&mintilerow=0&maxtilerow=0&mintilecol=0&maxtilecol=0"
+          curl -sS -m 1500 -u ogctest:ogctest -H 'Accept: application/xml' -o testng-results.xml \
+            "localhost:8080/teamengine/rest/suites/ogcapi-tiles-1.0/run?$args" || true
+          set +e
+          dev/ogc-compliance/baseline.py check testng-results.xml "$BASELINE" > gate.md 2>&1
+          rc=$?
+          { echo "## OGC API - Tiles ETS (ets-ogcapi-tiles10 1.2), view ogc-public"; cat gate.md; } >> "$GITHUB_STEP_SUMMARY"
+          cat gate.md
+          exit $rc
+      - name: TEAM Engine log
+        if: always()
+        run: docker logs teamengine > teamengine.log 2>&1 || true
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: ogc-tiles-external
+          path: |
+            testng-results.xml
+            gate.md
+            broker.log
+            teamengine.log
+          retention-days: 14
+      - name: File an issue on nightly failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: ogc-tiles-external went red
+          body: A test the OGC API - Tiles ETS passed in ci/ogc-tiles-compliance-baseline.json fails now.
+          log-file: gate.md
+
+  sta-compliance-external:
+    name: sta-compliance-external
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The SensorThings view of ci/views/sta (T-4878, docs/src/sta-compliance.md)
+    permissions:
+      contents: read
+      issues: write
+    env:
+      # ets-sta10 1.5, the last release and OGC's only SensorThings ETS (Part 1
+      # Sensing 1.0; none exists for 1.1), its only image tag, pinned by digest
+      TE_IMAGE: ogccite/ets-sta10:1.5-teamengine-6.0.0-RC2@sha256:e1ec8dc3508ea3355f059abee98737f5d2c00434aeffa298d80ea04361c93db3
+      IUT: http://localhost:9090/x/views/sta/sta/v1.1
+      # The fork's run reads the Capability3Tests fixtures, seeded through NGSI-LD (T-5918)
+      FORK_IUT: http://localhost:9090/x/views/sta-ets/sta/v1.1
+      BASELINE: ci/sta-compliance-baseline.json
+      # The fork's patches over tag 1.5: @iot.id read as ANY (15-078r6 Table 2,
+      # ets-sta10#40) and a Level 3 setup that writes nothing (T-5918),
+      # docs/src/sta-compliance.md section 4. Built by the pinned Maven image into
+      # the official image above, so the jar is the only difference.
+      FORK_REPO: marek-mraz-jc/ets-sta10
+      FORK_COMMIT: 5d5d9793c1cbae502a603f4630d1984b97044fd3
+      MAVEN_IMAGE: maven:3.9-eclipse-temurin-17@sha256:1a352420f7aba21f5ad08df31bab55f74c013fb491f1ae8ab1dd7ff9ed698584
+      FORK_BASELINE: ci/sta-compliance-fork-baseline.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.FORK_REPO }}
+          ref: ${{ env.FORK_COMMIT }}
+          path: ets-sta10-fork
+          persist-credentials: false
+      - name: Build the fork's jar into the official image
+        run: |
+          test "$(git -C ets-sta10-fork rev-parse HEAD)" = "$FORK_COMMIT"
+          docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD/ets-sta10-fork:/src" -w /src \
+            "$MAVEN_IMAGE" mvn -B -q -Dmaven.repo.local=/tmp/m2 -DskipTests package
+          printf 'FROM %s\nCOPY ets-sta10-1.5.jar /usr/local/tomcat/webapps/teamengine/WEB-INF/lib/ets-sta10-1.5.jar\n' \
+            "$TE_IMAGE" | docker build -t ets-sta10-fork -f - ets-sta10-fork/target
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: broker-surfaces
+      - name: Start TEAM Engine, the broker and the view
+        run: |
+          chmod +x antares
+          # host network: TEAM Engine on 8080 reaches the broker at localhost:9090
+          docker run -d --name teamengine --network host "$TE_IMAGE"
+          ANTARES_HTTP_PORT=9090 ANTARES_API_SURFACES=admin,views,sta ./antares > broker.log 2>&1 &
+          for _ in $(seq 1 100); do curl -sf -o /dev/null localhost:9090/q/health && break; sleep 0.2; done
+          dev/views-rig.sh http://localhost:9090 ci/views/sta
+          dev/views-rig.sh http://localhost:9090 ci/views/sta-ets
+          # the image's own public test account (ogctest), not a secret
+          for _ in $(seq 1 60); do
+            curl -fsS -m 5 -u ogctest:ogctest -o /dev/null localhost:8080/teamengine/rest/suites && break
+            sleep 5
+          done
+      - name: The ETS, gated by ci/sta-compliance-baseline.json
+        run: |
+          dev/ogc-compliance/baseline.py --self-test
+          iut=$(jq -rn --arg u "$IUT" '$u|@uri')
+          # ics=3: all three conformance levels
+          curl -sS -m 1500 -u ogctest:ogctest -H 'Accept: application/xml' -o testng-results.xml \
+            "localhost:8080/teamengine/rest/suites/sta10/run?iut=$iut&ics=3" || true
+          set +e
+          dev/ogc-compliance/baseline.py check testng-results.xml "$BASELINE" > gate.md 2>&1
+          rc=$?
+          { echo "## SensorThings ETS (ets-sta10 1.5), view sta"; cat gate.md; } >> "$GITHUB_STEP_SUMMARY"
+          cat gate.md
+          exit $rc
+      - name: The fork's ETS, gated by ci/sta-compliance-fork-baseline.json and the official run
+        if: always()
+        run: |
+          docker logs teamengine > teamengine.log 2>&1 || true
+          docker rm -f teamengine
+          docker run -d --name teamengine --network host ets-sta10-fork
+          for _ in $(seq 1 60); do
+            curl -fsS -m 5 -u ogctest:ogctest -o /dev/null localhost:8080/teamengine/rest/suites && break
+            sleep 5
+          done
+          iut=$(jq -rn --arg u "$FORK_IUT" '$u|@uri')
+          curl -sS -m 1500 -u ogctest:ogctest -H 'Accept: application/xml' -o fork-testng-results.xml \
+            "localhost:8080/teamengine/rest/suites/sta10/run?iut=$iut&ics=3" || true
+          set +e
+          dev/ogc-compliance/baseline.py check fork-testng-results.xml "$FORK_BASELINE" > fork-gate.md 2>&1
+          rc=$?
+          # The patch only adds passes: every test the official image passes passes on the fork.
+          dev/ogc-compliance/baseline.py write testng-results.xml official.json > /dev/null 2>&1
+          dev/ogc-compliance/baseline.py check fork-testng-results.xml official.json > fork-gap.md 2>&1
+          gap=$?
+          { echo "## SensorThings ETS fork ($FORK_REPO@${FORK_COMMIT:0:7}), view sta-ets"; cat fork-gate.md
+            echo "### Against the official run"; cat fork-gap.md; } >> "$GITHUB_STEP_SUMMARY"
+          cat fork-gate.md fork-gap.md
+          [ "$rc" = 0 ] && [ "$gap" = 0 ]
+      - name: TEAM Engine log
+        if: always()
+        run: docker logs teamengine > fork-teamengine.log 2>&1 || true
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: sta-compliance-external
+          path: |
+            testng-results.xml
+            gate.md
+            fork-testng-results.xml
+            fork-gate.md
+            fork-gap.md
+            broker.log
+            teamengine.log
+            fork-teamengine.log
+          retention-days: 14
+      - name: File an issue on nightly failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: sta-compliance-external went red
+          body: A test the SensorThings ETS passed in ci/sta-compliance-baseline.json or ci/sta-compliance-fork-baseline.json fails now.
+          log-file: gate.md
+
+  ws-conformance:
+    name: ws-conformance
+    if: ${{ !inputs.fast }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: marek-mraz-jc/joinedcontext-conformance
+          ref: ${{ env.CONFORMANCE_REF }}
+          path: conformance
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: broker-surfaces
+      - name: The AsyncAPI document is valid (ADR-0026 rule 11)
+        run: npx --yes @asyncapi/cli@2.16.0 validate docs/api/asyncapi-ws.yaml
+      - name: Install the suite's pinned Python
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --require-hashes -r conformance/requirements.txt
+      - name: Start the broker and load the views
+        # the lifetime outlasts one 30 s heartbeat (a removed view is seen
+        # there) and ends before the 60 s idle close; the HTTP twin of a
+        # notification goes to the suite's loopback receiver
+        run: |
+          chmod +x antares
+          ANTARES_HTTP_PORT=8080 ANTARES_API_SURFACES=admin,views,ws,ws-views \
+            ANTARES_SCHEMA_MAX_BYTES=1048576 ANTARES_WS_QUEUE=4 \
+            ANTARES_WS_MAX_LIFETIME_SECS=45 ANTARES_EGRESS_ALLOW_PRIVATE=true \
+            ./antares > broker.log 2>&1 &
+          for _ in $(seq 1 100); do curl -sf -o /dev/null localhost:8080/q/health && break; sleep 0.2; done
+          dev/views-rig.sh http://localhost:8080
+      - name: The WebSocket suite
+        env:
+          WS_URL: ws://localhost:8080/x/views/all/ws
+          ASYNCAPI_DOC: ${{ github.workspace }}/docs/api/asyncapi-ws.yaml
+          WS_QUEUE: "4"
+          JC_REPORTS_DIR: reports
+        run: |
+          export PATH="$PWD/.venv/bin:$PATH"
+          conformance/tests/ws/run.sh
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: ws-conformance
+          path: |
+            reports/
+            broker.log
+          retention-days: 14
+      - name: File an issue on nightly failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: ws-conformance went red
+          body: The AsyncAPI validation or the joinedcontext-conformance WebSocket suite against /x/views/all/ws failed.
+          log-file: broker.log
+
+  linkml-conformance:
+    name: linkml-conformance
+    needs: build
+    if: ${{ !inputs.fast }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: marek-mraz-jc/joinedcontext-conformance
+          ref: ${{ env.CONFORMANCE_REF }}
+          path: conformance
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: broker-surfaces
+      - name: Install the suite's pinned Python (linkml, pyshacl)
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --require-hashes -r conformance/requirements.txt
+      - name: Start the broker and load the views
+        run: |
+          chmod +x antares
+          ANTARES_HTTP_PORT=8080 ANTARES_API_SURFACES=admin,views,linkml \
+            ANTARES_SCHEMA_MAX_BYTES=1048576 ./antares > broker.log 2>&1 &
+          for _ in $(seq 1 100); do curl -sf -o /dev/null localhost:8080/q/health && break; sleep 0.2; done
+          dev/views-rig.sh http://localhost:8080
+      - name: The LinkML suite
+        env:
+          LINKML_URL: http://localhost:8080/x/views/all/linkml
+          LINKML_RESTRICTED_URL: http://localhost:8080/x/views/parity-restricted/linkml
+          JC_REPORTS_DIR: reports
+        run: |
+          export PATH="$PWD/.venv/bin:$PATH"
+          conformance/tests/linkml/run.sh
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: linkml-conformance
+          path: |
+            reports/
+            broker.log
+          retention-days: 14
+      - name: File an issue on nightly failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: linkml-conformance went red
+          body: The joinedcontext-conformance LinkML suite against /x/views/{all,parity-restricted}/linkml failed.
+          log-file: broker.log
+
+  # ADR-0024 decision 7: the two required OData clients read $metadata and
+  # one page of view all, then the restricted view without NO2. Nightly.
+  odata-clients:
+    name: odata-clients-${{ matrix.client }}
+    if: github.event_name != 'pull_request' && !inputs.fast
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        client: [dotnet, sap]
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: marek-mraz-jc/joinedcontext-conformance
+          ref: ${{ env.CONFORMANCE_REF }}
+          path: conformance
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: broker-surfaces
+      - if: matrix.client == 'dotnet'
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: "10.0.x"
+      - if: matrix.client == 'sap'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Start the broker and load the views
+        run: |
+          chmod +x antares
+          ANTARES_HTTP_PORT=8080 ANTARES_API_SURFACES=admin,views,odata \
+            ANTARES_SCHEMA_MAX_BYTES=1048576 ./antares > broker.log 2>&1 &
+          for _ in $(seq 1 100); do curl -sf -o /dev/null localhost:8080/q/health && break; sleep 0.2; done
+          dev/views-rig.sh http://localhost:8080
+      - name: The client check
+        env:
+          ODATA_URL: http://localhost:8080/x/views/all/odata/v4
+          ODATA_RESTRICTED_URL: http://localhost:8080/x/views/parity-restricted/odata/v4
+        run: conformance/tests/odata/clients/${{ matrix.client }}/run.sh
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: odata-clients-${{ matrix.client }}
+          path: broker.log
+          retention-days: 14
+      - name: File an issue on nightly failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: odata-clients-${{ matrix.client }} went red
+          body: The ${{ matrix.client }} OData client check against /x/views/all/odata/v4 failed.
+          log-file: broker.log
+
+  # T-3675: the ETSI IOP suite over five brokers (dev/etsi-pipeline.sh,
+  # SUITES=IOP) on the all-features image and on the vanilla image of the
+  # same commit; red on any TP whose verdict differs. Two release images per
+  # run, so nightly, v* tags and dispatch only, never per pull request.
+  etsi-iop-run:
+    name: etsi-iop ${{ matrix.variant }}
+    if: github.event_name != 'pull_request' && !inputs.fast
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [vanilla, full]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      OUT: results/iop-${{ matrix.variant }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the ${{ matrix.variant }} image
+        run: |
+          f=""; [ "${{ matrix.variant }}" = full ] && f=mqtt,views,mcp,odata,ws
+          docker build --build-arg FEATURES="$f" -t antares-local:latest .
+      - name: IOP_TP over five brokers
+        env:
+          STORE: memory
+          SUITES: IOP
+          RESULTS_DIR: ${{ env.OUT }}
+          SKIP_BUILD: "1"
+          STOP_ON_ERROR: "0"
+          CALLBACK_HOST: localhost
+          API_SURFACES: ${{ matrix.variant == 'full' && 'admin,views,mcp,odata,ws' || 'admin' }}
+        run: ./dev/etsi-pipeline.sh || true
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: etsi-iop-${{ matrix.variant }}
+          path: |
+            ${{ env.OUT }}/tp-status.csv
+            ${{ env.OUT }}/run-summary.md
+            ${{ env.OUT }}/failures.csv
+            ${{ env.OUT }}/IOP-console.log
+            ${{ env.OUT }}/**/log.html
+          retention-days: 14
+
+  etsi-iop:
+    name: etsi-iop
+    needs: etsi-iop-run
+    if: always() && needs.etsi-iop-run.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: etsi-iop-*
+          path: in
+      - name: Full answers as vanilla, TP by TP
+        # explicit bash is -eo pipefail: the compare's exit survives the tee
+        shell: bash
+        run: python3 dev/etsi-baseline.py compare in/etsi-iop-vanilla in/etsi-iop-full | tee iop-compare.txt
+      - name: File an issue on nightly failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: etsi-iop went red
+          body: The ETSI IOP suite on the all-features build differs from the vanilla build of the same commit.
+          log-file: iop-compare.txt
+
+  # T-3521, ADR-0025 equivalence layer 3: the ETSI DistributedOperations
+  # directory against broker1 of the full image with internal-csr and
+  # ANTARES_SELF_URLS set to that broker's own URL, and against the vanilla
+  # image of the same commit. The suite's Context Source is its HTTP mock,
+  # no self URL, so every forward stays HTTP and no verdict may move: the
+  # feature leaves foreign federation alone. Two release images per run, so
+  # nightly, v* tags and dispatch only, as etsi-iop.
+  etsi-icsr-run:
+    name: etsi-icsr ${{ matrix.variant }}
+    if: github.event_name != 'pull_request' && !inputs.fast
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [vanilla, full]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      OUT: results/icsr-${{ matrix.variant }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the ${{ matrix.variant }} image
+        run: |
+          f=""; [ "${{ matrix.variant }}" = full ] && f=internal-csr,mqtt,views,mcp,odata,ws
+          docker build --build-arg FEATURES="$f" -t antares-local:latest .
+      - name: DistributedOperations on broker1
+        env:
+          STORE: memory
+          SUITES: DistributedOperations
+          RESULTS_DIR: ${{ env.OUT }}
+          SKIP_BUILD: "1"
+          STOP_ON_ERROR: "0"
+          CALLBACK_HOST: localhost
+          SELF_URLS: ${{ matrix.variant == 'full' && 'http://localhost:9090' || '' }}
+        run: ./dev/etsi-pipeline.sh || true
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: etsi-icsr-${{ matrix.variant }}
+          path: |
+            ${{ env.OUT }}/tp-status.csv
+            ${{ env.OUT }}/run-summary.md
+            ${{ env.OUT }}/failures.csv
+            ${{ env.OUT }}/*-console.log
+            ${{ env.OUT }}/**/log.html
+          retention-days: 14
+
+  etsi-icsr:
+    name: etsi-icsr
+    needs: etsi-icsr-run
+    if: always() && needs.etsi-icsr-run.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: etsi-icsr-*
+          path: in
+      - name: The internal-csr build answers as vanilla, TP by TP
+        # explicit bash is -eo pipefail: the compare's exit survives the tee
+        shell: bash
+        run: python3 dev/etsi-baseline.py compare in/etsi-icsr-vanilla in/etsi-icsr-full | tee icsr-compare.txt
+      - name: File an issue on nightly failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: etsi-icsr went red
+          body: The ETSI DistributedOperations verdicts of the internal-csr build differ from the vanilla build of the same commit.
+          log-file: icsr-compare.txt
+
+  # E1 and E2 of surfaces-conformance.md 2.3 (T-3501): the serial suites on
+  # the full image's plain root, and through view `all` (ci/views/etsi) with
+  # every setup and teardown at the plain root (dev/etsi_setup_url.py).
+  # Pull requests run Consumption and Provision, the nightly every serial
+  # suite. Decided (worker-1, owner may override): cell `file` only, both on
+  # pull requests and nightly; the postgres cell adds a store, not a view path.
+  etsi-full-all-run:
+    name: etsi-full-all ${{ matrix.run }}
+    if: ${{ !inputs.fast }}
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [e1, e2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      OUT: results/etsi-${{ matrix.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the full image
+        run: docker build --build-arg FEATURES=mqtt,views,mcp,odata,ws -t antares-local:latest .
+      - name: The serial suites (${{ matrix.run }})
+        env:
+          STORE: file
+          SUITES: ${{ github.event_name == 'pull_request' && 'ContextInformation/Consumption,ContextInformation/Provision' || 'CommonBehaviours,ContextInformation,ContextSource,jsonldContext,DistributedOperations' }}
+          RESULTS_DIR: ${{ env.OUT }}
+          SKIP_BUILD: "1"
+          STOP_ON_ERROR: "0"
+          CALLBACK_HOST: localhost
+          API_SURFACES: admin,views
+          VIEWS: ${{ matrix.run == 'e2' && 'ci/views/etsi' || '' }}
+          NGSILD_BASE: ${{ matrix.run == 'e2' && '/x/views/all/ngsi-ld/v1' || '/ngsi-ld/v1' }}
+        run: ./dev/etsi-pipeline.sh || true
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: etsi-full-all-${{ matrix.run }}
+          path: |
+            ${{ env.OUT }}/tp-status.csv
+            ${{ env.OUT }}/requests.jsonl
+            ${{ env.OUT }}/run-summary.md
+            ${{ env.OUT }}/failures.csv
+            ${{ env.OUT }}/*-console.log
+            ${{ env.OUT }}/**/log.html
+          retention-days: 14
+
+  etsi-full-restricted-run:
+    name: etsi-full-restricted e4
+    if: ${{ github.event_name != 'pull_request' && !inputs.fast }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      OUT: results/etsi-e4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the full image
+        run: docker build --build-arg FEATURES=mqtt,views,mcp,odata,ws -t antares-local:latest .
+      - name: The serial suites through view etsi-restricted
+        env:
+          STORE: file
+          SUITES: CommonBehaviours,ContextInformation,ContextSource,jsonldContext,DistributedOperations
+          RESULTS_DIR: ${{ env.OUT }}
+          SKIP_BUILD: "1"
+          STOP_ON_ERROR: "0"
+          CALLBACK_HOST: localhost
+          API_SURFACES: admin,views
+          VIEWS: ci/views/etsi
+          NGSILD_BASE: /x/views/etsi-restricted/ngsi-ld/v1
+        run: ./dev/etsi-pipeline.sh || true
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: etsi-full-restricted-e4
+          path: |
+            ${{ env.OUT }}/tp-status.csv
+            ${{ env.OUT }}/requests.jsonl
+            ${{ env.OUT }}/run-summary.md
+            ${{ env.OUT }}/failures.csv
+            ${{ env.OUT }}/*-console.log
+            ${{ env.OUT }}/**/log.html
+          retention-days: 14
+
+  etsi-full-restricted:
+    name: etsi-full-restricted
+    needs: [etsi-full-all-run, etsi-full-restricted-run]
+    if: always() && needs.etsi-full-restricted-run.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: etsi-full-all-e1
+          path: in/e1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: etsi-full-restricted-e4
+          path: in/e4
+      - name: Through view etsi-restricted, every TP answers as the plain root or owes its refusal
+        # explicit bash is -eo pipefail: the diff's exit survives the tee
+        shell: bash
+        run: |
+          pip install --quiet pyyaml
+          python3 dev/etsi-view-diff.py ci/views/etsi/etsi-restricted.json in/e1 in/e4 | tee view-diff.txt
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: etsi-full-restricted-diff
+          path: |
+            view-diff.txt
+            in/e4/owed-refusals.json
+          retention-days: 14
+      - name: File an issue on nightly failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: etsi-full-restricted went red
+          body: Through view etsi-restricted, an ETSI TP answers otherwise than at the plain root of the same image, and no write, hidden type or hidden Attribute of the view explains it.
+          log-file: view-diff.txt
+
+  etsi-full-all:
+    name: etsi-full-all
+    needs: etsi-full-all-run
+    if: always() && needs.etsi-full-all-run.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: etsi-full-all-*
+          path: in
+      - name: Through view all, every TP answers as the plain root or owes its refusal
+        # explicit bash is -eo pipefail: the diff's exit survives the tee
+        shell: bash
+        run: |
+          pip install --quiet pyyaml
+          python3 dev/etsi-view-diff.py ci/views/etsi/all.json in/etsi-full-all-e1 in/etsi-full-all-e2 | tee view-diff.txt
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: etsi-full-all-diff
+          path: |
+            view-diff.txt
+            in/etsi-full-all-e2/owed-refusals.json
+          retention-days: 14
+      - name: File an issue on nightly failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: etsi-full-all went red
+          body: Through view all, an ETSI TP answers otherwise than at the plain root of the same image, and no refusal of the view explains it.
+          log-file: view-diff.txt

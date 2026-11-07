@@ -1,0 +1,54 @@
+[package]
+name = "ngsild-residual"
+description = "The residual of a standard query over an NGSI-LD view: one intermediate form and its three-valued evaluator over a normalized Entity (ADR-0028 rules 2 and 7)."
+version.workspace = true
+edition.workspace = true
+publish = ["crates-io"]
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+readme = "README.md"
+# reads the vendored ETSI suite, which is not in the package
+exclude = ["tests/etsi_fixtures.rs"]
+keywords = ["ngsi-ld", "etsi", "query", "three-valued", "fiware"]
+categories = ["data-structures", "database-implementations"]
+
+# ADR-0028 rule 2: reached only through antares-ops (T-3757). Role ngsild (T-3912): pure NGSI-LD,
+# published, held to rule M3 (dev/check-module-rules.py) and the 100 % coverage gate.
+[package.metadata.antares]
+role = "ngsild"
+
+[dependencies]
+geo = { workspace = true }
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+unicode-normalization = { version = "0.1", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+# the pushed `georel` matcher, held against the residual relations (tests/geometry.rs)
+antares-ql = { workspace = true }
+proptest = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"

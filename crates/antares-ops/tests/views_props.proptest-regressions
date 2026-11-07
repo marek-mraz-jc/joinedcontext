@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c41b93c1a3c02d2a6be598a8225124218f0c2d8887dbc7fd7eca811f903ede79 # shrinks to cars = [(0, None, None)], view_q = None, shown = [], q = Some("colour==\"red\"")
+cc bb7ec6e18b292d393ab929cb064d0b6f957a9124c59d3d3106fc1da5881362f8 # shrinks to cars = [(0, None, None)], q = Some("colour==\"red\"")
+cc 1a456bce3deb651379a49b54cd72a29554c32d7340d00fabe41eea33b35efcb0 # shrinks to cars = [(0, None, None)], view_q = None, engine_q = None, shown = [], q = Some("colour==\"red\"")
+cc 625fbc029ee85d42c03c832f7bb89e49c8df726aeeb8ea2e95869fdd29fa89f8 # shrinks to cars = [(0, Some(8), None)], view_q = None, engine_q = None, shown = [], q = Some("!speed")

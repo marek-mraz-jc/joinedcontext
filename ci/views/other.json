@@ -1,0 +1,22 @@
+{
+  "id": "other",
+  "tenant": "conformance-other",
+  "selector": [
+    "Device"
+  ],
+  "rules": [
+    {
+      "types": [
+        "Device"
+      ],
+      "attributes": [
+        "status"
+      ]
+    }
+  ],
+  "operations": [
+    "retrieve_entity",
+    "query_entities",
+    "query_entities_post"
+  ]
+}

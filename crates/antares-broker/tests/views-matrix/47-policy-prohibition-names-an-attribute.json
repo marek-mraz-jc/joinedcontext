@@ -1,0 +1,137 @@
+{
+ "about": "A read prohibition naming operator of Vehicle beside a whole grant (T-5842): every Entity, Vehicles without operator, Parking and Sensor with it; a notification is decided as a read and loses it too.",
+ "view": {
+  "selector": [
+   "*"
+  ],
+  "rules": [
+   {
+    "types": [
+     "*"
+    ],
+    "attributes": [
+     "*"
+    ]
+   }
+  ]
+ },
+ "caller": {
+  "x-jc-subject": "alice"
+ },
+ "policies": [
+  {
+   "id": "p",
+   "assignee": {
+    "kind": "user",
+    "id": "alice"
+   },
+   "operations": [
+    "5.7.1",
+    "5.7.2",
+    "5.7.3",
+    "5.7.4",
+    "5.7.5",
+    "5.7.6",
+    "5.7.7",
+    "5.7.8",
+    "5.7.9",
+    "5.7.10",
+    "5.8.1",
+    "5.8.2",
+    "5.8.3",
+    "5.8.4",
+    "5.8.5"
+   ]
+  },
+  {
+   "id": "x",
+   "assignee": {
+    "kind": "user",
+    "id": "alice"
+   },
+   "operations": [
+    "5.7.1",
+    "5.7.2",
+    "5.7.3",
+    "5.7.4",
+    "5.7.5",
+    "5.7.6",
+    "5.7.7",
+    "5.7.8",
+    "5.7.9",
+    "5.7.10"
+   ],
+   "information": [
+    {
+     "entities": [
+      {
+       "type": "Vehicle"
+      }
+     ],
+     "propertyNames": [
+      "operator"
+     ]
+    }
+   ],
+   "effect": "prohibit"
+  }
+ ],
+ "expect": {
+  "urn:ngsi-ld:Vehicle:V1": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V2": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V3": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V4": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V5": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V6": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V7": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V8": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Parking:P1": [
+   "availableSpots",
+   "location",
+   "name",
+   "operator"
+  ],
+  "urn:ngsi-ld:Parking:P2": [
+   "availableSpots",
+   "location",
+   "operator"
+  ],
+  "urn:ngsi-ld:Sensor:S1": [
+   "location",
+   "operator",
+   "temperature"
+  ]
+ }
+}

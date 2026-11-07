@@ -1,0 +1,25 @@
+{
+  "id": "ogc-public",
+  "tenant": "ogc",
+  "selector": [
+    "AirQualityObserved"
+  ],
+  "rules": [
+    {
+      "types": [
+        "AirQualityObserved"
+      ],
+      "attributes": [
+        "temperature",
+        "NO2",
+        "location",
+        "nearest"
+      ]
+    }
+  ],
+  "operations": [
+    "retrieve_entity",
+    "query_entities",
+    "query_entities_post"
+  ]
+}

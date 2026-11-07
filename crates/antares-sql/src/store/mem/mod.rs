@@ -1,0 +1,2444 @@
+// SPDX-License-Identifier: EUPL-1.2
+//! In-memory store — v0 storage backend.
+//!
+//! DELIBERATE DEVIATION (recorded in docs/adr/): the target backend is
+//! Postgres; the suite-green loop uses an in-memory backend first. The store
+//! API is shaped like the Postgres store traits (tenant first parameter
+//! everywhere) so the sqlx implementation can land behind the same seam.
+//!
+//! Documents are held in the *internal expanded form* produced by
+//! `antares_jsonld::expand` (IRI keys, instance arrays), with server-managed
+//! timestamps embedded (`createdAt`/`modifiedAt` at entity level and inside
+//! each attribute instance) — output layers strip them unless sysAttrs.
+
+use ::redb::{Database, Durability, ReadableDatabase, ReadableTableMetadata};
+use antares_model::{NgsiError, TenantId};
+use antares_store::{context_row_owner, context_row_visible, filter, ChangeHook, Kind};
+
+mod redb;
+use self::redb::{
+    key_bytes, split_key, table_for, Shadow, Table, FORMAT_VERSION, T_ENTITIES, T_JSONLD_CONTEXTS,
+    T_META, T_TEMPORAL_ENTITIES,
+};
+use serde_json::Value;
+
+/// One key [`Store::persist_many`] writes: its table, its key, and the doc
+/// (`None` deletes the key).
+type Persisted<'a> = (Table, Vec<u8>, Option<&'a Value>);
+use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
+use std::sync::RwLock;
+
+/// How many `Cached` @context entries the broker keeps (5.13.1). The bound is
+/// on the CACHE only: it exists because one entry is stored per distinct
+/// external @context URL a request references, which is client-controlled,
+/// while the working set of real @contexts a deployment uses is small. Every
+/// entry holds a whole @context body, so the count is the memory bound too.
+pub const MAX_CACHED_CONTEXTS: usize = 1_000;
+
+/// The `Cached` entry ids to drop so at most `MAX_CACHED_CONTEXTS` remain,
+/// oldest `createdAt` first (5.13.1 stamps every stored entry with one; an
+/// entry without a stamp sorts oldest and goes first). Other kinds are never
+/// candidates.
+fn oldest_cached(contexts: &BTreeMap<String, Value>) -> Vec<String> {
+    let mut cached: Vec<(&str, &str)> = contexts
+        .iter()
+        .filter(|(_, d)| d.get("kind").and_then(Value::as_str) == Some("Cached"))
+        .map(|(id, d)| {
+            (
+                id.as_str(),
+                d.get("createdAt").and_then(Value::as_str).unwrap_or(""),
+            )
+        })
+        .collect();
+    if cached.len() <= MAX_CACHED_CONTEXTS {
+        return Vec::new();
+    }
+    cached.sort_unstable_by(|(a_id, a_ts), (b_id, b_ts)| (a_ts, a_id).cmp(&(b_ts, b_id)));
+    cached
+        .iter()
+        .take(cached.len().saturating_sub(MAX_CACHED_CONTEXTS))
+        .map(|(id, _)| (*id).to_owned())
+        .collect()
+}
+
+/// The attribute names of an internal entity doc: every member but the
+/// entity's own (`ENTITY_META_KEYS`), collected so the doc can be changed
+/// while they are walked.
+fn attribute_names(obj: &serde_json::Map<String, Value>) -> Vec<String> {
+    obj.keys()
+        .filter(|k| !antares_model::ENTITY_META_KEYS.contains(&k.as_str()))
+        .cloned()
+        .collect()
+}
+
+/// Whether an internal doc's types include `type_iri` (retention, T-3900).
+fn typed(doc: &Value, type_iri: &str) -> bool {
+    match doc.get("type") {
+        Some(Value::Array(types)) => types.iter().any(|t| t.as_str() == Some(type_iri)),
+        Some(Value::String(t)) => t == type_iri,
+        _ => false,
+    }
+}
+
+/// Whether `scope` reaches the temporal document `id` (DM-97).
+fn in_scope(id: &str, doc: &Value, scope: antares_store::HistoryScope<'_>) -> bool {
+    use antares_store::HistoryScope;
+    match scope {
+        HistoryScope::Entity(one) => id == one,
+        HistoryScope::Type {
+            type_iri,
+            except_ids,
+        } => typed(doc, type_iri) && !except_ids.iter().any(|e| e == id),
+        HistoryScope::Rest {
+            except_types,
+            except_ids,
+        } => !except_types.iter().any(|t| typed(doc, t)) && !except_ids.iter().any(|e| e == id),
+    }
+}
+
+/// The instant of an attribute instance that carries no timestamp at all.
+pub(crate) const EPOCH: &str = "1970-01-01T00:00:00Z";
+
+/// The instant an attribute instance is kept by, the same fallback the
+/// Postgres arm's `observed_at` column takes (`None`: [`EPOCH`] there).
+pub(crate) fn instance_instant(inst: &Value) -> Option<&str> {
+    ["observedAt", "modifiedAt", "deletedAt", "createdAt"]
+        .iter()
+        .find_map(|k| inst.get(*k).and_then(Value::as_str))
+}
+
+/// `a` before `b`, compared as instants (4.6.3 allows a comma fraction), by
+/// bytes when either does not parse.
+pub(crate) fn earlier(a: &str, b: &str) -> bool {
+    let instant =
+        |s: &str| chrono::DateTime::parse_from_rfc3339(&filter::canonical_datetime(s)).ok();
+    match (instant(a), instant(b)) {
+        (Some(x), Some(y)) => x < y,
+        _ => a < b,
+    }
+}
+
+/// The 4.22 "now" the write paths judge `expiresAt` against — the same UTC-Z
+/// millisecond form the read boundary uses.
+fn now_stamp() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+const ALL_KINDS: [Kind; 10] = [
+    Kind::Entity,
+    Kind::Subscription,
+    Kind::Registration,
+    Kind::CSourceSubscription,
+    Kind::Temporal,
+    Kind::Snapshot,
+    Kind::EntityMap,
+    Kind::DistSub,
+    Kind::DeadLetter,
+    Kind::View,
+];
+
+/// Run `f` off the tokio worker pool when called from a multi-thread runtime:
+/// a per-commit fsync must never stall an async worker. Outside a
+/// runtime (unit tests, startup) it just runs inline.
+///
+/// `durable` is what decides. A per-document write blocks only where it
+/// commits, so it passes `shadow.is_some()`: in `memory` mode that write is
+/// a lock and a map insert, and handing a worker's queue to another thread —
+/// a handoff, and past the pool's live threads a spawn — costs more than the
+/// write and costs more the more cores there are to hand work between. The
+/// paths that hold the write section for a whole SCAN (the 4.22 sweep, the
+/// two purges) pass `true` whatever the mode: what makes them long there is
+/// the scan, not the commit.
+fn on_blocking<T>(durable: bool, f: impl FnOnce() -> T) -> T {
+    // wasm32: single-threaded, no tokio runtime — always inline.
+    #[cfg(not(target_arch = "wasm32"))]
+    if durable {
+        if let Ok(h) = tokio::runtime::Handle::try_current() {
+            if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
+                return tokio::task::block_in_place(f);
+            }
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = durable;
+    f()
+}
+
+#[derive(Default)]
+pub struct Store {
+    inner: RwLock<Inner>,
+    hook: RwLock<Option<ChangeHook>>,
+    /// Set when this instance serves only the temporal seam: it never holds
+    /// the entities, so the append guard must not look for them here.
+    pub temporal_only: bool,
+    /// `file` mode durability shadow; `None` = pure in-memory (`memory` mode).
+    shadow: Option<Shadow>,
+    /// Writers currently queued behind the single write-critical section
+    /// (redb has ONE writer, so fsync commits serialize here). Exported via
+    /// /q/health; the group-commit lever only gets built if a benchmark shows
+    /// this depth sustained at the measured ~3.1k writes/s ceiling.
+    write_waiters: std::sync::atomic::AtomicUsize,
+    write_waiters_peak: std::sync::atomic::AtomicUsize,
+    /// Change hooks fire in COMMIT order. The hook runs after the
+    /// write-critical section (it may write other kinds through the store,
+    /// so running it inside would deadlock), which lets a later commit's
+    /// hook overtake an earlier one — the consumer would record stale state
+    /// as newest. Entity writes therefore hold this from before the commit
+    /// until the emit is done. Only the local single-process path needs it:
+    /// across processes the transactional outbox is the ordered channel.
+    emit_order: tokio::sync::Mutex<()>,
+}
+
+#[derive(Default)]
+struct Inner {
+    /// tenant → id → internal entity doc (BTreeMap: deterministic list order).
+    entities: HashMap<String, BTreeMap<String, Value>>,
+    subscriptions: HashMap<String, BTreeMap<String, Value>>,
+    registrations: HashMap<String, BTreeMap<String, Value>>,
+    csource_subscriptions: HashMap<String, BTreeMap<String, Value>>,
+    snapshots: HashMap<String, BTreeMap<String, Value>>,
+    entity_map_docs: HashMap<String, BTreeMap<String, Value>>,
+    dist_subs: HashMap<String, BTreeMap<String, Value>>,
+    dead_letters: HashMap<String, BTreeMap<String, Value>>,
+    views: HashMap<String, BTreeMap<String, Value>>,
+    /// tenant → entity id → temporal doc (attr IRI → instance array).
+    temporal: HashMap<String, BTreeMap<String, Value>>,
+    /// hosted/cached @context documents, shared across tenants by design.
+    contexts: BTreeMap<String, Value>,
+}
+
+impl Store {
+    /// Open (or create) the `file`-mode store: redb at `dir/antares.redb`,
+    /// format-checked, in-memory maps rebuilt from the file.
+    /// Any open/format/decode error refuses to start — never silently serve
+    /// partial data.
+    pub fn open_file(dir: &Path) -> Result<Self, String> {
+        std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+        let path = dir.join("antares.redb");
+        let db = Database::create(&path).map_err(|e| format!("open {}: {e}", path.display()))?;
+        Self::from_database(db, &path.display().to_string())
+    }
+
+    /// The target-independent half of `open_file`: format check +
+    /// boot rebuild over an already-constructed redb `Database`. The
+    /// browser build calls this with an OPFS-backed database — same shadow,
+    /// same commit-before-ack, different `StorageBackend`.
+    pub fn from_database(db: Database, label: &str) -> Result<Self, String> {
+        // Format marker. Absent marker + existing data = a file this
+        // binary cannot vouch for; refuse rather than guess.
+        let stored_format = {
+            let rt = db.begin_read().map_err(|e| e.to_string())?;
+            match rt.open_table(T_META) {
+                Ok(t) => t
+                    .get("format")
+                    .map_err(|e| e.to_string())?
+                    .map(|v| v.value().to_owned()),
+                Err(::redb::TableError::TableDoesNotExist(_)) => None,
+                Err(e) => return Err(e.to_string()),
+            }
+        };
+        match stored_format.as_deref() {
+            Some(FORMAT_VERSION) => {}
+            Some(other) => {
+                return Err(format!(
+                    "data file {label} has format {other}, this binary supports {FORMAT_VERSION} — \
+                     refusing to start"
+                ));
+            }
+            None => {
+                let rt = db.begin_read().map_err(|e| e.to_string())?;
+                for kind in ALL_KINDS {
+                    // Absent = nothing stored under that kind. Any other
+                    // error is a table this binary cannot read, and reading
+                    // it as empty would let the guard stamp its marker onto
+                    // a file it is about to refuse.
+                    let t = match rt.open_table(table_for(kind)) {
+                        Ok(t) => t,
+                        Err(::redb::TableError::TableDoesNotExist(_)) => continue,
+                        Err(e) => return Err(e.to_string()),
+                    };
+                    if t.len().map_err(|e| e.to_string())? > 0 {
+                        return Err(format!(
+                            "data file {label} holds data but no format marker — refusing to start"
+                        ));
+                    }
+                }
+                drop(rt);
+                let mut tx = db.begin_write().map_err(|e| e.to_string())?;
+                tx.set_durability(Durability::Immediate)
+                    .map_err(|e| e.to_string())?;
+                {
+                    let mut t = tx.open_table(T_META).map_err(|e| e.to_string())?;
+                    t.insert("format", FORMAT_VERSION)
+                        .map_err(|e| e.to_string())?;
+                }
+                tx.commit().map_err(|e| e.to_string())?;
+            }
+        }
+
+        // Boot rebuild — scan every table into the in-memory maps.
+        let mut inner = Inner::default();
+        let rt = db.begin_read().map_err(|e| e.to_string())?;
+        for kind in ALL_KINDS {
+            let table = match rt.open_table(table_for(kind)) {
+                Ok(t) => t,
+                Err(::redb::TableError::TableDoesNotExist(_)) => continue,
+                Err(e) => return Err(e.to_string()),
+            };
+            let map = match kind {
+                Kind::Entity => &mut inner.entities,
+                Kind::Subscription => &mut inner.subscriptions,
+                Kind::Registration => &mut inner.registrations,
+                Kind::CSourceSubscription => &mut inner.csource_subscriptions,
+                Kind::Temporal => &mut inner.temporal,
+                Kind::Snapshot => &mut inner.snapshots,
+                Kind::EntityMap => &mut inner.entity_map_docs,
+                Kind::DistSub => &mut inner.dist_subs,
+                Kind::DeadLetter => &mut inner.dead_letters,
+                Kind::View => &mut inner.views,
+            };
+            for row in ::redb::ReadableTable::iter(&table).map_err(|e| e.to_string())? {
+                let (k, v) = row.map_err(|e| e.to_string())?;
+                let (tenant, id) = split_key(k.value())
+                    .ok_or_else(|| format!("undecodable key in table {kind:?}"))?;
+                let doc: Value = serde_json::from_slice(v.value())
+                    .map_err(|e| format!("undecodable value for {tenant}/{id}: {e}"))?;
+                map.entry(tenant).or_default().insert(id, doc);
+            }
+        }
+        // Same rule as the kind loop above: absent is empty, unreadable is a
+        // refusal. Hosted and ImplicitlyCreated @contexts (5.13.1) are a
+        // Tenant's own documents, so starting without this table is serving
+        // partial data, which `open_file` promises never to do.
+        let contexts = match rt.open_table(T_JSONLD_CONTEXTS) {
+            Ok(t) => Some(t),
+            Err(::redb::TableError::TableDoesNotExist(_)) => None,
+            Err(e) => return Err(e.to_string()),
+        };
+        if let Some(t) = contexts {
+            for row in ::redb::ReadableTable::iter(&t).map_err(|e| e.to_string())? {
+                let (k, v) = row.map_err(|e| e.to_string())?;
+                let id = String::from_utf8(k.value().to_vec())
+                    .map_err(|e| format!("undecodable context id: {e}"))?;
+                let doc: Value = serde_json::from_slice(v.value())
+                    .map_err(|e| format!("undecodable context {id}: {e}"))?;
+                inner.contexts.insert(id, doc);
+            }
+        }
+        drop(rt);
+
+        Ok(Self {
+            inner: RwLock::new(inner),
+            hook: RwLock::new(None),
+            emit_order: tokio::sync::Mutex::new(()),
+            shadow: Some(Shadow { db }),
+            temporal_only: false,
+            write_waiters: Default::default(),
+            write_waiters_peak: Default::default(),
+        })
+    }
+
+    /// Write-through for one doc (must be called inside the write-critical
+    /// section so redb order equals memory order).
+    fn persist(&self, table: Table, key: &[u8], doc: Option<&Value>) {
+        if let Some(shadow) = &self.shadow {
+            // None means DELETE the key, so a document that will not encode
+            // must skip the write rather than collapse into one.
+            let bytes = match doc {
+                Some(d) => match serde_json::to_vec(d) {
+                    Ok(b) => Some(b),
+                    Err(_) => return,
+                },
+                None => None,
+            };
+            shadow.write(table, key, bytes.as_deref());
+        }
+    }
+
+    /// [`Self::persist`] of many keys in one commit (`file` mode): what a
+    /// purge or a sweep deleted (`None`) or rewrote. A document that will not
+    /// encode is skipped, as `persist` skips it.
+    fn persist_many(&self, writes: &[Persisted<'_>]) {
+        let Some(shadow) = &self.shadow else {
+            return;
+        };
+        let encoded: Vec<_> = writes
+            .iter()
+            .filter_map(|(table, key, doc)| match doc {
+                Some(d) => serde_json::to_vec(d)
+                    .ok()
+                    .map(|b| (*table, key.as_slice(), Some(b))),
+                None => Some((*table, key.as_slice(), None)),
+            })
+            .collect();
+        shadow.write_many(encoded.iter().map(|(t, k, v)| (*t, *k, v.as_deref())));
+    }
+
+    /// Acquire the write-critical section, counting queued writers.
+    ///
+    /// Poison recovery (`into_inner`) is deliberate: a panic inside a caller's
+    /// mutate closure unwinds one request; poisoning would turn it into a
+    /// whole-process brick (every later store call panicking until restart).
+    /// Consistency holds because mutations work on a clone and swap last.
+    fn write_inner(&self) -> std::sync::RwLockWriteGuard<'_, Inner> {
+        use std::sync::atomic::Ordering;
+        let depth = self
+            .write_waiters
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
+        self.write_waiters_peak.fetch_max(depth, Ordering::Relaxed);
+        let guard = self
+            .inner
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.write_waiters.fetch_sub(1, Ordering::Relaxed);
+        guard
+    }
+
+    /// Whether writes reach a durability shadow (`file` mode, and the
+    /// browser build over OPFS) rather than living only in memory.
+    pub fn shadowed(&self) -> bool {
+        self.shadow.is_some()
+    }
+
+    /// (Currently queued writers, peak since start). The peak going
+    /// nowhere near sustained depth is the evidence that the group-commit
+    /// lever stays unbuilt.
+    pub fn commit_queue(&self) -> (usize, usize) {
+        use std::sync::atomic::Ordering;
+        (
+            self.write_waiters.load(Ordering::Relaxed),
+            self.write_waiters_peak.load(Ordering::Relaxed),
+        )
+    }
+
+    pub fn set_change_hook(&self, h: ChangeHook) {
+        *self
+            .hook
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(h);
+    }
+
+    /// Held from before an entity commit until its emit returns (see
+    /// `emit_order`). Not for other kinds: their writes emit nothing, and a
+    /// hook that writes them re-enters the store.
+    async fn emit_ordered(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.emit_order.lock().await
+    }
+
+    async fn emit(&self, tenant: &TenantId, before: Option<Value>, after: Option<Value>) {
+        // cloned out of the lock first: a read guard cannot be held across
+        // the await the hook now costs.
+        let hook = self
+            .hook
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(h) = hook {
+            h(tenant, before, after).await;
+        }
+    }
+
+    /// 4.22 garbage collection for the memory/file arm: remove entity docs
+    /// whose `expiresAt` (byte-compared against the UTC-Z `now` stamp, same
+    /// as the read filter) has passed, and prune expired ATTRIBUTE instances
+    /// from current-state and temporal docs — the read filter hides them,
+    /// but without physical removal a long-running store (the browser's OPFS
+    /// file under ticking sensors) grows without bound. `file` mode persists
+    /// each removal. Returns how many docs were reaped or pruned.
+    ///
+    /// Runs through `on_blocking` like every other mutating path: in `file`
+    /// mode it holds the write-critical section for a full scan and issues
+    /// one `Durability::Immediate` (fsync) commit per reaped doc, which must
+    /// never happen on an async worker thread.
+    pub fn sweep_expired(&self, now: &str) -> usize {
+        on_blocking(true, || self.sweep_expired_locked(now))
+    }
+
+    fn sweep_expired_locked(&self, now: &str) -> usize {
+        let mut inner = self.write_inner();
+        let mut reaped = 0usize;
+        let mut dead: Vec<(String, String)> = Vec::new();
+        for (tenant, docs) in &inner.entities {
+            for (id, doc) in docs {
+                if filter::expired_at(doc, now) {
+                    dead.push((tenant.clone(), id.clone()));
+                }
+            }
+        }
+        let mut gone: Vec<Persisted<'_>> = Vec::new();
+        for (tenant, id) in dead {
+            if let Some(docs) = inner.entities.get_mut(&tenant) {
+                gone.push((T_ENTITIES, key_bytes(&tenant, &id), None));
+                docs.remove(&id);
+                reaped = reaped.saturating_add(1);
+            }
+            // Its history goes with it (DM-97, owner 2026-10-18).
+            if let Some(docs) = inner.temporal.get_mut(&tenant) {
+                if docs.remove(&id).is_some() {
+                    gone.push((T_TEMPORAL_ENTITIES, key_bytes(&tenant, &id), None));
+                }
+            }
+        }
+        let Inner {
+            entities, temporal, ..
+        } = &mut *inner;
+        for (table, map) in [
+            (
+                T_ENTITIES,
+                entities as &mut HashMap<String, BTreeMap<String, Value>>,
+            ),
+            (T_TEMPORAL_ENTITIES, temporal),
+        ] {
+            for (tenant, docs) in map.iter_mut() {
+                for (id, doc) in docs.iter_mut() {
+                    if filter::prune_expired(doc, now) {
+                        reaped = reaped.saturating_add(1);
+                        gone.push((table, key_bytes(tenant, id), Some(doc)));
+                    }
+                }
+            }
+        }
+        self.persist_many(&gone);
+        reaped
+    }
+
+    /// Tenants that hold any subscriptions (interval-firing scan).
+    /// 5.5.10: a Tenant exists once any create operation implicitly created
+    /// it (any resource kind was ever written under it).
+    pub fn tenant_exists(&self, tenant: &TenantId) -> bool {
+        let inner = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        ALL_KINDS
+            .iter()
+            .any(|k| Self::map(&inner, *k).contains_key(tenant.as_str()))
+    }
+
+    /// Every tenant name, sorted; the default tenant is always present, and
+    /// the tenants the broker minted for itself are not — `/q/tenants` is the
+    /// inventory of customer accounts, not of the broker's own bookkeeping.
+    pub fn tenant_ids(&self) -> Vec<String> {
+        let inner = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut names: std::collections::BTreeSet<String> =
+            std::iter::once(TenantId::DEFAULT.to_string()).collect();
+        for kind in ALL_KINDS {
+            names.extend(
+                Self::map(&inner, kind)
+                    .keys()
+                    .filter(|t| !TenantId::is_reserved_str(t))
+                    .cloned(),
+            );
+        }
+        names.into_iter().collect()
+    }
+
+    /// The types the Tenant's live Entities carry, sorted (T-4610): one pass
+    /// over the held documents, none of them cloned. 4.22: an expired Entity
+    /// carries no type.
+    pub fn entity_type_names(&self, tenant: &TenantId, now: &str) -> Vec<String> {
+        self.entity_types_where(tenant, now, |_| true)
+    }
+
+    /// The types of the live Entities that carry one of `any_of`, sorted
+    /// (T-4683).
+    pub fn entity_types_beside(
+        &self,
+        tenant: &TenantId,
+        any_of: &[String],
+        now: &str,
+    ) -> Vec<String> {
+        self.entity_types_where(tenant, now, |types| {
+            types.len() > 1 && types.iter().any(|t| any_of.iter().any(|a| a == t))
+        })
+    }
+
+    /// The (type, member name) pairs the Tenant's live Entities carry,
+    /// sorted (T-4934): one pass over the held documents.
+    pub fn entity_attr_pairs(&self, tenant: &TenantId, now: &str) -> Vec<(String, String)> {
+        let inner = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut pairs = std::collections::BTreeSet::new();
+        if let Some(m) = Self::map(&inner, Kind::Entity).get(tenant.as_str()) {
+            for doc in m.values().filter(|d| !filter::expired_at(d, now)) {
+                let types: Vec<&str> = match &doc["type"] {
+                    Value::String(t) => vec![t.as_str()],
+                    Value::Array(a) => a.iter().filter_map(Value::as_str).collect(),
+                    _ => Vec::new(),
+                };
+                for k in doc.as_object().into_iter().flat_map(|o| o.keys()) {
+                    pairs.extend(types.iter().map(|t| (*t, k.as_str())));
+                }
+            }
+        }
+        pairs
+            .into_iter()
+            .map(|(t, k)| (t.to_owned(), k.to_owned()))
+            .collect()
+    }
+
+    fn entity_types_where(
+        &self,
+        tenant: &TenantId,
+        now: &str,
+        keep: impl Fn(&[&str]) -> bool,
+    ) -> Vec<String> {
+        let inner = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut names = std::collections::BTreeSet::new();
+        if let Some(m) = Self::map(&inner, Kind::Entity).get(tenant.as_str()) {
+            for doc in m.values().filter(|d| !filter::expired_at(d, now)) {
+                let types: Vec<&str> = match &doc["type"] {
+                    Value::String(t) => vec![t.as_str()],
+                    Value::Array(a) => a.iter().filter_map(Value::as_str).collect(),
+                    _ => Vec::new(),
+                };
+                if keep(&types) {
+                    names.extend(types);
+                }
+            }
+        }
+        names.into_iter().map(str::to_owned).collect()
+    }
+
+    /// What one tenant holds. Existence is the caller's question — an
+    /// unknown tenant simply counts zero of everything.
+    pub fn tenant_stats_one(&self, tenant: &TenantId) -> antares_store::TenantStats {
+        let inner = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let n = |k: Kind| {
+            Self::map(&inner, k)
+                .get(tenant.as_str())
+                .map_or(0, |m| m.len() as u64)
+        };
+        antares_store::TenantStats {
+            entities: n(Kind::Entity),
+            subscriptions: n(Kind::Subscription),
+            registrations: n(Kind::Registration),
+            csource_subscriptions: n(Kind::CSourceSubscription),
+            snapshots: n(Kind::Snapshot),
+            entity_maps: n(Kind::EntityMap),
+            dist_subs: n(Kind::DistSub),
+            created_at: None,
+            tenant: tenant.as_str().to_owned(),
+        }
+    }
+
+    /// Attribute instances held in the tenant's temporal documents.
+    pub fn attr_instance_count(&self, tenant: &TenantId) -> u64 {
+        let inner = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        inner.temporal.get(tenant.as_str()).map_or(0, |docs| {
+            docs.values()
+                .filter_map(Value::as_object)
+                .flat_map(|d| d.values().filter_map(Value::as_array))
+                .map(|a| a.iter().filter(|i| i.is_object()).count() as u64)
+                .sum()
+        })
+    }
+
+    /// The serialized size of the tenant's Entities, by first type (T-2890).
+    pub fn tenant_bytes(&self, tenant: &TenantId) -> antares_store::TenantBytes {
+        let inner = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut out = antares_store::TenantBytes::default();
+        for doc in inner
+            .entities
+            .get(tenant.as_str())
+            .into_iter()
+            .flat_map(BTreeMap::values)
+        {
+            let n = serde_json::to_vec(doc).map_or(0, |v| v.len() as u64);
+            let ty = match doc.get("type") {
+                Some(Value::String(t)) => t.as_str(),
+                Some(Value::Array(a)) => a.first().and_then(Value::as_str).unwrap_or(""),
+                _ => "",
+            };
+            out.entities = out.entities.saturating_add(n);
+            let t = out.by_type.entry(ty.to_owned()).or_default();
+            *t = t.saturating_add(n);
+        }
+        out
+    }
+
+    /// The serialized size of the tenant's temporal documents.
+    pub fn attr_instance_bytes(&self, tenant: &TenantId) -> u64 {
+        let inner = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        inner.temporal.get(tenant.as_str()).map_or(0, |docs| {
+            docs.values()
+                .map(|d| serde_json::to_vec(d).map_or(0, |v| v.len() as u64))
+                .sum()
+        })
+    }
+
+    /// Retention of current state (T-3900): drop at most `batch` Entities of
+    /// `tenant` typed `type_iri` that carry no `expiresAt` and whose
+    /// `modifiedAt` is before `before`. Persisted per key in `file` mode;
+    /// `dry_run` counts them and drops none.
+    pub fn retain_current(
+        &self,
+        tenant: &TenantId,
+        type_iri: &str,
+        before: &str,
+        batch: usize,
+        dry_run: bool,
+    ) -> u64 {
+        on_blocking(true, || {
+            let mut inner = self.write_inner();
+            let Some(docs) = inner.entities.get_mut(tenant.as_str()) else {
+                return 0;
+            };
+            let dead: Vec<String> = docs
+                .iter()
+                .filter(|(_, doc)| {
+                    typed(doc, type_iri)
+                        && doc.get("expiresAt").is_none()
+                        && doc
+                            .get("modifiedAt")
+                            .and_then(Value::as_str)
+                            .is_some_and(|m| earlier(m, before))
+                })
+                .map(|(id, _)| id.clone())
+                .take(batch)
+                .collect();
+            for id in dead.iter().filter(|_| !dry_run) {
+                self.persist(T_ENTITIES, &key_bytes(tenant.as_str(), id), None);
+                docs.remove(id);
+            }
+            dead.len() as u64
+        })
+    }
+
+    /// The Entities of every Tenant carrying their own history retention
+    /// (DM-97), at most `limit`, with the Property as stored.
+    pub fn history_overrides(&self, limit: usize) -> Vec<(String, String, Value)> {
+        let inner = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        inner
+            .entities
+            .iter()
+            .flat_map(|(tenant, docs)| {
+                docs.iter().filter_map(move |(id, doc)| {
+                    doc.get(antares_store::HISTORY_RETENTION)
+                        .map(|own| (tenant.clone(), id.clone(), own.clone()))
+                })
+            })
+            .take(limit)
+            .collect()
+    }
+
+    /// Retention of history (T-3900, DM-97): drop at most `batch` attribute
+    /// instances of the `tenant`'s temporal documents `scope` names whose
+    /// instant is before `before`; an attribute left without instances goes.
+    /// `dry_run` counts them and drops none.
+    pub fn retain_history(
+        &self,
+        tenant: &TenantId,
+        scope: antares_store::HistoryScope<'_>,
+        before: &str,
+        batch: usize,
+        dry_run: bool,
+    ) -> u64 {
+        on_blocking(true, || {
+            let mut inner = self.write_inner();
+            let Some(docs) = inner.temporal.get_mut(tenant.as_str()) else {
+                return 0;
+            };
+            let mut left = batch;
+            let mut dropped = 0u64;
+            for (id, doc) in docs.iter_mut() {
+                if left == 0 {
+                    break;
+                }
+                if !in_scope(id, doc, scope) {
+                    continue;
+                }
+                let Some(obj) = doc.as_object_mut() else {
+                    continue;
+                };
+                let before_count = dropped;
+                for k in attribute_names(obj) {
+                    let Some(arr) = obj.get_mut(&k).and_then(Value::as_array_mut) else {
+                        continue;
+                    };
+                    arr.retain(|inst| {
+                        let old =
+                            left > 0 && instance_instant(inst).is_some_and(|t| earlier(t, before));
+                        if old {
+                            left = left.saturating_sub(1);
+                            dropped = dropped.saturating_add(1);
+                        }
+                        dry_run || !old
+                    });
+                    if arr.is_empty() && !dry_run {
+                        obj.remove(&k);
+                    }
+                }
+                if dropped != before_count && !dry_run {
+                    self.persist(
+                        T_TEMPORAL_ENTITIES,
+                        &key_bytes(tenant.as_str(), id),
+                        Some(doc),
+                    );
+                }
+            }
+            dropped
+        })
+    }
+
+    /// Drop every document of the given kinds for one tenant; `true` when
+    /// the tenant held any of them. Persisted in one commit in `file` mode.
+    pub fn purge_kinds(&self, tenant: &TenantId, kinds: &[Kind]) -> bool {
+        on_blocking(true, || {
+            let mut inner = self.write_inner();
+            let mut hit = false;
+            let mut gone: Vec<Persisted<'_>> = Vec::new();
+            for kind in kinds {
+                if let Some(docs) = Self::map_mut(&mut inner, *kind).remove(tenant.as_str()) {
+                    hit = true;
+                    gone.extend(
+                        docs.keys()
+                            .map(|id| (table_for(*kind), key_bytes(tenant.as_str(), id), None)),
+                    );
+                }
+            }
+            self.persist_many(&gone);
+            hit
+        })
+    }
+
+    /// Remove the tenant from every kind, history included.
+    pub fn purge_tenant(&self, tenant: &TenantId) -> bool {
+        let existed = self.purge_kinds(tenant, &ALL_KINDS);
+        // ADR-0021: the Tenant's Hosted and ImplicitlyCreated @contexts are
+        // its documents and go with it — a row that outlived its Tenant would
+        // hand the next holder of that name a stranger's term mappings. A
+        // Cached row belongs to no Tenant and stays.
+        on_blocking(true, || {
+            let mut inner = self.write_inner();
+            let dead: Vec<String> = inner
+                .contexts
+                .iter()
+                .filter(|(_, row)| context_row_owner(row) == Some(tenant.as_str()))
+                .map(|(id, _)| id.clone())
+                .collect();
+            let gone: Vec<Persisted<'_>> = dead
+                .iter()
+                .map(|id| (T_JSONLD_CONTEXTS, id.as_bytes().to_vec(), None))
+                .collect();
+            self.persist_many(&gone);
+            for id in dead {
+                inner.contexts.remove(&id);
+            }
+        });
+        existed
+    }
+
+    pub fn subscription_tenants(&self) -> Vec<String> {
+        let inner = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Registrations belong to this domain: one of the hydrations that
+        // walks it fills the registration mirror, which the federation path
+        // then reads alone. Without them a tenant holding registrations and
+        // no subscription forwarded to no Context Source.
+        let mut out: Vec<String> = inner
+            .subscriptions
+            .iter()
+            .chain(inner.csource_subscriptions.iter())
+            .chain(inner.registrations.iter())
+            .filter(|(_, m)| !m.is_empty())
+            .map(|(t, _)| t.clone())
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    fn map(inner: &Inner, kind: Kind) -> &HashMap<String, BTreeMap<String, Value>> {
+        match kind {
+            Kind::Entity => &inner.entities,
+            Kind::Subscription => &inner.subscriptions,
+            Kind::Registration => &inner.registrations,
+            Kind::CSourceSubscription => &inner.csource_subscriptions,
+            Kind::Temporal => &inner.temporal,
+            Kind::Snapshot => &inner.snapshots,
+            Kind::EntityMap => &inner.entity_map_docs,
+            Kind::DistSub => &inner.dist_subs,
+            Kind::DeadLetter => &inner.dead_letters,
+            Kind::View => &inner.views,
+        }
+    }
+
+    fn map_mut(inner: &mut Inner, kind: Kind) -> &mut HashMap<String, BTreeMap<String, Value>> {
+        match kind {
+            Kind::Entity => &mut inner.entities,
+            Kind::Subscription => &mut inner.subscriptions,
+            Kind::Registration => &mut inner.registrations,
+            Kind::CSourceSubscription => &mut inner.csource_subscriptions,
+            Kind::Temporal => &mut inner.temporal,
+            Kind::Snapshot => &mut inner.snapshots,
+            Kind::EntityMap => &mut inner.entity_map_docs,
+            Kind::DistSub => &mut inner.dist_subs,
+            Kind::DeadLetter => &mut inner.dead_letters,
+            Kind::View => &mut inner.views,
+        }
+    }
+
+    /// 4.22: "expiresAt is defined as the system temporal Property at which a
+    /// certain Entity, Property or Relationship shall become invalid." An
+    /// entity past its expiry is invalid the moment the stamp passes, ahead
+    /// of the sweep that physically reaps it, so every write path treats it
+    /// as absent — otherwise the same id 404s on retrieve and 409s on create
+    /// for a whole sweep interval. Only entities carry the entity-level
+    /// stamp; subscriptions and registrations have their own expiry rules.
+    fn is_expired(&self, inner: &Inner, kind: Kind, tenant: &str, id: &str) -> bool {
+        kind == Kind::Entity
+            && Self::map(inner, kind)
+                .get(tenant)
+                .and_then(|m| m.get(id))
+                .is_some_and(|d| filter::expired_at(d, &now_stamp()))
+    }
+
+    /// Insert a new resource; `false` if the id already exists.
+    pub async fn create(&self, tenant: &TenantId, kind: Kind, id: &str, doc: Value) -> bool {
+        let _order = match kind {
+            Kind::Entity => Some(self.emit_ordered().await),
+            _ => None,
+        };
+        let created = on_blocking(self.shadow.is_some(), || {
+            let mut inner = self.write_inner();
+            let expired = self.is_expired(&inner, kind, tenant.as_str(), id);
+            let m = Self::map_mut(&mut inner, kind)
+                .entry(tenant.as_str().to_owned())
+                .or_default();
+            if m.contains_key(id) && !expired {
+                false
+            } else {
+                m.insert(id.to_owned(), doc.clone());
+                self.persist(table_for(kind), &key_bytes(tenant.as_str(), id), Some(&doc));
+                true
+            }
+        });
+        if created && kind == Kind::Entity {
+            self.emit(tenant, None, Some(doc)).await;
+        }
+        created
+    }
+
+    /// Insert or replace; returns `true` if it existed before. An expired
+    /// entity did not (4.22), so the upsert reports CREATED and the caller
+    /// answers 201 with a Location header instead of a silent 204.
+    pub async fn upsert(&self, tenant: &TenantId, kind: Kind, id: &str, doc: Value) -> bool {
+        let _order = match kind {
+            Kind::Entity => Some(self.emit_ordered().await),
+            _ => None,
+        };
+        let (prev, expired) = on_blocking(self.shadow.is_some(), || {
+            let mut inner = self.write_inner();
+            let expired = self.is_expired(&inner, kind, tenant.as_str(), id);
+            let prev = Self::map_mut(&mut inner, kind)
+                .entry(tenant.as_str().to_owned())
+                .or_default()
+                .insert(id.to_owned(), doc.clone());
+            self.persist(table_for(kind), &key_bytes(tenant.as_str(), id), Some(&doc));
+            (prev, expired)
+        });
+        let existed = prev.is_some() && !expired;
+        let prev = if expired { None } else { prev };
+        if kind == Kind::Entity {
+            self.emit(tenant, prev, Some(doc)).await;
+        }
+        existed
+    }
+
+    pub fn get(&self, tenant: &TenantId, kind: Kind, id: &str) -> Option<Value> {
+        let inner = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Self::map(&inner, kind)
+            .get(tenant.as_str())
+            .and_then(|m| m.get(id))
+            .cloned()
+    }
+
+    /// An expired entity is already invalid (4.22): deleting it is a 404,
+    /// the same answer retrieving it gives, not a 204 for something the API
+    /// stopped serving. The row itself still goes — the sweep would take it
+    /// anyway, and leaving it would resurrect the 409.
+    pub async fn delete(&self, tenant: &TenantId, kind: Kind, id: &str) -> bool {
+        let _order = match kind {
+            Kind::Entity => Some(self.emit_ordered().await),
+            _ => None,
+        };
+        let removed = on_blocking(self.shadow.is_some(), || {
+            let mut inner = self.write_inner();
+            // an expired doc is left in place for the sweep to reap: removing
+            // it here without persisting the removal would resurrect it on
+            // the next boot of a `file`-mode store
+            if self.is_expired(&inner, kind, tenant.as_str(), id) {
+                return None;
+            }
+            let removed = Self::map_mut(&mut inner, kind)
+                .get_mut(tenant.as_str())
+                .and_then(|m| m.remove(id));
+            if removed.is_some() {
+                self.persist(table_for(kind), &key_bytes(tenant.as_str(), id), None);
+            }
+            removed
+        });
+        let hit = removed.is_some();
+        if kind == Kind::Entity {
+            if let Some(old) = removed {
+                self.emit(tenant, Some(old), None).await;
+            }
+        }
+        hit
+    }
+
+    /// Delete one entity only if `keep` accepts the stored document. The
+    /// read and the removal happen under one hold of the write lock, so
+    /// nothing can replace the document between the decision and the delete.
+    /// `None` = absent, expired (4.22, as in `delete`) or refused.
+    pub async fn delete_if(
+        &self,
+        tenant: &TenantId,
+        id: &str,
+        keep: &(dyn for<'v> Fn(&'v Value) -> bool + Sync),
+    ) -> Option<Value> {
+        let _order = self.emit_ordered().await;
+        let removed = on_blocking(self.shadow.is_some(), || {
+            let mut inner = self.write_inner();
+            if self.is_expired(&inner, Kind::Entity, tenant.as_str(), id) {
+                return None;
+            }
+            let m = Self::map_mut(&mut inner, Kind::Entity).get_mut(tenant.as_str())?;
+            if !m.get(id).is_some_and(keep) {
+                return None;
+            }
+            let removed = m.remove(id);
+            if removed.is_some() {
+                self.persist(
+                    table_for(Kind::Entity),
+                    &key_bytes(tenant.as_str(), id),
+                    None,
+                );
+            }
+            removed
+        });
+        if let Some(old) = &removed {
+            self.emit(tenant, Some(old.clone()), None).await;
+        }
+        removed
+    }
+
+    /// Snapshot of all docs of a kind for one tenant (id order).
+    pub fn list(&self, tenant: &TenantId, kind: Kind) -> Vec<Value> {
+        let inner = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Self::map(&inner, kind)
+            .get(tenant.as_str())
+            .map(|m| m.values().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// One id-ordered page of docs: ids strictly greater than `after`, at
+    /// most `limit`. The per-tenant map is a `BTreeMap` keyed by id, so this
+    /// is a range walk, not a scan-and-sort.
+    ///
+    /// 4.22 applies to entities inside the walk, BEFORE the page is cut: an
+    /// expired document is not there to be paged, and dropping one after the
+    /// cut would hand the caller a short page — which every walker reads as
+    /// the end of the tenant.
+    pub fn list_page(
+        &self,
+        tenant: &TenantId,
+        kind: Kind,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Vec<Value> {
+        use std::ops::Bound;
+        let inner = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let lo = match after {
+            Some(a) => Bound::Excluded(a.to_owned()),
+            None => Bound::Unbounded,
+        };
+        let now = crate::store::any::now_utc();
+        Self::map(&inner, kind)
+            .get(tenant.as_str())
+            .map(|m| {
+                m.range((lo, Bound::Unbounded))
+                    .filter_map(|(_, v)| {
+                        let mut v = v.clone();
+                        if kind == Kind::Entity && crate::store::filter::strip_expired(&mut v, &now)
+                        {
+                            return None;
+                        }
+                        Some(v)
+                    })
+                    .take(limit)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Query Entities (T-3556) on the stored documents, under the read
+    /// lock: ids, the idPattern literal, types and attrs are tested on the
+    /// borrowed documents and only what the answer holds is copied, where a
+    /// snapshot of the tenant used to be. ids, types and attrs are exact
+    /// here, and so is a `q` without linked-entity terms when the request
+    /// @context comes along: it runs through the API's own evaluator
+    /// (T-3572). Without anything else (`scopeQ`, a geo query, a linked
+    /// term) the outcome is `decided`: the projection applies and a page is
+    /// cut in id order (the map's order), counted when asked. Otherwise the
+    /// caller stays the arbiter over the narrowed rows. 4.22: an expired
+    /// Entity is not a match, before any cut; its expired instances are the
+    /// caller's.
+    pub fn query_entities(
+        &self,
+        tenant: &TenantId,
+        f: &filter::EntityFilter<'_>,
+    ) -> filter::QueryOutcome {
+        let now = crate::store::any::now_utc();
+        // a linked term reads other Entities under the caller's narrowing
+        let q = match (f.q, f.ctx) {
+            (Some(q), Some(ctx)) if !q.has_linked_paths() => Some((q, ctx)),
+            _ => None,
+        };
+        let decided = (f.q.is_none() || q.is_some()) && f.scope_q.is_none() && f.geo.is_empty();
+        let inner = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(m) = Self::map(&inner, Kind::Entity).get(tenant.as_str()) else {
+            return filter::QueryOutcome {
+                rows: Vec::new(),
+                decided,
+                paged: decided && f.page.is_some(),
+                total: f.page.as_ref().filter(|_| decided).map(|_| 0),
+            };
+        };
+        // a pattern that does not compile matches nothing (`Rule::id_patterns`)
+        let id_res: Option<Vec<_>> = f.id_patterns.map(|ps| {
+            ps.iter()
+                .filter_map(|p| antares_ql::regex::compile(&format!("^(?:{p})$")).ok())
+                .collect()
+        });
+        let matches = |id: &str, doc: &Value| {
+            !filter::expired_at(doc, &now)
+                && id_res
+                    .as_ref()
+                    .is_none_or(|res| res.iter().any(|re| re.is_match(id)))
+                && f.id_literal.is_none_or(|l| {
+                    if l.anchored {
+                        id.starts_with(l.text)
+                    } else {
+                        id.contains(l.text)
+                    }
+                })
+                && f.types.is_none_or(|sel| {
+                    let held: Vec<&str> = doc["type"]
+                        .as_array()
+                        .map(|a| a.iter().filter_map(Value::as_str).collect())
+                        .unwrap_or_default();
+                    sel.iter()
+                        .any(|group| group.iter().all(|w| held.contains(&w.as_str())))
+                })
+                && f.attrs
+                    .is_none_or(|attrs| attrs.iter().any(|a| has_live_attr(doc, a, &now)))
+                && q.is_none_or(|(q, ctx)| {
+                    // 4.22: `q` judges what a read may see, so an instance
+                    // past its expiresAt never makes the Entity match
+                    // (F-ANT1-007); only a doc carrying one pays the copy
+                    if holds_expired_instance(doc, &now) {
+                        let mut live = doc.clone();
+                        filter::strip_expired(&mut live, &now);
+                        antares_ql::eval::eval_q(q, &live, ctx, &|_| None)
+                    } else {
+                        antares_ql::eval::eval_q(q, doc, ctx, &|_| None)
+                    }
+                })
+        };
+        // ids name at most what the client sent: look each up, in id order
+        let candidates: Box<dyn Iterator<Item = (&String, &Value)>> = match (f.ids, f.after_id) {
+            (Some(ids), after) => {
+                let mut want: Vec<&str> = ids.to_vec();
+                want.sort_unstable();
+                want.dedup();
+                want.retain(|id| after.is_none_or(|a| *id > a));
+                Box::new(want.into_iter().filter_map(|id| m.get_key_value(id)))
+            }
+            (None, Some(a)) => Box::new(
+                m.range::<str, _>((std::ops::Bound::Excluded(a), std::ops::Bound::Unbounded)),
+            ),
+            (None, None) => Box::new(m.iter()),
+        };
+        let hits = candidates
+            .filter(|(id, doc)| matches(id, doc))
+            .map(|(_, d)| d);
+        let project = |doc: &Value| {
+            let mut v = doc.clone();
+            if decided {
+                if let Some(o) = v.as_object_mut() {
+                    if let Some(keep) = f.keep_attrs {
+                        o.retain(|k, _| !k.starts_with("http") || keep.contains(k));
+                    } else if let Some(drop) = f.drop_attrs {
+                        o.retain(|k, _| !drop.contains(k));
+                    }
+                }
+            }
+            v
+        };
+        let Some(p) = f.page.as_ref().filter(|_| decided) else {
+            return filter::QueryOutcome {
+                rows: hits.map(project).collect(),
+                decided,
+                paged: false,
+                total: None,
+            };
+        };
+        let offset = usize::try_from(p.offset).unwrap_or(0);
+        let limit = usize::try_from(p.limit).unwrap_or(usize::MAX);
+        let mut rows: Vec<Value> = Vec::new();
+        let (mut matched, mut more) = (0usize, false);
+        for doc in hits {
+            if matched >= offset && rows.len() < limit {
+                rows.push(project(doc));
+            } else if rows.len() == limit && !p.count {
+                more = true;
+                break;
+            }
+            // the rest is counted, never copied
+            matched = matched.saturating_add(1);
+        }
+        let total = if p.count {
+            matched
+        } else {
+            // the smallest total consistent with "a next page exists"
+            offset
+                .saturating_add(rows.len())
+                .saturating_add(usize::from(more))
+        };
+        filter::QueryOutcome {
+            rows,
+            decided,
+            paged: true,
+            total: Some(i64::try_from(total).unwrap_or(i64::MAX)),
+        }
+    }
+
+    /// One id-ordered window of docs and the size of the whole set. The
+    /// per-tenant map is a `BTreeMap` keyed by id, so the window is a skip
+    /// over an already-ordered iterator.
+    pub fn list_slice(
+        &self,
+        tenant: &TenantId,
+        kind: Kind,
+        offset: usize,
+        limit: usize,
+    ) -> (Vec<Value>, usize) {
+        let inner = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Self::map(&inner, kind)
+            .get(tenant.as_str())
+            .map(|m| {
+                (
+                    m.values().skip(offset).take(limit).cloned().collect(),
+                    m.len(),
+                )
+            })
+            .unwrap_or_default()
+    }
+
+    /// Read-modify-write on one document. Returns `None` when absent; the
+    /// closure's error aborts without writing.
+    pub async fn mutate<T, E>(
+        &self,
+        tenant: &TenantId,
+        kind: Kind,
+        id: &str,
+        f: impl FnOnce(&mut Value) -> Result<T, E>,
+    ) -> Option<Result<T, E>> {
+        let _order = match kind {
+            Kind::Entity => Some(self.emit_ordered().await),
+            _ => None,
+        };
+        let (result, change) = on_blocking(self.shadow.is_some(), || {
+            let mut inner = self.write_inner();
+            if self.is_expired(&inner, kind, tenant.as_str(), id) {
+                return None; // 4.22: invalid, so absent
+            }
+            let doc = Self::map_mut(&mut inner, kind)
+                .get_mut(tenant.as_str())
+                .and_then(|m| m.get_mut(id))?;
+            let before = doc.clone();
+            let mut candidate = doc.clone();
+            Some(match f(&mut candidate) {
+                Ok(t) => {
+                    if candidate != before {
+                        self.persist(
+                            table_for(kind),
+                            &key_bytes(tenant.as_str(), id),
+                            Some(&candidate),
+                        );
+                    }
+                    let change = (kind == Kind::Entity && candidate != before)
+                        .then(|| (before, candidate.clone()));
+                    *doc = candidate;
+                    (Ok(t), change)
+                }
+                Err(e) => (Err(e), None),
+            })
+        })?;
+        if let Some((b, a)) = change {
+            self.emit(tenant, Some(b), Some(a)).await;
+        }
+        Some(result)
+    }
+
+    // jsonldContexts: one keyspace for the whole process (key = context id, no
+    // tenant prefix) — Cached rows are copies of public documents shared by
+    // every tenant. Ownership of the tenant-authored kinds (Hosted,
+    // ImplicitlyCreated, 5.13.1) travels in the document's "owner" member,
+    // and every call below is answered through it (ADR-0021): the Postgres
+    // arm has the same rule as a Row-Level Security policy over a generated
+    // `tenant_id` column, and this arm, which has no policy engine under it,
+    // applies it in the store.
+    pub fn context_put(
+        &self,
+        tenant: Option<&TenantId>,
+        id: &str,
+        doc: Value,
+    ) -> Result<(), NgsiError> {
+        on_blocking(self.shadow.is_some(), || {
+            let mut inner = self.write_inner();
+            // The row that is there decides whether this call may replace it,
+            // the row that arrives decides whether it may be stored: the two
+            // halves of the policy the Postgres arm writes as USING and WITH
+            // CHECK. Both are backstops — every caller mints its own id.
+            let held = inner.contexts.get(id);
+            if !held.is_none_or(|r| context_row_visible(r, tenant))
+                || !context_row_visible(&doc, tenant)
+            {
+                return Err(NgsiError::InternalError(
+                    "@context belongs to another tenant".into(),
+                ));
+            }
+            self.persist(T_JSONLD_CONTEXTS, id.as_bytes(), Some(&doc));
+            let cached = doc.get("kind").and_then(Value::as_str) == Some("Cached");
+            inner.contexts.insert(id.to_owned(), doc);
+            // 5.13.1: "Implementations shall periodically invalidate the
+            // 'Cached' @contexts." One entry is stored per distinct external
+            // URL a request references, so without a ceiling a client that
+            // references fresh URLs grows this keyspace (and, in `file` mode,
+            // the store on disk) forever. Oldest-first, and only for the
+            // Cached kind — Hosted/ImplicitlyCreated entries are resources
+            // the broker serves on demand, never a cache.
+            if cached && inner.contexts.len() > MAX_CACHED_CONTEXTS {
+                let dead = oldest_cached(&inner.contexts);
+                for id in dead {
+                    self.persist(T_JSONLD_CONTEXTS, id.as_bytes(), None);
+                    inner.contexts.remove(&id);
+                }
+            }
+            Ok(())
+        })
+    }
+
+    pub fn context_get(&self, tenant: Option<&TenantId>, id: &str) -> Option<Value> {
+        self.inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contexts
+            .get(id)
+            .filter(|r| context_row_visible(r, tenant))
+            .cloned()
+    }
+
+    /// Read-modify-write under the write lock; `None` when the row is absent
+    /// or another Tenant's, `Some(Err)` when `f` refused (nothing written).
+    pub fn context_mutate(
+        &self,
+        tenant: Option<&TenantId>,
+        id: &str,
+        f: impl FnOnce(&mut Value) -> Result<(), ()>,
+    ) -> Option<Result<(), ()>> {
+        on_blocking(self.shadow.is_some(), || {
+            let mut inner = self.write_inner();
+            let row = inner
+                .contexts
+                .get_mut(id)
+                .filter(|r| context_row_visible(r, tenant))?;
+            let mut doc = row.clone();
+            if f(&mut doc).is_err() {
+                return Some(Err(()));
+            }
+            self.persist(T_JSONLD_CONTEXTS, id.as_bytes(), Some(&doc));
+            *row = doc;
+            Some(Ok(()))
+        })
+    }
+
+    pub fn context_delete(&self, tenant: Option<&TenantId>, id: &str) -> bool {
+        on_blocking(self.shadow.is_some(), || {
+            let mut inner = self.write_inner();
+            let hit = inner
+                .contexts
+                .get(id)
+                .is_some_and(|r| context_row_visible(r, tenant));
+            if hit {
+                inner.contexts.remove(id);
+                self.persist(T_JSONLD_CONTEXTS, id.as_bytes(), None);
+            }
+            hit
+        })
+    }
+
+    /// Every row without its `body` member (the `@context` document itself).
+    /// A body may be 5 MiB and only the `Cached` rows are capped in number,
+    /// so cloning whole rows here was a multi-gigabyte copy on the boot path.
+    pub fn context_list_meta(&self, tenant: Option<&TenantId>) -> Vec<Value> {
+        self.inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contexts
+            .values()
+            .filter(|v| context_row_visible(v, tenant))
+            // every member but the body, which is never copied (T-5895)
+            .map(|v| match v.as_object() {
+                Some(o) => Value::Object(
+                    o.iter()
+                        .filter(|(k, _)| k.as_str() != "body")
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
+                ),
+                None => v.clone(),
+            })
+            .collect()
+    }
+}
+
+/// Whether `doc` holds Attribute `iri` once 4.22 has stripped its expired
+/// instances: an instance array keeps it while one instance is live, as
+/// `filter::strip_expired` decides.
+fn has_live_attr(doc: &Value, iri: &str, now: &str) -> bool {
+    match doc.get(iri) {
+        Some(Value::Array(arr)) if iri.contains(':') => {
+            arr.is_empty() || arr.iter().any(|i| !filter::expired_at(i, now))
+        }
+        Some(_) => true,
+        None => false,
+    }
+}
+
+/// Whether an Attribute instance of `doc`, a sub-Attribute's included, is
+/// past its `expiresAt`: what `filter::strip_expired` would remove.
+fn holds_expired_instance(doc: &Value, now: &str) -> bool {
+    doc.as_object().is_some_and(|o| {
+        o.iter()
+            .filter(|(k, _)| k.contains(':'))
+            .filter_map(|(_, v)| v.as_array())
+            .flatten()
+            .any(|i| filter::expired_at(i, now) || holds_expired_instance(i, now))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A change hook that PANICS must cost only its own caller: the panic
+    /// unwinds through that writer, and every later writer finds the store
+    /// usable — locks recover from the poisoning instead of turning one bad
+    /// hook into a dead store.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_panicking_hook_leaves_the_store_usable() {
+        use std::sync::Arc;
+        let s = Arc::new(Store::default());
+        s.set_change_hook(Arc::new(
+            |_t: &TenantId,
+             _b: Option<Value>,
+             after: Option<Value>|
+             -> antares_store::HookFuture<'_> {
+                Box::pin(async move {
+                    if after.as_ref().and_then(|a| a.get("boom")).is_some() {
+                        panic!("hook panic");
+                    }
+                })
+            },
+        ));
+        let t = TenantId::new("hook-panic").expect("tenant");
+        let s2 = s.clone();
+        let t2 = t.clone();
+        let poisoned = tokio::spawn(async move {
+            s2.upsert(
+                &t2,
+                Kind::Entity,
+                "urn:x:boom",
+                json!({"id": "urn:x:boom", "type": ["T"], "boom": true}),
+            )
+            .await;
+        })
+        .await;
+        assert!(poisoned.is_err(), "the hook's panic reaches its own caller");
+        // the NEXT writer and reader are untouched
+        assert!(
+            s.create(
+                &t,
+                Kind::Entity,
+                "urn:x:after",
+                json!({"id": "urn:x:after", "type": ["T"]})
+            )
+            .await
+        );
+        assert!(
+            s.get(&t, Kind::Entity, "urn:x:after").is_some(),
+            "one panicking hook must not take the store down"
+        );
+        assert!(
+            s.get(&t, Kind::Entity, "urn:x:boom").is_some(),
+            "the write that triggered the panic still committed — the hook runs after the commit"
+        );
+    }
+
+    /// Two writers to the same entity: the change hook fires in COMMIT
+    /// order. The first writer's hook is gated open only after the second
+    /// writer has had every chance to overtake it — if the second commit may
+    /// emit before the first commit's emit, the notification pipeline sees
+    /// the versions reversed and records stale state as newest.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn change_hook_fires_in_commit_order_per_entity() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let s = Arc::new(Store::default());
+        let seen: Arc<std::sync::Mutex<Vec<i64>>> = Arc::default();
+        let entered = Arc::new(AtomicBool::new(false));
+        let released = Arc::new(AtomicBool::new(false));
+        {
+            let (seen, entered, released) = (seen.clone(), entered.clone(), released.clone());
+            s.set_change_hook(Arc::new(
+                move |_t: &TenantId,
+                      _b: Option<Value>,
+                      after: Option<Value>|
+                      -> antares_store::HookFuture<'_> {
+                    let (seen, entered, released) =
+                        (seen.clone(), entered.clone(), released.clone());
+                    Box::pin(async move {
+                        let v = after
+                            .as_ref()
+                            .and_then(|a| a.get("v"))
+                            .and_then(Value::as_i64)
+                            .unwrap_or(-1);
+                        if v == 1 {
+                            entered.store(true, Ordering::SeqCst);
+                            while !released.load(Ordering::SeqCst) {
+                                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                            }
+                        }
+                        seen.lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .push(v);
+                    })
+                },
+            ));
+        }
+        let t = TenantId::new("emit-order").expect("tenant");
+        let doc = |v: i64| json!({"id": "urn:x:1", "type": ["T"], "v": v});
+        let s1 = s.clone();
+        let t1c = t.clone();
+        let w1 = tokio::spawn(async move {
+            s1.upsert(&t1c, Kind::Entity, "urn:x:1", doc(1)).await;
+        });
+        while !entered.load(std::sync::atomic::Ordering::SeqCst) {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        // writer 1 has committed and sits inside its hook. Writer 2 now has
+        // every chance to commit AND emit before writer 1's emit finishes.
+        let s2 = s.clone();
+        let t2c = t.clone();
+        let w2 = tokio::spawn(async move {
+            s2.upsert(&t2c, Kind::Entity, "urn:x:1", doc(2)).await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+        released.store(true, std::sync::atomic::Ordering::SeqCst);
+        w1.await.expect("writer 1");
+        w2.await.expect("writer 2");
+        assert_eq!(
+            *seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            vec![1, 2],
+            "hooks must fire in commit order, or the consumer records stale state as newest"
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_queue_counts_writers() {
+        // Every write passes through the counted critical section.
+        let s = Store::default();
+        assert_eq!(s.commit_queue(), (0, 0));
+        let t = TenantId::new("t").unwrap();
+        s.create(&t, Kind::Entity, "urn:a", json!({"id": "urn:a"}))
+            .await;
+        let (depth, peak) = s.commit_queue();
+        assert_eq!(depth, 0, "no writer in flight after the call returns");
+        assert!(peak >= 1, "the write itself must register in the peak");
+    }
+
+    /// What a store reports about itself, for an operator reading
+    /// `/q/health`: the memory and file modes are one backend with two
+    /// durability shapes, and the health body must not present them as the
+    /// same thing.
+    #[test]
+    fn a_store_reports_the_engine_it_actually_runs() {
+        let dir = tempdir("engine");
+        let mem = crate::store::any::AnyStore::Mem(Store::default());
+        let file = crate::store::any::AnyStore::Mem(Store::open_file(&dir).expect("open"));
+        assert_eq!(mem.version_info()["engine"], "memory");
+        assert_eq!(file.version_info()["engine"], "redb");
+    }
+
+    /// The commit queue is a `file`-mode signal: it exists because redb has
+    /// one writer and commits fsync through it. A pure in-memory store has no
+    /// such committer, so it reports nothing rather than a number that would
+    /// read as the same thing and mean something else.
+    #[test]
+    fn only_a_shadowed_store_reports_a_commit_queue() {
+        use crate::store::any::AnyStore;
+        assert_eq!(AnyStore::Mem(Store::default()).commit_queue(), None);
+        let dir = tempdir("commit-queue");
+        let s = Store::open_file(&dir).expect("open");
+        assert!(
+            AnyStore::Mem(s).commit_queue().is_some(),
+            "a durable store reports the queue behind its single committer"
+        );
+    }
+
+    #[tokio::test]
+    async fn tenant_isolation() {
+        let s = Store::default();
+        let t1 = TenantId::new("t1").unwrap();
+        let t2 = TenantId::new("t2").unwrap();
+        assert!(
+            s.create(&t1, Kind::Entity, "urn:a", json!({"id": "urn:a"}))
+                .await
+        );
+        assert!(s.get(&t2, Kind::Entity, "urn:a").is_none());
+        assert!(s.get(&t1, Kind::Entity, "urn:a").is_some());
+        assert!(!s.create(&t1, Kind::Entity, "urn:a", json!({})).await);
+        assert!(s.create(&t2, Kind::Entity, "urn:a", json!({})).await);
+    }
+
+    /// 4.6.3 allows a comma as the seconds-fraction separator. Byte order
+    /// puts ',' (0x2C) before both '.' and 'Z', so a comma-form instance that
+    /// has NOT expired reads as expired against the point-form `now` this
+    /// store stamps — the write path would drop a live instance, and the
+    /// postgres path (which parses through `try_timestamptz`) would keep it.
+    #[tokio::test]
+    async fn a_comma_fraction_instance_is_not_pruned_before_it_expires() {
+        let now = "2026-09-01T12:00:00.000Z";
+        let mut live = json!({
+            "id": "urn:x", "type": ["T"],
+            "https://a/attr": [{"value": 1, "expiresAt": "2026-09-01T12:00:00,500Z"}]
+        });
+        assert!(!filter::prune_expired(&mut live, now), "live instance kept");
+        assert_eq!(live["https://a/attr"].as_array().map(Vec::len), Some(1));
+
+        // one that HAS expired still goes, comma form included, and takes the
+        // attribute with it when it was the last instance
+        let mut gone = json!({
+            "id": "urn:x", "type": ["T"],
+            "https://a/attr": [{"value": 1, "expiresAt": "2026-09-01T11:59:59,500Z"}]
+        });
+        assert!(filter::prune_expired(&mut gone, now));
+        assert!(gone.get("https://a/attr").is_none());
+
+        // the entity-level sweep reads the same stamp the same way
+        let s = Store::default();
+        let t = TenantId::new("t").expect("tenant");
+        assert!(
+            s.create(
+                &t,
+                Kind::Entity,
+                "urn:live",
+                json!({"id": "urn:live", "type": ["T"], "expiresAt": "2026-09-01T12:00:00,500Z"})
+            )
+            .await
+        );
+        assert!(
+            s.create(
+                &t,
+                Kind::Entity,
+                "urn:gone",
+                json!({"id": "urn:gone", "type": ["T"], "expiresAt": "2026-09-01T11:59:59,500Z"})
+            )
+            .await
+        );
+        assert_eq!(s.sweep_expired(now), 1, "only the expired one is reaped");
+        assert!(s.get(&t, Kind::Entity, "urn:live").is_some());
+        assert!(s.get(&t, Kind::Entity, "urn:gone").is_none());
+    }
+
+    /// The same assertion over EVERY kind and the whole read/write surface,
+    /// with the SAME id on both sides — the shape a tenant-blind map gets
+    /// wrong, because it answers the neighbour's document instead of `None`.
+    #[tokio::test]
+    async fn no_kind_leaks_across_tenants() {
+        let s = Store::default();
+        let a = TenantId::new("t-a").expect("tenant");
+        let b = TenantId::new("t-b").expect("tenant");
+        let id = "urn:ngsi-ld:shared:1";
+        for kind in ALL_KINDS {
+            assert!(
+                s.create(&a, kind, id, json!({"id": id, "owner": "a"}))
+                    .await
+            );
+
+            assert!(s.get(&b, kind, id).is_none(), "{kind:?}: get");
+            assert!(s.list(&b, kind).is_empty(), "{kind:?}: list");
+            assert!(
+                s.list_page(&b, kind, None, 100).is_empty(),
+                "{kind:?}: list_page"
+            );
+            assert_eq!(
+                s.list_slice(&b, kind, 0, 100),
+                (Vec::new(), 0),
+                "{kind:?}: list_slice"
+            );
+
+            // no write reaches the neighbour's document either
+            assert!(!s.delete(&b, kind, id).await, "{kind:?}: delete");
+            assert!(
+                s.mutate::<(), ()>(&b, kind, id, |d| {
+                    d["owner"] = json!("b");
+                    Ok(())
+                })
+                .await
+                .is_none(),
+                "{kind:?}: mutate"
+            );
+
+            // the same id under another tenant is a create, not a conflict
+            assert!(
+                s.create(&b, kind, id, json!({"id": id, "owner": "b"}))
+                    .await
+            );
+            assert_eq!(s.get(&a, kind, id).expect("a keeps its own")["owner"], "a");
+            assert_eq!(s.get(&b, kind, id).expect("b has its own")["owner"], "b");
+
+            // and b deleting its own leaves a's untouched
+            assert!(s.delete(&b, kind, id).await, "{kind:?}: delete own");
+            assert!(s.get(&b, kind, id).is_none(), "{kind:?}: deleted");
+            assert_eq!(
+                s.get(&a, kind, id)
+                    .expect("survives the neighbour's delete")["owner"],
+                "a"
+            );
+            assert!(s.delete(&a, kind, id).await, "{kind:?}: cleanup");
+        }
+    }
+
+    fn tempdir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("antares-store-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("tempdir");
+        dir
+    }
+
+    /// `open_file` promises "Any open/format/decode error refuses to start —
+    /// never silently serve partial data", and the boot rebuild's kind loop
+    /// keeps it: an absent table has nothing to load, any other error refuses.
+    /// The @context table is read as `if let Ok(...)` instead, so a table that
+    /// exists and cannot be opened counts as an empty one — and that is the
+    /// table whose absence costs a Tenant its own documents, since Hosted and
+    /// ImplicitlyCreated @contexts (5.13.1) hold term mappings authored
+    /// through its requests. The broker would come up and serve without them.
+    ///
+    /// A table of the same name under different key/value types is redb's
+    /// `TableTypeMismatch`: the shape a file written by another binary, or by
+    /// an older schema, actually has.
+    #[test]
+    fn an_unreadable_table_refuses_the_boot_instead_of_reading_as_empty() {
+        let dir = tempdir("unreadable-context-table");
+        let path = dir.join("antares.redb");
+        {
+            let db = Database::create(&path).expect("db");
+            let mut tx = db.begin_write().expect("tx");
+            tx.set_durability(Durability::Immediate).expect("dur");
+            {
+                let mut m = tx.open_table(T_META).expect("meta");
+                m.insert("format", FORMAT_VERSION).expect("insert");
+            }
+            {
+                let def = ::redb::TableDefinition::<&str, &str>::new("jsonld_contexts");
+                let mut t = tx.open_table(def).expect("mismatched contexts table");
+                t.insert("urn:ngsi-ld:ctx", "{}").expect("insert");
+            }
+            tx.commit().expect("commit");
+        }
+        let db = Database::create(&path).expect("reopen");
+        let Err(err) = Store::from_database(db, &path.display().to_string()) else {
+            panic!("a table that cannot be opened must refuse the boot, not start without it");
+        };
+        assert!(!err.is_empty(), "the refusal says what failed");
+    }
+
+    /// The same read, in the guard that exists to refuse a file this binary
+    /// cannot vouch for: data present with no format marker. Skipping a table
+    /// it cannot open makes the guard conclude the file is empty and stamp
+    /// this binary's marker onto it — a write into a file it is about to
+    /// declare unreadable, and one that costs the operator the guard's own
+    /// diagnosis on every later start.
+    #[test]
+    fn the_marker_guard_does_not_stamp_a_file_it_could_not_read() {
+        let dir = tempdir("unstamped-unreadable");
+        let path = dir.join("antares.redb");
+        {
+            let db = Database::create(&path).expect("db");
+            let mut tx = db.begin_write().expect("tx");
+            tx.set_durability(Durability::Immediate).expect("dur");
+            let def = ::redb::TableDefinition::<&str, &str>::new("entities");
+            let mut t = tx.open_table(def).expect("mismatched entities table");
+            t.insert("k", "v").expect("insert");
+            drop(t);
+            tx.commit().expect("commit");
+        }
+        let db = Database::create(&path).expect("reopen");
+        let Err(_) = Store::from_database(db, &path.display().to_string()) else {
+            panic!("an unreadable table with no marker must refuse the boot");
+        };
+        let db = Database::create(&path).expect("reopen after the refusal");
+        let rt = db.begin_read().expect("read tx");
+        let stamped = match rt.open_table(T_META) {
+            Ok(m) => m.get("format").expect("get").is_some(),
+            Err(::redb::TableError::TableDoesNotExist(_)) => false,
+            Err(e) => panic!("{e}"),
+        };
+        assert!(
+            !stamped,
+            "a file the guard could not read must not carry this binary's format marker"
+        );
+    }
+
+    /// Every kind + contexts round-trip through a close/reopen.
+    #[tokio::test]
+    async fn file_mode_survives_reopen() {
+        let dir = tempdir("reopen");
+        let t = TenantId::new("tenant_a-1").expect("tenant");
+        {
+            let s = Store::open_file(&dir).expect("open");
+            for kind in ALL_KINDS {
+                assert!(
+                    s.create(&t, kind, "urn:x:1", json!({"kind": format!("{kind:?}")}))
+                        .await
+                );
+            }
+            // a row the writers actually produce: the kind is what decides
+            // whose it is (ADR-0021), and a Cached copy belongs to no Tenant
+            s.context_put(
+                None,
+                "ctx1",
+                json!({"localId": "ctx1", "kind": "Cached", "body": {"@context": {}}}),
+            )
+            .expect("store");
+        }
+        let s = Store::open_file(&dir).expect("reopen");
+        for kind in ALL_KINDS {
+            assert_eq!(
+                s.get(&t, kind, "urn:x:1").expect("survives")["kind"],
+                format!("{kind:?}")
+            );
+        }
+        assert!(s.context_get(None, "ctx1").is_some());
+        // tenant isolation intact after rebuild
+        assert!(s
+            .get(&TenantId::default(), Kind::Entity, "urn:x:1")
+            .is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Deletes and mutations reach redb — no phantom state after restart.
+    #[tokio::test]
+    async fn file_mode_deletes_and_updates_persist() {
+        let dir = tempdir("delete");
+        let t = TenantId::default();
+        {
+            let s = Store::open_file(&dir).expect("open");
+            s.create(&t, Kind::Entity, "urn:gone", json!({"n": 1}))
+                .await;
+            s.create(&t, Kind::Entity, "urn:kept", json!({"n": 1}))
+                .await;
+            assert!(s.delete(&t, Kind::Entity, "urn:gone").await);
+            let r: Option<Result<(), ()>> = s
+                .mutate(&t, Kind::Entity, "urn:kept", |d| {
+                    d["n"] = json!(2);
+                    Ok(())
+                })
+                .await;
+            assert!(matches!(r, Some(Ok(()))));
+            s.context_put(None, "ctx", json!({"localId": "ctx", "kind": "Cached"}))
+                .expect("store");
+            assert!(s.context_delete(None, "ctx"));
+        }
+        let s = Store::open_file(&dir).expect("reopen");
+        assert!(
+            s.get(&t, Kind::Entity, "urn:gone").is_none(),
+            "phantom 409 trap"
+        );
+        assert_eq!(s.get(&t, Kind::Entity, "urn:kept").expect("kept")["n"], 2);
+        assert!(s.context_get(None, "ctx").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A future-format file refuses to load with a clear message.
+    #[test]
+    fn file_mode_refuses_format_mismatch() {
+        let dir = tempdir("format");
+        {
+            let db = Database::create(dir.join("antares.redb")).expect("db");
+            let mut tx = db.begin_write().expect("tx");
+            tx.set_durability(Durability::Immediate).expect("dur");
+            tx.open_table(T_META)
+                .expect("meta")
+                .insert("format", "999")
+                .expect("insert");
+            tx.commit().expect("commit");
+        }
+        let err = match Store::open_file(&dir) {
+            Err(e) => e,
+            Ok(_) => panic!("must refuse a format-999 file"),
+        };
+        assert!(err.contains("format 999"), "err: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A file that HOLDS rows but carries no format marker was written by a
+    /// binary whose key/value shape this one cannot vouch for. Refusing is
+    /// the whole point of the marker — serving it would answer requests from
+    /// data that may be misread. An empty file, by contrast, is just a fresh
+    /// one and gets the marker stamped.
+    #[test]
+    fn file_mode_refuses_data_without_a_format_marker() {
+        let dir = tempdir("nomarker");
+        {
+            let db = Database::create(dir.join("antares.redb")).expect("db");
+            let mut tx = db.begin_write().expect("tx");
+            tx.set_durability(Durability::Immediate).expect("dur");
+            {
+                let mut t = tx.open_table(T_ENTITIES).expect("entities");
+                let mut k = b"plain".to_vec();
+                k.push(0);
+                k.extend_from_slice(b"urn:e:1");
+                let bytes = serde_json::to_vec(&json!({"id": "urn:e:1"})).expect("serialize");
+                t.insert(k.as_slice(), bytes.as_slice()).expect("insert");
+            }
+            // deliberately NO meta table
+            tx.commit().expect("commit");
+        }
+        let err = match Store::open_file(&dir) {
+            Err(e) => e,
+            Ok(_) => panic!("must refuse data with no format marker"),
+        };
+        assert!(err.contains("no format marker"), "err: {err}");
+        assert!(err.contains("antares.redb"), "the file is named: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // an EMPTY unmarked file is a fresh store, not a refusal
+        let fresh = tempdir("nomarker-empty");
+        {
+            let db = Database::create(fresh.join("antares.redb")).expect("db");
+            let tx = db.begin_write().expect("tx");
+            tx.commit().expect("commit");
+        }
+        Store::open_file(&fresh).expect("an empty file is a fresh store");
+        let _ = std::fs::remove_dir_all(&fresh);
+    }
+
+    /// 4.22: "expiresAt is defined as the system temporal Property at which a
+    /// certain Entity, Property or Relationship shall become invalid." The
+    /// clause sanctions the DELETION lagging, not the invalidity — so the
+    /// write paths must agree with the read boundary the instant the stamp
+    /// passes. Before this, the same id was simultaneously a 404 on retrieve,
+    /// a 409 on create and a 204 on delete for a whole sweep interval.
+    #[tokio::test]
+    async fn an_expired_entity_is_absent_to_writes_too() {
+        let s = Store::default();
+        let t = TenantId::default();
+        let dead = json!({"id": "urn:e", "type": ["T"], "expiresAt": "2000-01-01T00:00:00Z"});
+        let live = json!({"id": "urn:l", "type": ["T"], "expiresAt": "2999-01-01T00:00:00Z"});
+        assert!(s.create(&t, Kind::Entity, "urn:e", dead.clone()).await);
+        assert!(s.create(&t, Kind::Entity, "urn:l", live.clone()).await);
+
+        // patching or deleting something already invalid is a 404, not a 204
+        assert!(s
+            .mutate(&t, Kind::Entity, "urn:e", |_d| Ok::<(), ()>(()))
+            .await
+            .is_none());
+        assert!(
+            !s.delete(&t, Kind::Entity, "urn:e").await,
+            "expired delete is 404"
+        );
+        // …and creating over it succeeds instead of raising AlreadyExists
+        assert!(
+            s.create(&t, Kind::Entity, "urn:e", json!({"id": "urn:e", "n": 1}))
+                .await,
+            "an expired id must not 409 a create"
+        );
+        assert_eq!(
+            s.get(&t, Kind::Entity, "urn:e").expect("recreated")["n"],
+            1,
+            "the create must have replaced the expired document"
+        );
+
+        // an UNEXPIRED entity keeps every one of those answers
+        assert!(
+            !s.create(&t, Kind::Entity, "urn:l", live.clone()).await,
+            "409"
+        );
+        assert!(s
+            .mutate(&t, Kind::Entity, "urn:l", |_d| Ok::<(), ()>(()))
+            .await
+            .is_some());
+        assert!(s.delete(&t, Kind::Entity, "urn:l").await);
+
+        // upsert over an expired id reports CREATED (201 + Location), not
+        // updated
+        s.create(&t, Kind::Entity, "urn:x", dead.clone()).await;
+        assert!(
+            !s.upsert(&t, Kind::Entity, "urn:x", json!({"id": "urn:x"}))
+                .await,
+            "an expired id must upsert as created"
+        );
+        assert!(
+            s.upsert(&t, Kind::Entity, "urn:x", json!({"id": "urn:x", "n": 2}))
+                .await,
+            "and the live one that replaced it as updated"
+        );
+
+        // 4.22 is an ENTITY stamp: other kinds keep their own expiry rules
+        assert!(
+            s.create(&t, Kind::Subscription, "urn:s", dead.clone())
+                .await
+        );
+        assert!(
+            !s.create(&t, Kind::Subscription, "urn:s", dead).await,
+            "a subscription id still 409s"
+        );
+        assert!(s.delete(&t, Kind::Subscription, "urn:s").await);
+    }
+
+    /// The change hook drives every notification and all temporal
+    /// auto-recording, so its contract is: create emits (None, Some), delete
+    /// emits (Some, None), a real mutate emits both images — and, just as
+    /// load-bearing, a NON-entity write and a no-op mutate emit NOTHING. A
+    /// subscription leaking into the hook would be mirrored into temporal
+    /// storage; a no-op emitting would re-notify every subscriber on every
+    /// idempotent PATCH.
+    #[tokio::test]
+    async fn the_change_hook_fires_for_entity_changes_only() {
+        use std::sync::{Arc, Mutex};
+        type Images = (Option<Value>, Option<Value>);
+        let seen: Arc<Mutex<Vec<Images>>> = Arc::default();
+        let s = Store::default();
+        let t = TenantId::default();
+        let rec = Arc::clone(&seen);
+        s.set_change_hook(Arc::new(
+            move |_t: &TenantId,
+                  before: Option<Value>,
+                  after: Option<Value>|
+                  -> antares_store::HookFuture<'_> {
+                let rec = Arc::clone(&rec);
+                Box::pin(async move {
+                    rec.lock().expect("record").push((before, after));
+                })
+            },
+        ));
+
+        s.create(&t, Kind::Entity, "urn:e", json!({"id": "urn:e", "n": 1}))
+            .await;
+        // a write on another kind must not reach the hook at all
+        s.create(&t, Kind::Subscription, "urn:s", json!({"id": "urn:s"}))
+            .await;
+        s.upsert(
+            &t,
+            Kind::Subscription,
+            "urn:s",
+            json!({"id": "urn:s", "n": 9}),
+        )
+        .await;
+        s.delete(&t, Kind::Subscription, "urn:s").await;
+        // a mutate that changes nothing is not a change
+        let _ = s
+            .mutate(&t, Kind::Entity, "urn:e", |_d| Ok::<(), ()>(()))
+            .await;
+        // a real one is
+        let _ = s
+            .mutate(&t, Kind::Entity, "urn:e", |d| {
+                d["n"] = json!(2);
+                Ok::<(), ()>(())
+            })
+            .await;
+        // an aborted mutate writes nothing and emits nothing
+        let _ = s
+            .mutate(&t, Kind::Entity, "urn:e", |d| {
+                d["n"] = json!(3);
+                Err::<(), &str>("no")
+            })
+            .await;
+        s.delete(&t, Kind::Entity, "urn:e").await;
+
+        let seen = seen.lock().expect("read");
+        assert_eq!(seen.len(), 3, "emitted: {seen:?}");
+        assert!(seen[0].0.is_none() && seen[0].1.is_some(), "create");
+        assert_eq!(seen[1].0.as_ref().expect("before")["n"], 1);
+        assert_eq!(seen[1].1.as_ref().expect("after")["n"], 2);
+        assert!(seen[2].0.is_some() && seen[2].1.is_none(), "delete");
+        // the aborted mutate left the document alone
+        assert!(s.get(&t, Kind::Entity, "urn:e").is_none());
+    }
+
+    /// The supported backup route is stop-copy — close the broker, copy
+    /// the file, reopen the copy. This test IS that route.
+    #[tokio::test]
+    async fn file_mode_stop_copy_backup_restores() {
+        let dir = tempdir("backup");
+        let restore = tempdir("restore");
+        let t = TenantId::default();
+        {
+            let s = Store::open_file(&dir).expect("open");
+            s.create(&t, Kind::Entity, "urn:b", json!({"v": 42})).await;
+        } // broker stopped — file quiescent
+        std::fs::copy(dir.join("antares.redb"), restore.join("antares.redb")).expect("copy");
+        let s = Store::open_file(&restore).expect("open backup");
+        assert_eq!(s.get(&t, Kind::Entity, "urn:b").expect("restored")["v"], 42);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&restore);
+    }
+
+    /// 4.22: reaping an expired entity is a state change like any other, so
+    /// it must be durable — after a sweep the doc stays gone across a reopen,
+    /// whatever the tenant key on disk looks like, while a doc that has not
+    /// expired survives both.
+    #[test]
+    fn file_mode_sweep_removals_persist() {
+        let dir = tempdir("sweep-persist");
+        // Seed the file directly: one tenant key the boot rebuild accepts but
+        // `TenantId::new` rejects, alongside an ordinary one.
+        {
+            let db = Database::create(dir.join("antares.redb")).expect("db");
+            let mut tx = db.begin_write().expect("tx");
+            tx.set_durability(Durability::Immediate).expect("dur");
+            {
+                let mut m = tx.open_table(T_META).expect("meta");
+                m.insert("format", FORMAT_VERSION).expect("insert");
+            }
+            {
+                let mut t = tx.open_table(T_ENTITIES).expect("entities");
+                for (tenant, id, expires) in [
+                    ("odd.tenant", "urn:e:1", "2000-01-01T00:00:00Z"),
+                    ("odd.tenant", "urn:e:2", "2999-01-01T00:00:00Z"),
+                    ("plain", "urn:e:3", "2000-01-01T00:00:00Z"),
+                ] {
+                    let mut k = tenant.as_bytes().to_vec();
+                    k.push(0);
+                    k.extend_from_slice(id.as_bytes());
+                    let doc = json!({"id": id, "type": ["T"], "expiresAt": expires});
+                    let bytes = serde_json::to_vec(&doc).expect("serialize");
+                    t.insert(k.as_slice(), bytes.as_slice()).expect("insert");
+                }
+            }
+            tx.commit().expect("commit");
+        }
+        {
+            let s = Store::open_file(&dir).expect("open");
+            assert_eq!(s.sweep_expired("2026-01-01T00:00:00Z"), 2, "both expired");
+        }
+        let s = Store::open_file(&dir).expect("reopen");
+        let inner = s.inner.read().expect("lock");
+        assert!(
+            !inner
+                .entities
+                .get("odd.tenant")
+                .is_some_and(|d| d.contains_key("urn:e:1")),
+            "swept entity resurrected on reopen"
+        );
+        assert!(
+            inner
+                .entities
+                .get("odd.tenant")
+                .is_some_and(|d| d.contains_key("urn:e:2")),
+            "unexpired entity must outlive the sweep"
+        );
+        assert!(
+            !inner
+                .entities
+                .get("plain")
+                .is_some_and(|d| d.contains_key("urn:e:3")),
+            "swept entity resurrected on reopen"
+        );
+        drop(inner);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn sweep_prunes_expired_attribute_instances() {
+        let s = Store::default();
+        let t = TenantId::default();
+        s.create(
+            &t,
+            Kind::Entity,
+            "urn:e",
+            json!({"id": "urn:e", "type": ["T"],
+                "https://a/attr": [
+                    {"type": "Property", "value": 1, "expiresAt": "2000-01-01T00:00:00Z"},
+                    {"type": "Property", "value": 2, "expiresAt": "2999-01-01T00:00:00Z"}],
+                "https://a/gone": [
+                    {"type": "Property", "value": 3, "expiresAt": "2000-01-01T00:00:00Z"}]}),
+        )
+        .await;
+        s.create(
+            &t,
+            Kind::Temporal,
+            "urn:e",
+            json!({"id": "urn:e", "type": ["T"],
+                "https://a/attr": [
+                    {"value": 1, "expiresAt": "2000-01-01T00:00:00Z"},
+                    {"value": 2, "expiresAt": "2999-01-01T00:00:00Z"},
+                    {"value": 3}]}),
+        )
+        .await;
+        assert_eq!(s.sweep_expired("2026-01-01T00:00:00Z"), 2);
+        let e = s.get(&t, Kind::Entity, "urn:e").expect("entity survives");
+        assert_eq!(e["https://a/attr"].as_array().expect("attr").len(), 1);
+        assert_eq!(e["https://a/attr"][0]["value"], 2);
+        assert!(
+            e.get("https://a/gone").is_none(),
+            "fully-expired attribute removed"
+        );
+        let tp = s
+            .get(&t, Kind::Temporal, "urn:e")
+            .expect("temporal survives");
+        let vals: Vec<i64> = tp["https://a/attr"]
+            .as_array()
+            .expect("instances")
+            .iter()
+            .map(|i| i["value"].as_i64().expect("value"))
+            .collect();
+        assert_eq!(vals, [2, 3], "expired pruned, no-expiry instance kept");
+        assert_eq!(s.sweep_expired("2026-01-01T00:00:00Z"), 0, "idempotent");
+    }
+
+    /// ADR-0021 + 4.14: the memory/file arm has no Row-Level Security under
+    /// it, so the rule a Postgres deployment gets from the database is this
+    /// store's own job. A Hosted @context holds term mappings authored
+    /// through one Tenant's requests and belongs to that Tenant alone; a
+    /// Cached copy of a public document belongs to none and every Tenant
+    /// reaches it. A store that answered every caller would hand one
+    /// Tenant's term mappings to another, and 5.5.7 makes those mappings
+    /// decide what its payloads mean.
+    #[test]
+    fn clause_5_13_1_a_stored_context_answers_only_its_own_tenant() {
+        let s = Store::default();
+        let alpha = TenantId::new("alpha").expect("tenant");
+        let beta = TenantId::new("beta").expect("tenant");
+        let hosted = json!({"localId": "h", "kind": "Hosted", "owner": "alpha",
+                            "body": {"@context": {"a": "https://alpha.example/a"}}});
+        s.context_put(Some(&alpha), "h", hosted.clone())
+            .expect("the owner stores its own row");
+        s.context_put(
+            None,
+            "c",
+            json!({"localId": "c", "kind": "Cached", "body": {"@context": {}}}),
+        )
+        .expect("a Cached copy belongs to no Tenant");
+
+        assert!(
+            s.context_get(Some(&alpha), "h").is_some(),
+            "its owner reads it"
+        );
+        assert!(
+            s.context_get(Some(&beta), "h").is_none(),
+            "another Tenant's Hosted @context is as absent as one never stored"
+        );
+        assert!(
+            s.context_get(None, "h").is_none(),
+            "no Tenant in scope reaches no Tenant's documents"
+        );
+        for t in [Some(&alpha), Some(&beta), None] {
+            assert!(
+                s.context_get(t, "c").is_some(),
+                "a Cached copy is a public document and is shared"
+            );
+        }
+        assert!(
+            !s.context_delete(Some(&beta), "h"),
+            "a foreign delete takes nothing"
+        );
+        assert!(
+            s.context_put(Some(&beta), "h", hosted).is_err(),
+            "and a foreign write does not overwrite it either"
+        );
+        assert!(
+            s.context_list_meta(Some(&beta))
+                .iter()
+                .all(|r| r["localId"] != "h"),
+            "another Tenant's row is not listed"
+        );
+        assert!(
+            s.context_get(Some(&alpha), "h").is_some(),
+            "the owner's row survived every foreign attempt"
+        );
+
+        s.purge_tenant(&alpha);
+        assert!(
+            s.context_get(Some(&alpha), "h").is_none(),
+            "purging the Tenant takes the @contexts it stored"
+        );
+        assert!(
+            s.context_get(None, "c").is_some(),
+            "and leaves the copy that belongs to no Tenant"
+        );
+    }
+
+    /// 5.13.1: "Implementations shall periodically invalidate the 'Cached'
+    /// @contexts." The memory/file arm holds one entry per distinct external
+    /// URL a request referenced — client-controlled — so the same ceiling and
+    /// oldest-first eviction the Pg arm applies holds here, and it applies to
+    /// the Cached kind ONLY: a Hosted entry is client-owned data (5.13.2).
+    #[test]
+    fn clause_5_13_1_cached_contexts_are_capped_oldest_first() {
+        let s = Store::default();
+        let entry = |kind: &str, created: &str| json!({"kind": kind, "createdAt": created, "body": {"@context": {}}});
+        // a Hosted entry older than every Cached one: age must not decide
+        s.context_put(
+            Some(&TenantId::default()),
+            "hosted",
+            entry("Hosted", "2000-01-01T00:00:00Z"),
+        )
+        .expect("store");
+        for i in 0..MAX_CACHED_CONTEXTS {
+            s.context_put(
+                None,
+                &format!("cached-{i:05}"),
+                entry("Cached", &format!("2026-01-01T00:00:{:02}Z", i % 60)),
+            )
+            .expect("store");
+        }
+        let cached = |s: &Store| {
+            s.context_list_meta(Some(&TenantId::default()))
+                .iter()
+                .filter(|d| d["kind"] == "Cached")
+                .count()
+        };
+        assert_eq!(
+            cached(&s),
+            MAX_CACHED_CONTEXTS,
+            "at the ceiling, nothing lost"
+        );
+
+        // one more Cached entry evicts exactly one — the oldest
+        s.context_put(None, "cached-new", entry("Cached", "2026-06-01T00:00:00Z"))
+            .expect("store");
+        assert_eq!(cached(&s), MAX_CACHED_CONTEXTS, "the ceiling holds");
+        assert!(
+            s.context_get(None, "cached-new").is_some(),
+            "the new entry stays"
+        );
+        assert!(
+            s.context_get(None, "cached-00000").is_none(),
+            "the oldest Cached entry is the one evicted"
+        );
+        assert!(
+            s.context_get(None, "cached-00001").is_some(),
+            "eviction stops at the ceiling"
+        );
+        assert!(
+            s.context_get(Some(&TenantId::default()), "hosted")
+                .is_some(),
+            "a Hosted entry is never a candidate, however old"
+        );
+    }
+
+    #[tokio::test]
+    async fn mutate_aborts_on_error() {
+        let s = Store::default();
+        let t = TenantId::default();
+        s.create(&t, Kind::Entity, "urn:a", json!({"n": 1})).await;
+        let r: Option<Result<(), &str>> = s
+            .mutate(&t, Kind::Entity, "urn:a", |d| {
+                d["n"] = json!(2);
+                Err("nope")
+            })
+            .await;
+        assert!(matches!(r, Some(Err("nope"))));
+        assert_eq!(s.get(&t, Kind::Entity, "urn:a").unwrap()["n"], 1);
+    }
+
+    /// A purged tenant is gone from every kind, the neighbour tenant is
+    /// untouched, and in `file` mode the removal survives a reopen.
+    #[tokio::test]
+    async fn purge_tenant_empties_every_kind_and_survives_reopen() {
+        let dir = tempdir("purge");
+        let a = TenantId::new("purge_a").expect("tenant");
+        let b = TenantId::new("purge_b").expect("tenant");
+        {
+            let s = Store::open_file(&dir).expect("open");
+            for t in [&a, &b] {
+                for kind in ALL_KINDS {
+                    assert!(s.create(t, kind, "urn:x:1", json!({"id": "urn:x:1"})).await);
+                }
+            }
+            assert!(s.tenant_ids().iter().any(|t| t == "purge_a"), "listed");
+            let row = s.tenant_stats_one(&a);
+            assert_eq!((row.entities, row.subscriptions, row.dist_subs), (1, 1, 1));
+            assert!(s.purge_tenant(&a));
+            assert!(!s.purge_tenant(&a), "second purge finds nothing");
+            assert!(!s.tenant_exists(&a));
+            assert!(s.tenant_exists(&b));
+            for kind in ALL_KINDS {
+                assert!(s.get(&a, kind, "urn:x:1").is_none(), "{kind:?} row left");
+                assert!(s.get(&b, kind, "urn:x:1").is_some(), "{kind:?} lost for b");
+            }
+            assert!(s.tenant_ids().iter().all(|t| t != "purge_a"));
+            assert_eq!(
+                s.tenant_stats_one(&a).entities,
+                0,
+                "a purged tenant counts nothing"
+            );
+        }
+        let s = Store::open_file(&dir).expect("reopen");
+        assert!(!s.tenant_exists(&a), "purge must be persisted");
+        assert!(s.tenant_exists(&b));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

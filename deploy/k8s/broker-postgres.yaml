@@ -1,0 +1,184 @@
+# `postgres`-mode reference shape: stateless pods, RollingUpdate,
+# roles split — 2× api (HTTP, produces outbox + drains it) and 2× worker
+# (matcher,notifier,temporal — shared durables load-balance, interval
+# firings single-winner by row-lock claim). ANTARES_BUS=nats is what makes N
+# replicas ONE broker; ANTARES_NATS_REPLICAS=3 puts the streams at R3
+# on the 3-node cluster.
+#
+# The DSN lives in the antares-db Secret below and points at CNPG's -rw
+# service (postgres-cnpg.yaml); the kind smoke rewrites the host with sed —
+# one line, no tooling. Production replaces the Secret (or points at CNPG's
+# generated antares-pg-app credentials) instead of editing pod specs.
+apiVersion: v1
+kind: Service
+metadata:
+  name: antares
+  namespace: antares
+spec:
+  selector: { app: antares, role: api }
+  ports:
+    - { port: 9090 }
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: antares-db
+  namespace: antares
+type: Opaque
+stringData:
+  # Dev-grade credentials for the kind smoke; production MUST replace this
+  # Secret with a real one (non-superuser role, see the RLS note below), or
+  # point the Deployments at CNPG's generated antares-pg-app credentials.
+  # No sslmode: inside the namespace this is a plaintext connection. A
+  # cluster that does not treat its pod network as trusted terminates TLS at
+  # the database and appends `?sslmode=verify-full` here; the broker passes
+  # the DSN through untouched, so nothing else changes.
+  url: postgresql://antares:antares@antares-pg-rw.antares.svc:5432/antares
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: antares-api
+  namespace: antares
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector:
+    matchLabels: { app: antares, role: api }
+  template:
+    metadata:
+      labels: { app: antares, role: api }
+    spec:
+      # The `antares*` Services make kubelet inject ANTARES_PORT/
+      # ANTARES_SERVICE_* into every pod — fatal under the unknown-key
+      # check. Belt at main.rs skips the injected shapes; this is braces.
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30 # > drain delay + deadline
+      # Runtime hardening: non-root (image is uid 65532), read-only
+      # rootfs (postgres mode writes nothing there; /tmp is a tmpfs), all caps
+      # dropped, no privilege escalation.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: antares
+          image: antares-local:latest
+          imagePullPolicy: IfNotPresent
+          args: []
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+          env:
+            - { name: ANTARES_STORE, value: postgres }
+            # The Secret must name a NON-superuser, non-BYPASSRLS role
+            # (e.g. antares_app): ANTARES_REQUIRE_RLS=1 below refuses to boot
+            # otherwise, so the RLS tenant-isolation backstop is enforced. Migrations
+            # need a privileged role — run them as a separate bootstrap step, then
+            # run the broker as antares_app (granted DML on the tenant tables).
+            # The Secret above carries dev credentials only so the CI kind-smoke
+            # (superuser postgres-dev) boots; a real deployment MUST change both.
+            - name: ANTARES_DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: antares-db, key: url }
+            - { name: ANTARES_REQUIRE_RLS, value: "1" }
+            - { name: ANTARES_BUS, value: nats }
+            - { name: ANTARES_NATS_URL, value: "nats://nats.antares.svc:4222" }
+            - { name: ANTARES_NATS_REPLICAS, value: "3" }
+            - { name: ANTARES_ROLES, value: api }
+            # Paired with the memory limit below: a served connection can hold
+            # a forwarded read, and one measures about 1.8 MiB of broker
+            # memory while it runs. The 10 000 default admits twenty times
+            # what this pod's limit holds, so an overload would be an
+            # OOMKill instead of a refused connection.
+            - { name: ANTARES_MAX_CONNECTIONS, value: "512" }
+          ports:
+            - { containerPort: 9090 }
+          readinessProbe:
+            httpGet: { path: /q/ready, port: 9090 }
+            periodSeconds: 1
+          livenessProbe:
+            httpGet: { path: /q/health, port: 9090 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            # Measured on the shipped image under load, not borrowed from the
+            # ETSI pipeline's gate: about 100 MiB serving queries and
+            # retrieves, 809 MiB peak at the highest federated rate the broker
+            # still answers within a second. Past that rate what grows is the
+            # queue of requests it has not finished, not a working set.
+            requests: { memory: 128Mi, cpu: 100m }
+            limits: { memory: 1Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: antares-worker
+  namespace: antares
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 1 }
+  selector:
+    matchLabels: { app: antares, role: worker }
+  template:
+    metadata:
+      labels: { app: antares, role: worker }
+    spec:
+      # The `antares*` Services make kubelet inject ANTARES_PORT/
+      # ANTARES_SERVICE_* into every pod — fatal under the unknown-key
+      # check. Belt at main.rs skips the injected shapes; this is braces.
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: { type: RuntimeDefault }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: antares
+          image: antares-local:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+          env:
+            - { name: ANTARES_STORE, value: postgres }
+            # Non-superuser role + ANTARES_REQUIRE_RLS=1, as in the api
+            # Deployment above.
+            - name: ANTARES_DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: antares-db, key: url }
+            - { name: ANTARES_REQUIRE_RLS, value: "1" }
+            - { name: ANTARES_BUS, value: nats }
+            - { name: ANTARES_NATS_URL, value: "nats://nats.antares.svc:4222" }
+            - { name: ANTARES_NATS_REPLICAS, value: "3" }
+            - { name: ANTARES_ROLES, value: "matcher,notifier,temporal" }
+          ports:
+            - { containerPort: 9090 } # health only; no Service routes here
+          readinessProbe:
+            httpGet: { path: /q/ready, port: 9090 }
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: { path: /q/health, port: 9090 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            # Matching and delivery: 786 MiB peak at 500 updates/s against
+            # 10 000 subscriptions.
+            requests: { memory: 128Mi, cpu: 100m }
+            limits: { memory: 1Gi }

@@ -1,0 +1,7 @@
+# surfaces-threat-model 10.1: the request-path rules hold everywhere but in #[test] bodies.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+# LinkML is a name, not code.
+doc-valid-idents = ["LinkML", ".."]

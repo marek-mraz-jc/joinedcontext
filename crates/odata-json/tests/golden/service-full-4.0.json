@@ -1,0 +1,1 @@
+{"@odata.context":"https://example.org/odata/$metadata","value":[{"name":"Buildings","kind":"EntitySet","url":"Buildings"},{"name":"Towers","kind":"EntitySet","url":"Towers"},{"name":"People","kind":"EntitySet","url":"People"},{"name":"Keyless","kind":"EntitySet","url":"Keyless"},{"name":"Ghosts","kind":"EntitySet","url":"Ghosts"}]}

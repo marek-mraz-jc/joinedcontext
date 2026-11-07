@@ -1,0 +1,29 @@
+[package]
+name = "ngsild-model"
+description = "NGSI-LD data model types (CIM 009 V1.9.1). Publishable as ngsild-model."
+version.workspace = true
+edition.workspace = true
+publish = ["crates-io"]
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+readme = "README.md"
+# reads the vendored ETSI suite, which is not in the package
+exclude = ["tests/etsi_fixtures.rs"]
+keywords = ["ngsi-ld", "etsi", "fiware", "context-broker", "json-ld"]
+categories = ["data-structures", "parser-implementations"]
+
+# ADR-0027 / surfaces-threat-model 9.1: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "ngsild"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true

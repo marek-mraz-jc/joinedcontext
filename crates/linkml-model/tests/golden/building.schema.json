@@ -1,0 +1,87 @@
+{
+  "$id": "https://example.org/building",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "Asset": {
+      "description": "Anything the building operator tracks.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "retired"
+          ],
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "type": "object"
+    },
+    "Room": {
+      "description": "A room | with a pipe and *stars*.",
+      "properties": {
+        "floor": {
+          "type": "integer",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "name": {
+          "description": "The room's \"label\".",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "sensors": {
+          "items": {
+            "format": "uri",
+            "type": "string"
+          },
+          "type": "array",
+          "x-ngsi-ld-kind": "Relationship"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "retired"
+          ],
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "temperature": {
+          "type": "number",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "name",
+        "floor"
+      ],
+      "type": "object"
+    },
+    "Sensor": {
+      "properties": {
+        "location": {
+          "description": "Where the sensor hangs.\nSecond line.",
+          "format": "uri",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship"
+        },
+        "name": {
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "retired"
+          ],
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "title": "building"
+}

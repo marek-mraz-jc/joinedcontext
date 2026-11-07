@@ -1,0 +1,25 @@
+# The wasm broker as a container: the SAME www/pkg bytes a browser page
+# loads (ONE artifact everywhere — browser, bare node, docker), fronted by
+# the Node shim so the ETSI suite reaches it over TCP.
+#
+# Build www/pkg first: dev/wasm-build.sh. Store selection is the shim's:
+#   ANTARES_STORE=memory|file, ANTARES_FILE=<redb path> (mount /data).
+#
+#   docker build -f Dockerfile.wasm -t antares-wasm-local .
+#   docker run --network host -e ANTARES_STORE=file \
+#     -e ANTARES_FILE=/data/antares.redb -v wasmdata:/data \
+#     antares-wasm-local 9090
+FROM node:26-slim@sha256:930557a230abacbc3f4fd9b8648abf8f4bee1e17cb72195dcdfb2f709bc85b33
+WORKDIR /app
+COPY www/pkg ./pkg
+COPY www/node-shim.mjs ./node-shim.mjs
+# The shim needs nothing but read access to its own bundle, so it runs as the
+# image's unprivileged user. `file` mode writes to /data: a fresh named volume
+# inherits the mountpoint's ownership, so the directory is pre-created for
+# that user — nothing chowns at runtime. A BIND mount keeps the host
+# directory's ownership instead, so a caller mounting one passes
+# `--user "$(id -u):$(id -g)"` and stays unprivileged that way.
+RUN mkdir /data && chown node:node /data
+USER node
+ENTRYPOINT ["node", "node-shim.mjs"]
+CMD ["9090"]

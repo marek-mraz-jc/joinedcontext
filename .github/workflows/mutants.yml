@@ -1,0 +1,104 @@
+name: mutants
+
+# Mutation testing of the decision code (T-3531): ngsild-ql (q, geo, scope
+# filters), ngsild-matcher (subscription matching) and the policy seam
+# (crates/antares-api/src/policy.rs). A mutant the tests do not kill is a
+# filter or policy branch nothing pins; dev/mutants-survivors.txt lists the
+# ones that carry a written reason, and a survivor outside that list fails
+# the run. The list is keyed without line numbers, so an edit above a known
+# survivor does not make it new. Weekly and by hand; also when this file or
+# the list changes.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 6 * * 1" # Monday 06:41 UTC, the heavy weekly of Monday (T-5639)
+  push:
+    # dev only: a worker branch's push queued hours of runners ahead of ci.yml (2026-10-10)
+    branches: [dev]
+    paths:
+      - .github/workflows/mutants.yml
+      - dev/mutants-survivors.txt
+
+permissions:
+  contents: read
+
+# A scheduled run is never cancelled (its own group); pushes still supersede
+# each other (T-5639).
+concurrency:
+  group: mutants-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+
+jobs:
+  mutants:
+    name: mutants (${{ matrix.target.name }} ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      # 6 of the 24 cells at a time: the account runs 20 jobs, the trains
+      # need the rest (T-5639)
+      max-parallel: 6
+      matrix:
+        target:
+          - name: ql
+            shards: 6
+            args: -p ngsild-ql
+          - name: matcher
+            shards: 6
+            args: -p ngsild-matcher
+          - name: policy
+            shards: 6
+            # lib tests plus the integration tests: a mutant only an
+            # integration test kills is not a survivor. Since T-3540 most
+            # policy_* files are modules of the one `it` binary, and only
+            # three stay binaries of their own, so both are named. `Slow` is
+            # the test-kit wrapper the engine contract sleeps in, not seam code.
+            args: -p antares-api -f crates/antares-api/src/policy.rs --exclude-re 'for Slow' -- --lib --test it --test 'policy_*'
+          - name: jc-policy
+            shards: 6
+            # the platform's engine (T-3637): its own unit and router tests
+            args: -p joinedcontext-policy
+        shard: [0, 1, 2, 3, 4, 5]
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-mutants
+      - name: Mutate
+        run: |
+          rc=0
+          # word splitting of the matrix args is intended
+          # shellcheck disable=SC2086
+          cargo mutants --no-shuffle --shard ${{ matrix.shard }}/${{ matrix.target.shards }} \
+            ${{ matrix.target.args }} || rc=$?
+          # 0 all caught, 2 survivors, 3 timeouts: judged below. Anything
+          # else (the unmutated tree fails, a usage error) is the run failing.
+          case $rc in 0|2|3) ;; *) exit $rc;; esac
+      - name: New survivors
+        run: |
+          set -euo pipefail
+          norm() { sed -E 's/:[0-9]+:[0-9]+:/:/' "$1" | sort -u; }
+          touch mutants.out/missed.txt
+          norm mutants.out/missed.txt > missed.norm
+          grep -v '^#' dev/mutants-survivors.txt | grep -v '^$' | sed -E 's/ +# .*$//' > known.raw || true
+          norm known.raw > known.norm
+          comm -23 missed.norm known.norm > new.txt
+          { echo "### ${{ matrix.target.name }} shard ${{ matrix.shard }}"
+            echo "caught $(wc -l < mutants.out/caught.txt 2>/dev/null || echo 0), missed $(wc -l < missed.norm), new $(wc -l < new.txt)"
+            echo '```'; cat new.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          if [ -s new.txt ]; then
+            echo "::error::$(wc -l < new.txt) surviving mutant(s) not in dev/mutants-survivors.txt: write a test, or add the line with a reason"
+            cat new.txt
+            exit 1
+          fi
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: mutants-${{ matrix.target.name }}-${{ matrix.shard }}
+          path: mutants.out
+          retention-days: 30

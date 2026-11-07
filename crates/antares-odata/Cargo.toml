@@ -1,0 +1,65 @@
+[package]
+name = "antares-odata"
+description = "The OData surface of a view: /x/views/{view}/odata/v4, its $metadata built from the Tenant's LinkML schema intersected with the view, and its reads (T-3508, ADR-0024, ADR-0027)."
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+
+# ADR-0027 section 2, surfaces-threat-model 9.3: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "surface"
+feature = "odata"
+protocols = ["linkml-model", "odata-axum", "odata-batch", "odata-csdl", "odata-json", "odata-url"]
+
+[dependencies]
+antares-ops = { workspace = true }
+axum = { version = "0.8", default-features = false }
+linkml-model = { path = "../linkml-model" }
+# The built-model cache, bounded by bytes (T-4354).
+moka = { version = "0.12", default-features = false, features = ["sync"] }
+odata-axum = { path = "../odata-axum" }
+odata-batch = { path = "../odata-batch" }
+odata-csdl = { path = "../odata-csdl" }
+odata-json = { path = "../odata-json" }
+odata-url = { path = "../odata-url", features = ["edm"] }
+serde = { version = "1", default-features = false, features = ["std"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+uuid = { version = "1", default-features = false, features = ["std", "v4"] }
+
+[dev-dependencies]
+antares-ops = { workspace = true, features = ["test-kit"] }
+http-body-util = { version = "0.1", default-features = false }
+proptest = { workspace = true }
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread"] }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+tracing-subscriber = { workspace = true }
+
+[[bench]]
+name = "render"
+harness = false
+
+# surfaces-threat-model 10.1: the full table, not the workspace's.
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"

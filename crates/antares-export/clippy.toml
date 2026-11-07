@@ -1,0 +1,1 @@
+doc-valid-idents = ["GeoParquet", "GeoJSON", "CRS84", "WKB", "OGC", "..", "zstd"]

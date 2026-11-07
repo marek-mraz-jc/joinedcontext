@@ -1,0 +1,89 @@
+name: perf-baseline
+
+# The per-operation baseline (T-3467, docs/src/perf-baseline.md) and the
+# price of release overflow checks (T-3531), on a GitHub-hosted runner: the
+# repository is public, so the minutes are free and no shared host is
+# loaded. A hosted runner swings 20-30 % run to run (see perf-weekly.yml),
+# so the two builds run in ONE job, one after the other, and are read as a
+# ratio; absolute numbers belong to perf-weekly's dedicated box.
+#
+# Runs when the rig changes, and by hand.
+
+on:
+  workflow_dispatch:
+  push:
+    # dev only: a worker branch's push queued hours of runners ahead of ci.yml (2026-10-10)
+    branches: [dev]
+    paths:
+      - dev/perf/baseline.sh
+      - dev/perf/fanout.py
+      - dev/perf/k6-shapes.js
+      - dev/perf/shapes.sh
+      - .github/workflows/perf-baseline.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      CARGO_TERM_COLOR: always
+      DATABASE_URL: postgresql://antares:antares@localhost:15432/antares
+    services:
+      postgis:
+        image: ghcr.io/baosystems/postgis:17-3.5
+        env:
+          POSTGRES_USER: antares
+          POSTGRES_PASSWORD: antares
+          POSTGRES_DB: antares
+        ports: ["15432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U antares"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Install k6 and psql
+        run: |
+          curl -sL https://github.com/grafana/k6/releases/download/v0.54.0/k6-v0.54.0-linux-amd64.tar.gz \
+            | tar xz --strip-components=1
+          sudo mv k6 /usr/local/bin/
+          # shapes.sh settles PostgreSQL after each seed (T-3735)
+          command -v psql >/dev/null || sudo apt-get install -y -qq postgresql-client
+      - name: Build vanilla and overflow-checked binaries
+        run: |
+          set -euo pipefail
+          # Release checks overflow (T-3552); "vanilla" is the unchecked build it is measured against.
+          CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=false \
+            cargo build --locked --release -p antares-broker
+          cp target/release/antares antares-vanilla
+          cargo build --locked --release -p antares-broker --target-dir target-ovf
+          cp target-ovf/release/antares antares-overflow
+      - name: Baseline (vanilla)
+        run: BIN=$PWD/antares-vanilla OUT=results/baseline/vanilla dev/perf/baseline.sh
+      - name: Baseline (overflow-checks = true)
+        run: BIN=$PWD/antares-overflow OUT=results/baseline/overflow dev/perf/baseline.sh
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## perf-baseline @ ${GITHUB_SHA::7} on $(nproc) vCPU, $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2)"
+            for b in vanilla overflow; do
+              echo "### $b"
+              cat results/baseline/$b/e1k/shapes.md results/baseline/$b/e100k/shapes.md \
+                results/baseline/$b/fanout.md 2>/dev/null || echo "(no results)"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: perf-baseline
+          path: results/baseline
+          retention-days: 90

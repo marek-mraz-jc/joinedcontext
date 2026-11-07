@@ -1,0 +1,199 @@
+// SPDX-License-Identifier: EUPL-1.2
+//! `antares-@NAME@` against a broker, generated with the crate by `dev/new-surface.py`: the view
+//! narrows what the surface serves, the Policy decides each read, the surface writes nothing,
+//! and its parameters are checked. The assertions read ids and names in the answer's text, so
+//! they hold whatever [`render`](antares_@NAME@) writes; a surface adds its own beside them.
+//!
+//! The Tenant `city` holds the `Place`s `a` and `b` and the hidden `Secret` `s`. The view
+//! `city` shows `Place` without its `owner`; `every` shows every type; `writes` allows Create
+//! Entity alone; `void` reads the empty Tenant `void`.
+
+#![allow(clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
+
+use antares_ops::policy::{
+    Decision, DecisionFuture, NotifyDecision, Operation, PolicyEngine, Subject,
+};
+use antares_ops::test_kit::TestBroker;
+use antares_ops::Surface as _;
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use axum::Router;
+use http_body_util::BodyExt;
+use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tower::ServiceExt;
+
+const PLACES: &str = "/x/views/city/@NAME@/v1/Place";
+
+async fn send(app: &Router, method: &str, uri: &str, body: &str) -> (StatusCode, String) {
+    let mut req = Request::builder().method(method).uri(uri);
+    if uri.starts_with("/ngsi-ld") {
+        req = req.header("NGSILD-Tenant", "city");
+    }
+    if !body.is_empty() {
+        req = req
+            .header("Content-Type", "application/json")
+            .header("Content-Length", body.len());
+    }
+    let resp = app
+        .clone()
+        .oneshot(req.body(Body::from(body.to_owned())).expect("request"))
+        .await
+        .expect("infallible");
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.expect("body").to_bytes();
+    (status, String::from_utf8(bytes.to_vec()).expect("utf-8"))
+}
+
+/// Denies every Query Entities (clause 5.7) once locked, as a Policy granting no read would.
+#[derive(Default)]
+struct NoReads(AtomicBool);
+
+impl PolicyEngine for NoReads {
+    fn name(&self) -> &'static str {
+        "no-reads"
+    }
+
+    fn decide<'a>(&'a self, _: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
+        let locked = self.0.load(Ordering::SeqCst);
+        Box::pin(std::future::ready(if locked && op.clause.starts_with("5.7.") {
+            Decision::Deny("no read".into())
+        } else {
+            Decision::Allow
+        }))
+    }
+
+    fn pre_notify(&self, _: &Subject, _: &Value, _: &mut Value) -> NotifyDecision {
+        NotifyDecision::Deliver
+    }
+}
+
+async fn fixture_with(broker: TestBroker) -> Router {
+    let app = broker.serve(antares_@NAME@::@STRUCT@).expect("mounted");
+    let reads = json!(["query_entities"]);
+    let views = [
+        json!({"id": "city", "tenant": "city", "selector": ["Place"], "operations": reads,
+               "rules": [{"types": ["Place"], "attributes": ["name", "location"]}]}),
+        json!({"id": "writes", "tenant": "city", "selector": ["Place"], "operations": ["create_entity"],
+               "rules": [{"types": ["Place"], "attributes": ["name"]}]}),
+        json!({"id": "every", "tenant": "city", "selector": ["*"], "operations": reads,
+               "rules": [{"types": ["*"], "attributes": ["*"]}]}),
+        json!({"id": "void", "tenant": "void", "selector": ["Place"], "operations": reads,
+               "rules": [{"types": ["Place"], "attributes": ["name"]}]}),
+    ];
+    for view in views {
+        let id = view["id"].as_str().expect("id");
+        let (status, body) = send(&app, "PUT", &format!("/q/views/{id}"), &view.to_string()).await;
+        assert_eq!(status, StatusCode::CREATED, "view {id}: {body}");
+    }
+    let point = |x: f64, y: f64| json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [x, y]}});
+    let entities = [
+        json!({"id": "urn:ngsi-ld:Place:a", "type": "Place", "name": {"type": "Property", "value": "Námestie SNP"},
+               "location": point(19.146, 48.736), "owner": {"type": "Property", "value": "hidden-owner"}}),
+        json!({"id": "urn:ngsi-ld:Place:b", "type": "Place", "name": {"type": "Property", "value": "Urpín"},
+               "location": point(19.152, 48.739)}),
+        json!({"id": "urn:ngsi-ld:Secret:s", "type": "Secret", "name": {"type": "Property", "value": "hidden-secret"}}),
+    ];
+    for entity in entities {
+        let (status, body) = send(&app, "POST", "/ngsi-ld/v1/entities", &entity.to_string()).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+    app
+}
+
+async fn fixture() -> Router {
+    fixture_with(TestBroker::new().await.expect("broker")).await
+}
+
+#[tokio::test]
+async fn a_type_reads_through_the_view_without_what_it_hides() {
+    let app = fixture().await;
+    let (status, body) = send(&app, "GET", PLACES, "").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    for shown in ["urn:ngsi-ld:Place:a", "urn:ngsi-ld:Place:b", "Námestie SNP"] {
+        assert!(body.contains(shown), "{shown} missing: {body}");
+    }
+    assert!(!body.contains("hidden-owner"), "a hidden Attribute leaked: {body}");
+    let (status, body) = send(&app, "GET", "/x/views/every/@NAME@/v1/Secret", "").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("urn:ngsi-ld:Secret:s"), "a view of every type shows it: {body}");
+    let (status, body) = send(&app, "HEAD", PLACES, "").await;
+    assert_eq!((status, body.as_str()), (StatusCode::OK, ""));
+    let info = antares_@NAME@::@STRUCT@.version_info();
+    assert_eq!(info["endpoint"], "/x/views/{view}/@NAME@/v1/{type}");
+}
+
+#[tokio::test]
+async fn a_hidden_type_an_unknown_view_and_a_view_without_reads_are_404() {
+    let app = fixture().await;
+    for uri in [
+        "/x/views/city/@NAME@/v1/Secret",
+        "/x/views/nowhere/@NAME@/v1/Place",
+        "/x/views/writes/@NAME@/v1/Place",
+    ] {
+        let (status, body) = send(&app, "GET", uri, "").await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}: {body}");
+        assert!(!body.contains("hidden-secret"), "{body}");
+    }
+}
+
+#[tokio::test]
+async fn the_policy_decides_every_read() {
+    let engine = Arc::new(NoReads::default());
+    let broker = TestBroker::new().await.expect("broker").with_policy(engine.clone());
+    let app = fixture_with(broker).await;
+    engine.0.store(true, Ordering::SeqCst);
+    let (status, body) = send(&app, "GET", PLACES, "").await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(!body.contains("urn:ngsi-ld:Place:a"), "a denied read served data: {body}");
+}
+
+#[tokio::test]
+async fn the_surface_writes_nothing() {
+    let app = fixture().await;
+    let (status, _) = send(&app, "POST", PLACES, r#"{"id":"urn:ngsi-ld:Place:c","type":"Place"}"#).await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    let (status, _) = send(&app, "OPTIONS", PLACES, "").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = send(&app, "GET", "/ngsi-ld/v1/entities/urn:ngsi-ld:Place:c", "").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn pages_and_q_narrow_the_answer() {
+    let app = fixture().await;
+    let (_, first) = send(&app, "GET", &format!("{PLACES}?limit=1"), "").await;
+    let (_, second) = send(&app, "GET", &format!("{PLACES}?limit=1&offset=1"), "").await;
+    for (page, other) in [(&first, &second), (&second, &first)] {
+        let ids = ["urn:ngsi-ld:Place:a", "urn:ngsi-ld:Place:b"].map(|id| page.contains(id));
+        assert_eq!(ids.iter().filter(|x| **x).count(), 1, "one Place a page: {page}");
+        assert_ne!(page, other);
+    }
+    let (status, body) = send(&app, "GET", &format!("{PLACES}?q=name==%22Urp%C3%ADn%22"), "").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("urn:ngsi-ld:Place:b") && !body.contains("urn:ngsi-ld:Place:a"), "{body}");
+}
+
+#[tokio::test]
+async fn bad_parameters_are_400_and_an_empty_tenant_an_empty_page() {
+    let app = fixture().await;
+    for query in ["limit=0", "limit=101", "limit=x", "offset=-1", "limit=1&limit=2", "attrs=name", "q=((("] {
+        let (status, body) = send(&app, "GET", &format!("{PLACES}?{query}"), "").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{query}: {body}");
+    }
+    let (status, body) = send(&app, "GET", "/x/views/void/@NAME@/v1/Place", "").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(!body.contains("urn:ngsi-ld:"), "{body}");
+}
+
+#[tokio::test]
+async fn a_request_naming_another_tenant_is_refused() {
+    let app = fixture().await;
+    let req = Request::get(PLACES)
+        .header("NGSILD-Tenant", "void")
+        .body(Body::empty())
+        .expect("request");
+    let resp = app.oneshot(req).await.expect("infallible");
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}

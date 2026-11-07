@@ -1,0 +1,107 @@
+{
+  "_": "The render half of the platform's testdata/ical-mapping/cases.yaml (T-4900): the same case names and mappings, each with an entity and the VEVENT lines it renders to (DTSTAMP from its modifiedAt), the reason it is skipped, or why the broker refuses the mapping. Cases the platform refuses only against the model render here like any mapping; they are not repeated.",
+  "entity": {
+    "id": "urn:ngsi-ld:Event:1", "type": "Event", "modifiedAt": "2026-10-01T08:00:00Z",
+    "name": {"type": "LanguageProperty", "languageMap": {"en": "Concert in the square", "sk": "Koncert na námestí"}},
+    "title": {"type": "Property", "value": "Koncert"},
+    "description": {"type": "Property", "value": "Hrá orchester"},
+    "startDate": {"type": "Property", "value": "2026-10-20T18:00:00"},
+    "endDate": {"type": "Property", "value": "2026-10-20T20:00:00"},
+    "lastDay": {"type": "Property", "value": "2026-10-22"},
+    "address": {"type": "Property", "value": {"streetAddress": "Námestie SNP 1", "addressLocality": "Zvolen", "postalCode": "96001"}},
+    "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [19.12, 48.57]}},
+    "url": {"type": "Property", "value": "https://zvolen.sk/koncert"},
+    "category": {"type": "Property", "value": ["sport", "music", "other"]},
+    "eventStatus": {"type": "Property", "value": "https://schema.org/EventCancelled"}
+  },
+  "cases": {
+    "default-preset": {
+      "ical": {},
+      "lines": ["UID:urn:ngsi-ld:Event:1", "DTSTAMP:20261001T080000Z", "DTSTART:20261020T160000Z", "DTEND:20261020T180000Z",
+        "SUMMARY:Concert in the square", "DESCRIPTION:Hrá orchester", "LOCATION:Námestie SNP 1\\, 96001\\, Zvolen",
+        "GEO:48.57;19.12", "URL:https://zvolen.sk/koncert", "LAST-MODIFIED:20261001T080000Z"]
+    },
+    "sdm-event-explicit": {
+      "ical": {"preset": "sdm-event"},
+      "lines": ["UID:urn:ngsi-ld:Event:1", "DTSTAMP:20261001T080000Z", "DTSTART:20261020T160000Z", "DTEND:20261020T180000Z",
+        "SUMMARY:Concert in the square", "DESCRIPTION:Hrá orchester", "LOCATION:Námestie SNP 1\\, 96001\\, Zvolen",
+        "GEO:48.57;19.12", "URL:https://zvolen.sk/koncert", "LAST-MODIFIED:20261001T080000Z"]
+    },
+    "schema-org-preset": {
+      "ical": {"preset": "schema-org"},
+      "lines": ["UID:urn:ngsi-ld:Event:1", "DTSTAMP:20261001T080000Z", "DTSTART:20261020T160000Z", "DTEND:20261020T180000Z",
+        "SUMMARY:Concert in the square", "DESCRIPTION:Hrá orchester", "LOCATION:Námestie SNP 1\\, 96001\\, Zvolen",
+        "GEO:48.57;19.12", "URL:https://zvolen.sk/koncert", "STATUS:CANCELLED", "LAST-MODIFIED:20261001T080000Z"]
+    },
+    "preset-with-overrides": {
+      "ical": {"preset": "sdm-event", "mapping": {
+        "LOCATION": {"join": ["address.streetAddress", "address.addressLocality"], "separator": ", "},
+        "SUMMARY": {"attribute": "name", "language": "sk", "truncate": 7},
+        "DTEND": {"attribute": "lastDay", "date": "date", "endInclusive": true},
+        "CATEGORIES": {"attribute": "category", "map": {"sport": "Šport", "music": "Hudba"}},
+        "STATUS": {"attribute": "eventStatus", "map": {"EventScheduled": "CONFIRMED", "https://schema.org/EventCancelled": "CANCELLED"}, "default": "TENTATIVE"},
+        "CLASS": {"constant": "PUBLIC"}}},
+      "lines": ["UID:urn:ngsi-ld:Event:1", "DTSTAMP:20261001T080000Z", "DTSTART:20261020T160000Z", "DTEND:20261022T220000Z",
+        "SUMMARY:Koncert", "DESCRIPTION:Hrá orchester", "LOCATION:Námestie SNP 1\\, Zvolen",
+        "GEO:48.57;19.12", "URL:https://zvolen.sk/koncert", "CATEGORIES:Šport,Hudba", "STATUS:CANCELLED", "CLASS:PUBLIC",
+        "LAST-MODIFIED:20261001T080000Z"]
+    },
+    "custom-firstof-ending-required": {
+      "ical": {"mapping": {"DTSTART": "startDate", "SUMMARY": {"firstOf": ["headline", "title", "name"]}, "URL": "url"}},
+      "lines": ["UID:urn:ngsi-ld:Event:1", "DTSTAMP:20261001T080000Z", "DTSTART:20261020T160000Z", "SUMMARY:Koncert",
+        "URL:https://zvolen.sk/koncert", "LAST-MODIFIED:20261001T080000Z"]
+    },
+    "timezone-written-in-utc": {
+      "ical": {"preset": "sdm-event", "mapping": {"DTSTART": {"attribute": "startDate", "timezone": "Europe/Bratislava"},
+        "DTEND": {"attribute": "endDate", "timezone": "Europe/Bratislava"}}},
+      "lines": ["UID:urn:ngsi-ld:Event:1", "DTSTAMP:20261001T080000Z", "DTSTART:20261020T160000Z", "DTEND:20261020T180000Z",
+        "SUMMARY:Concert in the square", "DESCRIPTION:Hrá orchester", "LOCATION:Námestie SNP 1\\, 96001\\, Zvolen",
+        "GEO:48.57;19.12", "URL:https://zvolen.sk/koncert", "LAST-MODIFIED:20261001T080000Z"]
+    },
+    "duration-constant-is-the-length-of-an-event-without-end": {
+      "ical": {"mapping": {"DTSTART": "startDate", "SUMMARY": "title", "DURATION": {"constant": "PT1H"}}},
+      "lines": ["UID:urn:ngsi-ld:Event:1", "DTSTAMP:20261001T080000Z", "DTSTART:20261020T160000Z", "DURATION:PT1H", "SUMMARY:Koncert", "LAST-MODIFIED:20261001T080000Z"]
+    },
+    "duration-constant-must-be-a-duration": {
+      "ical": {"mapping": {"DTSTART": "startDate", "SUMMARY": "title", "DURATION": {"constant": "an hour"}}},
+      "refused": "RFC 5545 duration"
+    },
+    "missing-summary-value": {
+      "ical": {"mapping": {"DTSTART": "startDate", "SUMMARY": "headline"}},
+      "skip": "missing-summary"
+    },
+    "dtend-from-text": {
+      "ical": {"preset": "sdm-event", "mapping": {"DTEND": "description"}},
+      "skip": "unparsable-date"
+    },
+    "missing-dtstart": {"ical": {"mapping": {"SUMMARY": "name"}}, "refused": "maps no DTSTART"},
+    "dtend-and-duration": {"ical": {"mapping": {"DTSTART": "startDate", "SUMMARY": "name", "DTEND": "endDate", "DURATION": "description"}}, "refused": "both DTEND and DURATION"},
+    "fixed-uid": {"ical": {"preset": "sdm-event", "mapping": {"UID": "url"}}, "refused": "fixed by the broker"},
+    "remap-not-allowed": {"ical": {"preset": "sdm-event", "mapping": {"GEO": {"attribute": "location", "truncate": 10}}}, "refused": "does not take `truncate`"},
+    "class-not-public": {"ical": {"preset": "sdm-event", "mapping": {"CLASS": {"constant": "PRIVATE"}}}, "refused": "only `constant: PUBLIC`"},
+    "expression-refused": {"ical": {"preset": "sdm-event", "mapping": {"SUMMARY": "{{ name }}"}}, "refused": "is not an attribute path"},
+    "two-sources": {"ical": {"preset": "sdm-event", "mapping": {"SUMMARY": {"attribute": "name", "firstOf": ["title", "name"]}}}, "refused": "exactly one of"},
+    "status-bad-value": {"ical": {"preset": "sdm-event", "mapping": {"STATUS": {"attribute": "eventStatus", "default": "DONE"}}}, "refused": "TENTATIVE, CONFIRMED or CANCELLED"},
+    "unknown-field": {"ical": {"preset": "sdm-event", "mapping": {"ATTENDEE": "url"}}, "refused": "unknown variant"},
+    "unknown-remap": {"ical": {"preset": "sdm-event", "mapping": {"SUMMARY": {"attribute": "name", "template": "x"}}}, "refused": "did not match"},
+    "separator-too-long": {"ical": {"preset": "sdm-event", "mapping": {"LOCATION": {"join": ["address"], "separator": "------------"}}}, "refused": "too long"},
+    "language-not-a-code": {"ical": {"preset": "sdm-event", "mapping": {"SUMMARY": {"attribute": "name", "language": "english"}}}, "refused": "BCP 47 tag"},
+    "truncate-zero": {"ical": {"preset": "sdm-event", "mapping": {"SUMMARY": {"attribute": "name", "truncate": 0}}}, "refused": "1 to 10000"},
+    "join-on-status": {"ical": {"preset": "sdm-event", "mapping": {"STATUS": {"join": ["eventStatus"]}}}, "refused": "does not take `join`"},
+    "path-too-deep": {"ical": {"preset": "sdm-event", "mapping": {"LOCATION": "address.a.b.c"}}, "refused": "is not an attribute path"},
+    "empty-constant": {"ical": {"preset": "sdm-event", "mapping": {"CATEGORIES": {"constant": ""}}}, "refused": "too long"},
+    "constant-too-long": {"ical": {"preset": "sdm-event", "mapping": {"CATEGORIES": {"constant": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}}, "refused": "too long"},
+    "map-value-too-long": {"ical": {"preset": "sdm-event", "mapping": {"CATEGORIES": {"attribute": "category", "map": {"sport": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}}}, "refused": "too long"},
+    "default-empty": {"ical": {"preset": "sdm-event", "mapping": {"CATEGORIES": {"attribute": "category", "default": ""}}}, "refused": "too long"},
+    "type-name-too-long": {"ical": {"type": "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"}, "refused": "not an NGSI-LD type name"},
+    "status-default-only": {
+      "ical": {"mapping": {"DTSTART": "startDate", "SUMMARY": {"attribute": "title", "language": "first"},
+        "STATUS": {"attribute": "eventStatus", "default": "CONFIRMED"}}},
+      "lines": ["UID:urn:ngsi-ld:Event:1", "DTSTAMP:20261001T080000Z", "DTSTART:20261020T160000Z", "SUMMARY:Koncert",
+        "STATUS:CONFIRMED", "LAST-MODIFIED:20261001T080000Z"]
+    },
+    "join-on-geo": {"ical": {"preset": "sdm-event", "mapping": {"GEO": {"join": ["location"]}}}, "refused": "does not take `join`"},
+    "map-key-too-long": {"ical": {"preset": "sdm-event", "mapping": {"CATEGORIES": {"attribute": "category", "map": {"kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk": "x"}}}}, "refused": "too long"},
+    "bad-zone": {"ical": {"preset": "sdm-event", "mapping": {"DTSTART": {"attribute": "startDate", "timezone": "Mars/Olympus"}}}, "refused": "not an IANA zone"}
+  }
+}

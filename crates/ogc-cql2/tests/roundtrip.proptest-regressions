@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 63213a36671fa32cd645c1c96b2adcce54e7168c32fd055d0c54ec4b267216a6 # shrinks to tree = Op(Or, [Op(And, [Op(AContains, [Op(Add, [Op(Add, [Property("a"), Property("a")]), Property("a")]), Array([])]), Op(Between, [Op(Casei, [Op(Add, [Property("a"), Bool(false)])]), Op(Function("fn1"), []), Op(Function("fn1"), [])])]), Op(Between, [Op(Add, [Op(Casei, [Geometry(MultiPolygon([[[[0.0, 0.0], [1.0, 0.0, 2.0], [0.0, 0.0]]]]))]), Timestamp("2026-09-18T10:00:00.25Z")]), Op(Div, [Op(Casei, [Op(Function("fn1"), [Geometry(MultiPolygon([[[[0.0, 0.0], [1.0, 0.0, 2.0], [0.0, 0.0]]]])), Num(159845.59305069805)])]), Op(Function("fn1"), [Timestamp("2026-09-18T10:00:00.25Z")])]), Op(Function("fn1"), [Bool(false)])])])

@@ -1,0 +1,22 @@
+{
+  "id": "urn:ngsi-ld:ContextSourceRegistration:Auxiliary:2",
+  "type": "ContextSourceRegistration",
+  "information": [
+    {
+      "entities": [
+        {
+          "type": "OffStreetParking"
+        }
+      ],
+      "propertyNames": [
+        "availableSpotsNumber",
+        "totalSpotsNumber"			
+      ]
+    }
+  ],
+  "mode": "auxiliary",
+  "endpoint": "xxx",
+  "@context":[
+    "https://raw.githubusercontent.com/joinedcontext/Antares-NGSI-LD-Context-Broker/dev/ngsi-ld-test-suite/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld"
+  ]
+}

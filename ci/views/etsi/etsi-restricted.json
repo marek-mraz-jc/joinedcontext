@@ -1,0 +1,58 @@
+{
+  "id": "etsi-restricted",
+  "tenant": "default",
+  "selector": [
+    "https://ngsi-ld-test-suite/context#Building",
+    "https://uri.etsi.org/ngsi-ld/default-context/City"
+  ],
+  "rules": [
+    {
+      "types": [
+        "https://ngsi-ld-test-suite/context#Building",
+        "https://uri.etsi.org/ngsi-ld/default-context/City"
+      ],
+      "attributes": [
+        "http://purl.org/dc/terms/description",
+        "https://ngsi-ld-test-suite/context#almostFull",
+        "https://ngsi-ld-test-suite/context#availableSpotsNumber",
+        "https://ngsi-ld-test-suite/context#brandName",
+        "https://ngsi-ld-test-suite/context#fuelLevel",
+        "https://ngsi-ld-test-suite/context#isParked",
+        "https://ngsi-ld-test-suite/context#name",
+        "https://ngsi-ld-test-suite/context#reliability",
+        "https://ngsi-ld-test-suite/context#source",
+        "https://ngsi-ld-test-suite/context#speed",
+        "https://ngsi-ld-test-suite/context#subCategory",
+        "https://ngsi-ld-test-suite/context#totalSpotsNumber",
+        "https://uri.etsi.org/ngsi-ld/default-context/buildingDetails",
+        "https://uri.etsi.org/ngsi-ld/default-context/customLocation",
+        "https://uri.etsi.org/ngsi-ld/default-context/isInCountry",
+        "https://uri.etsi.org/ngsi-ld/default-context/jsonProperty",
+        "https://uri.etsi.org/ngsi-ld/default-context/locatedAt",
+        "https://uri.etsi.org/ngsi-ld/default-context/locatedIn",
+        "https://uri.etsi.org/ngsi-ld/default-context/street",
+        "https://uri.etsi.org/ngsi-ld/default-context/vocabProperty",
+        "https://uri.etsi.org/ngsi-ld/location",
+        "https://uri.etsi.org/ngsi-ld/observationSpace",
+        "https://uri.etsi.org/ngsi-ld/operationSpace"
+      ]
+    }
+  ],
+  "operations": [
+    "retrieve_entity",
+    "query_entities",
+    "query_entities_post",
+    "retrieve_attribute_value",
+    "retrieve_subscription",
+    "query_subscriptions",
+    "retrieve_entity_types",
+    "retrieve_entity_type_details",
+    "retrieve_entity_type_info",
+    "retrieve_attributes",
+    "retrieve_attribute_details",
+    "retrieve_attribute_info",
+    "temporal_retrieve",
+    "temporal_query",
+    "temporal_query_post"
+  ]
+}

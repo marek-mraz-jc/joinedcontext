@@ -1,0 +1,27 @@
+{
+ "about": "A multi-attribute speed (datasetId gps) selected by q.",
+ "view": {
+  "selector": [
+   "Vehicle"
+  ],
+  "rules": [
+   {
+    "types": [
+     "Vehicle"
+    ],
+    "attributes": [
+     "speed"
+    ]
+   }
+  ],
+  "q": "speed>=35;speed<37"
+ },
+ "expect": {
+  "urn:ngsi-ld:Vehicle:V8": [
+   "speed"
+  ]
+ },
+ "caller": {
+  "x-jc-roles": "public"
+ }
+}

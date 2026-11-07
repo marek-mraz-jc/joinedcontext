@@ -1,0 +1,42 @@
+name: advisories
+
+# Weekly cargo-deny sweep; a new advisory auto-files an
+# issue instead of silently reddening a badge nobody watches (the shared
+# .github/actions/failure-issue — its dedupe/file logic started here).
+on:
+  schedule:
+    - cron: "23 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  advisories:
+    name: cargo-deny advisories
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: cargo-deny (binary — the action image is x86_64-only)
+        run: |
+          # Pinned, like the same download in workspace.yml: asking the API
+          # for the newest release at run time runs whatever that answer
+          # names, in a job holding issues: write. The advisory database is
+          # fetched by the tool itself, so a pinned binary still reads
+          # today's advisories.
+          V=0.20.2
+          mkdir -p "$HOME/.cargo/bin"
+          curl -sSfL "https://github.com/EmbarkStudios/cargo-deny/releases/download/${V}/cargo-deny-${V}-aarch64-unknown-linux-musl.tar.gz" \
+            | tar xz -C "$HOME/.cargo/bin" --strip-components=1 --wildcards '*/cargo-deny'
+          "$HOME/.cargo/bin/cargo-deny" --log-level warn check all 2>&1 | tee deny.log
+          exit "${PIPESTATUS[0]}"
+      - name: File an issue on failure
+        if: failure()
+        uses: ./.github/actions/failure-issue
+        with:
+          title: Security advisory sweep failed
+          label: security
+          body: Weekly cargo-deny advisories run went red.
+          log-file: deny.log

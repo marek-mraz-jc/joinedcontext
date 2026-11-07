@@ -1,0 +1,46 @@
+# Policy overlay (T-4855), layered ON TOP of the ETSI stack by dev/etsi-pipeline.sh POLICY=<file>:
+#
+#   docker compose -f compose-files/docker-compose-etsi.yml \
+#                  -f compose-files/docker-compose-policy.yml [--profile db] up -d
+#
+# The platform image's engine decides every request: ANTARES_POLICY=joinedcontext on all five
+# brokers. In the platform the context-gateway sets the x-jc-* subject headers from the verified
+# token and strips any a client sent; here haproxy plays that part, so the suite stays unmodified:
+# it owns 9090..9094, removes every x-jc-* header a request carries, sets
+# `x-jc-client: etsi-suite` and forwards to the broker moved to 9190..9194. The brokers'
+# ANTARES_PUBLIC_URL keeps naming 909N, so a broker's forward to a peer and a peer's notification
+# pass the proxy too and are decided for the same caller. The policy documents themselves are
+# PUT by the pipeline (/q/policy/{tenant}) once the stack is up.
+x-policy: &policy
+  ANTARES_POLICY: joinedcontext
+  # the deployment's list (joinedcontext-deployment antares values)
+  ANTARES_POLICY_SUBJECT_HEADERS: x-jc-subject,x-jc-client,x-jc-groups,x-jc-roles,x-jc-restricted,x-jc-did
+
+services:
+  antares1:
+    environment:
+      <<: *policy
+      ANTARES_HTTP_PORT: "9190"
+  antares2:
+    environment:
+      <<: *policy
+      ANTARES_HTTP_PORT: "9191"
+  antares3:
+    environment:
+      <<: *policy
+      ANTARES_HTTP_PORT: "9192"
+  antares4:
+    environment:
+      <<: *policy
+      ANTARES_HTTP_PORT: "9193"
+  antares5:
+    environment:
+      <<: *policy
+      ANTARES_HTTP_PORT: "9194"
+  subject-proxy:
+    image: haproxy:3.0-alpine
+    container_name: antares-subject-proxy
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./haproxy-policy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro

@@ -1,0 +1,31 @@
+{
+ "counts": {
+  "FAIL": 3,
+  "PASS": 3,
+  "SKIP": 16
+ },
+ "results": {
+  "Conformance Level 1 :: Capability1Tests.checkResourcePaths": "FAIL",
+  "Conformance Level 1 :: Capability1Tests.checkServiceRootUri": "PASS",
+  "Conformance Level 1 :: Capability1Tests.readEntitiesAndCheckResponse": "PASS",
+  "Conformance Level 1 :: Capability1Tests.readEntityAndCheckResponse": "FAIL",
+  "Conformance Level 1 :: Capability1Tests.readNonexistentEntity": "PASS",
+  "Conformance Level 1 :: Capability1Tests.readPropertyOfEntityAndCheckResponse": "FAIL",
+  "Conformance Level 2 :: Capability2Tests.createEntities": "SKIP",
+  "Conformance Level 2 :: Capability2Tests.createEntitiesWithDeepInsert": "SKIP",
+  "Conformance Level 2 :: Capability2Tests.createInvalidEntities": "SKIP",
+  "Conformance Level 2 :: Capability2Tests.createInvalidEntitiesWithDeepInsert": "SKIP",
+  "Conformance Level 2 :: Capability2Tests.deleteEntities": "SKIP",
+  "Conformance Level 2 :: Capability2Tests.deleteNoneexistentEntities": "SKIP",
+  "Conformance Level 2 :: Capability2Tests.invalidPatchEntities": "SKIP",
+  "Conformance Level 2 :: Capability2Tests.patchEntities": "SKIP",
+  "Conformance Level 3 :: Capability3Tests.checkQueriesPriorityOrdering": "SKIP",
+  "Conformance Level 3 :: Capability3Tests.readEntitiesWithCountQO": "SKIP",
+  "Conformance Level 3 :: Capability3Tests.readEntitiesWithExpandQO": "SKIP",
+  "Conformance Level 3 :: Capability3Tests.readEntitiesWithFilterQO": "SKIP",
+  "Conformance Level 3 :: Capability3Tests.readEntitiesWithOrderbyQO": "SKIP",
+  "Conformance Level 3 :: Capability3Tests.readEntitiesWithSelectQO": "SKIP",
+  "Conformance Level 3 :: Capability3Tests.readEntitiesWithSkipQO": "SKIP",
+  "Conformance Level 3 :: Capability3Tests.readEntitiesWithTopQO": "SKIP"
+ }
+}

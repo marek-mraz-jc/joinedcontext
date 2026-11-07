@@ -1,0 +1,161 @@
+{
+ "about": "A policy within A; V4 moves to B between two reads. Temporally (ADR-0023 rule 11), V4's instances recorded while it was in A still show; its new location does not.",
+ "view": {
+  "selector": [
+   "*"
+  ],
+  "rules": [
+   {
+    "types": [
+     "*"
+    ],
+    "attributes": [
+     "*"
+    ]
+   }
+  ]
+ },
+ "caller": {
+  "x-jc-subject": "alice"
+ },
+ "policies": [
+  {
+   "id": "a",
+   "assignee": {
+    "kind": "user",
+    "id": "alice"
+   },
+   "operations": [
+    "5.7.1",
+    "5.7.2",
+    "5.7.3",
+    "5.7.4",
+    "5.7.5",
+    "5.7.6",
+    "5.7.7",
+    "5.7.8",
+    "5.7.9",
+    "5.7.10",
+    "5.8.1",
+    "5.8.2",
+    "5.8.3",
+    "5.8.4",
+    "5.8.5"
+   ],
+   "information": [
+    {
+     "entities": [
+      {
+       "type": "Vehicle"
+      }
+     ]
+    }
+   ],
+   "geoQ": "georel=within;geometry=Polygon;coordinates=[[[0,0],[10,0],[10,10],[0,10],[0,0]]]"
+  }
+ ],
+ "expect": {
+  "urn:ngsi-ld:Vehicle:V1": [
+   "location",
+   "operator",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V2": [
+   "location",
+   "operator",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V4": [
+   "location",
+   "operator",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V7": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V8": [
+   "location",
+   "operator",
+   "speed",
+   "vehicleType"
+  ]
+ },
+ "steps": [
+  {
+   "set": "urn:ngsi-ld:Vehicle:V4",
+   "attrs": {
+    "location": {
+     "type": "GeoProperty",
+     "value": {
+      "type": "Point",
+      "coordinates": [
+       12,
+       12
+      ]
+     }
+    }
+   },
+   "expect": {
+    "urn:ngsi-ld:Vehicle:V1": [
+     "location",
+     "operator",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V2": [
+     "location",
+     "operator",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V7": [
+     "location",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V8": [
+     "location",
+     "operator",
+     "speed",
+     "vehicleType"
+    ]
+   },
+   "temporal": {
+    "urn:ngsi-ld:Vehicle:V1": [
+     "location",
+     "operator",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V2": [
+     "location",
+     "operator",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V7": [
+     "location",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V8": [
+     "location",
+     "operator",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V4": [
+     "location",
+     "operator",
+     "speed",
+     "vehicleType"
+    ]
+   }
+  }
+ ]
+}

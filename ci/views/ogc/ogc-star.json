@@ -1,0 +1,22 @@
+{
+  "id": "ogc-star",
+  "tenant": "ogc",
+  "selector": [
+    "*"
+  ],
+  "rules": [
+    {
+      "types": [
+        "*"
+      ],
+      "attributes": [
+        "*"
+      ]
+    }
+  ],
+  "operations": [
+    "retrieve_entity",
+    "query_entities",
+    "query_entities_post"
+  ]
+}

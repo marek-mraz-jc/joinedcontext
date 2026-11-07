@@ -1,0 +1,104 @@
+{
+ "about": "Owner example 2: bob reads city Vehicles within B under /Zilina/transport, projected to location and speed; a granted scope path covers its subtree (platform R13), so V2's /Zilina/transport/buses is in; alice's policy is not his. Temporally nothing shows (ADR-0023 rule 11): the policy's scopeQ is a rule condition, and scope has no history, so every instance is hidden.",
+ "view": {
+  "selector": [
+   "*"
+  ],
+  "rules": [
+   {
+    "types": [
+     "*"
+    ],
+    "attributes": [
+     "*"
+    ]
+   }
+  ]
+ },
+ "caller": {
+  "x-jc-subject": "bob"
+ },
+ "policies": [
+  {
+   "id": "cars-a",
+   "assignee": {
+    "kind": "user",
+    "id": "alice"
+   },
+   "operations": [
+    "5.7.1",
+    "5.7.2",
+    "5.7.3",
+    "5.7.4",
+    "5.7.5",
+    "5.7.6",
+    "5.7.7",
+    "5.7.8",
+    "5.7.9",
+    "5.7.10",
+    "5.8.1",
+    "5.8.2",
+    "5.8.3",
+    "5.8.4",
+    "5.8.5"
+   ],
+   "information": [
+    {
+     "entities": [
+      {
+       "type": "Vehicle"
+      }
+     ]
+    }
+   ],
+   "geoQ": "georel=within;geometry=Polygon;coordinates=[[[0,0],[10,0],[10,10],[0,10],[0,0]]]"
+  },
+  {
+   "id": "city-b",
+   "assignee": {
+    "kind": "user",
+    "id": "bob"
+   },
+   "operations": [
+    "5.7.1",
+    "5.7.2",
+    "5.7.3",
+    "5.7.4",
+    "5.7.5",
+    "5.7.6",
+    "5.7.7",
+    "5.7.8",
+    "5.7.9",
+    "5.7.10",
+    "5.8.1",
+    "5.8.2",
+    "5.8.3",
+    "5.8.4",
+    "5.8.5"
+   ],
+   "information": [
+    {
+     "entities": [
+      {
+       "type": "Vehicle"
+      }
+     ],
+     "propertyNames": [
+      "location",
+      "speed"
+     ]
+    }
+   ],
+   "q": "operator==\"city\"",
+   "geoQ": "georel=within;geometry=Polygon;coordinates=[[[5,5],[15,5],[15,15],[5,15],[5,5]]]",
+   "scopeQ": "/Zilina/transport"
+  }
+ ],
+ "expect": {
+  "urn:ngsi-ld:Vehicle:V2": [
+   "location",
+   "speed"
+  ]
+ },
+ "temporal": {}
+}

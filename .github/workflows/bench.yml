@@ -1,0 +1,68 @@
+name: bench
+
+# 1 000 distinct queries a second (T-5062, docs/src/performance.md "1 000 distinct queries a
+# second"): tests/perf/distinct-1000/run.sh seeds ENTITIES synthetic entities over ten types into
+# a PostGIS container capped at 2 cores and 2 GiB, runs the platform binary pinned to 4 cores
+# under its policy engine as a role without BYPASSRLS, and holds RATE distinct requests a
+# second for DURATION from 64 source addresses: NGSI-LD retrieve, q, geo near and within,
+# temporal windows, OData $filter, OGC bbox, CSV pages and MCP tool calls, no two alike.
+# k6 fails the job on p95 >= 300 ms, errors >= 0.1 % or dropped arrivals >= 0.1 %.
+# On demand only: the numbers mean something on a runner with 8+ cores (runs_on), where the
+# generator has cores of its own; GitHub's 4-core ubuntu-latest shares them with the rig.
+on:
+  workflow_dispatch:
+    inputs:
+      runs_on:
+        description: runner label (8+ cores for the published numbers)
+        default: ubuntu-latest
+      rate:
+        description: requests a second
+        default: "1000"
+      duration:
+        description: k6 duration (10m for the published run)
+        default: 10m
+      entities:
+        description: seeded entities (581000 = dev's Helsinki + Prague count)
+        default: "581000"
+
+concurrency:
+  group: bench
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  distinct-1000:
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 120
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: the generator gives 600 000 distinct requests in the mix
+        run: node tests/perf/distinct-1000/queries.js
+      - uses: grafana/setup-k6-action@43b9fc21641a76002687994433dd586f56e791b1 # v1.2.2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Build the platform binary
+        run: cargo build --locked --release -p antares-broker --features full,jc-policy,linkml,parquet,tabular,ical,feed
+      - name: 1 000 distinct queries a second
+        env:
+          BIN: target/release/antares
+          RATE: ${{ inputs.rate }}
+          DURATION: ${{ inputs.duration }}
+          ENTITIES: ${{ inputs.entities }}
+        run: |
+          set -euo pipefail
+          command -v psql >/dev/null || sudo apt-get install -y -qq postgresql-client >/dev/null
+          status=0
+          tests/perf/distinct-1000/run.sh || status=$?
+          { echo '```'; cat results/distinct-1000/result.txt results/distinct-1000/resources.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: bench-distinct-1000
+          path: results/distinct-1000
+          retention-days: 90

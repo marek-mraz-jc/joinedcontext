@@ -1,0 +1,25 @@
+{
+  "@context": {
+    "Asset": "https://example.org/building#Asset",
+    "Room": "https://schema.org/Room",
+    "Sensor": "https://example.org/building#Sensor",
+    "floor": {
+      "@id": "https://example.org/building#floor",
+      "@type": "http://www.w3.org/2001/XMLSchema#integer"
+    },
+    "location": {
+      "@id": "https://example.org/building#location",
+      "@type": "@id"
+    },
+    "name": "https://schema.org/name",
+    "sensors": {
+      "@id": "https://example.org/building#sensors",
+      "@type": "@id"
+    },
+    "status": "https://example.org/building#status",
+    "temperature": {
+      "@id": "https://example.org/building#temperature",
+      "@type": "http://www.w3.org/2001/XMLSchema#float"
+    }
+  }
+}

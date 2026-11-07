@@ -1,0 +1,7 @@
+{
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:Entity:01",
+    "@context": [
+        "https://raw.githubusercontent.com/joinedcontext/Antares-NGSI-LD-Context-Broker/dev/ngsi-ld-test-suite/resources/jsonld-contexts/ngsi-ld-test-suite-compound.jsonld"
+    ]
+}

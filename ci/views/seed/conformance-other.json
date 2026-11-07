@@ -1,0 +1,10 @@
+[
+  {
+    "id": "urn:ngsi-ld:Device:other-1",
+    "type": "Device",
+    "status": {
+      "type": "Property",
+      "value": "ok"
+    }
+  }
+]

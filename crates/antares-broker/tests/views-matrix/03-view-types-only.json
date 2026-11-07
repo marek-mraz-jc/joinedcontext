@@ -1,0 +1,37 @@
+{
+ "about": "Selector and rules name Parking only.",
+ "view": {
+  "selector": [
+   "Parking"
+  ],
+  "rules": [
+   {
+    "types": [
+     "Parking"
+    ],
+    "attributes": [
+     "availableSpots",
+     "location",
+     "name",
+     "operator"
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "urn:ngsi-ld:Parking:P1": [
+   "availableSpots",
+   "location",
+   "name",
+   "operator"
+  ],
+  "urn:ngsi-ld:Parking:P2": [
+   "availableSpots",
+   "location",
+   "operator"
+  ]
+ },
+ "caller": {
+  "x-jc-roles": "public"
+ }
+}

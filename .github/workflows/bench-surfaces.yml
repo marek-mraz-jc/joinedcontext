@@ -1,0 +1,180 @@
+name: bench-surfaces
+
+# The surface crates' benches against their ADR-0027 section 6 budget rows
+# (surfaces-test-plan section 10, T-3523): dev/perf/bench-surfaces.sh runs
+# each bench and writes one row per budget into the job summary.
+#
+#   nightly  the view, OData, MCP, $filter and $metadata benches
+#   weekly   the same plus the WebSocket fan-out and resident memory
+#
+# Report-only on these shared runners: a row past its budget is reported
+# `over` and fails nothing until T-3467's noise profile exists (ten
+# same-commit runs on the pinned perf-weekly instance type,
+# docs/src/performance.md); then the run sets ENFORCE. A bench that does
+# not run fails the job either way. The end-to-end rows (`view`, `odata`,
+# `mcp` beside `query`) are dev/perf/shapes.sh with BIN_SURFACES in
+# perf-weekly.yml.
+on:
+  schedule:
+    - cron: "41 1 * * *"
+    - cron: "41 8 * * 0"
+  workflow_dispatch:
+    inputs:
+      weekly:
+        description: also run the WebSocket fan-out bench
+        type: boolean
+        default: false
+
+concurrency:
+  group: bench-surfaces
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  bench-surfaces:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: bench-surfaces
+      - name: The benches against their budget rows
+        env:
+          OUT: results/bench-surfaces
+          WEEKLY: ${{ (github.event.schedule == '41 8 * * 0' || inputs.weekly) && '1' || '' }}
+        run: dev/perf/bench-surfaces.sh
+      # The core request paths (T-4853): q/geo/type/scopeQ parse, their SQL
+      # and JSON-LD compaction, each read against the run's own calibration
+      # loop, so this shared runner's speed cancels out. Gated: a case 15 %
+      # over the committed baseline for this CPU fails the run;
+      # docs/src/performance.md says how to accept a change.
+      - name: Core-path bench against its baseline
+        shell: bash
+        run: |
+          python3 dev/perf/gate.py selftest
+          mkdir -p results/bench-surfaces
+          BENCH_JSON="$PWD"/results/bench-surfaces/bench-core.json \
+            cargo bench --locked -q -p antares-sql --bench core_paths
+          python3 dev/perf/gate.py bench results/bench-surfaces/bench-core.json \
+            ci/perf-baseline/bench-core.json | tee results/bench-surfaces/bench-core.md
+      - name: The table into the summary
+        if: always()
+        run: cat results/bench-surfaces/bench-surfaces.md results/bench-surfaces/bench-core.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: bench-surfaces
+          path: results/bench-surfaces/
+          retention-days: 30
+      - name: File an issue on a scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: bench-surfaces went red
+          body: A surface bench did not run; the logs are in the bench-surfaces artifact.
+          log-file: results/bench-surfaces/bench-surfaces.md
+
+  # The heavy mixed workload against the memory budget (T-5898): 30 concurrent large reads on
+  # every surface (temporal over all 577 stations, 1000-row geo and q pages, OGC limit=10000 with
+  # its next page, OData $filter and $batch, STA $expand, MCP summarize) with upserts beside
+  # them for 10 minutes, first on the baseline commit, then on this one. dev/perf/heavy.py fails
+  # the job on any failed read (503 MEMORY_OVERLOADED or another 5xx), or a peak RSS, p95 or p99
+  # more than 10 % over the baseline's; the 200 MB RSS target is reported in heavy.md until the
+  # large surface pages stream (later/antares-stream-large-surface-pages.md). BASE_REF is
+  # origin/dev before the memory budget (T-5895); move it to a newer green commit to compare
+  # against that one. Weekly and on dispatch only: one run takes about 150 minutes.
+  heavy:
+    if: github.event.schedule == '41 8 * * 0' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      issues: write
+    services:
+      postgis:
+        image: ghcr.io/baosystems/postgis:17-3.5
+        env:
+          POSTGRES_USER: antares
+          POSTGRES_PASSWORD: antares
+          POSTGRES_DB: antares
+        ports: ["15432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U antares"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      CARGO_TERM_COLOR: always
+      BASE_REF: a376b65659eaa0c74207b922e9ac2b869c9094ff
+      FEATURES: full,jc-policy,linkml,parquet,tabular,ical,feed
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The verdict fails a 503, a slowdown or RSS growth over the baseline and a missing run
+        run: python3 dev/perf/heavy.py --selftest
+      - uses: grafana/setup-k6-action@43b9fc21641a76002687994433dd586f56e791b1 # v1.2.2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: bench-heavy
+      - name: Build the baseline and this commit
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          git fetch --depth 1 origin "$BASE_REF"
+          git worktree add ../base FETCH_HEAD
+          # The base builds into a target dir of its own: cargo names a path crate's artifacts by
+          # its path relative to the workspace, so in a shared dir the head's older checkout
+          # mtimes make the base's rlibs look fresh and the head links or compiles against them
+          # (run 41321243156: E0599 Lit::Duration, T-6356).
+          (cd ../base && cargo build --locked --release -p antares-broker --features "$FEATURES" --target-dir "$RUNNER_TEMP/target-base")
+          cp "$RUNNER_TEMP/target-base/release/antares" bin/antares-base
+          cargo build --locked --release -p antares-broker --features "$FEATURES"
+          cp target/release/antares bin/antares-head
+          if cmp -s bin/antares-base bin/antares-head; then echo "::error::the head binary equals the baseline"; exit 1; fi
+      - name: Heavy workload, baseline then this commit
+        env:
+          DATABASE_URL: postgresql://antares:antares@localhost:15432/antares
+          BIN: bin/antares-head
+          BASE_BIN: bin/antares-base
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq postgresql-client >/dev/null
+          status=0
+          dev/perf/heavy.sh || status=$?
+          cat results/heavy/heavy.md >> "$GITHUB_STEP_SUMMARY" || true
+          exit "$status"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: bench-heavy
+          path: results/heavy/
+          retention-days: 30
+      - name: File an issue on a scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: bench-surfaces heavy workload went red
+          body: The heavy workload failed a read, or grew resident memory or slowed past the baseline; the table and the k6 logs are in the bench-heavy artifact.
+          log-file: results/heavy/heavy.md
+
+  # The run's tables committed to the perf-history branch, where they stay
+  # after the artifact above expires (T-4853). Scheduled runs on dev only.
+  history:
+    needs: bench-surfaces
+    if: always() && github.event_name == 'schedule' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: bench-surfaces
+          path: results/bench-surfaces
+      - name: Commit the tables
+        run: dev/perf/commit-history.sh results/bench-surfaces bench-surfaces

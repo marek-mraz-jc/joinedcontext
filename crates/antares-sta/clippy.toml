@@ -1,0 +1,2 @@
+# The resource names of OGC SensorThings and ISO 19156 read as words in this crate's docs.
+doc-valid-idents = ["..", "SensorThings", "OData", "GeoProperty", "ObservationGroup", "ObservedProperty", "ObservedProperties", "ObservableProperty", "FeatureOfInterest", "FeaturesOfInterest", "HistoricalLocation", "HistoricalLocations"]

@@ -1,0 +1,215 @@
+[package]
+name = "antares-api"
+description = "NGSI-LD HTTP binding (TS 104 176 shape): axum routers. Thin handlers; no business logic."
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+# One integration-test binary, tests/it.rs, plus the [[test]] entries below (T-3540).
+autotests = false
+
+# ADR-0027 / surfaces-threat-model 9.1: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "core"
+
+[dependencies]
+tower = { workspace = true, features = ["util"] }
+tower-http = { workspace = true }
+antares-model = { workspace = true }
+antares-store = { workspace = true }
+antares-jsonld = { workspace = true, features = ["fetch"] }
+antares-ql = { workspace = true }
+antares-matcher = { workspace = true }
+# Test-only: the built-in memory/file store behind `AppState::new`, and the
+# Postgres-backed integration tests. A consumer composes its drivers itself,
+# so a normal build of this crate names no storage backend.
+antares-sql = { workspace = true, default-features = false, optional = true }
+antares-notifier = { workspace = true, default-features = false }
+sonic-rs = { workspace = true, optional = true }
+# `std` spelled out: guarded()'s catch_unwind lives behind it, and a
+# consumer that builds this crate without the rest of the workspace (the
+# wasm crate) must not lose it to feature resolution.
+futures-util = { workspace = true, features = ["std"] }
+# ADR-0030: the tenant digest.
+sha2 = { workspace = true }
+chrono = { workspace = true }
+icu_collator = { workspace = true }
+icu_locale_core = { workspace = true }
+uuid = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+# the Channel document (feature `channels`)
+serde = { workspace = true, optional = true }
+tracing = { workspace = true }
+# The metrics facade only — a no-op unless the broker installs a recorder,
+# so tests and wasm builds cost nothing.
+metrics = { workspace = true }
+
+# The native tokio/reqwest builds carry sockets and rustls; the wasm32 build
+# takes the same crates with the target's own backends. Target sections only —
+# the code above is identical either way.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true }
+reqwest = { workspace = true }
+axum = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1", default-features = false, features = ["sync", "macros"] }
+# uuid v4 randomness on the browser target (crypto.getRandomValues)
+uuid = { workspace = true, features = ["js"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "query"] }
+# default axum minus "http1"+"tokio": the router without the listener.
+axum = { version = "0.8", default-features = false, features = [
+    "form", "json", "matched-path", "original-uri", "query", "tower-log", "tracing",
+] }
+wasm-bindgen-futures = { workspace = true }
+send_wrapper = { workspace = true }
+gloo-timers = { workspace = true }
+web-time = { workspace = true }
+
+[features]
+# Clause 7 MQTT notification binding; on by default — the 058 TPs need it.
+default = ["mqtt"]
+mqtt = ["antares-notifier/mqtt"]
+# Both reachable only through the dev-dependency below: `test-kit` gives
+# the tests `AppState::new` over the built-in store, `postgres` the
+# Postgres-backed integration tests.
+test-kit = ["dep:antares-sql"]
+postgres = ["test-kit", "antares-sql/postgres"]
+# sonic-rs on the batch-ingest hot path (x86_64/aarch64); serde_json is
+# always the compiled fallback.
+sonic = ["dep:sonic-rs"]
+# `antares_api::fuzzing`: the request parsers, reachable by the fuzz targets
+# under fuzz/ (T-3463). Adds no dependency and no route; no broker build
+# turns it on.
+fuzzing = []
+# Endpoint views (ADR-0023): the composition hook `gate!` applies when a
+# state carries a view. Off in the vanilla build; pulled by antares-ops.
+views = []
+# The joinedcontext platform's NGSI-LD extensions (T-4665, T-4854): the
+# gateway's JC-Provenance-Channel/-Actor, JC-Reason and X-Request-Id recorded
+# into history, and temporal `versions=all` behind JC-Read-Versions. Off in
+# the vanilla build: there every write is `channel: api` whatever its
+# headers say, and `versions` is an unknown query parameter (400).
+jc = []
+# Inbound bridge Channels (ADR-0031, T-5079): `/x/channels` binds a topic of
+# a message bridge (loopback, or MQTT 5 with `mqtt`) to one Attribute. Off
+# in the vanilla build.
+channels = ["dep:serde"]
+
+[dev-dependencies]
+# the storage seams are object-safe AND asynchronous: a test double
+# implements them through the same boxing macro the drivers use.
+async-trait = { workspace = true }
+antares-api = { workspace = true, features = ["test-kit", "postgres"] }
+http-body-util = { workspace = true }
+# T-5847: decode the gzip and br answers the compression layer sends
+flate2 = { workspace = true }
+brotli = { workspace = true }
+# a paused clock runs a test to a 60 s deadline at once (T-4102)
+tokio = { workspace = true, features = ["test-util"] }
+# capturing subscriber: the tests that prove a credential is not logged
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true
+
+[[test]]
+name = "it"
+path = "tests/it.rs"
+
+[[test]]
+# own process: sets the global tracing subscriber that counts statements
+name = "read_statement_budget"
+path = "tests/read_statement_budget.rs"
+
+[[test]]
+# own process: sets the global tracing subscriber that counts Entity rows read
+name = "types_id_pattern_probe_pg"
+path = "tests/types_id_pattern_probe_pg.rs"
+
+[[test]]
+# own process: sets the global tracing subscriber that counts Entity rows read
+name = "query_id_pattern_pg"
+path = "tests/query_id_pattern_pg.rs"
+
+[[test]]
+# own process: sets the global tracing subscriber that counts Entity rows read
+name = "query_id_pattern_count_pg"
+path = "tests/query_id_pattern_count_pg.rs"
+
+[[test]]
+# own process: sets the global tracing subscriber that counts Entity rows read
+name = "query_q_count_pg"
+path = "tests/query_q_count_pg.rs"
+
+[[test]]
+# own process: sets ANTARES_MAX_BODY_BYTES
+name = "csource_notification_bound"
+path = "tests/csource_notification_bound.rs"
+
+[[test]]
+# own process: sets ANTARES_DISCOVERY_SCAN_MAX (F-ANT2-010)
+name = "scan_bound_rules"
+path = "tests/scan_bound_rules.rs"
+
+[[test]]
+# own process: sets ANTARES_HISTORY_BACKFILL
+name = "temporal_backfill"
+path = "tests/temporal_backfill.rs"
+
+[[test]]
+# own process: installs the global tracing subscriber
+name = "csi_credential_4_3_6_5"
+path = "tests/csi_credential_4_3_6_5.rs"
+
+[[test]]
+# own process: sets ANTARES_PUBLIC_URL
+name = "dist_sub_through_proxies_5_8_1"
+path = "tests/dist_sub_through_proxies_5_8_1.rs"
+
+[[test]]
+# own process: sets ANTARES_PUBLIC_URL
+name = "dist_subs_5_8"
+path = "tests/dist_subs_5_8.rs"
+
+[[test]]
+# own process: sets ANTARES_PUBLIC_URL
+name = "forward_transport_adr0025"
+path = "tests/forward_transport_adr0025.rs"
+
+[[test]]
+# own process: sets ANTARES_MAX_FED_RESPONSE_BYTES
+name = "fed_bounds_5_7"
+path = "tests/fed_bounds_5_7.rs"
+
+[[test]]
+# own process: sets ANTARES_POLICY_SUBJECT_HEADERS
+name = "facade_seam_f0"
+path = "tests/facade_seam_f0.rs"
+
+[[test]]
+# own process: sets ANTARES_POLICY_SUBJECT_HEADERS
+name = "policy_maps_snapshots_5_14_5_16"
+path = "tests/policy_maps_snapshots_5_14_5_16.rs"
+
+[[test]]
+# own process: sets ANTARES_POLICY_SUBJECT_HEADERS
+name = "policy_notify_5_8_6"
+path = "tests/policy_notify_5_8_6.rs"
+
+[[test]]
+# own process: sets ANTARES_POLICY_SUBJECT_HEADERS (T-3692: as a module of
+# `it` it raced the first request of another module for the header list)
+name = "policy_record_lists_5_8_4"
+path = "tests/policy_record_lists_5_8_4.rs"
+
+[[test]]
+# own process: sets ANTARES_POLICY_SUBJECT_HEADERS and ANTARES_PUBLIC_URL
+name = "policy_subject_on_the_wire_p6"
+path = "tests/policy_subject_on_the_wire_p6.rs"
+
+[[test]]
+# own process: sets and removes ANTARES_PUBLIC_URL and ANTARES_HTTP_PORT
+name = "public_url_default_5_8_1"
+path = "tests/public_url_default_5_8_1.rs"

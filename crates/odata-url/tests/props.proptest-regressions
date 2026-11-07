@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 0fffdf016d0e19545314ff454203a87b785248874fff8912373c9007a4c895b5 # shrinks to uri = Resource { path: [EntitySet("Buildings")], options: QueryOptions { filter: Some(And(Or(Literal(Null), Literal(Null)), Literal(Null))), select: None, expand: None, orderby: None, top: None, skip: None, count: None, format: None, skiptoken: None, schemaversion: None, id: None, aliases: [], custom: [] } }

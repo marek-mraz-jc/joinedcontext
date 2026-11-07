@@ -1,0 +1,125 @@
+{
+ "about": "V1 drives out of A between two reads.",
+ "view": {
+  "selector": [
+   "Vehicle"
+  ],
+  "rules": [
+   {
+    "types": [
+     "Vehicle"
+    ],
+    "attributes": [
+     "location",
+     "operator",
+     "speed",
+     "vehicleType"
+    ]
+   }
+  ],
+  "geoQ": {
+   "georel": "within",
+   "geometry": "Polygon",
+   "coordinates": [
+    [
+     [
+      0,
+      0
+     ],
+     [
+      10,
+      0
+     ],
+     [
+      10,
+      10
+     ],
+     [
+      0,
+      10
+     ],
+     [
+      0,
+      0
+     ]
+    ]
+   ]
+  }
+ },
+ "expect": {
+  "urn:ngsi-ld:Vehicle:V1": [
+   "location",
+   "operator",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V2": [
+   "location",
+   "operator",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V4": [
+   "location",
+   "operator",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V7": [
+   "location",
+   "speed",
+   "vehicleType"
+  ],
+  "urn:ngsi-ld:Vehicle:V8": [
+   "location",
+   "operator",
+   "speed",
+   "vehicleType"
+  ]
+ },
+ "steps": [
+  {
+   "set": "urn:ngsi-ld:Vehicle:V1",
+   "attrs": {
+    "location": {
+     "type": "GeoProperty",
+     "value": {
+      "type": "Point",
+      "coordinates": [
+       12,
+       2
+      ]
+     }
+    }
+   },
+   "expect": {
+    "urn:ngsi-ld:Vehicle:V2": [
+     "location",
+     "operator",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V4": [
+     "location",
+     "operator",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V7": [
+     "location",
+     "speed",
+     "vehicleType"
+    ],
+    "urn:ngsi-ld:Vehicle:V8": [
+     "location",
+     "operator",
+     "speed",
+     "vehicleType"
+    ]
+   }
+  }
+ ],
+ "caller": {
+  "x-jc-roles": "public"
+ }
+}

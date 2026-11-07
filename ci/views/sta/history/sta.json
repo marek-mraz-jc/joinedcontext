@@ -1,0 +1,6 @@
+[
+  {"id": "urn:ngsi-ld:AirQualityObserved:station-1", "type": "AirQualityObserved",
+   "pm10": [{"type": "Property", "value": 18.0, "unitCode": "GQ", "observedAt": "2026-01-01T00:00:00Z"},
+            {"type": "Property", "value": 19.5, "unitCode": "GQ", "observedAt": "2026-01-01T01:00:00Z"}],
+   "location": [{"type": "GeoProperty", "value": {"type": "Point", "coordinates": [19.14, 48.72]}, "observedAt": "2026-01-01T00:00:00Z"}]}
+]

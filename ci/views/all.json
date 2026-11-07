@@ -1,0 +1,52 @@
+{
+  "id": "all",
+  "tenant": "conformance",
+  "selector": [
+    "*"
+  ],
+  "rules": [
+    {
+      "types": [
+        "*"
+      ],
+      "attributes": [
+        "*"
+      ]
+    }
+  ],
+  "operations": [
+    "retrieve_entity",
+    "query_entities",
+    "query_entities_post",
+    "retrieve_attribute_value",
+    "retrieve_entity_types",
+    "retrieve_entity_type_details",
+    "retrieve_entity_type_info",
+    "retrieve_attributes",
+    "retrieve_attribute_details",
+    "retrieve_attribute_info",
+    "temporal_retrieve",
+    "temporal_query",
+    "temporal_query_post",
+    "list_contexts",
+    "batch_create",
+    "batch_update",
+    "batch_merge",
+    "batch_delete",
+    "create_entity",
+    "update_attributes",
+    "append_attributes",
+    "partial_attribute_update",
+    "set_attribute_value",
+    "delete_attribute",
+    "delete_entity",
+    "merge_entity",
+    "replace_entity",
+    "replace_attribute",
+    "create_subscription",
+    "update_subscription",
+    "retrieve_subscription",
+    "query_subscriptions",
+    "delete_subscription"
+  ]
+}

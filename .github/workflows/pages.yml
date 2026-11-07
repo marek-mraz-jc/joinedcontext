@@ -1,0 +1,174 @@
+name: pages
+
+# Auto-redeploy of the Pages site after every FULL matrix run
+# (retargeted with the quick/full preset split) —
+# the README's seven per-cell ETSI badges and the /reports/ page always
+# describe a full 7-cell run. Per-commit ci runs gate on the quick preset
+# and upload ETSI-quick-results, which the fold deliberately ignores.
+#
+# This OVERTURNS the earlier "Pages deploys are manual-only" decision for
+# the REPORTS half of the site. The playground half is REUSED from the
+# newest antares-www artifact (produced by a wasm.yml run) — this workflow
+# never rebuilds wasm; wasm.yml's manual dispatch keeps working and remains
+# the only path that rebuilds/updates the playground itself.
+
+on:
+  workflow_run:
+    # full.yml absorbed etsi-full — its twice-a-week schedule (and
+    # dispatches) fire this. The schedule runs on the default branch, dev.
+    # The branch filter matches the HEAD branch of the triggering run,
+    # which a pull request from a fork can also name dev; the job
+    # condition below therefore refuses pull_request runs outright, so a
+    # fork can never repaint the public badges.
+    workflows: [full]
+    types: [completed]
+    branches: [dev]
+  workflow_dispatch:
+
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: true
+
+env:
+  PAGES_DOMAIN: antaresbroker.joinedcontext.com
+
+# Every job names its own grants; one without them reads the repository and nothing more.
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Fold reports + deploy Pages
+    # Deploy on a RED full run too: the badges and report page must
+    # turn red, not silently go stale on the last green numbers. Only
+    # cancellation and skipping are non-events.
+    # The site (antaresbroker.joinedcontext.com) is the Pages site of
+    # joinedcontext/Antares-NGSI-LD-Context-Broker; a custom domain belongs
+    # to one Pages site only, so every other copy of this repository (the
+    # working repo, forks) skips the job instead of failing on a 404 from
+    # a Pages site that does not exist there.
+    if: >
+      github.repository == 'joinedcontext/Antares-NGSI-LD-Context-Broker' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.event != 'pull_request' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        (github.event.workflow_run.conclusion == 'success' ||
+         github.event.workflow_run.conclusion == 'failure')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      pages: write
+      id-token: write
+      issues: write # the deploy alarm
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The book IS the site root, and mdbook CLEANS its output directory —
+      # so it has to run before anything else is folded into site/.
+      - name: Build the docs book into the site root
+        run: |
+          curl -sL "https://github.com/rust-lang/mdBook/releases/download/v0.4.44/mdbook-v0.4.44-$(uname -m)-unknown-linux-musl.tar.gz" | tar xz
+          ./mdbook build -d site
+          # custom domain: the CNAME file travels with every deploy
+          echo "$PAGES_DOMAIN" > site/CNAME
+
+      # The vendored ETSI OpenAPI and the broker's own operational API,
+      # each rendered with ReDoc (the CIM 047 Annex B recommendation) as a
+      # standalone page under /openapi/. Their own directory on purpose: the
+      # book already emits api.html and admin-api.html from its chapters of
+      # those names, and a render at the site root would overwrite them.
+      # ReDoc renders a bundled copy that dev/redoc-spec.py rewrote: the
+      # vendored ETSI file repeats one Attribute oneOf in ten schemas, and
+      # ReDoc expanding every ordering of them ran out of heap (T-5889).
+      - name: Render the API specs with ReDoc
+        # fail-soft: a renderer hiccup must not take the whole report deploy
+        # down with it — the page then says so instead of 404ing, and the
+        # run summary carries a warning
+        run: |
+          mkdir -p site/openapi
+          for pair in "ngsi-ld-api:ngsi-ld:NGSI-LD API" "antares-admin:admin:Antares operational API"; do
+            IFS=: read -r src page title <<< "$pair"
+            json="$RUNNER_TEMP/$src.json"
+            if npx --yes @redocly/cli@2.49.0 bundle "docs/openapi/$src.yaml" --ext json -o "$json" \
+              && python3 dev/redoc-spec.py "$json" "$json" \
+              && npx --yes @redocly/cli@2.49.0 build-docs "$json" -o "site/openapi/$page.html"; then
+              continue
+            fi
+            echo "::warning title=ReDoc render failed::docs/openapi/$src.yaml did not render; site/openapi/$page.html is a placeholder this deploy"
+            echo "<!doctype html><title>$title</title><p>ReDoc render failed this deploy — see docs/openapi/$src.yaml in the repo." > "site/openapi/$page.html"
+          done
+
+      - name: Reuse the newest playground bundle (antares-www) at /demo/
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p site/demo
+          art=$(gh api "repos/${{ github.repository }}/actions/artifacts?name=antares-www&per_page=1" \
+               -q '.artifacts[0] | "\(.id) \(.workflow_run.head_sha) \(.created_at)"' 2>/dev/null || true)
+          id=${art%% *}
+          if [ -n "$id" ] && [ "$id" != "null" ]; then
+            gh api "repos/${{ github.repository }}/actions/artifacts/$id/zip" > www.zip
+            unzip -q www.zip -d bundle
+            # the artifact is a whole site: take its playground half only.
+            # A bundle built before the /demo/ move still carries the
+            # playground at its root, hence the fallback + the strip below.
+            src=bundle; [ -d bundle/demo ] && src=bundle/demo
+            cp -r "$src/." site/demo/
+            rm -f site/demo/CNAME
+            rm -rf site/demo/reports site/demo/api site/demo/app
+            # The bundle is the newest one in retention, which is not
+            # necessarily this deploy's commit: the wasm build is dispatched,
+            # not run per deploy. Say which commit it IS, so a visitor can
+            # tell the playground apart from the docs beside it.
+            read -r _ commit built <<< "$art"
+            printf '{"commit":"%s","built":"%s"}\n' "$commit" "$built" > site/demo/playground-source.json
+          else
+            # no playground bundle in retention: docs and reports still
+            # deploy; /demo/ appears after the next wasm.yml dispatch
+            echo '<!doctype html><title>Antares playground</title><p>Playground pending a wasm.yml run — <a href="../">the docs</a>, <a href="../reports/latest/">the ETSI conformance report</a>.' \
+              > site/demo/index.html
+          fi
+
+      # API reference beside the book: book at /, rustdoc at /api/.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: pages-rustdoc
+      - name: Build rustdoc into the site
+        run: |
+          cargo doc --no-deps --workspace --locked
+          cp -r target/doc site/api
+          # rustdoc has no workspace root page, so /api/ 404s without one
+          echo '<!doctype html><meta http-equiv="refresh" content="0; url=antares_api/"><title>Antares crates</title>' > site/api/index.html
+
+      - name: Fold the latest ETSI report + coverage into the site
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: ./dev/fold-reports.sh
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+
+      - name: File an issue on a failed auto-deploy
+        # a broken auto-deploy means the public report goes silently stale
+        if: failure() && github.event_name == 'workflow_run'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: Pages report deploy failed
+          body: >-
+            The automatic Pages redeploy after a full matrix run went red —
+            the /reports/ page and badges are now stale. Rerun via dispatch
+            once fixed.

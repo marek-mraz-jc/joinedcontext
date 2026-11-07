@@ -1,0 +1,25 @@
+{
+  "id": "https://uri.etsi.org/ngsi-ld/default-context",
+  "name": "conformance",
+  "prefixes": {
+    "ngsild": {
+      "prefix_prefix": "ngsild",
+      "prefix_reference": "https://uri.etsi.org/ngsi-ld/default-context/"
+    }
+  },
+  "default_prefix": "ngsild",
+  "classes": {
+    "AirQualityObserved": {
+      "slots": ["temperature", "NO2", "location", "nearest"]
+    }
+  },
+  "slots": {
+    "temperature": {"range": "float"},
+    "NO2": {"range": "integer"},
+    "location": {
+      "slot_uri": "https://uri.etsi.org/ngsi-ld/location",
+      "annotations": {"ngsi_ld_kind": {"tag": "ngsi_ld_kind", "value": "GeoProperty"}}
+    },
+    "nearest": {"range": "AirQualityObserved"}
+  }
+}

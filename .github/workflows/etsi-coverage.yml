@@ -1,0 +1,237 @@
+name: etsi-coverage
+
+# ETSI-driven coverage, per store mode — which broker code NO test executes.
+#
+# strict.yml's daily floor covers the Rust tests. This workflow answers
+# the other half: it instruments the broker binary, runs the workspace tests
+# AND the full Robot suite against it (memory / file / postgres / timescale),
+# and publishes per-store + merged reports. A zero-count line in the merged
+# view means no Rust test and no ETSI TP in ANY store mode ever ran it.
+#
+# Report-only (artifacts + step summary), no gate: suite green is ci.yml's
+# job, the unit floor is strict.yml's. Thin wrapper around
+# dev/etsi-coverage.sh — the run is identical locally.
+on:
+  schedule:
+    - cron: "41 10 * * 1" # weekly Monday — after strict.yml's daily slots
+  workflow_dispatch:
+
+# Coverage runs read the checkout and upload artifacts; the alarm job
+# that files an issue declares its own wider set.
+permissions:
+  contents: read
+
+jobs:
+  cover:
+    name: ETSI coverage (${{ matrix.store }})
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - store: memory
+          - store: file
+          - store: postgres
+            db_image: ghcr.io/baosystems/postgis:17-3.5
+          - store: timescale
+            db_image: timescale/timescaledb-ha:pg17
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          # instrument-coverage RUSTFLAGS produce artifacts incompatible with
+          # the other workflows' caches — keep a separate one.
+          key: etsi-coverage
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Start ${{ matrix.store }} database
+        if: matrix.db_image
+        run: |
+          docker run -d --name db \
+            -e POSTGRES_USER=antares -e POSTGRES_PASSWORD=antares -e POSTGRES_DB=antares \
+            -p 15432:5432 ${{ matrix.db_image }}
+          for i in $(seq 60); do
+            docker exec db pg_isready -U antares && exit 0; sleep 2
+          done
+          echo "database never became ready"; exit 1
+
+      - name: Instrumented tests + ETSI suite
+        env:
+          STORE: ${{ matrix.store }}
+          UNIT_TESTS: "1"
+          MQTT: "1" # 058_* launch mosquitto via docker run — works here
+          # Same instance for the pg-gated unit tests and the broker: tests
+          # run first, dev/reset-broker.sh clears state between suites.
+          ANTARES_DATABASE_URL: ${{ matrix.db_image && 'postgresql://antares:antares@localhost:15432/antares' || '' }}
+          ANTARES_TEST_DATABASE_URL: ${{ matrix.db_image && 'postgresql://antares:antares@localhost:15432/antares' || '' }}
+        run: ./dev/etsi-coverage.sh
+
+      - name: Step summary
+        if: always()
+        run: |
+          R=results/coverage-${{ matrix.store }}
+          pct() { awk '/^TOTAL/ {print $(NF-3)}' "$1" 2>/dev/null || true; }
+          {
+            echo "## ETSI coverage — ${{ matrix.store }}"
+            echo "- unit (lib + bins): $(pct "$R/unit/summary.txt")"
+            echo "- api (integration binaries): $(pct "$R/api/summary.txt")"
+            echo "- robot (ETSI suite only): $(pct "$R/robot/summary.txt")"
+            echo "- combined: $(pct "$R/summary.txt")"
+            echo
+            echo "### Coverage per test source"
+            cat "$R/summary.md" 2>/dev/null || echo "(no table)"
+            echo
+            echo '```'
+            cat "$R/summary.txt"
+            echo '```'
+            echo "<details><summary>Attribution — which kind of test covers what</summary>"
+            echo
+            echo '```'
+            head -20 "$R/attribution.txt"
+            echo '```'
+            echo "</details>"
+            echo "<details><summary>First 50 functions no test ran</summary>"
+            echo
+            echo '```'
+            head -50 "$R/uncovered-functions.txt"
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload coverage results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: etsi-coverage-${{ matrix.store }}
+          path: results/coverage-${{ matrix.store }}
+          retention-days: 30
+
+  merge:
+    # The headline number: coverage with all four stores' profiles combined.
+    # A file at 0% here is code no test in the entire matrix ever executed.
+    name: Merged report (all stores)
+    needs: cover
+    if: always()
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: etsi-coverage-*
+          path: cells
+      - name: Merge lcov across stores — per test kind and combined
+        run: |
+          sudo apt-get install -y -qq lcov
+          merge() { # $1 = glob suffix under each cell, $2 = output
+            ARGS=()
+            for f in cells/etsi-coverage-*/$1; do [ -f "$f" ] && ARGS+=(-a "$f"); done
+            [ ${#ARGS[@]} -gt 0 ] && lcov "${ARGS[@]}" -o "$2" --ignore-errors inconsistent
+          }
+          merge lcov.info merged.info
+          merge unit/lcov.info merged-unit.info || true
+          merge api/lcov.info merged-api.info || true
+          merge robot/lcov.info merged-robot.info || true
+          merge rust.info merged-rust.info || true
+          if [ -f merged-rust.info ] && [ -f merged-robot.info ]; then
+            python3 dev/coverage-attribution.py merged-rust.info merged-robot.info .
+          fi
+          # One table, one column per test source: the two Rust sources, one
+          # per ETSI cell, and every profile merged. Tracefiles, not the JSON
+          # exports, because `lcov -a` is what unions the cells per line and
+          # per function.
+          TABLE=()
+          [ -f merged-unit.info ] && TABLE+=("unit=merged-unit.info")
+          [ -f merged-api.info ] && TABLE+=("api=merged-api.info")
+          for cell in memory file postgres timescale; do
+            f="cells/etsi-coverage-$cell/robot/lcov.info"
+            [ -f "$f" ] && TABLE+=("etsi-$cell=$f")
+          done
+          TABLE+=("combined=merged.info")
+          python3 dev/coverage-attribution.py --table . "${TABLE[@]}"
+          {
+            echo "## Merged coverage (memory ∪ file ∪ postgres ∪ timescale)"
+            echo "### Coverage per test source"
+            cat summary.md
+            echo
+            echo '```'
+            lcov --list merged.info --ignore-errors inconsistent
+            echo '```'
+            if [ -f attribution.txt ]; then
+              echo "### Attribution (Rust tests vs the Robot suite, all stores)"
+              echo '```'
+              head -20 attribution.txt
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Coverage ratchet — fail on a >1pt drop vs the published run
+        run: |
+          new=$(lcov --summary merged.info --ignore-errors inconsistent 2>/dev/null                 | awk '/lines/ {gsub("%","",$2); print $2}')
+          old=$(curl -sf https://antaresbroker.joinedcontext.com/reports/coverage-badge.json                 | python3 -c 'import json,sys,re; m=re.search(r"[0-9.]+", json.load(sys.stdin)["message"]); print(m.group(0) if m else "")' || true)
+          echo "merged lines: ${new}% (published baseline: ${old:-none}%)"
+          # The baseline lives off-tree, on the published report. When it
+          # cannot be read the ratchet has nothing to compare against — say
+          # so loudly, because a silent pass here is indistinguishable from a
+          # run that held the line.
+          if [ -z "$old" ] || [ -z "$new" ]; then
+            echo "::warning::coverage ratchet did not run — no baseline (published report unreachable) or no measurement"
+            echo "> Coverage ratchet SKIPPED this run: baseline \`${old:-unreadable}\`, measured \`${new:-none}\`." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -n "$old" ] && [ -n "$new" ]; then
+            python3 -c "import sys; n, o = float(sys.argv[1]), float(sys.argv[2]); print(f'delta: {n-o:+.1f}pt'); sys.exit(1 if o - n > 1.0 else 0)" "$new" "$old"
+          fi
+
+      - name: Render the merged HTML reports
+        # The Pages deploy copies html/ to /reports/coverage/ verbatim, so
+        # the combined tree stays at the root (today's URLs keep working)
+        # and the per-kind trees land at /reports/coverage/{unit,robot}/.
+        run: |
+          genhtml merged.info -o html --ignore-errors inconsistent
+          [ -f merged-unit.info ] && genhtml merged-unit.info -o html/unit --ignore-errors inconsistent
+          [ -f merged-robot.info ] && genhtml merged-robot.info -o html/robot --ignore-errors inconsistent
+          true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: etsi-coverage-merged
+          path: |
+            merged.info
+            merged-unit.info
+            merged-api.info
+            merged-robot.info
+            merged-rust.info
+            summary.md
+            attribution.txt
+            uncovered-lines.txt
+            html
+          retention-days: 90
+
+  alarm:
+    # Report-only workflow, but a silently-dead weekly report is how the
+    # coverage page rots — a red scheduled run files a deduped issue.
+    name: File an issue on a red scheduled run
+    if: failure() && github.event_name == 'schedule'
+    needs: [cover, merge]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/failure-issue
+        with:
+          title: ETSI coverage run failed
+          body: >-
+            The weekly ETSI-driven coverage run went red — a per-store
+            instrumented run failed, or the merged ratchet dropped more than
+            1pt against the published badge.

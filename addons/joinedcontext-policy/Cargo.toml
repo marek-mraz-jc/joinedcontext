@@ -1,0 +1,54 @@
+[package]
+name = "joinedcontext-policy"
+description = "The joinedcontext platform's policy engine (ANTARES_POLICY=joinedcontext): Policy rules decided on the Operation and the Subject from the /q/policy document."
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+rust-version.workspace = true
+
+# ADR-0020 / surfaces-threat-model 9.1: checked by dev/check-module-rules.py.
+[package.metadata.antares]
+role = "addon"
+
+[dependencies]
+antares-api = { workspace = true }
+antares-jsonld = { workspace = true }
+antares-model = { workspace = true }
+# the access surface (README section 4)
+antares-ops = { workspace = true }
+axum = { workspace = true }
+antares-ql = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+# the policy seam's own contract, and the broker's router for the end-to-end cases
+antares-api = { workspace = true, features = ["test-kit"] }
+antares-ops = { workspace = true, features = ["test-kit"] }
+http-body-util = { workspace = true }
+tokio = { workspace = true }
+tower = { workspace = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"

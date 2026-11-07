@@ -1,0 +1,57 @@
+{
+ "about": "A caller without subject or client is anonymous and holds role public alone, whatever x-jc-roles claims: the admin grant is not its.",
+ "view": {
+  "selector": [
+   "*"
+  ],
+  "rules": [
+   {
+    "types": [
+     "*"
+    ],
+    "attributes": [
+     "*"
+    ]
+   }
+  ]
+ },
+ "caller": {
+  "x-jc-roles": "admin"
+ },
+ "policies": [
+  {
+   "id": "a",
+   "assignee": {
+    "kind": "role",
+    "id": "admin"
+   },
+   "operations": [
+    "5.7.1",
+    "5.7.2",
+    "5.7.3",
+    "5.7.4",
+    "5.7.5",
+    "5.7.6",
+    "5.7.7",
+    "5.7.8",
+    "5.7.9",
+    "5.7.10",
+    "5.8.1",
+    "5.8.2",
+    "5.8.3",
+    "5.8.4",
+    "5.8.5"
+   ],
+   "information": [
+    {
+     "entities": [
+      {
+       "type": "Vehicle"
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "expect": "denied"
+}

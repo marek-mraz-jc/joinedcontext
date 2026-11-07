@@ -1,0 +1,16 @@
+# gitleaks (fast.yml scans every push and train, T-6151): the default rules, less the public
+# test literals of this repository. Each entry names why its text is no secret; never a path,
+# never a whole rule, so a real secret beside these still turns the push red.
+title = "Antares gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "RFC 6455 section 1.3's sample Sec-WebSocket-Key nonce, used by the WebSocket tests"
+regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']
+
+[[allowlists]]
+description = "the OGC TEAM Engine image's own public test account (ogctest), surfaces-conformance.yml"
+regexTarget = "line"
+regexes = ['''curl .*-u ogctest:ogctest ''']

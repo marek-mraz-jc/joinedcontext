@@ -1,0 +1,170 @@
+name: fast
+
+# The fast lane (T-3710): the per-push gate, on every push to dev and every
+# train. Since T-6151 (owner 2026-10-30: push to dev under 5 minutes) it
+# runs workspace.yml at scope `push`: fmt, clippy --all-features, the
+# workspace suite on the default features and on all features, the OData
+# ABNF cases, the repository rules that need no build, and gitleaks over
+# the pushed commits. Each feature alone, the binary sizes, MSRV, semver,
+# the shared crates, the fuzz and wasm32 builds, the SBOM, cargo-audit and
+# cargo-deny moved to sweep.yml (weekly when dev moved, and on the commit a
+# prod release pins); the nightly run here adds the fuzz smoke. The surface
+# subset left too: tasks/train dispatches surfaces-conformance.yml itself
+# when a train touches a surface, so fast ran it twice.
+#
+# A review closes on this run (tasks/ci), so a task does not wait for the
+# ETSI matrix and the images (ci.yml, nightly and on dispatch).
+#
+#   push to dev, dispatch per train ──→ fast: workspace.yml (scope push)
+#   nightly ──→ fast: workspace.yml (scope nightly: + fuzz smoke)
+#   weekly when dev moved, prod release ──→ sweep.yml: workspace.yml (scope sweep)
+#
+# A train is tested on train/<stamp> and dev then fast-forwards to that same
+# sha (T-3776): the push to dev finds the green fast run on its sha and skips
+# every job, so one train costs one fast run. A dispatch always runs.
+#
+# T-6035: a dispatch on train/<stamp> without `base` compares against the
+# train's merge base with dev; gitleaks scans from there. The nightly
+# schedule is the one run that writes the Rust caches every train then
+# reads (workspace.yml, "Caches").
+#
+# Job budget (T-6046; T-6151 cut a push from ~45 jobs to ~11). The account runs at most 20 GitHub jobs at once,
+# for every repository together; a job past that waits in the queue. Measured
+# 2026-10-28T10Z..10-29T10Z: Antares 2158 jobs (fast 1421, surfaces 406, ci
+# 246), portal 1523, deployment 275, platform 178, docs 86, conformance 27.
+# Shares the trains plan for: Antares at most 12 at once (a train's fast run
+# alone opens ~35 jobs, so it queues behind itself; the feature-alone and
+# coverage shards are the long ones), portal 5, deployment 2, the rest 1.
+# workspace.yml's `max_parallel` input is the knob if Antares must hold fewer.
+# Cut without dropping a check: the push of the train's suite-written commit
+# (below) runs 2 jobs instead of ~45, the eight OGC ETS views share one job
+# (surfaces-conformance.yml), and the portal's gitleaks is a step of its
+# `changes` job. Remeasure: dev/ci-queue.py.
+on:
+  push:
+    branches: [dev]
+  schedule:
+    - cron: "47 0 * * *"
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "the commit the change is measured from (empty on a train/* ref: its merge base with dev)"
+        required: false
+        default: ""
+
+# One push per train: a newer push supersedes the run of the older one.
+# The nightly run keeps a group of its own: a train landing on dev must not
+# cancel the run that warms the caches.
+concurrency:
+  group: fast-${{ github.ref }}${{ github.event_name == 'schedule' && '-nightly' || '' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pins:
+    # first and cheapest: a moved tag or a workflow-wide grant must not reach the jobs below (T-5564)
+    name: Workflow pins and gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # gitleaks below reads the commits of the push, and a train's merge base with dev
+          fetch-depth: 0
+      - run: python3 ci/check-workflow-pins.py --selftest && python3 ci/check-workflow-pins.py && ci/suite-written.sh --selftest
+      # T-6151: a secret pushed to this public repository cannot be recalled,
+      # so every push and train scans its own commits: a push from its
+      # previous tip, a train from its merge base with dev, the nightly run
+      # its last commit. The binary is pinned by version and checksum.
+      - name: gitleaks over the commits of this change
+        env:
+          BEFORE: ${{ github.event.before }}
+          V: 8.30.1
+          SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          set -eu
+          curl -sSfL -o gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${V}/gitleaks_${V}_linux_x64.tar.gz"
+          echo "$SHA256  gitleaks.tgz" | sha256sum -c -
+          tar xzf gitleaks.tgz gitleaks
+          base=
+          case ${BEFORE:-} in ''|0000000000000000000000000000000000000000) ;; *) base=$BEFORE ;; esac
+          if [ -z "$base" ] && [ "$GITHUB_REF_NAME" != dev ]; then
+            base=$(git merge-base origin/dev HEAD) || base=
+          fi
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            range="$base..HEAD"
+          else
+            range="-1 HEAD"
+          fi
+          echo "gitleaks range: $range"
+          # .gitleaks.toml: the default rules less this repository's public test literals
+          ./gitleaks git --no-banner --redact --exit-code 1 --config .gitleaks.toml --log-opts="$range" .
+
+  proven:
+    name: Already green on this sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      green: ${{ steps.ask.outputs.green }}
+      base: ${{ steps.base.outputs.base }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: ci
+      - id: ask
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          green=false
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            # a failed question runs everything: the answer must prove the sha, never assume it
+            runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&status=success&per_page=30" \
+              --jq '[.workflow_runs[] | select(.path == ".github/workflows/fast.yml" and .id != (env.GITHUB_RUN_ID | tonumber)) | .id] | join(" ")') || runs=
+            [ -n "$runs" ] && green=true && echo "green fast run(s) on $GITHUB_SHA: $runs"
+            # T-6046: a train lands with one commit on top of its proven tip, the OData
+            # baseline and level table tasks/train wrote from that train's own suite
+            # run. Only the surfaces gate reads those two files, and it passed on the
+            # run that wrote them, so the push is proven when its parent is green and
+            # the commit touches nothing else (it used to rerun all ~45 jobs).
+            if [ "$green" = false ] && [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ]; then
+              files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" \
+                --jq 'select(.status == "ahead" and .ahead_by == 1) | .files[].filename') || files=
+              if [ -n "$files" ] && ci/suite-written.sh <<< "$files"; then
+                runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$BEFORE&status=success&per_page=30" \
+                  --jq '[.workflow_runs[] | select(.path == ".github/workflows/fast.yml") | .id] | join(" ")') || runs=
+                [ -n "$runs" ] && green=true && echo "suite-written files only on top of green $BEFORE: $runs"
+              fi
+            fi
+          fi
+          echo "green=$green" | tee -a "$GITHUB_OUTPUT"
+      - id: base
+        # what the change is measured from: the dispatch's `base`, a push's
+        # previous tip, a train's merge base with dev; empty runs everything
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ inputs.base || github.event.before }}
+        run: |
+          if [ -z "$BASE" ] && [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [[ $GITHUB_REF_NAME == train/* ]]; then
+            BASE=$(gh api "repos/$GITHUB_REPOSITORY/compare/dev...$GITHUB_SHA" --jq .merge_base_commit.sha) || BASE=
+          fi
+          case $BASE in 0000000000000000000000000000000000000000) BASE= ;; esac
+          echo "base=$BASE" | tee -a "$GITHUB_OUTPUT"
+
+  workspace:
+    name: Workspace tests
+    needs: proven
+    if: needs.proven.outputs.green != 'true'
+    uses: ./.github/workflows/workspace.yml
+    with:
+      base: ${{ needs.proven.outputs.base }}
+      # the nightly run adds the fuzz smoke of every target (T-6151)
+      scope: ${{ github.event_name == 'schedule' && 'nightly' || 'push' }}
+

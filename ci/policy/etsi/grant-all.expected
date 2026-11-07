@@ -1,0 +1,20 @@
+# TPs the grant cell of image-jc.yml (etsi-policy) fails, and must fail (T-4855): each names a tenant it
+# makes up at run time (tp5510<random>, tp577a<suffix>, iopa<suffix>, ...). The grant-all policy is loaded
+# for the suite's fixed tenants only, and a tenant with no policy document denies every platform caller
+# (addons/joinedcontext-policy/README.md section 2): 403 AccessDenied before any NGSI-LD processing.
+# Every TP here is an Antares extension TP; every forge TP passes as in the baseline.
+# Measured locally on file, MQTT off, 2026-10-20 (worker-t4855): 1811 ran, 1797 pass, these 14 fail.
+5510_01_01  tenant made up at run time, no policy document: 403
+577_01_03  tenant made up at run time, no policy document: 403
+IOP_EXT_ADV_01_01  tenant made up at run time, no policy document: 403
+IOP_EXT_ADV_02_03  tenant made up at run time, no policy document: 403
+IOP_EXT_IDR_06_50  tenant made up at run time, no policy document: 403
+IOP_EXT_IDR_07_57  tenant made up at run time, no policy document: 403
+IOP_EXT_TEN_01_01  tenant made up at run time, no policy document: 403
+IOP_EXT_TEN_01_02  tenant made up at run time, no policy document: 403
+IOP_EXT_TEN_01_04  tenant made up at run time: the redirected write's forward is refused 403 by the peer, the proxy answers 502
+IOP_EXT_TEN_01_05  tenant made up at run time, no policy document: 403
+IOP_EXT_TEN_01_06  tenant made up at run time, no policy document: 403
+5134_01_01  tenant made up at run time, no policy document: 403
+5134_01_02  tenant made up at run time, no policy document: 403
+5134_01_03  tenant made up at run time, no policy document: 403

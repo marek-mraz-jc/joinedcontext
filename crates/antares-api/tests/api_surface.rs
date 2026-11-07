@@ -1,0 +1,315 @@
+// SPDX-License-Identifier: EUPL-1.2
+//! Extra HTTP surfaces register instead of being hard-wired. A deployment
+//! mounts its own routes beside the NGSI-LD API without editing a core
+//! crate; the spec's own root stays untouchable, and two surfaces cannot
+//! claim the same ground.
+
+use antares_api::{ApiSurface, AppState};
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use axum::routing::get;
+use axum::Router;
+use http_body_util::BodyExt;
+use serde_json::{json, Value};
+use tower::ServiceExt;
+
+/// A surface defined outside every shipped crate: registering it is the
+/// whole seam under test.
+struct Ping(&'static str);
+
+impl ApiSurface for Ping {
+    fn name(&self) -> &str {
+        "ping"
+    }
+    fn prefix(&self) -> &str {
+        self.0
+    }
+    fn router(&self, _st: AppState) -> Router<AppState> {
+        Router::new().route("/ping", get(|| async { "pong" }))
+    }
+    fn version_info(&self) -> Value {
+        json!({"answers": "pong"})
+    }
+}
+
+async fn get_path(st: &AppState, path: &str) -> (StatusCode, String) {
+    let req = Request::get(path).body(Body::empty()).expect("req");
+    let resp = antares_api::router(st.clone())
+        .oneshot(req)
+        .await
+        .expect("resp");
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.expect("body").to_bytes();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// A surface from another crate serves through the broker's own router.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_registered_surface_serves_its_routes() {
+    let st = AppState::new("surfaces".into())
+        .with_surface(Box::new(Ping("/x")))
+        .expect("/x is a reserved prefix");
+    assert_eq!(
+        get_path(&st, "/x/ping").await,
+        (StatusCode::OK, "pong".into())
+    );
+}
+
+/// The admin surface is the default, and registering another does not
+/// displace it.
+#[tokio::test(flavor = "multi_thread")]
+async fn admin_is_mounted_by_default_and_survives_a_second_surface() {
+    let st = AppState::new("surfaces".into());
+    let (code, body) = get_path(&st, "/q/health").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let st = st
+        .with_surface(Box::new(Ping("/x")))
+        .expect("/x is a reserved prefix");
+    assert_eq!(get_path(&st, "/q/health").await.0, StatusCode::OK);
+    assert_eq!(get_path(&st, "/x/ping").await.0, StatusCode::OK);
+}
+
+/// T-6182: a store wedged for good (a leaked pool) fails liveness, so the
+/// kubelet restarts the pod; readiness alone left prod not-ready for 16 h.
+/// Once the store serves again, liveness is green again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wedged_store_fails_liveness_until_it_serves_again() {
+    let mut st = AppState::new("surfaces".into());
+    let store = std::sync::Arc::new(crate::common::Double::passthrough(st.store.clone()));
+    st.store = store.clone();
+    assert_eq!(get_path(&st, "/q/health").await.0, StatusCode::OK);
+    store.set_wedged(true);
+    let (code, body) = get_path(&st, "/q/health").await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    let body: Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(body["status"], "STORE_WEDGED");
+    store.set_wedged(false);
+    assert_eq!(get_path(&st, "/q/health").await.0, StatusCode::OK);
+}
+
+/// The NGSI-LD API root belongs to the spec: a surface may not mount there,
+/// nor anywhere outside the reserved prefixes.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_surface_cannot_mount_outside_the_reserved_prefixes() {
+    for prefix in ["/ngsi-ld", "/ngsi-ld/v1", "/", "/entities", "/qq", "x"] {
+        let err = AppState::new("surfaces".into())
+            .with_surface(Box::new(Ping(prefix)))
+            .err()
+            .unwrap_or_else(|| panic!("{prefix} must be refused"));
+        assert!(err.contains(prefix), "the message names the prefix: {err}");
+    }
+}
+
+/// Two surfaces claiming the same ground is a startup error, not a race for
+/// the route: axum would answer whichever won the merge.
+#[tokio::test(flavor = "multi_thread")]
+async fn overlapping_surfaces_are_refused() {
+    let st = AppState::new("surfaces".into())
+        .with_surface(Box::new(Ping("/x")))
+        .expect("first");
+    let err = st
+        .with_surface(Box::new(Ping("/x")))
+        .err()
+        .expect("a second surface on /x must be refused");
+    assert!(err.contains("/x"), "{err}");
+    // …and nesting under one already taken is the same collision
+    let err = AppState::new("surfaces".into())
+        .with_surface(Box::new(Ping("/x")))
+        .expect("first")
+        .with_surface(Box::new(Ping("/x/deeper")))
+        .err()
+        .expect("a surface nested under /x must be refused");
+    assert!(err.contains("/x"), "{err}");
+    // the admin surface holds /q against a newcomer
+    let err = AppState::new("surfaces".into())
+        .with_surface(Box::new(Ping("/q")))
+        .err()
+        .expect("/q belongs to the admin surface");
+    assert!(err.contains("/q"), "{err}");
+}
+
+/// A surface on the view root `/x/views`, answering `/{view}/{sub}`.
+struct ViewSub(&'static str, &'static str);
+
+impl ApiSurface for ViewSub {
+    fn name(&self) -> &str {
+        self.0
+    }
+    fn prefix(&self) -> &str {
+        "/x/views"
+    }
+    fn router(&self, _st: AppState) -> Router<AppState> {
+        let answer = self.1;
+        Router::new().route(
+            &format!("/{{view}}/{}", self.1),
+            get(move || async move { answer }),
+        )
+    }
+    fn version_info(&self) -> Value {
+        Value::Null
+    }
+}
+
+/// ADR-0027 section 1: the view surfaces share `/x/views`, each on its own
+/// sub-root after `{view}`; nothing else shares a prefix, and nothing nests
+/// under the view root.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_view_surfaces_share_the_view_root() {
+    let st = AppState::new("surfaces".into())
+        .with_surface(Box::new(ViewSub("views", "ngsi-ld")))
+        .and_then(|st| st.with_surface(Box::new(ViewSub("mcp", "mcp"))))
+        .expect("two view surfaces share /x/views");
+    assert_eq!(
+        get_path(&st, "/x/views/cars/ngsi-ld").await,
+        (StatusCode::OK, "ngsi-ld".into())
+    );
+    assert_eq!(
+        get_path(&st, "/x/views/cars/mcp").await,
+        (StatusCode::OK, "mcp".into())
+    );
+    assert_eq!(
+        get_path(&st, "/x/views/cars/odata").await.0,
+        StatusCode::NOT_FOUND
+    );
+    let err = st
+        .with_surface(Box::new(Ping("/x/views/deeper")))
+        .err()
+        .expect("a surface nested under the view root must be refused");
+    assert!(err.contains("/x/views"), "{err}");
+}
+
+/// `/q/health` names every mounted surface, so an operator can see what a
+/// binary serves beyond the NGSI-LD API.
+#[tokio::test(flavor = "multi_thread")]
+async fn health_names_the_mounted_surfaces() {
+    let st = AppState::new("surfaces".into())
+        .with_surface(Box::new(Ping("/x")))
+        .expect("/x");
+    let (code, body) = get_path(&st, "/q/health").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let v: Value = serde_json::from_str(&body).expect("health json");
+    assert_eq!(v["surfaces"]["admin"]["prefix"], "/q", "{v}");
+    assert_eq!(v["surfaces"]["ping"]["prefix"], "/x", "{v}");
+    assert_eq!(v["surfaces"]["ping"]["answers"], "pong", "{v}");
+}
+
+/// A deployment's own selection replaces what the default mounting put
+/// there, so a binary can serve a list that does not include admin — and
+/// the prefix rules still hold across the replacement.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_selection_replaces_the_default_surfaces() {
+    let st = AppState::new("surfaces".into())
+        .with_surfaces(vec![Box::new(Ping("/x"))])
+        .expect("a selection of one");
+    assert_eq!(get_path(&st, "/x/ping").await.0, StatusCode::OK);
+    let (code, body) = get_path(&st, "/q/health").await;
+    assert_eq!(
+        code,
+        StatusCode::NOT_FOUND,
+        "admin was not selected, so /q is not served: {body}"
+    );
+    let err = AppState::new("surfaces".into())
+        .with_surfaces(vec![Box::new(Ping("/x")), Box::new(Ping("/x/deeper"))])
+        .err()
+        .expect("two surfaces on one prefix must be refused");
+    assert!(err.contains("/x"), "{err}");
+}
+
+/// Health names what each driver actually runs on, not just the backend
+/// name: memory and file are one backend with two durability shapes, and an
+/// operator reading a health body must be able to tell them apart.
+#[tokio::test(flavor = "multi_thread")]
+async fn health_names_the_engine_behind_each_driver() {
+    let st = AppState::new("surfaces".into());
+    let (code, body) = get_path(&st, "/q/health").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let v: Value = serde_json::from_str(&body).expect("health json");
+    let engine = v["storeInfo"]["engine"].as_str().unwrap_or_default();
+    assert!(
+        matches!(engine, "memory" | "redb"),
+        "the store must name its engine, got {v}"
+    );
+    assert!(
+        v.get("temporalInfo").is_some(),
+        "the temporal seam is the same store here and must report the same way: {v}"
+    );
+}
+
+/// The state names its store; it does not enumerate it. A driver from
+/// outside the built-in shelf is mounted the same way as one from inside,
+/// and `/q/health` reports whatever it is called — an enum here would mean
+/// no driver could be added without editing a core crate.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_store_from_outside_the_shelf_can_back_the_state() {
+    let st = AppState::with_store(
+        "surfaces".into(),
+        std::sync::Arc::new(antares_sql::store::any::AnyStore::Mem(
+            antares_sql::store::Store::default(),
+        )),
+        "example",
+    );
+    let (code, body) = get_path(&st, "/q/health").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let v: Value = serde_json::from_str(&body).expect("health json");
+    assert_eq!(v["store"], "example", "{v}");
+    assert_eq!(
+        v["temporal"], "example",
+        "one driver serves both seams: {v}"
+    );
+}
+
+/// The documented caps are the broker's, not one nest's: a registered
+/// surface is a route of this process like any other, so the bounds wall
+/// (6.3.4's bare 414/411 and the body cap `/q/health` advertises) applies
+/// there too. Without it a deployment's own `/x` routes — and the built-in
+/// `/q` ones, which delete tenants and replay dead letters — are the one
+/// place where no documented limit holds.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_registered_surface_is_behind_the_bounds_wall() {
+    let st = AppState::new("surfaces".into())
+        .with_surface(Box::new(Ping("/x")))
+        .expect("register");
+    let long = "a".repeat(9 * 1024);
+    let (status, _) = get_path(&st, &format!("/x/ping?pad={long}")).await;
+    assert_eq!(
+        status,
+        StatusCode::URI_TOO_LONG,
+        "an over-long URI is refused on every route"
+    );
+    let (status, _) = get_path(&st, &format!("/q/health?pad={long}")).await;
+    assert_eq!(status, StatusCode::URI_TOO_LONG, "the admin surface too");
+
+    // 6.3.4: a POST without Content-Length is a bare 411 wherever it lands.
+    let req = Request::post("/q/dead-letters/nope/replay")
+        .body(Body::empty())
+        .expect("req");
+    let resp = antares_api::router(st.clone())
+        .oneshot(req)
+        .await
+        .expect("resp");
+    assert_eq!(resp.status(), StatusCode::LENGTH_REQUIRED);
+}
+
+/// Every way the notification pipeline can silently lose work is visible on
+/// `/q/health`, which is the surface that is always there. The Prometheus
+/// recorder is not: `ANTARES_TELEMETRY` is off by default, so a counter that
+/// lives only in `/q/metrics` is invisible in a default deployment.
+///
+/// The three losses are the bounded matcher queue refusing a change
+/// (`changesDropped`), the delivery policy giving up (`deadLetters`), and a
+/// panic absorbed at the task boundary — which logs "this change is lost"
+/// and drops one subscription's notification (`taskPanics`). A counter that
+/// reports one of them and not the others makes a partial outage look clean.
+#[tokio::test(flavor = "multi_thread")]
+async fn health_reports_every_notification_loss_counter() {
+    let st = AppState::new("surfaces".into());
+    let (code, body) = get_path(&st, "/q/health").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let doc: serde_json::Value = serde_json::from_str(&body).expect("health is JSON");
+    for member in ["changesDropped", "deadLetters", "taskPanics"] {
+        assert!(
+            doc[member].is_u64(),
+            "/q/health must report {member}: {body}"
+        );
+    }
+}

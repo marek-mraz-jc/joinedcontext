@@ -1,0 +1,10 @@
+# Surviving mutants that carry a written reason (T-3531, .github/workflows/mutants.yml).
+# One line per mutant as cargo-mutants prints it in mutants.out/missed.txt;
+# line:col may be left in, the check drops it. After the mutant, " # " and
+# the reason it needs no test. A survivor not listed here fails the run:
+# the default answer is a test that kills it, not a line here.
+crates/antares-matcher/src/lib.rs:64:36: replace < with <= in is_active # the two differ only when expiresAt equals the clock's current instant; a test would race the clock, and 5.8.1.4 does not say which side "now" falls on
+crates/antares-ql/src/geo.rs:341:68: replace > with >= in GeoQuery::matches_geometry # differs only when the computed metric distance equals minDistance exactly; minDistance must be > 0 and no fixture puts a float distance on it, so the boundary is not constructible
+crates/antares-ql/src/lib.rs:617:26: replace < with <= in Parser<'a>::scalar # equivalent: d is the index of "..", stop the index of one of ";|()," — they can never be equal
+crates/antares-matcher/src/lib.rs:213:13: replace < with <= in throttled # differs only when the elapsed milliseconds equal the window exactly; a test would race the clock
+crates/antares-ql/src/regex.rs:163:76: replace > with >= in compile # differs only when the retained bytes plus one charge land exactly on MAX_REGEX_CACHE_BYTES; the_byte_budget_evicts_before_the_entry_count pins the bound itself

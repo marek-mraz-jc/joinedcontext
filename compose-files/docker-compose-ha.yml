@@ -1,0 +1,94 @@
+# HA overlay — layered ON TOP of the ETSI stack:
+#
+#   docker compose -f compose-files/docker-compose-etsi.yml \
+#                  -f compose-files/docker-compose-ha.yml [--profile db] up -d
+#
+# An overlay file rather than a compose profile, for a compose reason: a
+# profile can only ADD services, and HA must also MOVE antares1 off port 9090
+# so the load balancer can take it. An overlay does both and leaves the normal
+# ETSI stack file untouched.
+#
+# Shape: haproxy owns 9090, fronting antares1 (moved to 9095) and antares1b
+# (9096) — both host-networked like every broker, so the ETSI mocks and
+# notification callbacks keep resolving via localhost. The other four brokers
+# and the suite are unchanged: to the Robot runner this stack is
+# indistinguishable from the normal one, which is what makes the
+# ETSI-during-roll gate meaningful.
+#
+# Store modes: postgres / timescale only — both instances share postgres1,
+# which is what makes them replicas of ONE broker rather than two brokers.
+# `file` mode CANNOT run this overlay: redb's exclusive lock allows one
+# process per volume (the second opener is refused), which is why that mode
+# must be deployed Recreate, never RollingUpdate. `memory` mode
+# comes up but the replicas have independent state — good enough to exercise
+# the LB/drain mechanics, meaningless for data consistency.
+#
+# The replicas run ANTARES_BUS=nats against the overlay's own NATS.
+# That is what makes two instances ONE broker for notifications too: the
+# matcher is a shared durable (each change matched once, wherever it was
+# written), interval firings are single-winner by row-lock claim, and the
+# temporal recorder is a balanced consumer — bus=local replicas would each
+# tick their own intervals and double-fire (bus=local means one process).
+
+services:
+  nats:
+    image: nats:2-alpine
+    container_name: antares-nats
+    network_mode: host
+    restart: unless-stopped
+    command: ["-js"]
+
+  antares1:
+    environment:
+      ANTARES_HTTP_PORT: "9095"
+      # HA_BUS: nats for postgres/timescale (the real replica semantics);
+      # the pipeline sets local for memory-mode LB/drain mechanics drills,
+      # where ANTARES_BUS=nats would refuse to boot (per-process state).
+      ANTARES_BUS: ${HA_BUS:-nats}
+      ANTARES_NATS_URL: nats://localhost:4222
+    depends_on: [nats]
+    # stop_grace_period must exceed drain delay (2 s) +
+    # drain deadline (20 s), or `docker stop` turns the drain into a kill.
+    stop_grace_period: 30s
+
+  antares1b:
+    image: antares-local:latest
+    container_name: antares1b
+    network_mode: host
+    restart: unless-stopped
+    stop_grace_period: 30s
+    depends_on: [nats]
+    extra_hosts:
+      - "ngsi-ld-test-suite-mosquitto-container:172.29.9.2"
+    environment:
+      ANTARES_HTTP_PORT: "9096"
+      # Same alias as antares1 ON PURPOSE: behind the LB they are one broker,
+      # and Via-chain loop detection must treat them as one hop.
+      ANTARES_HOST_ALIAS: antares1
+      # 5.8.1.4: peers notify the LB, never this replica — without this the
+      # default is http://antares1:9096 and every chain notification dies
+      # with the rolled replica.
+      ANTARES_PUBLIC_URL: http://localhost:9090
+      ANTARES_STORE: ${STORE:-memory}
+      ANTARES_DATA_DIR: /data
+      ANTARES_EGRESS_ALLOW_PRIVATE: "true"
+      # the 6.3.10 ceiling the TTF 206 cases expect, as on antares1: without
+      # it every read the LB sends here answers 200 (T-4800, T-5858)
+      ANTARES_TEMPORAL_INSTANCE_LIMIT: "9"
+      ANTARES_BUS: ${HA_BUS:-nats}
+      ANTARES_NATS_URL: nats://localhost:4222
+      # Shares antares1's database — that is the whole point.
+      ANTARES_DATABASE_URL: postgresql://antares:antares@localhost:5433/antares
+    volumes:
+      - "antares1b-data:/data"
+
+  lb:
+    image: haproxy:3.0-alpine
+    container_name: antares-lb
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./haproxy-ha.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+
+volumes:
+  antares1b-data:

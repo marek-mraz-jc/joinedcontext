@@ -1,0 +1,23 @@
+{
+  "id": "ogc-projection",
+  "tenant": "ogc",
+  "selector": [
+    "AirQualityObserved"
+  ],
+  "rules": [
+    {
+      "types": [
+        "AirQualityObserved"
+      ],
+      "attributes": [
+        "temperature",
+        "location"
+      ]
+    }
+  ],
+  "operations": [
+    "retrieve_entity",
+    "query_entities",
+    "query_entities_post"
+  ]
+}

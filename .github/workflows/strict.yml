@@ -1,0 +1,400 @@
+name: strict
+
+# The scheduled strictness wall — checks too slow (or too nightly-only) for
+# the per-push gate in ci.yml:
+#
+#   DAILY  02:41 UTC : doc warnings + unused deps, fuzz-crash regression
+#                      replay (-runs=0), query pushdown properties at 10k
+#                      cases, workspace coverage floor, surface feature
+#                      powerset at depth 2
+#   WEEKLY Sun 07:41 : ThreadSanitizer over the workspace tests, Miri over
+#                      the pure parsing crates
+#
+# workflow_dispatch runs everything. Scheduled workflows only run on the
+# default branch, so this always tests dev.
+on:
+  schedule:
+    - cron: "41 2 * * *" # daily — hygiene + fuzz-regression + coverage
+    - cron: "41 7 * * 0" # weekly Sunday — tsan + miri
+  workflow_dispatch:
+
+# The default for the sanitizer, Miri, fuzz and coverage jobs; the alarm
+# job that files an issue declares its own wider set.
+# One scheduled run at a time, never cancelled (T-5639).
+concurrency:
+  group: strict-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    # Broken rustdoc links / malformed clause citations fail here instead of
+    # rotting; cargo-machete flags dependencies nothing uses (each one is
+    # advisory surface cargo-deny scans forever).
+    name: Doc warnings + unused deps (daily)
+    if: github.event.schedule != '41 7 * * 0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: dev/spdx-check.sh
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --document-private-items
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-machete
+      # False positive (macro-only dep)? Whitelist it via
+      # [package.metadata.cargo-machete] ignored — never delete this step.
+      - run: cargo machete
+
+  fuzz-regression:
+    # Every crash fuzz.yml ever found is committed to
+    # fuzz/regressions/<target>/ alongside its fix; this replays them all
+    # (-runs=0 = execute the corpus, no new fuzzing) so a fixed crash can
+    # never come back between weekly fuzz runs.
+    name: Fuzz-crash regression replay (daily)
+    if: github.event.schedule != '41 7 * * 0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c76c034f9e32a5d6e2c104dc4df23a22476db04 # nightly
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Replay committed crash inputs
+        run: |
+          for t in parse_q scope_q geo_params expand_entity q_to_sql type_selection projection representation join temporal order_by link_header tenant_header accept_header id_pattern datetime view_config_load; do
+            cargo +nightly fuzz run "$t" "fuzz/regressions/$t" -- -runs=0
+          done
+
+  properties:
+    # T-3462: the q/scopeQ/geoQ pushdown against the in-memory evaluator on
+    # generated entities and queries, 10 000 cases per property (the PR gate
+    # in workspace.yml runs the same file at proptest's default 256). A
+    # disagreement prints its shrunk input: commit it as a named regression
+    # test beside the fix.
+    name: Query pushdown properties, 10k cases (daily)
+    if: github.event.schedule != '41 7 * * 0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANTARES_TEST_DATABASE_URL: postgresql://antares:antares@localhost:15432/antares
+      PROPTEST_CASES: "10000"
+      CARGO_TERM_COLOR: always
+    services:
+      postgis:
+        # 17 on purpose: per-push workspace.yml tests 16, the major dev and
+        # prod run (T-6021); this lane keeps the next major tested
+        image: ghcr.io/baosystems/postgis:17-3.5
+        env:
+          POSTGRES_USER: antares
+          POSTGRES_PASSWORD: antares
+          POSTGRES_DB: antares
+        ports: ["15432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U antares"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo test --locked -p antares-sql --test pg_query_parity
+
+  coverage:
+    # Coverage floors over the same live-service setup as ci.yml (so the
+    # pg/mqtt/nats integration tests count instead of skipping vacuously),
+    # one floor per test source. dev/etsi-coverage.sh reports the same split
+    # per store, with the ETSI cells as further columns.
+    # A report since T-6147 (owner 2026-10-30: the broker does not need
+    # its coverage gated): a floor under its figure marks the job red in
+    # the run, but the run and the alarm stay green.
+    name: Coverage floor (daily)
+    if: github.event.schedule != '41 7 * * 0'
+    continue-on-error: true
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    env:
+      ANTARES_TEST_DATABASE_URL: postgresql://antares:antares@localhost:15432/antares
+      CARGO_TERM_COLOR: always
+    services:
+      postgis:
+        # 17 on purpose: per-push workspace.yml tests 16, the major dev and
+        # prod run (T-6021); this lane keeps the next major tested
+        image: ghcr.io/baosystems/postgis:17-3.5
+        env:
+          POSTGRES_USER: antares
+          POSTGRES_PASSWORD: antares
+          POSTGRES_DB: antares
+        ports: ["15432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U antares"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Start mosquitto for the MQTT e2e
+        run: |
+          sudo apt-get install -y -qq mosquitto
+          printf 'allow_anonymous true\nlistener 1883\n' | sudo tee /etc/mosquitto/conf.d/antares-e2e.conf
+          sudo systemctl restart mosquitto
+          echo "ANTARES_TEST_MQTT_URL=mqtt://127.0.0.1:1883" >> "$GITHUB_ENV"
+      - name: Start NATS (JetStream) for the bus tests
+        run: |
+          docker run -d --name nats -p 4222:4222 nats:2-alpine -js
+          echo "ANTARES_TEST_NATS_URL=nats://127.0.0.1:4222" >> "$GITHUB_ENV"
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-llvm-cov
+      # Coverage is gated per test source, never as one blended number: the
+      # in-crate unit surface and the integration binaries carry their own
+      # line AND function floors, so one of them rising can no longer hide
+      # the other falling. Floors only ratchet UP — after a green run raise
+      # them to just under the measured figure; never lower one to make a red
+      # run pass, and move docs/src/coverage.md in the same commit — the
+      # chapter publishes these floors to readers who never open this
+      # file. The numbers below sit a couple of points under a run
+      # measured with a live Postgres but no MQTT or NATS, which this job
+      # has, so they are a floor and not a target.
+      # The summary is captured from the gated run itself. A bare
+      # `llvm-cov report` would total every file in the coverage map,
+      # including targets this step never ran, and print a number that is not
+      # the one being gated.
+      # Two things `--lib --bins` instruments that no in-crate test can
+      # execute, so counting them made the unit floor a number about the
+      # shape of the workspace rather than about its tests. Both are still
+      # measured, by the API step below, which is where their tests live.
+      # `antares-store/src/contract.rs` is the store contract kit: it is
+      # `test-kit`-gated and a store implementation's own integration tests
+      # are the only thing that links it. `antares-sql/src/store/pg/` needs
+      # a live database AND a multi-thread runtime, and an in-crate
+      # `#[tokio::test]` is current-thread — the constraint follows from the
+      # synchronous driver traits, so it is not going away; the drivers are
+      # proven by the integration files that declare
+      # `flavor = "multi_thread"` and by the postgres and timescale ETSI
+      # cells. The crates the crate-test step below names test their
+      # library from their own tests/ directory, which `--lib` never runs,
+      # so they are measured there, against their own tests (T-3715).
+      # Nothing else is excluded: a file that in-crate tests COULD reach and
+      # do not is exactly what this floor is for.
+      - name: Unit surface floor (lib + bins)
+        run: |
+          set -eo pipefail
+          rc=0
+          cargo llvm-cov --locked --workspace --lib --bins --summary-only \
+            --ignore-filename-regex 'antares-store/src/contract\.rs|antares-sql/src/store/pg/|crates/(antares-geojson|antares-ical|antares-mcp|antares-odata|antares-ops|antares-sta|antares-views|antares-wasm|antares-ws|linkml-model|odata-axum|odata-batch|odata-json|ogc-cql2)/' \
+            --fail-under-lines 82 --fail-under-functions 79 > unit-cov.txt || rc=$?
+          { echo "### Coverage floor — unit (lib + bins)"; echo '```'
+            cat unit-cov.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          cargo llvm-cov report --lcov --output-path unit.lcov || true
+          exit $rc
+      # Named packages rather than --workspace: a package with no tests/
+      # directory has no target matching the glob and cargo refuses the whole
+      # invocation.
+      - name: API surface floor (integration binaries)
+        if: always()
+        run: |
+          set -eo pipefail
+          rc=0
+          cargo llvm-cov --locked -p antares-api -p antares-broker \
+            -p antares-bus -p antares-sql --test '*' --summary-only \
+            --fail-under-lines 78 --fail-under-functions 77 > api-cov.txt || rc=$?
+          { echo "### Coverage floor — api (integration binaries)"; echo '```'
+            cat api-cov.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          cargo llvm-cov report --lcov --output-path api.lcov || true
+          exit $rc
+      # The crates whose library is tested from its own tests/ directory and
+      # that the API step does not name: every test of the package runs
+      # (lib, bins and tests/), and `-p` reports only these packages' files.
+      # Measured 2026-10-11: 98.96 % lines / 98.06 % functions (T-3715);
+      # ogc-cql2 joined 2026-10-12 at 100 % / 100 % (T-3984).
+      # antares-geojson, antares-ical and antares-sta joined 2026-10-22 (T-5198):
+      # in the unit step they counted 0 % and pulled it to 81.92 / 78.47.
+      - name: Crate test floor (crates tested from tests/)
+        if: always()
+        run: |
+          set -eo pipefail
+          rc=0
+          cargo llvm-cov --locked -p antares-geojson -p antares-ical -p antares-mcp \
+            -p antares-odata -p antares-ops -p antares-sta -p antares-views \
+            -p antares-wasm -p antares-ws -p linkml-model -p odata-axum -p odata-batch -p odata-json -p ogc-cql2 --summary-only \
+            --fail-under-lines 96 --fail-under-functions 95 > crate-cov.txt || rc=$?
+          { echo "### Coverage floor — crate tests"; echo '```'
+            cat crate-cov.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          cargo llvm-cov report --lcov --output-path crate.lcov || true
+          exit $rc
+      # T-3468: every request surface calls straight into these three, so
+      # each carries its own floor over its own tests (`-p` reports only the
+      # package's files). Measured 2026-10-10: ql 97.2 % lines / 95.7 %
+      # functions, matcher 96.0 / 97.0, model 99.4 / 97.3. Ratchet up only.
+      - name: Request-path crate floors (ql, matcher, model)
+        if: always()
+        run: |
+          set -eo pipefail
+          rc=0
+          for c in ngsild-ql ngsild-matcher ngsild-model; do
+            cargo llvm-cov --locked -p "$c" --summary-only \
+              --fail-under-lines 95 --fail-under-functions 95 > "$c-cov.txt" || rc=1
+            { echo "### Coverage floor — $c"; echo '```'
+              tail -n 1 "$c-cov.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          done
+          exit $rc
+      # The three lcov files say WHICH lines and functions no test reached, so
+      # the next test can be written against a name instead of a percentage.
+      # They are a map, never the gated number: `report` totals every object
+      # left in the coverage map, so the api file also carries the lib and bin
+      # objects of the step before it, counted with no data. The six gated
+      # figures are the ones in unit-cov.txt, api-cov.txt and crate-cov.txt.
+      - name: Publish the coverage map
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-map
+          path: |
+            unit-cov.txt
+            api-cov.txt
+            crate-cov.txt
+            unit.lcov
+            api.lcov
+            crate.lcov
+          if-no-files-found: warn
+          retention-days: 14
+
+  tsan:
+    # ThreadSanitizer over the workspace tests — the machine check for the
+    # logical races rustc cannot see (lock ordering, RMW gaps, racy
+    # channel/map use in notify/federation fan-out). -Zbuild-std so std
+    # itself is instrumented (uninstrumented std = false positives).
+    # --exclude antares-broker: its jemalloc global allocator and TSan's
+    # interceptors do not coexist; the in-process race surface lives in
+    # antares-api/bus/notifier anyway. --tests skips doctests (TSan flags
+    # don't reach rustdoc's test binaries).
+    name: ThreadSanitizer (weekly)
+    if: github.event.schedule != '41 2 * * *'
+    # x86_64, not arm64: on ubuntu-24.04-arm every TSan binary, a hello world
+    # included, died with SIGSEGV inside __tsan::Initialize: the runtime calls
+    # __aarch64_swp1_acq, which -Zbuild-std takes from an instrumented
+    # compiler_builtins, and its func-entry hook runs before the thread state
+    # exists (probe run 38913148697, T-4367). Same tests, same flags.
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      RUSTFLAGS: "-Zsanitizer=thread"
+      # tokio's I/O driver synchronizes through epoll, which the sanitizer
+      # cannot see; its readiness atomics report as races on every run
+      TSAN_OPTIONS: "suppressions=${{ github.workspace }}/dev/tsan-suppressions.txt"
+      # the two tests that stage a timing race skip themselves under it
+      ANTARES_TEST_SANITIZER: thread
+      RUST_BACKTRACE: 1
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Pinned to the last nightly with a green run (rustc 12433c307
+      # 2026-10-24, run 40160884839): nightly 2026-10-31 refuses the
+      # Box-recursive ngsild_residual::Shape/Node with E0391 "cycle detected
+      # when computing when ... needs async drop" (run 41316472538,
+      # rust-lang/rust#165263, a regression of #164987, closed 2026-11-01).
+      # Move the date forward once a nightly holding that fix builds (T-6355).
+      - uses: dtolnay/rust-toolchain@2c76c034f9e32a5d6e2c104dc4df23a22476db04 # nightly
+        with:
+          toolchain: nightly-2026-10-25
+          components: rust-src
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # The runner's kernel randomizes mmap with more bits than TSan's fixed
+      # shadow layout allows (google/sanitizers#1716, run 38850474298, T-4250).
+      - run: sudo sysctl -w vm.mmap_rnd_bits=28
+      - run: >
+          cargo +nightly-2026-10-25 test -Zbuild-std
+          --target x86_64-unknown-linux-gnu
+          --workspace --exclude antares-broker --tests
+
+  miri:
+    # Miri interprets the tests of the pure (no-I/O, no-tokio) parsing crates
+    # and aborts on any undefined behaviour — including in dependency code on
+    # our call paths. -Zmiri-disable-isolation permits clock reads so
+    # time-touching tests run instead of erroring out. Tree borrows: the
+    # @context cache (moka over crossbeam-epoch) is rejected by the stacked
+    # borrows model and accepted by the tree model.
+    # One job per crate: in one job the crates shared 90 min and ngsild-ql
+    # alone ran past it (run 38109841097, T-3706).
+    name: Miri UB check (weekly, ${{ matrix.crate }})
+    if: github.event.schedule != '41 2 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      # 4 of the 9 crates at a time, beside tsan and the powerset (T-5639)
+      max-parallel: 4
+      matrix:
+        crate: [ngsild-model, ngsild-ql, ngsild-matcher, linkml-model, odata-csdl, odata-url, odata-json, odata-batch, ngsild-residual]
+    env:
+          # ignore-leaks: crossbeam-epoch parks its per-thread handle in a thread-local
+          # that Miri reports as leaked at exit; not a broker leak.
+          # permissive-provenance: crossbeam-epoch (moka) casts integers to
+          # pointers; Miri otherwise prints a backtrace per thread exit, which
+          # is minutes of log and no finding of ours.
+          MIRIFLAGS: "-Zmiri-disable-isolation -Zmiri-tree-borrows -Zmiri-ignore-leaks -Zmiri-permissive-provenance"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c76c034f9e32a5d6e2c104dc4df23a22476db04 # nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo +nightly miri test -p ${{ matrix.crate }}
+
+  feature-powerset:
+    # ADR-0027 section 4 (T-3493): every pair of surface features compiles
+    # (`--depth 2`, decided there), with mqtt on as the shipped default has
+    # it, so an interaction between two surfaces cannot compile only in
+    # `full`; and `full` itself with and without mqtt once it exists. The
+    # surface features are read from the broker's manifest
+    # (dev/surface-features.py), so a new surface joins by being declared.
+    name: Surface feature powerset, depth 2 (daily)
+    if: github.event.schedule != '41 7 * * 0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-hack
+      - run: python3 dev/surface-features.py --self-test
+      - name: Every pair of surface features, with mqtt
+        run: cargo hack check --locked -p antares-broker --feature-powerset --depth 2 --include-features "$(python3 dev/surface-features.py list)" --features mqtt
+      - name: full, with and without mqtt
+        run: |
+          if python3 dev/surface-features.py list | tr , '\n' | grep -qx full; then
+            cargo check --locked -p antares-broker --no-default-features --features full
+            cargo check --locked -p antares-broker --features full
+          else
+            echo "antares-broker has no full feature yet"
+          fi
+
+  alarm:
+    # A red scheduled wall auto-files a deduped issue (the shared
+    # failure-issue action) — dispatch runs are watched by the dispatcher.
+    name: File an issue on a red scheduled run
+    if: failure() && github.event_name == 'schedule'
+    needs: [hygiene, fuzz-regression, properties, coverage, feature-powerset, tsan, miri]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/failure-issue
+        with:
+          title: strict wall failed
+          body: >-
+            A scheduled strict run went red — doc/machete hygiene, the
+            fuzz-regression replay, the coverage floor, TSan or Miri.
+            The run log names the job.

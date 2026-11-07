@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 8f0cfc9024ee3e7f65cc97bdf0ceadac0dfdc385c035fe9a127141a0f08f72a0 # shrinks to s = Shape { classes: [], slots: [("", Some("\n"), 0, None, None, None, false)], enums: [], version: None, name: "a" }

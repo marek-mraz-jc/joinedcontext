@@ -1,0 +1,43 @@
+# build
+/target
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/coverage/
+**/*.rs.bk
+
+# test runs
+results/
+results-proc/
+.venv/
+
+# scratch dumps and ad-hoc summaries
+/20[0-9][0-9]-*.txt
+
+# local env & logs
+.env
+*.log
+
+# OS / editor noise
+.DS_Store
+.idea/
+.vscode/
+ScorpioBroker/
+__pycache__
+# npm deps (any package dir)
+node_modules
+# generated frontend artifacts live in www/.gitignore (pkg, dist, public sync)
+
+# analysis downloads / OS noise — never repo content
+ETSI-matrix-results*
+results*/
+.DS_Store
+*.zip
+
+# mdbook build output
+/book
+.vale/styles/write-good/
+
+# ETSI documents are downloaded, not redistributed (etsi-cim-specs/README.md)
+etsi-cim-specs/*.pdf
+/sbom/

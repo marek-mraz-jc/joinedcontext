@@ -1,0 +1,775 @@
+# Lines and branches of the surfaces epic's new crates that no test covers, and why
+# (surfaces-test-plan section 1, dev/coverage-gate.py). One entry per function:
+#
+# [[exclusion]]
+# crate = "antares-ops"                 # the package name
+# file = "src/parse.rs"                 # relative to the crate's folder
+# function = "antares_ops::parse::depth" # the Rust path of the function
+# lines = 1                             # uncovered lines in it
+# branches = 1                          # uncovered branch sides in it
+# reason = "unreachable after a checked conversion the type system cannot see"
+#
+# The gate is red when a crate is below 100 % minus what is listed, and when an entry's function
+# is gone or its counts differ from what is measured, so a fixed gap must leave this file too.
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/lib.rs"
+function = "Ops::run_in" # v0 mangling puts the impl between the crate and the type
+lines = 7
+branches = 1
+reason = "the two tracing::info! of the surface operation line repeat their fields in the `log` fallback, which runs only with no subscriber set; tests/ops_log.rs covers the subscriber path and asserts what it logs (the 503 the excluded lines used to hold moved to `answered`, covered by every_api_answer_maps_to_what_a_surface_may_see, T-3947)"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/lib.rs"
+function = "antares_ops::inner_failure"
+lines = 3
+branches = 0
+reason = "one side of tracing::warn!: the unit test every_api_answer_maps_to_what_a_surface_may_see reaches it with no subscriber set, and since T-3947 no request of the test kit reaches an inner 5xx (the @context failure ops_errors used is a 504 LdContextNotAvailable now), so the subscriber side is not measured"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/views.rs"
+function = "antares_ops::views::inner"
+lines = 8
+branches = 0
+reason = "the view store failing: the built-in store under test_kit does not fail, and antares-ops may not name the store to put one that does in its place (module rule M2)"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/views.rs"
+function = "antares_ops::views::install_with"
+lines = 3
+branches = 0
+reason = "the minute loop's sweep body: its first tick is a minute after start (an immediate one raced the tests' own sweeps, T-3745), so no test runs it; tests call Reload::sweep_retention and sweep_quality, which run the same two sweeps"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/views/preview.rs"
+function = "antares_ops::views::preview::preview"
+lines = 1
+branches = 0
+reason = "the error of building a request from a query axum already parsed and a tenant the loader validated: it cannot fail"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/views.rs"
+function = "Reloader::reload_or_log" # v0 mangling puts the impl between the crate and the type
+lines = 3
+branches = 1
+reason = "the periodic reload failing on the store, which the built-in store does not (see antares_ops::views::inner)"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/views/retention.rs"
+function = "run"
+lines = 4
+branches = 0
+reason = "the tracing::info! of a spent budget and of a slow step each repeat its field in the `log` fallback, which runs only with no subscriber set; tests/retention.rs a_sweep_past_its_budget_stops_and_the_next_goes_on runs the spent path (T-4084), views::retention::tests::a_failing_step_rests_longer_and_comes_back_with_a_smaller_batch the slow one. The failing statement path is views::retention::tests::a_step_that_times_out_leaves_the_others_swept_in_the_same_run (T-5157)"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/views/retention.rs"
+function = "antares_ops::views::retention::overrides"
+lines = 7
+branches = 1
+reason = "2 lines and the branch: a read that fills MAX_OVERRIDES (10 000 Entities that rule themselves), which no test writes; the unit test without_every_entity_that_rules_itself_no_history_runs_by_type_or_tenant runs what follows from it in levels. 2 lines: the store failing to list the Entities with their own historyRetention, which the built-in store under test_kit does not (see antares_ops::views::inner); tests/pg_retention.rs in antares-sql runs the Postgres read itself. 3 lines: the tracing::warn! of an unreadable value repeats its fields in the `log` fallback, which runs only with no subscriber set; tests/retention.rs an_entity_off_loses_its_history_and_forever_holds_the_platform_back runs that path (T-4414)"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/views/retention.rs"
+function = "antares_ops::views::retention::steps"
+lines = 3
+branches = 1
+reason = "the store failing to list its Tenants for the platform default, which the built-in store under test_kit does not (see antares_ops::views::inner); the branch: a partial read of the Entities that rule themselves, see overrides above (T-4414)"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/views/quality.rs"
+function = "antares_ops::views::quality::sweep"
+lines = 6
+branches = 0
+reason = "tracing::info! repeats its fields in the `log` fallback, which runs only with no subscriber set; the counter beside it is what tests/quality.rs reads through the sweep's answer"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/views/quality.rs"
+function = "antares_ops::views::quality::judge_rule"
+lines = 8
+branches = 2
+reason = "6 lines, 1 branch: the scan or the in-place write failing on the store, which the built-in store under test_kit does not (see antares_ops::views::inner); tests/quality_pg.rs runs both on Postgres. 2 lines, 1 branch: a type with more than PAGE (1000) Entities read over a second page, which no test seeds"
+
+[[exclusion]]
+crate = "antares-mcp"
+file = "src/server.rs"
+function = "Server::run" # v0 mangling puts the impl between the crate and the type
+lines = 4
+branches = 0
+reason = "an inner answer past 32 MiB: every tool asks a bounded page (limit at most 1000, lastN at most 100), so the built-in store cannot produce one without a fixture of that size in every test run"
+
+[[exclusion]]
+crate = "antares-mcp"
+file = "src/server.rs"
+function = "log_call" # every tool call's MC19 line, `call` and `summarize` alike (T-4680)
+lines = 5
+branches = 0
+reason = "tracing::info! repeats the fields in its `log` fallback, which runs only with no subscriber set; tests/mcp_log.rs covers the subscriber path and asserts what it logs"
+
+[[exclusion]]
+crate = "antares-odata"
+file = "src/lib.rs"
+function = "antares_odata::unreadable"
+lines = 2
+branches = 0
+reason = "tracing::warn! repeats the fields in its `log` fallback, which runs only with no subscriber set; tests/metadata.rs::an_unreadable_schema_is_logged_once_with_its_reason covers the subscriber path and asserts what it logs"
+
+[[exclusion]]
+crate = "antares-odata"
+file = "src/lib.rs"
+function = "antares_odata::model"
+lines = 3
+branches = 0
+reason = "tracing::debug! repeats the fields in its `log` fallback, which runs only with no subscriber set; tests/odata_metadata.rs sets one and counts the build events"
+
+[[exclusion]]
+crate = "antares-ws"
+file = "src/random.rs"
+function = "antares_ws::random::bytes"
+lines = 1
+branches = 1
+reason = "the operating system refusing randomness: getrandom cannot be made to fail from a test, and the process aborts there by design (an all-zero id would be guessable)"
+
+[[exclusion]]
+crate = "antares-ws"
+file = "src/hub.rs"
+function = "Hub::open"
+lines = 1
+branches = 1
+reason = "two 128-bit random connection ids colliding: the retry loop is the guard, no test can draw a collision"
+
+[[exclusion]]
+crate = "antares-ws"
+file = "src/hub.rs"
+function = "Conn::detach"
+lines = 1
+branches = 1
+reason = "a socket that ends by itself (Gone, a close) in the instant after a resume took its connection over: the resume wakes the old session first, which then always ends as TakenOver (ws_a_resume_takes_over_an_attached_connection covers that path)"
+
+[[exclusion]]
+crate = "antares-ws"
+file = "src/lib.rs"
+function = "antares_ws::upgrade"
+lines = 1
+branches = 0
+reason = "on_failed_upgrade runs when hyper fails the upgrade after the 101 was sent, an I/O failure inside hyper no client request produces"
+
+[[exclusion]]
+crate = "antares-ws"
+file = "src/socket.rs"
+function = "Session::resume"
+lines = 1
+branches = 1
+reason = "the socket breaking while the replay is written, in the instant between reading x-resume and writing its answer; the write deadline itself is covered by ws_a_slow_consumer_is_disconnected_not_buffered"
+
+[[exclusion]]
+crate = "antares-ws"
+file = "src/socket.rs"
+function = "Session::tick"
+lines = 1
+branches = 1
+reason = "a heartbeat that finds its connection taken over: a resume wakes the old session, whose drain sees the takeover first (covered), so the tick is a backstop for a wake the new session consumed"
+
+[[exclusion]]
+crate = "antares-ws"
+file = "src/socket.rs"
+function = "Session::run"
+lines = 1
+branches = 1
+reason = "the welcome write failing: it is the first frame on a socket the upgrade just opened, with an empty send buffer"
+
+[[exclusion]]
+crate = "antares-ws"
+file = "src/socket.rs"
+function = "antares_ws::socket::serve"
+lines = 8
+branches = 1
+reason = "tracing::info! repeats the fields in its `log` fallback, which runs only with no subscriber set (ws_log covers the subscriber path and asserts what it logs); and the branch where detach finds the connection taken over, see Conn::detach"
+
+[[exclusion]]
+crate = "antares-linkml"
+file = "src/render.rs"
+function = "Cache::get" # v0 mangling puts the impl between the crate and the type
+lines = 2
+branches = 0
+reason = "Model::new refusing a narrowing of a model that loaded: narrow keeps every name the kept elements use (a range to a hidden class becomes uriorcurie, enums and prefixes are kept by use), so no test schema reaches it; the arm keeps a narrowing defect from being served"
+
+[[exclusion]]
+crate = "antares-mcp"
+file = "src/server.rs"
+function = "Drop::drop" # the one Drop in server.rs, Closing's
+lines = 1
+branches = 1
+reason = "a listen stream dropped outside any tokio runtime: rmcp polls and drops the listen future inside the runtime that serves it, so only a process ending reaches this side, and expiresAt removes the subscriptions then"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/mapping.rs"
+function = "antares_ops::mapping::sources"
+lines = 1
+branches = 0
+reason = "the inner @context failing to merge: it maps generated terms to IRIs that compile already expanded and checked, which merge_object accepts; the arm keeps a refusal instead of an unwrap"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/scan.rs"
+function = "antares_ops::scan::read"
+lines = 3
+branches = 0
+reason = "a successful Query Entities answer that is no JSON list: the scan asks the store for application/json and never forwards the outer Accept (tests/view_scan.rs asserts geo+json stays outside), so the store answers a list; the refusal stays as the trust boundary on the store's answer"
+
+[[exclusion]]
+crate = "antares-icsr"
+file = "src/grant.rs"
+function = "antares_icsr::grant::held"
+lines = 3
+branches = 0
+reason = "tracing::warn! repeats the fields in its `log` fallback, which runs only with no subscriber set; tests/icsr_log.rs covers the subscriber path and asserts what it logs"
+
+[[exclusion]]
+crate = "antares-icsr"
+file = "src/grant.rs"
+function = "antares_icsr::grant::put_one"
+lines = 5
+branches = 0
+reason = "tracing::info! repeats the fields in its `log` fallback, which runs only with no subscriber set; tests/icsr_log.rs covers the subscriber path and asserts what it logs"
+
+[[exclusion]]
+crate = "antares-icsr"
+file = "src/grant.rs"
+function = "antares_icsr::grant::delete_one"
+lines = 3
+branches = 0
+reason = "tracing::info! repeats the fields in its `log` fallback, which runs only with no subscriber set; tests/icsr_log.rs covers the subscriber path and asserts what it logs"
+
+[[exclusion]]
+crate = "antares-icsr"
+file = "src/grant.rs"
+function = "antares_icsr::grant::answer"
+lines = 3
+branches = 0
+reason = "the grant store failing: the built-in store under test_kit does not fail, and antares-icsr may not name the store to put one that does in its place (module rule M2)"
+
+[[exclusion]]
+crate = "antares-icsr"
+file = "src/grant.rs"
+function = "antares_icsr::grant::problem"
+lines = 1
+branches = 0
+reason = "the InternalError kind is the 500 of a failing grant store, see antares_icsr::grant::answer"
+
+[[exclusion]]
+crate = "antares-icsr"
+file = "src/lib.rs"
+function = "ForwardTransport::admit" # v0 mangling puts the trait between the type and the method
+lines = 2
+branches = 0
+reason = "the grant store failing: the built-in store under test_kit does not fail, and antares-icsr may not name the store to put one that does in its place (module rule M2)"
+
+[[exclusion]]
+crate = "antares-icsr"
+file = "src/lib.rs"
+function = "Internal::serve" # v0 mangling puts the impl between the crate and the type
+lines = 21
+branches = 0
+reason = "2 lines: the grant store failing, which the built-in store under test_kit does not (module rule M2). 19 lines: the four tracing::info!/warn! of a forward made or not made repeat their fields in the `log` fallback, which runs only with no subscriber set; tests/icsr_log.rs and icsr_gate.rs cover the subscriber path and assert what they log"
+
+[[exclusion]]
+crate = "antares-icsr"
+file = "src/lib.rs"
+function = "Internal::deliver"
+lines = 10
+branches = 1
+reason = "8 lines: the two tracing::info! of the notification and its refusal repeat their fields in the `log` fallback, which runs only with no subscriber set; tests/icsr_notify.rs covers the subscriber path and asserts both lines. 2 lines, 1 branch: the grant store failing, which the built-in store under test_kit cannot be made to do"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/lib.rs"
+function = "Ops::notify_in_process"
+lines = 2
+branches = 1
+reason = "1 line, 1 branch: the depth bound is reached only inside a chain of MAX_IN_PROCESS_CALL_DEPTH in-process calls, whose task-local depth no test outside antares-api can set; tests/icsr_depth.rs covers the same bound for forwards. 1 line: the request builder fails only on an invalid URI or header, and the path is the transport's constant and the headers are fixed"
+
+# antares-ql (role ngsild, T-3911/T-3912)
+
+[[exclusion]]
+crate = "ngsild-ql"
+file = "src/eval.rs"
+function = "ngsild_ql::eval::compare"
+lines = 1
+branches = 0
+reason = "the closing `List | Range => false` arm: both are answered by the unfold guards at the top of the function before this match, so the arm only keeps the match exhaustive; eval::edges drives every reachable arm"
+
+[[exclusion]]
+crate = "ngsild-ql"
+file = "src/regex.rs"
+function = "ngsild_ql::regex::compile"
+lines = 1
+branches = 1
+reason = "the cache's write lock poisoned: only a panic while another thread holds it poisons it, and a test that poisons the process-wide cache breaks every other test sharing it"
+
+[[exclusion]]
+crate = "ngsild-ql"
+file = "src/regex.rs"
+function = "ngsild_ql::regex::q_node"
+lines = 1
+branches = 1
+reason = "the q cache's write lock poisoned: as for compile"
+
+[[exclusion]]
+crate = "ngsild-ql"
+file = "src/regex.rs"
+function = "ngsild_ql::regex::geo_query"
+lines = 2
+branches = 2
+reason = "the geo cache full (MAX_REGEX_CACHE entries) and its write lock poisoned: filling the process-wide cache from a test evicts the entries geo_query_is_shared_per_key reads in parallel, and poisoning is as for compile; the eviction it calls is the one evict_lru_half's own tests drive"
+
+[[exclusion]]
+crate = "ngsild-ql"
+file = "src/regex.rs"
+function = "ngsild_ql::regex::evict_lru_half"
+lines = 1
+branches = 1
+reason = "the `checked_sub` refusal: stamps holds one stamp per entry and keep is half the entries, so the index always exists; it stays a let-else so a future change to `keep` cannot index past the end"
+
+[[exclusion]]
+crate = "ngsild-ql"
+file = "src/sql.rs"
+function = "ngsild_ql::sql::literal"
+lines = 1
+branches = 1
+reason = "an exponent form: Rust's f64 Display never writes one, so the refusal guards a future formatter, not today's"
+
+[[exclusion]]
+crate = "ngsild-ql"
+file = "src/eval.rs"
+function = "expand_values_coercion"
+lines = 0
+branches = 1
+reason = "test code: the refusal side of the test's own matches! assertion, taken only when the test fails"
+
+[[exclusion]]
+crate = "ngsild-ql"
+file = "src/lib.rs"
+function = "unquoted_scalars_and_where_a_range_stops"
+lines = 0
+branches = 1
+reason = "test code: the refusal side of the test's own matches! assertion, taken only when the test fails"
+
+[[exclusion]]
+crate = "ngsild-ql"
+file = "src/lib.rs"
+function = "a_quoted_string_is_an_rfc_8259_string"
+lines = 0
+branches = 1
+reason = "test code: the refusal side of the test's own matches! assertion, taken only when the test fails"
+
+[[exclusion]]
+crate = "ngsild-ql"
+file = "src/lib.rs"
+function = "an_escaped_quote_does_not_end_the_string"
+lines = 0
+branches = 1
+reason = "test code: the refusal side of the test's own matches! assertion, taken only when the test fails"
+
+[[exclusion]]
+crate = "ngsild-ql"
+file = "src/lib.rs"
+function = "an_unquoted_token_is_a_number_only_when_rfc_8259_says_so"
+lines = 0
+branches = 1
+reason = "test code: the refusal side of the test's own matches! assertion, taken only when the test fails"
+
+[[exclusion]]
+crate = "ngsild-ql"
+file = "src/lib.rs"
+function = "and_or_precedence"
+lines = 0
+branches = 1
+reason = "test code: the refusal side of the test's own matches! assertion, taken only when the test fails"
+
+[[exclusion]]
+crate = "ngsild-ql"
+file = "src/render.rs"
+function = "a_regexp_operand_keeps_its_own_backslashes"
+lines = 0
+branches = 1
+reason = "test code: the refusal side of the test's own matches! assertion, taken only when the test fails"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/expand.rs"
+function = "ngsild_jsonld::expand::expand_instance"
+lines = 3
+branches = 0
+reason = "the `_` arm of the attribute-type dispatch: every name in ATTR_TYPES has its own arm, which reserved_member_guards::every_declarable_attribute_type_is_dispatched_not_unreachable proves for each one; the arm turns a future omission into a 500 instead of a panic"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/expand.rs"
+function = "ngsild_jsonld::expand::parse_datetime"
+lines = 1
+branches = 2
+reason = "the `else` of the cut at byte 19: the slice pattern above already matched 19 ASCII bytes, so both `get` calls are always Some"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/expand.rs"
+function = "bench_expansion_rate"
+lines = 31
+branches = 0
+reason = "#[ignore] throughput bench, run by hand with --ignored, not by the gate"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/expand.rs"
+function = "clause_4_5_5_1_a_repeated_dataset_id_is_refused_at_any_position"
+lines = 1
+branches = 1
+reason = "the let-else panic of a test assertion, reached only when the assertion fails"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/expand.rs"
+function = "geojson_geometries_meet_the_rfc_7946_restrictions"
+lines = 1
+branches = 0
+reason = "the panic closure of a test assertion, reached only when a valid geometry is refused"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/expand.rs"
+function = "every_declarable_attribute_type_is_dispatched_not_unreachable"
+lines = 1
+branches = 1
+reason = "the Ok side of `if let Err`: every type there carries the wrong members on purpose, so the expansion always refuses it; the test asserts what the refusal is"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "EgressPolicy::check_host_within"  # v0 mangling puts the impl between the crate and the type
+lines = 3
+branches = 1
+reason = "the public-address side of the DNS answer loop: a unit test has no resolver that answers a public address, and an outbound lookup would make the test depend on the network; the private side is covered by egress_policy_denies_private_ranges"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "EgressPolicy::from_env"  # v0 mangling puts the impl between the crate and the type
+lines = 0
+branches = 1
+reason = "ANTARES_EGRESS_ALLOW_PRIVATE unset: the env var is process-wide, and tests set the policy through with_policy so they cannot race each other on it; egress_switch_ignores_case_and_whitespace covers the parser"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "EgressPolicy::ip_is_private"  # v0 mangling puts the impl between the crate and the type
+lines = 0
+branches = 2
+reason = "the IPv6 loopback and unspecified tests: ::1 and :: are IPv4-compatible spellings of 0.0.0.1 and 0.0.0.0, so embedded_v4 judges them private first and these two operands are never the deciding ones"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "Loader::bump_url"  # v0 mangling puts the impl between the crate and the type
+lines = 1
+branches = 1
+reason = "`min_by` over the usage map at its cap: the map holds MAX_USAGE_ENTRIES > 0 entries there, so it always yields one"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "Loader::fetch"  # v0 mangling puts the impl between the crate and the type
+lines = 4
+branches = 4
+reason = "a send error that is a timeout or a redirect, a chunk read error, the outer 10 s deadline and the second size check after the read loop: the first three need a network that stalls past reqwest's own timeouts (a_host_that_never_answers covers the retry path instead), and the read loop already refuses a body past MAX_CONTEXT_BYTES before the second check can see one"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "Loader::invalidate_merged_using"  # v0 mangling puts the impl between the crate and the type
+lines = 1
+branches = 0
+reason = "a merged entry whose URL list was evicted on its own: both caches are filled and evicted together, the arm keeps the invalidation fail-closed if they ever drift"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "Loader::merge_entry"  # v0 mangling puts the impl between the crate and the type
+lines = 6
+branches = 1
+reason = "a relative @context URL whose base does not parse (the base is always a URL that was just fetched) and a poisoned URL-list lock (fails closed): neither is reachable from a request"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "Loader::merged_hit_is_usable"  # v0 mangling puts the impl between the crate and the type
+lines = 1
+branches = 0
+reason = "a merged hit whose URL list is gone: the same paired eviction as invalidate_merged_using"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "Loader::resolve_counted"  # v0 mangling puts the impl between the crate and the type
+lines = 1
+branches = 1
+reason = "the refetch after a counted bump finds the row gone fails: the loopback server answers every fetch, and a failing one is the 5.5.6 path clause_5_5_6_unavailable_vs_invalid_remote_context covers; plus the unpinned core context, which every_pinned_context_parses_and_carries_an_at_context rules out"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "ngsild_jsonld::loader::allow_private_egress"
+lines = 3
+branches = 0
+reason = "the process-wide switch is for the broker's own tests; flipping it here would change the policy under every other loader test running in parallel"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "ngsild_jsonld::loader::client_builder"
+lines = 7
+branches = 4
+reason = "a redirect hop to a host name, to a metadata address, and ANTARES_EXTRA_CA_FILE: the redirect tests cover private IP literals, a name hop needs DNS, and the CA file is a process-wide env var"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "ngsild_jsonld::loader::slow_factor"
+lines = 1
+branches = 1
+reason = "ANTARES_TEST_SANITIZER is set only by the sanitizer workflow"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "hooks::serve"
+lines = 1
+branches = 1
+reason = "the mock server's accept loop never ends: the runtime drops it when the test returns, so the loop's exit and the end of its task are never reached"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "a_dropped_connection_is_retried_before_the_context_is_unavailable"
+lines = 1
+branches = 1
+reason = "the mock server's accept loop never ends: the runtime drops it when the test returns, so the loop's exit and the end of its task are never reached"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "a_host_that_never_answers_is_unavailable_after_one_retry"
+lines = 1
+branches = 1
+reason = "the mock server's accept loop never ends: the runtime drops it when the test returns, so the loop's exit and the end of its task are never reached"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "clause_5_13_5_4_reload_keeps_existing_on_failure_replaces_on_success"
+lines = 1
+branches = 1
+reason = "the mock server's accept loop never ends: the runtime drops it when the test returns, so the loop's exit and the end of its task are never reached"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "clause_5_5_6_unavailable_vs_invalid_remote_context"
+lines = 1
+branches = 1
+reason = "the mock server's accept loop never ends: the runtime drops it when the test returns, so the loop's exit and the end of its task are never reached"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "client_builder_caps_redirects"
+lines = 2
+branches = 1
+reason = "the mock server's accept loop never ends: the runtime drops it when the test returns, so the loop's exit and the end of its task are never reached"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "fetch_cap_stops_crawl_before_the_limit_is_passed"
+lines = 1
+branches = 1
+reason = "the mock server's accept loop never ends: the runtime drops it when the test returns, so the loop's exit and the end of its task are never reached"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "merged_cache_honours_the_context_lifetime"
+lines = 1
+branches = 1
+reason = "the mock server's accept loop never ends: the runtime drops it when the test returns, so the loop's exit and the end of its task are never reached"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "oversized_chunked_context_is_refused_at_the_cap"
+lines = 3
+branches = 5
+reason = "the mock server's accept loop never ends: the runtime drops it when the test returns, so the loop's exit and the end of its task are never reached; and the early returns when the client hangs up mid-stream, which the cap makes it do at a byte count the test does not pin"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "private_range_denial_does_not_name_the_resolved_address"
+lines = 0
+branches = 2
+reason = "the short-circuit sides of a test assertion, reached only when the denial names an address"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "redirect_to_private_ip_literal_is_blocked"
+lines = 1
+branches = 1
+reason = "the mock server's accept loop never ends: the runtime drops it when the test returns, so the loop's exit and the end of its task are never reached"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "redirect_to_private_ipv6_literal_is_blocked"
+lines = 6
+branches = 3
+reason = "the mock server's accept loop never ends: the runtime drops it when the test returns, so the loop's exit and the end of its task are never reached; the IPv6 target is never reached, which is what the test asserts"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/loader.rs"
+function = "the_second_attempt_waits_before_it_connects"
+lines = 1
+branches = 1
+reason = "the mock server's accept loop never ends: the runtime drops it when the test returns, so the loop's exit and the end of its task are never reached"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/minicache.rs"
+function = "insert"
+lines = 3
+branches = 3
+reason = "the eviction loop's `break` and the two `None` arms: the queue and the map hold the same keys (insert and invalidate keep them paired), so a queue key is always in the map and a key other than the inserted one exists whenever the budget is short"
+
+[[exclusion]]
+crate = "ngsild-jsonld"
+file = "src/pinned.rs"
+function = "ngsild_jsonld::pinned::resolve_with"
+lines = 1
+branches = 0
+reason = "the unpinned core context: every_pinned_context_parses_and_carries_an_at_context rules it out; the arm makes a broken pin a 500 instead of a panic"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/views/erasure.rs"
+function = "antares_ops::views::erasure::reapply"
+lines = 1
+branches = 0
+reason = "the store failing while an erasure is applied again at start, which the built-in store under test_kit does not (see antares_ops::views::inner); tests/erasure.rs runs the re-apply that erases restored rows, the one that erases nothing and the record it cannot read (T-4665)"
+
+[[exclusion]]
+crate = "antares-mcp"
+file = "src/server.rs"
+function = "Server::area_overview" # v0 mangling puts the impl between the crate and the type
+lines = 1
+branches = 0
+reason = "a per-type read that failed with neither a gate refusal nor success (T-5279): only a store fault answers so once the gate allowed a checked read, and the memory store of the test broker raises none; area_type's refusal path is tested"
+
+[[exclusion]]
+crate = "antares-mcp"
+file = "src/server.rs"
+function = "Server::area_type" # v0 mangling puts the impl between the crate and the type
+lines = 1
+branches = 1
+reason = "the same store fault, where area_type returns it (T-5279): a read the gate refuses answers 401, 403 or 404 and is tested as an absent type"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/lib.rs"
+function = "ViewOps::type_selector"
+lines = 1
+branches = 0
+reason = "the `local=true` fallback for a store that keeps no type list or fails to read it (F-ANT5-010); the built-in store under test_kit keeps one"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/views/quality.rs"
+function = "antares_ops::views::quality::lift_orphans"
+lines = 3
+branches = 0
+reason = "2 lines: the scan or the in-place write failing on the store, which the built-in store under test_kit does not; 1 line: tracing::info! repeats its fields in the `log` fallback, which runs only with no subscriber set (F-ANT4-011)"
+
+[[exclusion]]
+crate = "antares-ops"
+file = "src/views/quality.rs"
+function = "antares_ops::views::quality::lift_in"
+lines = 1
+branches = 1
+reason = "a Tenant with more than PAGE (1000) marked Entities read over a second page, which no test seeds (F-ANT4-011)"
+
+[[exclusion]]
+crate = "antares-feed"
+file = "src/lib.rs"
+function = "antares_feed::entries"
+lines = 1
+branches = 0
+reason = "an Entity of a type the output does not list: since F-ANT5-010 every read pushes the output's types, so only the `local=true` fallback of a store without a type list returns one; the built-in store under test_kit keeps that list"
+
+[[exclusion]]
+crate = "antares-ws"
+file = "src/sta_mqtt.rs"
+function = "Session::publish"
+lines = 1
+branches = 1
+reason = "a socket that breaks or stops reading in the middle of a PUBLISH: tungstenite's write fails only on a peer the kernel has already dropped, which no client in a test can time between two messages"
+
+[[exclusion]]
+crate = "antares-ws"
+file = "src/sta_mqtt.rs"
+function = "Session::watch"
+lines = 1
+branches = 2
+reason = "the view removed between the tick that checks it and a SUBSCRIBE in the same second, and a view showing more than 64 types (MAX_TYPES); both refuse the topic as an unreadable one does"
+
+[[exclusion]]
+crate = "antares-ws"
+file = "src/sta_mqtt.rs"
+function = "Session::drain"
+lines = 2
+branches = 2
+reason = "the queue overflowing while the session drains it at once (an MQTT connection is never detached, so the queue only overflows under a burst faster than in-process reads), and a PUBLISH failing inside it (Session::publish)"
+
+[[exclusion]]
+crate = "antares-odata"
+file = "src/history.rs"
+function = "antares_odata::history::rows"
+lines = 1
+branches = 0
+reason = "the residual refuses an evaluation past MAX_STEPS (2^20 nodes visited) as TooComplexQuery; a history row is one Entity's state, so no test filter reaches that bound (tests/odata_history.rs covers every other path of rows)"
+
+[[exclusion]]
+crate = "antares-odata"
+file = "src/history.rs"
+function = "antares_odata::history::batch"
+lines = 1
+branches = 0
+reason = "the `?` that carries rows()'s TooComplexQuery refusal out, the evaluator bound of the history::rows entry above"
+
+[[exclusion]]
+crate = "antares-odata"
+file = "src/history.rs"
+function = "antares_odata::history::key_of"
+lines = 1
+branches = 0
+reason = "odata-url types each key value, an alias's too, against the history EntityType (id Edm.String, observedAt Edm.DateTimeOffset) and answers 404 first; tests/odata_history.rs sends an Int alias and a single key"

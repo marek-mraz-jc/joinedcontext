@@ -1,0 +1,5 @@
+services:
+  broker:
+    image: ghcr.io/joinedcontext/antares-broker:dev
+    ports: ["9090:9090"]
+    # zero infrastructure: memory store, local bus, all roles

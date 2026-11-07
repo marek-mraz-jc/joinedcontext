@@ -1,0 +1,44 @@
+# cargo-deny: licenses, advisories, bans, sources. TSL-licensed code must
+# NEVER be linked (TimescaleDB is talked to over SQL only).
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "EUPL-1.2",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    # webpki-roots: Mozilla CA-bundle DATA under the permissive CDLA — no code
+    # licensing implications (pulled via reqwest/hyper-rustls and async-nats).
+    "CDLA-Permissive-2.0",
+]
+
+[advisories]
+yanked = "deny"
+ignore = [
+    # paste: unmaintained proc-macro, build-time only, via tikv-jemalloc-ctl.
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained build-time proc-macro via tikv-jemalloc-ctl; no runtime code" },
+    # atomic-polyfill: unmaintained, no patched release. heapless 0.7 (via
+    # geo-types -> rstar) names it only for targets without native atomics,
+    # none of which this workspace builds; it sits in Cargo.lock, which
+    # cargo-audit reads whole (T-3489). Drops when rstar moves to heapless 0.8.
+    { id = "RUSTSEC-2023-0089", reason = "heapless 0.7 via rstar, only on targets without native atomics; never compiled here" },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# internal path dependencies carry no version by design; the wildcard wall
+# is for registry deps, where a `*` really is unpinned drift
+allow-wildcard-paths = true
+# one TLS stack, rustls on ring (Cargo.toml: "aws-lc-sys (C + cmake) never
+# enters the build"); a crate pulling OpenSSL or aws-lc back in is red per
+# change, not a week later (threat model F5, T-3475)
+deny = [{ name = "openssl-sys" }, { name = "native-tls" }, { name = "aws-lc-sys" }]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

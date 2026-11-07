@@ -1,0 +1,14 @@
+-- An Entity known to hold no history row (T-5835). The temporal page
+-- qualification probes both history parents per Entity, every weekly
+-- partition of each: ~0.25 ms an Entity with 60 weeks, and ~54 ms under a
+-- view's 501 shown Attributes, so a type of 19 782 Entities that keep no
+-- history (KeyPerformanceIndicator on prod: no observedAt, nothing recorded)
+-- passed the 30 s statement timeout on a page of one. A bare Entity is
+-- skipped without a probe.
+--
+-- The maintenance sweep (store/pg/maintenance.rs `mark_bare`) sets it from
+-- what the history holds, under a row lock taken before it looks; the
+-- instance write takes a share lock on the row and clears it. Every row
+-- starts false, as before this migration: probed until the sweep reached it.
+-- A constant default is a catalog change: no rewrite, no scan.
+ALTER TABLE temporal_entities ADD COLUMN bare boolean NOT NULL DEFAULT false;

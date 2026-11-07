@@ -1,0 +1,518 @@
+// SPDX-License-Identifier: EUPL-1.2
+//! Tracing + Prometheus metrics + env-gated OTLP span export.
+//!
+//! Naming follows Prometheus conventions with the `antares_` prefix and
+//! unit suffixes. The `metrics` facade is what core crates speak; THIS
+//! module is the only place an exporter exists (only the
+//! composition root knows). `/q/metrics` renders the Prometheus text
+//! format via the closure wired onto AppState.
+//!
+//! ALL of it sits behind a RUNTIME switch: ANTARES_TELEMETRY=1 installs
+//! the recorder, the sampler and (with ANTARES_OTLP_ENDPOINT) the OTLP
+//! pipeline at startup; the default constructs NONE of it — `metrics::`
+//! macro calls no-op without a recorder (zero allocations), and
+//! /q/metrics answers 404. One build, lean by default; flip the
+//! env and restart where a dashboard actually scrapes.
+//!
+//! OTLP: set ANTARES_OTLP_ENDPOINT (e.g. http://collector:4318/v1/traces)
+//! and spans flow out over OTLP/HTTP, log records to its `v1/logs` twin
+//! with the same resource; unset (the default) costs nothing.
+//! tokio-console: cargo feature `console` + RUSTFLAGS="--cfg tokio_unstable"
+//! (the layer only arms when BOTH are present — an --all-features build
+//! without the RUSTFLAGS must not panic at startup).
+
+use std::sync::Arc;
+
+/// What /q/metrics renders through — exporter type erased so `main` builds
+/// identically with and without the `telemetry` feature.
+pub type MetricsRender = Arc<dyn Fn() -> String + Send + Sync>;
+
+/// Is the observability stack switched on for this process? The default is
+/// off, so ANY value that is not an explicit off spelling arms it — a knob
+/// that recognized only `1|true|on` disabled the whole stack on `TRUE`
+/// without a word.
+pub fn enabled() -> bool {
+    std::env::var("ANTARES_TELEMETRY").is_ok_and(|v| !crate::is_off(&v))
+}
+
+/// Strip `user:password@` userinfo (RFC 3986 clause 3.2.1) out of a URL before
+/// it is logged. A string without an authority component — no scheme, or an
+/// `@` that belongs to the path — comes back byte-identical.
+fn redact_url(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_owned();
+    };
+    let (authority, path) = match rest.find('/') {
+        Some(i) => rest.split_at(i),
+        None => (rest, ""),
+    };
+    match authority.rsplit_once('@') {
+        Some((_, host)) => format!("{scheme}://{host}{path}"),
+        None => url.to_owned(),
+    }
+}
+
+/// An exporter that refuses its endpoint prints the endpoint back verbatim
+/// (`invalid URI {0}`), so a rejected URL carrying `user:password@` userinfo
+/// (RFC 3986 clause 3.2.1) reaches the startup error the way it would reach a
+/// log line. The endpoint is known at the call site, so the failure carries
+/// its redacted form instead.
+fn no_userinfo(message: String, endpoint: &str) -> String {
+    let safe = redact_url(endpoint);
+    if safe == endpoint {
+        message
+    } else {
+        message.replace(endpoint, &safe)
+    }
+}
+
+/// The OTLP/HTTP logs endpoint paired with a traces endpoint: the standard
+/// `v1/traces` suffix becomes `v1/logs`; any other URL is used as given.
+fn logs_endpoint(traces: &str) -> String {
+    match traces.strip_suffix("/v1/traces") {
+        Some(base) => format!("{base}/v1/logs"),
+        None => traces.to_owned(),
+    }
+}
+
+/// Install the tracing subscriber stack and (ANTARES_TELEMETRY=1) the
+/// Prometheus recorder. Call once, before the runtime spins up anything
+/// measurable. Returns the /q/metrics render closure, or None when the
+/// switch is off — in which case nothing telemetry-shaped is allocated.
+pub fn init() -> Result<Option<MetricsRender>, Box<dyn std::error::Error>> {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let env_filter =
+        tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
+    let fmt = tracing_subscriber::fmt::layer();
+
+    // The collector endpoint is a URL and may carry `user:password@` userinfo
+    // (RFC 3986 clause 3.2.1); it is logged at startup, so the credential is
+    // stripped first.
+    // Env-gated OTLP pipeline — needs the switch AND an endpoint. Spans and
+    // log records share one resource so a collector joins them.
+    let (otlp, logs) = match std::env::var("ANTARES_OTLP_ENDPOINT") {
+        Ok(endpoint) if enabled() => {
+            use opentelemetry::trace::TracerProvider as _;
+            use opentelemetry_otlp::WithExportConfig as _;
+            use tracing_subscriber::Layer as _;
+            let resource = opentelemetry_sdk::Resource::builder()
+                .with_service_name("antares")
+                .build();
+            let exporter = opentelemetry_otlp::SpanExporter::builder()
+                .with_http()
+                .with_endpoint(endpoint.clone())
+                .build()
+                .map_err(|e| no_userinfo(e.to_string(), &endpoint))?;
+            let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                .with_batch_exporter(exporter)
+                .with_resource(resource.clone())
+                .build();
+            let tracer = provider.tracer("antares");
+            // Log records: batch exporter on its own thread with a bounded
+            // queue, so a dead collector drops records instead of stalling
+            // a request. The exporter's own HTTP stack is filtered out of
+            // the bridge, else every export would log another export.
+            let logs_endpoint = logs_endpoint(&endpoint);
+            let log_exporter = opentelemetry_otlp::LogExporter::builder()
+                .with_http()
+                .with_endpoint(logs_endpoint.clone())
+                .build()
+                .map_err(|e| no_userinfo(e.to_string(), &logs_endpoint))?;
+            let logger_provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+                .with_batch_exporter(log_exporter)
+                .with_resource(resource)
+                .build();
+            let bridge = opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(
+                &logger_provider,
+            )
+            .with_filter(tracing_subscriber::filter::filter_fn(|m| {
+                !["opentelemetry", "hyper", "reqwest", "h2", "tonic"]
+                    .iter()
+                    .any(|t| m.target().starts_with(t))
+            }));
+            tracing::info!(
+                endpoint = redact_url(&endpoint),
+                "OTLP span and log export enabled"
+            );
+            (
+                Some(tracing_opentelemetry::layer().with_tracer(tracer)),
+                Some(bridge),
+            )
+        }
+        _ => (None, None),
+    };
+
+    #[cfg(all(feature = "console", tokio_unstable))]
+    let console = Some(console_subscriber::spawn());
+    #[cfg(not(all(feature = "console", tokio_unstable)))]
+    let console: Option<tracing_subscriber::layer::Identity> = None;
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(fmt)
+        .with(otlp)
+        .with(logs)
+        .with(console)
+        .init();
+
+    if !enabled() {
+        // An endpoint without the switch is a configuration the operator
+        // believes is exporting: say so rather than drop it silently. Logged
+        // here because the subscriber above is what makes a log visible.
+        if let Ok(endpoint) = std::env::var("ANTARES_OTLP_ENDPOINT") {
+            tracing::warn!(
+                endpoint = redact_url(&endpoint),
+                "ANTARES_OTLP_ENDPOINT is set but ANTARES_TELEMETRY is off — \
+                 no spans or logs are exported"
+            );
+        }
+        return Ok(None); // the recorder, registry and sampler are never built
+    }
+    let handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+        .set_buckets(LATENCY_BUCKETS_SECONDS)?
+        .set_buckets_for_metric(
+            metrics_exporter_prometheus::Matcher::Full("antares_answer_bytes".into()),
+            ANSWER_BUCKETS_BYTES,
+        )?
+        .install_recorder()?;
+    describe();
+    Ok(Some(Arc::new(move || handle.render())))
+}
+
+/// Bucket bounds, in seconds, for every histogram this binary registers —
+/// both are request-shaped latencies.
+///
+/// Without them the exporter renders a histogram as a rolling summary, whose
+/// quantiles are computed over a sliding window it owns rather than over the
+/// scrape: an idle window reports `0` for every quantile while `_count` and
+/// `_sum` keep climbing, a busy one reports only the last window, and neither
+/// can be aggregated across instances or read back over a rollout. Buckets
+/// are cumulative and belong to the scrape, so `histogram_quantile()` works
+/// on them.
+///
+/// The range is set from measured service time: single-digit milliseconds
+/// when the broker is healthy, tens of seconds once the accept path is the
+/// bottleneck. The exporter's own default stops at 10 s, which files every
+/// slow request under `+Inf` — precisely the requests a latency dashboard
+/// exists to show.
+const LATENCY_BUCKETS_SECONDS: &[f64] = &[
+    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0,
+];
+
+/// Bucket bounds, in bytes, of `antares_answer_bytes` (T-5898): from a
+/// one-Entity page to the 64 MiB per-answer cap, so the p99 and the largest
+/// answers of each surface show which pool size the load needs.
+const ANSWER_BUCKETS_BYTES: &[f64] = &[
+    1024.0,
+    16_384.0,
+    131_072.0,
+    524_288.0,
+    1_048_576.0,
+    4_194_304.0,
+    8_388_608.0,
+    16_777_216.0,
+    33_554_432.0,
+    67_108_864.0,
+];
+
+/// Metric metadata — Prometheus-convention names (antares_ prefix, unit suffixes).
+fn describe() {
+    use metrics::{describe_counter, describe_gauge, describe_histogram, Unit};
+    describe_counter!(
+        "antares_http_requests_total",
+        Unit::Count,
+        "HTTP requests served, by method and status class"
+    );
+    describe_histogram!(
+        "antares_http_request_duration_seconds",
+        Unit::Seconds,
+        "HTTP request service time"
+    );
+    describe_counter!(
+        "antares_policy_failures_total",
+        Unit::Count,
+        "policy decisions the seam had to make itself because the engine did not, by reason"
+    );
+    describe_counter!(
+        "antares_notifications_sent_total",
+        Unit::Count,
+        "notifications delivered successfully, by sink scheme"
+    );
+    describe_counter!(
+        "antares_notifications_failed_total",
+        Unit::Count,
+        "notification deliveries that failed, by sink scheme"
+    );
+    describe_histogram!(
+        "antares_change_lag_seconds",
+        Unit::Seconds,
+        "bus=nats: change-event age (stream publish -> matcher processing)"
+    );
+    describe_gauge!(
+        "antares_draining",
+        Unit::Count,
+        "1 while this instance drains — a roll is visible on a dashboard"
+    );
+    describe_gauge!(
+        "antares_uptime_seconds",
+        Unit::Seconds,
+        "seconds since process start"
+    );
+    describe_gauge!(
+        "antares_memory_allocated_bytes",
+        Unit::Bytes,
+        "jemalloc allocated (live) bytes"
+    );
+    describe_gauge!(
+        "antares_memory_resident_bytes",
+        Unit::Bytes,
+        "jemalloc resident bytes (RSS ~ live x1.2 is the section-2.1 target)"
+    );
+    describe_counter!(
+        "antares_context_cache_lookups_total",
+        Unit::Count,
+        "@context cache lookups by cache (merged, fetched) and result (hit, miss)"
+    );
+    describe_gauge!(
+        "antares_answer_pool_held_bytes",
+        Unit::Bytes,
+        "bytes the buffered in-process answers hold of the memory budget's pool"
+    );
+    describe_gauge!(
+        "antares_answer_pool_peak_bytes",
+        Unit::Bytes,
+        "the most bytes the buffered answers held at once since the previous 5 s sample"
+    );
+    describe_histogram!(
+        "antares_answer_bytes",
+        Unit::Bytes,
+        "size of each in-process answer read whole through the pool, by surface"
+    );
+    describe_histogram!(
+        "antares_answer_pool_wait_seconds",
+        Unit::Seconds,
+        "time a buffered read took, its wait for room in the pool included, by surface"
+    );
+    describe_counter!(
+        "antares_answer_pool_refusals_total",
+        Unit::Count,
+        "buffered reads answered 503 MEMORY_OVERLOADED: no room freed within the wait, by surface"
+    );
+    describe_gauge!(
+        "antares_commit_queue_depth",
+        Unit::Count,
+        "file mode: writers queued behind the single redb committer"
+    );
+    describe_histogram!(
+        "antares_pg_transaction_begin_seconds",
+        Unit::Seconds,
+        "postgres: time to obtain a pooled connection and open a transaction \
+         — the pool wait plus one BEGIN round trip, so this is where pool \
+         pressure shows"
+    );
+    describe_counter!(
+        "antares_pg_pool_timeouts_total",
+        Unit::Count,
+        "postgres: acquire timeouts — the request was answered 503 with Retry-After"
+    );
+    describe_gauge!(
+        "antares_limit_rejections_total",
+        Unit::Count,
+        "bounds-wall rejections, by limit"
+    );
+}
+
+/// The 5 s gauge sampler: process-level state that has no natural
+/// increment site. Spawned once per process from `run`. With the switch
+/// off there is no recorder to feed — no task is spawned at all.
+pub fn spawn_sampler(state: antares_api::AppState) {
+    if !enabled() {
+        return;
+    }
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            tick.tick().await;
+            metrics::gauge!("antares_uptime_seconds").set(state.started.elapsed().as_secs_f64());
+            metrics::gauge!("antares_draining").set(f64::from(u8::from(
+                state.draining.load(std::sync::atomic::Ordering::Relaxed),
+            )));
+            if let Some(mem) = &state.mem_stats {
+                let m = mem();
+                if let Some(a) = m.get("allocatedBytes").and_then(serde_json::Value::as_u64) {
+                    metrics::gauge!("antares_memory_allocated_bytes").set(a as f64);
+                }
+                if let Some(r) = m.get("residentBytes").and_then(serde_json::Value::as_u64) {
+                    metrics::gauge!("antares_memory_resident_bytes").set(r as f64);
+                }
+            }
+            // T-5895: the hit ratio of each @context cache under its share
+            let stats = &antares_jsonld::CACHE_STATS;
+            for (cache, count) in [("merged", &stats.merged), ("fetched", &stats.fetched)] {
+                for (result, n) in [("hit", &count.hits), ("miss", &count.misses)] {
+                    metrics::counter!("antares_context_cache_lookups_total",
+                        "cache" => cache, "result" => result)
+                    .absolute(n.load(std::sync::atomic::Ordering::Relaxed));
+                }
+            }
+            metrics::gauge!("antares_answer_pool_held_bytes").set(state.answer_pool.held() as f64);
+            metrics::gauge!("antares_answer_pool_peak_bytes")
+                .set(state.answer_pool.take_peak() as f64);
+            if let Some((depth, _peak)) = state.store.commit_queue() {
+                metrics::gauge!("antares_commit_queue_depth").set(depth as f64);
+            }
+            // Limit counters live in LimitStats (incremented at rejection
+            // sites); exported here so the wall is observable BEFORE users
+            // hit it.
+            if let Some(map) = state.limits.snapshot().as_object() {
+                for (key, n) in map {
+                    if let Some(limit) = key.strip_prefix("rejected") {
+                        if let Some(n) = n.as_u64() {
+                            metrics::gauge!(
+                                "antares_limit_rejections_total",
+                                "limit" => limit.to_owned()
+                            )
+                            .set(n as f64);
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+#[cfg(test)]
+mod logs_endpoint_tests {
+    #[test]
+    fn traces_suffix_becomes_logs_anything_else_is_kept() {
+        assert_eq!(
+            super::logs_endpoint("http://c:4318/v1/traces"),
+            "http://c:4318/v1/logs"
+        );
+        assert_eq!(
+            super::logs_endpoint("http://c:4318/otlp"),
+            "http://c:4318/otlp"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The switch is the whole stack's gate, and the environment is
+    /// process-global — every spelling is asserted in ONE test. The DEFAULT
+    /// is off, so only an explicit off value may keep it off: a knob that
+    /// recognized `1|true|on` alone disabled the whole observability stack on
+    /// `TRUE` without a word.
+    #[test]
+    fn telemetry_switch_is_off_by_default_and_tolerant_of_spelling() {
+        std::env::remove_var("ANTARES_TELEMETRY");
+        assert!(!enabled(), "the default must allocate nothing");
+        for on in ["1", "true", "on", "TRUE", "On", "yes", "1 ", " 1"] {
+            std::env::set_var("ANTARES_TELEMETRY", on);
+            assert!(enabled(), "ANTARES_TELEMETRY={on:?} must arm the stack");
+        }
+        for off in ["0", "false", "off", "", " ", "FALSE", "Off", "no", " 0 "] {
+            std::env::set_var("ANTARES_TELEMETRY", off);
+            assert!(
+                !enabled(),
+                "ANTARES_TELEMETRY={off:?} must NOT arm the stack"
+            );
+        }
+        std::env::remove_var("ANTARES_TELEMETRY");
+    }
+
+    /// A collector endpoint is a URL and may carry `user:password@` userinfo
+    /// (RFC 3986 clause 3.2.1). It is logged at startup, so the credential must be
+    /// stripped before it reaches the log.
+    #[test]
+    fn otlp_endpoint_userinfo_never_reaches_the_log() {
+        let redacted = redact_url("http://otel:s3cr3t@collector.internal:4318/v1/traces");
+        assert!(
+            !redacted.contains("s3cr3t") && !redacted.contains("otel:"),
+            "userinfo leaked into the log line: {redacted}"
+        );
+        assert!(
+            redacted.contains("collector.internal:4318/v1/traces"),
+            "the useful part of the endpoint must survive: {redacted}"
+        );
+        // No userinfo: byte-identical, including an '@' that belongs to the
+        // path rather than the authority.
+        for plain in [
+            "http://collector:4318/v1/traces",
+            "https://collector:4318/v1/@traces",
+            "collector:4318",
+            "",
+        ] {
+            assert_eq!(redact_url(plain), plain, "rewrote a credential-free URL");
+        }
+    }
+
+    /// An exporter that refuses its endpoint prints the endpoint back
+    /// verbatim, so the credential survives the build failure and lands in
+    /// the startup error `main` prints — the leak `redact_url` closes on the
+    /// two paths that succeed. Both exporters are built from the same
+    /// operator-supplied URL, so both have to lose it.
+    #[test]
+    fn a_rejected_collector_endpoint_loses_its_password() {
+        use opentelemetry_otlp::WithExportConfig as _;
+        // A space is not a legal URI character, so the build fails with no
+        // collector to reach — and the rejected endpoint rides the error.
+        let endpoint = "http://otel:s3cr3t@collector .internal:4318/v1/traces";
+        let Err(spans) = opentelemetry_otlp::SpanExporter::builder()
+            .with_http()
+            .with_endpoint(endpoint)
+            .build()
+        else {
+            panic!("a URI carrying a space is rejected")
+        };
+        let logs_endpoint = logs_endpoint(endpoint);
+        let Err(logs) = opentelemetry_otlp::LogExporter::builder()
+            .with_http()
+            .with_endpoint(logs_endpoint.clone())
+            .build()
+        else {
+            panic!("a URI carrying a space is rejected")
+        };
+        for (raw, needle) in [
+            (spans.to_string(), endpoint),
+            (logs.to_string(), logs_endpoint.as_str()),
+        ] {
+            let safe = no_userinfo(raw, needle);
+            assert!(!safe.contains("s3cr3t"), "the password reached it: {safe}");
+            assert!(!safe.contains("otel:"), "the userinfo reached it: {safe}");
+            assert!(
+                safe.contains("collector"),
+                "the destination stays readable: {safe}"
+            );
+        }
+    }
+
+    /// Metric label cardinality: the only labelled instrument this module
+    /// feeds is the limit-rejection gauge, whose label comes from a fixed key
+    /// set in the bounds snapshot — never from a client-controlled string
+    /// (a tenant, a URI or a header would blow up the time-series count).
+    #[test]
+    fn limit_rejection_labels_are_a_closed_identifier_set() {
+        let snapshot = antares_api::bounds::LimitStats::default().snapshot();
+        let labels: Vec<String> = snapshot
+            .as_object()
+            .expect("snapshot is an object")
+            .keys()
+            .filter_map(|k| k.strip_prefix("rejected").map(str::to_owned))
+            .collect();
+        assert_eq!(
+            labels.len(),
+            3,
+            "the rejection label set changed — keep it closed and bounded: {labels:?}"
+        );
+        for l in &labels {
+            assert!(
+                l.chars().all(|c| c.is_ascii_alphanumeric()),
+                "label value {l:?} is not a fixed identifier"
+            );
+        }
+    }
+}

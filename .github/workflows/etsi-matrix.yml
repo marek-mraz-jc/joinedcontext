@@ -1,0 +1,284 @@
+name: etsi-matrix
+
+# Reusable (workflow_call only): ONE image build feeding the cell matrix.
+# Two presets:
+#   quick — file, postgres, timescale. The per-commit gate (ci.yml).
+#   full  — those PLUS memory, postgres-nats/timescale-nats (the 5-role ×
+#           2-replica fleet behind the LB, ANTARES_BUS=nats, CONTINUOUSLY
+#           rolling for the whole suite) and wasm-file (the BROWSER
+#           artifact: five dockerized node shims over the redb file store —
+#           the same .wasm a page loads, MQTT structurally excluded there).
+#           Runs twice a week + on v* tags + on manual dispatch (full.yml).
+# Each cell runs ALL 10 suites through the one pipeline, folded into the
+# per-cell summary tables + one bundle (quick bundles are named
+# ETSI-quick-results so the Pages fold only ever renders full runs).
+
+on:
+  workflow_call:
+    inputs:
+      preset:
+        # quick = the per-commit gate (file/postgres/timescale —
+        #         memory/nats-roll/wasm live in the full run);
+        # full  = all seven cells (full.yml: twice-a-week schedule, v* tags,
+        #         manual dispatches).
+        description: "quick (3 cells, per commit) or full (all 7 cells)"
+        type: string
+        default: full
+      ref:
+        # the commit to test (ci.yml under workflow_run passes the head_sha
+        # of the green fast run; empty is the triggering commit)
+        description: "commit to check out (empty: the triggering commit)"
+        type: string
+        default: ""
+      max_parallel:
+        # cells of each matrix job at a time; full.yml's schedule lowers it
+        # so a run leaves the account's job slots to the trains (T-5639).
+        # The default is above every matrix here, so ci.yml runs unthrottled.
+        description: "matrix cells per job at a time"
+        type: number
+        default: 16
+
+env:
+  MEM_LIMIT_MB: 350 # per-broker peak-RSS gate, same limit as ScorpioBroker's pipeline
+
+# The default for the cells; the aggregate job declares the wider set it
+# needs to dispatch.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # ONE image for the whole run (the shared build-image.yml). Every store
+    # mode tests the SAME bytes, and the image that ships is the image the
+    # suites ran against. Runs alongside the workspace job (one runner, no
+    # fan-out) — only the store matrix waits for tests to be green.
+    name: Build the image under test
+    uses: ./.github/workflows/build-image.yml
+    with:
+      arch: amd64
+      ref: ${{ inputs.ref }}
+
+  build-wasm:
+    # The browser artifact for the wasm-file cell — built ONCE in parallel
+    # with the image build (the caller's graph: workspace -> builds -> cells),
+    # instead of every wasm cell paying its own toolchain + compile. Full
+    # preset only: quick has no wasm cell.
+    name: Build the wasm bundle
+    if: inputs.preset != 'quick'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: Build + size budget
+        run: |
+          ./dev/install-wasm-tools.sh
+          export PATH="$HOME/.local/bin:$PATH"
+          ./dev/wasm-build.sh
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: antares-wasm-pkg
+          path: www/pkg
+          retention-days: 3
+
+  etsi-cell:
+    # Parallel cells, each running ALL 10 suites serially through the SAME
+    # pipeline (with the between-suite state-reset pairing). The
+    # single-broker cells run bus=local as always; the two -nats cells run
+    # the role-split fleet (ROLES_SPLIT=1) with the containers rolling in
+    # role-group order for the WHOLE run (ROLL_DURING_RUN=1) — the suite has
+    # no retries, so any red there is a real drain/exactly-once bug.
+    name: ${{ matrix.cell }} (all suites)
+    needs: [build, build-wasm]
+    # build-wasm is SKIPPED on the quick preset — accept skipped, demand
+    # success otherwise (a plain `needs` would skip every cell with it).
+    if: >-
+      !cancelled() && needs.build.result == 'success' &&
+      (needs['build-wasm'].result == 'success' || needs['build-wasm'].result == 'skipped')
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ inputs.max_parallel }}
+      matrix:
+        # ONE source of truth for both presets — quick is a strict subset.
+        include: >-
+          ${{ inputs.preset == 'quick'
+          && fromJSON('[
+               { "cell": "file",      "store": "file" },
+               { "cell": "postgres",  "store": "postgres" },
+               { "cell": "timescale", "store": "timescale" }
+             ]')
+          || fromJSON('[
+               { "cell": "memory",    "store": "memory" },
+               { "cell": "file",      "store": "file" },
+               { "cell": "postgres",  "store": "postgres" },
+               { "cell": "timescale", "store": "timescale" },
+               { "cell": "postgres-nats",  "store": "postgres",  "roles": "1" },
+               { "cell": "timescale-nats", "store": "timescale", "roles": "1" },
+               { "cell": "wasm-file", "store": "file", "wasm": "1" }
+             ]') }}
+    runs-on: ubuntu-latest
+    # the rolling-fleet cells pay the restart wall-clock on top of the suites
+    timeout-minutes: ${{ matrix.roles && 120 || 90 }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+
+
+      - name: Load the image built once for all stores
+        if: ${{ !matrix.wasm }}
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: antares-image
+
+      - if: ${{ !matrix.wasm }}
+        run: docker load < antares-image.tgz
+
+      # The wasm cell tests the BROWSER artifact, not the native image: the
+      # bundle comes from the parallel build-wasm job (built once), the cell
+      # only wraps it in the shim image (seconds) — then the pipeline runs
+      # the five shims as containers (Dockerfile.wasm, WASM_DOCKER=1).
+      - name: Fetch the wasm bundle built once for this run
+        if: ${{ matrix.wasm }}
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: antares-wasm-pkg
+          path: www/pkg
+      - name: Build the shim image (wasm cell)
+        if: ${{ matrix.wasm }}
+        run: docker build -f Dockerfile.wasm -t antares-wasm-local:latest .
+
+      - name: Run every suite through the ONE pipeline
+        env:
+          STORE: ${{ matrix.store }}
+          ROLES_SPLIT: ${{ matrix.roles || '0' }}
+          ROLL_DURING_RUN: ${{ matrix.roles || '0' }}
+          WASM: ${{ matrix.wasm || '0' }}
+          WASM_DOCKER: ${{ matrix.wasm || '0' }}
+          RESULTS_DIR: results/${{ matrix.cell }}
+          SKIP_BUILD: "1"
+          STOP_ON_ERROR: "0"
+          CALLBACK_HOST: localhost
+        run: ./dev/etsi-pipeline.sh || true
+
+      - name: Upload cell results
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ETSI-cell-${{ matrix.cell }}
+          path: |
+            results/${{ matrix.cell }}/run-summary.md
+            results/${{ matrix.cell }}/gate-status.txt
+            results/${{ matrix.cell }}/failures.csv
+            results/${{ matrix.cell }}/tp-status.csv
+            results/${{ matrix.cell }}/local-context-check.txt
+            results/${{ matrix.cell }}/local-context/access.log
+            results/${{ matrix.cell }}/resource-samples.csv
+            results/${{ matrix.cell }}/resource-by-test.csv
+            results/${{ matrix.cell }}/roll-loop.log
+            results/${{ matrix.cell }}/*-console.log
+            results/${{ matrix.cell }}/**/log.html
+            results/${{ matrix.cell }}/**/report.html
+          retention-days: 7
+
+      - name: Gate — this cell 100% green
+        run: |
+          gate=$(cat "results/${{ matrix.cell }}/gate-status.txt" 2>/dev/null || echo MISSING)
+          echo "gate(${{ matrix.cell }}) = $gate"
+          [ "$gate" = PASS ]
+
+  etsi-aggregate:
+    # Fold the store results into ONE downloadable bundle + ONE report: per-store
+    # tables (pass/fail/skip + RSS/CPU rollups), the combined per-second
+    # resource samples, the combined all-failures file, and a detailed error
+    # list. The single required status check; any red/missing cell fails it.
+    name: Matrix summary
+    if: always()
+    needs: etsi-cell
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write # to delete the merged per-cell artifacts
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Download all cell results
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: ETSI-cell-*
+          path: cells
+
+      - name: Fold the cells into the combined bundle + report
+        # Gate result captured, not enforced here — the bundle must upload
+        # and the summary must render even when cells are red.
+        env:
+          STORES: >-
+            ${{ inputs.preset == 'quick'
+            && 'file postgres timescale'
+            || 'memory file postgres timescale postgres-nats timescale-nats wasm-file' }}
+        run: ./dev/etsi-matrix-summary.py cells || echo "RED_CELLS=$?" >> "$GITHUB_ENV"
+
+      # T-3466: per TP, not per total — every cell runs every TP of
+      # dev/etsi-baseline.json and each passes; a TP that stops running is
+      # red too. A new passing TP prints "ratchet: update baseline".
+      - name: Per-TP baseline (dev/etsi-baseline.json)
+        env:
+          # dev/etsi-pipeline.sh forces MQTT=0 for WASM: the 058 TPs never run there
+          MQTT_OFF: wasm-file
+          STORES: >-
+            ${{ inputs.preset == 'quick'
+            && 'file postgres timescale'
+            || 'memory file postgres timescale postgres-nats timescale-nats wasm-file' }}
+        run: |
+          rc=0
+          ./dev/etsi-baseline.py check cells > cells/_combined/baseline-check.txt || rc=$?
+          cat cells/_combined/baseline-check.txt
+          [ "$rc" = 0 ] || echo "RED_BASELINE=1" >> "$GITHUB_ENV"
+
+      - name: Upload the ONE results bundle
+        id: bundle
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          # quick bundles carry a different name ON PURPOSE: the Pages fold
+          # (dev/fold-reports.sh) downloads the newest ETSI-matrix-results,
+          # and a 3-cell quick bundle must never shrink the 7-cell report.
+          name: ${{ inputs.preset == 'quick' && 'ETSI-quick-results' || 'ETSI-matrix-results' }}
+          path: cells
+          retention-days: 14
+
+      - name: Write the step summary (download link first)
+        run: |
+          {
+            echo "# ETSI matrix"
+            echo
+            echo "⬇️ **[Download ALL results (one bundle)](${{ steps.bundle.outputs.artifact-url }})** — every cell's Robot log.html, \`_combined/all-resource-samples.csv\` (every 1 Hz CPU/RSS sample from every run), \`_combined/all-failures.csv\` (every error with run, keyword ran, expected-vs-got)."
+            echo
+            cat cells/_combined/matrix-summary.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete the merged per-cell artifacts
+        # The bundle supersedes them — one download link, not 33.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
+            --paginate -q '.artifacts[] | select(.name | startswith("ETSI-cell-")) | .id' |
+          while read -r id; do
+            gh api --method DELETE "repos/${{ github.repository }}/actions/artifacts/$id"
+          done
+
+      - name: Gate — all stores green, every baseline TP ran and passed
+        run: test -z "${RED_CELLS:-}" && test -z "${RED_BASELINE:-}"

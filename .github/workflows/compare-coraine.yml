@@ -1,0 +1,83 @@
+name: compare-coraine
+
+# Antares against Coraine (SEAMWARE/coraine) on one GitHub-hosted runner:
+# footprint, start to first answer and the T-3467 request shapes, both
+# brokers measured by the same script in the same job (T-3548,
+# docs/analysis/coraine-comparison.md). A hosted runner swings 20-30 % run
+# to run, so the numbers are read side by side within one run, never across
+# runs. The repository is public, so the minutes are free and no shared
+# host is loaded.
+#
+# Runs when the rig changes, and by hand (another Coraine tag via input).
+# The pin is the immutable build tag: Seamware re-pointed `0.5.0` five times on
+# 2026-10-10..12 (T-5210). Weekly, `pin` checks that the pinned digest is still
+# served, so a deleted image is a red run before a comparison needs it.
+# 0.6.0-dev-2026-10-22-030122be is eligible under the 7-day cooldown from 2026-10-29.
+
+on:
+  workflow_dispatch:
+    inputs:
+      coraine_image:
+        description: Coraine image to compare against (pinned tag, no latest exists)
+        default: quay.io/seamware/coraine:0.5.0-2026-10-10-7ad9140f@sha256:5e2e519a7d0c9c4bfea6cb75113c8de5e8bc892fc281c06125cd67c4004fcaff
+  schedule:
+    - cron: '17 9 * * 1'
+  push:
+    # dev only: a worker branch's push queued hours of runners ahead of ci.yml (2026-10-10)
+    branches: [dev]
+    paths:
+      - dev/perf/compare-coraine.sh
+      - dev/perf/k6-shapes.js
+      - .github/workflows/compare-coraine.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compare-coraine-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: The pinned Coraine digest is still served
+        env:
+          CORAINE_IMAGE: quay.io/seamware/coraine:0.5.0-2026-10-10-7ad9140f@sha256:5e2e519a7d0c9c4bfea6cb75113c8de5e8bc892fc281c06125cd67c4004fcaff
+        run: docker manifest inspect "$CORAINE_IMAGE" > /dev/null
+  compare:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      CARGO_TERM_COLOR: always
+      CORAINE_IMAGE: ${{ inputs.coraine_image || 'quay.io/seamware/coraine:0.5.0-2026-10-10-7ad9140f@sha256:5e2e519a7d0c9c4bfea6cb75113c8de5e8bc892fc281c06125cd67c4004fcaff' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Install k6
+        run: |
+          curl -sL https://github.com/grafana/k6/releases/download/v0.54.0/k6-v0.54.0-linux-amd64.tar.gz \
+            | tar xz --strip-components=1
+          sudo mv k6 /usr/local/bin/
+      - name: Build Antares (release, default features)
+        run: cargo build --locked --release -p antares-broker
+      - name: Pull Coraine
+        run: docker pull "$CORAINE_IMAGE" && docker image inspect "$CORAINE_IMAGE" --format '{{.Id}} {{.Size}}'
+      - name: Compare
+        run: BIN=$PWD/target/release/antares OUT=results/coraine dev/perf/compare-coraine.sh
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Antares ${GITHUB_SHA::7} vs $CORAINE_IMAGE on $(nproc) vCPU, $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2)"
+            cat results/coraine/footprint.md results/coraine/shapes.md 2>/dev/null || echo "(no results)"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: compare-coraine
+          path: results/coraine
+          retention-days: 90

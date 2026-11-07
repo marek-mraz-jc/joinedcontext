@@ -1,0 +1,129 @@
+name: wasm
+
+# Manual CI/CD for the browser build ALONE — the same build + test steps as
+# full.yml's wasm job (dev/wasm-build.sh size budget, dev/wasm-test.sh Node
+# tier + headless-Chromium tier incl. the cross-tenant federation check)
+# without dragging the ETSI matrix along, PLUS the React playground
+# (www: vitest + vite build, served at /demo/). Publishes the
+# ready-to-serve bundle as an artifact; `deploy_pages: true` additionally
+# deploys it to GitHub Pages (requires Pages enabled with "GitHub Actions"
+# source) under the custom domain below.
+#
+# A Pages deployment replaces the WHOLE site, so this workflow builds the
+# book into the site root too — otherwise a playground deploy would leave
+# the documented root 404ing until the next pages.yml run. (rustdoc at
+# /api/ is pages.yml's alone; a wasm deploy does drop it.)
+#
+# Custom domain (PAGES_DOMAIN): the CNAME file in the artifact pins it per
+# deploy. One-time setup outside this file: a DNS CNAME record
+#   antaresbroker  →  joinedcontext.github.io
+# and repo Settings → Pages → Custom domain + Enforce HTTPS.
+
+on:
+  # Manual only (standing decision): no push trigger. Deploying the
+  # playground is always an explicit `Run workflow` with deploy_pages ticked —
+  # so remember the live site trails dev until someone dispatches this.
+  workflow_dispatch:
+    inputs:
+      deploy_pages:
+        description: "Deploy the playground to GitHub Pages after a green run"
+        type: boolean
+        default: false
+
+# The default for the build; the Pages deploy declares its own wider set.
+permissions:
+  contents: read
+
+concurrency:
+  group: wasm-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PAGES_DOMAIN: antaresbroker.joinedcontext.com
+
+jobs:
+  build-test:
+    name: Build + test (wasm32)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # the browser build compiles code the native lanes never see (the
+      # minicache, the wasm sweep loop): a warning there is red here (T-3698)
+      - name: wasm32 is warning-free
+        run: cargo clippy --locked -p antares-wasm --target wasm32-unknown-unknown -- -D warnings
+      - name: wasm-bindgen (lockfile-matched) + binaryen
+        run: |
+          ./dev/install-wasm-tools.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build + size budget
+        run: |
+          ./dev/wasm-build.sh | tee wasm-size.txt
+          echo "## Browser artifact" >> "$GITHUB_STEP_SUMMARY"
+          tail -1 wasm-size.txt >> "$GITHUB_STEP_SUMMARY"
+      # One frontend folder: deps + chromium, vitest, then the production
+      # build. `npm run build` syncs pkg/worker/loopback into public/ first,
+      # so this must run AFTER dev/wasm-build.sh — and BEFORE dev/wasm-test.sh,
+      # whose browser tier drives the built www/dist. (The playwright e2e is
+      # local-dev tooling — the auto-demo makes it minutes-long; vitest gates
+      # CI.)
+      - name: React playground — deps, test, build (www)
+        working-directory: www
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright-core install --with-deps chromium
+          npx vitest run
+          npm run build
+      - name: Node tier + browser tier (incl. cross-tenant federation)
+        run: ./dev/wasm-test.sh
+      - name: Bundle the site (book at /, React playground at /demo/)
+        run: |
+          # the book is the site root and mdbook CLEANS its output directory,
+          # so it goes first; the playground and /reports/ fold in after it
+          curl -sL "https://github.com/rust-lang/mdBook/releases/download/v0.4.44/mdbook-v0.4.44-$(uname -m)-unknown-linux-musl.tar.gz" | tar xz
+          ./mdbook build -d site
+          mkdir -p site/demo
+          cp -r www/dist/* site/demo/
+          # custom domain: the CNAME file travels with every deploy
+          echo "$PAGES_DOMAIN" > site/CNAME
+      - name: Fold the latest ETSI conformance report into the site
+        # The ONE Pages deployment carries the
+        # playground AND /reports/ — the newest ETSI-matrix-results bundle is
+        # rendered to a static page + shields badges (combined + per-cell).
+        # The fold lives in dev/fold-reports.sh, SHARED with pages.yml
+        # so the two Pages paths cannot drift; a missing
+        # bundle renders a placeholder instead of failing the site deploy.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: ./dev/fold-reports.sh
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: antares-www
+          path: site
+      - name: Upload Pages artifact
+        if: inputs.deploy_pages
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: inputs.deploy_pages
+    needs: build-test
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

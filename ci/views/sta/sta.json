@@ -1,0 +1,11 @@
+{
+  "id": "sta",
+  "tenant": "sta",
+  "selector": ["AirQualityObserved", "Device", "PointOfInterest"],
+  "rules": [
+    {"types": ["AirQualityObserved"], "attributes": ["name", "location", "pm10", "NO2", "refDevice", "refPointOfInterest"]},
+    {"types": ["Device"], "attributes": ["name", "description", "controlledProperty"]},
+    {"types": ["PointOfInterest"], "attributes": ["name", "location"]}
+  ],
+  "operations": ["query_entities", "retrieve_entity", "temporal_retrieve", "temporal_query"]
+}

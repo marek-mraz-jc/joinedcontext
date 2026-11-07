@@ -1,0 +1,91 @@
+# Forge-latest ratchet (T-4855): the TPs of forge.etsi.org cim/ngsi-ld-test-suite, default branch, that
+# Antares fails, each with its triage (docs/conformance/final-validation.md 4.1). external-suites.yml
+# checks every `latest` cell with tests/external/etsi/ratchet.py: a TP not listed that fails is red, a
+# listed TP that passes is red until it is taken off. The list only shrinks: never add a TP to it without
+# its triage row in final-validation.md 4.1 and a reviewer's consent.
+# Source: external-suites run 38860287033 (antares 74b72185, forge 5c398518 and 56e721d0), 98 TPs; re-run by
+# T-5495 on forge develop cc8711ce (antares 98e7f38 + T-5486, memory store): 13 TPs forge fixed came off, 85 TPs.
+008_01_01  test bug: TS 104 175 11.2.2.4 all instances are added; etsi-raises.md §21
+020_17_01  test bug: TS 104 175 10.2.7.4 and 5.2.7 (urn:ngsi-ld:null only for deleted scopes); etsi-raises.md §15, §16
+020_17_02  test bug: TS 104 175 10.2.7.4 and 5.2.7 (urn:ngsi-ld:null only for deleted scopes); etsi-raises.md §15, §16
+020_17_03  test bug: TS 104 175 10.2.7.4 and 5.2.7 (urn:ngsi-ld:null only for deleted scopes); etsi-raises.md §15, §16
+020_18_01  test bug: TS 104 175 10.2.7.4 and 5.2.7 (urn:ngsi-ld:null only for deleted scopes); etsi-raises.md §15, §16
+020_18_02  test bug: TS 104 175 10.2.7.4 and 5.2.7 (urn:ngsi-ld:null only for deleted scopes); etsi-raises.md §15, §16
+020_18_03  test bug: TS 104 175 10.2.7.4 and 5.2.7 (urn:ngsi-ld:null only for deleted scopes); etsi-raises.md §15, §16
+020_19_01  test bug: TS 104 175 10.2.7.4 and 5.2.7 (urn:ngsi-ld:null only for deleted scopes); etsi-raises.md §15, §16
+020_20_01  test bug: TS 104 175 10.2.7.4 and 5.2.7 (urn:ngsi-ld:null only for deleted scopes); etsi-raises.md §15, §16
+021_08_01  test bug: TS 104 175 11.3.3.4 only instances meeting the restrictions; etsi-raises.md §18
+021_23_01  test bug: TS 104 175 11.3.3.4 ordering by a name other than id is BadRequestData; forge
+021_23_03  test bug: TS 104 175 11.3.3.4 ordering by a name other than id is BadRequestData; forge
+021_23_04  test bug: TS 104 175 11.3.3.4 ordering by a name other than id is BadRequestData; forge
+021_23_05  test bug: TS 104 175 11.3.3.4 ordering by a name other than id is BadRequestData; forge
+021_23_06  test bug: TS 104 175 11.3.3.4 ordering by a name other than id is BadRequestData; forge
+021_23_07  test bug: TS 104 175 11.3.3.4 ordering by a name other than id is BadRequestData; forge
+021_23_08  test bug: TS 104 175 11.3.3.4 ordering by a name other than id is BadRequestData; forge
+021_23_09  test bug: TS 104 175 11.3.3.4 ordering by a name other than id is BadRequestData; forge
+021_25  test bug: TS 104 175 11.3.3.4 all local Entities; the shared expectation lists one of two; forge
+028_06  test bug: 5.8.1.4 jsonldContext is initialised, the TP compares the whole Subscription; forge
+031_01_01  test bug: TS 104 175 5.2.6.5.2 notificationTrigger default not echoed, quoted ignore pattern never matches; forge
+031_02_02  test bug: TS 104 176 6.4.7.2 RFC 8288 Link whitespace, the TP compares raw text; forge
+033_01_02  test bug: TS 104 175 9.3.3 an exclusive registration relates to one Entity; etsi-raises.md §2
+037_07_01  test bug: TS 104 175 5.2.6.5.3 a CSR location is a GeoJSON Geometry; forge
+037_07_02  test bug: RFC 7946 3.1.6 polygon ring not closed; fixed in the vendored suite
+037_10_01  test bug: TS 104 176 6.2.3 context as Link on application/json, CSR ids passed as entity id; forge
+037_10_02  test bug: TS 104 176 6.2.3 context as Link on application/json, CSR ids passed as entity id; forge
+037_11_01  test bug: TS 104 176 6.4.7.2 Link type equals the requested media type, the TP sends no Accept; etsi-raises.md §19
+037_11_02  test bug: TS 104 176 6.4.7.2 Link type equals the requested media type, the TP sends no Accept; etsi-raises.md §19
+039_01_01  test bug: TS 104 175 5.2.6.5.2 status is provided by the system; forge
+041_03_01  test bug: TS 104 176 6.4.7.2 Link type equals the requested media type, the TP sends no Accept; etsi-raises.md §19
+041_03_02  test bug: TS 104 176 6.4.7.2 Link type equals the requested media type, the TP sends no Accept; etsi-raises.md §19
+042_02_01  test bug: tooling (missing import, expected_status, unset payload, stub URL, Should Contain on a list); forge
+042_03_01  test bug: tooling (missing import, expected_status, unset payload, stub URL, Should Contain on a list); forge
+046_05_01  test bug: TS 104 175 7.2.3.2 a filter is URI-encoded only in the URI; etsi-raises.md §23
+046_22_08  test bug: TS 104 175 10.5.7 a deleted Attribute with datasetIds is notified per instance; etsi-raises.md §22
+047_01_01  test bug: TS 104 175 5.11.7 the CSR fixture registers other types than the watched Building; forge
+047_02_01  test bug: TS 104 175 5.11.7 the CSR fixture registers other types than the watched Building; forge
+047_04_01  test bug: TS 104 175 5.11.7 the CSR fixture registers other types than the watched Building; forge
+047_05_01  test bug: TS 104 175 5.11.7 the CSR fixture registers other types than the watched Building; forge
+047_06_01  test bug: TS 104 175 5.11.7 the CSR fixture registers other types than the watched Building; forge
+047_08_01  test bug: TS 104 175 5.11.7 the CSR fixture registers other types than the watched Building; forge
+047_09_01  test bug: TS 104 175 5.11.7 the CSR fixture registers other types than the watched Building; forge
+047_16_01  test bug: TS 104 176 6.2.4 no Link means the default @context; forge
+047_16_03  test bug: TS 104 176 6.2.4 no Link means the default @context; forge
+060_05_01  test bug: TS 104 175 10.2.12.4 too wide query is BadRequestData; forge
+D001_01_inc  test bug: TS 104 175 9.2 default operations federationOps has no createEntity; forge
+D001_02_inc  test bug: knock-on of refused exclusive CSRs, TS 104 175 12.2.2.4 Conflict; forge (test isolation)
+D001_03_03_inc  test bug: knock-on of refused exclusive CSRs, TS 104 175 12.2.2.4 Conflict; forge (test isolation)
+D002_02_exc  test bug: TS 104 175 10.2.8.4 a partly failed delete is 207; forge
+D003_01_exc  test bug: TS 104 176 6.2.4 no Link means the default @context; forge
+D003_02_exc  test bug: TS 104 176 6.2.4 no Link means the default @context; forge
+D004_01_inc  test bug: tooling (missing import, expected_status, unset payload, stub URL, Should Contain on a list); forge
+D005_01_inc  test bug: TS 104 175 10.2.5.4 no default instance locally gives a 207 part; forge
+D006_01_red  test bug: knock-on of refused exclusive CSRs, TS 104 175 12.2.2.4 Conflict; forge (test isolation)
+D006_02_red  test bug: knock-on of refused exclusive CSRs, TS 104 175 12.2.2.4 Conflict; forge (test isolation)
+D010_01_exc  test bug: tooling (missing import, expected_status, unset payload, stub URL, Should Contain on a list); forge
+D011_02_exc_02  test bug: TS 104 175 Table 9.2-2 redirectionOps has no queryBatch; forge
+D011_02_red_02  test bug: TS 104 176 6.2.4 Link with application/ld+json is BadRequestData; forge
+D011_03_inc_02  test bug: TS 104 176 6.2.4 Link with application/ld+json is BadRequestData; forge
+D011_04_inc_02  test bug: TS 104 176 6.2.4 Link with application/ld+json is BadRequestData; forge
+D012_01_exc  test bug: TS 104 175 9.3.3 an exclusive registration relates to one Entity; etsi-raises.md §2
+D012_01_red  test bug: knock-on of refused exclusive CSRs, TS 104 175 12.2.2.4 Conflict; forge (test isolation)
+D013_01_exc  test bug: TS 104 175 9.3.3 an exclusive registration relates to one Entity; etsi-raises.md §2
+D013_01_red  test bug: knock-on of refused exclusive CSRs, TS 104 175 12.2.2.4 Conflict; forge (test isolation)
+D013_02_exc  test bug: TS 104 175 9.3.3 an exclusive registration relates to one Entity; etsi-raises.md §2
+D013_02_red  test bug: knock-on of refused exclusive CSRs, TS 104 175 12.2.2.4 Conflict; forge (test isolation)
+D014_01_exc  test bug: TS 104 175 9.3.3 an exclusive registration relates to one Entity; etsi-raises.md §2
+D014_01_red  test bug: knock-on of refused exclusive CSRs, TS 104 175 12.2.2.4 Conflict; forge (test isolation)
+D014_02_exc  test bug: TS 104 175 9.3.3 an exclusive registration relates to one Entity; etsi-raises.md §2
+D014_02_red  test bug: knock-on of refused exclusive CSRs, TS 104 175 12.2.2.4 Conflict; forge (test isolation)
+D015_01_exc  test bug: TS 104 175 9.3.3 an exclusive registration relates to one Entity; etsi-raises.md §2
+D015_01_red  test bug: knock-on of refused exclusive CSRs, TS 104 175 12.2.2.4 Conflict; forge (test isolation)
+D016_01_exc  test bug: TS 104 175 9.3.3 an exclusive registration relates to one Entity; etsi-raises.md §2
+D016_01_inc  test bug: tooling (missing import, expected_status, unset payload, stub URL, Should Contain on a list); forge
+D016_01_red  test bug: knock-on of refused exclusive CSRs, TS 104 175 12.2.2.4 Conflict; forge (test isolation)
+IOP_002_04_01_01  test bug: TS 104 175 4.3.6.1 no registration provides location; forge
+IOP_002_04_01_02  test bug: TS 104 175 4.3.6.1 no registration provides location; forge
+IOP_002_04_02_01  test bug: TS 104 175 5.9.2.4 redirect registration over an existing Entity is Conflict; forge
+IOP_002_04_02_02  test bug: TS 104 175 5.9.2.4 redirect registration over an existing Entity is Conflict; forge
+IOP_003_02_02_01  test bug: setup creates a different OffStreetParking:1 than it checks; forge
+IOP_003_02_02_02  test bug: setup creates a different OffStreetParking:1 than it checks; forge
+IOP_003_03_02_01  test bug: 10.4.3.5 attrs=location compared against the full Vehicle (after Antares fix 65d53b87); forge
+IOP_003_03_02_02  test bug: 10.4.3.5 attrs=location compared against the full Vehicle (after Antares fix 65d53b87); forge
