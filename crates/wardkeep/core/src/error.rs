@@ -161,13 +161,26 @@ impl WardkeepError {
     pub fn to_problem(&self) -> ProblemDetails {
         let status = self.status_code();
         let slug = self.slug();
+        let detail = self.public_detail();
         ProblemDetails {
             r#type: format!("urn:joinedcontext:problem:{slug}"),
             title: slug.replace('-', " "),
             status,
             slug: slug.to_owned(),
-            detail: self.to_string(),
-            error_message: Some(self.to_string()),
+            detail: detail.clone(),
+            error_message: Some(detail),
+        }
+    }
+
+    /// The text a caller may see. Storage and crypto failures carry internals (SQL, key ids, file
+    /// paths) and outbound refusals carry resolved addresses of the internal network, so those
+    /// answer a fixed sentence; the full error stays with the server.
+    #[must_use]
+    pub fn public_detail(&self) -> String {
+        match self {
+            Self::Storage(_) | Self::Crypto(_) => "internal server error".to_owned(),
+            Self::OutboundRefused(_) => "outbound fetch refused".to_owned(),
+            other => other.to_string(),
         }
     }
 }
@@ -266,5 +279,28 @@ impl From<odata_table::TableError> for WardkeepError {
             odata_table::TableError::BadRequest(msg) => Self::BadRequest(msg),
             odata_table::TableError::Source(msg) => Self::Storage(msg),
         }
+    }
+}
+
+#[cfg(test)]
+mod problem_tests {
+    use super::*;
+
+    #[test]
+    fn internal_errors_never_reach_the_caller() {
+        for err in [
+            WardkeepError::Storage("relation \"wk_user\" does not exist; host=10.0.0.7".into()),
+            WardkeepError::Crypto("cannot read /run/secrets/kek".into()),
+            WardkeepError::OutboundRefused("resolved address 10.43.0.10 is private".into()),
+        ] {
+            let p = err.to_problem();
+            assert!(!p.detail.contains("10."), "{}", p.detail);
+            assert!(!p.detail.contains("/run/secrets"));
+            assert!(!p.detail.contains("wk_user"));
+            assert_eq!(p.error_message.as_deref(), Some(p.detail.as_str()));
+        }
+        let nf = WardkeepError::NotFound("user not found".into()).to_problem();
+        assert_eq!(nf.status, 404);
+        assert!(nf.detail.contains("user not found"));
     }
 }

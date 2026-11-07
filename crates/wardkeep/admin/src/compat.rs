@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use wardkeep_core::*;
-use wardkeep_crypto::{random_handle_256, verify_jwt};
+use wardkeep_crypto::{random_handle_256, sha256_hex, verify_jwt};
 use wardkeep_oidc::{OidcState, dispatch_backchannel_logout};
 
 #[derive(Clone)]
@@ -231,21 +231,35 @@ pub async fn extract_admin_ctx(
         .filter(|s| !s.is_empty())
         .ok_or_else(|| WardkeepError::Unauthorized("missing admin bearer token".into()))?;
 
-    let mut verified_claims: Option<Value> = None;
+    let mut verified: Option<(Value, &str)> = None;
     for candidate_realm in [realm_id, "master"] {
         if let Ok(keys) = state.oidc.store.list_signing_keys(candidate_realm).await {
             let issuer = mount.realm_issuer(candidate_realm);
             if let Ok((_, claims)) = verify_jwt::<Value>(raw_token, &keys, Some(&issuer), None)
                 && claims.get("typ").and_then(Value::as_str) == Some("Bearer")
             {
-                verified_claims = Some(claims);
+                verified = Some((claims, candidate_realm));
                 break;
             }
         }
     }
 
-    let claims = verified_claims
-        .ok_or_else(|| WardkeepError::Unauthorized("invalid admin bearer token".into()))?;
+    let (claims, token_realm) =
+        verified.ok_or_else(|| WardkeepError::Unauthorized("invalid admin bearer token".into()))?;
+    if let Some(jti) = claims.get("jti").and_then(Value::as_str)
+        && state
+            .oidc
+            .store
+            .is_token_revoked(token_realm, &sha256_hex(jti))
+            .await?
+    {
+        return Err(WardkeepError::Unauthorized(
+            "invalid admin bearer token".into(),
+        ));
+    }
+    // A token from `master` acting on another realm is Keycloak's cross-realm admin: only the
+    // master `admin` role and the `{realm}-realm` client roles carry over (as `realm-management`).
+    let cross_realm = token_realm != realm_id;
 
     let sub = claims.get("sub").and_then(Value::as_str).map(str::to_owned);
     let azp = claims.get("azp").and_then(Value::as_str).map(str::to_owned);
@@ -275,6 +289,42 @@ pub async fn extract_admin_ctx(
             }
         }
     }
+    // Store-side role mappings come only from the realm that issued the token (never a same-id
+    // person of another realm).
+    if let Some(uid) = &sub
+        && let Ok(Some(u)) = state
+            .oidc
+            .store
+            .get_user_by_id(token_realm, None, uid)
+            .await
+    {
+        for r in u.realm_roles {
+            if !realm_roles.contains(&r) {
+                realm_roles.push(r);
+            }
+        }
+        for (cid, rlist) in u.client_roles {
+            let entry = client_roles.entry(cid).or_default();
+            for r in rlist {
+                if !entry.contains(&r) {
+                    entry.push(r);
+                }
+            }
+        }
+    }
+    if token_realm == "master" && realm_roles.iter().any(|r| r == "admin") {
+        realm_roles.push("realm-admin".into());
+    }
+    if cross_realm {
+        realm_roles.retain(|r| r == "realm-admin");
+        let per_realm = client_roles
+            .remove(&format!("{realm_id}-realm"))
+            .unwrap_or_default();
+        client_roles.clear();
+        if !per_realm.is_empty() {
+            client_roles.insert("realm-management".into(), per_realm);
+        }
+    }
 
     let mut organizations: Vec<String> = claims
         .get("jc_org")
@@ -289,34 +339,15 @@ pub async fn extract_admin_ctx(
 
     let mut org_roles: HashMap<String, Vec<String>> = HashMap::new();
 
-    // Also load direct role mappings and memberships from store for service accounts and org admins
-    if let Some(uid) = &sub {
-        for candidate_realm in [realm_id, "master"] {
-            if let Ok(Some(u)) = state
-                .oidc
-                .store
-                .get_user_by_id(candidate_realm, None, uid)
-                .await
-            {
-                for r in u.realm_roles {
-                    if !realm_roles.contains(&r) {
-                        realm_roles.push(r);
-                    }
-                }
-                for (cid, rlist) in u.client_roles {
-                    let entry = client_roles.entry(cid).or_default();
-                    for r in rlist {
-                        if !entry.contains(&r) {
-                            entry.push(r);
-                        }
-                    }
-                }
-                if let Some(u_org) = u.org_id
-                    && !organizations.contains(&u_org)
-                {
-                    organizations.push(u_org);
-                }
-            }
+    // Organization memberships of the person in this realm (a cross-realm admin has none here).
+    if let Some(uid) = &sub
+        && !cross_realm
+    {
+        if let Ok(Some(u)) = state.oidc.store.get_user_by_id(realm_id, None, uid).await
+            && let Some(u_org) = u.org_id
+            && !organizations.contains(&u_org)
+        {
+            organizations.push(u_org);
         }
         if let Ok(mships) = state
             .oidc
@@ -331,6 +362,9 @@ pub async fn extract_admin_ctx(
                 org_roles.insert(m.org_id, m.org_roles);
             }
         }
+    }
+    if cross_realm {
+        organizations.clear();
     }
 
     let acr = claims.get("acr").and_then(Value::as_str);
@@ -360,6 +394,44 @@ pub async fn extract_admin_ctx(
     }
 
     Ok(ctx)
+}
+
+/// Role mappings of a client may be granted or removed only by someone who may write that client:
+/// a realm admin, or (for an ordinary application) whoever the authorizer lets update it. The
+/// admin clients (`realm-management`, `broker`, `{realm}-realm`) are realm-admin only, so neither
+/// an organization admin nor a client manager can hand out admin roles (W6).
+async fn ensure_may_map_client_roles(
+    state: &AdminState,
+    ctx: &RequestCtx,
+    realm: &str,
+    client_uuid: &str,
+) -> Result<()> {
+    if ctx.principal.is_realm_admin() {
+        return Ok(());
+    }
+    let client = state
+        .oidc
+        .store
+        .get_client_by_uuid(realm, None, client_uuid)
+        .await?
+        .ok_or_else(|| WardkeepError::NotFound("client not found".into()))?;
+    if matches!(client.client_id.as_str(), "realm-management" | "broker")
+        || client.client_id.ends_with("-realm")
+    {
+        return Err(WardkeepError::Forbidden(
+            "admin client roles are granted by a realm admin only".into(),
+        ));
+    }
+    check_decision(state.authorizer.check(
+        ctx,
+        Action::Update,
+        &ObjectTarget::Application {
+            realm_id: realm.to_owned(),
+            org_id: client.org_id.clone(),
+            client_id: client.client_id.clone(),
+            managed_by: client.attributes.get("managed-by").cloned(),
+        },
+    ))
 }
 
 fn check_decision(dec: Decision) -> Result<()> {
@@ -752,7 +824,17 @@ async fn compat_update_user(
     ))?;
     user.id = id.clone();
     user.realm_id = realm;
-    if user.org_id.is_none() {
+    // Keycloak's PUT ignores role mappings and group membership (they have their own routes,
+    // each authorized there); the service-account binding and creation facts never change.
+    user.realm_roles = existing.realm_roles.clone();
+    user.client_roles = existing.client_roles.clone();
+    user.groups = existing.groups.clone();
+    user.service_account_client_id = existing.service_account_client_id.clone();
+    user.created_timestamp = existing.created_timestamp;
+    user.transient = existing.transient;
+    user.managed_by = existing.managed_by.clone();
+    // Moving a person to another organization is a realm-admin act.
+    if user.org_id.is_none() || !ctx.principal.is_realm_admin() {
         user.org_id = existing.org_id;
     }
     let updated = state.oidc.store.update_user(user).await?;
@@ -1603,6 +1685,7 @@ async fn compat_add_user_client_roles(
             person_id: user.id.clone(),
         },
     ))?;
+    ensure_may_map_client_roles(&state, &ctx, &realm, &client_uuid).await?;
     for item in items {
         state
             .oidc
@@ -1644,15 +1727,23 @@ async fn compat_delete_user_client_roles(
 ) -> Result<StatusCode> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
+    let allowed = ctx.allowed_orgs();
+    let user = state
+        .oidc
+        .store
+        .get_user_by_id(&realm, allowed.as_deref(), &id)
+        .await?
+        .ok_or_else(|| WardkeepError::NotFound("user not found".into()))?;
     check_decision(state.authorizer.check(
         &ctx,
         Action::Update,
         &ObjectTarget::Person {
             realm_id: realm.clone(),
-            org_id: ctx.active_org_id.clone(),
-            person_id: id.clone(),
+            org_id: user.org_id.clone(),
+            person_id: user.id.clone(),
         },
     ))?;
+    ensure_may_map_client_roles(&state, &ctx, &realm, &client_uuid).await?;
     for item in items {
         state
             .oidc
@@ -1698,6 +1789,7 @@ async fn compat_add_group_client_roles(
             managed_by: group.managed_by,
         },
     ))?;
+    ensure_may_map_client_roles(&state, &ctx, &realm, &client_uuid).await?;
     for item in items {
         state
             .oidc
@@ -1739,16 +1831,24 @@ async fn compat_delete_group_client_roles(
 ) -> Result<StatusCode> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
+    let allowed = ctx.allowed_orgs();
+    let group = state
+        .oidc
+        .store
+        .get_group(&realm, allowed.as_deref(), &id)
+        .await?
+        .ok_or_else(|| WardkeepError::NotFound("group not found".into()))?;
     check_decision(state.authorizer.check(
         &ctx,
         Action::Update,
         &ObjectTarget::Group {
             realm_id: realm.clone(),
-            org_id: ctx.active_org_id.clone(),
-            group_id: id.clone(),
-            managed_by: None,
+            org_id: group.org_id.clone(),
+            group_id: group.id.clone(),
+            managed_by: group.managed_by,
         },
     ))?;
+    ensure_may_map_client_roles(&state, &ctx, &realm, &client_uuid).await?;
     for item in items {
         state
             .oidc

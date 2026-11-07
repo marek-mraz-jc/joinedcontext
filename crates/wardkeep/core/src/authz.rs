@@ -55,12 +55,11 @@ impl Principal {
         }
     }
 
+    /// `realm-admin` (realm role, or `realm-management` client role as in Keycloak). The master
+    /// realm's `admin` role is mapped to `realm-admin` when the token is verified, never a role
+    /// that happens to be called `admin` or `platform-admin` in a department realm (W6).
     pub fn is_realm_admin(&self) -> bool {
-        if self
-            .realm_roles
-            .iter()
-            .any(|r| matches!(r.as_str(), "realm-admin" | "admin" | "platform-admin"))
-        {
+        if self.realm_roles.iter().any(|r| r == "realm-admin") {
             return true;
         }
         self.client_roles
@@ -342,16 +341,22 @@ impl Authorizer for LocalAuthorizer {
             return Decision::deny_hidden("unauthenticated");
         }
 
-        // Self-service checks on own profile, credentials, sessions, consents
+        // Self-service on the own account: read it, run the declared self-service operations
+        // (enrol TOTP, recovery codes, revoke consent) and end the own sessions. Writing the own
+        // person through the admin API (roles, groups, enabled, organization) is not self-service:
+        // it needs a management right like anybody else's (Keycloak admin API semantics).
         match object {
-            ObjectTarget::Person { person_id, .. } | ObjectTarget::Session { person_id, .. }
+            ObjectTarget::Person { person_id, .. }
                 if ctx.principal.subject.as_deref() == Some(person_id.as_str())
-                    && matches!(
-                        action,
-                        Action::Read | Action::SelfService | Action::Update | Action::Delete
-                    ) =>
+                    && matches!(action, Action::Read | Action::SelfService) =>
             {
                 return Decision::allow("self-service on own account");
+            }
+            ObjectTarget::Session { person_id, .. }
+                if ctx.principal.subject.as_deref() == Some(person_id.as_str())
+                    && matches!(action, Action::Read | Action::SelfService | Action::Delete) =>
+            {
+                return Decision::allow("self-service on own sessions");
             }
             _ => {}
         }
