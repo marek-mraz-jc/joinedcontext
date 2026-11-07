@@ -283,8 +283,44 @@ async fn run_8_isolation_tests(store: &dyn ControlroomStore) {
     );
 
     // Test 5 (§5.3): Query cache: the same PromQL from `a` and `b` never shares an entry.
+    let cache = controlroom_query::QueryCache::default();
+    let target = json!({ "refId": "A", "expr": "up" });
+    let key_a = controlroom_query::CacheKey::new(
+        org_a,
+        instance,
+        &["viewer"],
+        "prometheus",
+        &target,
+        0,
+        60_000,
+        15_000,
+    );
+    let key_b = controlroom_query::CacheKey::new(
+        org_b,
+        instance,
+        &["viewer"],
+        "prometheus",
+        &target,
+        0,
+        60_000,
+        15_000,
+    );
+    assert_ne!(key_a, key_b);
+    cache.insert(
+        key_a.clone(),
+        vec![controlroom_model::FrameSet::new("A", Vec::new())],
+        std::time::Duration::from_secs(30),
+    );
+    assert!(cache.get(&key_a).is_some());
+    assert!(cache.get(&key_b).is_none());
+    assert!(
+        cache
+            .stats_for_org(org_b, instance)
+            .iter()
+            .all(|s| s.hits == 0)
+    );
     let stats_b = store.list_query_cache_stats(org_b).await.unwrap();
-    assert!(stats_b.is_empty());
+    assert!(stats_b.iter().all(|s| s.org_id == org_b));
 
     // Test 6 (§5.3): State/history of `b` is invisible to `a`.
     let versions_of_b_in_a = store
@@ -300,11 +336,25 @@ async fn run_8_isolation_tests(store: &dyn ControlroomStore) {
         .collect();
     assert!(hits_in_a.is_empty());
 
-    // Test 8 (§5.3): Export of `a`'s folder contains no `b` uid, datasource or library panel.
-    let exported_a_json = serde_json::to_string(&a_dashboards).unwrap();
-    assert!(!exported_a_json.contains("b-exclusive-uid"));
-    assert!(!exported_a_json.contains("b-secret-ds"));
-    assert!(!exported_a_json.contains("Secret TitleXYZ"));
+    // Test 8 (§5.3): Export of `a`'s dashboards contains no `b` uid, datasource or title, and
+    // exporting `b`'s uid from `a` is the same 404 as an unknown uid.
+    for d in &a_dashboards {
+        let exported = controlroom_import::export_dashboard(store, org_a, &d.uid)
+            .await
+            .unwrap()
+            .to_string();
+        assert!(!exported.contains("b-exclusive-uid"));
+        assert!(!exported.contains("b-secret-ds"));
+        assert!(!exported.contains("Secret TitleXYZ"));
+    }
+    let cross = controlroom_import::export_dashboard(store, org_a, "b-exclusive-uid")
+        .await
+        .unwrap_err();
+    let unknown = controlroom_import::export_dashboard(store, org_a, "non-existent-uid")
+        .await
+        .unwrap_err();
+    assert_eq!(cross.status_code(), 404);
+    assert_eq!(cross.slug(), unknown.slug());
 
     // Quota enforcement check (§5.3)
     store
