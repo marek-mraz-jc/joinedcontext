@@ -65,7 +65,9 @@ impl CacheKey {
     }
 }
 
-/// Cache key for anonymous public dashboard panel queries (R7: per `(org_id, dashboard_uid, dashboard_version, panel_id, range_bucket)`).
+/// Cache key for anonymous public dashboard panel queries (R7: per `(org_id, dashboard_uid,
+/// dashboard_version, panel_id, range_bucket)`), plus the interval and `maxDataPoints` the
+/// anonymous caller chose, so one caller's coarse request is never served to the next.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PublicCacheKey {
     pub org_id: OrgId,
@@ -75,6 +77,8 @@ pub struct PublicCacheKey {
     pub panel_id: u32,
     pub from_bucket_ms: i64,
     pub to_bucket_ms: i64,
+    pub interval_ms: i64,
+    pub max_data_points: u32,
 }
 
 impl PublicCacheKey {
@@ -89,6 +93,7 @@ impl PublicCacheKey {
         from_ms: i64,
         to_ms: i64,
         bucket_ms: i64,
+        max_data_points: u32,
     ) -> Self {
         let b = bucket_ms.max(1_000);
         Self {
@@ -99,6 +104,8 @@ impl PublicCacheKey {
             panel_id,
             from_bucket_ms: from_ms.div_euclid(b) * b,
             to_bucket_ms: to_ms.div_euclid(b) * b,
+            interval_ms: b,
+            max_data_points,
         }
     }
 }

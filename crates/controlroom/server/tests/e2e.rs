@@ -846,6 +846,28 @@ async fn e2e_public_dashboard_rules_of_r7() {
     assert_eq!(st, StatusCode::OK);
     assert_eq!(call_count.load(Ordering::SeqCst), after_first);
 
+    // A coarser request (maxDataPoints 1) is its own cache entry: it must not be served the
+    // first answer, and must not poison the entry for the next caller.
+    let (st, _, _) = send_req(
+        &app,
+        Request::builder()
+            .method("POST")
+            .uri(format!("/api/public/dashboards/{token_1}/panels/3/query"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "intervalMs": 60000,
+                    "maxDataPoints": 1,
+                    "timeRange": { "from": "1700000000000", "to": "1700003600000" }
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(call_count.load(Ordering::SeqCst), after_first + 1);
+
     // 6. Rotate token (`POST /odata/v4/PublicDashboards('{pub_uid}')/Rotate`): old token immediately answers 404 (same body as unknown token)
     let (st, _, rotated) = send_req(
         &app,

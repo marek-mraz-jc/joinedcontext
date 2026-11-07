@@ -543,7 +543,7 @@ pub async fn execute_public_dashboard_query(
         .max(safe_interval_ms) as u64;
     let max_dp = req.max_data_points.unwrap_or(1_500).clamp(1, 11_000);
 
-    // Check public cache keyed by (org_id, instance_id, dashboard_uid, dashboard_version, panel_id, range_bucket) (R7)
+    // Check public cache keyed by (org_id, instance_id, dashboard_uid, dashboard_version, panel_id, range_bucket, interval, maxDataPoints) (R7)
     let pub_cache_key = PublicCacheKey::new(
         pubdash.org_id,
         pubdash.instance_id,
@@ -553,6 +553,7 @@ pub async fn execute_public_dashboard_query(
         from_ms,
         to_ms,
         effective_interval_ms as i64,
+        max_dp,
     );
 
     if resolved_vars.is_empty()
