@@ -149,13 +149,20 @@ pub fn init() -> Result<Option<MetricsRender>, Box<dyn std::error::Error>> {
     #[cfg(not(all(feature = "console", tokio_unstable)))]
     let console: Option<tracing_subscriber::layer::Identity> = None;
 
-    tracing_subscriber::registry()
+    // `try_init`: a process that already installed a subscriber (a host
+    // serving the broker beside other modules, a test harness) keeps its
+    // own; the broker's log lines then go through it.
+    if tracing_subscriber::registry()
         .with(env_filter)
         .with(fmt)
         .with(otlp)
         .with(logs)
         .with(console)
-        .init();
+        .try_init()
+        .is_err()
+    {
+        tracing::debug!("a tracing subscriber was already installed; keeping it");
+    }
 
     if !enabled() {
         // An endpoint without the switch is a configuration the operator
@@ -170,15 +177,39 @@ pub fn init() -> Result<Option<MetricsRender>, Box<dyn std::error::Error>> {
         }
         return Ok(None); // the recorder, registry and sampler are never built
     }
-    let handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+    let handle = match metrics_exporter_prometheus::PrometheusBuilder::new()
         .set_buckets(LATENCY_BUCKETS_SECONDS)?
         .set_buckets_for_metric(
             metrics_exporter_prometheus::Matcher::Full("antares_answer_bytes".into()),
             ANSWER_BUCKETS_BYTES,
         )?
-        .install_recorder()?;
+        .install_recorder()
+    {
+        Ok(handle) => handle,
+        Err(metrics_exporter_prometheus::BuildError::FailedToSetGlobalRecorder(_)) => {
+            // Another recorder owns the `metrics` facade (a host process):
+            // the broker records into it and its /q/metrics answers 404.
+            tracing::warn!(
+                "a metrics recorder was already installed; antares_ metrics go to it \
+                 and /q/metrics is not served"
+            );
+            describe();
+            return Ok(None);
+        }
+        Err(e) => return Err(e.into()),
+    };
     describe();
     Ok(Some(Arc::new(move || handle.render())))
+}
+
+/// Telemetry of a broker hosted in another process (`jc`): that process owns
+/// the tracing subscriber and the metrics recorder, so nothing is installed
+/// here (no panic on the installed subscriber, no refused second recorder).
+/// The broker's metrics are described to the host's recorder and recorded
+/// into it; `/q/metrics` is not served (the host exposes its own render).
+pub fn init_hosted() -> Option<MetricsRender> {
+    describe();
+    None
 }
 
 /// Bucket bounds, in seconds, for every histogram this binary registers —
