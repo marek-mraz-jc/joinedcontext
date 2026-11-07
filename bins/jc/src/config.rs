@@ -53,6 +53,11 @@ pub struct Cli {
     /// cluster-internal address; it is never mounted on the public listener).
     #[arg(long, env = "JCBIN_ADMIN_LISTEN")]
     pub admin_listen: Option<SocketAddr>,
+    /// File holding the bearer token `/metrics` of the admin listener asks for (required with
+    /// `--admin-listen`: it carries every module's series, Antares' among them, which the
+    /// standalone broker serves only behind its admin token).
+    #[arg(long, env = "JCBIN_ADMIN_TOKEN_FILE")]
+    pub admin_token_file: Option<PathBuf>,
     /// Proxy network (CIDR) whose `X-Forwarded-*` headers are trusted; repeat or comma-separate.
     #[arg(
         long = "trusted-proxy",
@@ -150,6 +155,7 @@ pub struct FileConfig {
     pub base_host: Option<String>,
     pub scheme: Option<String>,
     pub admin_listen: Option<SocketAddr>,
+    pub admin_token_file: Option<PathBuf>,
     #[serde(default)]
     pub trusted_proxies: Vec<IpNet>,
     pub log_format: Option<LogFormat>,
@@ -193,6 +199,8 @@ pub enum ConfigError {
         "antares needs an admin token file (JCBIN_ANTARES_ADMIN_TOKEN_FILE or [antares] admin_token_file)"
     )]
     AntaresToken,
+    #[error("the admin listener needs a token file (JCBIN_ADMIN_TOKEN_FILE or admin_token_file)")]
+    AdminToken,
 }
 
 /// The resolved configuration `jc` runs with.
@@ -204,6 +212,7 @@ pub struct Config {
     pub base_host: String,
     pub scheme: String,
     pub admin_listen: Option<SocketAddr>,
+    pub admin_token_file: Option<PathBuf>,
     pub trusted_proxies: Vec<IpNet>,
     pub log_format: LogFormat,
     pub mounts: BTreeMap<Module, MountOverride>,
@@ -299,6 +308,11 @@ impl Config {
         if roles.contains(&Module::Antares) && antares.admin_token_file.is_none() {
             return Err(ConfigError::AntaresToken);
         }
+        let admin_listen = cli.admin_listen.or(file.admin_listen);
+        let admin_token_file = cli.admin_token_file.or(file.admin_token_file);
+        if admin_listen.is_some() && admin_token_file.is_none() {
+            return Err(ConfigError::AdminToken);
+        }
         Ok(Self {
             roles,
             listen: cli.listen.or(file.listen).unwrap_or_else(|| {
@@ -309,7 +323,8 @@ impl Config {
             mode: cli.mode.or(file.mode).unwrap_or_default(),
             base_host,
             scheme,
-            admin_listen: cli.admin_listen.or(file.admin_listen),
+            admin_listen,
+            admin_token_file,
             trusted_proxies,
             log_format: cli.log_format.or(file.log_format).unwrap_or_default(),
             mounts,
@@ -390,6 +405,7 @@ mode = "host"
 base_host = "file.example"
 scheme = "http"
 admin_listen = "127.0.0.1:2"
+admin_token_file = "/run/jc/admin-token"
 trusted_proxies = ["10.0.0.0/8"]
 log_format = "text"
 
@@ -408,6 +424,10 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
         assert_eq!(from_file.scheme, "http");
         assert_eq!(from_file.base_host, "file.example");
         assert_eq!(from_file.admin_listen, Some("127.0.0.1:2".parse().unwrap()));
+        assert_eq!(
+            from_file.admin_token_file.as_deref(),
+            Some(Path::new("/run/jc/admin-token"))
+        );
         assert_eq!(from_file.log_format, LogFormat::Text);
         assert_eq!(
             from_file.mounts[&Module::Controlroom].host.as_deref(),
@@ -563,6 +583,29 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
             ok.antares.admin_token_file.as_deref(),
             Some(Path::new("/x"))
         );
+    }
+
+    #[test]
+    fn an_admin_listener_without_a_token_file_is_refused() {
+        let err = Config::merge(
+            cli(&["--role", "controlroom", "--admin-listen", "127.0.0.1:0"]),
+            FileConfig::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ConfigError::AdminToken), "{err}");
+        let file =
+            Config::parse_file(Path::new("jc.toml"), "admin_listen = \"127.0.0.1:0\"\n").unwrap();
+        let err = Config::merge(cli(&["--role", "controlroom"]), file.clone()).unwrap_err();
+        assert!(matches!(err, ConfigError::AdminToken), "{err}");
+        let ok = Config::merge(
+            cli(&["--role", "controlroom", "--admin-token-file", "/run/a"]),
+            file,
+        )
+        .unwrap();
+        assert_eq!(ok.admin_token_file.as_deref(), Some(Path::new("/run/a")));
+        // Without an admin listener no token is needed.
+        let ok = Config::merge(cli(&["--role", "controlroom"]), FileConfig::default()).unwrap();
+        assert_eq!(ok.admin_token_file, None);
     }
 
     #[test]

@@ -6,10 +6,15 @@ use crate::module::Module;
 use crate::modules;
 use crate::runtime;
 use axum::Router;
+use axum::extract::Request;
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use jc_router::{JcRouterBuilder, Mount, MountSpec, RouterError};
 use std::future::Future;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -31,6 +36,8 @@ pub enum StartError {
     },
     #[error("{0}")]
     Metrics(String),
+    #[error("admin listener: {0}")]
+    Admin(String),
     #[error("server: {0}")]
     Serve(std::io::Error),
 }
@@ -123,12 +130,43 @@ pub async fn build_router(
     Ok(builder.build()?.into_axum_router())
 }
 
-/// The internal admin router: Prometheus text of the one recorder, and liveness.
-fn admin_router() -> Result<Router, StartError> {
+/// Whether `headers` carry `Authorization: Bearer <expected>`.
+fn bearer_matches(headers: &HeaderMap, expected: &str) -> bool {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .is_some_and(|got| runtime::secret_eq(got.trim().as_bytes(), expected.as_bytes()))
+}
+
+/// The internal admin router: Prometheus text of the one recorder behind the admin bearer token
+/// (it carries every module's series; Antares serves its own only behind its admin token), and
+/// open liveness.
+fn admin_router(token: String) -> Result<Router, StartError> {
     let handle = runtime::metrics_handle().map_err(StartError::Metrics)?;
+    let expected: Arc<str> = token.into();
+    let guard = move |req: Request, next: Next| {
+        let expected = Arc::clone(&expected);
+        async move {
+            if bearer_matches(req.headers(), &expected) {
+                next.run(req).await
+            } else {
+                unauthorized()
+            }
+        }
+    };
     Ok(Router::new()
         .route("/metrics", get(move || std::future::ready(handle.render())))
+        .route_layer(axum::middleware::from_fn(guard))
         .route("/healthz", get(|| std::future::ready("ok"))))
+}
+
+fn unauthorized() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::WWW_AUTHENTICATE, "Bearer")],
+    )
+        .into_response()
 }
 
 async fn bind(addr: SocketAddr) -> Result<TcpListener, StartError> {
@@ -199,14 +237,24 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     // The one recorder goes in before any module is built: a module that installs its own when
     // none is there (the Portal's `telemetry::install`) then falls back to recording into this one.
     runtime::metrics_handle().map_err(StartError::Metrics)?;
+    let admin_token = match cfg.admin_listen {
+        Some(_) => {
+            let file = cfg
+                .admin_token_file
+                .as_deref()
+                .ok_or(crate::config::ConfigError::AdminToken)?;
+            Some(runtime::read_secret_file(file).map_err(StartError::Admin)?)
+        }
+        None => None,
+    };
     let tasks = TaskTracker::new();
     let router = build_router(cfg, &shutdown, &tasks).await?;
     let listener = bind(cfg.listen).await?;
     let addr = listener.local_addr().map_err(StartError::Serve)?;
     let mut servers = vec![serve(listener, router, shutdown.clone())];
     let mut admin_addr = None;
-    if let Some(admin) = cfg.admin_listen {
-        let admin_router = admin_router()?;
+    if let (Some(admin), Some(token)) = (cfg.admin_listen, admin_token) {
+        let admin_router = admin_router(token)?;
         let listener = bind(admin).await?;
         admin_addr = Some(listener.local_addr().map_err(StartError::Serve)?);
         servers.push(serve(listener, admin_router, shutdown.clone()));

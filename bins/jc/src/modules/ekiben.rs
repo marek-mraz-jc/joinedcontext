@@ -25,13 +25,7 @@ fn err(e: impl std::fmt::Display) -> StartError {
 /// Reads the bearer token: the whole file, trimmed; an empty file is refused. The token is never
 /// logged or put into an error.
 fn read_token(path: &Path) -> Result<String, StartError> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| err(format!("cannot read token file {}: {e}", path.display())))?;
-    let token = raw.trim();
-    if token.is_empty() {
-        return Err(err(format!("token file {} is empty", path.display())));
-    }
-    Ok(token.to_owned())
+    crate::runtime::read_secret_file(path).map_err(err)
 }
 
 /// The sandbox directory for `file` components: the configured one, or a private (0700)

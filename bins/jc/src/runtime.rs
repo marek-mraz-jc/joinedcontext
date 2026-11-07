@@ -8,6 +8,7 @@
 use crate::config::LogFormat;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use std::io::IsTerminal;
+use std::path::Path;
 use std::sync::OnceLock;
 
 static METRICS: OnceLock<Result<PrometheusHandle, String>> = OnceLock::new();
@@ -38,6 +39,23 @@ pub fn metrics_handle() -> Result<PrometheusHandle, String> {
                 .map_err(|e| format!("metrics recorder: {e}"))
         })
         .clone()
+}
+
+/// Reads a secret (a bearer token) from a file: the whole file, trimmed; an empty file is refused.
+/// The secret is never logged or put into an error.
+pub fn read_secret_file(path: &Path) -> Result<String, String> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read token file {}: {e}", path.display()))?;
+    let token = raw.trim();
+    if token.is_empty() {
+        return Err(format!("token file {} is empty", path.display()));
+    }
+    Ok(token.to_owned())
+}
+
+/// Compares two secrets in time that does not depend on where they first differ.
+pub fn secret_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// Installs ring as the process-wide rustls crypto provider unless one is already installed.
@@ -72,5 +90,14 @@ mod tests {
         let b = metrics_handle().expect("same recorder");
         assert!(b.render().contains("jc_runtime_test_total"));
         assert_eq!(a.render(), b.render());
+    }
+
+    #[test]
+    fn secrets_compare_whole_and_exact() {
+        assert!(secret_eq(b"token", b"token"));
+        assert!(!secret_eq(b"token", b"tokeN"));
+        assert!(!secret_eq(b"token", b"token2"));
+        assert!(!secret_eq(b"token", b""));
+        assert!(secret_eq(b"", b""));
     }
 }

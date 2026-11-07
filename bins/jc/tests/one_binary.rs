@@ -17,6 +17,7 @@ struct Fixture {
     ekiben_token: PathBuf,
     ekiben_root: PathBuf,
     antares_token: PathBuf,
+    admin_token: PathBuf,
 }
 
 /// Antares keeps process-wide statics (one broker per process), and these tests share one process:
@@ -25,6 +26,7 @@ static ONE_JC_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(
 
 const EKIBEN_TOKEN: &str = "ekiben-test-token";
 const ANTARES_TOKEN: &str = "antares-admin-test-token-0123456789abcdef";
+const ADMIN_TOKEN: &str = "jc-admin-metrics-test-token";
 
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -46,6 +48,8 @@ fn fixture() -> Fixture {
     let ekiben_root = dir.path().join("ekiben-files");
     let antares_token = dir.path().join("antares-admin-token");
     std::fs::write(&antares_token, format!("{ANTARES_TOKEN}\n")).expect("antares token");
+    let admin_token = dir.path().join("admin-token");
+    std::fs::write(&admin_token, format!("{ADMIN_TOKEN}\n")).expect("admin token");
     Fixture {
         _dir: dir,
         kek,
@@ -53,6 +57,7 @@ fn fixture() -> Fixture {
         ekiben_token,
         ekiben_root,
         antares_token,
+        admin_token,
     }
 }
 
@@ -62,6 +67,7 @@ fn config(fx: &Fixture, mode: MountMode, mounts: BTreeMap<Module, MountOverride>
             role: Some("all".into()),
             listen: Some("127.0.0.1:0".parse().unwrap()),
             admin_listen: Some("127.0.0.1:0".parse().unwrap()),
+            admin_token_file: Some(fx.admin_token.clone()),
             base_host: Some("city.test".into()),
             scheme: Some("http".into()),
             wardkeep_kek_file: Some(fx.kek.clone()),
@@ -176,12 +182,45 @@ async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
     let status = raw_get_status(addr, "city.test", "/dashboards/%2e%2e/id/realms/jc").await;
     assert_eq!(status, 404);
 
-    // The admin listener is separate: metrics and liveness there, never on the public listener.
+    // The admin listener is separate: metrics (behind the admin token: they carry Antares'
+    // series, which the broker serves only behind its own token) and open liveness there, never
+    // on the public listener.
     let admin = running.admin_addr.expect("admin listener");
     let (status, body) = get(admin, "localhost", "/healthz").await;
     assert_eq!((status, body.as_str()), (StatusCode::OK, "ok"));
-    let (status, _) = get(admin, "localhost", "/metrics").await;
-    assert_eq!(status, StatusCode::OK);
+    let (status, body) = get(admin, "localhost", "/metrics").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(body.is_empty(), "{body}");
+    let client = reqwest::Client::new();
+    for wrong in [
+        "wrong",
+        "jc-admin-metrics-test-tokem",
+        "jc-admin-metrics-test-token-",
+    ] {
+        let resp = client
+            .get(format!("http://{admin}/metrics"))
+            .bearer_auth(wrong)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{wrong}");
+    }
+    let resp = client
+        .get(format!("http://{admin}/metrics"))
+        .header("authorization", format!("Basic {ADMIN_TOKEN}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let resp = client
+        .get(format!("http://{admin}/metrics"))
+        .bearer_auth(ADMIN_TOKEN)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let text = resp.text().await.unwrap();
+    assert!(!text.contains(ADMIN_TOKEN));
     let (status, _) = get(addr, "city.test", "/metrics").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
@@ -502,6 +541,30 @@ async fn a_taken_port_is_reported() {
         .err()
         .expect("refused");
     assert!(matches!(err, StartError::Bind { .. }), "{err}");
+}
+
+#[tokio::test]
+async fn an_admin_listener_without_a_readable_token_is_refused() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
+    let fx = fixture();
+    let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
+    cfg.roles = vec![Module::Controlroom];
+    cfg.admin_token_file = None;
+    let err = jc::start(&cfg, CancellationToken::new())
+        .await
+        .err()
+        .expect("refused");
+    assert!(matches!(err, StartError::Config(_)), "{err}");
+
+    let empty = fx.admin_token.with_file_name("empty-admin-token");
+    std::fs::write(&empty, "\n").unwrap();
+    cfg.admin_token_file = Some(empty);
+    let err = jc::start(&cfg, CancellationToken::new())
+        .await
+        .err()
+        .expect("refused");
+    assert!(matches!(err, StartError::Admin(_)), "{err}");
+    assert!(err.to_string().contains("is empty"), "{err}");
 }
 
 #[tokio::test]
