@@ -423,6 +423,14 @@ async fn compat_create_realm(
             realm_id: realm.id.clone(),
         },
     ))?;
+    if state.oidc.store.get_realm(&realm.realm).await?.is_some()
+        || state.oidc.store.get_realm(&realm.id).await?.is_some()
+    {
+        return Err(WardkeepError::Conflict(format!(
+            "Conflict detected. See logs for details: realm {} exists",
+            realm.realm
+        )));
+    }
     state.oidc.store.upsert_realm(realm.clone()).await?;
     record_admin_write(&state, &ctx, "CREATE", "REALM", &realm.realm, None).await?;
     Ok(StatusCode::CREATED)

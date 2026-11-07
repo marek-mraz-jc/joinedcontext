@@ -129,9 +129,10 @@ async fn send_req(
 
 #[tokio::test]
 async fn row_01_02_03_realms_and_partial_import() {
-    let (app, _store, admin_token, _) = setup_app().await;
+    let (app, store, admin_token, _) = setup_app().await;
 
-    // Row 2: POST /admin/realms
+    // Row 2: POST /admin/realms. Keycloak creates realms only for a master-realm admin
+    // (keycloak-config-cli logs in to master); a token of realm `dev` may not create `stage`.
     let (st, _, _) = send_req(
         &app,
         Method::POST,
@@ -140,10 +141,56 @@ async fn row_01_02_03_realms_and_partial_import() {
         Some(json!({ "id": "stage", "realm": "stage", "enabled": true })),
     )
     .await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+
+    store
+        .upsert_realm(RealmConfig {
+            id: "master".into(),
+            realm: "master".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let master_keys = store.list_signing_keys("master").await.unwrap();
+    let now = chrono::Utc::now().timestamp();
+    let master_admin_token = sign_jwt(
+        &master_keys[0],
+        store.kek(),
+        Some("JWT"),
+        &json!({
+            "iss": "https://idm.localhost/realms/master",
+            "sub": "master-admin-1",
+            "azp": "admin-cli",
+            "typ": "Bearer",
+            "iat": now,
+            "exp": now + 3600,
+            "realm_access": { "roles": ["admin"] }
+        }),
+    )
+    .unwrap();
+    let (st, _, _) = send_req(
+        &app,
+        Method::POST,
+        "/admin/realms",
+        &master_admin_token,
+        Some(json!({ "id": "stage", "realm": "stage", "enabled": true })),
+    )
+    .await;
     assert_eq!(st, StatusCode::CREATED);
+    // COMPAT row 2: a realm that exists answers 409 and is not overwritten.
+    let (st, _, _) = send_req(
+        &app,
+        Method::POST,
+        "/admin/realms",
+        &master_admin_token,
+        Some(json!({ "id": "stage", "realm": "stage", "displayName": "clobbered", "enabled": true })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT);
 
     // Row 1 & 3: GET & PUT /admin/realms/{realm}
-    let (st, _, body) = send_req(&app, Method::GET, "/admin/realms/stage", &admin_token, None).await;
+    let (st, _, body) =
+        send_req(&app, Method::GET, "/admin/realms/stage", &master_admin_token, None).await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body["realm"], "stage");
 
@@ -151,11 +198,14 @@ async fn row_01_02_03_realms_and_partial_import() {
         &app,
         Method::PUT,
         "/admin/realms/stage",
-        &admin_token,
+        &master_admin_token,
         Some(json!({ "id": "stage", "realm": "stage", "displayName": "Stage Org", "enabled": true })),
     )
     .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
+    // A token of realm `dev` cannot read realm `stage`.
+    let (st, _, _) = send_req(&app, Method::GET, "/admin/realms/stage", &admin_token, None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
 
     // Row 4: POST /admin/realms/{realm}/partialImport (SKIP and OVERWRITE, PF-126 fixed IDs)
     let fixed_id = "de300000-0000-4000-8000-000000000001";
