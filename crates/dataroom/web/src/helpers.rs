@@ -245,7 +245,12 @@ pub fn jc_data_formats(ds: &Dataset) -> Vec<&'static str> {
             found.insert(kind.to_owned());
             continue;
         }
-        let mime = dist.media_type.as_deref().unwrap_or("").trim().to_ascii_lowercase();
+        let mime = dist
+            .media_type
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
         let mapped_mime = match mime.as_str() {
             "text/calendar" => Some("ICS"),
             "application/atom+xml" => Some("ATOM"),
@@ -287,7 +292,15 @@ pub fn jc_is_source(dist: &Distribution, ds: &Dataset) -> bool {
         && dist.format.as_deref().unwrap_or("").is_empty()
 }
 
-const API_FORMATS: [&str; 7] = ["NGSI-LD", "WEBSOCKET", "MCP", "OGCFEAT", "ODATA", "STA", "DCAT"];
+const API_FORMATS: [&str; 7] = [
+    "NGSI-LD",
+    "WEBSOCKET",
+    "MCP",
+    "OGCFEAT",
+    "ODATA",
+    "STA",
+    "DCAT",
+];
 const DATA_ORDER: [&str; 6] = ["CSV", "GEOJSON", "JSON", "XLSX", "PARQUET", "ZIP"];
 
 pub fn resource_section_key(dist: &Distribution, ds: &Dataset) -> &'static str {
@@ -306,7 +319,12 @@ pub fn resource_section_key(dist: &Distribution, ds: &Dataset) -> &'static str {
             "data"
         };
     }
-    let fmt = dist.format.as_deref().unwrap_or("").trim().to_ascii_uppercase();
+    let fmt = dist
+        .format
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_uppercase();
     if API_FORMATS.contains(&fmt.as_str()) {
         "api"
     } else {
@@ -364,7 +382,12 @@ pub fn jc_resource_format_chip(dist: &Distribution) -> String {
 }
 
 /// Human-readable resource label (`jc_resource_label` in `plugin.py` line 798, D3, D4).
-pub fn jc_resource_label(dist: &Distribution, ds: &Dataset, lang: &str, default_lang: &str) -> String {
+pub fn jc_resource_label(
+    dist: &Distribution,
+    ds: &Dataset,
+    lang: &str,
+    default_lang: &str,
+) -> String {
     let raw_name = localized_text(&dist.title, lang, default_lang)
         .unwrap_or("")
         .trim();
@@ -443,18 +466,20 @@ pub fn jc_resource_label(dist: &Distribution, ds: &Dataset, lang: &str, default_
     } else if !raw_name.is_empty() {
         raw_name.to_owned()
     } else {
-        dist.format
-            .clone()
-            .unwrap_or_else(|| dist.id.clone())
+        dist.format.clone().unwrap_or_else(|| dist.id.clone())
     }
 }
 
 /// One-line localized description of what a resource is (`jc_what` / `FORMATS` in `plugin.py`).
 pub fn jc_what(dist: &Distribution, lang: &str) -> String {
     let code = normalize_lang_code(lang);
-    let key = jc_kind(dist)
-        .map(str::to_owned)
-        .unwrap_or_else(|| dist.format.as_deref().unwrap_or("").trim().to_ascii_uppercase());
+    let key = jc_kind(dist).map(str::to_owned).unwrap_or_else(|| {
+        dist.format
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_uppercase()
+    });
     let base = match (key.as_str(), code.as_str()) {
         ("NGSI-LD", "sk") => "Živé entity cez API",
         ("NGSI-LD", "cs") => "Živé entity přes API",
@@ -767,10 +792,13 @@ pub fn jc_about(
     }
 
     if let Some(ref temp) = ds.temporal {
-        let parts: Vec<String> = [temp.start.map(|d| d.to_string()), temp.end.map(|d| d.to_string())]
-            .into_iter()
-            .flatten()
-            .collect();
+        let parts: Vec<String> = [
+            temp.start.map(|d| d.to_string()),
+            temp.end.map(|d| d.to_string()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
         if !parts.is_empty() {
             rows.push(AboutRow {
                 label: jc_t("period", lang),
@@ -800,7 +828,11 @@ pub fn jc_about(
         }
     }
 
-    if let Some(ident) = ds.identifier.as_ref().or_else(|| ds.extras.get("identifier")) {
+    if let Some(ident) = ds
+        .identifier
+        .as_ref()
+        .or_else(|| ds.extras.get("identifier"))
+    {
         if !ident.is_empty() {
             rows.push(AboutRow {
                 label: jc_t("identifier", lang),
@@ -867,20 +899,82 @@ pub fn jc_frequency(ds: &Dataset, lang: &str) -> Option<FrequencyInfo> {
         .frequency
         .as_deref()
         .or_else(|| ds.extras.get("frequency").map(String::as_str))?;
-    let code = raw.trim_end_matches('/').rsplit('/').next().unwrap_or(raw).to_ascii_uppercase();
+    let code = raw
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(raw)
+        .to_ascii_uppercase();
     let l = normalize_lang_code(lang);
 
-    let (en, sk, cs, de, hu, hours): (&str, &str, &str, &str, &str, Option<i64>) = match code.as_str() {
-        "CONT" | "UPDATE_CONT" => ("Continuously", "Priebežne", "Průběžně", "Laufend", "Folyamatosan", None),
-        "HOURLY" => ("Every hour", "Každú hodinu", "Každou hodinu", "Stündlich", "Óránként", Some(1)),
-        "DAILY" => ("Every day", "Denne", "Denně", "Täglich", "Naponta", Some(24)),
-        "WEEKLY" => ("Every week", "Týždenne", "Týdně", "Wöchentlich", "Hetente", Some(7 * 24)),
-        "MONTHLY" => ("Every month", "Mesačne", "Měsíčně", "Monatlich", "Havonta", Some(30 * 24)),
-        "QUARTERLY" => ("Every quarter", "Štvrťročne", "Čtvrtletně", "Vierteljährlich", "Negyedévente", Some(91 * 24)),
-        "ANNUAL" => ("Every year", "Ročne", "Ročně", "Jährlich", "Évente", Some(365 * 24)),
-        "IRREG" => ("Irregularly", "Nepravidelne", "Nepravidelně", "Unregelmäßig", "Rendszertelenül", None),
-        _ => return Some((raw.to_owned(), None)),
-    };
+    let (en, sk, cs, de, hu, hours): (&str, &str, &str, &str, &str, Option<i64>) =
+        match code.as_str() {
+            "CONT" | "UPDATE_CONT" => (
+                "Continuously",
+                "Priebežne",
+                "Průběžně",
+                "Laufend",
+                "Folyamatosan",
+                None,
+            ),
+            "HOURLY" => (
+                "Every hour",
+                "Každú hodinu",
+                "Každou hodinu",
+                "Stündlich",
+                "Óránként",
+                Some(1),
+            ),
+            "DAILY" => (
+                "Every day",
+                "Denne",
+                "Denně",
+                "Täglich",
+                "Naponta",
+                Some(24),
+            ),
+            "WEEKLY" => (
+                "Every week",
+                "Týždenne",
+                "Týdně",
+                "Wöchentlich",
+                "Hetente",
+                Some(7 * 24),
+            ),
+            "MONTHLY" => (
+                "Every month",
+                "Mesačne",
+                "Měsíčně",
+                "Monatlich",
+                "Havonta",
+                Some(30 * 24),
+            ),
+            "QUARTERLY" => (
+                "Every quarter",
+                "Štvrťročne",
+                "Čtvrtletně",
+                "Vierteljährlich",
+                "Negyedévente",
+                Some(91 * 24),
+            ),
+            "ANNUAL" => (
+                "Every year",
+                "Ročne",
+                "Ročně",
+                "Jährlich",
+                "Évente",
+                Some(365 * 24),
+            ),
+            "IRREG" => (
+                "Irregularly",
+                "Nepravidelne",
+                "Nepravidelně",
+                "Unregelmäßig",
+                "Rendszertelenül",
+                None,
+            ),
+            _ => return Some((raw.to_owned(), None)),
+        };
     let word = match l.as_str() {
         "sk" => sk,
         "cs" => cs,
@@ -1028,7 +1122,8 @@ pub fn jc_more_rows(ds: &Dataset, lang: &str) -> Vec<AboutRow> {
         } else {
             v.clone()
         };
-        let link = (text.starts_with("http://") || text.starts_with("https://")).then(|| text.clone());
+        let link =
+            (text.starts_with("http://") || text.starts_with("https://")).then(|| text.clone());
         rows.push(AboutRow { label, text, link });
     }
     rows
@@ -1295,8 +1390,9 @@ pub fn jc_schema_org_dict(
         .get("publisher_name")
         .cloned()
         .or_else(|| {
-            publisher
-                .and_then(|p| localized_text(&p.title, lang, &cat.default_language).map(str::to_owned))
+            publisher.and_then(|p| {
+                localized_text(&p.title, lang, &cat.default_language).map(str::to_owned)
+            })
         })
         .unwrap_or_else(|| ds.publisher_id.clone());
     let pub_uri = ds
@@ -1345,11 +1441,7 @@ pub fn jc_schema_org_dict(
             record.insert("license".into(), json!(lic));
         }
     }
-    if let Some(sp) = ds
-        .spatial
-        .first()
-        .or_else(|| ds.extras.get("spatial_uri"))
-    {
+    if let Some(sp) = ds.spatial.first().or_else(|| ds.extras.get("spatial_uri")) {
         let sp_iri = if sp.starts_with("http://") || sp.starts_with("https://") {
             sp.clone()
         } else {
@@ -1483,10 +1575,10 @@ pub fn jc_mcp_install(branding: &BrandingBlock) -> Option<McpInstallView> {
     }))
     .unwrap_or_default();
 
-    let vscode_payload = format!(
-        "{{\"name\":\"joinedcontext\",\"type\":\"http\",\"url\":\"{url}\"}}"
-    );
-    let vscode_enc: String = url::form_urlencoded::byte_serialize(vscode_payload.as_bytes()).collect();
+    let vscode_payload =
+        format!("{{\"name\":\"joinedcontext\",\"type\":\"http\",\"url\":\"{url}\"}}");
+    let vscode_enc: String =
+        url::form_urlencoded::byte_serialize(vscode_payload.as_bytes()).collect();
     let vscode = format!("vscode:mcp/install?{vscode_enc}");
 
     use base64::Engine as _;
@@ -1519,7 +1611,11 @@ pub struct ResourcePreviewConfig {
     pub heading: String,
 }
 
-pub fn jc_preview(dist: &Distribution, branding: &BrandingBlock, lang: &str) -> Option<ResourcePreviewConfig> {
+pub fn jc_preview(
+    dist: &Distribution,
+    branding: &BrandingBlock,
+    lang: &str,
+) -> Option<ResourcePreviewConfig> {
     let kind = jc_kind(dist)?;
     let url = dist.access_url.as_str();
     if !url.starts_with("https://") {
@@ -1590,7 +1686,10 @@ pub fn jc_examples(dist: &Distribution, lang: &str) -> Vec<ResourceExample> {
     let mut out = Vec::new();
     let mut add = |title: String, code: Option<String>, steps: Vec<String>| {
         let idx = out.len();
-        let cb = code.as_deref().map(render_breakable_html).unwrap_or_default();
+        let cb = code
+            .as_deref()
+            .map(render_breakable_html)
+            .unwrap_or_default();
         out.push(ResourceExample {
             id: format!("jc-ex-{}-{idx}", dist.id),
             title,
@@ -1605,7 +1704,9 @@ pub fn jc_examples(dist: &Distribution, lang: &str) -> Vec<ResourceExample> {
             let base = url.split('?').next().unwrap_or(url).trim_end_matches('/');
             add(
                 jc_t("ex_types", lang),
-                Some(format!("curl -H 'Accept: application/ld+json' '{base}/types'")),
+                Some(format!(
+                    "curl -H 'Accept: application/ld+json' '{base}/types'"
+                )),
                 Vec::new(),
             );
         }
@@ -1657,7 +1758,9 @@ pub fn jc_examples(dist: &Distribution, lang: &str) -> Vec<ResourceExample> {
             );
             add(
                 jc_t("mcp_claude", lang),
-                Some(format!("claude mcp add --transport http joinedcontext '{url}'")),
+                Some(format!(
+                    "claude mcp add --transport http joinedcontext '{url}'"
+                )),
                 Vec::new(),
             );
         }
@@ -1698,9 +1801,9 @@ pub fn jc_map_config(
 ) -> Option<Value> {
     let ogc_dist = ds.distributions.iter().find(|d| {
         (jc_kind(d) == Some("OGCFEAT")
-            || d.format
-                .as_deref()
-                .is_some_and(|f| f.eq_ignore_ascii_case("OGCFEAT") || f.eq_ignore_ascii_case("GEOJSON")))
+            || d.format.as_deref().is_some_and(|f| {
+                f.eq_ignore_ascii_case("OGCFEAT") || f.eq_ignore_ascii_case("GEOJSON")
+            }))
             && resource_id.is_none_or(|rid| d.id == rid)
     })?;
     let base = cat.base_url();
@@ -1759,13 +1862,8 @@ pub struct StaticPageView {
     pub other_pages: Vec<(String, String)>,
 }
 
-pub const STATIC_PAGE_NAMES: [&str; 5] = [
-    "connector",
-    "privacy",
-    "terms",
-    "support",
-    "accessibility",
-];
+pub const STATIC_PAGE_NAMES: [&str; 5] =
+    ["connector", "privacy", "terms", "support", "accessibility"];
 
 pub fn jc_page(name: &str, branding: &BrandingBlock, lang: &str) -> Option<StaticPageView> {
     if !STATIC_PAGE_NAMES.contains(&name) {
@@ -1773,7 +1871,10 @@ pub fn jc_page(name: &str, branding: &BrandingBlock, lang: &str) -> Option<Stati
     }
     let code = normalize_lang_code(lang);
     let mcp = jc_mcp_install(branding);
-    let mcp_url = mcp.as_ref().map(|m| m.url.as_str()).unwrap_or("https://api.localhost/api/mcp");
+    let mcp_url = mcp
+        .as_ref()
+        .map(|m| m.url.as_str())
+        .unwrap_or("https://api.localhost/api/mcp");
     let domain = if branding.domain.is_empty() {
         "localhost"
     } else {
@@ -2012,7 +2113,11 @@ type GuideText = (
     Vec<(&'static str, &'static str)>,
 );
 
-pub fn jc_assistant_guide(id: &str, branding: &BrandingBlock, lang: &str) -> Option<AssistantGuideView> {
+pub fn jc_assistant_guide(
+    id: &str,
+    branding: &BrandingBlock,
+    lang: &str,
+) -> Option<AssistantGuideView> {
     if !matches!(id, "chatgpt" | "claude" | "grok") {
         return None;
     }
@@ -2177,11 +2282,7 @@ pub fn jc_assistant_guide(id: &str, branding: &BrandingBlock, lang: &str) -> Opt
 }
 
 /// Generates `sitemap.xml` for public non-hidden datasets and active publishers (`jc_sitemap_xml` in `plugin.py`, D6).
-pub fn jc_sitemap_xml(
-    cat: &Catalogue,
-    datasets: &[Dataset],
-    publishers: &[Publisher],
-) -> String {
+pub fn jc_sitemap_xml(cat: &Catalogue, datasets: &[Dataset], publishers: &[Publisher]) -> String {
     let site = cat.base_url();
     let mut lines = vec![
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>".to_owned(),
@@ -2200,7 +2301,9 @@ pub fn jc_sitemap_xml(
     for ds in pub_ds.into_iter().take(50_000) {
         let loc = html_escape(&format!("{site}/dataset/{}", ds.name));
         let lastmod = ds.modified.format("%Y-%m-%d").to_string();
-        lines.push(format!("<url><loc>{loc}</loc><lastmod>{lastmod}</lastmod></url>"));
+        lines.push(format!(
+            "<url><loc>{loc}</loc><lastmod>{lastmod}</lastmod></url>"
+        ));
     }
     for p in publishers.iter().filter(|p| p.state == RecordState::Active) {
         let loc = html_escape(&format!("{site}/organization/{}", p.name));
@@ -2242,16 +2345,18 @@ pub fn publisher_card_info(
                 .collect();
             (!init.is_empty()).then_some(init)
         }),
-        colour: p
-            .badge_colour
-            .clone()
-            .or_else(|| Some("#00579c".into())),
+        colour: p.badge_colour.clone().or_else(|| Some("#00579c".into())),
         logo_url: p.logo_url.clone(),
         description: p.description.clone(),
         homepage: p.homepage.clone(),
     };
-    let (img, desc) =
-        resolve_publisher_branding(p.logo_url.as_deref(), &p.description, Some(&fb), lang, default_lang);
+    let (img, desc) = resolve_publisher_branding(
+        p.logo_url.as_deref(),
+        &p.description,
+        Some(&fb),
+        lang,
+        default_lang,
+    );
     let image = img.unwrap_or_else(|| "/base/images/placeholder-organization.png".into());
     let _ = jc_rows;
     (title, image, desc)
@@ -2265,7 +2370,13 @@ mod tests {
     fn d6_mcp_address_breaks_before_single_slashes_only() {
         assert_eq!(
             url_parts("https://api.dev.joinedcontext.com/api/mcp/d/demo"),
-            vec!["https://api.dev.joinedcontext.com", "/api", "/mcp", "/d", "/demo"]
+            vec![
+                "https://api.dev.joinedcontext.com",
+                "/api",
+                "/mcp",
+                "/d",
+                "/demo"
+            ]
         );
         let mut branding = BrandingBlock::default();
         branding.apply_override_json(&json!({ "domain": "dev.joinedcontext.com" }));

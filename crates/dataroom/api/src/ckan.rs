@@ -14,11 +14,12 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::Utc;
 use dataroom_core::ckan_compat::{
-    ckan_license_list, dataset_to_ckan, distribution_from_ckan,
-    distribution_to_ckan, resource_view_to_ckan,
+    ckan_license_list, dataset_to_ckan, distribution_from_ckan, distribution_to_ckan,
+    resource_view_to_ckan,
 };
 use dataroom_core::{
-    text_in_lang, Action, DataroomError, DatasetFilter, ObjectTarget, Publisher, RecordState, ResourceView, Visibility,
+    text_in_lang, Action, DataroomError, DatasetFilter, ObjectTarget, Publisher, RecordState,
+    ResourceView, Visibility,
 };
 use dataroom_plugin::validate_view_payload;
 use dataroom_search::{apply_fq_to_filter, search_datasets};
@@ -152,10 +153,20 @@ async fn dispatch_ckan_action(
                 .get("name")
                 .and_then(Value::as_str)
                 .unwrap_or("status_show");
-            ckan_ok(&base, &action, json!(format!("CKAN Action API: {name}")), is_anon_get)
+            ckan_ok(
+                &base,
+                &action,
+                json!(format!("CKAN Action API: {name}")),
+                is_anon_get,
+            )
         }
         "site_read" => ckan_ok(&base, &action, json!(true), is_anon_get),
-        "license_list" => ckan_ok(&base, &action, Value::Array(ckan_license_list()), is_anon_get),
+        "license_list" => ckan_ok(
+            &base,
+            &action,
+            Value::Array(ckan_license_list()),
+            is_anon_get,
+        ),
         "tag_list" => {
             let datasets = match state.store.list_datasets(&ctx).await {
                 Ok(d) => d,
@@ -267,8 +278,7 @@ async fn dispatch_ckan_action(
                     }
                 }
             }
-            let ckan_dict =
-                dataset_to_ckan(&ds, pub_rec.as_ref(), &views, &cat.default_language);
+            let ckan_dict = dataset_to_ckan(&ds, pub_rec.as_ref(), &views, &cat.default_language);
             let cacheable = is_anon_get && ds.visibility == Visibility::Public;
             ckan_ok(&base, &action, ckan_dict, cacheable)
         }
@@ -383,7 +393,9 @@ async fn dispatch_ckan_action(
                     .filter_map(Value::as_str)
                     .map(str::to_owned)
                     .collect(),
-                Some(Value::String(s)) => serde_json::from_str::<Vec<String>>(s).unwrap_or_default(),
+                Some(Value::String(s)) => {
+                    serde_json::from_str::<Vec<String>>(s).unwrap_or_default()
+                }
                 _ => Vec::new(),
             };
             let (facets, search_facets) = outcome.facets.to_ckan_facets(&requested_facets);
@@ -433,7 +445,14 @@ async fn dispatch_ckan_action(
                     DataroomError::field_error("id", "Missing value"),
                 );
             };
-            if state.store.get_dataset(&ctx, ident).await.ok().flatten().is_none() {
+            if state
+                .store
+                .get_dataset(&ctx, ident)
+                .await
+                .ok()
+                .flatten()
+                .is_none()
+            {
                 return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
             }
             let op_ctx = state.op_context();
@@ -584,8 +603,7 @@ async fn dispatch_ckan_action(
                 .list_resource_views(&ctx, &dist.id)
                 .await
                 .unwrap_or_default();
-            let res_dict =
-                distribution_to_ckan(&dist, &ds.id, pos, &views, &cat.default_language);
+            let res_dict = distribution_to_ckan(&dist, &ds.id, pos, &views, &cat.default_language);
             ckan_ok(&base, &action, res_dict, is_anon_get)
         }
         "resource_create" => {
@@ -622,8 +640,7 @@ async fn dispatch_ckan_action(
             if let Err(e) = state.store.upsert_dataset(&ctx, ds.clone()).await {
                 return ckan_err(&base, &action, e);
             }
-            let res_dict =
-                distribution_to_ckan(&dist, &ds.id, pos, &[], &cat.default_language);
+            let res_dict = distribution_to_ckan(&dist, &ds.id, pos, &[], &cat.default_language);
             ckan_ok(&base, &action, res_dict, false)
         }
         "resource_update" | "resource_patch" => {
@@ -634,12 +651,11 @@ async fn dispatch_ckan_action(
                     DataroomError::field_error("id", "Missing value"),
                 );
             };
-            let Some((mut ds, existing_dist)) =
-                (match state.store.get_distribution(&ctx, id).await {
-                    Ok(r) => r,
-                    Err(e) => return ckan_err(&base, &action, e),
-                })
-            else {
+            let Some((mut ds, existing_dist)) = (match state.store.get_distribution(&ctx, id).await
+            {
+                Ok(r) => r,
+                Err(e) => return ckan_err(&base, &action, e),
+            }) else {
                 return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
             };
             let pub_rec = state
@@ -658,13 +674,8 @@ async fn dispatch_ckan_action(
                 .iter()
                 .position(|r| r.id == existing_dist.id)
                 .unwrap_or(0);
-            let mut merged_json = distribution_to_ckan(
-                &existing_dist,
-                &ds.id,
-                pos,
-                &[],
-                &cat.default_language,
-            );
+            let mut merged_json =
+                distribution_to_ckan(&existing_dist, &ds.id, pos, &[], &cat.default_language);
             if let (Some(target_obj), Some(patch_obj)) =
                 (merged_json.as_object_mut(), payload.as_object())
             {
@@ -962,10 +973,7 @@ async fn dispatch_ckan_action(
             if let Err(e) = dataroom_core::validate_slug("name", name) {
                 return ckan_err(&base, &action, e);
             }
-            let title_str = payload
-                .get("title")
-                .and_then(Value::as_str)
-                .unwrap_or(name);
+            let title_str = payload.get("title").and_then(Value::as_str).unwrap_or(name);
             let desc_str = payload
                 .get("description")
                 .or_else(|| payload.get("notes"))
@@ -1189,10 +1197,7 @@ fn parse_resource_view(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
-    let order = payload
-        .get("order")
-        .and_then(Value::as_i64)
-        .unwrap_or(0) as i32;
+    let order = payload.get("order").and_then(Value::as_i64).unwrap_or(0) as i32;
 
     let mut config = BTreeMap::new();
     if let Some(obj) = payload.as_object() {

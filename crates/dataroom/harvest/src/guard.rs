@@ -17,7 +17,7 @@ pub const MAX_REDIRECT_HOPS: usize = 5;
 pub struct ValidatedTarget {
     pub url: Url,
     pub host: String,
-    pub pinned_addrs: Vec< std::net::SocketAddr>,
+    pub pinned_addrs: Vec<std::net::SocketAddr>,
 }
 
 /// Returns `true` when `ip` is loopback, private RFC 1918, link-local, cloud metadata, CGNAT,
@@ -32,7 +32,9 @@ pub fn is_private_or_internal_ip(ip: IpAddr) -> bool {
             let seg = v6.segments();
             // Addresses that carry an IPv4 address: NAT64 64:ff9b::/96, 6to4 2002::/16 and the
             // deprecated IPv4-compatible ::/96 reach that IPv4 host, so they are judged by it.
-            let embedded_v4 = |hi: u16, lo: u16| Ipv4Addr::new((hi >> 8) as u8, hi as u8, (lo >> 8) as u8, lo as u8);
+            let embedded_v4 = |hi: u16, lo: u16| {
+                Ipv4Addr::new((hi >> 8) as u8, hi as u8, (lo >> 8) as u8, lo as u8)
+            };
             if seg[0] == 0x0064 && seg[1] == 0xff9b && seg[2..6] == [0, 0, 0, 0] {
                 return is_internal_v4(embedded_v4(seg[6], seg[7]));
             }
@@ -110,7 +112,9 @@ pub fn validate_outbound_url(
     let Some(host_str) = parsed.host_str() else {
         return Err(DataroomError::OutboundRefused("URL has no host".into()));
     };
-    let host_lower = host_str.trim_matches(|c| c == '[' || c == ']').to_ascii_lowercase();
+    let host_lower = host_str
+        .trim_matches(|c| c == '[' || c == ']')
+        .to_ascii_lowercase();
 
     if host_lower == "localhost"
         || host_lower.ends_with(".localhost")
@@ -158,7 +162,8 @@ pub fn validate_outbound_url(
     }
 
     if resolve_dns {
-        let _ = resolve_and_validate_host(&host_lower, parsed.port_or_known_default().unwrap_or(443))?;
+        let _ =
+            resolve_and_validate_host(&host_lower, parsed.port_or_known_default().unwrap_or(443))?;
     }
 
     Ok(parsed)
@@ -166,10 +171,7 @@ pub fn validate_outbound_url(
 
 /// Resolves a host name via the system resolver and verifies that at least one address is returned
 /// and every returned address is a public IP (not private, loopback, link-local, CGNAT, or metadata).
-pub fn resolve_and_validate_host(
-    host: &str,
-    port: u16,
-) -> Result<Vec<std::net::SocketAddr>> {
+pub fn resolve_and_validate_host(host: &str, port: u16) -> Result<Vec<std::net::SocketAddr>> {
     let addrs: Vec<std::net::SocketAddr> = (host, port)
         .to_socket_addrs()
         .map_err(|e| {
@@ -262,7 +264,11 @@ mod tests {
             let ip: IpAddr = internal.parse().unwrap();
             assert!(is_private_or_internal_ip(ip), "{internal} must be internal");
         }
-        for public in ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946", "64:ff9b::5db8:d822"] {
+        for public in [
+            "93.184.216.34",
+            "2606:2800:220:1:248:1893:25c8:1946",
+            "64:ff9b::5db8:d822",
+        ] {
             let ip: IpAddr = public.parse().unwrap();
             assert!(!is_private_or_internal_ip(ip), "{public} is public");
         }

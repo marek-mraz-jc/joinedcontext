@@ -2,9 +2,7 @@
 //! Profile registry (`C17`) managing the 7 built-in DCAT-AP profiles and uploaded/versioned
 //! custom profiles, form layout extraction, and dry-run validation reports.
 
-use crate::validator::{
-    parse_shapes_graph, validate_graph_against_shapes, PathExpr, ShapesGraph,
-};
+use crate::validator::{parse_shapes_graph, validate_graph_against_shapes, PathExpr, ShapesGraph};
 use dataroom_core::ops::DatasetValidator;
 use dataroom_core::{
     Catalogue, DataroomError, Dataset, FormFieldLayout, OrgId, ProfileDryRunReport, ProfilePin,
@@ -17,10 +15,8 @@ use std::collections::BTreeMap;
 use std::sync::RwLock;
 
 /// Upstream and built-in SHACL shape sources.
-pub const UPSTREAM_EU_301_SHACL: &str =
-    include_str!("../../specs/dcat-ap-3.0.1/dcat-ap-SHACL.ttl");
-pub const UPSTREAM_CZ_SHACL: &str =
-    include_str!("../../specs/dcat-ap-cz/dcat-ap-cz.shacl.ttl");
+pub const UPSTREAM_EU_301_SHACL: &str = include_str!("../../specs/dcat-ap-3.0.1/dcat-ap-SHACL.ttl");
+pub const UPSTREAM_CZ_SHACL: &str = include_str!("../../specs/dcat-ap-cz/dcat-ap-cz.shacl.ttl");
 pub const UPSTREAM_CZ_LKOD_SHACL: &str =
     include_str!("../../specs/dcat-ap-cz/dcat-ap-cz-rozhraní-katalogů-dat.shacl.ttl");
 
@@ -63,7 +59,10 @@ pub fn derive_form_layout(shapes: &ShapesGraph, target_class: &str) -> Vec<FormF
                 });
 
             for (lang, text) in &ps.name {
-                entry.name.entry(lang.clone()).or_insert_with(|| text.clone());
+                entry
+                    .name
+                    .entry(lang.clone())
+                    .or_insert_with(|| text.clone());
             }
             for (lang, text) in &ps.description {
                 entry
@@ -99,7 +98,11 @@ pub fn derive_form_layout(shapes: &ShapesGraph, target_class: &str) -> Vec<FormF
     }
 
     let mut fields: Vec<FormFieldLayout> = by_path.into_values().collect();
-    fields.sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.field_name.cmp(&b.field_name)));
+    fields.sort_by(|a, b| {
+        a.order
+            .cmp(&b.order)
+            .then_with(|| a.field_name.cmp(&b.field_name))
+    });
     fields
 }
 
@@ -118,11 +121,7 @@ fn predicate_to_field_name(pred_iri: &str) -> String {
         "http://data.europa.eu/r5r/applicableLegislation" => "applicable_legislation".into(),
         "http://purl.org/dc/terms/conformsTo" => "conforms_to".into(),
         "http://www.w3.org/ns/dcat#landingPage" => "landing_page".into(),
-        other => other
-            .rsplit(['/', '#'])
-            .next()
-            .unwrap_or(other)
-            .to_owned(),
+        other => other.rsplit(['/', '#']).next().unwrap_or(other).to_owned(),
     }
 }
 
@@ -277,12 +276,17 @@ impl ProfileRegistry {
             }
         }
         guard
-            .iter().rfind(|((pid, _), _)| pid == id)
+            .iter()
+            .rfind(|((pid, _), _)| pid == id)
             .map(|(_, (rec, _))| rec.clone())
     }
 
     /// Resolves the stacked [`ShapesGraph`] for `(id, version)` including its `base_profile` chain (C17).
-    pub fn stacked_shapes(&self, id: &str, version: Option<&str>) -> Result<(ProfileRecord, ShapesGraph)> {
+    pub fn stacked_shapes(
+        &self,
+        id: &str,
+        version: Option<&str>,
+    ) -> Result<(ProfileRecord, ShapesGraph)> {
         let guard = self.profiles.read().unwrap_or_else(|e| e.into_inner());
         let (target_rec, target_sg) = if let Some(v) = version {
             guard
@@ -290,12 +294,14 @@ impl ProfileRegistry {
                 .cloned()
                 .or_else(|| {
                     guard
-                        .iter().rfind(|((pid, _), _)| pid == id)
+                        .iter()
+                        .rfind(|((pid, _), _)| pid == id)
                         .map(|(_, pair)| pair.clone())
                 })
         } else {
             guard
-                .iter().rfind(|((pid, _), _)| pid == id)
+                .iter()
+                .rfind(|((pid, _), _)| pid == id)
                 .map(|(_, pair)| pair.clone())
         }
         .ok_or_else(|| DataroomError::NotFound(format!("profile '{id}' not found")))?;
@@ -308,7 +314,8 @@ impl ProfileRegistry {
                 break;
             };
             let found = guard
-                .iter().rfind(|((pid, _), _)| pid == base_id)
+                .iter()
+                .rfind(|((pid, _), _)| pid == base_id)
                 .map(|(_, (r, sg))| (r.base_profile.clone(), sg.clone()));
             if let Some((next_base, sg)) = found {
                 chain.push(sg);
@@ -348,8 +355,7 @@ impl ProfileRegistry {
         }
 
         let (_, stacked) = self.stacked_shapes(&record.id, Some(&record.version))?;
-        record.form_fields =
-            derive_form_layout(&stacked, "http://www.w3.org/ns/dcat#Dataset");
+        record.form_fields = derive_form_layout(&stacked, "http://www.w3.org/ns/dcat#Dataset");
         {
             let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
             if let Some((stored_rec, _)) =
@@ -429,7 +435,8 @@ impl ProfileRegistry {
         dataset_id: &str,
     ) -> Result<ShaclValidationReport> {
         let shapes = parse_shapes_graph(shapes_turtle, &RdfLimits::uploaded_shapes())?;
-        let data = dataroom_rdf::turtle::parse_turtle_checked(sample_turtle, &RdfLimits::default())?;
+        let data =
+            dataroom_rdf::turtle::parse_turtle_checked(sample_turtle, &RdfLimits::default())?;
         Ok(validate_graph_against_shapes(
             &data,
             &shapes,
@@ -517,8 +524,7 @@ impl DatasetValidator for ProfileRegistry {
             }
         }
 
-        let feed_graph =
-            catalogue_to_graph(catalogue, &valid_datasets, publishers, kind, None);
+        let feed_graph = catalogue_to_graph(catalogue, &valid_datasets, publishers, kind, None);
         let feed_report = validate_graph_against_shapes(
             &feed_graph,
             &stacked,
@@ -545,9 +551,11 @@ impl DatasetValidator for ProfileRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeSet;
-    use dataroom_core::{AgentDetails, CatalogueId, Distribution, RecordState, ThemeTokens, Visibility};
+    use dataroom_core::{
+        AgentDetails, CatalogueId, Distribution, RecordState, ThemeTokens, Visibility,
+    };
     use dataroom_rdf::{parse_rdf_graph, RdfFormat};
+    use std::collections::BTreeSet;
     use uuid::Uuid;
 
     fn test_ids() -> (OrgId, CatalogueId) {
@@ -578,9 +586,7 @@ mod tests {
             ),
             (
                 "datova-sada-v-serii.ttl",
-                include_str!(
-                    "../../specs/dcat-ap-cz/priklady-katalog/datova-sada-v-serii.ttl"
-                ),
+                include_str!("../../specs/dcat-ap-cz/priklady-katalog/datova-sada-v-serii.ttl"),
                 &cz_shapes,
             ),
             (
@@ -608,11 +614,9 @@ mod tests {
         }
 
         // Validate specs/dcat-ap-cz/priklady-katalog/katalog.jsonld
-        let cz_cat_jsonld =
-            include_str!("../../specs/dcat-ap-cz/priklady-katalog/katalog.jsonld");
-        let g_cz_jsonld =
-            parse_rdf_graph(cz_cat_jsonld, RdfFormat::JsonLd, &RdfLimits::default())
-                .expect("parse cz katalog.jsonld");
+        let cz_cat_jsonld = include_str!("../../specs/dcat-ap-cz/priklady-katalog/katalog.jsonld");
+        let g_cz_jsonld = parse_rdf_graph(cz_cat_jsonld, RdfFormat::JsonLd, &RdfLimits::default())
+            .expect("parse cz katalog.jsonld");
         let r_cz_jsonld = validate_graph_against_shapes(
             &g_cz_jsonld,
             &cz_lkod_shapes,
@@ -655,8 +659,7 @@ mod tests {
                 RdfFormat::JsonLd,
             ),
         ] {
-            let g = parse_rdf_graph(content, fmt, &RdfLimits::default())
-                .expect("parse sk example");
+            let g = parse_rdf_graph(content, fmt, &RdfLimits::default()).expect("parse sk example");
             let report = validate_graph_against_shapes(
                 &g,
                 &sk_shapes,

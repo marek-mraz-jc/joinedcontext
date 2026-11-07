@@ -7,8 +7,7 @@
 
 use chrono::Utc;
 use dataroom_core::{
-    CatalogueId, OrgId, Result, ShaclFinding, ShaclSeverity,
-    ShaclValidationReport, Texts,
+    CatalogueId, OrgId, Result, ShaclFinding, ShaclSeverity, ShaclValidationReport, Texts,
 };
 use dataroom_rdf::turtle::parse_turtle_checked;
 use dataroom_rdf::{ns, RdfGraph, RdfLimits, SubjectNode, Term};
@@ -389,13 +388,13 @@ fn parse_constraints(g: &RdfGraph, subj: &SubjectNode) -> ShapeConstraints {
         .filter_map(|t| t.as_subject())
         .collect();
 
-    let severity = g.first_object(subj, &sh("severity")).map(|t| {
-        match t.string_value() {
+    let severity = g
+        .first_object(subj, &sh("severity"))
+        .map(|t| match t.string_value() {
             "http://www.w3.org/ns/shacl#Info" => ShaclSeverity::Info,
             "http://www.w3.org/ns/shacl#Warning" => ShaclSeverity::Warning,
             _ => ShaclSeverity::Violation,
-        }
-    });
+        });
     let message = read_texts(g, subj, &sh("message"));
 
     ShapeConstraints {
@@ -852,7 +851,10 @@ fn check_value_constraints(
                     severity,
                     message: default_msg(
                         &c.message,
-                        format!("Value '{}' does not match pattern /{pat}/", val.string_value()),
+                        format!(
+                            "Value '{}' does not match pattern /{pat}/",
+                            val.string_value()
+                        ),
                     ),
                 });
             }
@@ -1045,9 +1047,7 @@ fn subclasses_of(class_iri: &str) -> Vec<&str> {
         // `DatasetShape` wrongly applied dataset-only mandatory properties (`dcat:keyword`,
         // `dcat:theme`, `dct:accrualPeriodicity`, `dcat:distribution`) to `dcat:Catalog` nodes,
         // causing `specs/dcat-ap-sk/príklady/katalóg.ttl` to fail `dcat:keyword minCount 1`!
-        "http://www.w3.org/ns/dcat#Dataset" => vec![
-            "http://www.w3.org/ns/dcat#Dataset",
-        ],
+        "http://www.w3.org/ns/dcat#Dataset" => vec!["http://www.w3.org/ns/dcat#Dataset"],
         "http://xmlns.com/foaf/0.1/Agent" => vec![
             "http://xmlns.com/foaf/0.1/Agent",
             "http://xmlns.com/foaf/0.1/Organization",

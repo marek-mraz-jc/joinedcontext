@@ -26,7 +26,11 @@ use std::sync::Arc;
 
 /// Command-line interface for the `dataroom` binary.
 #[derive(Debug, Parser)]
-#[command(name = "dataroom", version, about = "Rust open and internal dataset catalogue")]
+#[command(
+    name = "dataroom",
+    version,
+    about = "Rust open and internal dataset catalogue"
+)]
 pub struct Cli {
     /// PostgreSQL connection URL; when absent, uses the in-memory store for standalone/demo runs.
     #[arg(long, env = "DATAROOM_DATABASE_URL")]
@@ -95,11 +99,9 @@ pub async fn import_ckan_json(
     raw_json: &str,
     default_lang: &str,
 ) -> Result<(usize, usize)> {
-    let parsed: Value = serde_json::from_str(raw_json).map_err(|e| {
-        DataroomError::Validation {
-            message: format!("invalid CKAN JSON: {e}"),
-            fields: BTreeMap::new(),
-        }
+    let parsed: Value = serde_json::from_str(raw_json).map_err(|e| DataroomError::Validation {
+        message: format!("invalid CKAN JSON: {e}"),
+        fields: BTreeMap::new(),
     })?;
 
     let mut created_publishers = 0usize;
@@ -118,7 +120,10 @@ pub async fn import_ckan_json(
                     let s = o.get("name").and_then(Value::as_str).unwrap_or("");
                     let t = o.get("title").and_then(Value::as_str).unwrap_or(s);
                     let d = o.get("description").and_then(Value::as_str).unwrap_or("");
-                    let im = o.get("image_url").and_then(Value::as_str).filter(|u| !u.is_empty());
+                    let im = o
+                        .get("image_url")
+                        .and_then(Value::as_str)
+                        .filter(|u| !u.is_empty());
                     let init = o.get("initials").and_then(Value::as_str).map(str::to_owned);
                     let col = o.get("colour").and_then(Value::as_str).map(str::to_owned);
                     (s, t, d, im, init, col)
@@ -395,9 +400,8 @@ pub async fn run_cli(cli: Cli) -> Result<Value> {
             }))
         }
         Command::Op { name, input } => {
-            let input_val: Value = serde_json::from_str(&input).map_err(|e| {
-                DataroomError::field_error("input", format!("invalid JSON: {e}"))
-            })?;
+            let input_val: Value = serde_json::from_str(&input)
+                .map_err(|e| DataroomError::field_error("input", format!("invalid JSON: {e}")))?;
             let authz = Arc::new(PolicyAuthorizer::new(vec![dataroom_core::GrantRule {
                 org_id,
                 catalogue_id: Some(catalogue_id),
@@ -450,7 +454,11 @@ mod tests {
             .expect("import ckan");
         assert_eq!(pubs, 1);
         assert_eq!(dss, 1);
-        let imported = store.get_dataset(&ctx, "bb-ovzdusie").await.unwrap().unwrap();
+        let imported = store
+            .get_dataset(&ctx, "bb-ovzdusie")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(imported.publisher_id, "banskabystrica");
     }
 
@@ -554,11 +562,17 @@ mod tests {
 
         let cat = store.get_catalogue(org_id, cat_id).await.unwrap().unwrap();
         assert_eq!(
-            cat.hidden_datasets.get("draft-internal-pkg").map(String::as_str),
+            cat.hidden_datasets
+                .get("draft-internal-pkg")
+                .map(String::as_str),
             Some("incomplete quality check")
         );
 
-        let ds = store.get_dataset(&ctx, "air-quality").await.unwrap().unwrap();
+        let ds = store
+            .get_dataset(&ctx, "air-quality")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(ds.id, "d262a2d3-17b2-4e44-afb7-1275fdbf3e4e");
         assert_eq!(ds.publisher_id, "barcelona");
         assert_eq!(ds.distributions.len(), 1);
@@ -568,7 +582,9 @@ mod tests {
         );
         assert_eq!(
             ds.endpoint_url.as_deref(),
-            Some("https://api.dev.joinedcontext.com/api/endpoint/esbxdrr7snorjsp7uus2luihr6vl5vv6/")
+            Some(
+                "https://api.dev.joinedcontext.com/api/endpoint/esbxdrr7snorjsp7uus2luihr6vl5vv6/"
+            )
         );
     }
 }

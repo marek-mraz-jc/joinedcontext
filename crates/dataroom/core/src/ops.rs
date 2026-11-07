@@ -530,7 +530,11 @@ pub async fn execute_operation(
                         "{} {} {} {}",
                         ds.name,
                         ds.title.values().cloned().collect::<Vec<_>>().join(" "),
-                        ds.description.values().cloned().collect::<Vec<_>>().join(" "),
+                        ds.description
+                            .values()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(" "),
                         ds.tags.join(" ")
                     )
                     .to_lowercase();
@@ -908,7 +912,9 @@ pub async fn execute_operation(
                 .store
                 .get_harvest_run(req_ctx, run_id)
                 .await?
-                .ok_or_else(|| DataroomError::NotFound(format!("harvest run '{run_id}' not found")))?;
+                .ok_or_else(|| {
+                    DataroomError::NotFound(format!("harvest run '{run_id}' not found"))
+                })?;
             Ok(serde_json::to_value(run).unwrap_or(Value::Null))
         }
         "harvest_run.logs" => {
@@ -927,7 +933,9 @@ pub async fn execute_operation(
                 .store
                 .get_harvest_run(req_ctx, run_id)
                 .await?
-                .ok_or_else(|| DataroomError::NotFound(format!("harvest run '{run_id}' not found")))?;
+                .ok_or_else(|| {
+                    DataroomError::NotFound(format!("harvest run '{run_id}' not found"))
+                })?;
             let logs: Vec<_> = run
                 .logs
                 .into_iter()
@@ -1140,10 +1148,15 @@ pub async fn execute_operation(
                 .store
                 .get_publisher(req_ctx, pub_id)
                 .await?
-                .ok_or_else(|| DataroomError::NotFound(format!("publisher '{pub_id}' not found")))?;
+                .ok_or_else(|| {
+                    DataroomError::NotFound(format!("publisher '{pub_id}' not found"))
+                })?;
             let target = ObjectTarget::from_publisher(&pub_rec);
             enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Delete, &target))?;
-            let withdrawn = op_ctx.store.withdraw_publisher(req_ctx, &pub_rec.id).await?;
+            let withdrawn = op_ctx
+                .store
+                .withdraw_publisher(req_ctx, &pub_rec.id)
+                .await?;
             op_ctx
                 .store
                 .record_activity(
@@ -1279,6 +1292,8 @@ pub async fn execute_operation(
                 "permission": asked_def.permission.as_str(),
             }))
         }
-        other => Err(DataroomError::NotFound(format!("unknown operation {other}"))),
+        other => Err(DataroomError::NotFound(format!(
+            "unknown operation {other}"
+        ))),
     }
 }

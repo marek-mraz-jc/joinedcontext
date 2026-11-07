@@ -235,8 +235,10 @@ pub trait Store: Send + Sync {
     ) -> BoxFuture<'a, Result<Vec<ShaclValidationReport>>>;
 
     /// Lists stored custom/uploaded profiles (`C17`).
-    fn list_profiles<'a>(&'a self, ctx: &'a RequestCtx)
-        -> BoxFuture<'a, Result<Vec<ProfileRecord>>>;
+    fn list_profiles<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+    ) -> BoxFuture<'a, Result<Vec<ProfileRecord>>>;
 
     /// Saves a versioned profile (`C17`).
     fn upsert_profile<'a>(

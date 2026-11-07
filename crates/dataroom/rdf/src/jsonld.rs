@@ -103,11 +103,7 @@ const MAX_CONTEXT_TERMS: usize = 256;
 
 /// Resolves a known built-in `@context` URL to its local inline `@context` Value, or refuses any
 /// unknown remote `@context` URL without fetching (A1).
-fn inline_and_check_jsonld(
-    val: &mut Value,
-    limits: &RdfLimits,
-    depth: usize,
-) -> Result<()> {
+fn inline_and_check_jsonld(val: &mut Value, limits: &RdfLimits, depth: usize) -> Result<()> {
     if depth > limits.max_depth {
         return Err(DataroomError::RdfLimitExceeded {
             kind: "nesting-depth".into(),
@@ -480,10 +476,7 @@ pub fn serialize_graph_jsonld(graph: &RdfGraph) -> String {
         }
         for (pred, terms) in preds {
             if pred == ns::RDF_TYPE {
-                let types: Vec<Value> = terms
-                    .iter()
-                    .map(|t| json!(t.string_value()))
-                    .collect();
+                let types: Vec<Value> = terms.iter().map(|t| json!(t.string_value())).collect();
                 obj.insert(
                     "@type".into(),
                     if types.len() == 1 {
@@ -554,12 +547,11 @@ pub fn serialize_cz_catalogue_jsonld(
         .publisher_uri
         .clone()
         .or_else(|| publishers.values().next().map(|p| p.uri.clone()))
-        .unwrap_or_else(|| "https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/00000000".into());
+        .unwrap_or_else(|| {
+            "https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/00000000".into()
+        });
 
-    let ds_iris: Vec<String> = datasets
-        .iter()
-        .map(|d| d.canonical_uri(&base))
-        .collect();
+    let ds_iris: Vec<String> = datasets.iter().map(|d| d.canonical_uri(&base)).collect();
 
     let mut doc = Map::new();
     doc.insert("@context".into(), json!(CZ_CATALOG_CONTEXT_IRI));
@@ -611,10 +603,7 @@ pub fn serialize_sk_catalogue_jsonld(
         .or_else(|| publishers.values().next().map(|p| p.uri.clone()))
         .unwrap_or_else(|| "https://data.gov.sk/id/legal-subject/00000000".into());
 
-    let ds_iris: Vec<String> = datasets
-        .iter()
-        .map(|d| d.canonical_uri(&base))
-        .collect();
+    let ds_iris: Vec<String> = datasets.iter().map(|d| d.canonical_uri(&base)).collect();
 
     let mut doc = Map::new();
     doc.insert("@context".into(), json!(SK_CATALOG_CONTEXT_IRI));
@@ -675,7 +664,9 @@ pub fn serialize_sk_dataset_jsonld(
         .frequency
         .as_deref()
         .map(dataroom_core::vocab::frequency_to_eu_iri)
-        .unwrap_or_else(|| "http://publications.europa.eu/resource/authority/frequency/IRREG".into());
+        .unwrap_or_else(|| {
+            "http://publications.europa.eu/resource/authority/frequency/IRREG".into()
+        });
 
     let mut kw = dataset.keywords.clone();
     if kw.is_empty() && !dataset.tags.is_empty() {
@@ -772,7 +763,9 @@ pub fn serialize_cz_dataset_jsonld(
     let pub_iri = publisher
         .map(|p| p.uri.clone())
         .or_else(|| dataset.publisher.as_ref().and_then(|a| a.uri.clone()))
-        .unwrap_or_else(|| "https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/00000000".into());
+        .unwrap_or_else(|| {
+            "https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/00000000".into()
+        });
 
     let mut doc = Map::new();
     doc.insert("@context".into(), json!(CZ_DATASET_CONTEXT_IRI));

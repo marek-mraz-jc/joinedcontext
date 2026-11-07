@@ -54,10 +54,7 @@ pub enum DataroomError {
 
     /// Specific RDF parser limit exceeded (A1).
     #[error("RDF limit exceeded ({kind}): {message}")]
-    RdfLimitExceeded {
-        kind: String,
-        message: String,
-    },
+    RdfLimitExceeded { kind: String, message: String },
 
     /// Underlying storage or tenant setting error.
     #[error("storage error: {0}")]
@@ -135,9 +132,7 @@ impl From<odata_table::TableError> for DataroomError {
     fn from(err: odata_table::TableError) -> Self {
         match err {
             odata_table::TableError::NotImplemented(w) => Self::NotSupported(w),
-            odata_table::TableError::UnknownProperty(p) => {
-                Self::field_error(p, "unknown property")
-            }
+            odata_table::TableError::UnknownProperty(p) => Self::field_error(p, "unknown property"),
             odata_table::TableError::BadRequest(msg) => Self::Validation {
                 message: msg,
                 fields: BTreeMap::new(),

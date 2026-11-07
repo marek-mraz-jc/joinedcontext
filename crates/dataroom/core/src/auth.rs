@@ -112,7 +112,9 @@ impl RequestCtx {
 }
 
 /// Verb checked by the `Authorizer`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Action {
     Read,
@@ -303,12 +305,7 @@ impl PolicyAuthorizer {
         self
     }
 
-    fn holds_rule(
-        &self,
-        ctx: &RequestCtx,
-        action: Action,
-        publisher_id: Option<&str>,
-    ) -> bool {
+    fn holds_rule(&self, ctx: &RequestCtx, action: Action, publisher_id: Option<&str>) -> bool {
         let principals = ctx.subject.principals();
         self.rules.iter().any(|rule| {
             rule.org_id == ctx.org_id
@@ -328,7 +325,9 @@ impl Authorizer for PolicyAuthorizer {
     fn check(&self, ctx: &RequestCtx, action: Action, object: &ObjectTarget) -> Decision {
         // 1. Cross-tenant or cross-catalogue boundary is always a hidden denial.
         if object.org_id() != ctx.org_id || object.catalogue_id() != ctx.catalogue_id {
-            return Decision::deny_hidden("object is outside the request's organization or catalogue");
+            return Decision::deny_hidden(
+                "object is outside the request's organization or catalogue",
+            );
         }
 
         // 2. Read-only connectors cannot perform writes.
@@ -349,7 +348,10 @@ impl Authorizer for PolicyAuthorizer {
                 if self.holds_rule(ctx, action, None) {
                     Decision::allow("granted on catalogue")
                 } else {
-                    Decision::deny_visible(format!("missing {} permission on catalogue", action.as_str()))
+                    Decision::deny_visible(format!(
+                        "missing {} permission on catalogue",
+                        action.as_str()
+                    ))
                 }
             }
             ObjectTarget::Publisher {
@@ -362,7 +364,9 @@ impl Authorizer for PolicyAuthorizer {
                 }
                 let principals = ctx.subject.principals();
                 let has_editor_grant = matches!(action, Action::Propose | Action::Approve)
-                    && editor_grants.iter().any(|g| principals.contains(&g.as_str()));
+                    && editor_grants
+                        .iter()
+                        .any(|g| principals.contains(&g.as_str()));
                 if has_editor_grant || self.holds_rule(ctx, action, Some(publisher_id)) {
                     Decision::allow("granted on publisher")
                 } else {
@@ -430,7 +434,9 @@ impl Authorizer for PolicyAuthorizer {
             }
             ObjectTarget::HarvestSource { .. } => {
                 if !ctx.subject.is_member_of(ctx.org_id) {
-                    return Decision::deny_hidden("harvest sources require organization membership");
+                    return Decision::deny_hidden(
+                        "harvest sources require organization membership",
+                    );
                 }
                 if self.holds_rule(ctx, action, None) || self.holds_rule(ctx, Action::Harvest, None)
                 {

@@ -177,7 +177,15 @@ pub fn validate_view_payload(payload: &Value) -> Result<()> {
 /// `<object>`, `<embed>`, `<style>`, `on*` event attributes and `javascript:` URLs.
 pub fn sanitize_view_html(raw: &str) -> String {
     let mut clean = raw.to_owned();
-    for forbidden in ["<script", "</script", "<iframe", "</iframe", "<object", "<embed", "javascript:"] {
+    for forbidden in [
+        "<script",
+        "</script",
+        "<iframe",
+        "</iframe",
+        "<object",
+        "<embed",
+        "javascript:",
+    ] {
         let lower = clean.to_ascii_lowercase();
         if lower.contains(forbidden) {
             clean = html_escape(&clean);

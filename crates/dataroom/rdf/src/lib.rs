@@ -13,4 +13,4 @@ pub use dcat::{
     negotiate_rdf_format, parse, parse_datasets_from_rdf, parse_rdf_graph, serialize_catalogue,
     serialize_dataset, DcatProfileKind, HydraPageInfo, RdfFormat,
 };
-pub use graph::{LiteralValue, RdfGraph, RdfLimits, SubjectNode, Term, Triple, ns};
+pub use graph::{ns, LiteralValue, RdfGraph, RdfLimits, SubjectNode, Term, Triple};

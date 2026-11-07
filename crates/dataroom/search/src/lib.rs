@@ -205,7 +205,10 @@ pub fn apply_fq_to_filter(fq: &str, filter: &mut DatasetFilter) -> Result<()> {
     let mut rest = trimmed;
     while !rest.is_empty() {
         rest = rest.trim_start();
-        if let Some(after_and) = rest.strip_prefix("AND").filter(|s| s.starts_with(char::is_whitespace)) {
+        if let Some(after_and) = rest
+            .strip_prefix("AND")
+            .filter(|s| s.starts_with(char::is_whitespace))
+        {
             rest = after_and.trim_start();
             continue;
         }
@@ -340,8 +343,8 @@ pub fn matches_full_text(dataset: &Dataset, terms: &[String]) -> (bool, usize) {
                 .iter()
                 .any(|w| candidates.iter().any(|cand| w.starts_with(cand)))
         };
-        let in_name = matches_any(&name_words)
-            || candidates.iter().any(|cand| folded_name.contains(cand));
+        let in_name =
+            matches_any(&name_words) || candidates.iter().any(|cand| folded_name.contains(cand));
         let in_title = matches_any(&title_words);
         let in_kw = matches_any(&kw_words);
         let in_desc = matches_any(&desc_words);
@@ -680,10 +683,9 @@ pub fn search_datasets(
             FacetKind::Visibility => &[],
         };
         for wanted in active_for_facet {
-            if !list
-                .iter()
-                .any(|f| f.value.eq_ignore_ascii_case(wanted) || f.label.eq_ignore_ascii_case(wanted))
-            {
+            if !list.iter().any(|f| {
+                f.value.eq_ignore_ascii_case(wanted) || f.label.eq_ignore_ascii_case(wanted)
+            }) {
                 let label = match facet_kind {
                     FacetKind::Publisher => pub_map
                         .get(wanted)
@@ -858,10 +860,10 @@ impl SearchFacets {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::NaiveDate;
     use dataroom_core::{
         CatalogueId, Distribution, GrantRule, OrgId, PolicyAuthorizer, Subject, TemporalPeriod,
     };
-    use chrono::NaiveDate;
     use uuid::Uuid;
 
     fn test_ids() -> (OrgId, CatalogueId) {
@@ -1005,7 +1007,7 @@ mod tests {
         let publishers = vec![
             Publisher {
                 org_id,
-badge_initials: None,
+                badge_initials: None,
                 badge_colour: None,
                 declared_by_instance: None,
                 catalogue_id,
@@ -1028,7 +1030,7 @@ badge_initials: None,
             },
             Publisher {
                 org_id,
-badge_initials: None,
+                badge_initials: None,
                 badge_colour: None,
                 declared_by_instance: None,
                 catalogue_id,

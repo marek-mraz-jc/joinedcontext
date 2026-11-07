@@ -69,10 +69,26 @@ pub fn dataroom_service() -> Service {
                     req_field("name", FieldKind::String, "Catalogue slug."),
                     req_field("host", FieldKind::String, "Catalogue public host name."),
                     req_field("title", FieldKind::String, "Default-language title."),
-                    opt_field("description", FieldKind::String, "Default-language description."),
-                    req_field("default_language", FieldKind::String, "Default ISO 639-1 language."),
-                    req_field("main_profile", FieldKind::String, "Main DCAT-AP profile ID."),
-                    req_field("modified", FieldKind::DateTime, "Last modification timestamp."),
+                    opt_field(
+                        "description",
+                        FieldKind::String,
+                        "Default-language description.",
+                    ),
+                    req_field(
+                        "default_language",
+                        FieldKind::String,
+                        "Default ISO 639-1 language.",
+                    ),
+                    req_field(
+                        "main_profile",
+                        FieldKind::String,
+                        "Main DCAT-AP profile ID.",
+                    ),
+                    req_field(
+                        "modified",
+                        FieldKind::DateTime,
+                        "Last modification timestamp.",
+                    ),
                 ],
                 rules: set_rules("propose:Catalogue"),
             },
@@ -89,13 +105,29 @@ pub fn dataroom_service() -> Service {
                     req_field("title", FieldKind::String, "Dataset title."),
                     opt_field("notes", FieldKind::String, "Dataset description."),
                     req_field("publisher_id", FieldKind::String, "Publisher slug or ID."),
-                    req_field("visibility", FieldKind::String, "Visibility: public, internal, restricted."),
-                    req_field("state", FieldKind::String, "State: draft, active, withdrawn."),
+                    req_field(
+                        "visibility",
+                        FieldKind::String,
+                        "Visibility: public, internal, restricted.",
+                    ),
+                    req_field(
+                        "state",
+                        FieldKind::String,
+                        "State: draft, active, withdrawn.",
+                    ),
                     opt_field("licence_id", FieldKind::String, "Licence identifier."),
                     opt_field("frequency", FieldKind::String, "Update frequency code."),
-                    opt_field("endpoint_url", FieldKind::String, "Linked NGSI-LD Endpoint URL."),
+                    opt_field(
+                        "endpoint_url",
+                        FieldKind::String,
+                        "Linked NGSI-LD Endpoint URL.",
+                    ),
                     req_field("issued", FieldKind::DateTime, "Release timestamp."),
-                    req_field("modified", FieldKind::DateTime, "Last modification timestamp."),
+                    req_field(
+                        "modified",
+                        FieldKind::DateTime,
+                        "Last modification timestamp.",
+                    ),
                 ],
                 rules: set_rules("propose:Dataset"),
             },
@@ -131,8 +163,16 @@ pub fn dataroom_service() -> Service {
                     req_field("title", FieldKind::String, "Publisher display title."),
                     req_field("uri", FieldKind::String, "Publisher registry IRI."),
                     req_field("state", FieldKind::String, "State: active, withdrawn."),
-                    opt_field("merged_into", FieldKind::String, "Target publisher ID if merged."),
-                    req_field("modified", FieldKind::DateTime, "Last modification timestamp."),
+                    opt_field(
+                        "merged_into",
+                        FieldKind::String,
+                        "Target publisher ID if merged.",
+                    ),
+                    req_field(
+                        "modified",
+                        FieldKind::DateTime,
+                        "Last modification timestamp.",
+                    ),
                 ],
                 rules: set_rules("propose:Publisher"),
             },
@@ -149,8 +189,16 @@ pub fn dataroom_service() -> Service {
                     req_field("kind", FieldKind::String, "Source kind."),
                     req_field("url", FieldKind::String, "Source endpoint URL."),
                     req_field("publisher_id", FieldKind::String, "Target publisher ID."),
-                    req_field("enabled", FieldKind::Boolean, "Whether scheduled runs are enabled."),
-                    req_field("modified", FieldKind::DateTime, "Last modification timestamp."),
+                    req_field(
+                        "enabled",
+                        FieldKind::Boolean,
+                        "Whether scheduled runs are enabled.",
+                    ),
+                    req_field(
+                        "modified",
+                        FieldKind::DateTime,
+                        "Last modification timestamp.",
+                    ),
                 ],
                 rules: set_rules("propose:HarvestSource"),
             },
@@ -166,7 +214,11 @@ pub fn dataroom_service() -> Service {
                     req_field("source_id", FieldKind::String, "Harvest source ID."),
                     req_field("state", FieldKind::String, "Run state."),
                     req_field("started_at", FieldKind::DateTime, "Run start timestamp."),
-                    opt_field("finished_at", FieldKind::DateTime, "Run completion timestamp."),
+                    opt_field(
+                        "finished_at",
+                        FieldKind::DateTime,
+                        "Run completion timestamp.",
+                    ),
                     req_field("created_count", FieldKind::Integer, "Datasets created."),
                     req_field("updated_count", FieldKind::Integer, "Datasets updated."),
                     req_field("unchanged_count", FieldKind::Integer, "Datasets unchanged."),
@@ -188,7 +240,11 @@ pub fn dataroom_service() -> Service {
                     req_field("operation", FieldKind::String, "Operation name."),
                     req_field("object_type", FieldKind::String, "Target object type."),
                     req_field("object_id", FieldKind::String, "Target object ID."),
-                    req_field("summary", FieldKind::String, "Human-readable change summary."),
+                    req_field(
+                        "summary",
+                        FieldKind::String,
+                        "Human-readable change summary.",
+                    ),
                 ],
                 rules: odata_table::open_rules(),
             },
@@ -204,8 +260,16 @@ pub fn dataroom_service() -> Service {
                     req_field("dataset_id", FieldKind::String, "Dataset ID."),
                     req_field("profile_id", FieldKind::String, "Profile ID."),
                     req_field("profile_version", FieldKind::String, "Profile version."),
-                    req_field("conforms", FieldKind::Boolean, "Whether the dataset conforms."),
-                    req_field("violation_count", FieldKind::Integer, "Number of violations."),
+                    req_field(
+                        "conforms",
+                        FieldKind::Boolean,
+                        "Whether the dataset conforms.",
+                    ),
+                    req_field(
+                        "violation_count",
+                        FieldKind::Integer,
+                        "Number of violations.",
+                    ),
                     req_field("warning_count", FieldKind::Integer, "Number of warnings."),
                     req_field("checked_at", FieldKind::DateTime, "Validation timestamp."),
                 ],
@@ -394,19 +458,18 @@ pub fn scope_for_context(
 
     if set_name == "Datasets" {
         if let Some(ids) = visible_dataset_ids {
-            scope = scope.and(
-                &["id"],
-                ids.into_iter().map(Value::String).collect(),
-            );
+            scope = scope.and(&["id"], ids.into_iter().map(Value::String).collect());
         } else if !ctx.subject.is_member_of(ctx.org_id) {
             scope = scope
-                .and(&["visibility"], vec![Value::String(Visibility::Public.as_str().into())])
+                .and(
+                    &["visibility"],
+                    vec![Value::String(Visibility::Public.as_str().into())],
+                )
                 .and(&["state"], vec![Value::String("active".into())]);
         }
     }
 
-    if matches!(set_name, "HarvestSources" | "HarvestRuns")
-        && !ctx.subject.is_member_of(ctx.org_id)
+    if matches!(set_name, "HarvestSources" | "HarvestRuns") && !ctx.subject.is_member_of(ctx.org_id)
     {
         scope = scope.and(&["id"], Vec::new());
     }

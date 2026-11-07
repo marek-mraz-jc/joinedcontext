@@ -16,17 +16,17 @@ pub mod ckan;
 pub mod feeds;
 pub mod odata_routes;
 
+use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use axum::body::Bytes;
 use dataroom_core::auth::constant_time_eq;
 use dataroom_core::ops::{all_operations, execute_operation, OpContext, OperationDef};
 use dataroom_core::{
-    validate_and_sanitise_logo, Action, ActivityRow, Authorizer, BrandingBlock,
-    Catalogue, CatalogueId, DataroomError, Dataset, DatasetFilter, ObjectTarget, OrgId, ProfilePin,
+    validate_and_sanitise_logo, Action, ActivityRow, Authorizer, BrandingBlock, Catalogue,
+    CatalogueId, DataroomError, Dataset, DatasetFilter, ObjectTarget, OrgId, ProfilePin,
     ProfileRecord, Publisher, RecordState, RequestCtx, Result, SanitisedAsset, Store, Subject,
 };
 use dataroom_harvest::{HarvestEngine, HttpFetcher};
@@ -148,7 +148,9 @@ impl DataroomState {
             .and_then(|v| v.to_str().ok())
             .map(|h| h.split(':').next().unwrap_or(h).trim());
 
-        let cat = if let Some(h) = host.filter(|h| !h.is_empty() && *h != "localhost" && *h != "127.0.0.1") {
+        let cat = if let Some(h) =
+            host.filter(|h| !h.is_empty() && *h != "localhost" && *h != "127.0.0.1")
+        {
             match self.store.resolve_host(h).await? {
                 Some(c) => c,
                 None => {
@@ -177,10 +179,7 @@ impl DataroomState {
             } else {
                 match raw_token.filter(|t| !t.is_empty()) {
                     Some(tok) => {
-                        let matched = self
-                            .tokens
-                            .iter()
-                            .find(|b| constant_time_eq(&b.token, tok));
+                        let matched = self.tokens.iter().find(|b| constant_time_eq(&b.token, tok));
                         match matched {
                             Some(binding) => binding.subject.clone(),
                             None => {
@@ -196,10 +195,7 @@ impl DataroomState {
         } else {
             match raw_token.filter(|t| !t.is_empty()) {
                 Some(tok) => {
-                    let matched = self
-                        .tokens
-                        .iter()
-                        .find(|b| constant_time_eq(&b.token, tok));
+                    let matched = self.tokens.iter().find(|b| constant_time_eq(&b.token, tok));
                     match matched {
                         Some(binding) => binding.subject.clone(),
                         None => {
@@ -225,7 +221,8 @@ pub fn operations() -> Vec<OperationDef> {
 
 /// Converts a [`DataroomError`] into an RFC 9457 Problem Details JSON response with a slug (A5).
 pub fn problem_response(err: DataroomError) -> Response {
-    let status = StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let status =
+        StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let body = json!({
         "type": err.problem_type_uri(),
         "slug": err.slug(),
@@ -481,10 +478,7 @@ async fn handle_portal_dataset(
         .into_response()
 }
 
-async fn handle_list_profiles(
-    State(state): State<DataroomState>,
-    headers: HeaderMap,
-) -> Response {
+async fn handle_list_profiles(State(state): State<DataroomState>, headers: HeaderMap) -> Response {
     let (_ctx, cat) = match state.resolve_context(&headers).await {
         Ok(v) => v,
         Err(e) => return problem_response(e),
@@ -538,15 +532,20 @@ async fn handle_upload_profile(
         .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p)])
         .collect();
 
-    let (saved_profile, dry_run) = match state
-        .profiles
-        .upload_and_dry_run(req.profile, &cat, &datasets, &pub_map)
-    {
-        Ok(res) => res,
-        Err(e) => return problem_response(e),
-    };
+    let (saved_profile, dry_run) =
+        match state
+            .profiles
+            .upload_and_dry_run(req.profile, &cat, &datasets, &pub_map)
+        {
+            Ok(res) => res,
+            Err(e) => return problem_response(e),
+        };
 
-    if let Err(e) = state.store.upsert_profile(&ctx, saved_profile.clone()).await {
+    if let Err(e) = state
+        .store
+        .upsert_profile(&ctx, saved_profile.clone())
+        .await
+    {
         return problem_response(e);
     }
 
@@ -738,10 +737,7 @@ async fn handle_mcp(
     Json(answer).into_response()
 }
 
-async fn handle_get_branding(
-    State(state): State<DataroomState>,
-    headers: HeaderMap,
-) -> Response {
+async fn handle_get_branding(State(state): State<DataroomState>, headers: HeaderMap) -> Response {
     let (_ctx, cat) = match state.resolve_context(&headers).await {
         Ok(v) => v,
         Err(e) => return problem_response(e),
@@ -820,10 +816,7 @@ async fn handle_upload_logo(
         Ok(a) => a,
         Err(e) => return problem_response(e),
     };
-    let fname = asset
-        .url_path
-        .trim_start_matches("/assets/")
-        .to_owned();
+    let fname = asset.url_path.trim_start_matches("/assets/").to_owned();
     state
         .assets
         .write()
@@ -897,10 +890,7 @@ async fn handle_jc_logo_svg() -> Response {
         .into_response()
 }
 
-async fn handle_sitemap_xml(
-    State(state): State<DataroomState>,
-    headers: HeaderMap,
-) -> Response {
+async fn handle_sitemap_xml(State(state): State<DataroomState>, headers: HeaderMap) -> Response {
     let (ctx, cat) = match state.resolve_context(&headers).await {
         Ok(v) => v,
         Err(e) => return problem_response(e),
@@ -916,10 +906,7 @@ async fn handle_sitemap_xml(
         .into_response()
 }
 
-async fn handle_robots_txt(
-    State(state): State<DataroomState>,
-    headers: HeaderMap,
-) -> Response {
+async fn handle_robots_txt(State(state): State<DataroomState>, headers: HeaderMap) -> Response {
     let (_ctx, cat) = match state.resolve_context(&headers).await {
         Ok(v) => v,
         Err(e) => return problem_response(e),
@@ -934,10 +921,7 @@ async fn handle_robots_txt(
         .into_response()
 }
 
-async fn handle_util_redirect(
-    State(state): State<DataroomState>,
-    body: Bytes,
-) -> Response {
+async fn handle_util_redirect(State(state): State<DataroomState>, body: Bytes) -> Response {
     redirect_from_form(&state, &body)
 }
 
@@ -994,10 +978,7 @@ fn redirect_from_form(state: &DataroomState, body: &[u8]) -> Response {
     }
 }
 
-async fn handle_user_login(
-    State(state): State<DataroomState>,
-    headers: HeaderMap,
-) -> Response {
+async fn handle_user_login(State(state): State<DataroomState>, headers: HeaderMap) -> Response {
     login_redirect(&state, &headers).await
 }
 
@@ -1071,7 +1052,12 @@ fn is_safe_local_target(v: &str) -> bool {
         && !v.chars().any(char::is_control)
 }
 
-fn html_response_with_csp(html: String, nonce: &str, branding: &BrandingBlock, framable_map: bool) -> Response {
+fn html_response_with_csp(
+    html: String,
+    nonce: &str,
+    branding: &BrandingBlock,
+    framable_map: bool,
+) -> Response {
     let domain = (!branding.domain.is_empty()).then_some(branding.domain.as_str());
     let csp = csp_header_for_domain(nonce, domain, framable_map);
     (
@@ -1206,19 +1192,31 @@ async fn dispatch_ui_route(
                 limit: 20,
                 ..DatasetFilter::default()
             };
-            if let Some(org) = q_params.get("organization").or_else(|| q_params.get("publisher")) {
+            if let Some(org) = q_params
+                .get("organization")
+                .or_else(|| q_params.get("publisher"))
+            {
                 filter.publishers.push(org.clone());
             }
-            if let Some(topic) = q_params.get("vocab_jc_topic").or_else(|| q_params.get("theme")) {
+            if let Some(topic) = q_params
+                .get("vocab_jc_topic")
+                .or_else(|| q_params.get("theme"))
+            {
                 filter.themes.push(topic.clone());
             }
             if let Some(tag) = q_params.get("tags").or_else(|| q_params.get("keyword")) {
                 filter.tags.push(tag.clone());
             }
-            if let Some(fmt) = q_params.get("vocab_jc_format").or_else(|| q_params.get("res_format")) {
+            if let Some(fmt) = q_params
+                .get("vocab_jc_format")
+                .or_else(|| q_params.get("res_format"))
+            {
                 filter.formats.push(fmt.clone());
             }
-            if let Some(lic) = q_params.get("license_id").or_else(|| q_params.get("licence")) {
+            if let Some(lic) = q_params
+                .get("license_id")
+                .or_else(|| q_params.get("licence"))
+            {
                 filter.licences.push(lic.clone());
             }
             if let Some(sp) = q_params.get("spatial") {
@@ -1283,7 +1281,9 @@ async fn dispatch_ui_route(
                 .await
                 .ok()
                 .flatten();
-            if pub_rec.as_ref().is_some_and(|p| p.state == RecordState::Withdrawn)
+            if pub_rec
+                .as_ref()
+                .is_some_and(|p| p.state == RecordState::Withdrawn)
                 && ctx.subject.is_anonymous()
             {
                 return problem_response(DataroomError::NotFound(format!(
@@ -1311,9 +1311,7 @@ async fn dispatch_ui_route(
 
             let accept = headers.get(header::ACCEPT).and_then(|v| v.to_str().ok());
             if let Some(rdf_fmt) = negotiate_rdf_format(ext, accept) {
-                let accept_profile = headers
-                    .get("Accept-Profile")
-                    .and_then(|v| v.to_str().ok());
+                let accept_profile = headers.get("Accept-Profile").and_then(|v| v.to_str().ok());
                 let q_prof = q_params.get("_profile").map(String::as_str);
                 let (prof_kind, prof_uri) =
                     negotiate_profile(q_prof, accept_profile, &cat.main_profile);
@@ -1329,10 +1327,7 @@ async fn dispatch_ui_route(
                     [
                         (header::CONTENT_TYPE, rdf_fmt.content_type().to_owned()),
                         (header::LINK, format!("<{prof_uri}>; rel=\"profile\"")),
-                        (
-                            header::HeaderName::from_static("content-profile"),
-                            prof_uri,
-                        ),
+                        (header::HeaderName::from_static("content-profile"), prof_uri),
                     ],
                     body,
                 )
@@ -1415,7 +1410,10 @@ async fn dispatch_ui_route(
             let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
             let datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
             let q = q_params.get("q").map(String::as_str).unwrap_or("");
-            let sort = q_params.get("sort").map(String::as_str).unwrap_or("title asc");
+            let sort = q_params
+                .get("sort")
+                .map(String::as_str)
+                .unwrap_or("title asc");
             let html = render_organization_list_page(
                 &cat,
                 Some(&state.installation_branding),
@@ -1527,7 +1525,12 @@ async fn dispatch_ui_route(
             html_response_with_csp(html, &nonce, &branding, false)
         }
         // D6: Static pages (`/connector`, `/privacy`, `/terms`, `/support`, `/accessibility`)
-        [page_name] if matches!(*page_name, "connector" | "privacy" | "terms" | "support" | "accessibility") => {
+        [page_name]
+            if matches!(
+                *page_name,
+                "connector" | "privacy" | "terms" | "support" | "accessibility"
+            ) =>
+        {
             let Some(html) = render_static_page(
                 &cat,
                 Some(&state.installation_branding),

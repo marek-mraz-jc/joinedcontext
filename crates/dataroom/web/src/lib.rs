@@ -10,20 +10,19 @@ use askama::Template;
 use chrono::Datelike;
 use dataroom_core::vocab::{find_licence, theme_code};
 use dataroom_core::{
-    localized_text, text_in_lang, BrandingBlock, Catalogue, Dataset, Distribution,
-    FormFieldLayout, Publisher, RecordState, ResourceView, ShaclValidationReport, ThemeTokens,
-    Visibility,
+    localized_text, text_in_lang, BrandingBlock, Catalogue, Dataset, Distribution, FormFieldLayout,
+    Publisher, RecordState, ResourceView, ShaclValidationReport, ThemeTokens, Visibility,
 };
 use dataroom_search::SearchFacets;
 use helpers::{
     html_escape, jc_about, jc_assistant_guide, jc_developer_page, jc_examples, jc_explorer,
     jc_format_chips, jc_is_source, jc_kind, jc_live, jc_map_config, jc_mcp_install, jc_model,
-    jc_more_rows, jc_page, jc_plain_glyphs, jc_preview, jc_resource_format_chip,
-    jc_resource_label, jc_resource_sections, jc_schema_org_script, jc_standard, jc_subscriptions,
-    jc_try_prompt, jc_visualizations, jc_what, publisher_card_info, render_breakable_html,
-    AboutRow, AssistantGuideView, ChartView, ExplorerView, LiveEndpointBox, McpInstallView,
-    ResourceExample, ResourcePreviewConfig, ResourceSectionView, StaticPageView,
-    SubscriptionsView, CONNECTOR_NAME, STATIC_PAGE_NAMES,
+    jc_more_rows, jc_page, jc_plain_glyphs, jc_preview, jc_resource_format_chip, jc_resource_label,
+    jc_resource_sections, jc_schema_org_script, jc_standard, jc_subscriptions, jc_try_prompt,
+    jc_visualizations, jc_what, publisher_card_info, render_breakable_html, AboutRow,
+    AssistantGuideView, ChartView, ExplorerView, LiveEndpointBox, McpInstallView, ResourceExample,
+    ResourcePreviewConfig, ResourceSectionView, StaticPageView, SubscriptionsView, CONNECTOR_NAME,
+    STATIC_PAGE_NAMES,
 };
 use i18n::{
     available_languages, format_date_localized, jc_number, jc_rows, jc_t, language_display_name,
@@ -342,7 +341,11 @@ impl UiLabels {
 /// `ours/ckan-theme/plugin.py` lines 1581-1606, D7).
 pub fn csp_header_for_domain(nonce: &str, domain: Option<&str>, framable_map: bool) -> String {
     let ancestors = if framable_map { "*" } else { "'self'" };
-    let own = match domain.filter(|d| !d.is_empty() && d.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')) {
+    let own = match domain.filter(|d| {
+        !d.is_empty()
+            && d.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    }) {
         Some(d) => format!(" https://{d} https://*.{d}"),
         None => String::new(),
     };
@@ -798,8 +801,7 @@ fn to_dataset_row_view(
     let pub_title = pub_rec
         .and_then(|p| localized_text(&p.title, lang, default_lang).map(str::to_owned))
         .unwrap_or_else(|| ds.publisher_id.clone());
-    let raw_title = localized_text(&ds.title, lang, default_lang)
-        .unwrap_or(&ds.name);
+    let raw_title = localized_text(&ds.title, lang, default_lang).unwrap_or(&ds.name);
     let raw_notes = localized_text(&ds.description, lang, default_lang).unwrap_or("");
     let clean_notes = jc_plain_glyphs(raw_notes);
     let notes_excerpt: String = if clean_notes.chars().count() > 180 {
@@ -840,15 +842,7 @@ pub fn render_home_page(
     csp_nonce: &str,
 ) -> String {
     render_home_page_mounted(
-        catalogue,
-        None,
-        datasets,
-        publishers,
-        query,
-        lang,
-        false,
-        "",
-        csp_nonce,
+        catalogue, None, datasets, publishers, query, lang, false, "", csp_nonce,
     )
 }
 
@@ -925,7 +919,11 @@ pub fn render_home_page_mounted(
 
     // Recent 6 datasets (`jc_recent(6)` in `plugin.py` line 2092, D1)
     let mut recent_sorted = public_ds.clone();
-    recent_sorted.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.name.cmp(&b.name)));
+    recent_sorted.sort_by(|a, b| {
+        b.modified
+            .cmp(&a.modified)
+            .then_with(|| a.name.cmp(&b.name))
+    });
     let recent_datasets: Vec<DatasetRowView> = recent_sorted
         .iter()
         .take(6)
@@ -951,7 +949,10 @@ pub fn render_home_page_mounted(
                 publisher_card_info(p, &chrome.lang, &catalogue.default_language);
             let d_str = desc.unwrap_or_default();
             let d_short = if d_str.chars().count() > 80 {
-                format!("{}...", d_str.chars().take(80).collect::<String>().trim_end())
+                format!(
+                    "{}...",
+                    d_str.chars().take(80).collect::<String>().trim_end()
+                )
             } else {
                 d_str.clone()
             };
@@ -982,10 +983,7 @@ pub fn render_home_page_mounted(
         .take(12)
         .map(|(tag, _)| {
             let enc: String = url::form_urlencoded::byte_serialize(tag.as_bytes()).collect();
-            (
-                tag,
-                format!("{}/dataset/?tags={enc}", chrome.lang_prefix),
-            )
+            (tag, format!("{}/dataset/?tags={enc}", chrome.lang_prefix))
         })
         .collect();
 
@@ -1004,10 +1002,7 @@ pub fn render_home_page_mounted(
         &odata_base,
         "Publishers",
         "Publisher",
-        &[
-            ("title", &labels.col_title, "text"),
-            ("uri", "IRI", "link"),
-        ],
+        &[("title", &labels.col_title, "text"), ("uri", "IRI", "link")],
     );
 
     let tpl = HomePageTemplate {
@@ -1075,7 +1070,8 @@ pub fn render_dataset_list_page(
         .collect();
 
     let base_path = format!("{}/dataset/", chrome.lang_prefix);
-    let facet_groups = build_dataset_facet_groups(facets, total, active_params, &base_path, &chrome.lang);
+    let facet_groups =
+        build_dataset_facet_groups(facets, total, active_params, &base_path, &chrome.lang);
 
     let last_page = total.div_ceil(20).max(1);
     let pages: Vec<usize> = (1..=last_page.min(5)).collect();
@@ -1155,8 +1151,7 @@ fn build_dataset_facet_groups(
             });
         }
         if !items.is_empty() {
-            let more_href = (list.len() > 10)
-                .then(|| format!("{base_path}?_{param}_limit=0"));
+            let more_href = (list.len() > 10).then(|| format!("{base_path}?_{param}_limit=0"));
             groups.push(FacetGroupView {
                 param: param.to_owned(),
                 title,
@@ -1288,13 +1283,7 @@ pub fn render_dataset_page_full(
         .unwrap_or_default();
 
     let odata_base = format!("{}/odata/v4", chrome.mount_prefix);
-    let explorer = jc_explorer(
-        dataset,
-        None,
-        &chrome.branding,
-        &chrome.lang,
-        &odata_base,
-    );
+    let explorer = jc_explorer(dataset, None, &chrome.branding, &chrome.lang, &odata_base);
     let charts = jc_visualizations(
         dataset,
         views,
@@ -1360,11 +1349,7 @@ pub fn render_dataset_page_full(
         .map(|d| DistributionRowView {
             title: jc_resource_label(d, dataset, &chrome.lang, &catalogue.default_language),
             format: jc_resource_format_chip(d),
-            url: d
-                .download_url
-                .as_ref()
-                .unwrap_or(&d.access_url)
-                .clone(),
+            url: d.download_url.as_ref().unwrap_or(&d.access_url).clone(),
         })
         .collect();
 
@@ -1475,7 +1460,8 @@ pub fn render_resource_page(
         })
         .unwrap_or_else(|| publisher_slug.clone());
 
-    let resource_label = jc_resource_label(dist, dataset, &chrome.lang, &catalogue.default_language);
+    let resource_label =
+        jc_resource_label(dist, dataset, &chrome.lang, &catalogue.default_language);
     let format_chip = jc_resource_format_chip(dist);
     let entity_type = helpers::jc_entity_type(dist).unwrap_or_default();
     let what = jc_what(dist, &chrome.lang);
@@ -1500,10 +1486,7 @@ pub fn render_resource_page(
     let full_breakable = render_breakable_html(&url);
 
     let odata_base = format!("{}/odata/v4", chrome.mount_prefix);
-    let explorer = if matches!(
-        jc_kind(dist),
-        Some("NGSI-LD" | "OGCFEAT" | "ODATA" | "STA")
-    ) {
+    let explorer = if matches!(jc_kind(dist), Some("NGSI-LD" | "OGCFEAT" | "ODATA" | "STA")) {
         jc_explorer(
             dataset,
             Some(dist),
@@ -1521,7 +1504,10 @@ pub fn render_resource_page(
     };
     let examples = jc_examples(dist, &chrome.lang);
     let guide_url = (jc_kind(dist) == Some("WEBSOCKET")
-        && chrome.branding.documentation_base_url.starts_with("https://"))
+        && chrome
+            .branding
+            .documentation_base_url
+            .starts_with("https://"))
     .then(|| {
         format!(
             "{}/API/07-websocket",
@@ -1665,7 +1651,10 @@ pub fn render_organization_list_page(
                 .count();
             let d_str = desc.unwrap_or_default();
             let d_short = if d_str.chars().count() > 80 {
-                format!("{}...", d_str.chars().take(80).collect::<String>().trim_end())
+                format!(
+                    "{}...",
+                    d_str.chars().take(80).collect::<String>().trim_end()
+                )
             } else {
                 d_str.clone()
             };
@@ -1694,10 +1683,7 @@ pub fn render_organization_list_page(
         &odata_base,
         "Publishers",
         "Publisher",
-        &[
-            ("title", &labels.col_title, "text"),
-            ("uri", "IRI", "link"),
-        ],
+        &[("title", &labels.col_title, "text"), ("uri", "IRI", "link")],
     );
 
     let tpl = OrganizationListPageTemplate {
@@ -1766,10 +1752,30 @@ pub fn render_organization_read_page(
     let base_path = format!("{}/organization/{}", chrome.lang_prefix, publisher.name);
     let mut facet_groups = Vec::new();
     let org_defs = [
-        ("organization", labels.nav_publishers.clone(), &facets.publisher, ""),
-        ("tags", labels.tags_label.clone(), &facets.keyword, "_tags_limit=0"),
-        ("res_format", labels.formats_label.clone(), &facets.format, "_res_format_limit=0"),
-        ("license_id", labels.licences_label.clone(), &facets.licence, ""),
+        (
+            "organization",
+            labels.nav_publishers.clone(),
+            &facets.publisher,
+            "",
+        ),
+        (
+            "tags",
+            labels.tags_label.clone(),
+            &facets.keyword,
+            "_tags_limit=0",
+        ),
+        (
+            "res_format",
+            labels.formats_label.clone(),
+            &facets.format,
+            "_res_format_limit=0",
+        ),
+        (
+            "license_id",
+            labels.licences_label.clone(),
+            &facets.licence,
+            "",
+        ),
     ];
     for (param, gtitle, list, more_q) in org_defs {
         if list.is_empty() {
@@ -1901,7 +1907,9 @@ pub fn render_static_page(
     );
     let page = jc_page(name, &chrome.branding, &chrome.lang)?;
     let labels = UiLabels::for_lang(&chrome.lang);
-    let mcp = (name == "connector").then(|| jc_mcp_install(&chrome.branding)).flatten();
+    let mcp = (name == "connector")
+        .then(|| jc_mcp_install(&chrome.branding))
+        .flatten();
     let tpl = StaticPageTemplate {
         chrome,
         labels,
@@ -2041,8 +2049,9 @@ pub fn render_map_page(
 
 /// Renders an HTML editor form from the [`FormFieldLayout`] derived from a profile's SHACL shapes (C17).
 pub fn render_profile_editor_form(fields: &[FormFieldLayout], lang: &str) -> String {
-    let mut out =
-        String::from("<form method=\"post\" action=\"/api/v1/datasets\" class=\"dr-profile-form\">\n");
+    let mut out = String::from(
+        "<form method=\"post\" action=\"/api/v1/datasets\" class=\"dr-profile-form\">\n",
+    );
     for f in fields {
         let label = text_in_lang(&f.name, Some(lang)).unwrap_or(&f.field_name);
         let desc = text_in_lang(&f.description, Some(lang)).unwrap_or("");

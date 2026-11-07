@@ -8,8 +8,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use dataroom_core::{
-    text_in_lang, Catalogue, DataroomError, Dataset, Publisher, RecordState, RequestCtx,
-    Visibility,
+    text_in_lang, Catalogue, DataroomError, Dataset, Publisher, RecordState, RequestCtx, Visibility,
 };
 use dataroom_rdf::{
     negotiate_profile, negotiate_rdf_format, serialize_catalogue, DcatProfileKind, HydraPageInfo,
@@ -129,14 +128,7 @@ fn render_dcat_catalog_response(
         prev_page_uri: (page > 1).then(|| format!("{base}{feed_path}?page={}", page - 1)),
     });
 
-    let body = serialize_catalogue(
-        cat,
-        &slice,
-        pub_map,
-        format,
-        profile_kind,
-        hydra.as_ref(),
-    );
+    let body = serialize_catalogue(cat, &slice, pub_map, format, profile_kind, hydra.as_ref());
 
     (
         StatusCode::OK,
@@ -278,7 +270,10 @@ async fn serve_catalog(
 
     if let Some(ref pub_name) = publisher_slug {
         let all_pubs = state.store.list_publishers(&ctx).await.unwrap_or_default();
-        if let Some(raw_pub) = all_pubs.iter().find(|p| &p.name == pub_name || &p.id == pub_name) {
+        if let Some(raw_pub) = all_pubs
+            .iter()
+            .find(|p| &p.name == pub_name || &p.id == pub_name)
+        {
             if let Some(ref merged_target) = raw_pub.merged_into {
                 let ext = match format {
                     RdfFormat::Turtle => "ttl",
@@ -306,9 +301,7 @@ async fn serve_catalog(
         }
     }
 
-    let accept_profile = headers
-        .get("Accept-Profile")
-        .and_then(|v| v.to_str().ok());
+    let accept_profile = headers.get("Accept-Profile").and_then(|v| v.to_str().ok());
     let chosen_qp = explicit_profile.as_deref().or(query.profile.as_deref());
     let (prof_kind, prof_uri) = negotiate_profile(chosen_qp, accept_profile, &cat.main_profile);
 
@@ -327,14 +320,7 @@ async fn serve_catalog(
     };
 
     render_dcat_catalog_response(
-        &cat,
-        datasets,
-        &pub_map,
-        format,
-        prof_kind,
-        prof_uri,
-        query.page,
-        &feed_path,
+        &cat, datasets, &pub_map, format, prof_kind, prof_uri, query.page, &feed_path,
     )
 }
 
@@ -350,7 +336,11 @@ pub async fn handle_general_atom(
     };
     let (mut datasets, _) =
         public_feed_datasets(&state, &ctx, &cat, DcatProfileKind::Eu301, None).await;
-    datasets.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.name.cmp(&b.name)));
+    datasets.sort_by(|a, b| {
+        b.modified
+            .cmp(&a.modified)
+            .then_with(|| a.name.cmp(&b.name))
+    });
     let title = text_in_lang(&cat.title, Some(&cat.default_language))
         .unwrap_or(&cat.name)
         .to_owned();
@@ -373,7 +363,11 @@ pub async fn handle_organization_atom(
     };
     let (mut datasets, _) =
         public_feed_datasets(&state, &ctx, &cat, DcatProfileKind::Eu301, Some(&id)).await;
-    datasets.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.name.cmp(&b.name)));
+    datasets.sort_by(|a, b| {
+        b.modified
+            .cmp(&a.modified)
+            .then_with(|| a.name.cmp(&b.name))
+    });
     let title = format!("{} - Publisher: {}", cat.name, id);
     render_atom_xml(
         &cat,
@@ -404,7 +398,11 @@ pub async fn handle_tag_atom(
         .into_iter()
         .filter(|d| d.tags.contains(&tag))
         .collect();
-    filtered.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.name.cmp(&b.name)));
+    filtered.sort_by(|a, b| {
+        b.modified
+            .cmp(&a.modified)
+            .then_with(|| a.name.cmp(&b.name))
+    });
     let title = format!("{} - Tag: {}", cat.name, tag);
     render_atom_xml(
         &cat,

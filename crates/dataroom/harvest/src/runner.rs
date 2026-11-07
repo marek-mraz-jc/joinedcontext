@@ -2,9 +2,7 @@
 //! Harvest runner executing sources with SSRF protection, provenance tracking, and withdrawal
 //! of datasets no longer listed by a complete source read (C9).
 
-use crate::guard::{
-    validate_and_pin_url, ValidatedTarget, MAX_HARVEST_BYTES, MAX_REDIRECT_HOPS,
-};
+use crate::guard::{validate_and_pin_url, ValidatedTarget, MAX_HARVEST_BYTES, MAX_REDIRECT_HOPS};
 use crate::sources::{
     parse_arcgis_hub_items, parse_ckan_search_page, parse_dcat_page, parse_nkod_sparql_bindings,
 };
@@ -89,9 +87,9 @@ impl OutboundFetcher for HttpFetcher {
             }
             builder = builder.resolve_to_addrs(&target.host, &target.pinned_addrs);
 
-            let client = builder.build().map_err(|e| {
-                DataroomError::OutboundRefused(format!("build HTTP client: {e}"))
-            })?;
+            let client = builder
+                .build()
+                .map_err(|e| DataroomError::OutboundRefused(format!("build HTTP client: {e}")))?;
 
             let url_str = target.url.as_str();
             let mut resp = client
@@ -197,7 +195,12 @@ impl MapFetcher {
             );
     }
 
-    pub fn insert_redirect(&self, url: impl Into<String>, status: u16, location: impl Into<String>) {
+    pub fn insert_redirect(
+        &self,
+        url: impl Into<String>,
+        status: u16,
+        location: impl Into<String>,
+    ) {
         self.responses
             .write()
             .unwrap_or_else(|e| e.into_inner())
@@ -418,7 +421,9 @@ impl HarvestEngine {
                         .and_then(|links| {
                             links.iter().find_map(|l| {
                                 (l.get("rel").and_then(Value::as_str) == Some("next"))
-                                    .then(|| l.get("href").and_then(Value::as_str).map(str::to_owned))
+                                    .then(|| {
+                                        l.get("href").and_then(Value::as_str).map(str::to_owned)
+                                    })
                                     .flatten()
                             })
                         });
@@ -548,7 +553,11 @@ impl HarvestRunner for HarvestEngine {
                 .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
 
             // Ensure target publisher exists (`harvest-hub.py` line 213).
-            if store.get_publisher(ctx, &source.publisher_id).await?.is_none() {
+            if store
+                .get_publisher(ctx, &source.publisher_id)
+                .await?
+                .is_none()
+            {
                 return Err(DataroomError::Validation {
                     message: format!("publisher '{}' does not exist", source.publisher_id),
                     fields: BTreeMap::new(),
@@ -729,9 +738,9 @@ impl HarvestRunner for HarvestEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::guard::validate_outbound_url;
     use dataroom_core::{Catalogue, CatalogueId, OrgId, Publisher, Subject, ThemeTokens};
     use dataroom_store_memory::MemoryStore;
-    use crate::guard::validate_outbound_url;
 
     fn test_setup() -> (OrgId, CatalogueId, RequestCtx, MemoryStore) {
         let org_id = OrgId::from_uuid(Uuid::from_u128(1));
@@ -749,13 +758,10 @@ mod tests {
     fn ssrf_guard_refuses_private_ips_plain_http_and_unlisted_hosts() {
         let allowed = vec!["opendata.bbsk.sk".to_owned()];
         // 1. Plain http refused
-        assert!(validate_outbound_url(
-            "http://opendata.bbsk.sk/api/items",
-            &allowed,
-            &[],
-            false
-        )
-        .is_err());
+        assert!(
+            validate_outbound_url("http://opendata.bbsk.sk/api/items", &allowed, &[], false)
+                .is_err()
+        );
 
         // 2. Private IPv4 ranges, loopback, and cloud metadata refused even if added to allowlist
         for internal in [
@@ -890,7 +896,10 @@ mod tests {
             enabled: true,
             modified: Utc::now(),
         };
-        store.upsert_harvest_source(&ctx, source.clone()).await.unwrap();
+        store
+            .upsert_harvest_source(&ctx, source.clone())
+            .await
+            .unwrap();
 
         let fetcher = MapFetcher::new();
         let hub_url = "https://hub.bbsk.sk/api/search/v1/collections/dataset/items?limit=100";
@@ -942,7 +951,10 @@ mod tests {
         );
 
         let engine = HarvestEngine::new(Arc::new(fetcher.clone())).with_dns_resolution(false);
-        let run1 = engine.run_source(&ctx, &store, &source).await.expect("run 1");
+        let run1 = engine
+            .run_source(&ctx, &store, &source)
+            .await
+            .expect("run 1");
         assert_eq!(run1.created_count, 2);
         assert_eq!(run1.updated_count, 0);
         assert_eq!(run1.unchanged_count, 0);
@@ -975,7 +987,10 @@ mod tests {
             .to_string(),
         );
 
-        let run2 = engine.run_source(&ctx, &store, &source).await.expect("run 2");
+        let run2 = engine
+            .run_source(&ctx, &store, &source)
+            .await
+            .expect("run 2");
         assert_eq!(run2.created_count, 0);
         assert_eq!(run2.unchanged_count, 1);
         assert_eq!(run2.withdrawn_count, 1);
@@ -1094,7 +1109,9 @@ mod tests {
             .with_custom_dns(|host, port| match host {
                 "allowed.example.org" => Ok(vec![SocketAddr::from(([93, 184, 216, 34], port))]),
                 "rebind.example.org" => Ok(vec![SocketAddr::from(([127, 0, 0, 1], port))]),
-                other => Err(DataroomError::OutboundRefused(format!("unknown host {other}"))),
+                other => Err(DataroomError::OutboundRefused(format!(
+                    "unknown host {other}"
+                ))),
             });
 
         // Test 1: Redirect to 169.254.169.254 refused

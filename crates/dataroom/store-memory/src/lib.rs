@@ -53,7 +53,12 @@ impl MemoryStore {
 
 impl Store for MemoryStore {
     fn resolve_host<'a>(&'a self, host: &'a str) -> BoxFuture<'a, Result<Option<Catalogue>>> {
-        let clean = host.split(':').next().unwrap_or(host).trim().to_ascii_lowercase();
+        let clean = host
+            .split(':')
+            .next()
+            .unwrap_or(host)
+            .trim()
+            .to_ascii_lowercase();
         let found = self
             .read_inner()
             .catalogues
@@ -178,15 +183,12 @@ impl Store for MemoryStore {
             publisher.id = format!("pub-{}", publisher.name);
         }
         let mut guard = self.write_inner();
-        let name_conflict = guard
-            .publishers
-            .iter()
-            .any(|((oid, cid, _), p)| {
-                *oid == ctx.org_id
-                    && *cid == ctx.catalogue_id
-                    && p.name == publisher.name
-                    && p.id != publisher.id
-            });
+        let name_conflict = guard.publishers.iter().any(|((oid, cid, _), p)| {
+            *oid == ctx.org_id
+                && *cid == ctx.catalogue_id
+                && p.name == publisher.name
+                && p.id != publisher.id
+        });
         if name_conflict {
             return Box::pin(std::future::ready(Err(DataroomError::Conflict(format!(
                 "publisher name '{}' already exists in this catalogue",
@@ -265,14 +267,11 @@ impl Store for MemoryStore {
         id_or_name: &'a str,
     ) -> BoxFuture<'a, Result<Publisher>> {
         let mut guard = self.write_inner();
-        let found = guard
-            .publishers
-            .values_mut()
-            .find(|p| {
-                p.org_id == ctx.org_id
-                    && p.catalogue_id == ctx.catalogue_id
-                    && (p.id == id_or_name || p.name == id_or_name)
-            });
+        let found = guard.publishers.values_mut().find(|p| {
+            p.org_id == ctx.org_id
+                && p.catalogue_id == ctx.catalogue_id
+                && (p.id == id_or_name || p.name == id_or_name)
+        });
         let Some(p) = found else {
             return Box::pin(std::future::ready(Err(DataroomError::NotFound(format!(
                 "publisher '{id_or_name}' not found"
@@ -394,9 +393,11 @@ impl Store for MemoryStore {
         };
         if let Some(removed) = guard.datasets.remove(&key) {
             let res_ids: Vec<String> = removed.distributions.iter().map(|r| r.id.clone()).collect();
-            guard
-                .views
-                .retain(|(oid, cid, _), v| !(*oid == ctx.org_id && *cid == ctx.catalogue_id && res_ids.contains(&v.resource_id)));
+            guard.views.retain(|(oid, cid, _), v| {
+                !(*oid == ctx.org_id
+                    && *cid == ctx.catalogue_id
+                    && res_ids.contains(&v.resource_id))
+            });
         }
         Box::pin(std::future::ready(Ok(())))
     }
@@ -457,9 +458,10 @@ impl Store for MemoryStore {
         if view.id.is_empty() {
             view.id = format!("view-{}", uuid::Uuid::now_v7());
         }
-        self.write_inner()
-            .views
-            .insert((ctx.org_id, ctx.catalogue_id, view.id.clone()), view.clone());
+        self.write_inner().views.insert(
+            (ctx.org_id, ctx.catalogue_id, view.id.clone()),
+            view.clone(),
+        );
         Box::pin(std::future::ready(Ok(view)))
     }
 
@@ -468,10 +470,10 @@ impl Store for MemoryStore {
         ctx: &'a RequestCtx,
         view_id: &'a str,
     ) -> BoxFuture<'a, Result<()>> {
-        let removed = self
-            .write_inner()
-            .views
-            .remove(&(ctx.org_id, ctx.catalogue_id, view_id.to_owned()));
+        let removed =
+            self.write_inner()
+                .views
+                .remove(&(ctx.org_id, ctx.catalogue_id, view_id.to_owned()));
         if removed.is_none() {
             return Box::pin(std::future::ready(Err(DataroomError::NotFound(format!(
                 "resource view '{view_id}' not found"
@@ -777,9 +779,9 @@ impl Store for MemoryStore {
                 .datasets
                 .values()
                 .flat_map(|ds| {
-                    ds.distributions
-                        .iter()
-                        .map(move |dist| distribution_to_row(ds.org_id, ds.catalogue_id, dist, lang_ref))
+                    ds.distributions.iter().map(move |dist| {
+                        distribution_to_row(ds.org_id, ds.catalogue_id, dist, lang_ref)
+                    })
                 })
                 .collect(),
             "Publishers" => guard

@@ -8,9 +8,7 @@ use dataroom_core::{
     AgentDetails, CatalogueId, DataroomError, Dataset, Distribution, HarvestSkippedItem,
     HarvestSource, OrgId, RecordState, Result, TermsOfUse, Visibility,
 };
-use dataroom_rdf::{
-    ns, parse_datasets_from_rdf, parse_rdf_graph, RdfFormat, RdfLimits,
-};
+use dataroom_rdf::{ns, parse_datasets_from_rdf, parse_rdf_graph, RdfFormat, RdfLimits};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -184,13 +182,8 @@ pub fn parse_arcgis_hub_items(
 
         if item_type == "Feature Service" {
             let service_url = item.get("url").and_then(Value::as_str).unwrap_or("");
-            if validate_outbound_url(
-                service_url,
-                &source.allowed_hosts,
-                cat_allowed_hosts,
-                false,
-            )
-            .is_err()
+            if validate_outbound_url(service_url, &source.allowed_hosts, cat_allowed_hosts, false)
+                .is_err()
             {
                 skipped.push(HarvestSkippedItem {
                     item_id,
@@ -281,7 +274,9 @@ pub fn parse_arcgis_hub_items(
             title: BTreeMap::from([(default_lang.to_owned(), format!("{title} (CSV)"))]),
             description: BTreeMap::new(),
             access_url: service_url,
-            download_url: Some(format!("{hub_base}/api/download/v1/items/{item_id}/csv?layers=0")),
+            download_url: Some(format!(
+                "{hub_base}/api/download/v1/items/{item_id}/csv?layers=0"
+            )),
             format: Some("CSV".into()),
             media_type: Some("text/csv".into()),
             compress_format: None,
@@ -328,25 +323,23 @@ pub fn parse_arcgis_hub_items(
             title: BTreeMap::from([(default_lang.to_owned(), title)]),
             description: BTreeMap::from([(default_lang.to_owned(), notes)]),
             publisher_id: source.publisher_id.clone(),
-            publisher: source.target_publisher_iri.as_ref().map(|uri| AgentDetails {
-                uri: Some(uri.clone()),
-                name: BTreeMap::from([(default_lang.to_owned(), source.publisher_id.clone())]),
-                ..AgentDetails::default()
-            }),
+            publisher: source
+                .target_publisher_iri
+                .as_ref()
+                .map(|uri| AgentDetails {
+                    uri: Some(uri.clone()),
+                    name: BTreeMap::from([(default_lang.to_owned(), source.publisher_id.clone())]),
+                    ..AgentDetails::default()
+                }),
             creator: None,
             contact_point: None,
             visibility: Visibility::Public,
             state: RecordState::Active,
             licence_id: Some(licence_id.to_owned()),
             licence_url: Some(licence_url.to_owned()),
-            themes: vec![
-                "http://publications.europa.eu/resource/authority/data-theme/REGI".into(),
-            ],
+            themes: vec!["http://publications.europa.eu/resource/authority/data-theme/REGI".into()],
             eurovoc_themes: Vec::new(),
-            keywords: BTreeMap::from([(
-                default_lang.to_owned(),
-                tags.iter().cloned().collect(),
-            )]),
+            keywords: BTreeMap::from([(default_lang.to_owned(), tags.iter().cloned().collect())]),
             tags: tags.into_iter().collect(),
             spatial: source.spatial_uri.iter().cloned().collect(),
             spatial_resolution_in_meters: None,
@@ -454,14 +447,17 @@ pub fn parse_nkod_sparql_bindings(
             }
         }
         if let (Some(dist_iri), Some(url)) = (cell("dist"), cell("url")) {
-            let d = entry.distributions.entry(dist_iri).or_insert_with(|| RawDist {
-                title: cell("distTitle").unwrap_or_else(|| entry.title.clone()),
-                url,
-                format: cell("format")
-                    .map(|f| f.rsplit('/').next().unwrap_or(&f).to_ascii_uppercase())
-                    .unwrap_or_else(|| "JSON".into()),
-                licences: BTreeSet::new(),
-            });
+            let d = entry
+                .distributions
+                .entry(dist_iri)
+                .or_insert_with(|| RawDist {
+                    title: cell("distTitle").unwrap_or_else(|| entry.title.clone()),
+                    url,
+                    format: cell("format")
+                        .map(|f| f.rsplit('/').next().unwrap_or(&f).to_ascii_uppercase())
+                        .unwrap_or_else(|| "JSON".into()),
+                    licences: BTreeSet::new(),
+                });
             for k in ["work", "database", "special"] {
                 if let Some(v) = cell(k) {
                     d.licences.insert(v);
@@ -486,7 +482,11 @@ pub fn parse_nkod_sparql_bindings(
     let mut skipped = Vec::new();
 
     for (_, raw) in folded {
-        if let Some(reason) = source.skip_items.get(&raw.title).or_else(|| source.skip_items.get(&raw.iri)) {
+        if let Some(reason) = source
+            .skip_items
+            .get(&raw.title)
+            .or_else(|| source.skip_items.get(&raw.iri))
+        {
             skipped.push(HarvestSkippedItem {
                 item_id: raw.iri,
                 title: raw.title,
@@ -608,20 +608,21 @@ pub fn parse_nkod_sparql_bindings(
                 },
             )]),
             publisher_id: source.publisher_id.clone(),
-            publisher: source.target_publisher_iri.as_ref().map(|uri| AgentDetails {
-                uri: Some(uri.clone()),
-                name: BTreeMap::from([(default_lang.to_owned(), source.publisher_id.clone())]),
-                ..AgentDetails::default()
-            }),
+            publisher: source
+                .target_publisher_iri
+                .as_ref()
+                .map(|uri| AgentDetails {
+                    uri: Some(uri.clone()),
+                    name: BTreeMap::from([(default_lang.to_owned(), source.publisher_id.clone())]),
+                    ..AgentDetails::default()
+                }),
             creator: None,
             contact_point: None,
             visibility: Visibility::Public,
             state: RecordState::Active,
             licence_id: Some(chosen_lic.to_owned()),
             licence_url: None,
-            themes: vec![
-                "http://publications.europa.eu/resource/authority/data-theme/GOVE".into(),
-            ],
+            themes: vec!["http://publications.europa.eu/resource/authority/data-theme/GOVE".into()],
             eurovoc_themes: Vec::new(),
             keywords: BTreeMap::from([(
                 default_lang.to_owned(),
@@ -723,10 +724,7 @@ pub fn parse_dcat_page(
 
     let mut out = Vec::new();
     for mut ds in parsed {
-        let source_item_id = ds
-            .uri
-            .clone()
-            .unwrap_or_else(|| ds.name.clone());
+        let source_item_id = ds.uri.clone().unwrap_or_else(|| ds.name.clone());
         if !source.name_prefix.is_empty() && !ds.name.starts_with(&source.name_prefix) {
             ds.name = format!("{}{}", source.name_prefix, ds.name)
                 .chars()
@@ -738,8 +736,7 @@ pub fn parse_dcat_page(
         ds.harvest_source_item_id = Some(source_item_id.clone());
         ds.extras
             .insert("harvest_source".into(), source.name.clone());
-        ds.extras
-            .insert("source_id".into(), source_item_id.clone());
+        ds.extras.insert("source_id".into(), source_item_id.clone());
         let hash = compute_harvest_hash(&ds);
         ds.harvest_hash = Some(hash.clone());
         ds.extras.insert("harvest_hash".into(), hash);

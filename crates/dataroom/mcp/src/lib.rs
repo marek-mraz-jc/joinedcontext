@@ -71,7 +71,10 @@ pub async fn handle_mcp_jsonrpc(
         .get("method")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let params = rpc_request.get("params").cloned().unwrap_or_else(|| json!({}));
+    let params = rpc_request
+        .get("params")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
 
     match method {
         "initialize" => json!({
@@ -99,10 +102,7 @@ pub async fn handle_mcp_jsonrpc(
             })
         }
         "tools/call" => {
-            let tool_name = params
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or("");
+            let tool_name = params.get("name").and_then(Value::as_str).unwrap_or("");
             let arguments = params
                 .get("arguments")
                 .cloned()

@@ -124,12 +124,11 @@ pub async fn set_tenant_config(
 /// 2. Every table in schema `dataroom` has both `relrowsecurity = true` and
 ///    `relforcerowsecurity = true`, and every table in [`REQUIRED_RLS_TABLES`] exists.
 pub async fn verify_rls_on_pool(pool: &PgPool) -> Result<()> {
-    let (is_super, bypass_rls): (bool, bool) = sqlx::query_as(
-        "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| DataroomError::Storage(format!("failed to inspect current role: {e}")))?;
+    let (is_super, bypass_rls): (bool, bool) =
+        sqlx::query_as("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| DataroomError::Storage(format!("failed to inspect current role: {e}")))?;
 
     if is_super || bypass_rls {
         return Err(DataroomError::Storage(
@@ -267,7 +266,9 @@ impl Store for PgStore {
 
     fn list_publishers<'a>(&'a self, ctx: &'a RequestCtx) -> BoxFuture<'a, Result<Vec<Publisher>>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let rows: Vec<(Json<Publisher>,)> = sqlx::query_as(
                 "SELECT doc FROM dataroom.cat_publisher
                  WHERE org_id = $1 AND catalogue_id = $2
@@ -291,7 +292,9 @@ impl Store for PgStore {
         id_or_name: &'a str,
     ) -> BoxFuture<'a, Result<Option<Publisher>>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let mut target_key = id_or_name.to_owned();
             let mut resolved = None;
             for _ in 0..4 {
@@ -339,7 +342,9 @@ impl Store for PgStore {
             let title = text_in_lang(&publisher.title, None)
                 .unwrap_or(&publisher.name)
                 .to_owned();
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             sqlx::query(
                 "INSERT INTO dataroom.cat_publisher
                  (org_id, catalogue_id, id, name, title, uri, state, merged_into, modified, doc)
@@ -425,7 +430,9 @@ impl Store for PgStore {
 
     fn list_datasets<'a>(&'a self, ctx: &'a RequestCtx) -> BoxFuture<'a, Result<Vec<Dataset>>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let rows: Vec<(Json<Dataset>,)> = sqlx::query_as(
                 "SELECT doc FROM dataroom.cat_dataset
                  WHERE org_id = $1 AND catalogue_id = $2
@@ -449,7 +456,9 @@ impl Store for PgStore {
         id_or_name: &'a str,
     ) -> BoxFuture<'a, Result<Option<Dataset>>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let row: Option<(Json<Dataset>,)> = sqlx::query_as(
                 "SELECT doc FROM dataroom.cat_dataset
                  WHERE org_id = $1 AND catalogue_id = $2
@@ -494,25 +503,39 @@ impl Store for PgStore {
             let text_sk = format!(
                 "{} {} {}",
                 dataset.title.get("sk").map(String::as_str).unwrap_or(""),
-                dataset.description.get("sk").map(String::as_str).unwrap_or(""),
+                dataset
+                    .description
+                    .get("sk")
+                    .map(String::as_str)
+                    .unwrap_or(""),
                 tags_joined
             );
             let text_cs = format!(
                 "{} {} {}",
                 dataset.title.get("cs").map(String::as_str).unwrap_or(""),
-                dataset.description.get("cs").map(String::as_str).unwrap_or(""),
+                dataset
+                    .description
+                    .get("cs")
+                    .map(String::as_str)
+                    .unwrap_or(""),
                 tags_joined
             );
             let text_en = format!(
                 "{} {} {}",
                 dataset.title.get("en").map(String::as_str).unwrap_or(""),
-                dataset.description.get("en").map(String::as_str).unwrap_or(""),
+                dataset
+                    .description
+                    .get("en")
+                    .map(String::as_str)
+                    .unwrap_or(""),
                 tags_joined
             );
             let text_fi = dataset.title.get("fi").cloned().unwrap_or_default();
             let text_ca = dataset.title.get("ca").cloned().unwrap_or_default();
 
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             sqlx::query(
                 "INSERT INTO dataroom.cat_dataset
                  (org_id, catalogue_id, id, name, title, notes, publisher_id, visibility, state,
@@ -641,7 +664,9 @@ impl Store for PgStore {
                     "dataset '{id_or_name}' not found"
                 )));
             };
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             sqlx::query(
                 "DELETE FROM dataroom.cat_distribution
                  WHERE org_id = $1 AND catalogue_id = $2 AND dataset_id COLLATE \"C\" = $3",
@@ -675,7 +700,9 @@ impl Store for PgStore {
         distribution_id: &'a str,
     ) -> BoxFuture<'a, Result<Option<(Dataset, Distribution)>>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let row: Option<(String, Json<Distribution>)> = sqlx::query_as(
                 "SELECT dataset_id, doc FROM dataroom.cat_distribution
                  WHERE org_id = $1 AND catalogue_id = $2 AND id COLLATE \"C\" = $3",
@@ -705,7 +732,9 @@ impl Store for PgStore {
         resource_id: &'a str,
     ) -> BoxFuture<'a, Result<Vec<ResourceView>>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let rows: Vec<(Json<ResourceView>,)> = sqlx::query_as(
                 "SELECT doc FROM dataroom.cat_view
                  WHERE org_id = $1 AND catalogue_id = $2 AND distribution_id COLLATE \"C\" = $3
@@ -730,7 +759,9 @@ impl Store for PgStore {
         view_id: &'a str,
     ) -> BoxFuture<'a, Result<Option<ResourceView>>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let row: Option<(Json<ResourceView>,)> = sqlx::query_as(
                 "SELECT doc FROM dataroom.cat_view
                  WHERE org_id = $1 AND catalogue_id = $2 AND id COLLATE \"C\" = $3",
@@ -757,7 +788,9 @@ impl Store for PgStore {
             if view.id.is_empty() {
                 view.id = format!("view-{}", uuid::Uuid::now_v7());
             }
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             sqlx::query(
                 "INSERT INTO dataroom.cat_view
                  (org_id, catalogue_id, distribution_id, id, view_type, title, view_order, doc)
@@ -792,7 +825,9 @@ impl Store for PgStore {
         view_id: &'a str,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let res = sqlx::query(
                 "DELETE FROM dataroom.cat_view
                  WHERE org_id = $1 AND catalogue_id = $2 AND id COLLATE \"C\" = $3",
@@ -820,7 +855,9 @@ impl Store for PgStore {
         ctx: &'a RequestCtx,
     ) -> BoxFuture<'a, Result<Vec<HarvestSource>>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let rows: Vec<(Json<HarvestSource>,)> = sqlx::query_as(
                 "SELECT doc FROM dataroom.cat_harvest_source
                  WHERE org_id = $1 AND catalogue_id = $2
@@ -844,7 +881,9 @@ impl Store for PgStore {
         id_or_name: &'a str,
     ) -> BoxFuture<'a, Result<Option<HarvestSource>>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let row: Option<(Json<HarvestSource>,)> = sqlx::query_as(
                 "SELECT doc FROM dataroom.cat_harvest_source
                  WHERE org_id = $1 AND catalogue_id = $2
@@ -875,7 +914,9 @@ impl Store for PgStore {
             if source.id.is_empty() {
                 source.id = format!("hs-{}", source.name);
             }
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             sqlx::query(
                 "INSERT INTO dataroom.cat_harvest_source
                  (org_id, catalogue_id, id, name, kind, url, publisher_id, enabled, modified, doc)
@@ -915,7 +956,9 @@ impl Store for PgStore {
         source_id: Option<&'a str>,
     ) -> BoxFuture<'a, Result<Vec<HarvestRun>>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let rows: Vec<(Json<HarvestRun>,)> = match source_id {
                 Some(sid) => {
                     sqlx::query_as(
@@ -955,7 +998,9 @@ impl Store for PgStore {
         run_id: &'a str,
     ) -> BoxFuture<'a, Result<Option<HarvestRun>>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let row: Option<(Json<HarvestRun>,)> = sqlx::query_as(
                 "SELECT doc FROM dataroom.cat_harvest_run
                  WHERE org_id = $1 AND catalogue_id = $2 AND id COLLATE \"C\" = $3",
@@ -981,7 +1026,9 @@ impl Store for PgStore {
         Box::pin(async move {
             run.org_id = ctx.org_id;
             run.catalogue_id = ctx.catalogue_id;
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             sqlx::query(
                 "INSERT INTO dataroom.cat_harvest_run
                  (org_id, catalogue_id, id, source_id, state, started_at, finished_at,
@@ -1026,7 +1073,9 @@ impl Store for PgStore {
         Box::pin(async move {
             row.org_id = ctx.org_id;
             row.catalogue_id = ctx.catalogue_id;
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             sqlx::query(
                 "INSERT INTO dataroom.cat_activity
                  (org_id, catalogue_id, id, at, actor, operation, object_type, object_id, summary, doc)
@@ -1059,7 +1108,9 @@ impl Store for PgStore {
         limit: usize,
     ) -> BoxFuture<'a, Result<Vec<ActivityRow>>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let rows: Vec<(Json<ActivityRow>,)> = match object_id {
                 Some(oid) => {
                     sqlx::query_as(
@@ -1109,7 +1160,9 @@ impl Store for PgStore {
                     report.dataset_id, report.profile_id, report.profile_version
                 );
             }
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             sqlx::query(
                 "INSERT INTO dataroom.cat_shacl_result
                  (org_id, catalogue_id, id, dataset_id, profile_id, profile_version,
@@ -1150,7 +1203,9 @@ impl Store for PgStore {
         profile_id: Option<&'a str>,
     ) -> BoxFuture<'a, Result<Vec<ShaclValidationReport>>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let rows: Vec<(Json<ShaclValidationReport>,)> = sqlx::query_as(
                 "SELECT doc FROM dataroom.cat_shacl_result
                  WHERE org_id = $1 AND catalogue_id = $2
@@ -1177,7 +1232,9 @@ impl Store for PgStore {
         ctx: &'a RequestCtx,
     ) -> BoxFuture<'a, Result<Vec<ProfileRecord>>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let rows: Vec<(Json<ProfileRecord>,)> = sqlx::query_as(
                 "SELECT doc FROM dataroom.cat_profile
                  WHERE org_id = $1 AND catalogue_id = $2
@@ -1201,7 +1258,9 @@ impl Store for PgStore {
         profile: ProfileRecord,
     ) -> BoxFuture<'a, Result<ProfileRecord>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             sqlx::query(
                 "INSERT INTO dataroom.cat_profile (org_id, catalogue_id, id, version, doc)
                  VALUES ($1, $2, $3, $4, $5)
@@ -1224,7 +1283,9 @@ impl Store for PgStore {
 
     fn list_pages<'a>(&'a self, ctx: &'a RequestCtx) -> BoxFuture<'a, Result<Vec<StaticPage>>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let rows: Vec<(Json<StaticPage>,)> = sqlx::query_as(
                 "SELECT doc FROM dataroom.cat_page
                  WHERE org_id = $1 AND catalogue_id = $2
@@ -1250,7 +1311,9 @@ impl Store for PgStore {
         Box::pin(async move {
             page.org_id = ctx.org_id;
             page.catalogue_id = ctx.catalogue_id;
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             sqlx::query(
                 "INSERT INTO dataroom.cat_page (org_id, catalogue_id, slug, lang, modified, doc)
                  VALUES ($1, $2, $3, $4, $5, $6)
@@ -1279,7 +1342,9 @@ impl Store for PgStore {
         ctx: &'a RequestCtx,
     ) -> BoxFuture<'a, Result<Vec<CataloguePlugin>>> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             let rows: Vec<(Json<CataloguePlugin>,)> = sqlx::query_as(
                 "SELECT doc FROM dataroom.cat_plugin
                  WHERE org_id = $1 AND catalogue_id = $2
@@ -1305,7 +1370,9 @@ impl Store for PgStore {
         Box::pin(async move {
             plugin.org_id = ctx.org_id;
             plugin.catalogue_id = ctx.catalogue_id;
-            let mut tx = self.begin_tenant(ctx.org_id, Some(ctx.catalogue_id)).await?;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
             sqlx::query(
                 "INSERT INTO dataroom.cat_plugin (org_id, catalogue_id, name, modified, doc)
                  VALUES ($1, $2, $3, $4, $5)
@@ -1425,7 +1492,9 @@ mod tests {
             .expect("connect as request role");
 
         // The superuser pool is refused; the request role passes on the migrated schema.
-        assert!(PgStore::connect_and_verify(admin_pool.clone()).await.is_err());
+        assert!(PgStore::connect_and_verify(admin_pool.clone())
+            .await
+            .is_err());
         PgStore::connect_and_verify(request_pool.clone())
             .await
             .expect("request role passes the boot check on the migrated schema");
@@ -1456,13 +1525,21 @@ mod tests {
         let cat_b = CatalogueId::from_uuid(Uuid::now_v7());
 
         for (org, cat, host) in [
-            (org_a, cat_a, format!("a-{}.example.org", Uuid::now_v7().simple())),
-            (org_b, cat_b, format!("b-{}.example.org", Uuid::now_v7().simple())),
+            (
+                org_a,
+                cat_a,
+                format!("a-{}.example.org", Uuid::now_v7().simple()),
+            ),
+            (
+                org_b,
+                cat_b,
+                format!("b-{}.example.org", Uuid::now_v7().simple()),
+            ),
         ] {
             store
                 .upsert_catalogue(Catalogue {
                     org_id: org,
-branding: None,
+                    branding: None,
                     hidden_datasets: Default::default(),
                     id: cat,
                     name: "shared".into(),
@@ -1504,7 +1581,7 @@ branding: None,
                 &ctx_b,
                 Publisher {
                     org_id: org_b,
-badge_initials: None,
+                    badge_initials: None,
                     badge_colour: None,
                     declared_by_instance: None,
                     catalogue_id: cat_b,
@@ -1539,15 +1616,18 @@ badge_initials: None,
             .await
             .expect("set tenant config A");
 
-        let count_b_from_a: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM dataroom.cat_publisher")
-                .fetch_one(&mut *tx)
-                .await
-                .expect("count publishers as A");
+        let count_b_from_a: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM dataroom.cat_publisher")
+            .fetch_one(&mut *tx)
+            .await
+            .expect("count publishers as A");
         assert_eq!(count_b_from_a.0, 0, "RLS must hide org B rows from org A");
         tx.rollback().await.ok();
 
-        assert!(store.get_publisher(&ctx_a, "city-b").await.unwrap().is_none());
+        assert!(store
+            .get_publisher(&ctx_a, "city-b")
+            .await
+            .unwrap()
+            .is_none());
         let _ = Visibility::Internal;
     }
 }

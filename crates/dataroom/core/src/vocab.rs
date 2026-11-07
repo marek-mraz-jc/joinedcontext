@@ -300,7 +300,12 @@ pub fn language_to_eu_iri(lang: &str) -> String {
         "uk" => "UKR",
         "fr" => "FRA",
         "es" => "SPA",
-        other => return format!("http://publications.europa.eu/resource/authority/language/{}", other.to_ascii_uppercase()),
+        other => {
+            return format!(
+                "http://publications.europa.eu/resource/authority/language/{}",
+                other.to_ascii_uppercase()
+            )
+        }
     };
     format!("http://publications.europa.eu/resource/authority/language/{code3}")
 }

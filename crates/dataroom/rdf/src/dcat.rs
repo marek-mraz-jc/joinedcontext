@@ -17,8 +17,8 @@ use dataroom_core::vocab::{
     iana_iri_to_media_type, language_to_eu_iri, media_type_to_iana_iri, theme_code, theme_to_iri,
 };
 use dataroom_core::{
-    AgentDetails, Catalogue, CatalogueId, ContactKind, ContactPoint, DataService,
-    Dataset, Distribution, OrgId, Publisher, RecordState, TemporalPeriod, TermsOfUse, Visibility,
+    AgentDetails, Catalogue, CatalogueId, ContactKind, ContactPoint, DataService, Dataset,
+    Distribution, OrgId, Publisher, RecordState, TemporalPeriod, TermsOfUse, Visibility,
 };
 use std::collections::BTreeMap;
 use uuid::Uuid;
@@ -62,7 +62,12 @@ pub fn negotiate_rdf_format(ext: Option<&str>, accept: Option<&str>) -> Option<R
     }
     let accept = accept?;
     for part in accept.split(',') {
-        let media = part.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        let media = part
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
         match media.as_str() {
             "text/turtle" | "application/x-turtle" | "text/n3" => return Some(RdfFormat::Turtle),
             "application/ld+json" => return Some(RdfFormat::JsonLd),
@@ -191,7 +196,11 @@ pub fn add_dataset_triples(
     } else {
         "http://www.w3.org/ns/dcat#Dataset"
     };
-    g.insert(ds_subj.clone(), ns::RDF_TYPE, Term::Iri(rdf_class.to_owned()));
+    g.insert(
+        ds_subj.clone(),
+        ns::RDF_TYPE,
+        Term::Iri(rdf_class.to_owned()),
+    );
 
     for (lang, text) in &dataset.title {
         if !text.is_empty() {
@@ -213,10 +222,7 @@ pub fn add_dataset_triples(
     }
 
     // Identifier
-    let ident = dataset
-        .identifier
-        .as_deref()
-        .unwrap_or(&dataset.name);
+    let ident = dataset.identifier.as_deref().unwrap_or(&dataset.name);
     if profile == DcatProfileKind::Eu301 {
         g.insert(
             ds_subj.clone(),
@@ -304,11 +310,7 @@ pub fn add_dataset_triples(
             } else {
                 format!("mailto:{}", cp.email)
             };
-            g.insert(
-                cp_subj,
-                format!("{}hasEmail", ns::VCARD),
-                Term::Iri(mailto),
-            );
+            g.insert(cp_subj, format!("{}hasEmail", ns::VCARD), Term::Iri(mailto));
         }
     }
 
@@ -1288,7 +1290,12 @@ pub fn graph_to_datasets(
             .filter(|s| s.len() >= 2)
             .unwrap_or_else(|| format!("dataset-{}", &Uuid::now_v7().to_string()[..8]));
 
-        let title = extract_lang_map(graph, &ds_subj, "http://purl.org/dc/terms/title", default_lang);
+        let title = extract_lang_map(
+            graph,
+            &ds_subj,
+            "http://purl.org/dc/terms/title",
+            default_lang,
+        );
         let description = extract_lang_map(
             graph,
             &ds_subj,
@@ -1340,16 +1347,27 @@ pub fn graph_to_datasets(
             .map(|p_subj| {
                 let start = graph
                     .first_object(&p_subj, "http://www.w3.org/ns/dcat#startDate")
-                    .and_then(|v| v.string_value().get(..10).and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()));
+                    .and_then(|v| {
+                        v.string_value()
+                            .get(..10)
+                            .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+                    });
                 let end = graph
                     .first_object(&p_subj, "http://www.w3.org/ns/dcat#endDate")
-                    .and_then(|v| v.string_value().get(..10).and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()));
+                    .and_then(|v| {
+                        v.string_value()
+                            .get(..10)
+                            .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+                    });
                 TemporalPeriod { start, end }
             })
             .filter(|tp| tp.start.is_some() || tp.end.is_some());
 
         let spatial_resolution_in_meters = graph
-            .first_object(&ds_subj, "http://www.w3.org/ns/dcat#spatialResolutionInMeters")
+            .first_object(
+                &ds_subj,
+                "http://www.w3.org/ns/dcat#spatialResolutionInMeters",
+            )
             .and_then(|t| t.string_value().parse::<f64>().ok());
 
         let temporal_resolution = graph
@@ -1643,7 +1661,10 @@ pub fn graph_to_datasets(
                 .map(|t| t.string_value().to_owned())
                 .collect();
             let dist_laws: Vec<String> = graph
-                .objects_of(&dist_subj, "http://data.europa.eu/r5r/applicableLegislation")
+                .objects_of(
+                    &dist_subj,
+                    "http://data.europa.eu/r5r/applicableLegislation",
+                )
                 .into_iter()
                 .map(|t| t.string_value().to_owned())
                 .collect();
@@ -1830,9 +1851,7 @@ fn extract_lang_map(
     let mut map = BTreeMap::new();
     for term in graph.objects_of(subj, predicate) {
         if let Term::Literal(lit) = term {
-            let lang = lit
-                .language
-                .unwrap_or_else(|| default_lang.to_owned());
+            let lang = lit.language.unwrap_or_else(|| default_lang.to_owned());
             map.insert(lang, lit.value);
         }
     }
@@ -1892,7 +1911,7 @@ mod tests {
     fn sample_catalogue(org_id: OrgId, catalogue_id: CatalogueId) -> Catalogue {
         Catalogue {
             org_id,
-branding: None,
+            branding: None,
             hidden_datasets: Default::default(),
             id: catalogue_id,
             name: "opendata".into(),
@@ -1959,7 +1978,11 @@ branding: None,
         );
         assert_eq!(ds_cz.distributions.len(), 2);
 
-        for profile in [DcatProfileKind::Eu301, DcatProfileKind::Cz, DcatProfileKind::Sk20] {
+        for profile in [
+            DcatProfileKind::Eu301,
+            DcatProfileKind::Cz,
+            DcatProfileKind::Sk20,
+        ] {
             let emitted_ttl = serialize_dataset(ds_cz, &cat, None, RdfFormat::Turtle, profile);
             let reparsed = parse_datasets_from_rdf(
                 &emitted_ttl,
@@ -2017,7 +2040,8 @@ branding: None,
     }
 
     #[test]
-    fn a1_rdf_limits_refuse_bytes_triples_nesting_literal_length_billion_laughs_and_remote_context() {
+    fn a1_rdf_limits_refuse_bytes_triples_nesting_literal_length_billion_laughs_and_remote_context()
+    {
         // 1. Byte cap refused with kind == "bytes"
         let small_byte_limit = RdfLimits {
             max_bytes: 32,
@@ -2040,7 +2064,12 @@ branding: None,
             <https://example.org/s> <https://example.org/p2> "v2" .
             <https://example.org/s> <https://example.org/p3> "v3" .
         "#;
-        let err = parse(three_triples.as_bytes(), RdfFormat::Turtle, small_triple_limit).unwrap_err();
+        let err = parse(
+            three_triples.as_bytes(),
+            RdfFormat::Turtle,
+            small_triple_limit,
+        )
+        .unwrap_err();
         assert!(
             matches!(&err, DataroomError::RdfLimitExceeded { kind, .. } if kind == "triples"),
             "expected triples limit error, got {err:?}"

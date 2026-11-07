@@ -29,7 +29,9 @@ pub fn text_in_lang<'a>(texts: &'a Texts, preferred: Option<&str>) -> Option<&'a
 }
 
 /// Verified Organization identifier (UUID, no `Default` and no `From<&str>` per research-tenancy §2.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(transparent)]
 pub struct OrgId(Uuid);
 
@@ -44,7 +46,10 @@ impl OrgId {
         let u = Uuid::parse_str(text)
             .map_err(|e| DataroomError::field_error("org_id", format!("invalid UUID: {e}")))?;
         if u.is_nil() {
-            return Err(DataroomError::field_error("org_id", "nil UUID is not allowed"));
+            return Err(DataroomError::field_error(
+                "org_id",
+                "nil UUID is not allowed",
+            ));
         }
         Ok(Self(u))
     }
@@ -62,7 +67,9 @@ impl fmt::Display for OrgId {
 }
 
 /// Verified Catalogue instance identifier (UUID, no `Default` and no `From<&str>`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(transparent)]
 pub struct CatalogueId(Uuid);
 
@@ -99,7 +106,9 @@ impl fmt::Display for CatalogueId {
 }
 
 /// Visibility of a dataset (00-contract.md).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Visibility {
     /// Published in open DCAT feeds and visible to anonymous callers.
@@ -121,7 +130,9 @@ impl Visibility {
 }
 
 /// Lifecycle state of a dataset or publisher.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum RecordState {
     Draft,
@@ -190,14 +201,12 @@ impl Default for ThemeTokens {
 }
 
 /// Kind of contact point (`vcard:Organization` or `vcard:Individual`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 pub enum ContactKind {
     #[default]
     Organization,
     Individual,
 }
-
 
 /// Contact point (`dcat:contactPoint`, `vcard:Kind`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -650,12 +659,20 @@ impl Dataset {
                 return uri.trim().to_owned();
             }
         }
-        if let Some(uri) = self.extras.get("uri").or_else(|| self.extras.get("source_uri")) {
+        if let Some(uri) = self
+            .extras
+            .get("uri")
+            .or_else(|| self.extras.get("source_uri"))
+        {
             if !uri.trim().is_empty() {
                 return uri.trim().to_owned();
             }
         }
-        format!("{}/dataset/{}", catalogue_base.trim_end_matches('/'), self.name)
+        format!(
+            "{}/dataset/{}",
+            catalogue_base.trim_end_matches('/'),
+            self.name
+        )
     }
 
     /// Validates slug, tags and required fields.
@@ -852,7 +869,9 @@ pub struct ActivityRow {
 }
 
 /// SHACL severity (`sh:Info`, `sh:Warning`, `sh:Violation`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 pub enum ShaclSeverity {
     Info,
     Warning,

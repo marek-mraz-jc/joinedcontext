@@ -149,7 +149,8 @@ pub fn parse_turtle_bytes(bytes: &[u8], limits: &RdfLimits) -> Result<RdfGraph> 
 
     let mut graph = RdfGraph::new();
     for item in parser.for_slice(bytes) {
-        let ox_triple = item.map_err(|e| DataroomError::Rdf(format!("Turtle syntax error: {e}")))?;
+        let ox_triple =
+            item.map_err(|e| DataroomError::Rdf(format!("Turtle syntax error: {e}")))?;
         graph.insert_checked(from_ox_triple(ox_triple), limits)?;
     }
     Ok(graph)
@@ -364,10 +365,14 @@ mod tests {
     fn parses_cz_and_sk_example_turtle_files() {
         let cz_ds = include_str!("../../specs/dcat-ap-cz/priklady-katalog/datova-sada.ttl");
         let g = parse_turtle_checked(cz_ds, &RdfLimits::default()).expect("parse cz dataset");
-        assert!(!g.instances_of("http://www.w3.org/ns/dcat#Dataset").is_empty());
+        assert!(!g
+            .instances_of("http://www.w3.org/ns/dcat#Dataset")
+            .is_empty());
 
         let sk_ds = include_str!("../../specs/dcat-ap-sk/príklady/dataset.ttl");
         let g2 = parse_turtle_checked(sk_ds, &RdfLimits::default()).expect("parse sk dataset");
-        assert!(!g2.instances_of("http://www.w3.org/ns/dcat#Dataset").is_empty());
+        assert!(!g2
+            .instances_of("http://www.w3.org/ns/dcat#Dataset")
+            .is_empty());
     }
 }

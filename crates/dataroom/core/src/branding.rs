@@ -170,9 +170,7 @@ impl Default for BrandingBlock {
 /// Checks whether `value` is `#rgb` or `#rrggbb` of hex digits (`_is_colour` in `plugin.py`).
 pub fn is_valid_hex_colour(value: &str) -> bool {
     let bytes = value.as_bytes();
-    matches!(bytes.len(), 4 | 7)
-        && bytes[0] == b'#'
-        && bytes[1..].iter().all(u8::is_ascii_hexdigit)
+    matches!(bytes.len(), 4 | 7) && bytes[0] == b'#' && bytes[1..].iter().all(u8::is_ascii_hexdigit)
 }
 
 /// Parses a `#rgb` or `#rrggbb` colour into `(r, g, b)` (`_rgb` in `plugin.py`).
@@ -271,7 +269,10 @@ impl BrandingBlock {
                 continue;
             }
             if section == "languages" && trimmed.starts_with("- ") {
-                let code = trimmed.trim_start_matches("- ").trim().trim_matches(['\'', '"']);
+                let code = trimmed
+                    .trim_start_matches("- ")
+                    .trim()
+                    .trim_matches(['\'', '"']);
                 if !code.is_empty() {
                     offered.push(Value::String(code.to_owned()));
                 }
@@ -424,34 +425,66 @@ impl BrandingBlock {
             }
         } else {
             // Also support flat ThemeTokens override (`primary`, `secondary`, `accent`, `background`, `text`)
-            if let Some(c) = obj.get("primary").and_then(Value::as_str).filter(|c| is_valid_hex_colour(c)) {
+            if let Some(c) = obj
+                .get("primary")
+                .and_then(Value::as_str)
+                .filter(|c| is_valid_hex_colour(c))
+            {
                 self.colours.primary = c.to_owned();
             }
-            if let Some(c) = obj.get("secondary").and_then(Value::as_str).filter(|c| is_valid_hex_colour(c)) {
+            if let Some(c) = obj
+                .get("secondary")
+                .and_then(Value::as_str)
+                .filter(|c| is_valid_hex_colour(c))
+            {
                 self.colours.secondary = c.to_owned();
             }
-            if let Some(c) = obj.get("accent").and_then(Value::as_str).filter(|c| is_valid_hex_colour(c)) {
+            if let Some(c) = obj
+                .get("accent")
+                .and_then(Value::as_str)
+                .filter(|c| is_valid_hex_colour(c))
+            {
                 self.colours.accent = c.to_owned();
             }
-            if let Some(c) = obj.get("background").and_then(Value::as_str).filter(|c| is_valid_hex_colour(c)) {
+            if let Some(c) = obj
+                .get("background")
+                .and_then(Value::as_str)
+                .filter(|c| is_valid_hex_colour(c))
+            {
                 self.colours.background = c.to_owned();
             }
-            if let Some(c) = obj.get("text").and_then(Value::as_str).filter(|c| is_valid_hex_colour(c)) {
+            if let Some(c) = obj
+                .get("text")
+                .and_then(Value::as_str)
+                .filter(|c| is_valid_hex_colour(c))
+            {
                 self.colours.text = c.to_owned();
             }
         }
 
         if let Some(Value::Object(f)) = obj.get("fonts") {
-            if let Some(h) = f.get("heading").and_then(Value::as_str).and_then(sanitize_font_stack) {
+            if let Some(h) = f
+                .get("heading")
+                .and_then(Value::as_str)
+                .and_then(sanitize_font_stack)
+            {
                 self.fonts.heading = h;
             }
-            if let Some(b) = f.get("body").and_then(Value::as_str).and_then(sanitize_font_stack) {
+            if let Some(b) = f
+                .get("body")
+                .and_then(Value::as_str)
+                .and_then(sanitize_font_stack)
+            {
                 self.fonts.body = b;
             }
         }
 
         if let Some(Value::Object(l)) = obj.get("languages") {
-            if let Some(def) = l.get("default").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+            if let Some(def) = l
+                .get("default")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+            {
                 self.languages.default = def.to_owned();
             }
             if let Some(Value::Array(arr)) = l.get("offered") {
@@ -495,7 +528,8 @@ impl BrandingBlock {
         if let Some(st) = obj.get("siteTitle").or_else(|| obj.get("site_title")) {
             match st {
                 Value::String(s) if !s.is_empty() => {
-                    self.site_title.insert(self.languages.default.clone(), s.clone());
+                    self.site_title
+                        .insert(self.languages.default.clone(), s.clone());
                 }
                 Value::Object(map) => {
                     for (k, v) in map {
@@ -755,7 +789,10 @@ pub fn validate_and_sanitise_logo(bytes: &[u8], content_type: &str) -> Result<Sa
     if bytes.len() > MAX_LOGO_BYTES {
         return Err(DataroomError::field_error(
             "logo",
-            format!("image size {} exceeds limit of {MAX_LOGO_BYTES} bytes", bytes.len()),
+            format!(
+                "image size {} exceeds limit of {MAX_LOGO_BYTES} bytes",
+                bytes.len()
+            ),
         ));
     }
 
@@ -766,21 +803,25 @@ pub fn validate_and_sanitise_logo(bytes: &[u8], content_type: &str) -> Result<Sa
         .trim()
         .to_ascii_lowercase();
 
-    let (canonical_ct, ext) = if ct_clean == "image/svg+xml" || bytes.starts_with(b"<svg") || bytes.starts_with(b"<?xml") {
-        validate_svg_bytes(bytes)?;
-        ("image/svg+xml", "svg")
-    } else if ct_clean == "image/png" || bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        validate_png_bytes(bytes)?;
-        ("image/png", "png")
-    } else if ct_clean == "image/webp" || (bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP") {
-        validate_webp_bytes(bytes)?;
-        ("image/webp", "webp")
-    } else {
-        return Err(DataroomError::field_error(
-            "logo",
-            "unsupported image format; only SVG, PNG and WebP are allowed",
-        ));
-    };
+    let (canonical_ct, ext) =
+        if ct_clean == "image/svg+xml" || bytes.starts_with(b"<svg") || bytes.starts_with(b"<?xml")
+        {
+            validate_svg_bytes(bytes)?;
+            ("image/svg+xml", "svg")
+        } else if ct_clean == "image/png" || bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+            validate_png_bytes(bytes)?;
+            ("image/png", "png")
+        } else if ct_clean == "image/webp"
+            || (bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP")
+        {
+            validate_webp_bytes(bytes)?;
+            ("image/webp", "webp")
+        } else {
+            return Err(DataroomError::field_error(
+                "logo",
+                "unsupported image format; only SVG, PNG and WebP are allowed",
+            ));
+        };
 
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -883,7 +924,11 @@ fn svg_tags(text: &str) -> Vec<SvgTag<'_>> {
             i += 1;
         }
         // Tag name.
-        while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'/' && bytes[i] != b'>' {
+        while i < bytes.len()
+            && !bytes[i].is_ascii_whitespace()
+            && bytes[i] != b'/'
+            && bytes[i] != b'>'
+        {
             i += 1;
         }
         let mut attributes = Vec::new();
@@ -923,7 +968,8 @@ fn svg_tags(text: &str) -> Vec<SvgTag<'_>> {
                     }
                     _ => {
                         let value_start = i;
-                        while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' {
+                        while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>'
+                        {
                             i += 1;
                         }
                         value = &text[value_start..i];
@@ -949,16 +995,25 @@ fn svg_tags(text: &str) -> Vec<SvgTag<'_>> {
 fn check_svg_attribute(name: &str, value: &str) -> Result<()> {
     let refuse = |why: String| Err(DataroomError::field_error("logo", why));
     if name.starts_with("on") && name.len() > 2 {
-        return refuse(format!("SVG contains forbidden event handler attribute '{name}'"));
+        return refuse(format!(
+            "SVG contains forbidden event handler attribute '{name}'"
+        ));
     }
     let value = value.trim();
     if matches!(name, "href" | "src") || name.ends_with(":href") {
         let local = value.starts_with('#');
-        let embedded_raster = ["data:image/png", "data:image/jpeg", "data:image/gif", "data:image/webp"]
-            .iter()
-            .any(|p| value.starts_with(p));
+        let embedded_raster = [
+            "data:image/png",
+            "data:image/jpeg",
+            "data:image/gif",
+            "data:image/webp",
+        ]
+        .iter()
+        .any(|p| value.starts_with(p));
         if !local && !embedded_raster {
-            return refuse(format!("SVG contains forbidden external reference in '{name}'"));
+            return refuse(format!(
+                "SVG contains forbidden external reference in '{name}'"
+            ));
         }
     }
     if name == "attributename"
@@ -1098,7 +1153,10 @@ mod tests {
             logo_url: None,
             description: BTreeMap::from([
                 ("sk".into(), "Otvorené údaje mesta Banská Bystrica.".into()),
-                ("en".into(), "Open data of the City of Banská Bystrica.".into()),
+                (
+                    "en".into(),
+                    "Open data of the City of Banská Bystrica.".into(),
+                ),
             ]),
             homepage: Some("https://www.banskabystrica.sk".into()),
         };
@@ -1159,26 +1217,50 @@ mod tests {
 
         // Also check neutral default block and a light primary colour (#ffe977)
         let neutral = BrandingBlock::default();
-        assert!(wcag_contrast_ratio(&neutral.colours.text, &neutral.colours.background).unwrap() >= 4.5);
-        assert!(wcag_contrast_ratio(&neutral.primary_foreground, &neutral.colours.primary).unwrap() >= 4.5);
-        assert!(wcag_contrast_ratio(&neutral.colours.primary, &neutral.colours.background).unwrap() >= 4.5);
+        assert!(
+            wcag_contrast_ratio(&neutral.colours.text, &neutral.colours.background).unwrap() >= 4.5
+        );
+        assert!(
+            wcag_contrast_ratio(&neutral.primary_foreground, &neutral.colours.primary).unwrap()
+                >= 4.5
+        );
+        assert!(
+            wcag_contrast_ratio(&neutral.colours.primary, &neutral.colours.background).unwrap()
+                >= 4.5
+        );
     }
 
     #[test]
     fn b1_broken_domain_and_mcp_server_fall_back_to_the_level_above() {
         let mut block = BrandingBlock::default();
-        block.apply_override_json(&json!({ "domain": "dev.joinedcontext.com", "mcpServer": "d/demo-1" }));
+        block.apply_override_json(
+            &json!({ "domain": "dev.joinedcontext.com", "mcpServer": "d/demo-1" }),
+        );
         assert_eq!(block.domain, "dev.joinedcontext.com");
         assert_eq!(block.mcp_server.as_deref(), Some("d/demo-1"));
-        for bad in ["x; script-src *", "Dev.Example.com", "localhost", "-a.example", "a..example", "evil.example/path"] {
+        for bad in [
+            "x; script-src *",
+            "Dev.Example.com",
+            "localhost",
+            "-a.example",
+            "a..example",
+            "evil.example/path",
+        ] {
             let mut b = block.clone();
             b.apply_override_json(&json!({ "domain": bad, "orgDomain": bad }));
-            assert_eq!(b.domain, "dev.joinedcontext.com", "domain {bad:?} must be ignored");
+            assert_eq!(
+                b.domain, "dev.joinedcontext.com",
+                "domain {bad:?} must be ignored"
+            );
         }
         for bad in ["d/", "d/-x", "d/<script>", "e/demo", "d/a/b"] {
             let mut b = block.clone();
             b.apply_override_json(&json!({ "mcpServer": bad }));
-            assert_eq!(b.mcp_server.as_deref(), Some("d/demo-1"), "mcpServer {bad:?} must be ignored");
+            assert_eq!(
+                b.mcp_server.as_deref(),
+                Some("d/demo-1"),
+                "mcpServer {bad:?} must be ignored"
+            );
         }
     }
 
@@ -1193,7 +1275,8 @@ mod tests {
         assert_eq!(asset.content_type, "image/svg+xml");
 
         // 2. SVG with <script> is refused
-        let script_svg = br#"<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>"#;
+        let script_svg =
+            br#"<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>"#;
         assert!(validate_and_sanitise_logo(script_svg, "image/svg+xml").is_err());
 
         // 3. SVG with onload= event attribute is refused

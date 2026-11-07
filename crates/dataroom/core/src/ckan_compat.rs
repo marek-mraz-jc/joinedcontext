@@ -96,7 +96,10 @@ pub fn dataset_to_ckan(
                 dist,
                 &dataset.id,
                 idx,
-                views_by_resource.get(&dist.id).map(Vec::as_slice).unwrap_or(&[]),
+                views_by_resource
+                    .get(&dist.id)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
                 default_lang,
             )
         })
@@ -104,10 +107,14 @@ pub fn dataset_to_ckan(
 
     let mut extras_map: BTreeMap<String, String> = dataset.extras.clone();
     if let Some(ident) = &dataset.identifier {
-        extras_map.entry("identifier".into()).or_insert_with(|| ident.clone());
+        extras_map
+            .entry("identifier".into())
+            .or_insert_with(|| ident.clone());
     }
     if let Some(freq) = &dataset.frequency {
-        extras_map.entry("frequency".into()).or_insert_with(|| freq.clone());
+        extras_map
+            .entry("frequency".into())
+            .or_insert_with(|| freq.clone());
     }
     if !dataset.themes.is_empty() {
         if let Ok(s) = serde_json::to_string(&dataset.themes) {
@@ -160,7 +167,9 @@ pub fn dataset_to_ckan(
         }
     }
     if let Some(ep) = &dataset.endpoint_url {
-        extras_map.entry("endpoint".into()).or_insert_with(|| ep.clone());
+        extras_map
+            .entry("endpoint".into())
+            .or_insert_with(|| ep.clone());
     }
     if let Some(gen_by) = &dataset.generated_by {
         extras_map
@@ -220,7 +229,10 @@ pub fn dataset_to_ckan(
     out.insert("notes_translated".into(), json!(dataset.description));
     out.insert("owner_org".into(), json!(owner_org));
     out.insert("organization".into(), org_value);
-    out.insert("private".into(), json!(dataset.visibility != Visibility::Public));
+    out.insert(
+        "private".into(),
+        json!(dataset.visibility != Visibility::Public),
+    );
     out.insert("visibility".into(), json!(dataset.visibility.as_str()));
     out.insert("state".into(), json!(dataset.state.ckan_state()));
     out.insert("type".into(), json!(dataset.dataset_type));
@@ -234,8 +246,14 @@ pub fn dataset_to_ckan(
     }
     out.insert("maintainer".into(), json!(maintainer));
     out.insert("maintainer_email".into(), json!(maintainer_email));
-    out.insert("metadata_created".into(), json!(dataset.issued.to_rfc3339()));
-    out.insert("metadata_modified".into(), json!(dataset.modified.to_rfc3339()));
+    out.insert(
+        "metadata_created".into(),
+        json!(dataset.issued.to_rfc3339()),
+    );
+    out.insert(
+        "metadata_modified".into(),
+        json!(dataset.modified.to_rfc3339()),
+    );
     out.insert("num_resources".into(), json!(resources.len()));
     out.insert("num_tags".into(), json!(tags.len()));
     out.insert("tags".into(), Value::Array(tags));
@@ -286,10 +304,7 @@ pub fn distribution_to_ckan(
     obj.insert("size".into(), json!(dist.byte_size));
     obj.insert("position".into(), json!(position));
     obj.insert("state".into(), json!("active"));
-    obj.insert(
-        "resource_type".into(),
-        json!(dist.resource_type.as_deref()),
-    );
+    obj.insert("resource_type".into(), json!(dist.resource_type.as_deref()));
     if !dist.conforms_to.is_empty() {
         if dist.conforms_to.len() == 1 {
             obj.insert("conforms_to".into(), json!(dist.conforms_to[0]));
@@ -539,19 +554,18 @@ pub fn dataset_from_ckan(
     };
 
     let contact_point = {
-        let cname = extras_map
-            .get("contact_name")
-            .cloned()
-            .or_else(|| payload.get("maintainer").and_then(Value::as_str).map(str::to_owned));
-        let cemail = extras_map
-            .get("contact_email")
-            .cloned()
-            .or_else(|| {
-                payload
-                    .get("maintainer_email")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-            });
+        let cname = extras_map.get("contact_name").cloned().or_else(|| {
+            payload
+                .get("maintainer")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+        let cemail = extras_map.get("contact_email").cloned().or_else(|| {
+            payload
+                .get("maintainer_email")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
         if cname.is_some() || cemail.is_some() {
             let mut names = BTreeMap::new();
             if let Some(n) = cname {
@@ -638,8 +652,7 @@ pub fn dataset_from_ckan(
         .or_else(|| existing.map(|e| e.issued))
         .unwrap_or(now);
 
-    let applicable_legislation =
-        parse_json_or_single(extras_map.get("applicable_legislation"));
+    let applicable_legislation = parse_json_or_single(extras_map.get("applicable_legislation"));
     let conforms_to = parse_json_or_single(extras_map.get("conforms_to"));
     let documentation = parse_json_or_single(extras_map.get("documentation"));
     let languages = parse_json_or_single(extras_map.get("language"));
@@ -671,7 +684,9 @@ pub fn dataset_from_ckan(
         licence_id,
         licence_url,
         themes,
-        eurovoc_themes: existing.map(|e| e.eurovoc_themes.clone()).unwrap_or_default(),
+        eurovoc_themes: existing
+            .map(|e| e.eurovoc_themes.clone())
+            .unwrap_or_default(),
         keywords,
         tags,
         spatial,
@@ -766,7 +781,9 @@ pub fn distribution_from_ckan(
     }
     if let Some(n) = raw.get("name").and_then(Value::as_str) {
         if !n.is_empty() {
-            title.entry(default_lang.to_owned()).or_insert_with(|| n.to_owned());
+            title
+                .entry(default_lang.to_owned())
+                .or_insert_with(|| n.to_owned());
         }
     }
 
@@ -870,10 +887,7 @@ pub fn distribution_from_ckan(
             .and_then(Value::as_str)
             .map(str::to_owned),
         rights: BTreeMap::new(),
-        status: raw
-            .get("status")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        status: raw.get("status").and_then(Value::as_str).map(str::to_owned),
         availability: raw
             .get("availability")
             .and_then(Value::as_str)

@@ -50,7 +50,11 @@ async fn send_json(
     let status = resp.status();
     let headers = resp.headers().clone();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (status, headers, String::from_utf8_lossy(&bytes).into_owned())
+    (
+        status,
+        headers,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
 }
 
 fn make_catalogue(org_id: OrgId, cat_id: CatalogueId, name: &str, host: &str) -> Catalogue {
@@ -144,12 +148,11 @@ async fn ckan_action_api_answers_all_19_calls_with_jcctl_field_set() {
         publisher_id: None,
     }]));
 
-    let state = DataroomState::new(store.clone(), authz, org_id, cat_id).with_tokens(vec![
-        TokenBinding {
+    let state =
+        DataroomState::new(store.clone(), authz, org_id, cat_id).with_tokens(vec![TokenBinding {
             token: "secret-jcctl-token".into(),
             subject: Subject::authenticated("jcctl-publisher", vec![org_id], Vec::new()),
-        },
-    ]);
+        }]);
     let app = router(state);
     let host = "opendata.city.example";
     let tok = Some("secret-jcctl-token");
@@ -542,10 +545,7 @@ async fn ckan_action_api_answers_all_19_calls_with_jcctl_field_set() {
     assert_eq!(st, StatusCode::OK);
 
     // resource_delete
-    let second_res_id = shown_pkg["resources"][1]["id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+    let second_res_id = shown_pkg["resources"][1]["id"].as_str().unwrap().to_owned();
     let (st, _, _) = send_json(
         &app,
         Method::POST,
@@ -754,7 +754,11 @@ async fn two_publishers_in_one_catalogue_with_separate_editor_grants_and_merge()
         .merge_publishers(&ctx_admin, "dopravny-podnik", "mesto-bb")
         .await
         .unwrap();
-    let moved = store.get_dataset(&ctx_admin, "dp-linky").await.unwrap().unwrap();
+    let moved = store
+        .get_dataset(&ctx_admin, "dp-linky")
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(moved.publisher_id, "mesto-bb");
 
     let (st_redir, hdrs, _) = send_json(
@@ -931,12 +935,7 @@ async fn dataset_rendered_under_eu_cz_and_sk_profiles_by_accept_profile() {
         .await
         .unwrap();
 
-    let state = DataroomState::new(
-        store,
-        Arc::new(PolicyAuthorizer::default()),
-        org_id,
-        cat_id,
-    );
+    let state = DataroomState::new(store, Arc::new(PolicyAuthorizer::default()), org_id, cat_id);
     let app = router(state);
 
     // 1. EU 3.0.1 profile via Accept-Profile
@@ -1411,7 +1410,16 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
     ));
 
     // Host A renders BB look, no noindex meta tag, and only BB's dataset
-    let (st, _, html_a) = send_json(&app, Method::GET, "/", "data.banskabystrica.sk", None, None, None).await;
+    let (st, _, html_a) = send_json(
+        &app,
+        Method::GET,
+        "/",
+        "data.banskabystrica.sk",
+        None,
+        None,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     assert!(html_a.contains("--jc-primary: #00579c;"));
     assert!(html_a.contains("Otvorené dáta BB"));
@@ -1419,11 +1427,29 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
     assert!(!html_a.contains("Demo senzory"));
     assert!(!html_a.contains("noindex, nofollow"));
 
-    let (_, _, robots_a) = send_json(&app, Method::GET, "/robots.txt", "data.banskabystrica.sk", None, None, None).await;
+    let (_, _, robots_a) = send_json(
+        &app,
+        Method::GET,
+        "/robots.txt",
+        "data.banskabystrica.sk",
+        None,
+        None,
+        None,
+    )
+    .await;
     assert!(robots_a.contains("Sitemap: https://data.banskabystrica.sk/sitemap.xml"));
 
     // Host B renders Demo look, ribbon, noindex meta tag, Disallow: / in robots.txt, and only Demo's dataset
-    let (st, _, html_b) = send_json(&app, Method::GET, "/", "demo.joinedcontext.com", None, None, None).await;
+    let (st, _, html_b) = send_json(
+        &app,
+        Method::GET,
+        "/",
+        "demo.joinedcontext.com",
+        None,
+        None,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     assert!(html_b.contains("--jc-primary: #7a1f5c;"));
     assert!(html_b.contains("Demo Katalóg"));
@@ -1432,14 +1458,25 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
     assert!(html_b.contains("Demo senzory"));
     assert!(!html_b.contains("Rozpočet BB"));
 
-    let (_, _, robots_b) = send_json(&app, Method::GET, "/robots.txt", "demo.joinedcontext.com", None, None, None).await;
+    let (_, _, robots_b) = send_json(
+        &app,
+        Method::GET,
+        "/robots.txt",
+        "demo.joinedcontext.com",
+        None,
+        None,
+        None,
+    )
+    .await;
     assert_eq!(robots_b, "User-agent: *\nDisallow: /\n");
 }
 
 /// The pack's live pages escape `'` as `&#39;` (Jinja), askama as `&#x27;`: the same character.
 /// Snapshot comparisons read both in the pack's form.
 fn normalise_entities(html: &str) -> String {
-    html.replace("&#x27;", "&#39;").replace("&#x22;", "&quot;").replace("&#34;", "&quot;")
+    html.replace("&#x27;", "&#39;")
+        .replace("&#x22;", "&quot;")
+        .replace("&#34;", "&quot;")
 }
 
 #[tokio::test]
@@ -1719,13 +1756,8 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
         .await
         .unwrap();
 
-    let state = DataroomState::new(
-        store,
-        Arc::new(PolicyAuthorizer::default()),
-        org_id,
-        cat_id,
-    )
-    .with_installation_branding(dev_branding);
+    let state = DataroomState::new(store, Arc::new(PolicyAuthorizer::default()), org_id, cat_id)
+        .with_installation_branding(dev_branding);
     let app = router(state);
 
     // 1. Home page (`live/dev-home.html` parity)
@@ -1762,7 +1794,8 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
     }
 
     // 2. Dataset list page (`live/dev-dataset-list.html` parity)
-    let (st, _, list_html) = send_json(&app, Method::GET, "/dataset/", host, None, None, None).await;
+    let (st, _, list_html) =
+        send_json(&app, Method::GET, "/dataset/", host, None, None, None).await;
     let list_html = normalise_entities(&list_html);
     assert_eq!(st, StatusCode::OK);
     for expected in [
@@ -1857,7 +1890,7 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
     // 5. Organization list (`live/dev-organization-list.html` parity) & Organization page (`live/dev-organization-banskabystrica.html` parity)
     let (st, _, org_list_html) =
         send_json(&app, Method::GET, "/organization/", host, None, None, None).await;
-        let org_list_html = normalise_entities(&org_list_html);
+    let org_list_html = normalise_entities(&org_list_html);
     assert_eq!(st, StatusCode::OK);
     for expected in [
         "id=\"organization-search-form\"",
@@ -2047,12 +2080,11 @@ async fn f1_f2_f3_operation_registry_surfaces_allowed_parity_and_admin_audit_row
         publisher_id: None,
     }]));
 
-    let state = DataroomState::new(store.clone(), authz, org_a, cat_a).with_tokens(vec![
-        TokenBinding {
+    let state =
+        DataroomState::new(store.clone(), authz, org_a, cat_a).with_tokens(vec![TokenBinding {
             token: "tok-alice".into(),
             subject: Subject::authenticated("alice-admin", vec![org_a], Vec::new()),
-        },
-    ]);
+        }]);
     let app = router(state.clone());
     let host = "f1a.example.org";
 
@@ -2281,19 +2313,36 @@ async fn g1_g2_g3_g4_mountable_router_portal_and_jcctl_parity() {
             axum::routing::get(|| async { "portal-host-ok" }),
         )
         .nest("/catalogue", router(dr_state));
-    let (st_nested, _, nested_html) =
-        send_json(&nested_app, Method::GET, "/catalogue", host, None, None, None).await;
+    let (st_nested, _, nested_html) = send_json(
+        &nested_app,
+        Method::GET,
+        "/catalogue",
+        host,
+        None,
+        None,
+        None,
+    )
+    .await;
     assert_eq!(st_nested, StatusCode::OK);
     assert!(nested_html.contains("href=\"/catalogue/dataset/\""));
 
     // Verify sibling router and mounted dataroom routes (`/catalogue/`, `/catalogue/catalog.ttl`,
     // `/catalogue/odata/v4/Datasets`, `/catalogue/api/v1/branding`)
-    let (st_h, _, body_h) = send_json(&host_app, Method::GET, "/healthz", host, None, None, None).await;
+    let (st_h, _, body_h) =
+        send_json(&host_app, Method::GET, "/healthz", host, None, None, None).await;
     assert_eq!(st_h, StatusCode::OK);
     assert_eq!(body_h, "portal-host-ok");
 
-    let (st_ui, _, ui_html) =
-        send_json(&host_app, Method::GET, "/catalogue/", host, None, None, None).await;
+    let (st_ui, _, ui_html) = send_json(
+        &host_app,
+        Method::GET,
+        "/catalogue/",
+        host,
+        None,
+        None,
+        None,
+    )
+    .await;
     assert_eq!(st_ui, StatusCode::OK);
     // Links inside mounted UI honour `/catalogue` mount prefix!
     assert!(ui_html.contains("href=\"/catalogue/dataset/\""));
