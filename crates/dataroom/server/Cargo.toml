@@ -26,6 +26,6 @@ dataroom-store-pg = { path = "../store-pg" }
 dataroom-web = { path = "../web" }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
-sqlx = { version = "0.8.3", default-features = false, features = ["runtime-tokio", "postgres"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres"] }
 tokio = { version = "1.44.1", features = ["full"] }
 uuid = { version = "1.11.0", features = ["v4", "v7", "serde"] }

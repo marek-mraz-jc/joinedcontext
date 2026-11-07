@@ -62,7 +62,7 @@
             {% if !heading.is_empty() %}<h2>{{ heading }}</h2>{% endif %}
             {% for paragraph in paragraphs %}<p>{{ paragraph }}</p>{% endfor %}
           {% endfor %}
-          {% if let Some(ref m) = mcp %}
+          {% if let Some(m) = mcp %}
           <section class="jc-live jc-mcp" aria-labelledby="jc-mcp-title">
             <h2 id="jc-mcp-title">{{ labels.mcp }}</h2>
             <p id="jc-mcp-url" class="jc-code-url">{{ m.url_wbr|safe }}</p>

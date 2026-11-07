@@ -131,8 +131,8 @@
                   </div>
                   {% endif %}
                 {% endfor %}
-                {% if let Some(ref g_url) = guide_url %}<p><a href="{{ g_url }}" rel="noreferrer">{{ labels.usage }}</a></p>{% endif %}
-                {% if let Some(ref dev_url) = developer_page_url %}<p class="jc-developer-page"><a href="{{ dev_url }}" rel="noreferrer">{{ dev_url }}</a></p>{% endif %}
+                {% if let Some(g_url) = guide_url %}<p><a href="{{ g_url }}" rel="noreferrer">{{ labels.usage }}</a></p>{% endif %}
+                {% if let Some(dev_url) = developer_page_url %}<p class="jc-developer-page"><a href="{{ dev_url }}" rel="noreferrer">{{ dev_url }}</a></p>{% endif %}
               </section>
               {% endif %}
             </div>

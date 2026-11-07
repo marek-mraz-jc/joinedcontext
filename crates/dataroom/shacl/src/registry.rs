@@ -13,7 +13,7 @@ use dataroom_core::{
 use dataroom_rdf::jsonld::{CZ_CATALOG_CONTEXT_IRI, SK_CATALOG_CONTEXT_IRI};
 use dataroom_rdf::{catalogue_to_graph, dataset_to_graph, DcatProfileKind, RdfLimits};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::RwLock;
 
 /// Upstream and built-in SHACL shape sources.
@@ -738,6 +738,8 @@ mod tests {
             publisher_name: None,
             contact_point: None,
             theme: ThemeTokens::default(),
+            branding: None,
+            hidden_datasets: Default::default(),
             allow_cross_org_harvest: true,
             allowed_outbound_hosts: Vec::new(),
             applicable_legislation: Vec::new(),

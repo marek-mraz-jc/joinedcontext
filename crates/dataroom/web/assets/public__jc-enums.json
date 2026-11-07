@@ -1,0 +1,131 @@
+{
+  "$comment": "The map popup's words for code values of a category (T-4639, T-4672): the theme's own. The order and labels of attributes come from each DataStore table's data dictionary, which the publisher writes from the data model.",
+  "enums": {
+    "museumsGalleriesLibraries": {
+      "sk": "Múzeá, galérie, knižnice",
+      "cs": "Muzea, galerie, knihovny",
+      "en": "Museums, galleries, libraries",
+      "de": "Museen, Galerien, Bibliotheken"
+    },
+    "theatre": {
+      "sk": "Divadlo",
+      "cs": "Divadlo",
+      "en": "Theatre",
+      "de": "Theater"
+    },
+    "concert": {
+      "sk": "Koncert",
+      "cs": "Koncert",
+      "en": "Concert",
+      "de": "Konzert"
+    },
+    "music": {
+      "sk": "Hudba",
+      "cs": "Hudba",
+      "en": "Music",
+      "de": "Musik"
+    },
+    "cinema": {
+      "sk": "Kino",
+      "cs": "Kino",
+      "en": "Cinema",
+      "de": "Kino"
+    },
+    "film": {
+      "sk": "Film",
+      "cs": "Film",
+      "en": "Film",
+      "de": "Film"
+    },
+    "sport": {
+      "sk": "Šport",
+      "cs": "Sport",
+      "en": "Sport",
+      "de": "Sport"
+    },
+    "sports": {
+      "sk": "Šport",
+      "cs": "Sport",
+      "en": "Sport",
+      "de": "Sport"
+    },
+    "exhibition": {
+      "sk": "Výstava",
+      "cs": "Výstava",
+      "en": "Exhibition",
+      "de": "Ausstellung"
+    },
+    "festival": {
+      "sk": "Festival",
+      "cs": "Festival",
+      "en": "Festival",
+      "de": "Festival"
+    },
+    "education": {
+      "sk": "Vzdelávanie",
+      "cs": "Vzdělávání",
+      "en": "Education",
+      "de": "Bildung"
+    },
+    "children": {
+      "sk": "Pre deti",
+      "cs": "Pro děti",
+      "en": "For children",
+      "de": "Für Kinder"
+    },
+    "market": {
+      "sk": "Trh",
+      "cs": "Trh",
+      "en": "Market",
+      "de": "Markt"
+    },
+    "good": {
+      "sk": "Dobrá",
+      "cs": "Dobrá",
+      "en": "Good",
+      "de": "Gut"
+    },
+    "moderate": {
+      "sk": "Mierna",
+      "cs": "Mírná",
+      "en": "Moderate",
+      "de": "Mäßig"
+    },
+    "poor": {
+      "sk": "Zlá",
+      "cs": "Špatná",
+      "en": "Poor",
+      "de": "Schlecht"
+    },
+    "veryPoor": {
+      "sk": "Veľmi zlá",
+      "cs": "Velmi špatná",
+      "en": "Very poor",
+      "de": "Sehr schlecht"
+    },
+    "open": {
+      "sk": "Otvorené",
+      "cs": "Otevřeno",
+      "en": "Open",
+      "de": "Geöffnet"
+    },
+    "closed": {
+      "sk": "Zatvorené",
+      "cs": "Zavřeno",
+      "en": "Closed",
+      "de": "Geschlossen"
+    },
+    "working": {
+      "sk": "V prevádzke",
+      "cs": "V provozu",
+      "en": "Working",
+      "de": "In Betrieb"
+    },
+    "outOfService": {
+      "sk": "Mimo prevádzky",
+      "cs": "Mimo provoz",
+      "en": "Out of service",
+      "de": "Außer Betrieb"
+    }
+  }
+}

@@ -751,6 +751,7 @@ mod tests {
     use super::*;
     use dataroom_core::{Catalogue, CatalogueId, OrgId, Publisher, Subject, ThemeTokens};
     use dataroom_store_memory::MemoryStore;
+    use crate::guard::validate_outbound_url;
 
     fn test_setup() -> (OrgId, CatalogueId, RequestCtx, MemoryStore) {
         let org_id = OrgId::from_uuid(Uuid::from_u128(1));
@@ -848,6 +849,8 @@ mod tests {
                 publisher_name: None,
                 contact_point: None,
                 theme: ThemeTokens::default(),
+                branding: None,
+                hidden_datasets: Default::default(),
                 allow_cross_org_harvest: true,
                 allowed_outbound_hosts: vec!["hub.bbsk.sk".into()],
                 applicable_legislation: Vec::new(),
@@ -876,6 +879,9 @@ mod tests {
                     state: RecordState::Active,
                     merged_into: None,
                     editor_grants: Vec::new(),
+                    badge_initials: None,
+                    badge_colour: None,
+                    declared_by_instance: None,
                     created: Utc::now(),
                     modified: Utc::now(),
                 },

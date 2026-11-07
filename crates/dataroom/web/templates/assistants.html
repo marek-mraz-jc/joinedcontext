@@ -57,7 +57,7 @@
       <div class="row wrapper no-nav">
         <div class="primary col-12" role="main"><article class="module-content jc-page jc-assistants">
           <h1 class="page-heading">{{ labels.assistants }}</h1>
-          {% if let Some(ref m) = mcp %}
+          {% if let Some(m) = mcp %}
             <p>{{ lead }}</p>
             <p class="jc-connector-status">{{ labels.connector_status }}</p>
             <div class="jc-connector-note" role="note">

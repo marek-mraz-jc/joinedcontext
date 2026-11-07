@@ -6,6 +6,7 @@ license = "EUPL-1.2"
 description = "Server-rendered HTML pages (askama), i18n (sk, cs, en), CSP nonces and SDK DataGrid configurations for dataroom"
 
 [dependencies]
+base64 = "0.22.1"
 askama = "0.12.1"
 chrono = { version = "0.4.38", features = ["serde"] }
 dataroom-core = { path = "../core" }

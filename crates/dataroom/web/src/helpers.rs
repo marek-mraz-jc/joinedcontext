@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-const NUTS_JSON: &str = include_str!("../../../ours/ckan-theme/nuts.json");
+const NUTS_JSON: &str = include_str!("../assets/nuts.json");
 
 /// Looks up a NUTS code (e.g. `SK032`, `CZ010`) in `nuts.json` in `lang` (`_nuts_names` in `plugin.py`, D2, D3).
 pub fn nuts_label(uri_or_code: &str, lang: &str) -> String {

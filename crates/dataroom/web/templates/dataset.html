@@ -205,20 +205,20 @@
                       <dd><details class="jc-about-sources"><summary>{{ sources_all_label }}</summary>
                         <ul>
                           {% for s_row in source_rows %}
-                          <li>{% if let Some(ref link) = s_row.link %}<a href="{{ link }}" rel="noopener">{{ s_row.text }}</a>{% else %}{{ s_row.text }}{% endif %}</li>
+                          <li>{% if let Some(link) = s_row.link %}<a href="{{ link }}" rel="noopener">{{ s_row.text }}</a>{% else %}{{ s_row.text }}{% endif %}</li>
                           {% endfor %}
                         </ul>
                       </details></dd>
                     {% else %}
                       <dt>{{ row.label }}</dt>
-                      <dd>{% if let Some(ref link) = row.link %}<a href="{{ link }}" rel="noopener">{{ row.text }}</a>{% else %}{{ row.text }}{% endif %}</dd>
+                      <dd>{% if let Some(link) = row.link %}<a href="{{ link }}" rel="noopener">{{ row.text }}</a>{% else %}{{ row.text }}{% endif %}</dd>
                     {% endif %}
                   {% endfor %}
                 </dl>
               </section>
               {% endif %}
 
-              {% if let Some(ref lv) = live %}
+              {% if let Some(lv) = live %}
               <section class="jc-live" aria-labelledby="jc-live-title">
                 <h2 id="jc-live-title">{{ labels.live }}</h2>
                 <p>{{ labels.live_lead }}</p>
@@ -233,7 +233,7 @@
               </section>
               {% endif %}
 
-              {% if let Some(ref m) = mcp %}
+              {% if let Some(m) = mcp %}
               <section class="jc-live jc-mcp" aria-labelledby="jc-mcp-title">
                 <h2 id="jc-mcp-title">{{ labels.mcp }}</h2>
                 <p>{{ labels.mcp_lead }}</p>
@@ -332,7 +332,7 @@
                 <dl class="jc-about-list">
                   {% for r in more_rows %}
                   <dt>{{ r.label }}</dt>
-                  <dd>{% if let Some(ref link) = r.link %}<a href="{{ link }}" rel="noreferrer">{{ r.text }}</a>{% else %}{{ r.text }}{% endif %}</dd>
+                  <dd>{% if let Some(link) = r.link %}<a href="{{ link }}" rel="noreferrer">{{ r.text }}</a>{% else %}{{ r.text }}{% endif %}</dd>
                   {% endfor %}
                 </dl>
               </section>

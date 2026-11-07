@@ -1,0 +1,748 @@
+/*
+* The catalogue's look (T-3009), in the Portal's family: the same three layers as the Portal's
+* tokens.css. The brand sources (`--jc-primary`, `--jc-background`, `--jc-text`, the fonts) are
+* written by base.html from the branding block; every other colour here is mixed from them, so
+* this file carries no colour of any installation and a second one restyles by values alone.
+*/
+:root {
+/* Scales: paper is the branded background, ink the branded text. */
+--jc-paper: var(--jc-background);
+--jc-ink: var(--jc-text);
+--jc-n50: color-mix(in oklab, var(--jc-ink) 3%, var(--jc-paper));
+--jc-n100: color-mix(in oklab, var(--jc-ink) 6%, var(--jc-paper));
+--jc-n200: color-mix(in oklab, var(--jc-ink) 12%, var(--jc-paper));
+--jc-n300: color-mix(in oklab, var(--jc-ink) 22%, var(--jc-paper));
+--jc-muted: color-mix(in oklab, var(--jc-ink) 68%, var(--jc-paper));
+--jc-primary-dark: color-mix(in oklab, var(--jc-primary) 80%, var(--jc-ink));
+--jc-primary-soft: color-mix(in oklab, var(--jc-primary) 8%, var(--jc-paper));
+--jc-primary-soft-fg: color-mix(in oklab, var(--jc-primary) 50%, var(--jc-ink));
+/* WCAG 2.2 asks 3:1 of the focus ring; the brand raw can be pale, so it leans to the ink. */
+--jc-ring: color-mix(in oklab, var(--jc-primary) 65%, var(--jc-ink));
+--jc-bg: var(--jc-n50);
+--jc-surface: var(--jc-paper);
+--jc-border: var(--jc-n200);
+--jc-radius-sm: .375rem;
+--jc-radius: .5rem;
+--jc-radius-lg: .75rem;
+--jc-shadow-1: 0 1px 2px 0 color-mix(in oklab, var(--jc-ink) 6%, transparent), 0 0 0 1px color-mix(in oklab, var(--jc-ink) 4%, transparent);
+--jc-shadow-2: 0 4px 12px -2px color-mix(in oklab, var(--jc-ink) 12%, transparent), 0 0 0 1px color-mix(in oklab, var(--jc-ink) 5%, transparent);
+--jc-content-max: 76rem;
+/* CKAN's Bootstrap reads its colour from these; the rules it compiled with its own teal
+written out, four shades of it, are restated below on ours (T-2888). */
+--bs-primary: var(--jc-primary);
+--bs-blue: var(--jc-primary);
+--bs-primary-rgb: var(--jc-primary-rgb);
+--bs-link-color: var(--jc-primary);
+--bs-link-color-rgb: var(--jc-primary-rgb);
+--bs-link-hover-color: var(--jc-primary-dark);
+--bs-focus-ring-color: var(--jc-ring);
+--bs-body-color: var(--jc-ink);
+--bs-body-bg: var(--jc-bg);
+--bs-border-color: var(--jc-border);
+--bs-body-font-family: var(--jc-font-body);
+}
+/* ---- Page ------------------------------------------------------------------------------ */
+/* The footer sits at the bottom of a short page instead of above a band of page colour. */
+body:not(.dt-view) { min-height: 100vh; display: flex; flex-direction: column; }
+body:not(.dt-view) > .site-footer { margin-top: auto; }
+body {
+background: var(--jc-bg);
+color: var(--jc-ink);
+font-family: var(--jc-font-body);
+font-size: 1rem;
+line-height: 1.6;
+-webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, h4, .navbar-brand { font-family: var(--jc-font-heading); color: var(--jc-ink); letter-spacing: -.01em; }
+h1 { font-size: clamp(1.625rem, 1.2rem + 1.4vw, 2.25rem); font-weight: 700; line-height: 1.2; margin-bottom: .75rem; }
+h2 { font-size: 1.375rem; font-weight: 650; line-height: 1.3; margin: 2rem 0 .75rem; }
+h3 { font-size: 1.0625rem; font-weight: 650; line-height: 1.4; }
+.container { max-width: var(--jc-content-max); }
+.main { background: var(--jc-bg); padding: 1.5rem 0 3rem; }
+a, .btn-link, .link-primary { color: var(--jc-primary); text-underline-offset: .2em; }
+a:hover, a:focus, .btn-link:hover, .link-primary:hover, .link-primary:focus { color: var(--jc-primary-dark); }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, iframe:focus-visible {
+outline: 3px solid var(--jc-ring); outline-offset: 2px; border-radius: var(--jc-radius-sm);
+}
+.visually-hidden-focusable:focus { background: var(--jc-surface); padding: .5rem 1rem; }
+/* ---- Header: the Portal's bar, a surface with a hairline under it ---------------------- */
+.account-masthead { background: var(--jc-ink); color: var(--jc-paper); min-height: 0; font-size: .8125rem; }
+.account-masthead .account ul li a, .account-masthead .account ul li .btn-link { color: color-mix(in oklab, var(--jc-paper) 85%, var(--jc-ink)); font-weight: 500; }
+.account-masthead .account ul li a:hover, .account-masthead .account ul li a:focus { color: var(--jc-paper); background: transparent; text-decoration: underline; }
+.account-masthead .account ul li { border-left: 0; }
+.masthead { background: var(--jc-surface); color: var(--jc-ink); border-bottom: 1px solid var(--jc-border); padding: .75rem 0; box-shadow: none; }
+.masthead .navbar { padding: 0; }
+.masthead a, .masthead .navbar a { color: var(--jc-ink); }
+.jc-brand { text-decoration: none; }
+/* CKAN sets the logo link inline-block on a text line, which left room for descenders under the
+image and lifted it above the navigation's centre: its box is a flex row of the image alone. */
+.masthead .header-image { display: flex; align-items: center; }
+/* T-4627: the joinedcontext.com lockup, mark and name in one image, on one line at every width. */
+.jc-brand img { display: block; block-size: 2.25rem; inline-size: auto; }
+.masthead .navbar-nav { gap: .25rem; }
+/* CKAN writes these at (0,2,3) with white text and its dark teal behind hover and active. */
+.masthead .main-navbar ul li a {
+color: var(--jc-muted); font-weight: 550; padding: .5rem .875rem; border-radius: var(--jc-radius); text-decoration: none; background: transparent;
+}
+.masthead .main-navbar ul li:hover a, .masthead .main-navbar ul li:focus a, .masthead .main-navbar ul li a:hover, .masthead .main-navbar ul li a:focus { background: var(--jc-n100); color: var(--jc-ink); }
+.masthead .main-navbar ul li.active a { background: var(--jc-primary-soft); color: var(--jc-primary-soft-fg); }
+.masthead .site-search { margin-left: 1rem; position: relative; }
+.masthead .site-search .form-control { border-radius: 999px; background: var(--jc-n50); border-color: var(--jc-border); padding-left: 1rem; min-width: 14rem; }
+.masthead .main-navbar .site-search button { margin-left: 0; }
+.masthead .site-search .btn { position: absolute; right: .5rem; top: 50%; transform: translateY(-50%); color: var(--jc-muted); background: transparent; border: 0; }
+.masthead .navbar-toggler { border-color: var(--jc-border); }
+.masthead .navbar-toggler .fa-bars { color: var(--jc-ink) !important; }
+@media (max-width: 991.98px) {
+.masthead .main-navbar { padding-top: .75rem; }
+.masthead .site-search { margin: .5rem 0 0; }
+.masthead .site-search .form-control { min-width: 0; width: 100%; }
+}
+/* ---- Cards: the modules CKAN draws, as the Portal's surfaces --------------------------- */
+.wrapper { background: transparent; border: 0; box-shadow: none; }
+.wrapper::before { display: none; }
+.wrapper > .primary, .wrapper > .secondary { padding-left: calc(var(--bs-gutter-x) * .5); padding-right: calc(var(--bs-gutter-x) * .5); }
+.primary > .module, .secondary > .module, .secondary .module, .jc-card {
+background: var(--jc-surface); border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg);
+box-shadow: var(--jc-shadow-1); margin-bottom: 1.25rem; overflow: hidden;
+}
+.module-content { padding: 1.5rem 1.75rem; }
+/* On a phone the page's own content comes first and the sidebar (publisher, filters) after it. */
+@media (max-width: 767.98px) {
+.wrapper { display: flex; flex-direction: column; }
+.wrapper > .secondary { order: 2; }
+.module-content { padding: 1.125rem 1rem; }
+.page-header { padding: 0 1rem; }
+}
+.module-content:last-child { padding-bottom: 1.75rem; }
+.module-heading { background: var(--jc-n50); border-color: var(--jc-border); font-size: .9375rem; font-weight: 650; padding: .75rem 1.25rem; }
+.page-header { background: var(--jc-n50); border-bottom: 1px solid var(--jc-border); padding: 0 1.75rem; }
+.page-header .nav-tabs { border: 0; }
+.page-header .nav-tabs li a, .page-header .nav-tabs .nav-link { color: var(--jc-muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; font-weight: 550; }
+.page-header .nav-tabs li.active a, .page-header .nav-tabs .nav-link.active, .page-header .nav-tabs li a:hover {
+color: var(--jc-ink); border-bottom-color: var(--jc-primary); background: transparent;
+}
+.toolbar { padding: 0 0 1rem; }
+.toolbar .breadcrumb { font-size: .875rem; margin: 0; }
+.toolbar .breadcrumb a, .toolbar .breadcrumb li, .toolbar .breadcrumb .active a { color: var(--jc-muted); font-weight: 500; text-decoration: none; }
+.toolbar .breadcrumb .active a { color: var(--jc-ink); }
+.nav-simple > li, .nav-item { border-color: var(--jc-border); }
+.nav-simple > li > a, .nav-facet .nav-item > a { color: var(--jc-ink); }
+.module-narrow .nav-item.active > a, .nav-aside li.active a,
+.nav-simple > .active > a, .nav-facet .nav-item.active > a { background: var(--jc-primary-soft); color: var(--jc-primary-soft-fg); }
+/* ---- Buttons, inputs, badges ----------------------------------------------------------- */
+.btn { border-radius: var(--jc-radius); font-weight: 550; }
+.btn-primary { background: var(--jc-primary); border-color: var(--jc-primary); color: var(--jc-primary-fg); }
+.btn-primary:hover, .btn-primary:focus, .btn-primary:active, .btn-primary.active, .btn-check:checked + .btn-primary {
+background-color: var(--jc-primary-dark); border-color: var(--jc-primary-dark); color: var(--jc-primary-fg);
+}
+.btn-primary:disabled, .btn-primary.disabled, .form-check-input:checked, .form-check-input[type=checkbox]:indeterminate,
+.btn-outline-primary:hover, .btn-check:checked + .btn-outline-primary, .btn-outline-primary:active, .btn-outline-primary.active,
+.followee-container li:hover, .followee-container li.active, .page-item.active .page-link, .nav-pills .nav-link.active {
+background-color: var(--jc-primary); border-color: var(--jc-primary); color: var(--jc-primary-fg);
+}
+.btn-outline-primary, .border-primary, .media-view:hover, .media-view.hovered, .view-list li a.active, .view-list li a:hover, .view-list li.active a { border-color: var(--jc-primary); }
+.btn-outline-primary, .page-link, .nav-link { color: var(--jc-primary); }
+.btn-default, .btn-secondary { background: var(--jc-surface); border: 1px solid var(--jc-border); color: var(--jc-ink); }
+.btn-default:hover, .btn-default:focus, .btn-secondary:hover { background: var(--jc-n100); border-color: var(--jc-n300); color: var(--jc-ink); }
+.dropdown-item.active, .dropdown-item:active, .dropdown-menu-dark .dropdown-item.active, .progress-bar, .list-group-item.active,
+.resource-list.reordering .resource-item.ui-sortable-helper, .resource-view-list.reordering li.ui-sortable-helper {
+background-color: var(--jc-primary); border-color: var(--jc-primary); color: var(--jc-primary-fg);
+}
+.resource-list.reordering .resource-item.ui-sortable-helper .handle, .resource-view-list.reordering li.ui-sortable-helper .handle { background-color: var(--jc-primary-dark); border-color: var(--jc-primary-dark); }
+.form-range::-webkit-slider-thumb { background-color: var(--jc-primary); }
+.form-range::-moz-range-thumb { background-color: var(--jc-primary); }
+.view-list li .arrow { border-top-color: var(--jc-primary); }
+.account-masthead .account .notifications a span.badge { background-color: var(--jc-primary); color: var(--jc-primary-fg); }
+.account-masthead .account .notifications a:hover span { background-color: var(--jc-primary-dark); }
+.view-list li a.active .icon, .view-list li a:hover .icon, .view-list li.active a .icon, .followee-container li:hover i, .followee-container li.active i { background-color: var(--jc-primary); }
+.form-control, .form-select { border-color: var(--jc-border); border-radius: var(--jc-radius); background-color: var(--jc-surface); color: var(--jc-ink); }
+.form-control:focus, .form-select:focus, .form-check-input:focus, .btn:focus, .page-link:focus, .accordion-button:focus {
+border-color: var(--jc-primary); box-shadow: 0 0 0 .25rem color-mix(in oklab, var(--jc-primary) 25%, transparent);
+}
+.badge, .label-default, .tag { background: var(--jc-n100); color: var(--jc-ink); border: 1px solid var(--jc-border); border-radius: 999px; font-weight: 550; font-size: .75rem; padding: .2rem .6rem; text-shadow: none; box-shadow: none; }
+.tag:hover, a.badge:hover { background: var(--jc-primary-soft); color: var(--jc-primary-soft-fg); border-color: var(--jc-primary); }
+.jc-chip { display: inline-flex; align-items: center; border-radius: 999px; padding: .15rem .6rem; font-size: .75rem; font-weight: 600; line-height: 1.4;
+background: var(--jc-n100); color: var(--jc-ink); border: 1px solid var(--jc-border); white-space: nowrap; }
+.jc-chip-primary { background: var(--jc-primary-soft); color: var(--jc-primary-soft-fg); border-color: color-mix(in oklab, var(--jc-primary) 30%, var(--jc-paper)); }
+.homepage .module-search .search-form, .search-form .search-input button { color: var(--jc-primary-fg); }
+.search-form .search-input .form-control { border-radius: var(--jc-radius); }
+.search-form .search-input button { color: var(--jc-muted); }
+.pagination .page-link { border-color: var(--jc-border); }
+/* ---- Search results and lists ---------------------------------------------------------- */
+.dataset-list, .jc-grid-list { list-style: none; padding: 0; margin: 0; }
+.dataset-item {
+background: var(--jc-surface); border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg);
+padding: 1.125rem 1.25rem; margin-bottom: .75rem; box-shadow: var(--jc-shadow-1); transition: border-color .15s, box-shadow .15s;
+}
+.dataset-item:hover { border-color: color-mix(in oklab, var(--jc-primary) 45%, var(--jc-paper)); box-shadow: var(--jc-shadow-2); }
+.dataset-item .dataset-heading { font-size: 1.125rem; margin: 0 0 .25rem; }
+.dataset-item .dataset-heading a { color: var(--jc-ink); text-decoration: none; }
+.dataset-item .dataset-heading a:hover { color: var(--jc-primary); text-decoration: underline; }
+.dataset-item .dataset-content > div, .dataset-item .dataset-content p { color: var(--jc-muted); font-size: .9375rem; margin-bottom: .5rem; }
+/* Inside a module the results are rows with a hairline between them, not cards in a card. */
+.module .dataset-list .dataset-item { border: 0; border-top: 1px solid var(--jc-border); border-radius: 0; box-shadow: none; padding: 1.25rem 0; margin: 0; }
+.module .dataset-list .dataset-item:first-child { border-top: 0; }
+.module .dataset-list .dataset-item:hover { box-shadow: none; }
+.jc-item-meta { display: flex; flex-wrap: wrap; align-items: center; gap: .375rem .375rem; margin-top: .625rem; }
+.jc-item-facts { color: var(--jc-muted); font-size: .8125rem; margin-left: .25rem; }
+.nav-facet .nav-item > a { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .5rem 1.25rem; text-decoration: none; }
+.nav-facet .nav-item > a .item-label { overflow-wrap: anywhere; }
+.nav-facet .separator { display: none; }
+.module-narrow .nav-item > a .badge, .nav-facet .nav-item > a .item-count { background: var(--jc-n100); color: var(--jc-muted); border: 0; font-variant-numeric: tabular-nums; }
+.module-narrow .nav-item.active > a .badge { background: var(--jc-primary); color: var(--jc-primary-fg); }
+.module-narrow .module-content.empty, .module-narrow p.empty { color: var(--jc-muted); font-size: .875rem; }
+.module-footer .read-more { font-weight: 600; font-size: .875rem; text-decoration: none; }
+.dataset-resources { display: flex; flex-wrap: wrap; gap: .375rem; list-style: none; padding: 0; margin: 0; }
+.dataset-resources li { margin: 0; }
+.search-form { border-bottom: 1px solid var(--jc-border); padding-bottom: 1rem; margin-bottom: 1.25rem; }
+.search-form h1, .search-form h2 { font-size: 1.125rem; margin: 1rem 0 0; }
+.secondary .module-narrow .module-heading, .secondary .module-footer { background: var(--jc-surface); }
+.secondary .module-footer { border-top: 1px solid var(--jc-border); margin: 0; padding: .75rem 1.25rem; }
+/* The list ends the card: no list margin under its last row (owner, 2026-10-12). */
+.nav-facet { margin-bottom: 0; }
+.jc-empty { color: var(--jc-muted); padding: 2rem 0; }
+/* Publisher and topic cards: a grid that wraps names at word boundaries (T-3028), in place of
+CKAN's fixed 178 px floats with `word-break: break-all`. */
+.media-grid { clear: both; display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: 1rem; border: 0; background: transparent; min-height: 0; padding: 0; }
+.media-grid::before, .media-grid::after { content: none; }
+/* CKAN's item snippet adds a float clearer after every third card; in a grid it takes a cell. */
+.media-grid > .clearfix { display: none; }
+.media-item { float: none; width: auto; margin: 0; background: var(--jc-surface); border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg); box-shadow: var(--jc-shadow-1); }
+.media-heading, .media-description { word-break: normal; overflow-wrap: break-word; hyphens: auto; }
+.media-heading { font-size: 1.0625rem; }
+/* The publisher box: CKAN nests a `.module.context-info` inside a `.module`, so without this the
+card drew twice, the inner one adding its margin and padding below "read more" (owner,
+2026-10-12); and CKAN breaks its description at any letter. */
+/* The publisher bar above a dataset (owner, 2026-10-12). */
+.jc-publisher { display: flex; align-items: center; gap: 1rem; padding: .875rem 1.25rem; }
+.jc-publisher-image img { display: block; height: 3.5rem; width: auto; border-radius: var(--jc-radius); }
+.jc-publisher-name { font-weight: 650; font-size: 1.0625rem; color: var(--jc-ink); text-decoration: none; }
+.jc-publisher-name:hover { text-decoration: underline; }
+.jc-publisher-text p { margin: .125rem 0 0; color: var(--jc-muted); font-size: .9375rem; }
+@media (max-width: 575.98px) { .jc-publisher { align-items: flex-start; } .jc-publisher-image img { height: 2.5rem; } }
+.module .module.context-info { border: 0; border-radius: 0; box-shadow: none; margin: 0; }
+.context-info .description { word-break: normal; overflow-wrap: break-word; hyphens: auto; }
+.context-info .module-content > :last-child { margin-bottom: 0; }
+/* ---- Home ------------------------------------------------------------------------------ */
+.homepage .main, .homepage { background: var(--jc-bg); }
+.jc-hero {
+background:
+radial-gradient(60rem 22rem at 85% -20%, color-mix(in oklab, var(--jc-secondary) 55%, transparent), transparent 70%),
+linear-gradient(135deg, var(--jc-primary), color-mix(in oklab, var(--jc-primary) 78%, var(--jc-ink)));
+color: var(--jc-primary-fg); padding: clamp(2.5rem, 6vw, 4.5rem) 0 clamp(2.5rem, 5vw, 4rem);
+}
+.jc-hero h1 { color: var(--jc-primary-fg); font-size: clamp(2rem, 1.3rem + 2.6vw, 3.25rem); margin-bottom: .75rem; letter-spacing: -.02em; }
+.jc-hero-lead { font-size: clamp(1.0625rem, 1rem + .4vw, 1.3125rem); max-width: 42rem; opacity: .92; margin-bottom: 1.75rem; }
+.jc-hero-search { max-width: 44rem; }
+.jc-hero-search label::after { content: none; }
+.jc-hero-search label { display: block; font-weight: 600; margin-bottom: .5rem; color: var(--jc-primary-fg); }
+.jc-hero-field { display: flex; gap: .5rem; background: var(--jc-surface); padding: .375rem; border-radius: var(--jc-radius-lg); box-shadow: var(--jc-shadow-2); }
+.jc-hero-field .form-control { border: 0; font-size: 1.0625rem; padding: .625rem .75rem; box-shadow: none; }
+.jc-hero-field .form-control:focus { box-shadow: none; }
+.jc-hero-field:focus-within { outline: 3px solid var(--jc-primary-fg); outline-offset: 2px; }
+.jc-hero-field .btn { padding: .625rem 1.25rem; white-space: nowrap; }
+.jc-hero-stats { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; margin: 1.5rem 0 0; padding: 0; list-style: none; font-size: .9375rem; opacity: .95; }
+.jc-hero-stats strong { font-size: 1.375rem; font-weight: 700; margin-right: .25rem; }
+.jc-home { display: grid; grid-template-columns: minmax(0, 1fr) 20rem; gap: 2.5rem 2rem; padding: 2.5rem 0 3.5rem; }
+.jc-home h2 { margin-top: 0; }
+.jc-home-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.jc-home-head a { font-weight: 600; text-decoration: none; }
+.jc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: 1rem; list-style: none; padding: 0; margin: 0; }
+.jc-card { display: flex; flex-direction: column; margin: 0; padding: 1.25rem; transition: border-color .15s, box-shadow .15s, transform .15s; }
+.jc-card:hover { border-color: color-mix(in oklab, var(--jc-primary) 45%, var(--jc-paper)); box-shadow: var(--jc-shadow-2); }
+.jc-card-org { font-size: .8125rem; font-weight: 600; color: var(--jc-muted); margin: 0 0 .25rem; text-transform: none; }
+.jc-card h3 { margin: 0 0 .5rem; font-size: 1.125rem; }
+.jc-card h3 a { color: var(--jc-ink); text-decoration: none; }
+.jc-card h3 a::after { content: ""; position: absolute; inset: 0; }
+.jc-card { position: relative; }
+.jc-card h3 a:hover { color: var(--jc-primary); }
+.jc-card-text { color: var(--jc-muted); font-size: .9375rem; margin: 0 0 1rem; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.jc-card-foot { margin-top: auto; display: flex; flex-wrap: wrap; align-items: center; gap: .375rem; font-size: .8125rem; color: var(--jc-muted); }
+.jc-card-foot time { flex-basis: 100%; margin-top: .375rem; }
+.jc-side h2 { font-size: 1.0625rem; margin: 0 0 .75rem; }
+.jc-side section + section { margin-top: 2rem; }
+.jc-facet { list-style: none; padding: 0; margin: 0; background: var(--jc-surface); border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg); box-shadow: var(--jc-shadow-1); overflow: hidden; }
+.jc-facet li + li { border-top: 1px solid var(--jc-border); }
+.jc-facet a { display: flex; justify-content: space-between; gap: 1rem; padding: .625rem 1rem; color: var(--jc-ink); text-decoration: none; font-weight: 500; }
+.jc-facet a:hover, .jc-facet a:focus { background: var(--jc-primary-soft); color: var(--jc-primary-soft-fg); }
+.jc-facet .jc-count { color: var(--jc-muted); font-variant-numeric: tabular-nums; }
+.jc-topics { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(10rem, 100%), 1fr)); gap: .75rem; list-style: none; padding: 0; margin: 0 0 2rem; }
+.jc-topics a { display: flex; flex-direction: column; gap: .25rem; height: 100%; padding: .875rem 1rem; background: var(--jc-surface); border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg); box-shadow: var(--jc-shadow-1); color: var(--jc-ink); text-decoration: none; }
+.jc-topics a:hover, .jc-topics a:focus-visible { background: var(--jc-primary-soft); color: var(--jc-primary-soft-fg); }
+.jc-topic-name { font-weight: 600; overflow-wrap: anywhere; }
+.jc-topics .jc-count { color: var(--jc-muted); font-size: .875rem; font-variant-numeric: tabular-nums; }
+.jc-tags { display: flex; flex-wrap: wrap; gap: .5rem; list-style: none; padding: 0; margin: 0; }
+.jc-tags a { text-decoration: none; }
+@media (max-width: 991.98px) { .jc-home { grid-template-columns: 1fr; } }
+@media (max-width: 575.98px) { .jc-hero-field { flex-direction: column; } .jc-hero-field .btn { width: 100%; } }
+/* ---- Dataset page ---------------------------------------------------------------------- */
+.notes.embedded-content { font-size: 1.0625rem; color: color-mix(in oklab, var(--jc-ink) 85%, var(--jc-paper)); max-width: 48rem; }
+.jc-preview, .jc-about, .jc-live, .jc-resources, .additional-info { margin-block: 2rem 0; }
+.jc-preview-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem 1rem; }
+.jc-preview-head h2 { margin: 0; }
+.jc-preview p.jc-lead { color: var(--jc-muted); margin: .25rem 0 1rem; }
+.jc-table { border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg); background: var(--jc-surface); padding: 0 1rem; }
+.jc-table + .jc-table { margin-top: .75rem; }
+.jc-table > summary { position: relative; cursor: pointer; list-style: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem 1rem; padding: .75rem 0; font-weight: 600; }
+.jc-table > summary::-webkit-details-marker { display: none; }
+/* The arrow hangs in the card's padding, so the table's name starts on the edge the table does (T-4637). */
+.jc-table > summary::before { content: "\25B8"; position: absolute; inset-inline-start: -.75rem; top: .75rem; font-size: .875rem; line-height: 1.5rem; color: var(--jc-muted); transition: transform .15s; }
+.jc-table[open] > summary::before { transform: rotate(90deg); }
+.jc-table-rows { color: var(--jc-muted); font-weight: 500; font-size: .875rem; }
+.jc-table > .jc-preview-actions { padding-bottom: 1rem; }
+/* The frame runs from border to border of its card: the card's border is the only one, and the
+view inside keeps the card's 1rem (T-4637). This height holds until the view says its own
+(jc-frame.js). */
+.jc-grid { display: block; margin-inline: -1rem; width: calc(100% + 2rem); height: clamp(18rem, calc(15rem + var(--jc-rows, 20) * 2.6rem), 38rem); border: 0; background: var(--jc-surface); }
+.jc-preview-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .75rem; }
+.jc-about-list { display: grid; grid-template-columns: minmax(9rem, max-content) 1fr; gap: 0; margin: 0;
+border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg); overflow: hidden; }
+.jc-about-list dt, .jc-about-list dd { padding: .625rem 1rem; border-top: 1px solid var(--jc-border); margin: 0; }
+.jc-about-list dt:first-of-type, .jc-about-list dd:first-of-type { border-top: 0; }
+.jc-about-list dt { font-weight: 600; background: var(--jc-n50); color: var(--jc-ink); font-size: .9375rem; }
+.jc-about-list dd { overflow-wrap: anywhere; }
+.jc-about-lead { font-size: 1.1875rem; }
+.jc-live { background: var(--jc-primary-soft); border: 1px solid color-mix(in oklab, var(--jc-primary) 22%, var(--jc-paper)); border-radius: var(--jc-radius-lg); padding: 1.25rem 1.5rem; }
+.jc-live h2 { margin-top: 0; }
+.jc-copy { display: flex; gap: .5rem; }
+.jc-copy .form-control, .jc-copy-code pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .875rem; }
+/* An API resource's usage text and its commands to copy (T-3887). */
+.jc-usage { margin-top: .5rem; }
+.jc-usage summary { cursor: pointer; font-weight: 600; }
+.jc-usage p { margin: .5rem 0; overflow-wrap: anywhere; }
+.jc-copy-code { align-items: flex-start; margin: .5rem 0; }
+/* A command wraps instead of scrolling sideways (T-4066); the copy button copies it whole. */
+.jc-copy-code pre { min-width: 0; flex: 1; margin: 0; padding: .75rem 1rem; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24rem; overflow-y: auto; background: var(--jc-n50); border: 1px solid var(--jc-border); border-radius: var(--jc-radius); font-size: .8125rem; line-height: 1.5; }
+.jc-usage code { overflow-wrap: anywhere; }
+.jc-live pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--jc-ink); color: var(--jc-paper); border-radius: var(--jc-radius); padding: .875rem 1rem; font-size: .8125rem; margin: 0; }
+.jc-example-label { font-weight: 600; margin: 1rem 0 .375rem; }
+/* "Connect an AI assistant" (T-4284): a block's label and its copy button share a header row, so
+the code keeps the column's whole width; code never wraps inside a word, and the address breaks
+only where the template put a <wbr> (before a slash). */
+.jc-mcp { --jc-code-pad: .875rem; }
+.jc-main > .jc-mcp { margin-top: 2.5rem; }
+/* A code line that does not wrap must scroll inside its block, never widen the page. */
+.jc-main, .jc-mcp-body > div { min-width: 0; }
+/* Claude's steps beside the editors and the code where the card is wide enough, stacked below. */
+.jc-mcp-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 0 2rem; }
+.jc-mcp h3.jc-mcp-client { font-size: 1rem; font-weight: 700; margin: 1.25rem 0 .5rem; }
+.jc-mcp-body > div > h3.jc-mcp-client:first-child { margin-top: .5rem; }
+.jc-mcp-steps { margin: 0; padding-left: 1.25rem; }
+.jc-mcp-steps li + li { margin-top: .375rem; }
+.jc-mcp-steps .jc-code { margin: .5rem 0 0; }
+.jc-mcp-links { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0 0 .75rem; }
+.jc-mcp-links .btn { display: inline-flex; align-items: center; min-height: 2.75rem; }
+.jc-code { margin: .75rem 0 0; border-radius: var(--jc-radius); overflow: hidden; background: var(--jc-ink); color: var(--jc-paper); }
+.jc-code-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .25rem .25rem .25rem var(--jc-code-pad); font-size: .8125rem; font-weight: 600; border-bottom: 1px solid color-mix(in oklab, var(--jc-paper) 14%, transparent); }
+.jc-code-copy { display: inline-flex; align-items: center; gap: .375rem; min-height: 2.25rem; padding: 0 .75rem; border: 1px solid color-mix(in oklab, var(--jc-paper) 22%, transparent); border-radius: calc(var(--jc-radius) - 2px); background: color-mix(in oklab, var(--jc-paper) 8%, transparent); color: inherit; font: inherit; font-weight: 500; cursor: pointer; }
+.jc-code-copy:hover { background: color-mix(in oklab, var(--jc-paper) 16%, transparent); }
+.jc-code-copy:focus-visible { outline: 2px solid var(--jc-paper); outline-offset: 1px; }
+.jc-live .jc-code pre, .jc-code .jc-code-url { margin: 0; padding: .75rem var(--jc-code-pad); background: transparent; color: inherit; border-radius: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .8125rem; line-height: 1.5; }
+.jc-code code { font: inherit; color: inherit; background: none; padding: 0; }
+.jc-live .jc-code pre { white-space: pre; overflow-wrap: normal; overflow-x: auto; }
+.jc-code .jc-code-url { overflow-wrap: normal; word-break: normal; }
+@media (max-width: 575.98px) {
+.jc-code-copy { min-height: 2.75rem; }
+/* A phone's card gives the code the width its longest line needs. */
+.jc-mcp { padding: 1rem; --jc-code-pad: .625rem; }
+.jc-live .jc-code pre, .jc-code .jc-code-url { font-size: .75rem; }
+}
+.jc-section + .jc-section { margin-top: 1.5rem; }
+.jc-section h3 { margin: 0; font-size: 1.0625rem; }
+.jc-section-lead { color: var(--jc-muted); font-size: .9375rem; margin: .125rem 0 .75rem; }
+.jc-resource-list { list-style: none; padding: 0; margin: 0; border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg); overflow: hidden; background: var(--jc-surface); }
+.jc-resource { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: .75rem 1rem; padding: .875rem 1rem; margin: 0; }
+.jc-resource + .jc-resource { border-top: 1px solid var(--jc-border); }
+.jc-resource:hover { background: var(--jc-n50); }
+.jc-resource-head { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
+.jc-resource .jc-chip { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.jc-resource .heading { font-weight: 600; color: var(--jc-ink); text-decoration: none; overflow-wrap: anywhere; }
+.jc-resource .heading:hover { color: var(--jc-primary); text-decoration: underline; }
+.jc-resource p { margin: 0; color: var(--jc-muted); font-size: .875rem; }
+.jc-resource-actions { display: flex; gap: .375rem; }
+.jc-schema > summary { cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: .75rem; flex-wrap: wrap; padding: .25rem 0; }
+.jc-schema > summary::-webkit-details-marker { display: none; }
+.jc-schema > summary::before { content: "\25B8"; color: var(--jc-muted); transition: transform .15s; }
+.jc-schema[open] > summary::before { transform: rotate(90deg); }
+.jc-schema > summary .jc-section-lead { margin: 0; flex-basis: 100%; padding-left: 1.25rem; }
+.jc-schema > .jc-resource-list { margin-top: .75rem; }
+@media (max-width: 575.98px) {
+.jc-resource { grid-template-columns: 1fr; }
+.jc-about-list { grid-template-columns: 1fr; }
+.jc-about-list dd { border-top: 0; padding-top: 0; }
+.jc-grid { height: clamp(18rem, calc(15rem + var(--jc-rows, 20) * 2.6rem), 26rem); }
+.jc-copy { flex-direction: column; }
+}
+.table { --bs-table-striped-bg: var(--jc-n50); --bs-table-hover-bg: var(--jc-n100); --bs-table-border-color: var(--jc-border); color: var(--jc-ink); }
+.table > :not(caption) > * > * { background-color: transparent; color: var(--jc-ink); }
+.table-striped > tbody > tr:nth-of-type(odd) > * { background-color: var(--jc-n50); }
+.table th { font-weight: 600; }
+/* ---- Footer: the ink as the paper, the one pair the branding block makes legible -------- */
+.site-footer { background: var(--jc-ink); color: var(--jc-paper); border-top: 4px solid var(--jc-primary); padding: 2.5rem 0 2rem; margin-top: 0; }
+.site-footer p, .site-footer a, .site-footer label, .site-footer .attribution p, .site-footer li { color: color-mix(in oklab, var(--jc-paper) 88%, var(--jc-ink)); }
+.site-footer a { text-decoration: none; }
+.site-footer a:hover, .site-footer a:focus { color: var(--jc-paper); text-decoration: underline; }
+.site-footer .footer-links ul { padding: 0; }
+.site-footer .footer-links li { margin-bottom: .5rem; }
+.jc-footer-brand { display: flex; align-items: center; gap: .625rem; margin-bottom: .75rem; }
+.jc-footer-brand img { height: 2rem; width: 2rem; }
+.jc-footer-brand span { font-family: var(--jc-font-heading); font-size: 1.25rem; font-weight: 700; color: var(--jc-paper); }
+.jc-ribbon { position: sticky; top: 0; z-index: 1030; padding: .375rem 1rem; text-align: center; font-weight: 600; background: var(--jc-accent); color: var(--jc-text); }
+.jc-footer-lines { font-size: .875rem; }
+.jc-footer-lines p { margin: 0 0 .375rem; }
+.site-footer .form-select, .site-footer select { background-color: color-mix(in oklab, var(--jc-paper) 10%, var(--jc-ink)); color: var(--jc-paper); border-color: color-mix(in oklab, var(--jc-paper) 25%, var(--jc-ink)); }
+/* ---- The table view, framed on the dataset page and on its own page --------------------- */
+body.dt-view { background: var(--jc-surface); }
+/* The DataTables stylesheet loads after this one, so its rules are outranked by the body class. */
+body.dt-view .page-item.active .page-link { background-color: var(--jc-primary); border-color: var(--jc-primary); color: var(--jc-primary-fg); }
+body.dt-view .page-link { color: var(--jc-primary); }
+body.dt-view .dt-button, body.dt-view .btn-secondary { background: var(--jc-surface); color: var(--jc-ink); border-color: var(--jc-border); }
+/* The resource page's list of resources: whole names that wrap, and an editor's Edit beside each (T-3048). */
+.jc-resource-nav .nav-item { display: flex; align-items: center; gap: .5rem; }
+/* The chip keeps its column and a long name wraps beside it, never under it (T-4333). */
+.jc-resource-nav .nav-item > a:first-child { flex: 1; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: .375rem; overflow-wrap: anywhere; }
+.jc-resource-nav .jc-resource-edit { font-size: .875rem; white-space: nowrap; padding-inline-end: 1rem; }
+.jc-resource-address { overflow-wrap: anywhere; }
+.jc-no-view { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; padding: 1rem 0; }
+.jc-no-view p { margin: 0; flex: 1 1 20rem; }
+/* The framed table (T-3048, T-4637): one row of controls above the table, the length choice left
+and the search, then the buttons, right; one row under it, the count left and the pages right.
+The frame has no border of its own, the card's is the only one, and the wrapper's 1rem is the
+card's padding, so the card's title, the controls and the table share one left edge. The view's
+own rules name `#dtprv_wrapper`, so these do too. */
+body.dt-view #resize_wrapper { inset: 0; }
+body.dt-view #dtprv_wrapper { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; padding: 1rem; }
+body.dt-view #dtprv_wrapper > div:not(.dataTables_processing) { float: none; margin: 0; text-align: start; }
+body.dt-view #dtprv_wrapper > div.dataTables_length { order: 1; margin-inline-end: auto; }
+body.dt-view #dtprv_wrapper > .dataTables_filter { order: 2; display: flex; align-items: center; gap: .25rem; }
+body.dt-view #dtprv_wrapper .dataTables_filter label { display: flex; flex: 1; align-items: center; gap: .5rem; margin: 0; }
+body.dt-view #dtprv_wrapper .dataTables_filter input { flex: 1; min-width: 0; margin-left: 0; }
+body.dt-view #dtprv_wrapper > .dt-buttons { order: 3; }
+body.dt-view #dtprv_wrapper > .dataTables_scroll { order: 4; flex: 1 0 100%; }
+body.dt-view #dtprv_wrapper > div.dataTables_info { order: 5; padding: 0; margin-inline-end: auto; white-space: normal; }
+body.dt-view #dtprv_wrapper > .dataTables_paginate { order: 6; }
+body.dt-view #dtprv_wrapper .dataTables_paginate .pagination { flex-wrap: wrap; margin: 0; }
+/* The body is as tall as its rows, up to 26rem, then scrolls: the view's scrollResize filled the
+frame and left a band under two rows. Its heights are inline, hence !important. */
+body.dt-view #dtprv_wrapper .dataTables_scrollBody { height: auto !important; max-height: 26rem !important; }
+/* CKAN's own first column is the row number, and it holds the row expander and the refit button,
+so it stays; its header reads "#" rather than the DataStore's `_id` (T-4661). The other headers
+are the fields' `info.label`, which the publisher writes (data_dictionary_labels, on by default). */
+body.dt-view #dtprv thead th[data-name="_id"] { font-size: 0; }
+body.dt-view #dtprv thead th[data-name="_id"]::after { content: "#"; font-size: .875rem; }
+/* The view's stylesheet draws the search field's clear button with an icon it does not ship (a
+404 on every page); the field is cleared as any field is, so the button goes (T-4637). */
+body.dt-view input[type="search"]::-webkit-search-cancel-button { display: none; }
+/* A narrow frame: the buttons get their own row above, then length and search stack. */
+@media (max-width: 47.99rem) {
+body.dt-view #dtprv_wrapper > .dt-buttons { order: 0; flex: 1 0 100%; justify-content: flex-end; }
+body.dt-view #dtprv_wrapper > .dt-buttons > * { flex: 0 0 auto; }
+}
+@media (max-width: 29.99rem) {
+body.dt-view #dtprv_wrapper > .dataTables_length,
+body.dt-view #dtprv_wrapper > .dataTables_filter { flex: 1 0 100%; }
+}
+/* The assistant (AG-114): a button in the corner, its frame opening above it, never wider than
+the phone it is on. */
+/* The corner (T-4585): the link to /assistants and the assistant's launcher, one row of two
+buttons of one size; the launcher's frame opens above the launcher as before. */
+.jc-corner { position: fixed; inset-inline-end: 1rem; inset-block-end: max(1rem, env(safe-area-inset-bottom)); z-index: 1040; display: flex; align-items: flex-end; gap: .5rem; }
+.jc-assistant { position: relative; }
+/* T-4620: one bar on a slant, a segment per assistant in its maker's colour, its logo in white and
+upright again; no border and no dividers, the colours divide it. */
+.jc-corner .jc-assistants-link { box-sizing: border-box; block-size: 3rem; margin-inline: .375rem; display: flex; flex-wrap: nowrap; overflow: hidden; border-radius: 10px; transform: skewX(-14deg); text-decoration: none; box-shadow: 0 4px 14px color-mix(in oklab, var(--jc-ink) 25%, transparent); }
+.jc-corner .jc-assistants-link:hover, .jc-corner .jc-assistants-link:focus { text-decoration: none; }
+.jc-corner:has(.jc-assistant[open]) .jc-assistants-link { display: none; }
+.jc-seg { display: flex; align-items: center; justify-content: center; inline-size: 3.125rem; }
+.jc-seg-claude { background: #d97757; }
+.jc-seg-chatgpt { background: #10a37f; }
+.jc-seg-mcp { background: #1f1f2e; }
+.jc-corner .jc-assistants-link:hover .jc-seg, .jc-corner .jc-assistants-link:focus-visible .jc-seg { filter: brightness(1.08); }
+.jc-seg .jc-ai-logo { flex: none; display: block; inline-size: 1.375rem; block-size: 1.375rem; transform: skewX(14deg); }
+.jc-assistants-link:focus-visible { outline: 3px solid var(--jc-accent); outline-offset: 2px; }
+.jc-assistant > summary { list-style: none; cursor: pointer; box-sizing: border-box; min-block-size: 2.75rem; display: flex; align-items: center; justify-content: center; background: var(--jc-primary); color: var(--jc-primary-fg); border-radius: 999px; padding: .75rem 1.25rem; font-weight: 600; box-shadow: 0 .25rem 1rem color-mix(in oklab, var(--jc-ink) 25%, transparent); }
+.jc-assistant > summary::-webkit-details-marker { display: none; }
+.jc-assistant > summary:focus-visible { outline: 3px solid var(--jc-accent); outline-offset: 2px; }
+/* T-4622: closed, the launcher takes the logo bar's shape: the same slant, corners, height and
+shadow, its words upright again and on one line. Open, it is the ✕ below as before. */
+.jc-assistant:not([open]) > summary { block-size: 3rem; min-block-size: 0; padding-block: 0; margin-inline: .375rem; border-radius: 10px; transform: skewX(-14deg); white-space: nowrap; box-shadow: 0 4px 14px color-mix(in oklab, var(--jc-ink) 25%, transparent); }
+.jc-assistant:not([open]) > summary > span { display: inline-block; transform: skewX(14deg); }
+.jc-assistant-icon { display: none; }
+/* Open, the launcher goes: the ✕ in the chat's own header closes the panel (T-4635, the widget's
+embed mode), so no circle stays in the corner. */
+.jc-assistant[open] > summary { display: none; }
+/* One tall frame in the corner where the launcher was, 760px and never taller than the window
+less its two 1rem margins, with nothing under it (T-4592, T-4635). */
+.jc-assistant > iframe { position: fixed; inset-inline-end: 1rem; inset-block-end: max(1rem, env(safe-area-inset-bottom)); width: min(26rem, calc(100vw - 2rem)); height: min(760px, calc(100vh - 2rem)); height: min(760px, calc(100dvh - 2rem)); border: 1px solid var(--jc-border); border-radius: .75rem; background: var(--jc-surface); }
+/* Expanded by the chat's button (T-4658): the window less the 1rem gutter and the safe areas, at
+most 60rem wide and centred; an iframe does not stretch between insets, so both sizes are set.
+The page behind does not scroll (jc-assistant.js makes it inert). */
+.jc-assistant.jc-full > iframe { inset-inline-end: max(1rem, calc((100vw - 60rem) / 2)); inset-block-start: max(1rem, env(safe-area-inset-top)); width: min(60rem, calc(100vw - 2rem)); height: calc(100vh - max(1rem, env(safe-area-inset-top)) - max(1rem, env(safe-area-inset-bottom))); height: calc(100dvh - max(1rem, env(safe-area-inset-top)) - max(1rem, env(safe-area-inset-bottom))); }
+body:has(.jc-assistant.jc-full[open]) { overflow: hidden; }
+/* Docked (T-4685, API/05 §1.6.1): on a screen 1100px wide or more the frame takes the right edge
+at full height, 34% of the window by default and 360px to half the window as the visitor drags
+its edge (jc-assistant.js), and the page shrinks beside it, never under it: search, filters,
+maps and tables stay usable. Narrower, the floating panel stays. Docked, the page scrolls in its
+body beside the frame, never the window behind it, so the page's bar and the chat's never stand
+side by side at the screen's edge (T-4767). */
+.jc-dock-edge { display: none; }
+@media (min-width: 1100px) {
+html.jc-docked { --jc-dock-w: clamp(360px, var(--jc-dock, 34vw), 50vw); overflow: hidden; }
+html.jc-docked body { margin-inline-end: var(--jc-dock-w); block-size: 100vh; block-size: 100dvh; overflow-y: auto; }
+html.jc-docked .jc-assistant[open]:not(.jc-full) > iframe { inset-block: 0; inset-inline-end: 0; width: var(--jc-dock-w); height: 100vh; height: 100dvh; border-width: 0 0 0 1px; border-radius: 0; }
+html.jc-docked .jc-assistant[open]:not(.jc-full) > .jc-dock-edge { display: block; position: fixed; inset-block: 0; inset-inline-end: calc(var(--jc-dock-w) - 4px); inline-size: 8px; cursor: col-resize; touch-action: none; z-index: 1; }
+.jc-dock-edge:focus-visible { outline: 3px solid var(--jc-accent); outline-offset: -3px; }
+/* While the edge is dragged, the frame does not take the pointer. */
+html.jc-dragging .jc-assistant > iframe { pointer-events: none; }
+}
+/* A link on the page is a normal page load: the browser holds the panel in place while the page
+beside it cross-fades, and shows the panel as it was until the next page's frame has drawn. */
+@view-transition { navigation: auto; }
+.jc-assistant[open] > iframe { view-transition-name: jc-assistant; }
+::view-transition-group(root) { animation-duration: .15s; }
+::view-transition-old(jc-assistant) { animation: jc-hold .4s step-end both; }
+::view-transition-new(jc-assistant) { animation: none; }
+@keyframes jc-hold { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+::view-transition-group(root), ::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+}
+/* T-4204: the page keeps room at its end, so the button never covers its last line. */
+body:has(.jc-corner) { padding-block-end: 5rem; }
+/* On a phone the open assistant takes the whole screen, the chat's header with its ✕ on top; the
+page behind neither shows nor scrolls (jc-assistant.js also makes it inert and adds Escape). */
+@media (max-width: 40rem) {
+/* T-4620: the bar is narrow enough to stay beside the launcher, one row as on a desktop. */
+.jc-corner { align-items: center; }
+.jc-corner .jc-assistants-link { block-size: 2.75rem; }
+/* T-4622: 23px segments keep the bar beside the Slovak launcher down to a 375px phone; where a
+label is longer than the room (German, or any label at 320px), the bar goes on a row of its
+own above the launcher, both inside the 1rem gutters, and the page keeps room for two rows. */
+.jc-corner { flex-wrap: wrap; justify-content: flex-end; max-inline-size: calc(100vw - 2rem); }
+/* T-4996: closed, the launcher is a square chat icon the bar's height, its words kept for a screen
+reader, so it covers a corner of a card instead of a card's line; bar and icon are one row at
+every label and 320px, so the page keeps room for one row. */
+body:has(.jc-corner) { padding-block-end: 4.5rem; }
+.jc-seg { inline-size: 1.4375rem; }
+.jc-seg .jc-ai-logo { inline-size: 1.125rem; block-size: 1.125rem; }
+.jc-brand img { block-size: 1.75rem; }
+.jc-assistant:not([open]) > summary { block-size: 2.75rem; inline-size: 2.75rem; padding-inline: 0; }
+.jc-assistant:not([open]) > summary > span { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
+.jc-assistant:not([open]) > summary > .jc-assistant-icon { display: block; inline-size: 1.375rem; block-size: 1.375rem; transform: skewX(14deg); }
+.jc-corner:has(.jc-assistant[open]) { z-index: 2000; }
+body:has(.jc-assistant[open]) { overflow: hidden; }
+.jc-assistant[open] { position: fixed; inset: 0; z-index: 2000; display: flex; flex-direction: column; background: var(--jc-surface); }
+/* The frame's height is the screen's: an iframe stretches neither as a flex item of details (its
+content sits in ::details-content) nor between insets, and stays 150 px (T-4248). */
+.jc-assistant[open] > iframe { position: fixed; inset: 0; width: 100%; height: 100vh; height: 100dvh; border: 0; border-radius: 0; }
+}
+/* ---- A resource's page (T-4333) ---------------------------------------------------------- */
+/* The resource card sits in the same grid as the cards under it: a `.row` child is padded by half
+a gutter, so it is inset by that much instead and wears the card's own surface. */
+.wrapper > .module-resource {
+margin-inline: calc(var(--bs-gutter-x) * .5); padding-inline: 0; width: calc(100% - var(--bs-gutter-x));
+background: var(--jc-surface); border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg);
+box-shadow: var(--jc-shadow-1); margin-bottom: 1.25rem; overflow: hidden;
+}
+.module-resource .actions:empty, .module-resource .actions > :empty { display: none; }
+.module-content > h2:first-child, .module-resource .page-heading { margin-top: 0; }
+.jc-eyebrow { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; margin: 0 0 .5rem; color: var(--jc-muted); font-size: .875rem; }
+.jc-eyebrow code, .jc-facts code { color: var(--jc-ink); font-size: .875em; overflow-wrap: anywhere; }
+.module-resource .page-heading { overflow-wrap: anywhere; margin-bottom: .5rem; }
+.jc-lead { font-size: 1.0625rem; margin: 0 0 .75rem; }
+.jc-address { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; margin: 1rem 0 .25rem; padding: .75rem 1rem; background: var(--jc-n50); border: 1px solid var(--jc-border); border-radius: var(--jc-radius); }
+.jc-address-label { font-weight: 600; }
+.jc-address-short { flex: 1 1 16rem; min-width: 0; color: var(--jc-ink); overflow-wrap: normal; word-break: normal; }
+.jc-address-short > span { white-space: nowrap; }
+.jc-address .btn { flex: none; }
+.jc-address-whole { flex: 1 1 100%; min-width: 0; font-size: .875rem; }
+.jc-address-whole summary { cursor: pointer; color: var(--jc-muted); }
+.jc-address-whole pre { margin: .5rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8125rem; }
+.jc-api { padding-block: .5rem 0; }
+.jc-api h2 { font-size: 1.25rem; margin: 1.5rem 0 .5rem; }
+.jc-api h3 { font-size: 1rem; font-weight: 650; margin: 1.25rem 0 .25rem; }
+.jc-api p { margin: .25rem 0; }
+.jc-rows-status { color: var(--jc-muted); }
+.jc-rows-table { overflow-x: auto; border: 1px solid var(--jc-border); border-radius: var(--jc-radius); }
+.jc-rows-table table { margin: 0; font-size: .875rem; }
+.jc-rows-table td, .jc-rows-table th { white-space: nowrap; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
+.jc-facts { display: grid; grid-template-columns: minmax(8rem, max-content) 1fr; margin: 0; }
+.jc-facts > div { display: contents; }
+.jc-facts > div[hidden] { display: none; }
+.jc-facts dt, .jc-facts dd { padding: .625rem 0; border-top: 1px solid var(--jc-border); margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.jc-facts dt { font-weight: 600; padding-inline-end: 1.5rem; }
+.jc-facts > div:first-child > * { border-top: 0; }
+@media (max-width: 575.98px) {
+.jc-facts { grid-template-columns: 1fr; }
+.jc-facts dd { border-top: 0; padding-top: 0; }
+}
+.jc-nav-group { font-size: .75rem; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; color: var(--jc-muted); margin: 0; padding: .875rem 1.25rem .375rem; border-top: 1px solid var(--jc-border); }
+.jc-resource-nav .jc-chip { margin-inline-end: 0; }
+/* Nothing on a page may push it wider than the window, or the corner button leaves it. */
+.wrapper > .primary, .wrapper > .secondary, .module-content { min-width: 0; }
+/* A command wraps inside its card at every width; Bootstrap's `pre code` would keep it one line. */
+.jc-api pre, .jc-api pre code, .jc-address-whole pre code { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.jc-api .jc-copy-code { flex-wrap: wrap; }
+.jc-api .jc-copy-code pre { flex: 1 1 auto; width: min(100%, 40rem); }
+.jc-api .jc-copy-code .btn { align-self: flex-start; }
+/* The address box ends the header card's text; the rows and examples follow without a band. */
+.module-resource .resource-view.jc-api { margin-top: 0; padding-top: 0; }
+.jc-api > section:first-child > h2 { margin-top: 1.25rem; }
+.jc-live-url { flex: 1 1 auto; min-width: 0; margin: 0; padding: .5rem .75rem; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--jc-surface); border: 1px solid var(--jc-border); border-radius: var(--jc-radius); font-size: .875rem; }
+.jc-live .jc-live-url { padding: .5rem .75rem; background: var(--jc-surface); color: var(--jc-ink); font-size: .875rem; }
+.jc-live-url code { white-space: inherit; overflow-wrap: inherit; color: var(--jc-ink); }
+/* Below desktop a resource page is one column: the list of resources reads whole under the facts. */
+@media (max-width: 991.98px) {
+.wrapper:has(> .module-resource) > .primary, .wrapper:has(> .module-resource) > .secondary { width: 100%; flex: 0 0 100%; max-width: 100%; }
+.wrapper:has(> .module-resource) > .secondary { order: 2; }
+}
+/* A command or address breaks only between its pieces (jc_breakable.html), never inside a
+host, an id or "ngsi-ld"; a piece longer than the line scrolls instead (owner rule, T-4333). */
+pre .jc-nb { white-space: pre; }
+pre:has(.jc-nb), pre:has(.jc-nb) code { overflow-wrap: normal; word-break: normal; }
+pre:has(.jc-nb) { overflow-x: auto; }
+/* The framed table carries no developer lines (T-4333): the frame's summary already names the
+table, the column arrows show the sort, and CKAN's label rule left a ":" after the search
+field. Below desktop width the controls stack, so the frame grows by their height and its
+first rows stay in view. */
+body.dt-view .resourceinfo, body.dt-view .sortinfo { display: none; }
+body.dt-view .dataTables_filter label::after { content: none; }
+@media (max-width: 991.98px) {
+.jc-grid { height: clamp(24rem, calc(21rem + var(--jc-rows, 20) * 2.6rem), 38rem); }
+}
+@media (max-width: 575.98px) {
+.jc-grid { height: clamp(27rem, calc(24rem + var(--jc-rows, 20) * 2.6rem), 34rem); }
+}
+/* ---- The dataset map (T-4639) ----------------------------------------------------------- */
+/* Border to border of its card, like the table's frame; the panel over its right side on a
+desktop, a sheet over its lower half on a phone. Clusters are buttons with their count. */
+.jc-map { position: relative; }
+.jc-map-card .jc-map { margin-inline: -1rem; }
+.jc-map-area { height: 26rem; background: var(--jc-surface); }
+.jc-map-area:focus-within { outline: 2px solid var(--jc-primary); outline-offset: -2px; }
+.jc-map-note:empty { display: none; }
+.jc-map-note { margin: .5rem 1rem 0; color: var(--jc-muted); font-size: .875rem; }
+.jc-map-panel { position: absolute; z-index: 3; top: .75rem; inset-inline-end: .75rem; width: min(20rem, calc(100% - 1.5rem)); max-height: calc(100% - 1.5rem); overflow: auto; padding: .75rem 1rem 1rem; background: var(--jc-surface); color: var(--jc-ink); border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg); box-shadow: var(--jc-shadow-2); user-select: text; }
+.jc-map-panel h3 { margin: 0 2rem .5rem 0; font-size: 1.0625rem; overflow-wrap: anywhere; }
+.jc-map-panel dl { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: .25rem .75rem; margin: 0; font-size: .875rem; }
+.jc-map-panel dt { color: var(--jc-muted); font-weight: 500; overflow-wrap: anywhere; }
+/* The record's source, provider and dates close the list in small type (T-4661). */
+.jc-map-panel .jc-map-meta { font-size: .75rem; }
+.jc-map-panel dd a { overflow-wrap: anywhere; }
+/* The attributes after a feature's key ones, folded under "Viac" (T-4672). */
+.jc-map-panel details { margin-top: .5rem; }
+.jc-map-panel summary { cursor: pointer; color: var(--jc-primary); font-size: .875rem; font-weight: 500; }
+.jc-map-panel details dl { margin-top: .375rem; }
+/* While features load the note sits over the map, not under an empty one (T-4661). */
+.jc-map[data-state="loading"] .jc-map-note { position: absolute; z-index: 2; top: .75rem; inset-inline-start: .75rem; margin: 0; padding: .25rem .75rem; background: var(--jc-surface); color: var(--jc-ink); border: 1px solid var(--jc-border); border-radius: 999px; box-shadow: var(--jc-shadow-2); }
+.jc-map-panel dd { margin: 0; overflow-wrap: anywhere; }
+.jc-map-close { position: absolute; top: .5rem; inset-inline-end: .5rem; inline-size: 2rem; block-size: 2rem; border: 0; border-radius: 50%; background: transparent; color: var(--jc-ink); font-size: 1rem; line-height: 1; }
+.jc-map-close:hover, .jc-map-close:focus-visible { background: var(--jc-border); }
+.jc-map-cluster { min-inline-size: 2.25rem; block-size: 2.25rem; padding: 0 .5rem; border: 2px solid var(--jc-paper); border-radius: 1.125rem; background: var(--jc-primary); color: var(--jc-primary-fg); font-weight: 700; font-size: .8125rem; box-shadow: var(--jc-shadow-2); cursor: pointer; }
+.jc-map-cluster:focus-visible { outline: 3px solid var(--jc-accent); outline-offset: 2px; }
+.jc-map-embed { flex-basis: 100%; }
+.jc-map-embed > summary { list-style: none; display: inline-block; }
+.jc-map-embed > summary::-webkit-details-marker { display: none; }
+.jc-map-embed[open] > summary { margin-bottom: .5rem; }
+.jc-map-embed textarea { font-family: var(--bs-font-monospace, monospace); font-size: .8125rem; margin-bottom: .5rem; }
+@media (max-width: 599.98px) {
+.jc-map-area { height: 22rem; }
+.jc-map-panel { top: auto; bottom: 0; inset-inline: 0; width: auto; max-height: 55%; border-radius: var(--jc-radius-lg) var(--jc-radius-lg) 0 0; }
+}
+/* The map as a page of its own, framed by another site: the map and two links, nothing else. */
+body.jc-embed { margin: 0; background: var(--jc-surface); }
+/* The page of its own loads no Bootstrap: its keys line stays for screen readers only (T-5061). */
+.jc-embed .visually-hidden { position: absolute; inline-size: 1px; block-size: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.jc-map-page { display: flex; flex-direction: column; height: 100vh; }
+.jc-map-page .jc-map { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.jc-map-page .jc-map-area { flex: 1; height: auto; min-height: 12rem; }
+/* T-5061: on the page of its own the note always floats over the map. In the flow it changed the
+map's height whenever it came and went, and every resize past the cap asked the Endpoint again. */
+.jc-map-page .jc-map-note { position: absolute; z-index: 2; top: .75rem; inset-inline-start: .75rem; max-inline-size: calc(100% - 4rem); margin: 0; padding: .25rem .75rem; background: var(--jc-surface); color: var(--jc-ink); border: 1px solid var(--jc-border); border-radius: 999px; box-shadow: var(--jc-shadow-2); }
+.jc-map-links { display: flex; flex-wrap: wrap; gap: .25rem 1rem; margin: 0; padding: .5rem .75rem; font-size: .875rem; border-top: 1px solid var(--jc-border); }
+/* ---- Use it in your AI assistant (T-4585) ------------------------------------------------ */
+/* T-4628, T-4634: every card in one row on a desktop, as many as fit at 14rem below it, one column
+on a phone, all one height. A card's link covers the whole card, and the card shows its focus. */
+.jc-assistant-cards { list-style: none; margin: 1.5rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); grid-auto-rows: 1fr; gap: 1rem; }
+.jc-assistant-card { position: relative; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: .75rem; padding: 1.25rem; background: var(--jc-surface); border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg); box-shadow: var(--jc-shadow-1); }
+.jc-assistant-card h2 { display: flex; align-items: center; gap: .75rem; font-size: 1.25rem; margin: 0; }
+.jc-assistant-card .jc-ai-logo { flex: none; display: block; inline-size: 2rem; block-size: 2rem; }
+.jc-card-links { margin: auto 0 0; display: flex; flex-wrap: wrap; gap: .5rem 1rem; }
+.jc-card-link { font-weight: 600; }
+/* T-4643: the guide sits above the card's whole-card link, so it stays its own target. */
+.jc-card-link::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+.jc-assistant-card:has(.jc-card-link) { cursor: pointer; }
+.jc-assistant-card:has(.jc-card-link:hover) { border-color: var(--jc-primary); }
+.jc-card-link:focus-visible { outline: none; }
+.jc-assistant-card:has(.jc-card-link:focus-visible) { outline: 3px solid var(--jc-accent); outline-offset: 2px; }
+.jc-connector-note { display: flex; gap: .75rem; align-items: flex-start; margin: 0 0 1.5rem; padding: .75rem 1rem; background: var(--jc-primary-soft); color: var(--jc-primary-soft-fg); border-inline-start: 4px solid var(--jc-primary); border-radius: var(--jc-radius); }
+.jc-connector-note p { margin: 0 0 .5rem; }
+.jc-connector-note p:last-child { margin: 0; }
+.jc-note-icon { flex: none; margin-block-start: .15rem; }
+.jc-note-prompt { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; font-weight: 600; }
+.jc-note-prompt q { overflow-wrap: anywhere; }
+.jc-connector-status { margin: 0 0 1rem; padding: .75rem 1rem; background: var(--jc-primary-soft); color: var(--jc-primary-soft-fg); border-inline-start: 4px solid var(--jc-primary); border-radius: var(--jc-radius); }
+.jc-store-address { margin: 1.5rem 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.jc-store-url { font-weight: 600; overflow-wrap: anywhere; }
+/* One assistant, step by step (T-4643). */
+.jc-guide h1 { display: flex; align-items: center; gap: .75rem; }
+.jc-guide h1 .jc-ai-logo { flex: none; inline-size: 2rem; block-size: 2rem; }
+.jc-guide-steps li { margin-block-end: .75rem; }
+.jc-guide-steps .jc-store-address { margin-block-start: .5rem; }
+.jc-guide-example { margin: 0 0 1rem; padding: .75rem 1rem; border-inline-start: 4px solid var(--jc-primary); background: var(--jc-surface); }
+.jc-guide-trouble dt { font-weight: 600; margin-block-start: .75rem; }
+.jc-guide-trouble dd { margin: .25rem 0 0; }
+.jc-guide-checked { color: var(--jc-muted); overflow-wrap: anywhere; }
+.jc-developers { margin-top: 2.5rem; }
+.jc-developers > summary { cursor: pointer; font-weight: 600; font-size: 1.125rem; }
+.jc-developers > .jc-mcp { margin-top: 1rem; }
+/* T-4641: a chart of the dataset, framed from the renderer's host; the frame sets its own height. */
+.jc-visualizations { margin: 2rem 0; }
+.jc-viz { margin: 0 0 1.5rem; }
+.jc-viz h3 { font-size: 1.1rem; margin: 0 0 .25rem; }
+.jc-viz figcaption p { margin: 0 0 .5rem; }
+.jc-viz-frame { display: block; width: 100%; height: 420px; border: 0; }
+.jc-viz-actions { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; align-items: baseline; margin-top: .5rem; }
+.jc-viz-embed pre { white-space: pre-wrap; word-break: break-all; }
+.jc-explorer-frame { height: 640px; }
+/* T-5192: while the live data widget is on screen, the corner shrinks to the square chat icon and
+the logo bar goes, so the launcher covers a corner of a table cell rather than a button or a row. */
+body.jc-corner-compact .jc-corner .jc-assistants-link { display: none; }
+body.jc-corner-compact .jc-assistant:not([open]) > summary { block-size: 2.75rem; inline-size: 2.75rem; padding-inline: 0; }
+body.jc-corner-compact .jc-assistant:not([open]) > summary > span { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
+body.jc-corner-compact .jc-assistant:not([open]) > summary > .jc-assistant-icon { display: block; inline-size: 1.375rem; block-size: 1.375rem; transform: skewX(14deg); }
+/* T-5415: on a phone the compact icon sits flush on the screen's right edge, square on that side and
+unslanted, so it covers the last 44 px of a table row or a chart's edge instead of a row's middle
+or the legend; the legend now sits under the chart (render.js). */
+@media (max-width: 40rem) {
+body.jc-corner-compact .jc-corner { inset-inline-end: 0; }
+body.jc-corner-compact .jc-assistant:not([open]) > summary { margin-inline: 0; transform: none; border-start-end-radius: 0; border-end-end-radius: 0; opacity: .92; }
+body.jc-corner-compact .jc-assistant:not([open]) > summary > .jc-assistant-icon { transform: none; }
+}
+.jc-about-sources > summary { cursor: pointer; color: var(--jc-primary); min-block-size: 2.75rem; display: flex; align-items: center; }
+.jc-about-sources > summary:focus-visible { outline: 3px solid var(--jc-accent); outline-offset: 2px; }
+.jc-about-sources ul { margin: .25rem 0 0; padding-inline-start: 1.25rem; columns: 2 16rem; }
+.jc-about-sources li { min-block-size: 2rem; break-inside: avoid; }
+/* "Odoberať" on a dataset page (T-5203): a menu under its button, inside the page at 400 px. */
+.jc-subscribe { margin: 0 0 1rem; }
+.jc-subscribe > summary { display: inline-block; cursor: pointer; list-style: none; }
+.jc-subscribe > summary::-webkit-details-marker { display: none; }
+.jc-subscribe-menu { margin-top: .5rem; max-width: min(32rem, 100%); padding: .75rem 1rem; border: 1px solid var(--jc-border); border-radius: var(--jc-radius); background: var(--jc-surface); }
+.jc-subscribe-menu ul { list-style: none; margin: 0 0 .5rem; padding: 0; }
+.jc-subscribe-menu li { padding: .25rem 0; overflow-wrap: anywhere; }
+.jc-subscribe-group { margin: .25rem 0; font-size: .8125rem; font-weight: 600; color: var(--jc-muted); }
+.jc-subscribe-hint { margin: .5rem 0 0; font-size: .8125rem; color: var(--jc-muted); }
+/* A short table's frame (T-4333): its row count as an attribute, as the CSP refuses a style attribute (T-5147). */
+.jc-grid[data-jc-rows="1"] { --jc-rows: 1; } .jc-grid[data-jc-rows="2"] { --jc-rows: 2; } .jc-grid[data-jc-rows="3"] { --jc-rows: 3; }
+.jc-grid[data-jc-rows="4"] { --jc-rows: 4; } .jc-grid[data-jc-rows="5"] { --jc-rows: 5; } .jc-grid[data-jc-rows="6"] { --jc-rows: 6; }
+.jc-grid[data-jc-rows="7"] { --jc-rows: 7; } .jc-grid[data-jc-rows="8"] { --jc-rows: 8; } .jc-grid[data-jc-rows="9"] { --jc-rows: 9; }
+.jc-grid[data-jc-rows="10"] { --jc-rows: 10; } .jc-grid[data-jc-rows="11"] { --jc-rows: 11; } .jc-grid[data-jc-rows="12"] { --jc-rows: 12; }
+.jc-grid[data-jc-rows="13"] { --jc-rows: 13; } .jc-grid[data-jc-rows="14"] { --jc-rows: 14; } .jc-grid[data-jc-rows="15"] { --jc-rows: 15; }
+.jc-grid[data-jc-rows="16"] { --jc-rows: 16; } .jc-grid[data-jc-rows="17"] { --jc-rows: 17; } .jc-grid[data-jc-rows="18"] { --jc-rows: 18; }
+.jc-grid[data-jc-rows="19"] { --jc-rows: 19; }
+/* htmx's indicator styles, which htmx 1.9 would write inline (T-5147). */
+.htmx-indicator { opacity: 0; }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; transition: opacity 200ms ease-in; }
+/* The table view's column filters and record dialog, whose style attributes datatablesview.js writes into HTML the CSP refuses (T-5147). */
+.dt-view th.fhead input { width: 100%; }
+.jc-image-view { margin: auto; max-height: 100%; display: block; }
+.dt-view .dtr-modal-content h2 > span:first-child, .dt-view .modal-title > span:first-child { font-size: 150%; font-weight: bold; }

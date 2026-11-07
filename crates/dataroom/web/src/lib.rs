@@ -35,12 +35,12 @@ use std::collections::BTreeMap;
 
 /// Complete stylesheet from `ours/ckan-theme/public__jc-theme.css` plus dark-mode support (`prefers-color-scheme: dark`, B2).
 pub const JC_THEME_CSS: &str = concat!(
-    include_str!("../../../ours/ckan-theme/public__jc-theme.css"),
+    include_str!("../assets/public__jc-theme.css"),
     "\n@media (prefers-color-scheme: dark) {\n  :root[data-jc-color-scheme=\"auto\"] {\n    --jc-paper: #0f172a;\n    --jc-ink: #f8fafc;\n  }\n}\n"
 );
 
 /// Built-in enum labels JSON from `ours/ckan-theme/public__jc-enums.json`.
-pub const JC_ENUMS_JSON: &str = include_str!("../../../ours/ckan-theme/public__jc-enums.json");
+pub const JC_ENUMS_JSON: &str = include_str!("../assets/public__jc-enums.json");
 
 /// Default joinedcontext lockup SVG (`/jc-logo.svg`, paths only, no script, no external href).
 pub const JC_LOGO_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="171" height="36" viewBox="0 0 171 36" fill="none"><rect width="36" height="36" rx="8" fill="#0000bf"/><text x="18" y="24" text-anchor="middle" fill="#ffffff" font-family="system-ui, sans-serif" font-size="18" font-weight="700">jc</text><text x="46" y="24" fill="currentColor" font-family="system-ui, sans-serif" font-size="18" font-weight="700">joinedcontext</text></svg>"##;
@@ -170,6 +170,7 @@ pub struct UiLabels {
     pub download: String,
     pub open: String,
     pub file_lead: String,
+    pub source: String,
     pub source_lead: String,
     pub section_schema: String,
     pub conforms_to: String,
@@ -315,6 +316,7 @@ impl UiLabels {
             download: t("download"),
             open: t("open"),
             file_lead: t("file_lead"),
+            source: t("source"),
             source_lead: t("source_lead"),
             section_schema: t("section_schema"),
             conforms_to: t("conforms_to"),

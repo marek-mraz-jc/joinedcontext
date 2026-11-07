@@ -1444,7 +1444,7 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
     let host = "opendata.dev.joinedcontext.com";
 
     let dev_branding = dataroom_core::BrandingBlock::from_yaml_lossy(include_str!(
-        "../../../../ours/environments/dev-branding.yaml"
+        "../../core/tests/fixtures/branding/dev-branding.yaml"
     ));
 
     let mut cat = make_catalogue(org_id, cat_id, "dev", host);
@@ -2203,7 +2203,7 @@ async fn g1_g2_g3_g4_mountable_router_portal_and_jcctl_parity() {
     }]));
 
     let portal_branding = dataroom_core::BrandingBlock::from_yaml_lossy(include_str!(
-        "../../../../ours/environments/smartcity-branding.yaml"
+        "../../core/tests/fixtures/branding/smartcity-branding.yaml"
     ));
 
     // G1: Mount `dataroom_api::router(state)` under `/catalogue` beside another router in one Axum app
