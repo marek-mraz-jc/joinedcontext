@@ -699,3 +699,128 @@ async fn entity_sets_answer_queries_count_export_and_allowed_over_http() {
     let err: Value = serde_json::from_slice(&bytes).unwrap();
     assert!(err["error"]["code"].is_string());
 }
+
+#[tokio::test]
+async fn mcp_lists_only_permitted_tools_and_lists_match_odata() {
+    let api = Api::new().await;
+    let admin = api.admin().await;
+    let member = api
+        .token(
+            "de300000-0000-4000-8000-00000000000f",
+            json!({ "jc_org": ["helsinki"] }),
+        )
+        .await;
+    let rpc = |method: &str| json!({ "jsonrpc": "2.0", "id": 7, "method": method, "params": {} });
+
+    let (st, _, init, _) = api
+        .call(
+            Method::POST,
+            "/api/v1/realms/dev/mcp",
+            &admin,
+            Some(rpc("initialize")),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(init["id"], 7);
+    assert_eq!(init["result"]["serverInfo"]["name"], "wardkeep-mcp");
+
+    let names = |body: &Value| -> Vec<String> {
+        body["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let (_, _, all, _) = api
+        .call(
+            Method::POST,
+            "/api/v1/realms/dev/mcp",
+            &admin,
+            Some(rpc("tools/list")),
+        )
+        .await;
+    let admin_tools = names(&all);
+    assert_eq!(
+        admin_tools.len(),
+        OperationRegistry::new().operations().len()
+    );
+    assert!(all["result"]["tools"][0]["inputSchema"].is_object());
+    let (_, _, few, _) = api
+        .call(
+            Method::POST,
+            "/api/v1/realms/dev/mcp",
+            &member,
+            Some(rpc("tools/list")),
+        )
+        .await;
+    let member_tools = names(&few);
+    assert!(member_tools.len() < admin_tools.len());
+    assert!(
+        !member_tools
+            .iter()
+            .any(|t| t == "keys_rotate" || t == "realm_apply")
+    );
+
+    // A list tool and the OData set answer the same rows.
+    let filter = "username eq 'demo.analyst@hel.fi'";
+    let listed = mcp_value(
+        &api.mcp(&admin, "wk_person_list", json!({ "filter": filter }))
+            .await,
+    );
+    let (_, _, odata, _) = api
+        .call(
+            Method::GET,
+            &format!("{BASE}/People?$filter=username%20eq%20'demo.analyst@hel.fi'"),
+            &admin,
+            None,
+        )
+        .await;
+    let ids = |v: &Value| -> Vec<String> {
+        let rows = v.get("value").unwrap_or(v);
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(ids(&listed), ids(&odata));
+    assert_eq!(ids(&listed), vec![ANALYST.to_owned()]);
+
+    // A member calling an admin tool gets the same slug OData answers.
+    let refused = api.mcp(&member, "keys_rotate", json!({})).await;
+    let (st, _, err, _) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/SigningKeys/Rotate"),
+            &member,
+            Some(json!({})),
+        )
+        .await;
+    assert!(st.is_client_error());
+    assert_eq!(refused["error"]["data"]["slug"], err["error"]["code"]);
+    assert_eq!(refused["error"]["data"]["status"], st.as_u16());
+
+    // Unknown tool and unknown method are JSON-RPC errors.
+    let unknown = api.mcp(&admin, "no_such_tool", json!({})).await;
+    assert_eq!(unknown["error"]["code"], -32601);
+    let (_, _, nm, _) = api
+        .call(
+            Method::POST,
+            "/api/v1/realms/dev/mcp",
+            &admin,
+            Some(rpc("resources/list")),
+        )
+        .await;
+    assert_eq!(nm["error"]["code"], -32601);
+
+    // No token, no tools.
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/v1/realms/dev/mcp")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(rpc("tools/list").to_string()))
+        .unwrap();
+    let resp = api.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
