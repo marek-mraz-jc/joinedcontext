@@ -1,0 +1,7 @@
+{
+  "$comment": [
+    "T-2730: what the page walker (tests/walker_pages.test.tsx) finds today, each with the open task that fixes it.",
+    "An entry excuses one check on one address. The list only shrinks: an entry whose page is clean fails the walker until it is removed."
+  ],
+  "excused": []
+}

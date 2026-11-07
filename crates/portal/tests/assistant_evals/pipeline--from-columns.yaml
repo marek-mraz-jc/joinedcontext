@@ -1,0 +1,20 @@
+# T-6532 (live walk T-6490, S-20): a new pipeline whose test is red on `root = this` goes back to
+# the model with the rows it ran on, and the draft that opens maps the CSV's columns to id, type
+# and attributes, its test green.
+workflow: pipeline
+as: steward
+says:
+  - "Create a pipeline counters-hourly from DataSource counters-csv, hourly, upsert into Endpoint t6025-full-counters."
+expect:
+  calls:
+    - tool: change_resource
+      input:
+        kind: Pipeline
+        name: counters-hourly
+        create: true
+        patch: { spec: { period: 1h, source: { dataSourceRef: { name: counters-csv } } } }
+  outcome: form
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: create a pipeline counters-hourly from DataSource counters-csv."

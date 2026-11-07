@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>joinedcontext plan</title>
+<style>
+:root { --bg: #ffffff; --fg: #1b1f24; --muted: #5b6470; --line: #d8dde3; --head: #f3f5f7;
+  --green: #1a7f37; --yellow: #9a6700; --red: #cf222e; --add: #e6f4ea; --del: #fbe9eb; --link: #0b57d0;
+  color-scheme: light; }
+:root[data-theme="dark"] { --bg: #16191d; --fg: #e6e9ed; --muted: #a0a8b3; --line: #343a42; --head: #1f2328;
+  --green: #4ac26b; --yellow: #d4a72c; --red: #ff7b72; --add: #12301c; --del: #3a1418; --link: #8ab4f8;
+  color-scheme: dark; }
+body { margin: 0; padding: 12px 16px; background: var(--bg); color: var(--fg);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+h1 { font-size: 16px; margin: 0 0 4px; }
+h2 { font-size: 14px; margin: 16px 0 6px; overflow-wrap: anywhere; }
+p { margin: 4px 0; }
+.muted { color: var(--muted); }
+.lane { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; font-weight: 600;
+  border: 1px solid currentColor; margin-left: 6px; }
+.lane-green { color: var(--green); } .lane-yellow { color: var(--yellow); } .lane-red { color: var(--red); }
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; vertical-align: top; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+th { background: var(--head); font-weight: 600; }
+td { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: break-word; min-width: 10ch; max-width: 32em; }
+td.from { background: var(--del); } td.to { background: var(--add); }
+ul.errors { color: var(--red); padding-left: 18px; }
+.actions { margin-top: 16px; }
+a.button { display: inline-block; padding: 6px 14px; border-radius: 6px; background: var(--link); color: var(--bg);
+  text-decoration: none; font-weight: 600; }
+a.button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main id="view" aria-live="polite"><p class="muted">Waiting for the plan…</p></main>
+<script>
+// The joinedcontext plan view (MCP Apps, T-5960). It renders the one tool result the host hands
+// it and nothing else: no network, no token, text nodes only. Links go to the Portal origin the
+// Portal wrote here when it served the view.
+(function () {
+  "use strict";
+  var PORTAL = __PORTAL_ORIGIN__;
+  var PROJECT = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
+  var MAX_ROWS = 50;
+  var view = document.getElementById("view");
+  var project = null;
+  var nextId = 1;
+
+  function send(message) { window.parent.postMessage(message, "*"); }
+  function request(method, params) { send({ jsonrpc: "2.0", id: nextId++, method: method, params: params }); }
+  function el(tag, text, cls) {
+    var node = document.createElement(tag);
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    if (cls) node.className = cls;
+    return node;
+  }
+  // An NGSI-LD Property or Relationship shows its value or the entity it names.
+  function show(value) {
+    if (value === undefined || value === null) return "";
+    if (Array.isArray(value)) return value.map(show).join(", ");
+    if (typeof value === "object") {
+      if ("value" in value) return show(value.value);
+      if ("object" in value) return show(value.object);
+    }
+    return typeof value === "string" ? value : JSON.stringify(value);
+  }
+  function portalLink(path, label) {
+    if (!project || !PROJECT.test(project)) return null;
+    var url = PORTAL + "/projects/" + encodeURIComponent(project) + path;
+    var a = el("a", label, "button");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.addEventListener("click", function (event) {
+      event.preventDefault();
+      request("ui/open-link", { url: url });
+    });
+    return a;
+  }
+  function table(headers, rows, classes) {
+    var wrap = el("div", null, "scroll");
+    var t = el("table");
+    var head = el("tr");
+    headers.forEach(function (h) { var th = el("th", h); th.scope = "col"; head.appendChild(th); });
+    var thead = el("thead"); thead.appendChild(head); t.appendChild(thead);
+    var body = el("tbody");
+    rows.forEach(function (row) {
+      var tr = el("tr");
+      row.forEach(function (cell, i) { tr.appendChild(el("td", cell, classes && classes[i])); });
+      body.appendChild(tr);
+    });
+    t.appendChild(body);
+    wrap.appendChild(t);
+    return wrap;
+  }
+  function lane(word) {
+    var w = word === "red" || word === "yellow" ? word : "green";
+    return el("span", w + " lane", "lane lane-" + w);
+  }
+  function renderPlan(out) {
+    var h = el("h1", "Plan of " + out.diff.length + (out.diff.length === 1 ? " change" : " changes"));
+    h.appendChild(lane(out.lane));
+    view.appendChild(h);
+    if (out.expiresAt) view.appendChild(el("p", "Valid until " + out.expiresAt + ". Nothing is saved until a person approves it.", "muted"));
+    out.diff.slice(0, MAX_ROWS).forEach(function (change) {
+      var title = el("h2", show(change.op) + " " + show(change.kind) + " " + show(change.name));
+      title.appendChild(lane(change.lane));
+      view.appendChild(title);
+      var fields = (change.plan && Array.isArray(change.plan.fields)) ? change.plan.fields : [];
+      if (fields.length === 0) { view.appendChild(el("p", "No field changes.", "muted")); return; }
+      view.appendChild(table(["Field", "Before", "After"], fields.slice(0, MAX_ROWS).map(function (f) {
+        return [show(f.path), show(f.from), show(f.to)];
+      }), [null, "from", "to"]));
+      if (fields.length > MAX_ROWS) view.appendChild(el("p", (fields.length - MAX_ROWS) + " more fields: open the change in the Portal.", "muted"));
+    });
+    var actions = el("div", null, "actions");
+    var link = portalLink("/approvals", "Open in Portal to approve");
+    if (link) actions.appendChild(link);
+    if (out.next) actions.appendChild(el("p", out.next, "muted"));
+    view.appendChild(actions);
+  }
+  function renderSample(out) {
+    var records = Array.isArray(out.records) ? out.records : [];
+    var errors = Array.isArray(out.errors) ? out.errors : [];
+    view.appendChild(el("h1", "Mapping tried on " + records.length + (records.length === 1 ? " record" : " records")));
+    if (records.length === 0) view.appendChild(el("p", "The mapping wrote no record; read the errors below or try another sample.", "muted"));
+    var columns = [];
+    records.slice(0, MAX_ROWS).forEach(function (r) {
+      if (r && typeof r === "object") Object.keys(r).forEach(function (k) { if (columns.indexOf(k) < 0 && columns.length < 12) columns.push(k); });
+    });
+    if (columns.length) {
+      view.appendChild(table(columns, records.slice(0, MAX_ROWS).map(function (r) {
+        return columns.map(function (k) { return show(r && r[k]); });
+      })));
+    }
+    if (records.length > MAX_ROWS) view.appendChild(el("p", "First " + MAX_ROWS + " of " + records.length + " records.", "muted"));
+    if (errors.length) {
+      view.appendChild(el("h2", errors.length + (errors.length === 1 ? " error" : " errors")));
+      var list = el("ul", null, "errors");
+      errors.slice(0, MAX_ROWS).forEach(function (e) {
+        var where = [e && e.stage, e && e.step, e && e.line].filter(function (x) { return x !== undefined && x !== null; }).join(" · ");
+        list.appendChild(el("li", (where ? where + ": " : "") + show(e && (e.message || e.error || e))));
+      });
+      view.appendChild(list);
+    }
+    var actions = el("div", null, "actions");
+    var link = portalLink("/pipelines", "Open pipelines in Portal");
+    if (link) actions.appendChild(link);
+    view.appendChild(actions);
+  }
+  function render(result) {
+    view.textContent = "";
+    var out = result && result.structuredContent;
+    if (!out || typeof out !== "object" || result.isError) {
+      view.appendChild(el("h1", "The call was refused"));
+      var text = result && Array.isArray(result.content) && result.content[0] && result.content[0].text;
+      view.appendChild(el("p", text || "The tool answered no plan. Read the answer in the chat.", "muted"));
+    } else if (Array.isArray(out.diff)) {
+      renderPlan(out);
+    } else {
+      renderSample(out);
+    }
+    send({ jsonrpc: "2.0", method: "ui/notifications/size-changed",
+      params: { width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight } });
+  }
+  function theme(context) {
+    if (context && (context.theme === "dark" || context.theme === "light")) document.documentElement.dataset.theme = context.theme;
+  }
+  if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) document.documentElement.dataset.theme = "dark";
+  window.addEventListener("message", function (event) {
+    if (event.source !== window.parent) return;
+    var m = event.data;
+    if (!m || m.jsonrpc !== "2.0") return;
+    if (m.id === 1 && m.result) {
+      theme(m.result.hostContext);
+      send({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
+    } else if (m.method === "ui/notifications/tool-input") {
+      var args = m.params && m.params.arguments;
+      project = args && typeof args.project === "string" ? args.project : null;
+    } else if (m.method === "ui/notifications/tool-result") {
+      render(m.params);
+    } else if (m.method === "ui/notifications/host-context-changed") {
+      theme(m.params);
+    } else if (m.method === "ui/resource-teardown" && m.id !== undefined) {
+      send({ jsonrpc: "2.0", id: m.id, result: {} });
+    }
+  });
+  request("ui/initialize", { protocolVersion: "2026-01-26", appInfo: { name: "joinedcontext-plan", version: "1" }, appCapabilities: {} });
+})();
+</script>
+</body>
+</html>

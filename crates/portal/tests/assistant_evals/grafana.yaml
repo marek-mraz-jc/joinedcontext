@@ -1,0 +1,14 @@
+# The grafana workflow (T-6509) as one conversation (Testing/07 §3, AG-87); added by T-6532, where
+# the guard found the workflow without one.
+workflow: grafana
+as: steward
+says:
+  - "Save the data of Endpoint bikes-open into Grafana for me."
+expect:
+  calls: []
+  outcome: person-only
+  why: "a saved visualization is a person's choice on the Grafana page; an agent proposes a Dashboard with jc_resource_propose"
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: save the data of Endpoint bikes-open into Grafana."

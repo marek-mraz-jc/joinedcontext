@@ -1,0 +1,20 @@
+# T-6489: why a pipeline wrote nothing is read from its runs, never guessed from its grants
+# (live walk T-5962, S-21).
+workflow: pipeline
+as: steward
+says:
+  - "Pipeline counters-load wrote 0 entities last night. Why?"
+expect:
+  calls:
+    - tool: jc_pipeline_logs
+      input:
+        name: counters-load
+    - tool: jc_pipeline_inspect
+      input:
+        name: counters-load
+        view: rejected
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: why did pipeline counters-load write nothing?"

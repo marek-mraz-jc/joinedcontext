@@ -1,0 +1,17 @@
+# T-6488 (S-14, live walk T-5962): a manifest the kind refuses at parse brings the kind's schema
+# back to the model once, and the next call names the real field, spec.projection.hiddenAttributes.
+workflow: endpoint
+as: steward
+says:
+  - "Hide attribute ownerEmail from the public Endpoint eval-air-public."
+expect:
+  calls:
+    - tool: change_resource
+      input: { kind: Endpoint, name: eval-air-public }
+    - tool: jc_schema_get
+      input: { kind: Endpoint }
+  outcome: change
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: hide attribute ownerEmail from the public Endpoint eval-air-public."

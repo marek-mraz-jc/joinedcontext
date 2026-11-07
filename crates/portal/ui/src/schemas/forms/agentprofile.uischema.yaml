@@ -1,0 +1,213 @@
+# Default form arrangement for AgentProfile (UI-02, T-1536).
+# What an agent run of the organization executes, calls and may reach; its one example, the
+# wall-clock limit, is neutral (T-2752, T-2882).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: agentprofile
+spec:
+  for: AgentProfile
+  guide: User-Guide/12-managing-organization-and-projects
+  about:
+    en: >-
+      An agent profile says what an assistant or builder run executes and may reach: the runtime
+      image, the model and its budget, the limits every run is held to, the hosts it may read, and
+      the operations, kinds and endpoints it may call. The person who starts a run narrows it
+      further with their own permissions.
+    sk: >-
+      Profil agenta určuje, čo beh asistenta alebo tvorcu spúšťa a kam smie siahnuť: obraz
+      prostredia, model a jeho rozpočet, limity každého behu, hostiteľov, ktorých smie čítať, a
+      operácie, druhy a koncové body, ktoré smie volať. Kto beh spustí, ho ďalej zúži svojimi
+      oprávneniami.
+    cs: >-
+      Profil agenta určuje, co běh asistenta nebo tvůrce spouští a kam smí sáhnout: obraz
+      prostředí, model a jeho rozpočet, limity každého běhu, hostitele, které smí číst, a operace,
+      druhy a koncové body, které smí volat. Kdo běh spustí, jej dále zúží svými oprávněními.
+    de: >-
+      Ein Agentenprofil legt fest, was ein Assistenten- oder Builder-Lauf ausführt und erreichen
+      darf: das Laufzeit-Image, das Modell und sein Budget, die Grenzen jedes Laufs, die lesbaren
+      Hosts und die Operationen, Arten und Endpunkte, die er aufrufen darf. Wer einen Lauf startet,
+      schränkt ihn mit den eigenen Berechtigungen weiter ein.
+  order: [name, role, runtime, model, limits, egress, tools, workspace, access]
+  groups:
+    - title:
+        en: Profile and model
+        sk: Profil a model
+        cs: Profil a model
+        de: Profil und Modell
+      description:
+        en: What the profile is for, the image a run executes, and the model it calls.
+        sk: Na čo profil slúži, obraz, ktorý beh spúšťa, a model, ktorý volá.
+        cs: K čemu profil slouží, obraz, který běh spouští, a model, který volá.
+        de: Wofür das Profil ist, welches Image ein Lauf ausführt und welches Modell er aufruft.
+      fields: [name, role, runtime, model]
+    - title:
+        en: Limits and workspace
+        sk: Limity a pracovný priestor
+        cs: Limity a pracovní prostor
+        de: Grenzen und Arbeitsbereich
+      description:
+        en: The bounds every run is held to, and the resources its workspace gets; the reference profile's values are filled in.
+        sk: Hranice každého behu a prostriedky jeho pracovného priestoru; hodnoty referenčného profilu sú vyplnené.
+        cs: Hranice každého běhu a prostředky jeho pracovního prostoru; hodnoty referenčního profilu jsou vyplněné.
+        de: Die Grenzen jedes Laufs und die Ressourcen seines Arbeitsbereichs; die Werte des Referenzprofils sind eingetragen.
+      folded: true
+      fields: [limits, workspace]
+    - title:
+        en: Reach
+        sk: Dosah
+        cs: Dosah
+        de: Reichweite
+      description:
+        en: The hosts a run may read and the tools it carries, and what in the Portal it may call.
+        sk: Hostitelia, ktorých beh smie čítať, nástroje, ktoré nesie, a čo v portáli smie volať.
+        cs: Hostitelé, které běh smí číst, nástroje, které nese, a co v portálu smí volat.
+        de: Die lesbaren Hosts, die mitgeführten Werkzeuge und was ein Lauf im Portal aufrufen darf.
+      folded: true
+      fields: [egress, tools, access]
+  fields:
+    name:
+      help:
+        en: The short name runs select the profile by; it cannot change once the profile exists.
+        sk: Krátky názov, podľa ktorého behy profil vyberajú; keď profil existuje, nemení sa.
+        cs: Krátký název, podle něhož běhy profil vybírají; jakmile profil existuje, nemění se.
+        de: Der kurze Name, über den Läufe das Profil wählen; er ändert sich nicht mehr, sobald es besteht.
+    role:
+      help:
+        en: A steward calls Portal operations and reaches no host; a builder carries tools and needs an allow-list.
+        sk: Správca volá operácie portálu a nesiahne na žiadneho hostiteľa; tvorca nesie nástroje a potrebuje zoznam povolených.
+        cs: Správce volá operace portálu a nesáhne na žádného hostitele; tvůrce nese nástroje a potřebuje seznam povolených.
+        de: Ein Steward ruft Portal-Operationen auf und erreicht keinen Host; ein Builder trägt Werkzeuge und braucht eine Liste.
+    runtime.image:
+      help:
+        en: The container image a run executes; the digest below pins it, not the tag.
+        sk: Obraz kontajnera, ktorý beh spúšťa; pripína ho odtlačok nižšie, nie značka.
+        cs: Obraz kontejneru, který běh spouští; připíná jej otisk níže, ne značka.
+        de: Das Container-Image, das ein Lauf ausführt; es wird durch den Digest unten festgelegt, nicht durch ein Tag.
+    runtime.digest:
+      help:
+        en: The image's sha256 digest; a profile without one is refused.
+        sk: Odtlačok sha256 obrazu; profil bez neho je odmietnutý.
+        cs: Otisk sha256 obrazu; profil bez něj je odmítnut.
+        de: Der sha256-Digest des Images; ein Profil ohne ihn wird abgelehnt.
+    model.provider:
+      help:
+        en: The protocol the proxy speaks to the model; the proxy holds the key, never the profile.
+        sk: Protokol, ktorým proxy hovorí s modelom; kľúč drží proxy, nikdy nie profil.
+        cs: Protokol, kterým proxy mluví s modelem; klíč drží proxy, nikdy ne profil.
+        de: Das Protokoll des Proxys zum Modell; den Schlüssel hält der Proxy, nie das Profil.
+    model.name:
+      help:
+        en: The model identifier as the provider knows it.
+        sk: Identifikátor modelu, ako ho pozná poskytovateľ.
+        cs: Identifikátor modelu, jak jej zná poskytovatel.
+        de: Die Modellkennung, wie der Anbieter sie kennt.
+    model.maxTokensPerRun:
+      help:
+        en: The tokens one run may use before the proxy ends it.
+        sk: Tokeny, ktoré smie jeden beh minúť, kým ho proxy ukončí.
+        cs: Tokeny, které smí jeden běh spotřebovat, než jej proxy ukončí.
+        de: Die Tokens, die ein Lauf verbrauchen darf, bevor der Proxy ihn beendet.
+    model.reasoningEffort:
+      help:
+        en: How long the model thinks on every call; left empty, no setting is sent.
+        sk: Ako dlho model pri každom volaní uvažuje; ak je prázdne, nastavenie sa neposiela.
+        cs: Jak dlouho model při každém volání uvažuje; pokud je prázdné, nastavení se neposílá.
+        de: Wie lange das Modell bei jedem Aufruf nachdenkt; leer gelassen, wird nichts gesendet.
+    limits.stepsPerRun:
+      help:
+        en: Agent steps one run may take before it stops and hands over its last log.
+        sk: Kroky agenta, ktoré smie jeden beh urobiť, kým sa zastaví a odovzdá posledný záznam.
+        cs: Kroky agenta, které smí jeden běh udělat, než se zastaví a předá poslední záznam.
+        de: Agentenschritte eines Laufs, bevor er anhält und sein letztes Protokoll übergibt.
+    limits.wallClock:
+      placeholder: "PT20M"
+      help:
+        en: The longest a run may take, as PT with hours, minutes or seconds; at most PT1H.
+        sk: Najdlhšie trvanie behu ako PT s hodinami, minútami alebo sekundami; najviac PT1H.
+        cs: Nejdelší trvání běhu jako PT s hodinami, minutami nebo sekundami; nejvýše PT1H.
+        de: Die längste Laufzeit als PT mit Stunden, Minuten oder Sekunden; höchstens PT1H.
+    limits.concurrentRunsPerOrganization:
+      help:
+        en: Runs of this profile the whole organization may have in flight at once.
+        sk: Behy tohto profilu, ktoré smie mať celá organizácia naraz.
+        cs: Běhy tohoto profilu, které smí mít celá organizace najednou.
+        de: Läufe dieses Profils, die die ganze Organisation gleichzeitig haben darf.
+    limits.requestsPerMinute:
+      help:
+        en: Requests through the proxy one run may make per minute.
+        sk: Požiadavky cez proxy, ktoré smie jeden beh urobiť za minútu.
+        cs: Požadavky přes proxy, které smí jeden běh udělat za minutu.
+        de: Anfragen über den Proxy, die ein Lauf pro Minute stellen darf.
+    limits.maxResponseBytes:
+      help:
+        en: The bytes one proxied response may carry.
+        sk: Bajty, ktoré smie niesť jedna odpoveď cez proxy.
+        cs: Bajty, které smí nést jedna odpověď přes proxy.
+        de: Die Bytes, die eine Antwort über den Proxy tragen darf.
+    egress.allowedHosts:
+      help:
+        en: Bare hostnames a builder may read, no scheme, port or wildcard; a steward names none.
+        sk: Holé názvy hostiteľov, ktoré smie tvorca čítať, bez schémy, portu a zástupných znakov; správca neuvádza žiadne.
+        cs: Holé názvy hostitelů, které smí tvůrce číst, bez schématu, portu a zástupných znaků; správce neuvádí žádné.
+        de: Reine Hostnamen, die ein Builder lesen darf, ohne Schema, Port oder Platzhalter; ein Steward nennt keine.
+    egress.maxBytesPerRun:
+      help:
+        en: Bytes one run may read from those hosts in total; left empty, 16 MiB.
+        sk: Bajty, ktoré smie jeden beh spolu prečítať z tých hostiteľov; ak je prázdne, 16 MiB.
+        cs: Bajty, které smí jeden běh celkem přečíst z těch hostitelů; pokud je prázdné, 16 MiB.
+        de: Bytes, die ein Lauf insgesamt von diesen Hosts lesen darf; leer gelassen, 16 MiB.
+    tools:
+      help:
+        en: The tools a builder's workspace carries; a steward carries none.
+        sk: Nástroje, ktoré nesie pracovný priestor tvorcu; správca nenesie žiadne.
+        cs: Nástroje, které nese pracovní prostor tvůrce; správce nenese žádné.
+        de: Die Werkzeuge im Arbeitsbereich eines Builders; ein Steward trägt keine.
+    workspace.cpu:
+      help:
+        en: The CPU the workspace container gets, as Kubernetes writes it.
+        sk: CPU, ktoré dostane kontajner pracovného priestoru, v zápise Kubernetes.
+        cs: CPU, které dostane kontejner pracovního prostoru, v zápisu Kubernetes.
+        de: Die CPU des Arbeitsbereich-Containers, wie Kubernetes sie schreibt.
+    workspace.memory:
+      help:
+        en: The memory the workspace container gets.
+        sk: Pamäť, ktorú dostane kontajner pracovného priestoru.
+        cs: Paměť, kterou dostane kontejner pracovního prostoru.
+        de: Der Arbeitsspeicher des Arbeitsbereich-Containers.
+    workspace.ephemeralStorage:
+      help:
+        en: The size of the scratch directory the workspace works in.
+        sk: Veľkosť dočasného adresára, v ktorom pracovný priestor pracuje.
+        cs: Velikost dočasného adresáře, ve kterém pracovní prostor pracuje.
+        de: Die Größe des temporären Verzeichnisses, in dem der Arbeitsbereich arbeitet.
+    access.operations:
+      help:
+        en: The operations a run may call; left empty, only read-only operations.
+        sk: Operácie, ktoré smie beh volať; ak je prázdne, len operácie na čítanie.
+        cs: Operace, které smí běh volat; pokud je prázdné, jen operace pro čtení.
+        de: Die Operationen, die ein Lauf aufrufen darf; leer gelassen, nur lesende.
+    access.kinds[].kind:
+      help:
+        en: A manifest kind of the catalogue, each listed once.
+        sk: Druh manifestu z katalógu, každý uvedený raz.
+        cs: Druh manifestu z katalogu, každý uvedený jednou.
+        de: Eine Manifestart des Katalogs, jede einmal.
+    access.kinds[].verbs:
+      help:
+        en: Read manifests of the kind, or propose changes a person still approves.
+        sk: Čítať manifesty druhu alebo navrhovať zmeny, ktoré aj tak schváli človek.
+        cs: Číst manifesty druhu nebo navrhovat změny, které stejně schválí člověk.
+        de: Manifeste der Art lesen oder Änderungen vorschlagen, die eine Person freigibt.
+    access.endpoints[].name:
+      help:
+        en: The endpoint's name, each listed once.
+        sk: Názov koncového bodu, každý uvedený raz.
+        cs: Název koncového bodu, každý uvedený jednou.
+        de: Der Name des Endpunkts, jeder einmal.
+    access.endpoints[].verbs:
+      help:
+        en: Read entities through the endpoint, or write them under its policy.
+        sk: Čítať entity cez koncový bod alebo ich zapisovať podľa jeho politiky.
+        cs: Číst entity přes koncový bod nebo je zapisovat podle jeho politiky.
+        de: Entitäten über den Endpunkt lesen oder unter seiner Richtlinie schreiben.

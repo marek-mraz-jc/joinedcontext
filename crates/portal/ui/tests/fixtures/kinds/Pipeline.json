@@ -1,0 +1,1620 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "AttributeHistory": {
+      "additionalProperties": false,
+      "description": "The plan of chosen attributes of a type (PL-106).",
+      "properties": {
+        "heartbeat": {
+          "description": "With `changes` only: a row at least this often, `PT1M` to `P3650D`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "keep": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Keep"
+            }
+          ],
+          "description": "Which rows the broker keeps."
+        },
+        "names": {
+          "description": "One to 64 slots of the type.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "observedAt": {
+          "description": "A date-time slot of the type whose value is the row's time, or [`RECEIVED`]; absent, the mapping decides.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keep",
+        "names"
+      ],
+      "type": "object"
+    },
+    "AttributeLifetime": {
+      "additionalProperties": false,
+      "description": "The lifetime of chosen attributes of a type (PL-80): `names` and one mode.",
+      "properties": {
+        "at": {
+          "description": "See [`LifetimeMode::at`].",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "from": {
+          "description": "See [`LifetimeMode::from`].",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "names": {
+          "description": "One to 64 slots of the type.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "notAfter": {
+          "description": "See [`LifetimeMode::not_after`].",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "plus": {
+          "description": "See [`LifetimeMode::plus`].",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rolling": {
+          "description": "See [`LifetimeMode::rolling`].",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "names"
+      ],
+      "type": "object"
+    },
+    "Build": {
+      "additionalProperties": false,
+      "description": "The artifact one build of an `App` published, as the build lane writes it back (AP-13a).",
+      "properties": {
+        "builtAt": {
+          "description": "When the build lane published it.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "commit": {
+          "description": "The commit of the source the artifact was built from, 7 to 40 lowercase hexadecimal characters.",
+          "type": "string"
+        },
+        "component": {
+          "description": "The digest of a `wasm` App's server component, taken from the checked bundle and stored by it in the object store; what the WASM host loads and checks (AP-151).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "digest": {
+          "description": "The artifact's digest, `sha256:` and 64 lowercase hexadecimal characters. The reconciler deploys this and nothing else (AP-72).",
+          "type": "string"
+        },
+        "sdkVersion": {
+          "description": "The version of the app SDK the artifact was built against.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "builtAt",
+        "commit",
+        "digest",
+        "sdkVersion"
+      ],
+      "type": "object"
+    },
+    "Compute": {
+      "additionalProperties": false,
+      "description": "Compute execution specification (PL-33).",
+      "properties": {
+        "bloblang": {
+          "description": "The inline mapping of a `bloblang` step (PL-41): the reconciler renders it as the last `mapping` processor of the generated `bento.yaml`. Absent means the author keeps the mapping in `bento.yaml`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "datacube": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DatacubeStep"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The cubes of a `datacube` step (PL-112)."
+        },
+        "function": {
+          "description": "Entry point function name (for wasm).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ComputeKind"
+            }
+          ],
+          "description": "Engine kind executing compute logic."
+        },
+        "kpi": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/KpiStep"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The indicator of a `kpi` step over several sources (PL-102…PL-104)."
+        },
+        "mappingRef": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Ref"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Reference to a [`Mapping`][crate::kinds::Mapping] resource."
+        },
+        "module": {
+          "description": "Path or package of the compute module (for wasm).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "ComputeKind": {
+      "description": "Execution technology category for pipeline compute steps (PL-33).",
+      "oneOf": [
+        {
+          "description": "Inline Bento Bloblang processor.",
+          "enum": [
+            "bloblang"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Compiled LinkML-Map mapping processor (PL-29).",
+          "enum": [
+            "mapping"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Sandboxed WebAssembly WASI module (PL-34).",
+          "enum": [
+            "wasm"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Ephemeral containerized job (PL-35).",
+          "enum": [
+            "container"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "One indicator over several named sources (PL-102), compiled to a mapping by jc-core.",
+          "enum": [
+            "kpi"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "JSON-stat 2.0 statistical cubes (PL-112), rendered to a mapping by jc-core.",
+          "enum": [
+            "datacube"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Condition": {
+      "additionalProperties": false,
+      "description": "Status condition entry.",
+      "properties": {
+        "lastTransitionTime": {
+          "description": "Last transition timestamp.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Human-readable message.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Machine-readable reason code.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Status value (\"True\", \"False\", \"Unknown\").",
+          "type": "string"
+        },
+        "type": {
+          "description": "Type of condition (e.g. Reconciled, Ready).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "type"
+      ],
+      "type": "object"
+    },
+    "Cube": {
+      "additionalProperties": false,
+      "description": "One cube of a `datacube` step: which dimension plays which role.",
+      "properties": {
+        "area": {
+          "default": null,
+          "description": "The territory dimension; absent, every cell is `wholeArea`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "indicator": {
+          "default": null,
+          "description": "The indicator dimension; absent, the cube's code is the indicator.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "keys": {
+          "default": [],
+          "description": "Further dimensions, in order, that tell cells apart (`dimensionKey`).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "period": {
+          "default": null,
+          "description": "The period dimension, `vh3001rr_rok`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "The address the cube is read from, as its DataSource reads it.",
+          "type": "string"
+        },
+        "unit": {
+          "default": null,
+          "description": "The unit dimension, whose label is the cell's `unitText`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "update": {
+          "default": null,
+          "description": "The release date the publisher gives, `2025-10-31`; the answer's own `update` wins.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
+    },
+    "DatacubeStep": {
+      "additionalProperties": false,
+      "description": "A `datacube` step (PL-112).",
+      "properties": {
+        "cubes": {
+          "additionalProperties": {
+            "$ref": "#/definitions/Cube"
+          },
+          "description": "The cubes by their code, `vh3001rr`.",
+          "type": "object"
+        },
+        "datasetPage": {
+          "description": "The catalogue page of a cube, `{cube}` standing for its code: `https://opendata.example.org/dataset/susr-{cube}`.",
+          "type": "string"
+        },
+        "wholeArea": {
+          "description": "The territory code of a cube without an area dimension, `SK0` for Slovakia.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cubes",
+        "datasetPage",
+        "wholeArea"
+      ],
+      "type": "object"
+    },
+    "Expiry": {
+      "additionalProperties": false,
+      "description": "Stale-entity expiry: entities of `types` not modified for `after` are deleted (PL-64).",
+      "properties": {
+        "after": {
+          "description": "Whole hours or days, `1h` to `365d`.",
+          "type": "string"
+        },
+        "types": {
+          "description": "The entity types the sweep deletes, one to twenty.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "after",
+        "types"
+      ],
+      "type": "object"
+    },
+    "History": {
+      "additionalProperties": false,
+      "description": "The history plan of one written type (PL-106).",
+      "properties": {
+        "attributes": {
+          "description": "One to 64 entries, each attribute in one of them.",
+          "items": {
+            "$ref": "#/definitions/AttributeHistory"
+          },
+          "type": "array"
+        },
+        "type": {
+          "description": "The entity type, one an output of the pipeline writes.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attributes",
+        "type"
+      ],
+      "type": "object"
+    },
+    "IdMint": {
+      "additionalProperties": false,
+      "description": "The mint option of a pipeline's output (ADR-N-041 §3.4, Architecture/08).",
+      "properties": {
+        "from": {
+          "description": "The record field the id is made from (`prefixed`, `keep`): a path such as `a.b_c`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mint": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Mint"
+            }
+          ],
+          "description": "`prefixed`, `keep` or `template`."
+        },
+        "template": {
+          "description": "The id with `{field}` placeholders (`template`), starting `urn:ngsi-ld:{Type}:`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "mint"
+      ],
+      "type": "object"
+    },
+    "Join": {
+      "additionalProperties": false,
+      "description": "How the sources' rows meet (PL-102, PL-104).",
+      "properties": {
+        "by": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/JoinBy"
+            }
+          ],
+          "default": "time",
+          "description": "`time`, `entity` or `area`."
+        },
+        "keys": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Per source name, the attribute (or `id`) naming the entity or area a row is about.",
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "JoinBy": {
+      "description": "The join kinds.",
+      "oneOf": [
+        {
+          "description": "Every row of the run's window, one indicator.",
+          "enum": [
+            "time"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "One indicator per entity every source names.",
+          "enum": [
+            "entity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "One indicator per area every source has rows in.",
+          "enum": [
+            "area"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Keep": {
+      "description": "What the broker keeps of an attribute's writes (PL-106).",
+      "oneOf": [
+        {
+          "description": "A row per measurement: the space rule `record: every`.",
+          "enum": [
+            "every"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A row per change and once per `heartbeat`: `record: onChange` (DM-109).",
+          "enum": [
+            "changes"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The current value only, no rows: holds where the type's history is `off` (DM-97).",
+          "enum": [
+            "latest"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "KpiStep": {
+      "additionalProperties": false,
+      "description": "A `kpi` step (PL-102).",
+      "properties": {
+        "formula": {
+          "description": "Arithmetic over `sum|avg|min|max(input.attribute)` and `count(input)` (PL-103).",
+          "type": "string"
+        },
+        "join": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Join"
+            }
+          ],
+          "default": {
+            "by": "time"
+          },
+          "description": "How the sources' rows meet; `by: time` when absent."
+        },
+        "name": {
+          "description": "The indicator's `{localId}`; a key's slug is appended for an entity or area join.",
+          "type": "string"
+        },
+        "title": {
+          "description": "A title for people.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unitCode": {
+          "description": "The result's UN/CEFACT common code.",
+          "type": "string"
+        },
+        "window": {
+          "description": "The window the value covers, `PT15M`, `PT1H`, `P1D`; `PT1H` when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "formula",
+        "name",
+        "unitCode"
+      ],
+      "type": "object"
+    },
+    "Lifetime": {
+      "additionalProperties": false,
+      "description": "The lifetime of one written type (PL-80): the whole entity, chosen attributes, or both.",
+      "properties": {
+        "attributes": {
+          "description": "When chosen attributes end: the `expiresAt` member of each named attribute.",
+          "items": {
+            "$ref": "#/definitions/AttributeLifetime"
+          },
+          "type": "array"
+        },
+        "entity": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LifetimeMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the whole entity ends: its `expiresAt`."
+        },
+        "type": {
+          "description": "The entity type, a class of the target space's model that an output writes.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "LifetimeMode": {
+      "additionalProperties": false,
+      "description": "One of three modes (PL-80): `from` a field (with `plus` and `notAfter`), `rolling`, or `at`.",
+      "properties": {
+        "at": {
+          "description": "One fixed RFC 3339 instant with an offset.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "from": {
+          "description": "A date-time slot of the type, or `observedAt`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notAfter": {
+          "description": "Caps a `from` end at the write time plus this duration.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "plus": {
+          "description": "Added to the `from` time, an ISO 8601 duration.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rolling": {
+          "description": "The write time plus this duration, renewed by each write.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Mint": {
+      "description": "How an output's ids are made (ADR-N-041 §3.4).",
+      "oneOf": [
+        {
+          "description": "`urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}`.",
+          "enum": [
+            "prefixed"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The source's own id, an NGSI-LD URN of the type made of it when it is not one.",
+          "enum": [
+            "keep"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A template over the record's fields.",
+          "enum": [
+            "template"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "MultiLanguageMap": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Multi-language map keyed by ISO 639-1 two-letter lowercase language codes",
+      "propertyNames": {
+        "pattern": "^[a-z]{2}$",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "ObjectMeta": {
+      "additionalProperties": false,
+      "description": "Metadata envelope attached to every platform resource (MF-02).",
+      "properties": {
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value annotations for provenance and ownership (MF-08).",
+          "type": "object"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable description: one string, or the legacy map per locale (UI-50, PF-24)."
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value labels for filtering (MF-10).",
+          "type": "object"
+        },
+        "name": {
+          "description": "Resource name (DNS-1123 label).",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Resource namespace (\"org\" or project slug).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable title: one string, or the legacy map per locale (UI-50, PF-24)."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Output": {
+      "additionalProperties": false,
+      "description": "Output specification for derived pipeline computations (PL-32).",
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/IdMint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the renderer sets each entity's id (ADR-N-041 §3.4, PF-44); absent, the mapping sets it itself."
+        },
+        "mode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/OutputMode"
+            }
+          ],
+          "description": "Write mode applied to target context space."
+        },
+        "type": {
+          "description": "Target entity type name produced.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "type"
+      ],
+      "type": "object"
+    },
+    "OutputMode": {
+      "description": "Mutation mode for pipeline output writers (PL-32).",
+      "oneOf": [
+        {
+          "description": "Create the entity, or merge the attributes the record names into it; the rest stay (`entityOperations/upsert?options=update`, PL-79).",
+          "enum": [
+            "upsert"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Make the entity exactly the record: an attribute the record does not name is removed (`entityOperations/upsert` without options), for a pipeline that alone writes its entities (PL-79, T-4406).",
+          "enum": [
+            "replace"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Update or append attributes onto existing entity.",
+          "enum": [
+            "update-attrs"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Phase": {
+      "description": "Lifecycle phase enumeration.",
+      "oneOf": [
+        {
+          "description": "Resource manifest is in draft state.",
+          "enum": [
+            "Draft"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is pending review or approval.",
+          "enum": [
+            "Pending"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource deployment is in progress.",
+          "enum": [
+            "Deploying"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is live and active in cluster.",
+          "enum": [
+            "Live"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Reconciliation error.",
+          "enum": [
+            "Error"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The platform holds something the repository does not declare, or no longer holds what it does (CC-21, UI-25). Configuration cannot reach this phase — every component reads it from the repository (CC-72) — so it is a space whose seed entities the broker answers differently, and the two resolutions of UI-26 are what a person does about it.",
+          "enum": [
+            "Drifted"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "PipelineClass": {
+      "description": "Operational execution class of a data pipeline (PL-04, PL-05).",
+      "oneOf": [
+        {
+          "description": "Reconciler automatically determines class from cadence or input mode (PL-05, PL-26).",
+          "enum": [
+            "auto"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Continuous process hosted inside project pipeline runner deployment.",
+          "enum": [
+            "resident"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Ephemeral Kubernetes CronJob executed periodically.",
+          "enum": [
+            "scheduled"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "PipelineOutput": {
+      "additionalProperties": false,
+      "description": "One output of a `v1alpha2` pipeline (PL-52): the Endpoint written through and how.",
+      "properties": {
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/OutputMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Write mode; absent is `upsert`."
+        },
+        "targetEndpoint": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Urn"
+            }
+          ],
+          "description": "The Endpoint the writes go through (PF-39, PL-18)."
+        },
+        "type": {
+          "description": "The entity type written, when the pipeline names one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "targetEndpoint"
+      ],
+      "type": "object"
+    },
+    "PipelineQuotas": {
+      "additionalProperties": false,
+      "description": "Resource quotas for a pipeline runner (PL-11).",
+      "properties": {
+        "cpuMillicores": {
+          "description": "CPU allocation in millicores.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxMemoryMb": {
+          "description": "Maximum allowed memory allocation in megabytes.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "PipelineRoute": {
+      "additionalProperties": false,
+      "description": "One route of a `v1alpha2` pipeline (PL-73): its condition, its own steps and its outputs.",
+      "properties": {
+        "name": {
+          "description": "A DNS label, unique among the pipeline's routes.",
+          "type": "string"
+        },
+        "outputs": {
+          "description": "Where the route writes, each through its own Endpoint (PL-55).",
+          "items": {
+            "$ref": "#/definitions/PipelineOutput"
+          },
+          "type": "array"
+        },
+        "steps": {
+          "description": "The route's own steps, after the pipeline's `steps`.",
+          "items": {
+            "$ref": "#/definitions/Step"
+          },
+          "type": "array"
+        },
+        "when": {
+          "description": "A Bloblang query; the messages it is true for take this route.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "outputs",
+        "when"
+      ],
+      "type": "object"
+    },
+    "PipelineSource": {
+      "additionalProperties": false,
+      "description": "Source specification for derived pipelines (PL-31).",
+      "properties": {
+        "dataSourceRef": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Ref"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Reference to the `DataSource` whose connection becomes this pipeline's Bento input (PL-39, MF-35). Excludes `endpointRef`: a pipeline reads the outside world or the platform's own spaces, not both in one input."
+        },
+        "endpointRef": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Ref"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Reference to source Endpoint for reading context entities."
+        },
+        "name": {
+          "description": "The input's name, by which a `kpi` step's formula reads it (PL-102); a DNS label unique among the sources.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SourceQuery"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Query parameters for pulling entities."
+        },
+        "trigger": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Trigger"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Event subscription trigger for resident processing."
+        }
+      },
+      "type": "object"
+    },
+    "PipelineSpec": {
+      "additionalProperties": false,
+      "description": "Desired specification of a [`Pipeline`][crate::kinds::Pipeline] resource (PL-01..PL-28).\n\nTwo shapes (PL-54, ADR-N-023): `v1alpha1` holds one `source`, one `compute`, one `output` and `targetEndpoint`; `v1alpha2` holds `sources`, `steps` and `outputs`. The accessors [`PipelineSpec::sources`], [`PipelineSpec::steps`] and [`PipelineSpec::outputs`] read either as the second, so nothing downstream has to know which one a file was written in.",
+      "properties": {
+        "allowFeedback": {
+          "description": "The author knows this resident pipeline triggers itself and accepts it (PL-37).\n\nA derived pipeline whose output type is the type its own subscription watches feeds its own trigger, and the reconciler refuses it. Setting this says the loop is deliberate, which is why PL-37 puts the change in the yellow lane: a person reviews it.",
+          "type": "boolean"
+        },
+        "class": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PipelineClass"
+            }
+          ],
+          "description": "Operational execution class (PL-04, PL-05)."
+        },
+        "compute": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Compute"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional compute execution specification (PL-33)."
+        },
+        "enabled": {
+          "description": "Whether the pipeline runs (PL-40). `false` pauses it: the reconciler leaves a resident stream out of the runner and suspends a scheduled CronJob, the manifest stays, and a Resume is the flag flipped back. Absent means `true`, and `true` is not written back.",
+          "type": "boolean"
+        },
+        "expiry": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Expiry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Deletes the entities its source stopped sending; absent, nothing is deleted (PL-64)."
+        },
+        "history": {
+          "description": "Which history rows the broker keeps of each written attribute and where the time of a row comes from (PL-106…PL-110).",
+          "items": {
+            "$ref": "#/definitions/History"
+          },
+          "type": "array"
+        },
+        "lifetime": {
+          "description": "When entities of a written type, or chosen attributes of them, end (PL-80…PL-83): the rendered stream writes their `expiresAt` after the author's steps.",
+          "items": {
+            "$ref": "#/definitions/Lifetime"
+          },
+          "type": "array"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Output"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional output entity type and write mode."
+        },
+        "outputs": {
+          "description": "Where the result is written, each through its own Endpoint (PL-52, PL-55); `v1alpha2`.",
+          "items": {
+            "$ref": "#/definitions/PipelineOutput"
+          },
+          "type": "array"
+        },
+        "period": {
+          "description": "How often the pipeline polls its source, as a Bento duration (`15s`, `5m`).\n\nThe reconciler reads it to pick the class (PL-26) and copies it into the runner's `input.generate.interval` (PL-27). Absent means push-based: an MQTT or subscription input driven by its source rather than by a clock.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quotas": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PipelineQuotas"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Resource quotas allocated to this pipeline runner (PL-11)."
+        },
+        "routes": {
+          "description": "Routes by condition (PL-73): a message after `steps` takes the first route whose `when` holds; one no route takes is written through `outputs`; `v1alpha2`.",
+          "items": {
+            "$ref": "#/definitions/PipelineRoute"
+          },
+          "type": "array"
+        },
+        "schedule": {
+          "description": "Standard cron schedule expression for scheduled runs (PL-04, PL-26..PL-28).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "secretRefs": {
+          "description": "Secret references injected into runner environments (PL-14..PL-16).",
+          "items": {
+            "$ref": "#/definitions/SecretRef"
+          },
+          "type": "array"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PipelineSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional context source query or subscription trigger for derived pipelines (PL-31)."
+        },
+        "sourceDeletes": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SourceDeletes"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the pipeline follows a record its source removed (PL-96…PL-100); absent, nothing is deleted, as with `mode: never`."
+        },
+        "sources": {
+          "description": "The inputs, merged by a Bento `broker` when there are several (PL-52, PL-53); `v1alpha2`.",
+          "items": {
+            "$ref": "#/definitions/PipelineSource"
+          },
+          "type": "array"
+        },
+        "steps": {
+          "description": "The processors, in the order they run (PL-52); `v1alpha2`.",
+          "items": {
+            "$ref": "#/definitions/Step"
+          },
+          "type": "array"
+        },
+        "targetEndpoint": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Urn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Target endpoint URN through which writes occur (PF-39, PL-18); `v1alpha1` only."
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "type": "object"
+    },
+    "ProcessorStep": {
+      "additionalProperties": false,
+      "description": "A step that names a runner processor (PL-52).",
+      "properties": {
+        "processor": {
+          "additionalProperties": true,
+          "description": "Exactly one entry: the processor's name and its configuration.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "processor"
+      ],
+      "type": "object"
+    },
+    "Ref": {
+      "anyOf": [
+        {
+          "description": "Bare string resource name.",
+          "type": "string"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TypedRef"
+            }
+          ],
+          "description": "Typed reference with kind, name, and optional namespace."
+        }
+      ],
+      "description": "Reference to another resource, either bare name or typed reference (MF-07)."
+    },
+    "SecretRef": {
+      "additionalProperties": false,
+      "description": "Reference to a credential stored in SOPS or OpenBao (PF-36).\n\n`deny_unknown_fields` is a security control: it rejects inline `value:` or `password:` fields at parse time, enforcing that secrets never appear in Git or manifest files.",
+      "properties": {
+        "envVar": {
+          "description": "Optional environment variable name for injection into runners.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key": {
+          "description": "Optional key within secret.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Secret name in secret store.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "SourceDeleteMode": {
+      "description": "How a pipeline follows deletions at its source (PL-96).",
+      "oneOf": [
+        {
+          "description": "Nothing is deleted when the source drops a record; said so in the editor.",
+          "enum": [
+            "never"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An id missing from `misses` consecutive complete runs is deleted, within `maxShare`.",
+          "enum": [
+            "snapshot"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A mapped record for which `deletedWhen` holds deletes the entity of its id.",
+          "enum": [
+            "events"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The entity ends by a rolling `spec.lifetime`, renewed by each write.",
+          "enum": [
+            "lease"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "SourceDeletes": {
+      "additionalProperties": false,
+      "description": "`spec.sourceDeletes` (PL-96).",
+      "properties": {
+        "deletedWhen": {
+          "description": "`events`: a Bloblang query on the mapped record, true when the source says the record is deleted (for example `this.status.value == \"withdrawn\"`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "maxShare": {
+          "description": "`snapshot`: the most of the ledger, in percent (1 to 100, default 10), one run deletes; a run that would delete more deletes nothing and is held.",
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "misses": {
+          "description": "`snapshot`: consecutive complete runs an id is missing from before it goes, 1 to 10 (default 2).",
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SourceDeleteMode"
+            }
+          ],
+          "description": "`never`, `snapshot`, `events` or `lease`."
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    },
+    "SourceQuery": {
+      "additionalProperties": false,
+      "description": "NGSI-LD query parameters for pipeline source entity retrieval.",
+      "properties": {
+        "attrs": {
+          "description": "Attributes projection list.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "geoQ": {
+          "description": "Geographic query filter string.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ids": {
+          "description": "The entities to read instead of the whole type (PL-42): PF-42 URNs whose `{Type}` is `type` when both are set. Rendered as the `id=` parameter of the fetch.",
+          "items": {
+            "$ref": "#/definitions/Urn"
+          },
+          "type": "array"
+        },
+        "q": {
+          "description": "Entity query filter string.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scopeQ": {
+          "description": "Scope query filter string.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "temporalQ": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TemporalWindow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Temporal window constraint."
+        },
+        "type": {
+          "description": "Target entity type short name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Status": {
+      "additionalProperties": false,
+      "description": "Server-computed lifecycle and reconciliation status (MF-04). Never stored in Git.",
+      "properties": {
+        "build": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Build"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the build lane published for an `App`, and the only place its artifact is named (AP-13a). Written back by the build lane in the commit that publishes the artifact; an App without it renders no pod, and no other principal may set it (AP-73)."
+        },
+        "conditions": {
+          "description": "Reconciler condition transitions.",
+          "items": {
+            "$ref": "#/definitions/Condition"
+          },
+          "type": "array"
+        },
+        "observedRevision": {
+          "description": "Git commit revision observed during reconciliation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Phase"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Current lifecycle phase."
+        },
+        "shard": {
+          "description": "The shard of the WASM host a `wasm` App runs on, recorded at its first publish and kept; the edge's route to the App's server is rendered from it (AP-149).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Step": {
+      "anyOf": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ProcessorStep"
+            }
+          ],
+          "description": "`processor: { <name>: <config> }`."
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Compute"
+            }
+          ],
+          "description": "`kind: bloblang | mapping | wasm | container` with that kind's fields."
+        }
+      ],
+      "description": "One step of a `v1alpha2` pipeline (PL-52): a compute kind of PL-33, or one processor the pinned runner ships, its configuration verbatim in the processor's own field names."
+    },
+    "SubscriptionTrigger": {
+      "additionalProperties": false,
+      "description": "Subscription configuration triggering pipeline execution.",
+      "properties": {
+        "type": {
+          "description": "Target entity type name.",
+          "type": "string"
+        },
+        "watchedAttributes": {
+          "description": "Whitelist of watched attribute names.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "TemporalWindow": {
+      "additionalProperties": false,
+      "description": "ISO 8601 temporal window for source queries.",
+      "properties": {
+        "window": {
+          "description": "ISO 8601 duration string (e.g. `P1D`).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "window"
+      ],
+      "type": "object"
+    },
+    "Text": {
+      "anyOf": [
+        {
+          "description": "The form every new manifest writes.",
+          "type": "string"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/MultiLanguageMap"
+            }
+          ],
+          "description": "The legacy `{locale: text}` map."
+        }
+      ],
+      "description": "A human label or description (UI-50): one plain string in the author's language. The legacy language map is still read, through release `v0.9`, and resolves to one string."
+    },
+    "Trigger": {
+      "additionalProperties": false,
+      "description": "Subscription trigger for resident pipelines (PL-31).",
+      "properties": {
+        "subscription": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SubscriptionTrigger"
+            }
+          ],
+          "description": "Underlying context subscription details."
+        }
+      },
+      "required": [
+        "subscription"
+      ],
+      "type": "object"
+    },
+    "TypedRef": {
+      "additionalProperties": false,
+      "description": "Structured typed resource reference (MF-07).",
+      "properties": {
+        "kind": {
+          "description": "Target resource kind.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Target resource name.",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Target resource namespace (defaults to caller namespace if omitted).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "type": "object"
+    },
+    "Urn": {
+      "description": "NGSI-LD entity URN (ADR-N-041, PF-43): urn:ngsi-ld:{Type}:{id}; the prefixed shape urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId} is optional",
+      "pattern": "^urn:ngsi-ld:[A-Z][A-Za-z0-9]{1,63}:(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2}){0,255}$",
+      "type": "string"
+    }
+  },
+  "description": "Kubernetes-style resource envelope (MF-01..MF-04).",
+  "properties": {
+    "apiVersion": {
+      "description": "API version: [`API_VERSION`], or a version [`serves`] accepts for this kind.",
+      "type": "string"
+    },
+    "kind": {
+      "description": "Resource kind name (must match [`Kind::KIND`]).",
+      "type": "string"
+    },
+    "metadata": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ObjectMeta"
+        }
+      ],
+      "description": "Metadata identifying and labeling the resource."
+    },
+    "spec": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/PipelineSpec"
+        }
+      ],
+      "description": "Desired spec state."
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Status"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Server-computed status. Stripped during export and serialization."
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "ResourceEnvelope_for_PipelineSpec",
+  "type": "object"
+}

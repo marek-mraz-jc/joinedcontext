@@ -1,0 +1,208 @@
+# Default form arrangement for Organization (UI-02, T-2605).
+# The one manifest of the organization: its domain, languages, contacts and the rules its projects
+# follow. The examples are neutral (T-2752).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: organization
+spec:
+  for: Organization
+  guide: User-Guide/12-managing-organization-and-projects
+  about:
+    en: >-
+      The organization is the body that owns every project here: its internet domain names every
+      entity, its languages are what the Portal offers, and its contacts are who answers for it.
+      The project rules below decide who may open a project, who reads them and what each may hold.
+    sk: >-
+      Organizácia je subjekt, ktorému patria všetky projekty: jej internetová doména pomenúva každú
+      entitu, jej jazyky ponúka Portál a jej kontakty sú tí, ktorí za ňu odpovedajú. Pravidlá
+      projektov nižšie určujú, kto smie otvoriť projekt, kto ho číta a koľko smie obsahovať.
+    cs: >-
+      Organizace je subjekt, kterému patří všechny projekty: její internetová doména pojmenovává
+      každou entitu, její jazyky nabízí Portál a její kontakty jsou ti, kdo za ni odpovídají.
+      Pravidla projektů níže určují, kdo smí otevřít projekt, kdo jej čte a kolik smí obsahovat.
+    de: >-
+      Die Organisation ist die Stelle, der jedes Projekt hier gehört: ihre Internet-Domain benennt
+      jede Entität, ihre Sprachen bietet das Portal an, und ihre Kontakte stehen für sie ein. Die
+      Projektregeln unten bestimmen, wer ein Projekt eröffnet, wer es liest und was es enthalten darf.
+  order: [domain, locales, defaultLocale, contacts, projects, policies, limits]
+  groups:
+    - title:
+        en: The organization
+        sk: Organizácia
+        cs: Organizace
+        de: Die Organisation
+      description:
+        en: The domain every identifier carries and the languages people read the Portal in.
+        sk: Doména, ktorú nesie každý identifikátor, a jazyky, v ktorých ľudia čítajú Portál.
+        cs: Doména, kterou nese každý identifikátor, a jazyky, ve kterých lidé čtou Portál.
+        de: Die Domain in jedem Bezeichner und die Sprachen, in denen man das Portal liest.
+      fields: [domain, locales, defaultLocale]
+    - title:
+        en: Who answers for it
+        sk: Kto za ňu odpovedá
+        cs: Kdo za ni odpovídá
+        de: Wer für sie einsteht
+      description:
+        en: The people a user of the published data writes to, one per responsibility.
+        sk: Ľudia, ktorým píše používateľ zverejnených dát, jeden na každú zodpovednosť.
+        cs: Lidé, kterým píše uživatel zveřejněných dat, jeden na každou odpovědnost.
+        de: Die Menschen, an die Nutzer der veröffentlichten Daten schreiben, je Zuständigkeit.
+      fields: [contacts]
+    - title:
+        en: Rules for projects
+        sk: Pravidlá projektov
+        cs: Pravidla projektů
+        de: Regeln für Projekte
+      description:
+        en: Who may open a project, who reads the projects, and what a new project may hold.
+        sk: Kto smie otvoriť projekt, kto číta projekty a čo smie nový projekt obsahovať.
+        cs: Kdo smí otevřít projekt, kdo čte projekty a co smí nový projekt obsahovat.
+        de: Wer ein Projekt eröffnen darf, wer die Projekte liest und was ein neues enthalten darf.
+      fields: [projects]
+    - title:
+        en: Policies and limits
+        sk: Pravidlá a limity
+        cs: Pravidla a limity
+        de: Richtlinien und Grenzwerte
+      description:
+        en: What the organization allows and how much the platform does for it, each inside the range the operator sets.
+        sk: Čo organizácia povoľuje a koľko pre ňu platforma urobí, každé v rozsahu, ktorý nastaví prevádzkovateľ.
+        cs: Co organizace povoluje a kolik pro ni platforma udělá, každé v rozsahu, který nastaví provozovatel.
+        de: Was die Organisation erlaubt und wie viel die Plattform für sie leistet, jeweils im Bereich, den der Betreiber setzt.
+      folded: true
+      fields: [policies, limits]
+  fields:
+    policies.apps.services:
+      help:
+        en: The platform services an app may call beyond identity and data; a project or an app may only narrow the list.
+        sk: Služby platformy, ktoré smie aplikácia volať okrem identity a dát; projekt či aplikácia zoznam môžu len zúžiť.
+        cs: Služby platformy, které smí aplikace volat kromě identity a dat; projekt či aplikace seznam mohou jen zúžit.
+        de: Die Plattformdienste, die eine App neben Identität und Daten aufrufen darf; Projekt oder App können die Liste nur einengen.
+    policies.apps.public:
+      help:
+        en: Whether a project may publish an app everyone can open without signing in.
+        sk: Či môže projekt zverejniť aplikáciu, ktorú otvorí ktokoľvek bez prihlásenia.
+        cs: Zda smí projekt zveřejnit aplikaci, kterou otevře kdokoli bez přihlášení.
+        de: Ob ein Projekt eine App veröffentlichen darf, die jeder ohne Anmeldung öffnet.
+    policies.agents.models:
+      help:
+        en: The models the assistant may use, by the name the installation gives them; leave it out to allow every one.
+        sk: Modely, ktoré môže asistent používať, podľa názvu v inštalácii; vynechajte, aby boli povolené všetky.
+        cs: Modely, které smí asistent používat, podle názvu v instalaci; vynechte, aby byly povoleny všechny.
+        de: Die Modelle, die der Assistent nutzen darf, mit dem Namen der Installation; weglassen erlaubt jedes.
+    domain:
+      placeholder: "city.example"
+      help:
+        en: The internet domain the organization proves it owns; every entity identifier carries it.
+        sk: Internetová doména, ktorú organizácia preukázateľne vlastní; nesie ju každý identifikátor entity.
+        cs: Internetová doména, kterou organizace prokazatelně vlastní; nese ji každý identifikátor entity.
+        de: Die Internet-Domain, deren Besitz die Organisation nachweist; jeder Entitätsbezeichner trägt sie.
+    locales:
+      help:
+        en: The languages the Portal and the published data are offered in, the preferred one first.
+        sk: Jazyky, v ktorých sa ponúka Portál a zverejnené dáta, najprv ten uprednostňovaný.
+        cs: Jazyky, ve kterých se nabízí Portál a zveřejněná data, nejprve ten upřednostňovaný.
+        de: Die Sprachen, in denen Portal und veröffentlichte Daten angeboten werden, bevorzugte zuerst.
+    defaultLocale:
+      help:
+        en: The language shown when a person's own is not offered; it has to be one of the languages above.
+        sk: Jazyk zobrazený, keď jazyk osoby nie je v ponuke; musí byť jedným z jazykov vyššie.
+        cs: Jazyk zobrazený, když jazyk osoby není v nabídce; musí být jedním z jazyků výše.
+        de: Die Sprache, wenn die eigene nicht angeboten wird; sie muss eine der Sprachen oben sein.
+    contacts:
+      help:
+        en: One entry per responsibility; a data user writes to the address listed for theirs.
+        sk: Jeden záznam na každú zodpovednosť; používateľ dát píše na adresu uvedenú pri tej svojej.
+        cs: Jeden záznam na každou odpovědnost; uživatel dat píše na adresu uvedenou u té své.
+        de: Ein Eintrag je Zuständigkeit; Datennutzer schreiben an die Adresse, die dort steht.
+    contacts[].role:
+      help:
+        en: What this contact answers for, such as data protection or security.
+        sk: Za čo tento kontakt odpovedá, napríklad ochrana osobných údajov alebo bezpečnosť.
+        cs: Za co tento kontakt odpovídá, například ochrana osobních údajů nebo bezpečnost.
+        de: Wofür dieser Kontakt zuständig ist, etwa Datenschutz oder Sicherheit.
+    contacts[].name:
+      help:
+        en: The person or the department behind the address, as a reader should address them.
+        sk: Osoba alebo oddelenie za adresou, tak ako ich má čitateľ osloviť.
+        cs: Osoba nebo oddělení za adresou, tak jak je má čtenář oslovit.
+        de: Die Person oder Abteilung hinter der Adresse, so wie Lesende sie ansprechen sollen.
+    contacts[].email:
+      help:
+        en: The address that reaches this contact; a shared mailbox outlives a person's.
+        sk: Adresa, na ktorej je kontakt k zastihnutiu; spoločná schránka prežije osobnú.
+        cs: Adresa, na které je kontakt k zastižení; společná schránka přežije osobní.
+        de: Die Adresse, unter der der Kontakt erreichbar ist; ein Sammelpostfach überdauert Personen.
+    contacts[].phone:
+      help:
+        en: A telephone number in international form, when the contact takes calls.
+        sk: Telefónne číslo v medzinárodnom tvare, ak kontakt prijíma hovory.
+        cs: Telefonní číslo v mezinárodním tvaru, pokud kontakt přijímá hovory.
+        de: Eine Telefonnummer im internationalen Format, falls der Kontakt Anrufe annimmt.
+    projects.creation:
+      help:
+        en: Who may open a project - anyone signed in (anyone), only an organization administrator (org-admin), or the members of one group (group:<name>).
+        sk: Kto smie otvoriť projekt - ktokoľvek prihlásený, iba administrátor organizácie (org-admin), alebo členovia jednej skupiny (group:<názov>).
+        cs: Kdo smí otevřít projekt - kdokoli přihlášený, jen administrátor organizace (org-admin), nebo členové jedné skupiny (group:<název>).
+        de: Wer ein Projekt eröffnen darf - alle Angemeldeten (anyone), nur die Organisationsverwaltung (org-admin) oder die Mitglieder einer Gruppe (group:<Name>).
+    projects.visibility:
+      help:
+        en: Whether every signed-in person of the organization reads every project, or only the people a binding names.
+        sk: Či každý prihlásený človek organizácie číta každý projekt, alebo iba ľudia, ktorých menuje väzba.
+        cs: Zda každý přihlášený člověk organizace čte každý projekt, nebo jen lidé, které jmenuje vazba.
+        de: Ob jede angemeldete Person der Organisation jedes Projekt liest oder nur, wen eine Bindung nennt.
+    projects.nameCooldownDays:
+      help:
+        en: How many days the name of a deleted project stays reserved; empty keeps the 30 days, 0 frees it at once.
+        sk: Koľko dní zostáva názov zmazaného projektu rezervovaný; prázdne ponechá 30 dní, 0 ho uvoľní hneď.
+        cs: Kolik dní zůstává název smazaného projektu rezervovaný; prázdné ponechá 30 dní, 0 jej uvolní hned.
+        de: Wie viele Tage der Name eines gelöschten Projekts reserviert bleibt; leer heißt 30 Tage, 0 gibt ihn sofort frei.
+    projects.quota.contextSpaces:
+      help:
+        en: How many context spaces a new project may run; empty sets no limit.
+        sk: Koľko kontextových priestorov smie nový projekt prevádzkovať; prázdne nestanoví limit.
+        cs: Kolik kontextových prostorů smí nový projekt provozovat; prázdné nestanoví limit.
+        de: Wie viele Kontexträume ein neues Projekt betreiben darf; leer setzt keine Grenze.
+    projects.quota.residentPipelines:
+      help:
+        en: How many pipelines of a new project may run all the time; empty sets no limit.
+        sk: Koľko pipeline nového projektu smie bežať nepretržite; prázdne nestanoví limit.
+        cs: Kolik pipeline nového projektu smí běžet nepřetržitě; prázdné nestanoví limit.
+        de: Wie viele Pipelines eines neuen Projekts dauerhaft laufen dürfen; leer setzt keine Grenze.
+    projects.quota.publicEndpoints:
+      help:
+        en: How many endpoints of a new project anyone may read without signing in; empty sets no limit.
+        sk: Koľko koncových bodov nového projektu smie ktokoľvek čítať bez prihlásenia; prázdne nestanoví limit.
+        cs: Kolik koncových bodů nového projektu smí kdokoli číst bez přihlášení; prázdné nestanoví limit.
+        de: Wie viele Endpunkte eines neuen Projekts alle ohne Anmeldung lesen dürfen; leer setzt keine Grenze.
+    projects.quota.ingestEventsPerSecond:
+      help:
+        en: How many updates per second a new project's sources may write; empty sets no limit.
+        sk: Koľko aktualizácií za sekundu smú zapísať zdroje nového projektu; prázdne nestanoví limit.
+        cs: Kolik aktualizací za sekundu smějí zapsat zdroje nového projektu; prázdné nestanoví limit.
+        de: Wie viele Aktualisierungen pro Sekunde die Quellen eines neuen Projekts schreiben; leer setzt keine Grenze.
+    projects.quota.apps:
+      help:
+        en: How many applications a new project may publish; empty sets no limit.
+        sk: Koľko aplikácií smie nový projekt zverejniť; prázdne nestanoví limit.
+        cs: Kolik aplikací smí nový projekt zveřejnit; prázdné nestanoví limit.
+        de: Wie viele Anwendungen ein neues Projekt veröffentlichen darf; leer setzt keine Grenze.
+    projects.quota.agentRunsPerDay:
+      help:
+        en: How many assistant runs a new project may start in one day; empty sets no limit.
+        sk: Koľko behov asistenta smie nový projekt spustiť za deň; prázdne nestanoví limit.
+        cs: Kolik běhů asistenta smí nový projekt spustit za den; prázdné nestanoví limit.
+        de: Wie viele Assistentenläufe ein neues Projekt pro Tag starten darf; leer setzt keine Grenze.
+    projects.quota.entitiesPerSpace:
+      help:
+        en: How many entities one context space of a new project may hold; empty sets no limit.
+        sk: Koľko entít smie mať jeden kontextový priestor nového projektu; prázdne nestanoví limit.
+        cs: Kolik entit smí mít jeden kontextový prostor nového projektu; prázdné nestanoví limit.
+        de: Wie viele Entitäten ein Kontextraum eines neuen Projekts halten darf; leer setzt keine Grenze.
+    projects.quota.requestsPerMinute:
+      help:
+        en: How many requests per minute one endpoint of a new project answers; empty sets no limit.
+        sk: Na koľko požiadaviek za minútu odpovie jeden koncový bod nového projektu; prázdne nestanoví limit.
+        cs: Na kolik požadavků za minutu odpoví jeden koncový bod nového projektu; prázdné nestanoví limit.
+        de: Wie viele Anfragen pro Minute ein Endpunkt eines neuen Projekts beantwortet; leer setzt keine Grenze.

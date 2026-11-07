@@ -1,0 +1,46 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-bbsk-podujatia-1
+  namespace: bbsk
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:bbsk/app-bbsk-podujatia
+    kind: role
+  assigner: did:web:bbsk.sk
+  contextSpaceRef:
+    kind: ContextSpace
+    name: bbsk-podujatia
+  information:
+  - entities:
+    - type: Event
+    propertyNames:
+    - name
+    - description
+    - startDate
+    - endDate
+    - venue
+    - address
+    - eventCategory
+    - url
+    - source
+    - dataProvider
+    - location
+    relationshipNames:
+    - name
+    - description
+    - startDate
+    - endDate
+    - venue
+    - address
+    - eventCategory
+    - url
+    - source
+    - dataProvider
+    - location
+  operations:
+  - queryEntity
+  - retrieveEntity
+  scopeQ: /SK/BB/#

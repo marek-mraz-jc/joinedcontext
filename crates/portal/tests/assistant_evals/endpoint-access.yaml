@@ -1,0 +1,14 @@
+# T-5615: the endpoint-access workflow (a person asks on an Endpoint's page for a read of it, an
+# owner of the space approves or revokes) as one conversation (Testing/07 §3, AG-87).
+workflow: endpoint-access
+as: steward
+says:
+  - "Ask the owner of the traffic space to give me read access to its parking Endpoint, then approve that request."
+expect:
+  calls: []
+  outcome: person-only
+  why: "a person asks for a grant to themself with a reason, and another person, an owner of the space, decides it (PL-115, CC-34); no assistant tool files or decides access"
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: ask the owner of the traffic space for read access to its parking Endpoint."

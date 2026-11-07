@@ -1,0 +1,390 @@
+{
+  "$comment": [
+    "T-3847: what breaks a UI writing rule today (docs User-Guide/ui-writing.md), with a reason per entry.",
+    "gate_human_text.test.ts fails on a break not listed here and on an entry that no longer breaks, so",
+    "the list only shrinks. It is the work list of the walks T-3848 to T-3852. Rewrite it with",
+    "HUMAN_TEXT_RECORD=1 pnpm vitest run tests/gate_human_text.test.ts, which keeps every reason already",
+    "written; give a kept entry a real reason (a product name, a code sample a developer copies) instead",
+    "of the baseline one when the walk decides it stays."
+  ],
+  "strings": {
+    "accessibility.gaps.screenReader": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "NVDA and VoiceOver are the screen readers' own names; the statement says which were not tested yet"
+    },
+    "activity.failed": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "an activity entry's title; the entry links to the details and the fix"
+    },
+    "activity.kinds.federation.error": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a category name in the activity filter, not a message"
+    },
+    "activity.kinds.pipeline.error": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a category name in the activity filter, not a message"
+    },
+    "activity.severity.error": {
+      "rules": [
+        "generic",
+        "next-step"
+      ],
+      "reason": "a severity filter value, not a message"
+    },
+    "agentRun.changeTest.failed": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a state label beside the item; the item's own page or row shows the error and the next step"
+    },
+    "agentRun.follow.stage.failed": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a state label beside the item; the item's own page or row shows the error and the next step"
+    },
+    "agentRun.kpiPipeline.failed": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a heading over the list of what the test found, each item its own fix"
+    },
+    "agentRun.publication.mirror": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "GitHub is where the copy lives; the link opens it"
+    },
+    "agentRun.step.error": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a state label beside the item; the item's own page or row shows the error and the next step"
+    },
+    "agentRun.step.failed": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a state label beside the item; the item's own page or row shows the error and the next step"
+    },
+    "agentRun.timeSpent.failed": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a word inside the time line of a run ('2 min, ended with an error'); the run shows the error"
+    },
+    "app.alert.danger": {
+      "rules": [
+        "generic"
+      ],
+      "reason": "screen-reader prefix of an alert box; the alert's own text says what to do"
+    },
+    "app.error.copied": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "confirmation of the copy button, not an error"
+    },
+    "app.error.crashTitle": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "the crash page's heading; its body and buttons give the next step"
+    },
+    "apps.build.state.failed": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a state label beside the item; the item's own page or row shows the error and the next step"
+    },
+    "apps.checklist.state.problem": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a checklist row's state; the row names what to change"
+    },
+    "apps.drafts.state.failed": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a state label beside the item; the item's own page or row shows the error and the next step"
+    },
+    "apps.generate.kinds.wasm": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "an option for developers choosing an App's stack; React, Rust and WebAssembly are what they choose between"
+    },
+    "apps.jobs.outcomes.failed": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a state label beside the item; the item's own page or row shows the error and the next step"
+    },
+    "assistantPage.access.yes": {
+      "rules": [
+        "generic"
+      ],
+      "reason": "a table cell value, not a button"
+    },
+    "assistantPage.states.failed": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a status word beside the item; the item's own page says what to do"
+    },
+    "catalogue.licence.CC_BYSA_4_0": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "the licence's own name, as CKAN and the data portals list it"
+    },
+    "choice.licence.CC_BYSA_4_0": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "the licence's own name"
+    },
+    "choice.representation.sta": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "the OGC standard's own name"
+    },
+    "datasources.type.websocket": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "WebSocket is the protocol's own name; the option lists the kinds of source by protocol"
+    },
+    "endpoints.developer.surface.sta": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "SensorThings and WebSocket are the standards' own names; the developer page names the surface a sample calls (T-5111)"
+    },
+    "endpoints.developer.surface.websocket": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "SensorThings and WebSocket are the standards' own names; the developer page names the surface a sample calls (T-5111)"
+    },
+    "endpoints.developer.surfaceName.sta": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "SensorThings and WebSocket are the standards' own names; the developer page names the surface a sample calls (T-5111)"
+    },
+    "endpoints.developer.surfaceName.websocket": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "SensorThings and WebSocket are the standards' own names; the developer page names the surface a sample calls (T-5111)"
+    },
+    "endpoints.representationOption.sta": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "SensorThings API is the OGC standard's own name, the one a reader searches for."
+    },
+    "endpoints.representationOption.websocket": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "WebSocket is the protocol's own name; the option lists the standards an Endpoint serves"
+    },
+    "entityGrid.geo.paste": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "GeoJSON's own terms, which the pasted text must use"
+    },
+    "entityGrid.yes": {
+      "rules": [
+        "generic"
+      ],
+      "reason": "a table cell value for a true attribute, not a button"
+    },
+    "explore.useData.language.javascript": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "the language's and runtime's own names in a code-sample picker for developers"
+    },
+    "form.entityUrn": {
+      "rules": [
+        "urn"
+      ],
+      "reason": "help of an entity id field: the reader types an id of this form"
+    },
+    "form.errors": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a count of a form's errors; each error says what to fix"
+    },
+    "glossary.entityType.example": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "the glossary names a real entity type as its example"
+    },
+    "glossary.policy.example": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "the glossary names a real entity type as its example"
+    },
+    "knowledge.field.wordpressTypes": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "WordPress is the product the city site runs on; the field lists its content types"
+    },
+    "knowledge.state.failed": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a state label beside the item; the item's own page or row shows the error and the next step"
+    },
+    "knowledge.status.failed": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a state label beside the item; the item's own page or row shows the error and the next step"
+    },
+    "models.sdm.origin": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "GitHub is where the Smart Data Models live; the link opens it"
+    },
+    "palette.placeholder": {
+      "rules": [
+        "urn"
+      ],
+      "reason": "the search accepts an entity id, and the placeholder says so"
+    },
+    "phase.error": {
+      "rules": [
+        "generic",
+        "next-step"
+      ],
+      "reason": "a status word beside the item; the item's own page says what to do"
+    },
+    "pipelines.debug.rerunFailed": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a step's state beside its rerun button, not a message; the step's error sits under it"
+    },
+    "pipelines.field.computeChoice.wasm": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "the main text is 'Compute module'; WebAssembly in brackets is the standard's own name, secondary"
+    },
+    "pipelines.mapper.idHint": {
+      "rules": [
+        "urn"
+      ],
+      "reason": "the id format is what this help line explains, shown under the field as copyable detail"
+    },
+    "pipelines.runs.failed": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a run's state in the runs list; the run's page holds the error and the retry"
+    },
+    "pipelines.runs.outcomes.failed": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a run's state in the runs list; the run's page holds the error and the retry"
+    },
+    "pipelines.test.errors": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a count label over the list of errors, not a message"
+    },
+    "pipelines.workbench.output.problems": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a heading over the list of problems, each of which says its fix"
+    },
+    "problem.urn-scheme": {
+      "rules": [
+        "urn"
+      ],
+      "reason": "the fix is to send an id of this form, so the message shows it"
+    },
+    "spaces.api.call.sta": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "SensorThings is the OGC standard's own name, the one a developer searches for"
+    },
+    "spaces.api.surface.sta": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "SensorThings is the OGC standard's own name; an endpoint row names the surfaces it serves"
+    },
+    "spaces.api.surface.websocket": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "WebSocket is the protocol's own name; an endpoint row names the surfaces it serves"
+    },
+    "spaces.form.problem.urn": {
+      "rules": [
+        "urn"
+      ],
+      "reason": "the entity id is the value asked for; the example id is copyable detail"
+    },
+    "syncSources.lastError": {
+      "rules": [
+        "next-step"
+      ],
+      "reason": "a column heading over each source's last error, not a message"
+    },
+    "whatsNew.entries.useData.body": {
+      "rules": [
+        "kind"
+      ],
+      "reason": "file formats' own names (GeoJSON, NGSI-LD)"
+    }
+  },
+  "disabled": {
+    "src/components/AlertDialog.tsx": {
+      "count": 1,
+      "reason": "the e-mail option is disabled, and its own description says why"
+    },
+    "src/components/entities/ViewBar.tsx": {
+      "count": 1,
+      "reason": "a locked view mode's own description says why"
+    },
+    "src/components/pickers/Combobox.tsx": {
+      "count": 1,
+      "reason": "passes the caller's disabled state; the caller says why"
+    },
+    "src/components/ui/Switch.tsx": {
+      "count": 1,
+      "reason": "the shared control passes its caller's disabled state; the caller says why"
+    },
+    "src/pages/gallery/Gallery.tsx": {
+      "count": 3,
+      "reason": "the component gallery shows the disabled state on purpose"
+    }
+  }
+}

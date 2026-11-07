@@ -1,0 +1,13 @@
+# T-2742: a one-to-many relationship asked in words (DM-64, AG-77).
+workflow: datamodel
+as: steward
+says:
+  - "In the helsinki data model, a city district has many points of interest and each point of interest lies in exactly one city district."
+expect:
+  calls:
+    - tool: change_resource
+      input: { kind: DataModel, name: helsinki, operations: [{ op: addRelationship, cardinality: one-to-many }] }
+  outcome: change
+refusal:
+  as: viewer
+  says: "In the helsinki data model, a city district has many points of interest and each point of interest lies in exactly one city district."

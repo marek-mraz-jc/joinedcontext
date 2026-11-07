@@ -1,0 +1,13 @@
+# T-3319: the feedback workflow of T-3272 as one conversation (Testing/07 §3, AG-87).
+workflow: feedback
+as: steward
+says:
+  - "Send the platform's owners feedback that the Approve button stays grey on this page."
+expect:
+  calls: []
+  outcome: person-only
+  why: "feedback is the person's own words about what got in their way, sent from the page they are on; the assistant has no tool for it and reads no feedback"
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: send the platform's owners feedback that the Approve button stays grey on this page."

@@ -1,0 +1,287 @@
+# Default form arrangement for Dashboard (UI-02).
+# Presents map layers and widgets; examples match Helsinki city dashboards.
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: dashboard
+spec:
+  for: Dashboard
+  guide: User-Guide/06-dashboards
+  about:
+    en: >-
+      A dashboard is a page of maps and numbers built from endpoints this project can already
+      read. Give it a name and a title people recognise, say who may open it, and add the layers
+      and widgets that draw the data.
+    sk: >-
+      Nástenka je stránka s mapami a číslami, postavená z endpointov, ktoré tento projekt už vie
+      čítať. Dajte jej názov a titul, ktorý ľudia poznajú, povedzte, kto ju smie otvoriť, a pridajte
+      vrstvy a prvky, ktoré údaje vykreslia.
+    cs: >-
+      Nástěnka je stránka s mapami a čísly, postavená z endpointů, které tento projekt už umí
+      čist. Dejte jí název a titul, který lidé poznají, řekněte, kdo ji smí otevřít, a přidejte
+      vrstvy a prvky, které data vykreslí.
+    de: >-
+      Ein Dashboard ist eine Seite aus Karten und Zahlen, gebaut aus Endpunkten, die dieses
+      Projekt schon lesen kann. Geben Sie ihm einen Namen und einen Titel, den Menschen
+      wiedererkennen, sagen Sie, wer es öffnen darf, und fügen Sie die Ebenen und Elemente hinzu.
+  order: [name, title, visibility, pages]
+  groups:
+    - title:
+        en: General information
+        sk: Všeobecné informácie
+        cs: Všeobecné informace
+        de: Allgemeine Informationen
+      description:
+        en: Identifier, title and audience visibility for this dashboard.
+        sk: Identifikátor, titulok a viditeľnosť pre publikum tejto nástenky.
+        cs: Identifikátor, titulek a viditelnost pro publikum této nástěnky.
+        de: Kennung, Titel und Sichtbarkeit für dieses Dashboard.
+      fields: [name, title, visibility]
+    - title:
+        en: Pages and content
+        sk: Stránky a obsah
+        cs: Stránky a obsah
+        de: Seiten und Inhalt
+      description:
+        en: Dashboard pages with layouts, map layers and informational widgets.
+        sk: Stránky nástenky s rozložením, mapovými vrstvami a informačnými prvkami.
+        cs: Stránky nástěnky s rozložením, mapovými vrstvami a informačními prvky.
+        de: Dashboard-Seiten mit Layouts, Kartenebenen und Informations-Widgets.
+      fields: [pages]
+  fields:
+    name:
+      placeholder: city-bikes
+      help:
+        en: The short name in this dashboard's address. Lowercase letters, digits and dashes.
+        sk: Krátky názov v adrese tejto nástenky. Malé písmená, číslice a spojovníky.
+        cs: Krátký název v adrese této nástěnky. Malá písmena, číslice a spojovníky.
+        de: Der kurze Name in der Adresse dieses Dashboards. Kleinbuchstaben, Ziffern und Bindestriche.
+    title:
+      help:
+        en: The name shown at the top of the dashboard and in the menu.
+        sk: Názov zobrazený v hlavičke nástenky a v menu.
+        cs: Název zobrazený v hlavičce nástěnky a v menu.
+        de: Der Name über dem Dashboard und im Menü.
+    visibility:
+      help:
+        en: Who can view this dashboard, ranging from private view to public audience.
+        sk: Kto si môže túto nástenku zobraziť, od súkromného náhľadu po verejnosť.
+        cs: Kdo si může tuto nástěnku zobrazit, od soukromého náhledu po veřejnost.
+        de: Wer dieses Dashboard ansehen darf, von privater Ansicht bis zur Öffentlichkeit.
+    pages[].title:
+      help:
+        en: Tab title displayed to users for this dashboard page.
+        sk: Názov záložky zobrazený používateľom pre túto stránku nástenky.
+        cs: Název záložky zobrazený uživatelům pro tuto stránku nástěnky.
+        de: Auf der Registerkarte angezeigter Titel für diese Dashboard-Seite.
+    pages[].layout:
+      help:
+        en: Arrangement of visual elements on the page, such as a full map or grid layout.
+        sk: Usporiadanie vizuálnych prvkov na stránke, napríklad celá mapa alebo mriežka.
+        cs: Uspořádání vizuálních prvků na stránce, například celá mapa nebo mřížka.
+        de: Anordnung der visuellen Elemente auf der Seite, etwa Vollbildkarte oder Raster.
+    pages[].layers:
+      widget: checkboxes
+      help:
+        en: Map layers to display together on this page's map view.
+        sk: Mapové vrstvy, ktoré sa majú zobraziť spolu na mape tejto stránky.
+        cs: Mapové vrstvy, které se mají zobrazit společně na mapě této stránky.
+        de: Kartenebenen, die gemeinsam auf der Karte dieser Seite angezeigt werden.
+    pages[].widgets[].widgetType:
+      help:
+        en: Type of informational component to render, such as a time chart.
+        sk: Typ informačného prvku na zobrazenie, napríklad graf vývoja v čase.
+        cs: Typ informačního prvku k zobrazení, například graf vývoje v čase.
+        de: Typ der anzuzeigenden Komponente, beispielsweise ein Zeitverlaufsdiagramm.
+    pages[].widgets[].endpointRef:
+      help:
+        en: Endpoint providing the live entities and readings for this widget.
+        sk: Rozhranie poskytujúce živé entity a merania pre tento prvok.
+        cs: Rozhraní poskytující živé entity a měření pro tento prvek.
+        de: Endpunkt, der die aktuellen Entitäten und Messwerte für dieses Widget liefert.
+    pages[].widgets[].entityId:
+      help:
+        en: Identifier of the specific entity whose historical values are plotted.
+        sk: Identifikátor konkrétnej entity, ktorej historické hodnoty sa vykresľujú.
+        cs: Identifikátor konkrétní entity, jejíž historické hodnoty se vykreslují.
+        de: Kennung der bestimmten Entität, deren historische Werte dargestellt werden.
+    pages[].widgets[].property:
+      help:
+        en: Name of the entity property or attribute to display in this widget.
+        sk: Názov vlastnosti alebo atribútu entity, ktorý sa má zobraziť v tomto prvku.
+        cs: Název vlastnosti nebo atributu entity, který se má zobrazit v tomto prvku.
+        de: Name der Entitätseigenschaft, die in diesem Widget dargestellt werden soll.
+    pages[].widgets[].entityType:
+      help:
+        en: The entity type a table lists or a chart over a type counts, as the endpoint's model names it.
+        sk: Typ entity, ktorý tabuľka vypíše alebo graf nad typom spočíta, presne ako ho pomenúva model endpointu.
+        cs: Typ entity, který tabulka vypíše nebo graf nad typem spočítá, přesně jak jej pojmenovává model endpointu.
+        de: Der Entitätstyp, den eine Tabelle auflistet oder ein Diagramm über einen Typ zählt, so benannt wie im Modell des Endpunkts.
+    pages[].widgets[].q:
+      help:
+        en: The NGSI-LD filter a bar chart or a histogram reads its type with; empty reads every entity the endpoint grants.
+        sk: Filter NGSI-LD, s ktorým stĺpcový graf alebo histogram číta svoj typ; prázdny číta každú entitu, ktorú endpoint sprístupní.
+        cs: Filtr NGSI-LD, se kterým sloupcový graf nebo histogram čte svůj typ; prázdný čte každou entitu, kterou endpoint zpřístupní.
+        de: Der NGSI-LD-Filter, mit dem ein Balkendiagramm oder Histogramm seinen Typ liest; leer liest jede Entität, die der Endpunkt freigibt.
+    pages[].widgets[].grid.columns[].attr:
+      help:
+        en: The attribute this column shows. Leave the columns empty to show every attribute.
+        sk: Atribút, ktorý tento stĺpec zobrazuje. Bez stĺpcov sa zobrazia všetky atribúty.
+        cs: Atribut, který tento sloupec zobrazuje. Bez sloupců se zobrazí všechny atributy.
+        de: Das Attribut dieser Spalte. Ohne Spalten werden alle Attribute gezeigt.
+    pages[].widgets[].grid.columns[].label:
+      help:
+        en: The heading above the column, in place of the attribute's own name.
+        sk: Hlavička nad stĺpcom namiesto vlastného názvu atribútu.
+        cs: Záhlaví nad sloupcem místo vlastního názvu atributu.
+        de: Die Überschrift über der Spalte anstelle des Attributnamens.
+    pages[].widgets[].grid.columns[].width:
+      help:
+        en: How wide the column is in pixels. Left out, it takes the width its values need.
+        sk: Šírka stĺpca v pixeloch. Bez nej si stĺpec vezme šírku podľa svojich hodnôt.
+        cs: Šířka sloupce v pixelech. Bez ní si sloupec vezme šířku podle svých hodnot.
+        de: Die Spaltenbreite in Pixeln. Ohne Angabe richtet sie sich nach den Werten.
+    pages[].widgets[].grid.columns[].pinned:
+      help:
+        en: Keeps the column in view while the grid is scrolled sideways.
+        sk: Ponechá stĺpec na očiach, aj keď sa mriežka posúva do strán.
+        cs: Ponechá sloupec na očích, i když se mřížka posouvá do stran.
+        de: Hält die Spalte im Blick, während das Raster seitlich gescrollt wird.
+    pages[].widgets[].grid.columns[].editable:
+      help:
+        en: Lets a correction be typed into this column, if the grid is in edit mode.
+        sk: Dovolí do tohto stĺpca vpísať opravu, ak je mriežka v režime úprav.
+        cs: Dovolí do tohoto sloupce vepsat opravu, pokud je mřížka v režimu úprav.
+        de: Erlaubt eine Korrektur in dieser Spalte, wenn das Raster bearbeitbar ist.
+    pages[].widgets[].grid.columns[].format:
+      help:
+        en: How the value is drawn when the loaded rows do not say by themselves.
+        sk: Ako sa hodnota vykreslí, keď to načítané riadky samy nepovedia.
+        cs: Jak se hodnota vykreslí, když to načtené řádky samy neřeknou.
+        de: Wie der Wert dargestellt wird, wenn die Zeilen es nicht selbst sagen.
+    pages[].widgets[].grid.columns[].show.observedAt:
+      help:
+        en: Opens a column beside the value with the moment it was observed.
+        sk: Otvorí vedľa hodnoty stĺpec s okamihom, kedy bola odmeraná.
+        cs: Otevře vedle hodnoty sloupec s okamžikem, kdy byla změřena.
+        de: Öffnet neben dem Wert eine Spalte mit dem Beobachtungszeitpunkt.
+    pages[].widgets[].grid.columns[].show.unit:
+      help:
+        en: Opens a column with the unit the value is measured in.
+        sk: Otvorí stĺpec s jednotkou, v ktorej je hodnota meraná.
+        cs: Otevře sloupec s jednotkou, ve které je hodnota měřena.
+        de: Öffnet eine Spalte mit der Einheit des Werts.
+    pages[].widgets[].grid.columns[].show.datasetId:
+      help:
+        en: Opens a column naming which dataset this instance of the attribute belongs to.
+        sk: Otvorí stĺpec s tým, ktorej dátovej sade táto instancia atribútu patrí.
+        cs: Otevře sloupec s tím, které datové sadě tato instance atributu patří.
+        de: Öffnet eine Spalte mit dem Datensatz, zu dem diese Instanz gehört.
+    pages[].widgets[].grid.columns[].show.createdAt:
+      help:
+        en: Opens a column with the moment the attribute was first written.
+        sk: Otvorí stĺpec s okamihom, kedy bol atribút zapísaný prvý raz.
+        cs: Otevře sloupec s okamžikem, kdy byl atribut zapsán poprvé.
+        de: Öffnet eine Spalte mit dem Zeitpunkt der ersten Schreibung.
+    pages[].widgets[].grid.columns[].show.modifiedAt:
+      help:
+        en: Opens a column with the moment the attribute last changed.
+        sk: Otvorí stĺpec s okamihom, kedy sa atribút zmenil naposledy.
+        cs: Otevře sloupec s okamžikem, kdy se atribut změnil naposledy.
+        de: Öffnet eine Spalte mit dem Zeitpunkt der letzten Änderung.
+    pages[].widgets[].grid.entityTimestamps:
+      help:
+        en: Adds the entity's own created and modified moments as two more columns.
+        sk: Pridá vlastné časy vzniku a zmeny entity ako dva ďalšie stĺpce.
+        cs: Přidá vlastní časy vzniku a změny entity jako dva další sloupce.
+        de: Fügt Erstellungs- und Änderungszeitpunkt der Entität als Spalten hinzu.
+    pages[].widgets[].grid.filters.allowed:
+      help:
+        en: The columns whose filter row is offered. Left empty, every filterable column is.
+        sk: Stĺpce, ktorým sa nabídne filtračný riadok. Bez nich sú to všetky filtrovateľné.
+        cs: Sloupce, kterým se nabídne filtrační řádek. Bez nich jsou to všechny filtrovatelné.
+        de: Die Spalten mit Filterzeile. Leer gelassen, sind es alle filterbaren Spalten.
+    pages[].widgets[].grid.filters.preset.q:
+      help:
+        en: The query the grid always asks the endpoint with, before anyone filters on screen.
+        sk: Dotaz, s ktorým sa mriežka endpointu pýta vždy, ešte než niekto filtruje na obrazovke.
+        cs: Dotaz, se kterým se mřížka endpointu ptá vždy, ještě než někdo filtruje na obrazovce.
+        de: Die Abfrage, mit der das Raster immer fragt, bevor jemand am Bildschirm filtert.
+    pages[].widgets[].grid.filters.preset.attrs:
+      help:
+        en: The attributes asked for, when the grid should not read every one of them.
+        sk: Atribúty, o ktoré sa žiada, keď mriežka nemá čítať všetky.
+        cs: Atributy, o které se žádá, když mřížka nemá číst všechny.
+        de: Die angefragten Attribute, wenn nicht alle gelesen werden sollen.
+    pages[].widgets[].grid.filters.preset.idPattern:
+      help:
+        en: A regular expression the entity identifiers must match to be listed.
+        sk: Regulárny výraz, ktorému musia identifikátory entít vyhovieť, aby sa vypísali.
+        cs: Regulární výraz, kterému musí identifikátory entit vyhovět, aby se vypsaly.
+        de: Ein regulärer Ausdruck, dem die Kennungen entsprechen müssen.
+    pages[].widgets[].grid.filters.preset.scopeQ:
+      help:
+        en: The scope the listed entities must sit in, written as a scope expression.
+        sk: Rozsah, v ktorom musia vypísané entity ležať, zapísaný ako výraz rozsahu.
+        cs: Rozsah, ve kterém musí vypsané entity ležet, zapsaný jako výraz rozsahu.
+        de: Der Bereich, in dem die Entitäten liegen müssen, als Bereichsausdruck.
+    pages[].widgets[].grid.pageSize:
+      help:
+        en: How many entities one page holds, between 1 and 1000. Fifty when left out.
+        sk: Koľko entít drží jedna strana, od 1 do 1000. Bez zadania päťdesiat.
+        cs: Kolik entit drží jedna strana, od 1 do 1000. Bez zadání padesát.
+        de: Wie viele Entitäten eine Seite hält, 1 bis 1000. Ohne Angabe fünfzig.
+    pages[].widgets[].grid.mode:
+      help:
+        en: Whether a correction may be typed into a cell at all. Read only when left out.
+        sk: Či sa vôbec smie do poľa vpísať oprava. Bez zadania len na čítanie.
+        cs: Zda se vůbec smí do pole vepsat oprava. Bez zadání jen ke čtení.
+        de: Ob überhaupt eine Korrektur eingetippt werden darf. Ohne Angabe nur lesend.
+    pages[].widgets[].grid.editableAttrs:
+      help:
+        en: The attributes a correction may be typed into, which edit mode requires.
+        sk: Atribúty, do ktorých sa smie vpísať oprava; režim úprav ich vyžaduje.
+        cs: Atributy, do kterých se smí vepsat oprava; režim úprav je vyžaduje.
+        de: Die Attribute, die korrigiert werden dürfen; der Bearbeitungsmodus verlangt sie.
+    pages[].widgets[].grid.history.enabled:
+      help:
+        en: Lets one attribute's history be opened from its column.
+        sk: Dovolí otvoriť históriu jedného atribútu priamo z jeho stĺpca.
+        cs: Dovolí otevřít historii jednoho atributu přímo z jeho sloupce.
+        de: Erlaubt, den Verlauf eines Attributs aus seiner Spalte zu öffnen.
+    pages[].widgets[].grid.history.maxPoints:
+      help:
+        en: How many points one history read returns at most, between 1 and 1000.
+        sk: Koľko bodov najviac vráti jedno čítanie histórie, od 1 do 1000.
+        cs: Kolik bodů nejvýše vrátí jedno čtení historie, od 1 do 1000.
+        de: Wie viele Punkte ein Verlaufsabruf höchstens liefert, 1 bis 1000.
+    pages[].widgets[].grid.density:
+      help:
+        en: How much room a row takes, compact for more rows or comfortable for more space.
+        sk: "Koľko miesta zaberá riadok: úsporne pre viac riadkov, pohodlne pre viac miesta."
+        cs: "Kolik místa zabírá řádek: úsporně pro více řádků, pohodlně pro více místa."
+        de: "Wie viel Raum eine Zeile nimmt: kompakt für mehr Zeilen, bequem für mehr Platz."
+    pages[].widgets[].grid.map.enabled:
+      help:
+        en: Whether a map is shown beside the rows. Off when left out, and never shown for a type with no geometry.
+        sk: Či sa vedľa riadkov zobrazí mapa. Bez zadania vypnutá a nikdy pre typ bez geometrie.
+        cs: Zda se vedle řádků zobrazí mapa. Bez zadání vypnutá a nikdy pro typ bez geometrie.
+        de: Ob neben den Zeilen eine Karte erscheint. Ohne Angabe aus, und nie bei einem Typ ohne Geometrie.
+    pages[].widgets[].grid.map.attr:
+      help:
+        en: Which geometry attribute the map draws. The type's first one when left out.
+        sk: Ktorý geometrický atribút mapa kreslí. Bez zadania prvý atribút typu.
+        cs: Který geometrický atribut mapa kreslí. Bez zadání první atribut typu.
+        de: Welches Geometrie-Attribut die Karte zeichnet. Ohne Angabe das erste des Typs.
+    pages[].widgets[].grid.map.position:
+      help:
+        en: Where the map sits, beside the rows or under them. Beside them when left out, and under them on a narrow screen either way.
+        sk: Kde mapa sedí, vedľa riadkov alebo pod nimi. Bez zadania vedľa a na úzkej obrazovke tak či tak pod nimi.
+        cs: Kde mapa sedí, vedle řádků nebo pod nimi. Bez zadání vedle a na úzké obrazovce tak či tak pod nimi.
+        de: Wo die Karte sitzt, neben den Zeilen oder darunter. Ohne Angabe daneben, auf schmalem Bildschirm ohnehin darunter.
+    pages[].widgets[].grid.rowActions:
+      help:
+        en: The row actions this page offers by name; the page itself draws them.
+        sk: Akcie riadku, ktoré táto stránka nabízí podľa názvu; vykresľuje ich sama stránka.
+        cs: Akce řádku, které tato stránka nabízí podle názvu; vykresluje je sama stránka.
+        de: Die Zeilenaktionen, die diese Seite anbietet; die Seite zeichnet sie selbst.

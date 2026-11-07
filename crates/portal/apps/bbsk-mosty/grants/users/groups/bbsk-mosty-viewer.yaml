@@ -1,0 +1,12 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata:
+  name: bbsk-mosty-viewer
+  namespace: org
+  annotations:
+    joinedcontext.com/app: bbsk/bbsk-mosty
+spec:
+  description: The viewers of bbsk-mosty, its default group.
+  members:
+  - user: de300000-0000-4000-8000-000000000002 # demo.viewer
+  - user: de300000-0000-4000-8000-000000000001 # demo.steward

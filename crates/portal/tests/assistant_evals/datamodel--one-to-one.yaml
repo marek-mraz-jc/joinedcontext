@@ -1,0 +1,13 @@
+# T-2742: a one-to-one relationship asked in words (DM-64, AG-77).
+workflow: datamodel
+as: steward
+says:
+  - "In the helsinki data model, each parking area has exactly one parking zone and each parking zone belongs to exactly one parking area."
+expect:
+  calls:
+    - tool: change_resource
+      input: { kind: DataModel, name: helsinki, operations: [{ op: addRelationship, cardinality: one-to-one }] }
+  outcome: change
+refusal:
+  as: viewer
+  says: "In the helsinki data model, each parking area has exactly one parking zone and each parking zone belongs to exactly one parking area."

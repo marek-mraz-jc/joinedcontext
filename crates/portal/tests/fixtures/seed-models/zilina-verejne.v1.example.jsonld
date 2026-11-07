@@ -1,0 +1,24 @@
+{
+  "co": 0.0,
+  "dataProvider": "dataProvider",
+  "dateObserved": "2026-01-01T00:00:00Z",
+  "id": "urn:ngsi-ld:AirQualityObserved:joinedcontext.com:example:1",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "name": {
+    "en": "name"
+  },
+  "no2": 0.0,
+  "o3": 0.0,
+  "observedAt": "2026-01-01T00:00:00Z",
+  "pm10": 0.0,
+  "pm25": 0.0,
+  "source": "source",
+  "stationCode": "SK0020A",
+  "type": "AirQualityObserved"
+}

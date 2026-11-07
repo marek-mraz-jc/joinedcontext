@@ -1,0 +1,27 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-bbsk-zaznamy
+  namespace: bbsk
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    en: Records of the Banská Bystrica region
+    sk: Záznamy Banskobystrického kraja
+spec:
+  allowedProjects:
+  - bbsk
+  audience: project-list
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: bbsk-kraj
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - ogc-features
+  roles:
+  - name: steward
+    subjects:
+    - group: bbsk-zaznamy-steward
+  slug: 66kkv3xr4lau6pjg2i5ef5lonc

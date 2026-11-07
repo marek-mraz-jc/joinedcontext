@@ -1,0 +1,322 @@
+{
+  "id": "https://banskabystrica.sk/ns/senzor",
+  "name": "senzor",
+  "prefixes": {
+    "bb": {
+      "prefix_prefix": "bb",
+      "prefix_reference": "https://banskabystrica.sk/ns/"
+    },
+    "geojson": {
+      "prefix_prefix": "geojson",
+      "prefix_reference": "https://purl.org/geojson/vocab#"
+    },
+    "linkml": {
+      "prefix_prefix": "linkml",
+      "prefix_reference": "https://w3id.org/linkml/"
+    },
+    "ngsi-ld": {
+      "prefix_prefix": "ngsi-ld",
+      "prefix_reference": "https://uri.etsi.org/ngsi-ld/"
+    },
+    "qudt-quantkind": {
+      "prefix_prefix": "qudt-quantkind",
+      "prefix_reference": "http://qudt.org/vocab/quantitykind/"
+    },
+    "qudt-unit": {
+      "prefix_prefix": "qudt-unit",
+      "prefix_reference": "http://qudt.org/vocab/unit/"
+    },
+    "schema": {
+      "prefix_prefix": "schema",
+      "prefix_reference": "http://schema.org/"
+    },
+    "shex": {
+      "prefix_prefix": "shex",
+      "prefix_reference": "http://www.w3.org/ns/shex#"
+    },
+    "unece": {
+      "prefix_prefix": "unece",
+      "prefix_reference": "https://vocabulary.uncefact.org/UnitMeasureCode#"
+    },
+    "xsd": {
+      "prefix_prefix": "xsd",
+      "prefix_reference": "http://www.w3.org/2001/XMLSchema#"
+    }
+  },
+  "default_prefix": "bb",
+  "classes": {
+    "Address": {
+      "name": "Address",
+      "class_uri": "bb:Address",
+      "slots": [
+        "streetAddress"
+      ],
+      "description": "A nested object with a shape, carried inline and not by reference."
+    },
+    "AirQualityObserved": {
+      "name": "AirQualityObserved",
+      "class_uri": "bb:AirQualityObserved",
+      "is_a": "Entity",
+      "slots": [
+        "temperature",
+        "reliability",
+        "refDevice",
+        "label",
+        "address",
+        "pollutant",
+        "measuredAt",
+        "id",
+        "type",
+        "location",
+        "observedAt"
+      ],
+      "description": "One air quality reading of one sensor."
+    },
+    "Entity": {
+      "name": "Entity",
+      "class_uri": "ngsi-ld:Entity",
+      "slots": [
+        "id",
+        "type",
+        "location",
+        "observedAt"
+      ],
+      "annotations": {
+        "upstream_source": {
+          "tag": "upstream_source",
+          "value": "ETSI NGSI-LD core context v1.8"
+        }
+      },
+      "description": "The root every NGSI-LD entity class specialises."
+    },
+    "FreeForm": {
+      "name": "FreeForm",
+      "class_uri": "bb:FreeForm",
+      "is_a": "Entity",
+      "slots": [
+        "id",
+        "type",
+        "location",
+        "observedAt"
+      ],
+      "annotations": {
+        "open_world": {
+          "tag": "open_world",
+          "value": "true"
+        }
+      },
+      "description": "A class that still accepts attributes the model does not declare."
+    }
+  },
+  "slots": {
+    "address": {
+      "name": "address",
+      "slot_uri": "bb:address",
+      "range": "Address",
+      "description": "Where the sensor stands, as an inline object rather than a reference.",
+      "annotations": {
+        "ngsi_ld_kind": {
+          "tag": "ngsi_ld_kind",
+          "value": "JsonProperty"
+        }
+      }
+    },
+    "id": {
+      "name": "id",
+      "slot_uri": "ngsi-ld:hasId",
+      "required": true,
+      "identifier": true,
+      "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+      "annotations": {
+        "ngsi_ld_kind": {
+          "tag": "ngsi_ld_kind",
+          "value": "Property"
+        },
+        "jsonld_keyword": {
+          "tag": "jsonld_keyword",
+          "value": "@id"
+        },
+        "upstream_source": {
+          "tag": "upstream_source",
+          "value": "ETSI NGSI-LD core context v1.8"
+        }
+      },
+      "range": "string"
+    },
+    "label": {
+      "name": "label",
+      "slot_uri": "bb:label",
+      "description": "What the sensor is called, per locale.",
+      "annotations": {
+        "ngsi_ld_kind": {
+          "tag": "ngsi_ld_kind",
+          "value": "LanguageProperty"
+        }
+      },
+      "range": "string"
+    },
+    "location": {
+      "name": "location",
+      "slot_uri": "geojson:geometry",
+      "range": "string",
+      "description": "Where the entity is, as GeoJSON geometry.",
+      "annotations": {
+        "ngsi_ld_kind": {
+          "tag": "ngsi_ld_kind",
+          "value": "GeoProperty"
+        },
+        "upstream_source": {
+          "tag": "upstream_source",
+          "value": "ETSI NGSI-LD core context v1.8"
+        }
+      }
+    },
+    "measuredAt": {
+      "name": "measuredAt",
+      "slot_uri": "bb:measuredAt",
+      "range": "float",
+      "multivalued": true,
+      "description": "The depths the sensor sampled, in the order it sampled them.",
+      "annotations": {
+        "ngsi_ld_kind": {
+          "tag": "ngsi_ld_kind",
+          "value": "ListProperty"
+        }
+      }
+    },
+    "observedAt": {
+      "name": "observedAt",
+      "slot_uri": "ngsi-ld:observedAt",
+      "range": "datetime",
+      "description": "When the observation the entity reports was made.",
+      "annotations": {
+        "ngsi_ld_kind": {
+          "tag": "ngsi_ld_kind",
+          "value": "Property"
+        },
+        "upstream_source": {
+          "tag": "upstream_source",
+          "value": "ETSI NGSI-LD core context v1.8"
+        }
+      }
+    },
+    "pollutant": {
+      "name": "pollutant",
+      "slot_uri": "bb:pollutant",
+      "range": "Pollutant",
+      "description": "Which pollutant this reading is of, as a term of a vocabulary.",
+      "annotations": {
+        "ngsi_ld_kind": {
+          "tag": "ngsi_ld_kind",
+          "value": "VocabProperty"
+        }
+      }
+    },
+    "refDevice": {
+      "name": "refDevice",
+      "slot_uri": "bb:refDevice",
+      "description": "The device that produced the reading.",
+      "annotations": {
+        "ngsi_ld_kind": {
+          "tag": "ngsi_ld_kind",
+          "value": "Relationship"
+        }
+      },
+      "range": "string"
+    },
+    "reliability": {
+      "name": "reliability",
+      "slot_uri": "bb:reliability",
+      "range": "ReliabilityLevel",
+      "description": "How much the reading can be trusted.",
+      "annotations": {
+        "ngsi_ld_kind": {
+          "tag": "ngsi_ld_kind",
+          "value": "Property"
+        }
+      }
+    },
+    "streetAddress": {
+      "name": "streetAddress",
+      "slot_uri": "bb:streetAddress",
+      "range": "string",
+      "annotations": {
+        "ngsi_ld_kind": {
+          "tag": "ngsi_ld_kind",
+          "value": "Property"
+        }
+      }
+    },
+    "temperature": {
+      "name": "temperature",
+      "slot_uri": "bb:temperature",
+      "range": "float",
+      "required": true,
+      "description": "Air temperature at the sensor.",
+      "unit": {
+        "ucum_code": "Cel",
+        "symbol": "°C",
+        "exact_mappings": [
+          "unece:CEL",
+          "qudt-unit:DEG_C"
+        ]
+      },
+      "annotations": {
+        "ngsi_ld_kind": {
+          "tag": "ngsi_ld_kind",
+          "value": "Property"
+        }
+      }
+    },
+    "type": {
+      "name": "type",
+      "slot_uri": "ngsi-ld:hasType",
+      "required": true,
+      "description": "The entity type, one class of a published data model.",
+      "annotations": {
+        "ngsi_ld_kind": {
+          "tag": "ngsi_ld_kind",
+          "value": "Property"
+        },
+        "jsonld_keyword": {
+          "tag": "jsonld_keyword",
+          "value": "@type"
+        },
+        "upstream_source": {
+          "tag": "upstream_source",
+          "value": "ETSI NGSI-LD core context v1.8"
+        }
+      },
+      "range": "string"
+    }
+  },
+  "enums": {
+    "Pollutant": {
+      "name": "Pollutant",
+      "permissible_values": {
+        "pm10": {
+          "text": "pm10",
+          "meaning": "bb:pm10"
+        },
+        "pm25": {
+          "text": "pm25",
+          "meaning": "bb:pm25"
+        }
+      }
+    },
+    "ReliabilityLevel": {
+      "name": "ReliabilityLevel",
+      "permissible_values": {
+        "low": {
+          "text": "low"
+        },
+        "medium": {
+          "text": "medium"
+        },
+        "high": {
+          "text": "high"
+        }
+      }
+    }
+  }
+}

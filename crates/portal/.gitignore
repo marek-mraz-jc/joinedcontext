@@ -1,0 +1,21 @@
+target/
+ui/node_modules/
+# A test runner started from the repo root writes its cache here; it is never source.
+/node_modules/
+ui/dist/
+# The reference apps of AP-34 carry the same three build outputs.
+apps/*/ui/node_modules/
+apps/*/ui/dist/
+apps/*/ui/test-results/
+apps/*/ui/*.tsbuildinfo
+apps/*/*.tsbuildinfo
+# The kit of AP-56 is a third bundle; its dist is embedded at build time, never committed.
+sdk/node_modules/
+sdk/dist/
+sdk/*.tsbuildinfo
+.secrets/
+sdk/template/dist/
+sdk/template/node_modules/
+# The lane test borrows the SDK's Vite (ci.yml); the image bakes the template's.
+builder/node_modules
+__pycache__/

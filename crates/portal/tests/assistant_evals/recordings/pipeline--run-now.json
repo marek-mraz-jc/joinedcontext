@@ -1,0 +1,166 @@
+{
+  "workflow": "pipeline",
+  "run": "c2827f48-161c-47fb-9b0d-ea8228eb4a37",
+  "recordedAt": "2026-11-03T00:25:28.534Z",
+  "model": "app-builder: google/gemini-3.8-flash",
+  "events": [
+    {
+      "kind": "status",
+      "payload": {
+        "status": "queued"
+      }
+    },
+    {
+      "kind": "message",
+      "payload": {
+        "sentBy": "demo.steward@hel.fi",
+        "text": "Run pipeline traffic-messages now and tell me the result."
+      }
+    },
+    {
+      "kind": "status",
+      "payload": {
+        "status": "starting"
+      }
+    },
+    {
+      "kind": "status",
+      "payload": {
+        "status": "interviewing"
+      }
+    },
+    {
+      "kind": "usage",
+      "payload": {
+        "cachedTokens": 0,
+        "costUsd": 0.0009135,
+        "inputTokens": 238,
+        "latencyMs": 3301,
+        "model": "google/gemini-3.8-flash",
+        "outputTokens": 196,
+        "reasoningEffort": "low",
+        "tokensThisStep": 434
+      }
+    },
+    {
+      "kind": "usage",
+      "payload": {
+        "cachedTokens": 9035,
+        "costUsd": 0.0011425833333333333,
+        "inputTokens": 9053,
+        "latencyMs": 4361,
+        "model": "google/gemini-3.8-flash",
+        "outputTokens": 20,
+        "reasoningEffort": "low",
+        "tokensThisStep": 9073
+      }
+    },
+    {
+      "kind": "question",
+      "payload": {
+        "default": null,
+        "elapsedMs": null,
+        "input": null,
+        "max": null,
+        "min": null,
+        "multiple": false,
+        "options": [
+          {
+            "description": null,
+            "title": "Run it now",
+            "value": "run:traffic-messages"
+          },
+          {
+            "description": null,
+            "title": "Do not run it",
+            "value": "keep"
+          }
+        ],
+        "pick": null,
+        "questionId": "q-2026-11-03T002507.94341168Z",
+        "schema": {
+          "properties": {
+            "answer": {
+              "oneOf": [
+                {
+                  "const": "run:traffic-messages",
+                  "title": "Run it now"
+                },
+                {
+                  "const": "keep",
+                  "title": "Do not run it"
+                }
+              ],
+              "title": "Run pipeline traffic-messages now, outside its schedule?",
+              "type": "string"
+            }
+          },
+          "required": [
+            "answer"
+          ],
+          "title": "Run pipeline traffic-messages now, outside its schedule?",
+          "type": "object"
+        },
+        "step": "run-now"
+      }
+    },
+    {
+      "kind": "thought",
+      "payload": {
+        "text": "Run pipeline traffic-messages now, outside its schedule?"
+      }
+    },
+    {
+      "kind": "answer",
+      "payload": {
+        "answeredBy": "demo.steward@hel.fi",
+        "answers": {
+          "answer": "run:traffic-messages"
+        },
+        "questionId": "q-2026-11-03T002507.94341168Z"
+      }
+    },
+    {
+      "kind": "tool",
+      "payload": {
+        "durationMs": 70,
+        "elapsedMs": 9948,
+        "input": {
+          "name": "traffic-messages"
+        },
+        "status": "ok",
+        "tool": "jc_pipeline_run"
+      }
+    },
+    {
+      "kind": "tool",
+      "payload": {
+        "durationMs": 0,
+        "elapsedMs": 9962,
+        "input": {
+          "endpoint": null,
+          "name": "traffic-messages",
+          "page": "resource",
+          "plural": "Pipeline",
+          "q": null,
+          "type": null
+        },
+        "status": "ok",
+        "tool": "jc_ui_navigate"
+      }
+    },
+    {
+      "kind": "navigate",
+      "payload": {
+        "elapsedMs": 9977,
+        "route": "/projects/helsinki/pipelines?name=traffic-messages"
+      }
+    },
+    {
+      "kind": "thought",
+      "payload": {
+        "text": "Pipeline traffic-messages is queued as run 2026-11-03T00:25:08Z: it waits its turn in its lane, and its page shows how it ended."
+      }
+    }
+  ]
+}

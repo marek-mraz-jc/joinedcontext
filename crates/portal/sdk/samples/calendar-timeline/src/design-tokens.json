@@ -1,0 +1,46 @@
+{
+  "color": {
+    "accent": "#9a3412",
+    "ink": "#2b1d14",
+    "muted": "#5c4a3d",
+    "surface": "#faf6f1",
+    "card": "#ffffff",
+    "line": "#e4d8cc",
+    "danger": "#b42318",
+    "success": "#2f6b3a",
+    "warning": "#8a5a00"
+  },
+  "font": {
+    "body": "\"Literata\", Georgia, \"Times New Roman\", serif",
+    "mono": "ui-monospace, monospace",
+    "size": {
+      "sm": "0.875rem",
+      "md": "1rem",
+      "lg": "1.25rem",
+      "xl": "1.625rem"
+    }
+  },
+  "space": {
+    "1": "0.25rem",
+    "2": "0.5rem",
+    "3": "0.75rem",
+    "4": "1rem",
+    "6": "1.5rem",
+    "8": "2rem"
+  },
+  "radius": {
+    "sm": "6px",
+    "md": "10px",
+    "lg": "14px"
+  },
+  "chart": {
+    "palette": ["#9a3412", "#1e5b74", "#6b4c9a", "#3f6b2a", "#a1476a", "#8a5a00", "#2b5c9e", "#5c4a3d"]
+  },
+  "map": {
+    "point": "#9a3412",
+    "selected": "#1e5b74",
+    "low": "#1e5b74",
+    "high": "#9a3412",
+    "stroke": "#ffffff"
+  }
+}

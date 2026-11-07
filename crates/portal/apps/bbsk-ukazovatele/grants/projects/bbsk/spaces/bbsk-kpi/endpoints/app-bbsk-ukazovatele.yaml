@@ -1,0 +1,23 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-bbsk-ukazovatele
+  namespace: bbsk
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    en: Indicators of the region and the city
+    sk: Ukazovatele kraja a mesta
+spec:
+  allowedProjects:
+  - bbsk
+  audience: project-list
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: bbsk-kpi
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - ogc-features
+  slug: lzeplkk2ymndc6s5ktxa5doe6z

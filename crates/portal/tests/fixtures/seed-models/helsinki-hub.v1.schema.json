@@ -1,0 +1,281 @@
+{
+  "$id": "https://hel.fi/models/helsinki/helsinki-hub",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "Entity": {
+      "additionalProperties": false,
+      "description": "The root every NGSI-LD entity class specialises.",
+      "properties": {
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "Entity",
+      "type": "object"
+    },
+    "KeyPerformanceIndicator": {
+      "additionalProperties": false,
+      "description": "One computed indicator, registered from the helsinki-kpi space.",
+      "properties": {
+        "calculationFormula": {
+          "description": "How the value was computed, in words a reader can check the number against: the measure, the aggregation, the window and any divisor, such as `per km\u00b2 of the district's own area`.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "calculationPeriod": {
+          "description": "The window the value actually covers, as `{ start, end }` RFC 3339 instants. It is the window the pipeline used and not the one it was asked for, so the distance between `calculationPeriod.end` and `updatedAt` is how stale the source is.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "computedBy": {
+          "description": "The Pipeline that computed it, as its URN.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship"
+        },
+        "currentValue": {
+          "description": "The number, with its unit on the Property as `unitCode`, a UN/CEFACT common code, and the instant it describes as `observedAt`. A window with no reading in it carries the string `not measured` instead of a number, and never a zero: a zero reads as a measurement (Development/10 \u00a75).",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "derivedFrom": {
+          "description": "The Endpoint the sources were read through, as its URN. The endpoint and not the space: what an indicator could see is what that endpoint's policy let it see.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "description": "The indicator's own name, equal to the `{localId}` of its id, so the territory is legible without parsing the URN.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "updatedAt": {
+          "description": "When the pipeline last ran, as an NGSI-LD DateTime. It is the run and not the window: an indicator whose source stopped moving keeps its window and gains a newer `updatedAt`, which is the visible fact that the source is static.",
+          "format": "date-time",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "name",
+        "currentValue",
+        "calculationPeriod",
+        "calculationFormula",
+        "derivedFrom",
+        "computedBy",
+        "updatedAt",
+        "id",
+        "type"
+      ],
+      "title": "KeyPerformanceIndicator",
+      "type": "object"
+    },
+    "Vehicle": {
+      "additionalProperties": false,
+      "description": "One HSL bus on a trunk line, registered from the helsinki space.",
+      "properties": {
+        "fleetVehicleId": {
+          "description": "The operator and vehicle number HSL publishes, operator-vehicle.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "heading": {
+          "description": "Compass heading of the bus, degrees clockwise from north.",
+          "maximum": 360,
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "deg"
+          }
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "route": {
+          "description": "The HSL route id the bus is serving, four digits with the municipality prefix.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "speed": {
+          "description": "Ground speed of the bus.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "m/s"
+          }
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "vehicleType": {
+          "description": "The kind of vehicle; bus on every entity of this space.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "Vehicle",
+      "type": "object"
+    }
+  },
+  "metamodel_version": "1.11.0",
+  "title": "helsinki-hub",
+  "type": "object",
+  "version": null,
+  "x-generator-version": "linkml-1.11.1"
+}

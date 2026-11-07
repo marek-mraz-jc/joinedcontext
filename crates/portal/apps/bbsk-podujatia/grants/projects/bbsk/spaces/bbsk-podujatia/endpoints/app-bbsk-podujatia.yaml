@@ -1,0 +1,28 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-bbsk-podujatia
+  namespace: bbsk
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    en: Events in the Banská Bystrica Region
+    sk: Podujatia v Banskobystrickom kraji
+spec:
+  audience: public
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: bbsk-podujatia
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - ogc-features
+  - ical
+  representations:
+    ical:
+    - name: events
+      sources:
+      - preset: sdm-event
+        type: Event
+  slug: suaf5rzxgkoptcss4ghgke75ck

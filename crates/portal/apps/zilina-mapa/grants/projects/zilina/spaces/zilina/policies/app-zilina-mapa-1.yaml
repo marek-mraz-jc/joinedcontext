@@ -1,0 +1,57 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-zilina-mapa-1
+  namespace: zilina
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:zilina/app-zilina-mapa
+    kind: role
+  assigner: did:web:zilina.sk
+  contextSpaceRef:
+    kind: ContextSpace
+    name: zilina-verejne
+  information:
+  - entities:
+    - type: PointOfInterest
+    - type: GtfsStop
+    - type: AirQualityObserved
+    propertyNames:
+    - name
+    - location
+    - address
+    - monumentNumber
+    - monumentKind
+    - architecturalStyle
+    - constructionPeriod
+    - cadastralArea
+    - ownershipForm
+    - dailyDepartures
+    - dateObserved
+    - pm10
+    - pm25
+    - no2
+    - o3
+    - co
+    relationshipNames:
+    - name
+    - location
+    - address
+    - monumentNumber
+    - monumentKind
+    - architecturalStyle
+    - constructionPeriod
+    - cadastralArea
+    - ownershipForm
+    - dailyDepartures
+    - dateObserved
+    - pm10
+    - pm25
+    - no2
+    - o3
+    - co
+  operations:
+  - queryEntity
+  - retrieveEntity

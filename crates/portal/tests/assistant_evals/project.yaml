@@ -1,0 +1,13 @@
+# T-2733: the project workflow as one conversation (Testing/07 §3, AG-87).
+workflow: project
+as: steward
+says:
+  - "What is this project, and what changed in it lately?"
+expect:
+  calls:
+    - tool: jc_project_get
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: what is this project, and what changed in it lately?"

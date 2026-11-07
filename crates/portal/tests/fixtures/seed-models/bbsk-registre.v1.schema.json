@@ -1,0 +1,879 @@
+{
+  "$id": "https://joinedcontext.com/models/bbsk/bbsk-registre",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "AdministrativeArea": {
+      "additionalProperties": false,
+      "description": "One district (okres) or municipality (obec) of the region, its outline and its code.",
+      "properties": {
+        "areaCode": {
+          "description": "The area's statistical code: LAU 1 (`SK0321`) for a district, LAU 2 (`SK0321508438`) for a municipality, the same codes the Statistical Office's cubes carry in `refArea`.",
+          "pattern": "^SK032[0-9A-D]([0-9]{6})?$",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for, as an application shows it beside the data.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "divisionLevel": {
+          "$ref": "#/definitions/DivisionLevel",
+          "description": "Which tier of the territorial division the area is.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The name, per language, as the publisher writes it.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "LanguageProperty"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "refParentArea": {
+          "description": "The district a municipality lies in; absent on a district.",
+          "pattern": "^urn:ngsi-ld:AdministrativeArea:",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship",
+          "x-ngsi-ld-relationship": {
+            "cardinality": "many-to-one",
+            "inverse": "childAreas",
+            "onDelete": "restrict",
+            "target": "AdministrativeArea",
+            "unique": false
+          }
+        },
+        "source": {
+          "description": "The open-data service the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "surfaceArea": {
+          "description": "The area's surface as the cadastre states it.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "m2"
+          }
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "areaCode",
+        "divisionLevel",
+        "id",
+        "type"
+      ],
+      "title": "AdministrativeArea",
+      "type": "object"
+    },
+    "Bridge": {
+      "additionalProperties": false,
+      "description": "One bridge of the road network in the region, its road, its age, its size and who manages it.",
+      "properties": {
+        "bridgeCode": {
+          "description": "The bridge's number in the national road databank (Cestn\u00e1 databanka), such as `M9673`.",
+          "pattern": "^M[0-9]+$",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "bridgedLength": {
+          "description": "The length of the bridged gap.",
+          "minimum": 0,
+          "type": [
+            "number",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property",
+          "x-unit": {
+            "ucumCode": "m"
+          }
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for, as an application shows it beside the data.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "districtName": {
+          "description": "The district the record lies in, by name, as the publisher writes it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "heritageStatus": {
+          "$ref": "#/definitions/HeritageStatus",
+          "description": "Whether the bridge is a listed monument; absent where the databank does not say.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "managerName": {
+          "description": "The road administration that manages the bridge.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "name": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The name, per language, as the publisher writes it.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "LanguageProperty"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "roadClass": {
+          "$ref": "#/definitions/RoadClass",
+          "description": "The class of the road the bridge carries.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "roadNumber": {
+          "description": "The number of the road the bridge carries, such as `66b`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The open-data service the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "spanCount": {
+          "description": "How many openings the bridge has.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "structureKind": {
+          "description": "The kind of load-bearing structure, in the databank's words, such as `doskov\u00e1`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "structureMaterial": {
+          "description": "The material of the load-bearing structure, in the databank's words.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "yearBuilt": {
+          "description": "The year the bridge was built.",
+          "minimum": 1000,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "bridgeCode",
+        "id",
+        "type"
+      ],
+      "title": "Bridge",
+      "type": "object"
+    },
+    "DivisionLevel": {
+      "description": "",
+      "enum": [
+        "district",
+        "municipality"
+      ],
+      "title": "DivisionLevel",
+      "type": "string",
+      "x-enum-descriptions": {
+        "district": "A district (okres), LAU 1.",
+        "municipality": "A municipality or town (obec, mesto), LAU 2."
+      }
+    },
+    "Entity": {
+      "additionalProperties": false,
+      "description": "The root every NGSI-LD entity class specialises.",
+      "properties": {
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "Entity",
+      "type": "object"
+    },
+    "HeritageStatus": {
+      "description": "",
+      "enum": [
+        "notListed",
+        "cultural",
+        "culturalAndTechnical"
+      ],
+      "title": "HeritageStatus",
+      "type": "string",
+      "x-enum-descriptions": {
+        "cultural": "The bridge is a listed cultural monument.",
+        "culturalAndTechnical": "The bridge is listed as a cultural and a technical monument.",
+        "notListed": "The bridge is not a listed monument."
+      }
+    },
+    "HospitalKind": {
+      "description": "",
+      "enum": [
+        "general",
+        "specialised"
+      ],
+      "title": "HospitalKind",
+      "type": "string",
+      "x-enum-descriptions": {
+        "general": "A general hospital (v\u0161eobecn\u00e1 nemocnica).",
+        "specialised": "A specialised hospital (\u0161pecializovan\u00e1 nemocnica)."
+      }
+    },
+    "OrganizationCategory": {
+      "description": "",
+      "enum": [
+        "school",
+        "socialCare",
+        "culture",
+        "office"
+      ],
+      "title": "OrganizationCategory",
+      "type": "string",
+      "x-enum-descriptions": {
+        "culture": "A theatre, a museum, a gallery, a library or an education centre (kult\u00fara).",
+        "office": "An office or an agency of the region (\u00farad).",
+        "school": "A secondary school or a school facility (\u0161koly).",
+        "socialCare": "A social-care facility (soci\u00e1lne)."
+      }
+    },
+    "PlaceCategory": {
+      "description": "",
+      "enum": [
+        "hospital",
+        "socialService"
+      ],
+      "title": "PlaceCategory",
+      "type": "string",
+      "x-enum-descriptions": {
+        "hospital": "A general or specialised hospital.",
+        "socialService": "A registered social service."
+      }
+    },
+    "PointOfInterest": {
+      "additionalProperties": false,
+      "description": "One hospital (by its facility number in the health-care register) or one registered social service a municipality, a town or the region provides; `category` says which. The FIWARE Smart Data Model PointOfInterest (T-4329): no published model is a hospital or a social service. Private providers of social services are not in the space.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The postal address as the register publishes it, field by field (Smart Data Models' common PostalAddress, T-4329); a field the register leaves out is absent, never guessed.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "capacity": {
+          "description": "How many people the service may take at once, as registered; absent for a service registered without one.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "category": {
+          "description": "What kind of place it is: `hospital` or `socialService`. The two registers share the Smart Data Model PointOfInterest, and an application asks for one with `q=category==\"hospital\"` (T-4329).",
+          "items": {
+            "$ref": "#/definitions/PlaceCategory"
+          },
+          "type": "array",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for, as an application shows it beside the data.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "districtName": {
+          "description": "The district the record lies in, by name, as the publisher writes it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "hospitalKind": {
+          "$ref": "#/definitions/HospitalKind",
+          "description": "Whether the hospital is a general one or specialises in some fields.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "legalId": {
+          "description": "The body's identification number (I\u010cO) in the Slovak register of legal persons.",
+          "pattern": "^[0-9]{8}$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "medicalSpecialties": {
+          "description": "The fields of medicine the hospital is licensed for, with their codes, as the register lists them.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "name": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The name, per language, as the publisher writes it.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "LanguageProperty"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "operatorName": {
+          "description": "The legal person that runs it, as the register names it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "providerKind": {
+          "$ref": "#/definitions/ProviderKind",
+          "description": "Which public body provides the service.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "serviceForm": {
+          "$ref": "#/definitions/ServiceForm",
+          "description": "How the service reaches the person it serves.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "serviceKind": {
+          "description": "The kind of social service in the words of Act 448/2008 Z. z., such as `zariadenie pre seniorov` or `opatrovate\u013esk\u00e1 slu\u017eba`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "source": {
+          "description": "The open-data service the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "targetGroup": {
+          "description": "Whom the service is for, as the provisions of the Act the register cites.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "url": {
+          "description": "The web page the publisher gives for it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "category",
+        "id",
+        "type"
+      ],
+      "title": "PointOfInterest",
+      "type": "object"
+    },
+    "PostalAddress": {
+      "additionalProperties": false,
+      "description": "The value of `address`: a postal address, never an entity of its own (Smart Data Models' common schema).",
+      "properties": {
+        "addressCountry": {
+          "description": "The country, as an ISO 3166-1 alpha-2 code.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "addressLocality": {
+          "description": "The town or the municipality.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "postalCode": {
+          "description": "The postal code.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "streetAddress": {
+          "description": "The street and the house number, or the venue.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "title": "PostalAddress",
+      "type": "object"
+    },
+    "ProviderKind": {
+      "description": "",
+      "enum": [
+        "municipality",
+        "municipalityFounded",
+        "regionFounded"
+      ],
+      "title": "ProviderKind",
+      "type": "string",
+      "x-enum-descriptions": {
+        "municipality": "A municipality or a town itself (obec/mesto).",
+        "municipalityFounded": "A legal person a municipality or a town founded.",
+        "regionFounded": "A legal person the self-governing region founded."
+      }
+    },
+    "PublicOrganization": {
+      "additionalProperties": false,
+      "description": "One organisation the region founded: a secondary school, a social-care home, a theatre, a museum or an office. The FIWARE Smart Data Model CPSV-AP PublicOrganization (T-4329).",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PostalAddress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The postal address as the register publishes it, field by field (Smart Data Models' common PostalAddress, T-4329); a field the register leaves out is absent, never guessed.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "alternateName": {
+          "description": "The shorter name the organisation goes by, when it differs from the official one.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "dataProvider": {
+          "description": "Who publishes the data the entity was read from, with the credit its licence asks for, as an application shows it beside the data.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "id": {
+          "description": "The entity id, urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "legalId": {
+          "description": "The body's identification number (I\u010cO) in the Slovak register of legal persons.",
+          "pattern": "^[0-9]{8}$",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "location": {
+          "description": "Where the entity is, as GeoJSON geometry.",
+          "properties": {
+            "coordinates": {
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "Point",
+                "MultiPoint",
+                "LineString",
+                "MultiLineString",
+                "Polygon",
+                "MultiPolygon"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "coordinates"
+          ],
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "GeoProperty"
+        },
+        "name": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The name, per language, as the publisher writes it.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "LanguageProperty"
+        },
+        "observedAt": {
+          "description": "When the observation the entity reports was made.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "organizationCategory": {
+          "$ref": "#/definitions/OrganizationCategory",
+          "description": "The field the region founded the organisation for.",
+          "x-ngsi-ld-kind": "Property"
+        },
+        "preferredLabel": {
+          "description": "The organisation's official name, as CPSV-AP's PublicOrganization requires it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "refMunicipality": {
+          "description": "The municipality the record lies in.",
+          "pattern": "^urn:ngsi-ld:AdministrativeArea:",
+          "type": "string",
+          "x-ngsi-ld-kind": "Relationship",
+          "x-ngsi-ld-relationship": {
+            "cardinality": "many-to-one",
+            "inverse": "publicOrganizations",
+            "onDelete": "restrict",
+            "target": "AdministrativeArea",
+            "unique": false
+          }
+        },
+        "source": {
+          "description": "The open-data service the entity was read from.",
+          "format": "uri",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "spatial": {
+          "description": "The municipality the organisation is in, by name, as CPSV-AP's PublicOrganization requires it.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "x-ngsi-ld-kind": "Property"
+        },
+        "type": {
+          "description": "The entity type, one class of a published data model.",
+          "type": "string",
+          "x-ngsi-ld-kind": "Property"
+        }
+      },
+      "required": [
+        "organizationCategory",
+        "id",
+        "type"
+      ],
+      "title": "PublicOrganization",
+      "type": "object"
+    },
+    "RoadClass": {
+      "description": "",
+      "enum": [
+        "motorway",
+        "firstClass",
+        "secondClass",
+        "thirdClass",
+        "local",
+        "service"
+      ],
+      "title": "RoadClass",
+      "type": "string",
+      "x-enum-descriptions": {
+        "firstClass": "A first-class road (cesta I. triedy).",
+        "local": "A local road of no stated class (miestna neur\u010den\u00e1).",
+        "motorway": "A motorway or an expressway (dia\u013enica).",
+        "secondClass": "A second-class road (cesta II. triedy).",
+        "service": "A service road (\u00fa\u010delov\u00e1 cesta).",
+        "thirdClass": "A third-class road (cesta III. triedy)."
+      }
+    },
+    "ServiceForm": {
+      "description": "",
+      "enum": [
+        "field",
+        "outpatient",
+        "residentialYearRound",
+        "residentialWeekly",
+        "remote"
+      ],
+      "title": "ServiceForm",
+      "type": "string",
+      "x-enum-descriptions": {
+        "field": "Provided where the person lives (ter\u00e9nna).",
+        "outpatient": "The person comes to it (ambulantn\u00e1).",
+        "remote": "By telephone or another telecommunication means (in\u00e1 forma).",
+        "residentialWeekly": "The person lives there during the week (pobytov\u00e1 - t\u00fd\u017edenn\u00e1).",
+        "residentialYearRound": "The person lives there all year (pobytov\u00e1 - ro\u010dn\u00e1)."
+      }
+    }
+  },
+  "metamodel_version": "1.11.0",
+  "title": "bbsk-registre",
+  "type": "object",
+  "version": null,
+  "x-generator-version": "linkml-1.11.1"
+}

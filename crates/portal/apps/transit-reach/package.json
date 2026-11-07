@@ -1,0 +1,34 @@
+{
+  "name": "transit-reach",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.20.0",
+  "scripts": {
+    "wasm": "cd wasm && cargo build --release --target wasm32-unknown-unknown --locked && wasm-bindgen --target web --out-dir pkg target/wasm32-unknown-unknown/release/transit_reach.wasm",
+    "dev": "vite",
+    "typecheck": "tsc -b --noEmit",
+    "test": "vitest run",
+    "build": "tsc -b && vite build",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@joinedcontext/sdk": "0.1.0",
+    "maplibre-gl": "^6.7.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "jsdom": "^30.0.1",
+    "typescript": "~5.9.3",
+    "vite": "^8.2.2",
+    "vitest": "^5.0.0",
+    "@playwright/test": "1.63.0",
+    "axe-core": "4.13.0"
+  }
+}

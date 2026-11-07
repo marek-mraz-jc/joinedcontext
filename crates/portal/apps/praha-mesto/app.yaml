@@ -1,0 +1,39 @@
+# Prague right now (T-2917, AP-07, AP-14, AP-18): the city's shared bikes, park-and-ride car parks
+# and air quality, read live from the praha-mesto space (T-2785, T-2907). Hand written, so no
+# generated-by annotation.
+#
+# It reads and never writes, so it is `ui`: a bundle the Portal static host serves under
+# /apps/praha-mesto/, calling its endpoint with the reader's own token (AP-07).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: praha-mesto
+  namespace: praha
+  annotations:
+    # The Portal image ships this bundle (Dockerfile, /srv/apps), so the App names no
+    # repository of its own; the Portal accepts the mark only where the bundle is (AP-87).
+    joinedcontext.com/shipped-with: portal
+  title:
+    cs: "Praha teď"
+    en: "Prague right now"
+  description:
+    cs: "Sdílená kola nextbike, parkoviště P+R a kvalita ovzduší z otevřených dat Prahy, živě z prostoru praha-mesto."
+    en: "nextbike shared bikes, park-and-ride car parks and air quality from Prague's open data, live from the praha-mesto space."
+spec:
+  kind: ui
+  source:
+    path: ./apps/praha-mesto
+  build:
+    node: "22"
+  visibility: project
+  lifecycle: published
+  embeddable: true
+  dataNeeds:
+    # Every attribute of the three types: the car parks gain their live counts when T-2907's feed
+    # reaches the space, and the grant must not have to change for the screen to show them.
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: praha-mesto
+      types: [BikeHireDockingStation, OffStreetParking, AirQualityObserved]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]

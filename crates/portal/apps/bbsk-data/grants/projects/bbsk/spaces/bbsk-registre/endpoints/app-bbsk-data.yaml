@@ -1,0 +1,22 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-bbsk-data
+  namespace: bbsk
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    en: Registers of the Banská Bystrica region
+    sk: Registre Banskobystrického kraja
+spec:
+  audience: public
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: bbsk-registre
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - csv
+  - ogc-features
+  slug: tw3jx6pcam2qzk7nre5bdv4yfh

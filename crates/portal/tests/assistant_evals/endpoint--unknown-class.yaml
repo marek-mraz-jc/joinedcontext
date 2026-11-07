@@ -1,0 +1,14 @@
+# T-6530 (S-37, live walk T-6490): an Endpoint over a type the space's data model has no class
+# for is refused naming the type; the assistant drafts nothing and says the model needs it first.
+workflow: endpoint
+as: steward
+says:
+  - "Create a public Endpoint air-events for the Event entities of context space air that serves NGSI-LD and an iCal feed named events."
+expect:
+  calls: []
+  outcome: person-only
+  why: "space air's data model has no Event class: a person adds it to the model and approves it before an Endpoint can serve Event"
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: create a public Endpoint air-events for the Event entities of space air."

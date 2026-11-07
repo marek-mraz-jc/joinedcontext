@@ -1,0 +1,13 @@
+# T-2733: the ckan workflow as one conversation (Testing/07 §3, AG-87).
+workflow: ckan
+as: steward
+says:
+  - "Is our CKAN catalogue in sync?"
+expect:
+  calls:
+    - tool: jc_ckan_status
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: is our CKAN catalogue in sync?"

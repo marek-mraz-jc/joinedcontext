@@ -1,0 +1,9 @@
+/// kpi-forecast's server: the request handler and the daily job (T-3372, AP-159).
+package helsinki:kpi-forecast;
+
+world server {
+    include jc:app/app-host@0.1.0;
+
+    /// Records every period's forecasts of the day (app.yaml `spec.server.jobs`).
+    export record-forecasts: func() -> result<_, string>;
+}

@@ -1,0 +1,13 @@
+# T-2733: the datasource workflow as one conversation (Testing/07 §3, AG-87).
+workflow: datasource
+as: steward
+says:
+  - "Add an MQTT data source eval-mqtt reading tls://mqtt.example.fi:8883, topic sensors/aq/#, and check it."
+expect:
+  calls:
+    - tool: jc_datasource_check
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: add an MQTT data source eval-mqtt reading tls://mqtt.example.fi:8883, topic sensors/aq/#, and check it."

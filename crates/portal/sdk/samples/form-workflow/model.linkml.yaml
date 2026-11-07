@@ -1,0 +1,69 @@
+# The data model this sample writes and reads (SDK-10). The endpoint's JSON Schema is generated
+# from it; `src/fixtures.ts` holds that schema as the sample's stub serves it.
+id: https://example.org/samples/form-workflow
+name: form-workflow
+prefixes:
+  linkml: https://w3id.org/linkml/
+  schema: https://schema.org/
+default_range: string
+imports:
+  - linkml:types
+classes:
+  ServiceRequest:
+    description: A problem a person reports, and where it stands.
+    attributes:
+      category:
+        range: RequestCategory
+        required: true
+      title:
+        range: string
+        required: true
+        pattern: ".{5,80}"
+        slot_uri: schema:name
+      description:
+        range: string
+        required: true
+        pattern: "[\\s\\S]{20,2000}"
+        slot_uri: schema:description
+      address:
+        range: string
+        required: true
+        pattern: ".{3,120}"
+      district:
+        range: District
+      contactEmail:
+        range: string
+        pattern: "[^@\\s]+@[^@\\s]+\\.[^@\\s]+"
+        slot_uri: schema:email
+      mayContact:
+        range: boolean
+      submittedBy:
+        description: The account that sent the request (the token's subject).
+        range: string
+        required: true
+      dateSubmitted:
+        range: datetime
+        required: true
+      status:
+        range: RequestStatus
+        required: true
+enums:
+  RequestCategory:
+    permissible_values:
+      pothole:
+      streetlight:
+      graffiti:
+      litter:
+      other:
+  District:
+    permissible_values:
+      Kallio:
+      Kamppi:
+      Vallila:
+      Töölö:
+      Pasila:
+  RequestStatus:
+    permissible_values:
+      received:
+      inProgress:
+      done:

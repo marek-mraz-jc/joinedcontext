@@ -1,0 +1,160 @@
+# Default form arrangement for Layer (UI-02).
+# Displays entities on map dashboards; examples match Helsinki map layers.
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: layer
+spec:
+  for: Layer
+  guide: User-Guide/06-dashboards
+  about:
+    en: >-
+      A layer is one kind of thing drawn on a dashboard's map: the bike stations, the buses, the
+      air quality. Pick the endpoint it reads and the entity type it draws, then how it should look
+      and, if you want, which entities to leave out.
+    sk: >-
+      Vrstva je jeden druh vecí vykreslený na mape nástenky: stanice bicyklov, autobusy, kvalita
+      vzduchu. Vyberte endpoint, z ktorého čita, a typ entity, ktorý vykresľuje, potom ako má
+      vyzerať a prípadne ktoré entity vynechať.
+    cs: >-
+      Vrstva je jeden druh věcí vykreslený na mapě nástěnky: stanice kol, autobusy, kvalita
+      vzduchu. Vyberte endpoint, z něhož čte, a typ entity, který vykresluje, potom jak má vypadat
+      a případně které entity vynechat.
+    de: >-
+      Eine Ebene ist eine Art von Dingen auf der Karte eines Dashboards: die Fahrradstationen, die
+      Busse, die Luftqualität. Wählen Sie den Endpunkt, aus dem sie liest, und den Entitätstyp, den
+      sie zeichnet, dann das Aussehen und, wenn Sie mögen, welche Entitäten wegfallen.
+  order:
+    [
+      name,
+      sourceEndpointRef,
+      entityType,
+      style,
+      visible,
+      filter,
+      colorBy,
+      sizeBy,
+      popupProperties,
+    ]
+  groups:
+    - title:
+        en: Source and style
+        sk: Zdroj a štýl
+        cs: Zdroj a styl
+        de: Quelle und Stil
+      description:
+        en: Layer name, endpoint, entity type and basic map display style.
+        sk: Názov vrstvy, rozhranie, typ entity a základný štýl zobrazenia na mape.
+        cs: Název vrstvy, rozhraní, typ entity a základní styl zobrazení na mapě.
+        de: Ebenenname, Endpunkt, Entitätstyp und grundlegender Kartenstil.
+      fields: [name, sourceEndpointRef, entityType, style, visible]
+    - title:
+        en: Entity filters
+        sk: Filtre entít
+        cs: Filtry entit
+        de: Entitätenfilter
+      description:
+        en: Query, scope and geographic constraints filtering visible entities.
+        sk: Filtre podľa dopytu, rozsahu a polohy obmedzujúce viditeľné entity.
+        cs: Filtry podle dotazu, rozsahu a polohy omezující viditelné entity.
+        de: Abfrage-, Bereichs- und Geofilter zur Einschränkung sichtbarer Entitäten.
+      folded: true
+      fields: [filter]
+    - title:
+        en: Encodings and popups
+        sk: Kódovanie a bubliny
+        cs: Kódování a bubliny
+        de: Kodierung und Popups
+      description:
+        en: Color palettes, size scaling and attributes shown when clicking an entity.
+        sk: Farebné palety, škálovanie veľkosti a atribúty zobrazené po kliknutí na entitu.
+        cs: Barevné palety, škálování velikosti a atributy zobrazené po kliknutí na entitu.
+        de: Farbpaletten, Größenskalierung und beim Klick auf eine Entität gezeigte Attribute.
+      folded: true
+      fields: [colorBy, sizeBy, popupProperties]
+  fields:
+    name:
+      help:
+        en: The short name of this layer, the one a dashboard uses to place it on a page.
+        sk: Krátky názov tejto vrstvy; ním ju nástenka umiestni na stránku.
+        cs: Krátký název této vrstvy; jím ji nástěnka umístí na stránku.
+        de: Der kurze Name dieser Ebene; damit setzt ein Dashboard sie auf eine Seite.
+    sourceEndpointRef:
+      help:
+        en: Endpoint providing the entities drawn on this map layer.
+        sk: Rozhranie poskytujúce entity vykresľované na tejto mapovej vrstve.
+        cs: Rozhraní poskytující entity vykreslované na této mapové vrstvě.
+        de: Endpunkt, der die auf dieser Kartenebene gezeichneten Entitäten liefert.
+    entityType:
+      help:
+        en: Type of context entity displayed by this layer, such as bike stations or vehicles.
+        sk: Typ kontextovej entity zobrazovaný touto vrstvou, napríklad stanice bicyklov alebo vozidlá.
+        cs: Typ kontextové entity zobrazovaný touto vrstvou, například stanice kol nebo vozidla.
+        de: Entitätstyp, den diese Ebene anzeigt, etwa Fahrradstationen oder Fahrzeuge.
+    style:
+      help:
+        en: Visual geometry representation on the map, such as circle, line, or heatmap.
+        sk: Vizuálne geometrické zobrazenie na mape, napríklad kruh, línia alebo teplotná mapa.
+        cs: Vizuální geometrické zobrazení na mapě, například kruh, linie nebo teplotní mapa.
+        de: Visuelle Geometriedarstellung auf der Karte, etwa Kreis, Linie oder Heatmap.
+    visible:
+      help:
+        en: Whether the layer is displayed when the dashboard initially loads.
+        sk: Či je vrstva viditeľná pri prvotnom načítaní nástenky.
+        cs: Zda je vrstva viditelná při prvotním načtení nástěnky.
+        de: Ob die Ebene beim ersten Laden des Dashboards sichtbar ist.
+    filter.q:
+      placeholder: "availableBikeNumber>0"
+      help:
+        en: Query expression filtering which entities appear on the map based on attributes.
+        sk: Dopytový výraz filtrujúci entity zobrazené na mape podľa ich atribútov.
+        cs: Dotazový výraz filtrující entity zobrazené na mapě podle jejich atributů.
+        de: Abfrageausdruck, der filtert, welche Entitäten anhand von Attributen auf der Karte erscheinen.
+    filter.scopeQ:
+      help:
+        en: Hierarchical scope filter restricting entities to specific districts or zones.
+        sk: Hierarchický filter rozsahu obmedzujúci entity na konkrétne štvrte alebo zóny.
+        cs: Hierarchický filtr rozsahu omezující entity na konkrétní čtvrti nebo zóny.
+        de: Hierarchischer Bereichsfilter, der Entitäten auf bestimmte Bezirke oder Zonen beschränkt.
+    filter.geoQ:
+      help:
+        en: Geographic filter restricting entities to a specific spatial bounding box or radius.
+        sk: Geografický filter obmedzujúci entity na konkrétnu priestorovú oblasť alebo polomer.
+        cs: Geografický filtr omezující entity na konkrétní prostorovou oblast nebo poloměr.
+        de: Geografischer Filter, der Entitäten auf einen bestimmten Raumbereich oder Radius beschränkt.
+    colorBy.property:
+      help:
+        en: Entity attribute determining marker colors across the map.
+        sk: Atribút entity určujúci farby značiek na mape.
+        cs: Atribut entity určující barvy značek na mapě.
+        de: Entitätsattribut, das die Farben der Markierungen auf der Karte bestimmt.
+    colorBy.palette:
+      help:
+        en: Color palette name used to interpolate colors across the value domain.
+        sk: Názov farebnej palety použitej na prechod farieb v rozsahu hodnôt.
+        cs: Název barevné palety použité pro přechod barev v rozsahu hodnot.
+        de: Name der Farbpalette, die Farben über den Wertebereich interpoliert.
+    colorBy.domain:
+      help:
+        en: Minimum and maximum numeric values mapped to the start and end of the color palette.
+        sk: Minimálna a maximálna číselná hodnota priradená k začiatku a koncu farebnej palety.
+        cs: Minimální a maximální číselná hodnota přiřazená k začátku a konci barevné palety.
+        de: Numerischer Mindest- und Höchstwert für den Anfang und das Ende der Farbpalette.
+    sizeBy.property:
+      help:
+        en: Entity attribute determining marker size or circle radius.
+        sk: Atribút entity určujúci veľkosť značky alebo polomer kruhu.
+        cs: Atribut entity určující velikost značky nebo poloměr kruhu.
+        de: Entitätsattribut, das die Größe der Markierung oder den Kreisradius bestimmt.
+    sizeBy.range:
+      help:
+        en: Minimum and maximum circle radius in pixels corresponding to the value range.
+        sk: Minimálny a maximálny polomer kruhu v pixeloch zodpovedajúci rozsahu hodnôt.
+        cs: Minimální a maximální poloměr kruhu v pixelech odpovídající rozsahu hodnot.
+        de: Minimaler und maximaler Kreisradius in Pixeln passend zum Wertebereich.
+    popupProperties:
+      help:
+        en: List of attribute names shown in the popup card when clicking a map entity.
+        sk: Zoznam názvov atribútov zobrazených v bubline po kliknutí na entitu na mape.
+        cs: Seznam názvů atributů zobrazených v bublině po kliknutí na entitu na mapě.
+        de: Liste der Attributnamen, die beim Klick auf eine Entität im Popup angezeigt werden.

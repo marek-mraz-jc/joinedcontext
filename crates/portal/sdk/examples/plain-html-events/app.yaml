@@ -1,0 +1,39 @@
+# The plain-HTML teaching example of the SDK (T-2597, AP-83, T-2923). Hand written, so no
+# generated-by annotation (AP-35).
+#
+# `build: {}` is no build step: this folder is the bundle, index.html at its root, served as it is
+# by the Portal static host. It is not a published App: a published App is a React App on the SDK
+# with a chart and a map (AP-138), which `apps/helsinki-events` now is. This folder stays as the
+# example of AP-83 and is what its tests read.
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: plain-html-events
+  namespace: helsinki
+  title:
+    en: "Helsinki events"
+    fi: "Helsingin tapahtumat"
+  description:
+    en: "Upcoming events of the City of Helsinki's Linked Events register: search, filter by date, read the details and see where they are."
+    fi: "Helsingin kaupungin Linked Events -rekisterin tulevat tapahtumat: hae, rajaa päivämäärällä, lue tiedot ja katso sijainti."
+spec:
+  kind: ui
+  source:
+    git:
+      url: https://dev.joinedcontext.com/git/joinedcontext/helsinki_helsinki-events.git
+      ref: main
+  build: {}
+  # The events endpoint of Helsinki is public (GW22): an anonymous reader gets what the public
+  # role is granted and nothing more.
+  visibility: public
+  lifecycle: draft
+  dataNeeds:
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [Event]
+      # The attributes the Event entities carry on dev (2026-09-22); contactPoint is hidden by
+      # the endpoint's projection and is not asked for.
+      attrs: [name, description, startDate, endDate, eventStatus, address, location, source]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]

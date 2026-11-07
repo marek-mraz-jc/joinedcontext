@@ -1,0 +1,47 @@
+# Školy mesta Banská Bystrica — the school coverage desk for city staff (T-2782, AP-07, AP-14,
+# AP-118). Hand written, so no generated-by annotation.
+#
+# It reads and never writes, so it is `static`: a bundle the Portal static host serves under
+# /apps/banskabystrica-skoly/. It is a staff desk, so it is opened by its role, never anonymously:
+# the viewer role is held by its default group (T-2686), and the bundle holds no token of its own.
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: banskabystrica-skoly
+  namespace: banskabystrica
+  annotations:
+    # The Portal image ships this bundle (Dockerfile, /srv/apps), so the App names no
+    # repository of its own; the Portal accepts the mark only where the bundle is (AP-87).
+    joinedcontext.com/shipped-with: portal
+  title:
+    sk: "Školy mesta Banská Bystrica"
+    en: "Schools of Banská Bystrica"
+  description:
+    sk: "Pracovisko pre zamestnancov mesta: žiaci, učitelia a rozpočet každej školy, žiakov na učiteľa a rozpočet na žiaka, čo vybočuje v rámci mesta, a tabuľka na stiahnutie."
+    en: "A desk for city staff: every school's pupils, teachers and budget, pupils per teacher and budget per pupil, what stands out within the city, and the table as a download."
+spec:
+  kind: ui
+  source:
+    path: ./apps/banskabystrica-skoly
+  build:
+    node: "22"
+  visibility: roles
+  lifecycle: published
+  roles:
+    - name: viewer
+      title: { sk: "Čitateľ", en: "Viewer" }
+      description: "Reads every school's figures and downloads the table."
+  # grants/users/groups/ (AP-118, ADR-N-031): who holds a role is that group's members.
+  access:
+    - role: viewer
+      subjects: [{ group: banskabystrica-skoly-viewer }]
+  dataNeeds:
+    # The schools of the city's public space, the counts the desk computes from (T-2781).
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: banskabystrica-verejne
+      types: [Organization]
+      attrs: [name, address, pupilCount, teachingStaff, nonTeachingStaff, annualBudget, budgetYear, location]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]
+      roles: [viewer]

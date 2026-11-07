@@ -1,0 +1,17 @@
+{
+  "fleetVehicleId": "fleetVehicleId",
+  "heading": 0.0,
+  "id": "urn:ngsi-ld:Vehicle:hel.fi:example:1",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "observedAt": "2026-01-01T00:00:00Z",
+  "route": "route",
+  "speed": 0.0,
+  "type": "Vehicle",
+  "vehicleType": "vehicleType"
+}

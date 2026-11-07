@@ -1,0 +1,207 @@
+# Default form arrangement for SyncSource (UI-02).
+# Synchronizes configuration from external Git repositories, bundles and platform APIs.
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: syncsource
+spec:
+  for: SyncSource
+  guide: User-Guide/09-export-import
+  about:
+    en: >-
+      A sync source keeps this project in step with somewhere else: a Git repository, a published
+      bundle or another joinedcontext instance. Say where to read from and how often; what it
+      brings is proposed as a change a person decides, unless you say otherwise.
+    sk: >-
+      Zdroj synchronizácie drží tento projekt v súlade s niečím iným: s Git repozitárom,
+      zverejneným balíkom alebo inou instanciou joinedcontext. Povedzte, odkiaľ čítať a ako často;
+      čo prinesie, sa podá ako zmena, o ktorej rozhodne človek, ak nepoviete inak.
+    cs: >-
+      Zdroj synchronizace drží tento projekt v souladu s něčím jiným: s Git repozitářem,
+      zveřejněným balíkem nebo jinou instancí joinedcontext. Řekněte, odkud čist a jak často; co
+      přinese, se podá jako změna, o které rozhodne člověk, pokud neřeknete jinak.
+    de: >-
+      Eine Synchronisationsquelle hält dieses Projekt mit etwas anderem im Gleichschritt: einem
+      Git-Repository, einem veröffentlichten Bundle oder einer anderen joinedcontext-Instanz. Sagen
+      Sie, woher und wie oft gelesen wird; was sie bringt, wird als Änderung vorgeschlagen, über
+      die eine Person entscheidet.
+  # The form shows one origin at a time, the one the person picked; the others are
+  # arranged here all the same and passed over while they are not on the form.
+  variants: [git, bundle, platformApi]
+  order:
+    [
+      name,
+      title,
+      git,
+      bundle,
+      platformApi,
+      interval,
+      mode,
+      conflictPolicy,
+      prune,
+      autoMerge,
+    ]
+  groups:
+    - title:
+        en: Basics
+        sk: Základné údaje
+        cs: Základní údaje
+        de: Basisdaten
+      description:
+        en: Identifier and descriptive title for this sync source.
+        sk: Identifikátor a popisný titulok tohto zdroja synchronizácie.
+        cs: Identifikátor a popisný titulek tohoto zdroje synchronizace.
+        de: Kennung und beschreibender Titel dieser Synchronisierungsquelle.
+      fields: [name, title]
+    - title:
+        en: Where the resources come from
+        sk: Odkiaľ prostriedky pochádzajú
+        cs: Odkud prostředky pocházejí
+        de: Woher die Ressourcen stammen
+      description:
+        en: Upstream repository, bundle archive or remote platform connection.
+        sk: Nadradený repozitár, archív balíka alebo pripojenie k vzdialenej platforme.
+        cs: Nadřazený repozitář, archiv balíku nebo připojení ke vzdálené platformě.
+        de: Übergeordnetes Repository, Paketarchiv oder entfernte Plattformverbindung.
+      fields: [git, bundle, platformApi]
+    - title:
+        en: Schedule and rules
+        sk: Rozvrh a pravidlá
+        cs: Rozvrh a pravidla
+        de: Zeitplan und Regeln
+      description:
+        en: How often the source is read, whether it is mirrored or imported once, and what wins a name clash.
+        sk: Ako často sa zdroj číta, či sa zrkadlí alebo importuje raz, a čo vyhrá pri zhode názvov.
+        cs: Jak často se zdroj čte, zda se zrcadlí nebo importuje jednou, a co vyhraje při shodě názvů.
+        de: Wie oft die Quelle gelesen wird, ob sie gespiegelt oder einmal importiert wird und was bei gleichen Namen gilt.
+      fields: [interval, mode, conflictPolicy]
+    - title:
+        en: Cleanup and automatic merge
+        sk: Čistenie a automatické zlúčenie
+        cs: Čištění a automatické sloučení
+        de: Bereinigung und automatisches Zusammenführen
+      description:
+        en: Whether resources the source drops are removed here, and whether passing changes apply without review.
+        sk: Či sa tu odstránia prostriedky, ktoré zdroj vypustí, a či sa zmeny, ktoré prejdú kontrolami, nasadia bez schválenia.
+        cs: Zda se zde odstraní prostředky, které zdroj vypustí, a zda se změny, které projdou kontrolami, nasadí bez schválení.
+        de: Ob Ressourcen, die die Quelle entfernt, auch hier entfernt werden und ob geprüfte Änderungen ohne Freigabe gelten.
+      folded: true
+      fields: [prune, autoMerge]
+  fields:
+    name:
+      help:
+        en: Unique identifier for this synchronization job; cannot be changed later.
+        sk: Jedinečný identifikátor tejto synchronizačnej úlohy; neskôr ho nemožno zmeniť.
+        cs: Jedinečný identifikátor této synchronizační úlohy; později jej nelze změnit.
+        de: Eindeutige Kennung für diesen Synchronisationsauftrag; kann später nicht geändert werden.
+    title:
+      help:
+        en: The name people read in the list of sources, saying where it syncs from and what.
+        sk: Názov v zozname zdrojov, ktorý povie, odkiaľ a čo sa synchronizuje.
+        cs: Název v seznamu zdrojů, který řekne, odkud a co se synchronizuje.
+        de: Der Name in der Liste der Quellen, der sagt, woher und was synchronisiert wird.
+    git.url:
+      placeholder: "https://git.example.org/city/context.git"
+      help:
+        en: The address you would clone the repository from, https:// or ssh://. A private repository also needs the credential below.
+        sk: Adresa, z ktorej by ste repozitár klonovali, https:// alebo ssh://. Súkromný repozitár potrebuje aj prístupový údaj nižšie.
+        cs: Adresa, ze které byste repozitář klonovali, https:// nebo ssh://. Soukromý repozitář potřebuje i přístupový údaj níže.
+        de: Die Adresse, von der Sie das Repository klonen würden, https:// oder ssh://. Ein privates Repository braucht auch die Zugangsdaten unten.
+    git.ref:
+      help:
+        en: Branch name, tag, or specific commit hash to check out from the repository.
+        sk: Názov vetvy, značka alebo konkrétny kontrolný súčet verzie z repozitára.
+        cs: Název větve, značka nebo konkrétní kontrolní součet verze z repozitáře.
+        de: Name des Zweigs, Schlagwort oder bestimmter Versionsstand des Repositorys.
+    git.path:
+      help:
+        en: Only this folder of the repository is read, such as projects/helsinki; empty reads the whole repository.
+        sk: Číta sa len tento priečinok repozitára, ako projects/helsinki; prázdne číta celý repozitár.
+        cs: Čte se jen tato složka repozitáře, jako projects/helsinki; prázdné čte celý repozitář.
+        de: Nur dieser Ordner des Repositorys wird gelesen, wie projects/helsinki; leer liest das ganze Repository.
+    git.secretRef.name:
+      help:
+        en: Name of the stored secret holding access tokens or SSH keys for the repository.
+        sk: Názov uloženého tajomstva obsahujúceho prístupové tokeny alebo SSH kľúče k repozitáru.
+        cs: Název uloženého tajemství obsahujícího přístupové tokeny nebo SSH klíče k repozitáři.
+        de: Name des gespeicherten Secrets mit Zugriffstoken oder SSH-Schlüsseln für das Repository.
+    git.secretRef.key:
+      help:
+        en: Property key inside the secret storing the credential value.
+        sk: Kľúč vlastnosti v tajomstve, kde je uložená hodnota prihlasovacieho údaju.
+        cs: Klíč vlastnosti v tajemství, kde je uložena hodnota přihlašovacího údaje.
+        de: Schlüssel innerhalb des Secrets, unter dem die Zugangsdaten hinterlegt sind.
+    bundle.url:
+      help:
+        en: Web address of the published bundle archive to download and import.
+        sk: Webová adresa zverejneného archívu balíka na stiahnutie a import.
+        cs: Webová adresa zveřejněného archivu balíku ke stažení a importu.
+        de: Webadresse des veröffentlichten Paketarchivs zum Herunterladen und Importieren.
+    bundle.secretRef.name:
+      help:
+        en: Name of the stored secret holding credentials to download the bundle.
+        sk: Názov uloženého tajomstva obsahujúceho prihlasovacie údaje na stiahnutie balíka.
+        cs: Název uloženého tajemství obsahujícího přihlašovací údaje ke stažení balíku.
+        de: Name des gespeicherten Secrets mit Zugangsdaten zum Herunterladen des Pakets.
+    bundle.secretRef.key:
+      help:
+        en: Property key inside the secret storing the credential value.
+        sk: Kľúč vlastnosti v tajomstve, kde je uložená hodnota prihlasovacieho údaju.
+        cs: Klíč vlastnosti v tajemství, kde je uložena hodnota přihlašovacího údaje.
+        de: Schlüssel innerhalb des Secrets, unter dem die Zugangsdaten hinterlegt sind.
+    platformApi.baseUrl:
+      help:
+        en: Base web address of the remote platform instance serving the API.
+        sk: Základná webová adresa vzdialenej inštancie platformy poskytujúcej rozhranie API.
+        cs: Základní webová adresa vzdálené instance platformy poskytující rozhraní API.
+        de: Basiswebadresse der entfernten Plattforminstanz, die die API bereitstellt.
+    platformApi.project:
+      help:
+        en: Project identifier on the remote instance to copy resources from.
+        sk: Identifikátor projektu na vzdialenej inštancii, z ktorého sa kopírujú prostriedky.
+        cs: Identifikátor projektu na vzdálené instanci, ze kterého se kopírují prostředky.
+        de: Projektkennung auf der entfernten Instanz, aus der Ressourcen übernommen werden.
+    platformApi.secretRef.name:
+      help:
+        en: Name of the stored secret holding credentials to access the remote platform.
+        sk: Názov uloženého tajomstva obsahujúceho prihlasovacie údaje k vzdialenej platforme.
+        cs: Název uloženého tajemství obsahujícího přihlašovací údaje ke vzdálené platformě.
+        de: Name des gespeicherten Secrets mit Zugangsdaten für die entfernte Plattform.
+    platformApi.secretRef.key:
+      help:
+        en: Property key inside the secret storing the credential value.
+        sk: Kľúč vlastnosti v tajomstve, kde je uložená hodnota prihlasovacieho údaju.
+        cs: Klíč vlastnosti v tajemství, kde je uložena hodnota přihlašovacího údaje.
+        de: Schlüssel innerhalb des Secrets, unter dem die Zugangsdaten hinterlegt sind.
+    interval:
+      help:
+        en: How often the source is polled for updates, such as 30m, 6h, or 1d.
+        sk: Ako často sa kontrolujú aktualizácie zdroja, napríklad 30m, 6h alebo 1d.
+        cs: Jak často se kontrolují aktualizace zdroje, například 30m, 6h nebo 1d.
+        de: Wie oft die Quelle auf Aktualisierungen geprüft wird, etwa 30m, 6h oder 1d.
+    mode:
+      help:
+        en: Mirror keeps this project identical to source, while oneshot imports resources once.
+        sk: Režim zrkadlenia udržiava projekt zhodný so zdrojom, jednorazový import stiahne dáta raz.
+        cs: Režim zrcadlení udržuje projekt shodný se zdrojem, jednorázový import stáhne data jednou.
+        de: Spiegeln hält dieses Projekt identisch zur Quelle, Einmalig importiert Ressourcen nur einmal.
+    conflictPolicy:
+      help:
+        en: What to do if an incoming resource has the same name as an existing one.
+        sk: Čo urobiť, ak má prichádzajúci prostriedok rovnaký názov ako existujúci.
+        cs: Co udělat, pokud má příchozí prostředek stejný název jako existující.
+        de: Was geschehen soll, wenn eine eingehende Ressource denselben Namen wie eine vorhandene hat.
+    prune:
+      advanced: true
+      help:
+        en: When the source drops a resource, the run proposes removing it here too; a person approves the removal unless the next switch is on.
+        sk: Keď zdroj prostriedok vypustí, beh navrhne jeho odstránenie aj tu; odstránenie schvaľuje človek, ak nie je zapnutý nasledujúci prepínač.
+        cs: Když zdroj prostředek vypustí, běh navrhne jeho odstranění i zde; odstranění schvaluje člověk, pokud není zapnutý následující přepínač.
+        de: Wenn die Quelle eine Ressource entfernt, schlägt der Lauf ihr Entfernen auch hier vor; eine Person genehmigt es, außer der nächste Schalter ist an.
+    autoMerge:
+      advanced: true
+      help:
+        en: Automatically applies incoming changes when they pass all checks without manual review.
+        sk: Automaticky nasadí prichádzajúce zmeny, ak úspešne prejdú kontrolami bez nutnosti schválenia.
+        cs: Automaticky nasadí příchozí změny, pokud úspěšně projdou kontrolami bez nutnosti schválení.
+        de: Wendet eingehende Änderungen automatisch an, wenn alle Prüfungen ohne manuelle Freigabe bestanden werden.

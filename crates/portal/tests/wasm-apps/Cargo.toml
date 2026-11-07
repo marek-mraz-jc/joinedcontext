@@ -1,0 +1,29 @@
+# The Helsinki server WASM Apps (T-3346..T-3350) on the real host, `wasm-host`, against a real
+# Postgres and RustFS: each App's component built from apps/<name>/server, its migrations run as
+# the reconciler runs them, the gateway a mock holding fixture entities. Its own workspace, so
+# wasmtime never weighs on the Portal's fast lane; ci-full runs it. See src/lib.rs for the
+# variables.
+[package]
+name = "wasm-apps-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[dependencies]
+# The host at the platform commit the Apps' SDK pins: it asks the Portal for the caller and their
+# roles (T-3825) and reaches the App's own Endpoint alone (AP-147).
+wasm-host = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "ef03418872f29c10bf895fdf84aaf899e651f205" }
+bytes = "1"
+hex = "0.4"
+http = "1"
+http-body-util = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres"] }
+time = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+wiremock = "0.6"
+
+[workspace]

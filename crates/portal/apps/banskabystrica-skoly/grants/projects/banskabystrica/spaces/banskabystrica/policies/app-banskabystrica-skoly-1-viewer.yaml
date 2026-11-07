@@ -1,0 +1,39 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-banskabystrica-skoly-1-viewer
+  namespace: banskabystrica
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:banskabystrica/app-banskabystrica-skoly/viewer
+    kind: role
+  assigner: did:web:banskabystrica.sk
+  contextSpaceRef:
+    kind: ContextSpace
+    name: banskabystrica-verejne
+  information:
+  - entities:
+    - type: Organization
+    propertyNames:
+    - name
+    - address
+    - pupilCount
+    - teachingStaff
+    - nonTeachingStaff
+    - annualBudget
+    - budgetYear
+    - location
+    relationshipNames:
+    - name
+    - address
+    - pupilCount
+    - teachingStaff
+    - nonTeachingStaff
+    - annualBudget
+    - budgetYear
+    - location
+  operations:
+  - queryEntity
+  - retrieveEntity

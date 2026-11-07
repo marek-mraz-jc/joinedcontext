@@ -1,0 +1,13 @@
+# T-2733: the pipeline workflow as one conversation (Testing/07 §3, AG-87).
+workflow: pipeline
+as: steward
+says:
+  - "How is the citybikes-gbfs pipeline doing?"
+expect:
+  calls:
+    - tool: jc_pipeline_metrics
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: how is the citybikes-gbfs pipeline doing?"

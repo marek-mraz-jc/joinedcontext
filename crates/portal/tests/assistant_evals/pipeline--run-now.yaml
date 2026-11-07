@@ -1,0 +1,17 @@
+# T-6482: a queued pipeline runs now after the person's confirmation (live walk T-5962, S-24,
+# AG-63). The later line of `says` answers the question the Portal asks.
+workflow: pipeline
+as: steward
+says:
+  - "Run pipeline traffic-messages now and tell me the result."
+  - "run:traffic-messages"
+expect:
+  calls:
+    - tool: jc_pipeline_run
+      input:
+        name: traffic-messages
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: run pipeline traffic-messages now."

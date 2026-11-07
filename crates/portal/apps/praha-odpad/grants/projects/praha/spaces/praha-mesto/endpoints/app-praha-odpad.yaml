@@ -1,0 +1,27 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-praha-odpad
+  namespace: praha
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    cs: Tříděný odpad Prahy
+    en: Prague recycling
+spec:
+  allowedProjects:
+  - praha
+  audience: project-list
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: praha-mesto
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - ogc-features
+  roles:
+  - name: viewer
+    subjects:
+    - group: praha-odpad-viewer
+  slug: wn4ry2bxc6qpz7tmk3jdh5vae2

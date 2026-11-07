@@ -1,0 +1,95 @@
+/*
+ * The Žilina indicators on the SDK's own tokens (SDK-04). Its own look (T-2779): the population is
+ * a wide headline card, the others a grid of cards one to three across; no card carries a colour
+ * that would read as a judgement (Development/13 §3).
+ */
+.subtitle,
+.source,
+.note,
+.question,
+.window,
+.computed {
+  color: var(--jc-color-text-muted, #555);
+}
+
+.failed {
+  color: var(--jc-color-danger, #b42318);
+}
+
+.cards {
+  list-style: none;
+  margin: 0 0 var(--jc-space-4, 1rem);
+  padding: 0;
+  display: grid;
+  gap: var(--jc-space-4, 1rem);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr));
+}
+
+.cards .headline {
+  grid-column: 1 / -1;
+}
+
+.card {
+  height: 100%;
+  box-sizing: border-box;
+  padding: var(--jc-space-4, 1rem);
+  border: 1px solid var(--jc-color-border, #d0d0d0);
+  border-radius: var(--jc-radius-md, 0.5rem);
+  background: var(--jc-color-surface, #fff);
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-2, 0.5rem);
+}
+
+.card h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.card p {
+  margin: 0;
+}
+
+.value {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.headline .value {
+  font-size: clamp(2.25rem, 6vw, 3.5rem);
+}
+
+.unit {
+  font-size: 1rem;
+  font-weight: 400;
+}
+
+.missing {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--jc-color-text-muted, #555);
+}
+
+.card details {
+  margin-top: auto;
+}
+
+.card summary {
+  cursor: pointer;
+}
+
+/* A card's title opens the indicator in the entity panel (SDK-40): it reads as the title, and says it is a button. */
+.opens {
+  font: inherit;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}

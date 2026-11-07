@@ -1,0 +1,14 @@
+# T-4863: the pipeline-access workflow (ask another space's owner for a pipeline's read, approve,
+# decline, revoke) as one conversation (Testing/07 §3, AG-87).
+workflow: pipeline-access
+as: steward
+says:
+  - "Ask the owner of the traffic space to let our air-quality pipeline read it, then approve that request."
+expect:
+  calls: []
+  outcome: person-only
+  why: "a grant into another space is its owner's decision on their data (PL-91), and the request is a person's ask for it with a reason; no assistant tool files or decides access"
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: ask the owner of the traffic space to let our air-quality pipeline read it."

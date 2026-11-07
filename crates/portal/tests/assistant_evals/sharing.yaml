@@ -1,0 +1,13 @@
+# T-2733: the sharing workflow as one conversation (Testing/07 §3, AG-87).
+workflow: sharing
+as: steward
+says:
+  - "Which spaces of other projects does this project read, and who reads ours?"
+expect:
+  calls:
+    - tool: jc_federation_graph
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: which spaces of other projects does this project read, and who reads ours?"

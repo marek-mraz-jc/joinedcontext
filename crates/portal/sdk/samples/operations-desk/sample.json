@@ -1,0 +1,25 @@
+{
+  "name": "operations-desk",
+  "title": "Operations desk",
+  "purpose": "Let staff work through a queue: a dense table of open items with filters, the chosen item beside it, and bulk actions for the people allowed to act.",
+  "archetype": "operations-desk",
+  "audience": "staff",
+  "layout": "desk",
+  "keywords": ["desk", "queue", "operations", "operator", "dispatcher", "incident", "incidents", "alert", "alerts", "ticket", "tickets", "triage", "acknowledge", "bulk", "staff"],
+  "ready": "Alerts desk",
+  "dataNeeds": [
+    {
+      "types": ["Alert"],
+      "attrs": ["name", "category", "severity", "status", "district", "dateIssued", "description"],
+      "operations": ["queryEntity"]
+    },
+    {
+      "roles": ["editor"],
+      "types": ["Alert"],
+      "attrs": ["status"],
+      "operations": ["updateAttrs"]
+    }
+  ],
+  "access": "Everyone signed in reads the queue; only the editor role may change an alert's status, and only that attribute.",
+  "sdk": ["useEntities", "useFilters", "useAccess", "useSave", "format", "displayName", "Page", "Header", "Split", "EntityTable", "SearchBox", "SelectFilter", "FilterBar"]
+}

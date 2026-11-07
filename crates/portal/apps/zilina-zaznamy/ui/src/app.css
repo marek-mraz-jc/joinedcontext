@@ -1,0 +1,104 @@
+/*
+ * The Žilina records on the SDK's own tokens (SDK-04). Its own look (T-2779): the datasets are a
+ * column of described buttons on the left and the grid fills the rest; on a phone the buttons are
+ * a wrapping row above the grid and the descriptions stay under the chosen one's heading.
+ */
+.subtitle {
+  color: var(--jc-color-text-muted, #555);
+}
+
+.source,
+.note,
+.about {
+  color: var(--jc-color-text-muted, #555);
+}
+
+.failed {
+  color: var(--jc-color-danger, #b42318);
+}
+
+.screen {
+  display: grid;
+  gap: var(--jc-space-4, 1rem);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 64rem) {
+  .screen {
+    grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-2, 0.5rem);
+}
+
+nav button {
+  font: inherit;
+  text-align: left;
+  padding: var(--jc-space-2, 0.5rem) var(--jc-space-3, 0.75rem);
+  border: 1px solid var(--jc-color-border, #8a8a8a);
+  border-radius: var(--jc-radius-md, 0.5rem);
+  background: var(--jc-color-surface, #fff);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-1, 0.25rem);
+}
+
+nav button[aria-current="true"] {
+  background: var(--jc-color-surface-muted, #eef3fa);
+  border-color: var(--jc-color-primary, #1f5fa8);
+}
+
+nav .name {
+  font-weight: 600;
+}
+
+/* On a phone the list is a row of names; what each holds is read under the chosen one's heading. */
+nav .about {
+  display: none;
+  font-size: 0.875rem;
+}
+
+@media (min-width: 64rem) {
+  nav ul {
+    flex-direction: column;
+    flex-wrap: nowrap;
+  }
+
+  nav button {
+    width: 100%;
+  }
+
+  nav .about {
+    display: block;
+  }
+}
+
+.dataset {
+  min-width: 0;
+}
+
+.dataset h2 {
+  margin-top: 0;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jc-space-3, 0.75rem);
+  margin-bottom: var(--jc-space-2, 0.5rem);
+}
+
+.actions button {
+  font: inherit;
+  padding: var(--jc-space-2, 0.5rem) var(--jc-space-3, 0.75rem);
+}

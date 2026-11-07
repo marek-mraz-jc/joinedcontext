@@ -1,0 +1,24 @@
+{
+  "dataProvider": "dataProvider",
+  "id": "urn:ngsi-ld:Article:joinedcontext.com:example:1",
+  "identifier": "identifier",
+  "isPartOf": "isPartOf",
+  "license": "license",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "name": {
+    "en": "name"
+  },
+  "observedAt": "2026-01-01T00:00:00Z",
+  "publisher": "publisher",
+  "source": "source",
+  "type": "Article",
+  "url": "url",
+  "workType": "workType",
+  "yearPublished": 1900
+}

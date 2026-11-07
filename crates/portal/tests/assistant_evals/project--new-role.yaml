@@ -1,0 +1,26 @@
+# T-6489: a new Role is drafted and its form opens, the person proposes (live walk T-5962, S-28,
+# PF-68, AG-77). T-6534 (walk T-6490 S-28): "no writes" drafts read rules only; running a
+# pipeline needs propose and approve on Pipeline, both writes, so the assistant says so and asks
+# instead of granting them (change::wider_than_asked sends such a draft back).
+workflow: project
+as: steward
+says:
+  - "Create a role Analyst: read all Endpoints, run pipelines, no writes."
+expect:
+  calls:
+    - tool: change_resource
+      input:
+        kind: Role
+        name: analyst
+        create: true
+        patch:
+          spec:
+            rules:
+              - kinds: [Endpoint]
+                verbs: [read]
+  outcome: form
+  why: "a read-only Role; the answer names propose and approve on Pipeline for running and asks"
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: create a role Analyst."

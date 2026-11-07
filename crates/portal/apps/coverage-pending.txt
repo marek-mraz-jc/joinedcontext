@@ -1,0 +1,3 @@
+# Apps the coverage gate measures but does not yet fail (T-3373), one per line: the App and the task
+# that brings it to green and removes its line in the same commit. The list only shrinks: the
+# gate refuses a new line, and fails a listed App that already passes. Thresholds never move.

@@ -1,0 +1,19 @@
+{
+  "name": "calendar-timeline",
+  "title": "Calendar and timeline",
+  "purpose": "Show residents and staff what is happening when: events on a month and a week, and a timeline of what is coming first, with the chosen event read beside it.",
+  "archetype": "calendar",
+  "audience": "residents",
+  "layout": "tabs-with-detail",
+  "keywords": ["calendar", "event", "events", "timeline", "schedule", "agenda", "week", "month", "date", "dates", "booking", "bookings", "meeting", "meetings", "programme", "program", "whats-on", "upcoming"],
+  "ready": "What's on",
+  "dataNeeds": [
+    {
+      "types": ["Event"],
+      "attrs": ["name", "category", "venue", "description", "startDate", "endDate"],
+      "operations": ["queryEntity"]
+    }
+  ],
+  "access": "Read-only; the events may be public.",
+  "sdk": ["useEntities", "displayName", "Page", "Header", "Split", "Tabs"]
+}

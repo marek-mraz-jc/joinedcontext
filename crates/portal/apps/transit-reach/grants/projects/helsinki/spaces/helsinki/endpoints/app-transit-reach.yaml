@@ -1,0 +1,28 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-transit-reach
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    en: How far can I get by transit
+    fi: Kuinka pitkälle pääsen joukkoliikenteellä
+spec:
+  audience: public
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - ogc-features
+  roles:
+  - name: viewer
+    subjects:
+    - group: transit-reach-viewer
+  - name: steward
+    subjects:
+    - group: transit-reach-steward
+  slug: oymmo5juex3inoe3ccvtp5bwue

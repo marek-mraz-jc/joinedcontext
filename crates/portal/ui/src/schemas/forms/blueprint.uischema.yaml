@@ -1,0 +1,100 @@
+# Default form arrangement for Blueprint (UI-02, T-1537).
+# A template the organization offers in the Flows gallery; examples are a neutral weather feed (T-2752).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: blueprint
+spec:
+  for: Blueprint
+  guide: User-Guide/12-managing-organization-and-projects
+  about:
+    en: >-
+      A blueprint is a template the organization offers in the Flows gallery: a form of parameters
+      and the manifests it expands into. A person who runs it fills the form, and the expanded
+      manifests are proposed as one change in the lane the risk class names.
+    sk: >-
+      Šablóna je predloha, ktorú organizácia ponúka v galérii tokov: formulár parametrov a
+      manifesty, na ktoré sa rozvinie. Kto ju spustí, vyplní formulár a rozvinuté manifesty sa
+      navrhnú ako jedna zmena v pruhu, ktorý určuje trieda rizika.
+    cs: >-
+      Šablona je předloha, kterou organizace nabízí v galerii toků: formulář parametrů a manifesty,
+      na které se rozvine. Kdo ji spustí, vyplní formulář a rozvinuté manifesty se navrhnou jako
+      jedna změna v pruhu, který určuje třída rizika.
+    de: >-
+      Eine Vorlage bietet die Organisation in der Flows-Galerie an: ein Formular mit Parametern und
+      die Manifeste, zu denen sie sich entfaltet. Wer sie ausführt, füllt das Formular, und die
+      Manifeste werden als eine Änderung in der Spur der Risikoklasse vorgeschlagen.
+  order: [name, version, category, riskClass, allowedRoles, parameterSchema, templates]
+  groups:
+    - title:
+        en: In the gallery
+        sk: V galérii
+        cs: V galerii
+        de: In der Galerie
+      description:
+        en: How the blueprint is listed, who may run it, and how its change is reviewed.
+        sk: Ako je šablóna uvedená, kto ju smie spustiť a ako sa posudzuje jej zmena.
+        cs: Jak je šablona uvedena, kdo ji smí spustit a jak se posuzuje její změna.
+        de: Wie die Vorlage erscheint, wer sie ausführen darf und wie ihre Änderung geprüft wird.
+      fields: [name, version, category, riskClass, allowedRoles]
+    - title:
+        en: Form and templates
+        sk: Formulár a šablóny
+        cs: Formulář a šablony
+        de: Formular und Vorlagen
+      description:
+        en: The parameters a person fills, and the manifests the blueprint expands into.
+        sk: Parametre, ktoré človek vyplní, a manifesty, na ktoré sa šablóna rozvinie.
+        cs: Parametry, které člověk vyplní, a manifesty, na které se šablona rozvine.
+        de: Die Parameter, die eine Person ausfüllt, und die Manifeste, zu denen die Vorlage wird.
+      fields: [parameterSchema, templates]
+  fields:
+    name:
+      help:
+        en: The short name the blueprint is filed under; the gallery and every run of it use this name.
+        sk: Krátky názov, pod ktorým je šablóna uložená; galéria a každé jej spustenie ho používajú.
+        cs: Krátký název, pod nímž je šablona uložena; galerie a každé její spuštění jej používají.
+        de: Der kurze Name der Vorlage; die Galerie und jede Ausführung verwenden ihn.
+    version:
+      help:
+        en: The version a run pins, as major.minor.patch; raise it whenever the templates change.
+        sk: Verzia, ktorú spustenie pripne, ako major.minor.patch; zvýšte ju pri každej zmene šablón.
+        cs: Verze, kterou spuštění připne, jako major.minor.patch; zvyšte ji při každé změně šablon.
+        de: Die Version, die eine Ausführung festhält, als Major.Minor.Patch; bei jeder Vorlagenänderung erhöhen.
+    category:
+      help:
+        en: The gallery section the blueprint is listed under; left empty, it is listed with the rest.
+        sk: Sekcia galérie, v ktorej je šablóna uvedená; ak je prázdne, je uvedená so zvyškom.
+        cs: Sekce galerie, v níž je šablona uvedena; pokud je prázdné, je uvedena se zbytkem.
+        de: Der Galerieabschnitt der Vorlage; leer gelassen, erscheint sie bei den übrigen.
+    riskClass:
+      help:
+        en: How the change a run proposes is reviewed; red asks the approver to type the name back.
+        sk: Ako sa posudzuje zmena, ktorú spustenie navrhne; červená žiada schvaľovateľa napísať názov.
+        cs: Jak se posuzuje změna, kterou spuštění navrhne; červená žádá schvalovatele napsat název.
+        de: Wie die vorgeschlagene Änderung geprüft wird; Rot verlangt, dass die freigebende Person den Namen eintippt.
+    allowedRoles:
+      help:
+        en: The roles whose holders see the blueprint in the gallery and may run it; at least one.
+        sk: Roly, ktorých držitelia vidia šablónu v galérii a smú ju spustiť; aspoň jedna.
+        cs: Role, jejichž držitelé vidí šablonu v galerii a smějí ji spustit; alespoň jedna.
+        de: Die Rollen, deren Inhaber die Vorlage in der Galerie sehen und ausführen dürfen; mindestens eine.
+    parameterSchema:
+      placeholder: '{"type": "object", "required": ["city"], "properties": {"city": {"type": "string"}}}'
+      help:
+        en: A JSON Schema of type object; each property is a field of the form a person fills to run it.
+        sk: JSON Schema typu object; každá vlastnosť je pole formulára, ktoré človek vyplní pri spustení.
+        cs: JSON Schema typu object; každá vlastnost je pole formuláře, které člověk vyplní při spuštění.
+        de: Ein JSON Schema vom Typ object; jede Eigenschaft ist ein Feld des Formulars zum Ausführen.
+    templates[].name:
+      help:
+        en: The name of the manifest this template renders; two templates of a blueprint cannot share one.
+        sk: Názov manifestu, ktorý šablóna vykreslí; dve šablóny jednej predlohy ho nemôžu zdieľať.
+        cs: Název manifestu, který šablona vykreslí; dvě šablony jedné předlohy jej nemohou sdílet.
+        de: Der Name des Manifests, das diese Vorlage erzeugt; zwei Vorlagen teilen ihn nicht.
+    templates[].template:
+      help:
+        en: The manifest as text, with the parameters written in double braces where their values go.
+        sk: Manifest ako text, s parametrami v dvojitých zátvorkách tam, kam patria ich hodnoty.
+        cs: Manifest jako text, s parametry ve dvojitých závorkách tam, kam patří jejich hodnoty.
+        de: Das Manifest als Text, die Parameter in doppelten geschweiften Klammern an ihrer Stelle.

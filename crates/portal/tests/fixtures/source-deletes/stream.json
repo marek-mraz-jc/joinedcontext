@@ -1,0 +1,104 @@
+{
+  "input": {
+    "generate": {
+      "count": 1,
+      "interval": "",
+      "mapping": "root = \"W3siaWRzIjpbInVybjp4OjAiLCJ1cm46eDoxIiwidXJuOng6MiIsInVybjp4OjMiLCJ1cm46eDo0IiwidXJuOng6NSIsInVybjp4OjYiLCJ1cm46eDo3IiwidXJuOng6OCIsInVybjp4OjkiLCJ1cm46eDoxMCIsInVybjp4OjExIiwidXJuOng6MTIiLCJ1cm46eDoxMyIsInVybjp4OjE0IiwidXJuOng6MTUiLCJ1cm46eDoxNiIsInVybjp4OjE3IiwidXJuOng6MTgiLCJ1cm46eDoxOSIsInVybjp4OjIwIiwidXJuOng6MjEiLCJ1cm46eDoyMiIsInVybjp4OjIzIiwidXJuOng6MjQiLCJ1cm46eDoyNSIsInVybjp4OjI2IiwidXJuOng6MjciLCJ1cm46eDoyOCIsInVybjp4OjI5IiwidXJuOng6MzAiLCJ1cm46eDozMSIsInVybjp4OjMyIiwidXJuOng6MzMiLCJ1cm46eDozNCIsInVybjp4OjM1IiwidXJuOng6MzYiLCJ1cm46eDozNyIsInVybjp4OjM4IiwidXJuOng6MzkiLCJ1cm46eDo0MCIsInVybjp4OjQxIiwidXJuOng6NDIiLCJ1cm46eDo0MyIsInVybjp4OjQ0IiwidXJuOng6NDUiLCJ1cm46eDo0NiIsInVybjp4OjQ3IiwidXJuOng6NDgiLCJ1cm46eDo0OSIsInVybjp4OjUwIiwidXJuOng6NTEiLCJ1cm46eDo1MiIsInVybjp4OjUzIiwidXJuOng6NTQiLCJ1cm46eDo1NSIsInVybjp4OjU2IiwidXJuOng6NTciLCJ1cm46eDo1OCIsInVybjp4OjU5IiwidXJuOng6NjAiLCJ1cm46eDo2MSIsInVybjp4OjYyIiwidXJuOng6NjMiLCJ1cm46eDo2NCIsInVybjp4OjY1IiwidXJuOng6NjYiLCJ1cm46eDo2NyIsInVybjp4OjY4IiwidXJuOng6NjkiLCJ1cm46eDo3MCIsInVybjp4OjcxIiwidXJuOng6NzIiLCJ1cm46eDo3MyIsInVybjp4Ojc0IiwidXJuOng6NzUiLCJ1cm46eDo3NiIsInVybjp4Ojc3IiwidXJuOng6NzgiLCJ1cm46eDo3OSIsInVybjp4OjgwIiwidXJuOng6ODEiLCJ1cm46eDo4MiIsInVybjp4OjgzIiwidXJuOng6ODQiLCJ1cm46eDo4NSIsInVybjp4Ojg2IiwidXJuOng6ODciLCJ1cm46eDo4OCIsInVybjp4Ojg5IiwidXJuOng6OTAiLCJ1cm46eDo5MSIsInVybjp4OjkyIiwidXJuOng6OTMiLCJ1cm46eDo5NCIsInVybjp4Ojk1IiwidXJuOng6OTYiLCJ1cm46eDo5NyIsInVybjp4Ojk4IiwidXJuOng6OTkiXSwicnVuIjoiMjAyNi0xMC0yMFQwNTowMDowMFoiLCJ3cm90ZSI6WzE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDBdfSx7ImlkcyI6WyJ1cm46eDoxMDAiLCJ1cm46eDoxMDEiLCJ1cm46eDoxMDIiLCJ1cm46eDoxMDMiLCJ1cm46eDoxMDQiLCJ1cm46eDoxMDUiLCJ1cm46eDoxMDYiLCJ1cm46eDoxMDciLCJ1cm46eDoxMDgiLCJ1cm46eDoxMDkiLCJ1cm46eDoxMTAiLCJ1cm46eDoxMTEiLCJ1cm46eDoxMTIiLCJ1cm46eDoxMTMiLCJ1cm46eDoxMTQiLCJ1cm46eDoxMTUiLCJ1cm46eDoxMTYiLCJ1cm46eDoxMTciLCJ1cm46eDoxMTgiLCJ1cm46eDoxMTkiLCJ1cm46eDoxMjAiLCJ1cm46eDoxMjEiLCJ1cm46eDoxMjIiLCJ1cm46eDoxMjMiLCJ1cm46eDoxMjQiLCJ1cm46eDoxMjUiLCJ1cm46eDoxMjYiLCJ1cm46eDoxMjciLCJ1cm46eDoxMjgiLCJ1cm46eDoxMjkiLCJ1cm46eDoxMzAiLCJ1cm46eDoxMzEiLCJ1cm46eDoxMzIiLCJ1cm46eDoxMzMiLCJ1cm46eDoxMzQiLCJ1cm46eDoxMzUiLCJ1cm46eDoxMzYiLCJ1cm46eDoxMzciLCJ1cm46eDoxMzgiLCJ1cm46eDoxMzkiLCJ1cm46eDoxNDAiLCJ1cm46eDoxNDEiLCJ1cm46eDoxNDIiLCJ1cm46eDoxNDMiLCJ1cm46eDoxNDQiLCJ1cm46eDoxNDUiLCJ1cm46eDoxNDYiLCJ1cm46eDoxNDciLCJ1cm46eDoxNDgiLCJ1cm46eDoxNDkiLCJ1cm46eDoxNTAiLCJ1cm46eDoxNTEiLCJ1cm46eDoxNTIiLCJ1cm46eDoxNTMiLCJ1cm46eDoxNTQiLCJ1cm46eDoxNTUiLCJ1cm46eDoxNTYiLCJ1cm46eDoxNTciLCJ1cm46eDoxNTgiLCJ1cm46eDoxNTkiXSwicnVuIjoiMjAyNi0xMC0yMFQwNTowMDowMFoiLCJ3cm90ZSI6WzE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwLDE3OTIwMDAwMDAsMTc5MjAwMDAwMCwxNzkyMDAwMDAwXX1d\".decode(\"base64\").parse_json()"
+    }
+  },
+  "output": {
+    "http_client": {
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "oauth2": {
+        "client_key": "helsinki-pipelines",
+        "client_secret": "${JC_CLIENT_SECRET_HELSINKI}",
+        "enabled": true,
+        "token_url": "${JC_TOKEN_URL}"
+      },
+      "timeout": "10s",
+      "url": "http://127.0.0.1:18089/report",
+      "verb": "POST"
+    }
+  },
+  "pipeline": {
+    "processors": [
+      {
+        "unarchive": {
+          "format": "json_array"
+        }
+      },
+      {
+        "try": [
+          {
+            "branch": {
+              "processors": [
+                {
+                  "http": {
+                    "headers": {
+                      "Accept": "application/json",
+                      "Content-Type": "application/json"
+                    },
+                    "oauth2": {
+                      "client_key": "helsinki-pipelines",
+                      "client_secret": "${JC_CLIENT_SECRET_HELSINKI}",
+                      "enabled": true,
+                      "token_url": "${JC_TOKEN_URL}"
+                    },
+                    "retries": 1,
+                    "timeout": "30s",
+                    "url": "${JC_GATEWAY_URL}/api/endpoint/ep-slug/ngsi-ld/v1/entityOperations/query?options=sysAttrs,keyValues&limit=100",
+                    "verb": "POST"
+                  }
+                }
+              ],
+              "request_map": "root = {\"type\": \"Query\", \"entities\": [{\"type\": \"*\", \"id\": this.ids}]}",
+              "result_map": "root.found = this.map_each(e -> {\"id\": e.id.or(\"\"), \"at\": e.modifiedAt.or(\"\").ts_unix().catch(0)})"
+            }
+          },
+          {
+            "mapping": "let found = this.found\nlet wrote = this.wrote\nlet edited = this.ids.enumerated().filter(p -> $found.any(f -> f.id == p.value && f.at > $wrote.index(p.index).or(0) + 5)).map_each(p -> p.value)\nroot = this.without(\"found\", \"wrote\")\nroot.edited = $edited\nroot.ids = this.ids.filter(i -> !$edited.contains(i))"
+          },
+          {
+            "branch": {
+              "processors": [
+                {
+                  "http": {
+                    "headers": {
+                      "Accept": "application/json",
+                      "Content-Type": "application/json",
+                      "JC-Reason": "source-event%3A%20pipeline%20registry%20run%202026-10-20T05%3A00%3A00Z"
+                    },
+                    "oauth2": {
+                      "client_key": "helsinki-pipelines",
+                      "client_secret": "${JC_CLIENT_SECRET_HELSINKI}",
+                      "enabled": true,
+                      "token_url": "${JC_TOKEN_URL}"
+                    },
+                    "retries": 1,
+                    "timeout": "30s",
+                    "url": "${JC_GATEWAY_URL}/api/endpoint/ep-slug/ngsi-ld/v1/entityOperations/delete",
+                    "verb": "POST"
+                  }
+                }
+              ],
+              "request_map": "root = if this.ids.length() == 0 { deleted() } else { this.ids }",
+              "result_map": "root.answer = if content().length() == 0 { null } else { this }"
+            }
+          },
+          {
+            "mapping": "let errors = this.answer.errors.or([])\nroot.run = this.run\nroot.deleted = if this.answer == null { this.ids } else { this.answer.success.or([]) }\nroot.gone = $errors.filter(e -> e.error.status.or(0) == 404 || e.error.type.or(\"\").string().has_suffix(\"ResourceNotFound\")).map_each(e -> e.entityId)\nroot.failed = $errors.filter(e -> !(e.error.status.or(0) == 404 || e.error.type.or(\"\").string().has_suffix(\"ResourceNotFound\"))).map_each(e -> {\"id\": e.entityId, \"message\": e.error.title.or(e.error.detail).or(\"refused\").string()})\nroot.edited = this.edited"
+          }
+        ]
+      },
+      {
+        "catch": [
+          {
+            "mapping": "root = {\"run\": this.run, \"deleted\": [], \"gone\": [], \"edited\": [], \"failed\": this.ids.map_each(id -> {\"id\": id, \"message\": error().or(\"the gateway did not answer\")})}"
+          }
+        ]
+      }
+    ]
+  }
+}

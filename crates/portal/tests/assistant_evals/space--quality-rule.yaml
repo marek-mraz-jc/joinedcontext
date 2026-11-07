@@ -1,0 +1,16 @@
+# T-6489: a quality rule is a member of the space, not of the model (live walk T-5962, S-35, DM-87).
+workflow: space
+as: steward
+says:
+  - "Add a quality rule: count of BikeCounter in space air must be >= 0."
+expect:
+  calls:
+    - tool: change_resource
+      input:
+        kind: ContextSpace
+        name: air
+  outcome: form
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: add a quality rule to space air."

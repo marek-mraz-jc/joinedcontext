@@ -1,0 +1,13 @@
+# T-2733: the workspace workflow as one conversation (Testing/07 §3, AG-87).
+workflow: workspace
+as: steward
+says:
+  - "Start a copy of this project called eval-copy so I can try a change."
+expect:
+  calls:
+    - tool: jc_workspace_open
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: start a copy of this project called eval-copy so I can try a change."

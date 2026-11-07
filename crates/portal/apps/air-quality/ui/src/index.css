@@ -1,0 +1,166 @@
+/* The columns, the heading and the cards are the SDK's layout primitives (T-2825, SDK-12); what
+   is left here is the page's own gutter, the record form and the muted lines. */
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+
+/* The page follows the reader's colour scheme; the SDK's cards take their colours from these. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --jc-color-card: #1e1e22;
+    --jc-color-line: #3a3a3a;
+  }
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  padding: var(--jc-gutter, 1rem);
+}
+
+.identity {
+  font-size: 0.875rem;
+  opacity: 0.75;
+  margin: 0 0 0.75rem;
+}
+
+/* The station cards' own lists; the SDK's panel lays out its own. */
+.jc-card dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0.5rem 0;
+}
+
+.jc-card dt {
+  opacity: 0.75;
+}
+
+.jc-card dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+[role="alert"] {
+  color: #b3261e;
+}
+
+/* The same red on the dark card is unreadable (axe color-contrast): a lighter one of the hue. */
+@media (prefers-color-scheme: dark) {
+  [role="alert"] {
+    color: #ff8a80;
+  }
+}
+
+/* One label above its field, the buttons in a row that wraps, every control a finger's size. */
+.note {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0.75rem;
+}
+
+.note label {
+  margin-top: 0.5rem;
+}
+
+.note :is(input, textarea) {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--jc-target, 2.75rem);
+  font: inherit;
+}
+
+.note-actions,
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+button {
+  min-height: var(--jc-target, 2.75rem);
+  padding: 0 1rem;
+  font: inherit;
+}
+
+/* The map, its legend and the chart (T-2925): colours come from the index scale and the token
+   palette, the layout from the SDK's cards. */
+.map {
+  height: clamp(260px, 45vh, 420px);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.legend,
+.stations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0 0;
+  font-size: 0.875rem;
+}
+
+.stations button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 44px;
+  padding: 0 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--jc-color-line, #d0d7de);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.stations button[aria-pressed="true"] {
+  border-color: var(--jc-color-accent, #0f766e);
+  box-shadow: inset 0 0 0 1px var(--jc-color-accent, #0f766e);
+}
+
+.swatch {
+  display: inline-block;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
+.chart {
+  margin: 0;
+}
+
+.chart svg {
+  width: 100%;
+  height: auto;
+}
+
+.chart .grid {
+  stroke: var(--jc-color-line, #d0d7de);
+  stroke-width: 1;
+}
+
+.chart .limit {
+  stroke-dasharray: 6 4;
+  stroke-width: 1.5;
+}
+
+.chart .axis {
+  font-size: 11px;
+  fill: currentColor;
+  opacity: 0.7;
+}
+
+/* MapLibre's attribution is a link inside a line of text, told apart by colour alone
+   (axe link-in-text-block, T-3045); the element is the library's DOM, so it is dressed here. */
+.maplibregl-ctrl-attrib a {
+  text-decoration: underline;
+}

@@ -1,0 +1,298 @@
+/*
+ * The screen, on the SDK's own tokens (SDK-04): nothing here picks a colour of its own except
+ * the three states, which take the platform's semantic tokens so they follow the theme and the
+ * high-contrast setting with everything else.
+ *
+ * The columns are the SDK's Page and Grid in its shell (T-2825, SDK-39): one card across on a phone, up to four
+ * on a wall; the card is the unit that wraps, never the number and its unit.
+ */
+.jc-main {
+  padding: var(--jc-gutter, 1rem);
+}
+
+.note {
+  color: var(--jc-color-text-muted, #555);
+  margin: 0 0 var(--jc-space-3, 0.75rem);
+}
+
+/* Each body carries its own colour, `--body`, set from the design tokens by the component (AP-123):
+   the region's sections, bars and headline cards in one, the city's in another. */
+.body {
+  --body: var(--jc-color-accent, #0f766e);
+  margin-block-end: var(--jc-space-8, 2rem);
+}
+
+.body h2 {
+  margin-block: var(--jc-space-4, 1rem) var(--jc-space-2, 0.5rem);
+  padding: var(--jc-space-2, 0.5rem) var(--jc-space-3, 0.75rem);
+  border-inline-start: 6px solid var(--body);
+  background: color-mix(in srgb, var(--body) 10%, var(--jc-color-surface, #fff));
+  border-radius: var(--jc-radius-sm, 4px);
+}
+
+.group h3 {
+  margin-block: var(--jc-space-4, 1rem) var(--jc-space-2, 0.5rem);
+  color: color-mix(in srgb, var(--body) 75%, var(--jc-color-ink, #0f172a));
+}
+
+/* The bar chart of one indicator's districts: label, bar, value on one row on a wide screen, the
+   label above its bar on a phone, so neither the name nor the number is ever cut. */
+.district-chart {
+  margin: 0 0 var(--jc-space-4, 1rem);
+}
+
+.district-chart figcaption {
+  font-size: 0.875rem;
+  color: var(--jc-color-muted, #64748b);
+  margin-block-end: var(--jc-space-2, 0.5rem);
+}
+
+.bars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--jc-space-1, 0.25rem);
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 14rem) 1fr auto;
+  align-items: center;
+  gap: var(--jc-space-2, 0.5rem);
+  font-size: 0.875rem;
+}
+
+.bar-track {
+  height: 1.1rem;
+  background: var(--jc-color-card, #f8fafc);
+  border-radius: var(--jc-radius-sm, 4px);
+  overflow: hidden;
+}
+
+.bar {
+  display: block;
+  height: 100%;
+  width: calc(var(--share, 0) * 100%);
+  background: var(--bar, var(--body));
+  border-radius: var(--jc-radius-sm, 4px);
+}
+
+.bar-value {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A district's name is the keyboard's way to pick it on the map (T-2933): a button that reads as
+   the label, and the picked row drawn marked in the body's colour. */
+button.bar-label {
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  background: none;
+  border: 0;
+  padding: 0.125rem 0;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+.bar-row.marked .bar-label {
+  font-weight: 700;
+}
+
+.bar-row.marked .bar-track {
+  outline: 2px solid var(--body);
+  outline-offset: 1px;
+}
+
+/* The district map: taller than the SDK default on a wide screen, shorter on a phone, the legend under it. */
+.map-panel {
+  margin: 0 0 var(--jc-space-6, 1.5rem);
+}
+
+.map-pick select {
+  font: inherit;
+  max-width: 100%;
+}
+
+.district-map {
+  margin: 0;
+}
+
+.district-map .map {
+  height: clamp(16rem, 50vh, 28rem);
+  border-radius: var(--jc-radius-sm, 4px);
+  overflow: hidden;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jc-space-2, 0.5rem);
+  font-size: 0.875rem;
+  margin-block-start: var(--jc-space-2, 0.5rem);
+}
+
+.legend-ramp {
+  display: inline-block;
+  width: min(12rem, 40vw);
+  height: 0.75rem;
+  border-radius: var(--jc-radius-sm, 4px);
+}
+
+.legend-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.legend-none {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--jc-space-1, 0.25rem);
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 2px;
+}
+
+@media (max-width: 40rem) {
+  .bar-row {
+    grid-template-columns: 1fr auto;
+  }
+  .bar-label {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Border-box: with the padding and the border outside a full-height box, a card ran 26 px into the
+   row under it. */
+.card {
+  box-sizing: border-box;
+  border: 1px solid var(--jc-color-border, #d0d0d0);
+  border-block-start: 4px solid var(--body);
+  border-radius: var(--jc-radius-md, 0.5rem);
+  padding: var(--jc-space-3, 0.75rem);
+  background: var(--jc-color-surface, #fff);
+  height: 100%;
+}
+
+/* The whole region or the whole city: the headline number of its indicator. */
+.card.whole {
+  background: color-mix(in srgb, var(--body) 8%, var(--jc-color-surface, #fff));
+}
+
+.territory {
+  margin: 0 0 var(--jc-space-2, 0.5rem);
+  font-size: 1rem;
+}
+
+/* The territory opens the indicator in the entity panel: a button that reads as the card's heading. */
+.card-open {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: inherit;
+  text-decoration: underline;
+}
+
+.value {
+  margin: 0 0 var(--jc-space-2, 0.5rem);
+}
+
+.reading {
+  font-size: 1.75rem;
+  font-weight: 600;
+  /* The number and its unit are one line or none: a unit that wraps away from its number is a
+     number without a unit. */
+  white-space: nowrap;
+}
+
+.unit {
+  font-size: 1rem;
+  font-weight: 400;
+}
+
+.not-measured .reading {
+  font-size: 1.25rem;
+  font-style: italic;
+  white-space: normal;
+}
+
+.why {
+  display: block;
+  font-size: 0.875rem;
+  color: var(--jc-color-text-muted, #555);
+}
+
+.state {
+  margin: 0 0 var(--jc-space-2, 0.5rem);
+  font-size: 0.9375rem;
+}
+
+/* The shape carries the state as much as the colour does (UI-30); the colour is the platform's
+   semantic token, so a theme or a contrast mode changes it once, here and everywhere. */
+.shape {
+  font-size: 1.125rem;
+}
+
+.state-green {
+  color: var(--jc-color-success-text, #1b5e20);
+}
+
+.state-amber {
+  color: var(--jc-color-warning-text, #8a5000);
+}
+
+.state-red {
+  color: var(--jc-color-danger-text, #b3261e);
+}
+
+/* The card's own text colour: the muted grey read 4.26:1 on a whole card's body tint (WCAG 1.4.3,
+   T-2946), and a control is read before it is opened. */
+.more summary {
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.facts {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.facts dt {
+  font-weight: 600;
+  margin-top: var(--jc-space-2, 0.5rem);
+}
+
+.facts dd {
+  margin: 0;
+}
+
+.formula {
+  overflow-wrap: anywhere;
+}
+
+/* A card's published years as a line, its words beside it (T-2934). */
+.trend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jc-space-2, 0.5rem);
+  margin: 0;
+}
+
+.trend svg {
+  flex: none;
+  max-width: 100%;
+}
+
+.trend-words {
+  font-size: 0.8rem;
+  color: var(--jc-color-text-muted, #555);
+}

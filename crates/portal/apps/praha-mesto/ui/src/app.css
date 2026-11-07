@@ -1,0 +1,50 @@
+/* The organization's colours (AP-123, T-2921): every hue below is a design token, so a branding
+   change recolours the whole screen and nothing here is a colour of its own. */
+main { background: var(--jc-color-surface); }
+.section {
+  margin-block: 1.5rem;
+  padding: 1rem 1.25rem;
+  background: var(--jc-color-card);
+  border: 1px solid var(--jc-color-line);
+  border-top: 4px solid var(--jc-color-accent);
+  border-radius: 12px;
+}
+.section h2 { color: var(--jc-color-accent); margin-top: 0; }
+.note { color: var(--jc-color-muted); }
+.failed { color: var(--jc-color-danger); }
+.totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.75rem; list-style: none; padding: 0; margin: 1rem 0; }
+.totals li { padding: 0.75rem; border-radius: 10px; background: color-mix(in srgb, var(--jc-color-accent) 12%, var(--jc-color-card)); }
+.totals .figure { display: block; font-size: 1.75rem; font-weight: 700; color: var(--jc-color-accent); font-variant-numeric: tabular-nums; }
+.totals .label { color: var(--jc-color-ink); }
+.panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1rem; margin-block: 1rem; }
+.station-map { margin: 0; }
+.station-map .map { height: 320px; border-radius: 10px; overflow: hidden; border: 1px solid var(--jc-color-line); }
+.legend-title { font-weight: 600; }
+.legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; list-style: none; padding: 0; margin: 0.5rem 0 0; }
+.swatch { display: inline-block; width: 0.9rem; height: 0.9rem; border-radius: 50%; vertical-align: -0.1rem; border: 1px solid var(--jc-color-line); }
+.chart { width: 100%; }
+.search { display: block; margin-top: 1rem; font-weight: 600; }
+input[type="search"] { width: 100%; max-width: 24rem; padding: 0.5rem; font: inherit; margin-block: 0.25rem 0.5rem; border: 1px solid var(--jc-color-line); border-radius: 8px; }
+input[type="search"]:focus-visible { outline: 3px solid var(--jc-color-accent); outline-offset: 1px; }
+.scroll { overflow-x: auto; }
+.scroll:focus-visible { outline: 3px solid var(--jc-color-accent); outline-offset: 1px; }
+table { border-collapse: collapse; width: 100%; }
+th, td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--jc-color-line); text-align: left; }
+thead th { color: var(--jc-color-accent); }
+tbody th { font-weight: 400; }
+.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.off { color: var(--jc-color-muted); }
+caption { text-align: left; caption-side: top; }
+
+/* A row's name opens it in the entity panel (SDK-40): it reads as the name, and says it is a button. */
+.opens {
+  font: inherit;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}

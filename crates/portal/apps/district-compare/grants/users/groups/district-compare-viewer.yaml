@@ -1,0 +1,11 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata:
+  name: district-compare-viewer
+  namespace: org
+  annotations:
+    joinedcontext.com/app: helsinki/district-compare
+spec:
+  description: The viewers of district-compare, its default group.
+  members:
+  - user: de300000-0000-4000-8000-000000000002 # demo.viewer

@@ -1,0 +1,63 @@
+/*
+ * The data screen on the SDK's own tokens (SDK-04). Its own look (T-2779): a row of tabs over one
+ * full-width table, the downloads in a line above it.
+ */
+main {
+  padding: var(--jc-gutter, 1rem);
+}
+
+.about,
+.source,
+small {
+  color: var(--jc-color-text-muted, #555);
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-1, 0.25rem);
+  border-bottom: 2px solid var(--jc-color-border, #d0d0d0);
+  margin-bottom: var(--jc-space-3, 0.75rem);
+}
+
+.tabs [role="tab"] {
+  font: inherit;
+  padding: var(--jc-space-2, 0.5rem) var(--jc-space-4, 1rem);
+  border: 0;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  background: none;
+  cursor: pointer;
+}
+
+.tabs [role="tab"][aria-selected="true"] {
+  border-bottom-color: var(--jc-color-primary, #1f5fa8);
+  font-weight: 600;
+}
+
+.downloads {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--jc-space-2, 0.5rem) var(--jc-space-3, 0.75rem);
+  margin-bottom: var(--jc-space-3, 0.75rem);
+}
+
+.downloads small {
+  flex-basis: 100%;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* The table keeps its own scroller; the page itself never scrolls sideways. */
+.panel {
+  min-width: 0;
+  overflow-x: auto;
+}

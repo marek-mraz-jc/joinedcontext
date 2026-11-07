@@ -1,0 +1,30 @@
+# The React + Rust/WebAssembly example of the SDK (T-3327, AP-142). Hand written, so no
+# generated-by annotation (AP-35).
+#
+# A `ui` App: the Portal's static host serves its files and no pod runs for it. `build` names
+# node for the interface and rust for the crate in `wasm/`, which the lane compiles to
+# WebAssembly on the `app-build-rust` runner before `vite build`.
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: react-rust-wasm
+  namespace: helsinki
+  title:
+    en: "Summary in WebAssembly"
+    fi: "Yhteenveto WebAssemblyllä"
+spec:
+  kind: ui
+  source:
+    path: .
+  build:
+    node: "22"
+    rust: "1.90"
+  visibility: public
+  lifecycle: draft
+  dataNeeds:
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [BikeHireDockingStation]
+      attrs: [name, availableBikeNumber]
+      operations: [queryEntity]

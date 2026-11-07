@@ -1,0 +1,15 @@
+# T-2733: the groups workflow as one conversation (Testing/07 §3, AG-87).
+workflow: groups
+as: steward
+says:
+  - "Create a group called eval-stewards for the people who look after the air data."
+expect:
+  calls:
+    # A Group has no empty create form (change::NEW_FORMS): the assistant opens the
+    # organization's groups and names the button.
+    - tool: jc_ui_navigate
+  outcome: form
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: create a group called eval-stewards for the people who look after the air data."

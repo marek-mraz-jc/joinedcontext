@@ -1,0 +1,249 @@
+{
+  "$comment": "T-4945: text boxes whose label names a picked thing (tests/free_text.ts PICKED) or cannot be read, each with why it stays a box. FREE stays; REF, ENUM and SUGGEST with a task are waiting for that task, which removes the entry. rule: the server rule that decides which values a person may pick.",
+  "fields": {
+    "src/pages/mcp/AiConnectorsPage.tsx :: Find a project, space or Endpoint": {
+      "class": "FREE",
+      "reason": "a search over the tick tree below it: it narrows the list and submits nothing"
+    },
+    "src/assistant/AssistantDock.tsx :: Ask the assistant": {
+      "class": "FREE",
+      "reason": "a question in prose"
+    },
+    "src/assistant/EndpointPicker.tsx :: Search endpoints": {
+      "class": "FREE",
+      "reason": "a search box: the text filters a list on the page, the list itself is the choice"
+    },
+    "src/components/DeleteProjectDialog.tsx :: Type {name} to confirm": {
+      "class": "FREE",
+      "reason": "typing the name is the confirmation itself (GitHub-style guard)"
+    },
+    "src/components/DeleteResourceDialog.tsx :: Type {name} to confirm": {
+      "class": "FREE",
+      "reason": "typing the name is the confirmation itself"
+    },
+    "src/components/DuplicateProjectDialog.tsx :: (no label)": {
+      "class": "FREE",
+      "reason": "the name of the new project being created"
+    },
+    "src/components/ImportProjectDialog.tsx :: (no label)": {
+      "class": "FREE",
+      "reason": "a template parameter without an enum; one with an enum is already a Select beside it"
+    },
+    "src/components/entities/EntityFilters.tsx :: (no label)": {
+      "class": "FREE",
+      "reason": "the value of a filter row (a number, a date, a text) compared against an attribute"
+    },
+    "src/components/entities/EntityFilters.tsx :: Area": {
+      "class": "FREE",
+      "reason": "an NGSI-LD scopeQ expression (/city/#), shown as the area code"
+    },
+    "src/components/forms/theme.tsx :: (no label)": {
+      "class": "FREE",
+      "reason": "rjsf's base text and textarea templates: the field's own picker comes from REFERENCE_PICKERS (tests/reference_pickers.test.ts gates it)"
+    },
+    "src/components/forms/widgets/EntityPicker.tsx :: (no label)": {
+      "class": "FREE",
+      "reason": "the search box inside the entity picker"
+    },
+    "src/components/forms/widgets/SuggestWidgets.tsx :: (no label)": {
+      "class": "FREE",
+      "reason": "the shared suggest widget itself (datalist of the existing choices)"
+    },
+    "src/components/pickers/Combobox.tsx :: (no label)": {
+      "class": "FREE",
+      "reason": "the shared combobox's own search box"
+    },
+    "src/components/ui/Input.tsx :: (no label)": {
+      "class": "FREE",
+      "reason": "the Input and Textarea primitives"
+    },
+    "src/pages/access/AccessExplorer.tsx :: Search people": {
+      "class": "FREE",
+      "reason": "a search box: the text filters a list on the page, the list itself is the choice"
+    },
+    "src/pages/apps/AppGenerator.tsx :: App name": {
+      "class": "FREE",
+      "reason": "the name of the new App"
+    },
+    "src/pages/apps/AppGenerator.tsx :: Only this application role may write (optional)": {
+      "class": "FREE",
+      "reason": "the name of a role the new App declares: it exists only once the App is published, so there is nothing to pick yet (T-4948); the form checks its shape (isRoleName) and the App kind validates it again"
+    },
+    "src/pages/apps/AppGenerator.tsx :: What should the app do?": {
+      "class": "FREE",
+      "reason": "a prompt in prose"
+    },
+    "src/pages/apps/ConversationPanel.tsx :: Tell the assistant what to build or change…": {
+      "class": "FREE",
+      "reason": "a prompt in prose"
+    },
+    "src/pages/apps/NewEndpointPanel.tsx :: Endpoint name": {
+      "class": "FREE",
+      "reason": "the name of the new Endpoint"
+    },
+    "src/pages/catalogue/PublishDataset.tsx :: Type the endpoint's name to confirm": {
+      "class": "FREE",
+      "reason": "typing the picked endpoint's name back is the red-lane confirmation for a public publication (EP-142)"
+    },
+    "src/pages/datasources/TemplateGallery.tsx :: datasources.template.${picked.id}.url": {
+      "class": "FREE",
+      "reason": "the address of an outside feed"
+    },
+    "src/pages/endpoints/EndpointPage.tsx :: endpoints.area.${corner}": {
+      "class": "FREE",
+      "reason": "a coordinate of the bounding box"
+    },
+    "src/pages/endpoints/EndpointPage.tsx :: endpoints.filter.${key}": {
+      "class": "FREE",
+      "reason": "an NGSI-LD q, scopeQ, geoQ or temporalQ expression"
+    },
+    "src/pages/endpoints/ModelPicker.tsx :: Scope": {
+      "class": "FREE",
+      "reason": "an NGSI-LD scope path pattern a writer is held to (/city/#); scopes are written per entity and no registry lists them to offer (T-4947 decided)"
+    },
+    "src/pages/endpoints/SchemaProjectionPanel.tsx :: Hide an attribute by name": {
+      "class": "FREE",
+      "reason": "the published attributes are ticked in the list above it; this box names one the schema does not publish yet (T-1767), shape-checked (T-4947 decided)"
+    },
+    "src/components/ChangeNotice.tsx :: Type the name to confirm": {
+      "class": "FREE",
+      "reason": "typing the name is the confirmation itself"
+    },
+    "src/pages/inbox/InboxPage.tsx :: To confirm, type this name:": {
+      "class": "FREE",
+      "reason": "typing the name is the confirmation itself"
+    },
+    "src/pages/mcp/McpServerDialog.tsx :: Find an Endpoint": {
+      "class": "FREE",
+      "reason": "a search box: the text filters a list on the page, the list itself is the choice"
+    },
+    "src/pages/models/LinkmlVisualEditor.tsx :: Find a type": {
+      "class": "FREE",
+      "reason": "a search box: the text filters the model's own type list in the rail, nothing is written"
+    },
+    "src/pages/models/NameField.tsx :: (no label)": {
+      "class": "FREE",
+      "reason": "the new name of a type, field, enumeration or stored value of the model open in the editor; its label comes from the caller and the operation refuses a name already taken"
+    },
+    "src/pages/models/LinkmlVisualEditor.tsx :: New type": {
+      "class": "FREE",
+      "reason": "the name of a new class"
+    },
+    "src/pages/models/SmartDataModelsImport.tsx :: Attribute name": {
+      "class": "FREE",
+      "reason": "the new name of an imported attribute"
+    },
+    "src/pages/models/SmartDataModelsImport.tsx :: Find an attribute": {
+      "class": "FREE",
+      "reason": "a search box: the text filters a list on the page, the list itself is the choice"
+    },
+    "src/pages/models/SmartDataModelsImport.tsx :: Search models and attributes": {
+      "class": "FREE",
+      "reason": "a search box: the text filters a list on the page, the list itself is the choice"
+    },
+    "src/pages/organization/OrganizationApplications.tsx :: Name in the project": {
+      "class": "FREE",
+      "reason": "the name the new application gets in the project"
+    },
+    "src/pages/organization/People.tsx :: Search people": {
+      "class": "FREE",
+      "reason": "a search box: the text filters a list on the page, the list itself is the choice"
+    },
+    "src/pages/organization/People.tsx :: organization.people.form.${key}": {
+      "class": "FREE",
+      "reason": "e-mail, first and last name of a new person"
+    },
+    "src/pages/pipelines/AccessRequests.tsx :: Why the pipeline needs it": {
+      "class": "FREE",
+      "reason": "a reason in prose"
+    },
+    "src/pages/pipelines/PipelineFlow.tsx :: Attribute filter": {
+      "class": "FREE",
+      "reason": "an NGSI-LD q expression"
+    },
+    "src/pages/pipelines/PipelineStudio.tsx :: Mapping on the compute node": {
+      "class": "FREE",
+      "reason": "a Bloblang program"
+    },
+    "src/pages/pipelines/PipelineWorkbench.tsx :: Bloblang mapping": {
+      "class": "FREE",
+      "reason": "a Bloblang program"
+    },
+    "src/pages/pipelines/PipelineWorkbench.tsx :: Mapping file (bento.yaml)": {
+      "class": "FREE",
+      "reason": "a Bento configuration file"
+    },
+    "src/pages/policies/TryAPerson.tsx :: Find a person": {
+      "class": "FREE",
+      "reason": "a search box: the text filters a list on the page, the list itself is the choice"
+    },
+    "src/pages/spaces/FormView.tsx :: (no label)": {
+      "class": "FREE",
+      "reason": "a form answer typed as its kind asks (text, number, date); a relationship answer of the signed-in form is an EntitySearchPicker (T-4946), while the public form stays a typed URN because its anonymous submitter may read nothing in the space"
+    },
+    "src/pages/spaces/FormView.tsx :: spaces.form.${part}": {
+      "class": "FREE",
+      "reason": "a part of an address answer (street, town, postcode)"
+    },
+    "src/pages/spaces/SharePanel.tsx :: Endpoint name": {
+      "class": "FREE",
+      "reason": "the name of the new public Endpoint"
+    },
+    "src/pages/spaces/SpaceComplete.tsx :: Endpoint URL": {
+      "class": "FREE",
+      "reason": "the address of an outside NGSI-LD Endpoint"
+    },
+    "src/pages/spaces/SpaceInside.tsx :: (no label)": {
+      "class": "FREE",
+      "reason": "Set a field's typed value for a field with no enum (a number or a text); an enum field gets a Select, and the Endpoint's Policy judges the value on write"
+    },
+    "src/pages/spaces/SpacePersonalData.tsx :: Person's identifier": {
+      "class": "FREE",
+      "reason": "a data subject's value as the space stores it (DM-124); the Portal lists no persons, so no picker may offer them, and the server checks the owner's right and the value (erasure::subject_refusal)"
+    },
+    "src/pages/spaces/UploadCsv.tsx :: Type name": {
+      "class": "FREE",
+      "reason": "the name of a new type the upload creates; an existing type is the picker above it"
+    },
+    "src/routes/EndpointsPage.tsx :: Find an endpoint by name or title": {
+      "class": "FREE",
+      "reason": "a search box: the text filters a list on the page, the list itself is the choice"
+    },
+    "src/routes/PipelinesPage.tsx :: Find a pipeline": {
+      "class": "FREE",
+      "reason": "a search box: the text filters a list on the page, the list itself is the choice"
+    },
+    "src/routes/PoliciesPage.tsx :: Find a policy": {
+      "class": "FREE",
+      "reason": "a search box: the text filters a list on the page, the list itself is the choice"
+    },
+    "src/components/forms/widgets/RepresentationOutputsField.tsx :: endpoints.outputs.title.${lang}": {
+      "class": "FREE",
+      "reason": "a calendar's or feed's own title per language, written by the person, not a pick of an existing thing"
+    },
+    "src/pages/pipelines/KpiEditor.tsx :: Unit code": {
+      "class": "FREE",
+      "reason": "a UN/CEFACT common code from a list of thousands; the KPI check refuses any code but the formula's own unit (PL-103) and says which one it is"
+    },
+    "src/pages/apps/UseTemplate.tsx :: App name": {
+      "class": "FREE",
+      "reason": "the name of the new App being created, checked by the server (DNS-1123, not taken)"
+    },
+    "src/pages/access/AccountSecret.tsx :: (no label)": {
+      "class": "FREE",
+      "reason": "a read-only value the Portal issued (client id, the secret shown once, the token URL), shown for copying; nobody types into it"
+    },
+    "src/pages/mqttbrokers/BrokerEditor.tsx :: Role": {
+      "class": "FREE",
+      "reason": "the name of a new role this broker declares: nothing to pick it from"
+    },
+    "src/pages/mqttbrokers/BrokerEditor.tsx :: (no label)": {
+      "class": "FREE",
+      "reason": "a topic filter or a network typed as a chip, checked as typed against jc-core's rules (brokerDraft.ts); topics and networks name no stored thing"
+    },
+    "src/components/grid/ManifestGrid.tsx :: (no label)": {
+      "class": "FREE",
+      "reason": "a cell panel string field the kind's JSON Schema leaves free (version, schedule, description); an enum, a reference or a boolean gets its Select, picker or switch, and the Field's label names it"
+    }
+  }
+}

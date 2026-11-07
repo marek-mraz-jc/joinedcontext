@@ -1,0 +1,16 @@
+# T-6482: revoking a connector leads to the My connectors page (live walk T-5962, S-50, AG-151).
+workflow: connector
+as: steward
+says:
+  - "Revoke my connector for claude.ai."
+expect:
+  calls:
+    - tool: jc_ui_navigate
+      input:
+        page: connectors
+  outcome: person-only
+  why: "a connector is revoked by its owner on the My connectors page, which the assistant opens; no assistant tool revokes one (AG-151)"
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: revoke my connector for claude.ai."

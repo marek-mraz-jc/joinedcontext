@@ -1,0 +1,39 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-bbsk-ukazovatele-1
+  namespace: bbsk
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:bbsk/app-bbsk-ukazovatele
+    kind: role
+  assigner: did:web:bbsk.sk
+  contextSpaceRef:
+    kind: ContextSpace
+    name: bbsk-kpi
+  information:
+  - entities:
+    - type: KeyPerformanceIndicator
+    propertyNames:
+    - name
+    - currentValue
+    - calculationPeriod
+    - calculationFormula
+    - derivedFrom
+    - computedBy
+    - updatedAt
+    - location
+    relationshipNames:
+    - name
+    - currentValue
+    - calculationPeriod
+    - calculationFormula
+    - derivedFrom
+    - computedBy
+    - updatedAt
+    - location
+  operations:
+  - queryEntity
+  - retrieveEntity

@@ -1,0 +1,95 @@
+{
+  "name": "@joinedcontext/sdk",
+  "version": "0.1.0",
+  "description": "The joinedcontext application kit: typed data client, hooks, charts, maps and the platform's design tokens.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@10.20.0",
+  "sideEffects": [
+    "*.css"
+  ],
+  "files": [
+    "dist/package",
+    "README.md",
+    "API.md"
+  ],
+  "exports": {
+    ".": "./src/sdk/index.ts",
+    "./grid": "./src/sdk/grid.ts",
+    "./server": "./src/sdk/server.ts",
+    "./testing": "./src/sdk/testing.ts",
+    "./responsive": "./src/sdk/responsive.ts",
+    "./style.css": "./src/sdk/style.css",
+    "./tokens.json": "./src/sdk/tokens.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/package/types/sdk/index.d.ts",
+        "import": "./dist/package/index.js"
+      },
+      "./grid": {
+        "types": "./dist/package/types/sdk/grid.d.ts",
+        "import": "./dist/package/grid.js"
+      },
+      "./server": {
+        "types": "./dist/package/types/sdk/server.d.ts",
+        "import": "./dist/package/server.js"
+      },
+      "./testing": {
+        "types": "./dist/package/types/sdk/testing.d.ts",
+        "import": "./dist/package/testing.js"
+      },
+      "./responsive": {
+        "types": "./dist/package/types/sdk/responsive.d.ts",
+        "import": "./dist/package/responsive.js"
+      },
+      "./style.css": "./dist/package/style.css",
+      "./tokens.json": "./dist/package/tokens.json"
+    }
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build && vite build --config vite.worker.config.ts && vite build --config vite.template.config.ts && vite build --config vite.runtime.config.ts && vite build --config vite.server.config.ts && vite build --config vite.demos.config.ts && pnpm run build:package",
+    "typecheck": "tsc -b --noEmit && tsc -p tsconfig.package.json --noEmit && for sample in samples/*/tsconfig.json; do tsc -p \"$sample\" --noEmit || exit 1; done",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "build:package": "vite build --config vite.package.config.ts && tsc -p tsconfig.package.json && cp src/sdk/tokens.json dist/package/tokens.json",
+    "prepack": "pnpm run build:package"
+  },
+  "peerDependencies": {
+    "axe-core": "4.13.0",
+    "maplibre-gl": "6.9.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "peerDependenciesMeta": {
+    "axe-core": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "terra-draw": "1.34.0",
+    "terra-draw-maplibre-gl-adapter": "1.4.1"
+  },
+  "devDependencies": {
+    "@deck.gl/aggregation-layers": "^9.4.0",
+    "@deck.gl/core": "^9.4.0",
+    "@deck.gl/layers": "^9.4.0",
+    "@deck.gl/mapbox": "^9.4.0",
+    "@playwright/test": "1.63.0",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "axe-core": "4.13.0",
+    "echarts": "^6.1.0",
+    "jsdom": "^30.0.1",
+    "recharts": "^3.10.1",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.0"
+  }
+}

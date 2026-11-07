@@ -1,0 +1,16 @@
+# T-6532 (live walk T-6490, S-36): a daily KPI runs every 24h into its indicator space, whose
+# Endpoint is drafted beside the pipeline when the project has none, and the test is not red on
+# that Endpoint.
+workflow: pipeline
+as: steward
+says:
+  - "Define a KPI: daily bike count per counter over BikeCounter of Endpoint t6025-full-counters."
+expect:
+  calls:
+    - tool: draft_kpi_pipeline
+      input: { type: BikeCounter, sourceEndpoint: t6025-full-counters, every: 24h }
+  outcome: form
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: define a daily KPI over BikeCounter."

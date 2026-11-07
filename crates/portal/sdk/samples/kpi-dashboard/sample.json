@@ -1,0 +1,19 @@
+{
+  "name": "kpi-dashboard",
+  "title": "KPI dashboard",
+  "purpose": "Show managers how the organization's indicators stand: the latest value of each against its target, the trend over a chosen period, and which ones need attention.",
+  "archetype": "kpi-dashboard",
+  "audience": "managers",
+  "layout": "dashboard-grid",
+  "keywords": ["kpi", "kpis", "indicator", "indicators", "dashboard", "target", "targets", "trend", "trends", "performance", "goal", "goals", "manager", "managers", "overview", "summary", "statistics"],
+  "ready": "City indicators",
+  "dataNeeds": [
+    {
+      "types": ["KeyPerformanceIndicator"],
+      "attrs": ["name", "category", "kpiValue", "target", "unit", "higherIsBetter", "dateObserved"],
+      "operations": ["queryEntity"]
+    }
+  ],
+  "access": "Read-only; the indicators may be public.",
+  "sdk": ["useEntities", "format", "Page", "Header", "Grid", "Card", "ChartCard", "currentTokens"]
+}

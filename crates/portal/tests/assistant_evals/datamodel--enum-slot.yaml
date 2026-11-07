@@ -1,0 +1,22 @@
+# T-6530 (S-10, live walk T-6490): a slot that takes its values from a list is an enum with those
+# values, never a string range that loses them.
+workflow: datamodel
+as: steward
+says:
+  - "Add an optional slot direction (enum in, out) to CityDistrict in the helsinki data model."
+expect:
+  calls:
+    - tool: change_resource
+      input:
+        kind: DataModel
+        name: helsinki
+        operations:
+          - { op: addEnum }
+          - { op: addEnumValue, value: in }
+          - { op: addEnumValue, value: out }
+          - { op: addSlot, name: direction, class: CityDistrict }
+  outcome: change
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: add an optional slot direction (enum in, out) to CityDistrict in the helsinki data model."

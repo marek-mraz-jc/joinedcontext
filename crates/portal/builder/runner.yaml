@@ -1,0 +1,14 @@
+# The forge's runner on the build image (ADR-N-028 §3.3, AP-81). runner.sh writes the
+# registration file beside it and wipes both between jobs.
+log:
+  level: info
+runner:
+  file: /tmp/runner/.runner
+  capacity: 1
+  # The forge's own per-job limit is longer; a build that runs past this is a build that hangs.
+  timeout: 20m
+  # The node-22 label runs on this image itself (host mode): no container runtime in the pod.
+  labels: ["node-22:host"]
+# One repository's cache must not be another repository's input: no shared action cache.
+cache:
+  enabled: false

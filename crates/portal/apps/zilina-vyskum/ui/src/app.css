@@ -1,0 +1,210 @@
+/*
+ * The university's research on the SDK's own tokens (SDK-04). Its own look (T-2779): a line of
+ * totals, two panels side by side on a wide screen (the years as columns, the busiest journals),
+ * then the list as cards a person reads one under another.
+ */
+.subtitle {
+  color: var(--jc-color-text-muted, #555);
+}
+
+.source,
+.note,
+.meta,
+.collection,
+.shown,
+small {
+  color: var(--jc-color-text-muted, #555);
+}
+
+.failed {
+  color: var(--jc-color-danger, #b42318);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.totals {
+  font-size: 1.15rem;
+}
+
+.overview {
+  display: grid;
+  gap: var(--jc-space-4, 1rem);
+  grid-template-columns: minmax(0, 1fr);
+  margin-bottom: var(--jc-space-5, 1.5rem);
+}
+
+@media (min-width: 56rem) {
+  .overview {
+    grid-template-columns: minmax(0, 3fr) minmax(16rem, 2fr);
+  }
+}
+
+.panel {
+  border: 1px solid var(--jc-color-border, #d0d0d0);
+  border-radius: var(--jc-radius-md, 0.5rem);
+  padding: var(--jc-space-4, 1rem);
+  min-width: 0;
+}
+
+.panel h2 {
+  margin-top: 0;
+  font-size: 1.05rem;
+}
+
+.bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 10rem;
+}
+
+.bar {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.bar .fill {
+  width: 100%;
+  min-height: 1px;
+  background: var(--jc-color-primary, #1f5fa8);
+  border-radius: 2px 2px 0 0;
+}
+
+.bar .label {
+  font-size: 0.7rem;
+  color: var(--jc-color-text-muted, #555);
+}
+
+.series {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-2, 0.5rem);
+}
+
+.series .count {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-3, 0.75rem);
+  align-items: flex-start;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jc-space-1, 0.25rem);
+  min-width: 0;
+}
+
+.field.grow {
+  flex: 1 1 18rem;
+}
+
+.field input,
+.field select {
+  font: inherit;
+  padding: var(--jc-space-2, 0.5rem);
+  border: 1px solid var(--jc-color-border, #8a8a8a);
+  border-radius: var(--jc-radius-sm, 4px);
+}
+
+.kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jc-space-2, 0.5rem);
+  border: 0;
+  margin: var(--jc-space-3, 0.75rem) 0 0;
+  padding: 0;
+}
+
+.kinds legend {
+  font-weight: 600;
+  margin-bottom: var(--jc-space-1, 0.25rem);
+}
+
+.kind {
+  display: inline-flex;
+  padding: var(--jc-space-1, 0.25rem) var(--jc-space-3, 0.75rem);
+  border: 1px solid var(--jc-color-border, #8a8a8a);
+  border-radius: var(--jc-radius-sm, 4px);
+  cursor: pointer;
+}
+
+.kind[data-checked="true"] {
+  background: var(--jc-color-surface-muted, #eef3fa);
+  border-color: var(--jc-color-primary, #1f5fa8);
+  font-weight: 600;
+}
+
+.kind input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.kind:focus-within {
+  outline: 2px solid var(--jc-color-focus, #1f5fa8);
+  outline-offset: 2px;
+}
+
+.works {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--jc-space-3, 0.75rem);
+}
+
+.works li {
+  border-bottom: 1px solid var(--jc-color-border, #e2e2e2);
+  padding-bottom: var(--jc-space-3, 0.75rem);
+}
+
+.works h3 {
+  margin: 0 0 var(--jc-space-1, 0.25rem);
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.works p {
+  margin: 0 0 var(--jc-space-1, 0.25rem);
+  overflow-wrap: anywhere;
+}
+
+.more {
+  font: inherit;
+  margin-top: var(--jc-space-3, 0.75rem);
+  padding: var(--jc-space-2, 0.5rem) var(--jc-space-3, 0.75rem);
+}
+
+/* A work's title opens it in the entity panel (SDK-40): it reads as the title, and says it is a button. */
+.opens {
+  font: inherit;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}

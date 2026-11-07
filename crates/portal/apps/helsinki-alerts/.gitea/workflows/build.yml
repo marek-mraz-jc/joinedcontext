@@ -1,0 +1,65 @@
+# The build of this application (AP-80, AP-100, AP-101, AP-104, ADR-N-028). The Portal writes this
+# file in the application's first commit and a run never changes it: only a version a reviewer
+# merged runs. It builds the default branch on every push to it, and again when the Portal's
+# Rebuild dispatches it (AP-103).
+#
+# Runs on the installation's `gitea-runner` (label node-22), whose image carries the SDK and the
+# template's packages already installed, so nothing is installed here (AP-82). No step fetches an
+# action: the runner reaches the forge and the Portal API only (AP-81), by the in-cluster
+# addresses it gives every job as JC_FORGE_URL and JC_PORTAL_URL; `gitea.server_url` is the
+# public host, which the runner cannot reach.
+#
+# Two jobs: `build` runs the application's code and holds the job token only; `propose` runs no
+# code of the application and is the only one that sees the lane's secret. The Portal checks the
+# uploaded bundle against the proposed digest and publishes the package itself (AP-104).
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # `build` runs in a pod of this App's own (label app-build-node), registered with this
+  # repository's token alone and mounting this App's build cache; `propose` stays on the shared
+  # runner and mounts no cache (AP-130, AP-131).
+  build:
+    runs-on: app-build-node
+    timeout-minutes: 20
+    env:
+      JC_BUILD_DIR: ${{ runner.temp }}/jc-build
+    outputs:
+      digest: ${{ steps.upload.outputs.digest }}
+      commit: ${{ steps.upload.outputs.commit }}
+      sdk-version: ${{ steps.upload.outputs.sdk-version }}
+      built-at: ${{ steps.upload.outputs.built-at }}
+    steps:
+      # Clones the commit, runs the tests, builds and bundles the functions; the application's
+      # own code runs here, with the job token removed from its environment.
+      - name: Test and build
+        env:
+          JC_REPOSITORY: ${{ gitea.repository }}
+          JC_APP_COMMIT: ${{ gitea.sha }}
+          JC_FORGE_TOKEN: ${{ gitea.token }}
+        run: JC_APP_REPO="$JC_FORGE_URL/$JC_REPOSITORY.git" build-app
+
+      # bundle-{commit} and sbom-{commit}, the run's artifacts, for the Portal to check and publish.
+      - name: Upload the build
+        id: upload
+        run: node /opt/template/lane.mjs upload "$JC_BUILD_DIR"
+
+  propose:
+    needs: build
+    runs-on: node-22
+    timeout-minutes: 5
+    steps:
+      # The one step that sees the lane's secret, and it runs no code of the application (AP-80).
+      - name: Propose status.build
+        env:
+          JC_LANE_TOKEN: ${{ secrets.JC_LANE_TOKEN }}
+          JC_REPOSITORY: ${{ gitea.repository }}
+          JC_DIGEST: ${{ needs.build.outputs.digest }}
+          JC_COMMIT: ${{ needs.build.outputs.commit }}
+          JC_SDK_VERSION: ${{ needs.build.outputs.sdk-version }}
+          JC_BUILT_AT: ${{ needs.build.outputs.built-at }}
+        run: node /opt/template/lane.mjs propose "$JC_REPOSITORY"

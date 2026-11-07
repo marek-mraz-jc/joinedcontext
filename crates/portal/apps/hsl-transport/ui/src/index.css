@@ -1,0 +1,223 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --surface: #ffffff;
+  --ink: #0f172a;
+  --muted: #64748b;
+  --line: #e2e8f0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #0f172a;
+    --ink: #e2e8f0;
+    --muted: #94a3b8;
+    --line: #1e293b;
+    /* The SDK's shell, panel and cards read these; without them they stay light under the dark
+       page's ink. */
+    --jc-color-surface: #0f172a;
+    --jc-color-accent: #93c5fd;
+    --jc-color-card: #111c33;
+    --jc-color-line: #1e293b;
+    --jc-color-ink: #e2e8f0;
+    --jc-color-muted: #94a3b8;
+  }
+}
+
+.jc-card {
+  color: var(--ink);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--surface);
+}
+
+/* The SDK's Page and Header (T-2825, SDK-12) around the map and its charts: on a laptop and wider
+   the map takes two thirds of the window's height beside the charts, on a phone the map comes
+   first at a phone's worth of height and the charts follow below it (T-2926). */
+.app .jc-page {
+  padding: var(--jc-gutter, 0.75rem);
+}
+
+.status {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.map-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.map {
+  height: 60dvh;
+  min-height: 18rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+@media (min-width: 48rem) {
+  .map {
+    height: calc(100dvh - 9rem);
+  }
+}
+
+.charts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.bars {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.875rem;
+}
+
+.bar {
+  display: grid;
+  grid-template-columns: minmax(3.5rem, 7rem) 1fr 2.5rem;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.bar-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-track {
+  height: 0.8rem;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+
+.bar-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.empty,
+.note {
+  margin: 0.4rem 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.lines {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.875rem;
+}
+
+.line {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+}
+
+/* MapLibre's attribution is a link inside a line of text, told apart by colour alone
+   (axe link-in-text-block, T-3045); the element is the library's DOM, so it is dressed here. */
+.maplibregl-ctrl-attrib a {
+  text-decoration: underline;
+}
+
+/* The keyboard's way to a bus: the ones in view, by fleet number, each opening in the panel. */
+.pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jc-space-2, 0.5rem);
+  margin-top: var(--jc-space-2, 0.5rem);
+}
+.pick select {
+  font: inherit;
+  max-width: 100%;
+}
+
+/* T-3895: the mode filter above the map, the departures and the service alerts beside it. */
+.modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.9rem;
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.modes label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 2.75rem;
+}
+
+.departures,
+.alerts {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
+.departure {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.departure.off {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.departure-line {
+  font-weight: 600;
+}
+
+.departure-to {
+  overflow-wrap: anywhere;
+}
+
+.alert {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.alert p {
+  margin: 0.25rem 0 0;
+}

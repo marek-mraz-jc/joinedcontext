@@ -1,0 +1,13 @@
+# T-3315: the navigation workflow (T-3238..T-3242) as one conversation (Testing/07 §3, AG-87).
+workflow: navigation
+as: steward
+says:
+  - "Star the pipeline citybikes-gbfs-info for me and copy its link."
+expect:
+  calls: []
+  outcome: person-only
+  why: "finding a page with the keyboard, starring it and sending its link are the person's own way around the Portal; the assistant reaches data through its own tools"
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: star the pipeline citybikes-gbfs-info for me and copy its link."

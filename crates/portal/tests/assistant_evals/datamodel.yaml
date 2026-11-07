@@ -1,0 +1,14 @@
+# T-2733: the datamodel workflow as one conversation (Testing/07 §3, AG-87).
+workflow: datamodel
+as: steward
+says:
+  - "Draft a data model for air quality stations with pm10 and pm25 readings."
+expect:
+  calls:
+    - tool: change_resource
+      input: { kind: DataModel, create: true }
+  outcome: change
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: draft a data model for air quality stations with pm10 and pm25 readings."

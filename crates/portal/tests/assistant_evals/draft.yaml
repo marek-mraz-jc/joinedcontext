@@ -1,0 +1,13 @@
+# T-2733: the draft workflow as one conversation (Testing/07 §3, AG-87).
+workflow: draft
+as: steward
+says:
+  - "Which drafts are open in this project?"
+expect:
+  calls:
+    - tool: jc_draft_list
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: which drafts are open in this project?"

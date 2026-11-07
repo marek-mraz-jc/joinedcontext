@@ -1,0 +1,30 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-bike-rebalancing
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    en: City bike rebalancing planner
+    fi: Kaupunkipyörien tasaussuunnitelma
+spec:
+  allowedProjects:
+  - helsinki
+  audience: project-list
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - ogc-features
+  roles:
+  - name: viewer
+    subjects:
+    - group: bike-rebalancing-viewer
+  - name: steward
+    subjects:
+    - group: bike-rebalancing-steward
+  slug: hveoejb7k3cedpvc7otakoozbe

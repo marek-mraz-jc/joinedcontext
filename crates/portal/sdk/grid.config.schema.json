@@ -1,0 +1,285 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "source": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "endpoint"
+            },
+            "slug": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "slug"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "space"
+            },
+            "space": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "space"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "fixture"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "columns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "attr": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string"
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "show": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "observedAt": {
+                "type": "boolean"
+              },
+              "unit": {
+                "type": "boolean"
+              },
+              "datasetId": {
+                "type": "boolean"
+              },
+              "createdAt": {
+                "type": "boolean"
+              },
+              "modifiedAt": {
+                "type": "boolean"
+              }
+            }
+          },
+          "editable": {
+            "type": "boolean"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "text",
+              "number",
+              "date",
+              "link"
+            ]
+          },
+          "formula": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        }
+      }
+    },
+    "entityTimestamps": {
+      "type": "boolean"
+    },
+    "filters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "preset": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "q": {
+              "type": "string"
+            },
+            "attrs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "idPattern": {
+              "type": "string"
+            },
+            "scopeQ": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "pageSize": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5000
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "view",
+        "edit"
+      ]
+    },
+    "editableAttrs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "maxPoints": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "compareWith": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "endpoint"
+            },
+            "slug": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "slug"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "space"
+            },
+            "space": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "space"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "fixture"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "density": {
+      "type": "string",
+      "enum": [
+        "compact",
+        "comfortable"
+      ]
+    },
+    "rowActions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "map": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "attr": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "enum": [
+            "right",
+            "bottom"
+          ]
+        }
+      }
+    }
+  },
+  "required": [
+    "source",
+    "type"
+  ]
+}

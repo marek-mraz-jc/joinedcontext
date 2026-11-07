@@ -1,0 +1,40 @@
+# Helsingin palvelukartta — Helsinki's service map for its residents (T-2788, AP-07, AP-14, UI-15).
+# Hand written, so no generated-by annotation.
+#
+# It reads and never writes, so it is `static`: a bundle the Portal static host serves under
+# /apps/helsinki-kartta/. Everything it shows is in the city's public space, read through a public
+# endpoint, so the app never asks anybody to sign in and never holds a token (AP-28).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: helsinki-kartta
+  namespace: helsinki
+  annotations:
+    # The Portal image ships this bundle (Dockerfile, /srv/apps), so the App names no
+    # repository of its own; the Portal accepts the mark only where the bundle is (AP-87).
+    joinedcontext.com/shipped-with: portal
+  title:
+    fi: "Helsingin palvelukartta"
+    en: "Helsinki service map"
+  description:
+    fi: "Kirjastot, terveysasemat, uimahallit, uimarannat ja koulut sekä rantojen vedenlämpö yhdellä kartalla, haulla ja paikan tiedoilla."
+    en: "Libraries, health stations, swimming halls, beaches and schools with the beaches' water temperature on one map, with search and a detail of each place."
+spec:
+  kind: ui
+  source:
+    path: ./apps/helsinki-kartta
+  build:
+    node: "22"
+  visibility: public
+  lifecycle: published
+  embeddable: true
+  dataNeeds:
+    # One space, two types, read only: the service register of the pipeline services and the water
+    # sensors of beach-water (T-2787).
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [PointOfInterest, WaterQualityObserved]
+      attrs: [name, location, address, url, serviceCategory, openingHours, temperature, dateObserved, refPointOfInterest]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]

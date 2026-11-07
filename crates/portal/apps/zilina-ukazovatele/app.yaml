@@ -1,0 +1,39 @@
+# Ukazovatele mesta Žilina — the city's indicators (T-3140, PF-54, PF-55, AP-07, AP-14).
+# Hand written, so no generated-by annotation.
+#
+# It reads and never writes, so it is `static`: a bundle the Portal static host serves under
+# /apps/zilina-ukazovatele/. The indicators are public, read through a public endpoint, so the app
+# never asks anybody to sign in and never holds a token (AP-28).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: zilina-ukazovatele
+  namespace: zilina
+  annotations:
+    # The Portal image ships this bundle (Dockerfile, /srv/apps), so the App names no
+    # repository of its own; the Portal accepts the mark only where the bundle is (AP-87).
+    joinedcontext.com/shipped-with: portal
+  title:
+    sk: "Ukazovatele mesta Žilina"
+    en: "Indicators of the city of Žilina"
+  description:
+    sk: "Obyvatelia, prírastok, priemerný vek, index starnutia, uchádzači o zamestnanie a návštevníci mesta z údajov ŠÚ SR, každé číslo so svojím obdobím a výpočtom."
+    en: "Residents, population change, mean age, ageing index, jobseekers and visitors of the city from the Statistical Office's data, each number with its period and how it is computed."
+spec:
+  kind: ui
+  source:
+    path: ./apps/zilina-ukazovatele
+  build:
+    node: "22"
+  visibility: public
+  lifecycle: published
+  embeddable: true
+  dataNeeds:
+    # The six indicators of the pipeline ukazovatele (Development/13), read only.
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: zilina-kpi
+      types: [KeyPerformanceIndicator]
+      attrs: [name, currentValue, calculationPeriod, calculationFormula, updatedAt, location]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]

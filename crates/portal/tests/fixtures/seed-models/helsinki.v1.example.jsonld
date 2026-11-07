@@ -1,0 +1,29 @@
+{
+  "address": {
+    "addressCountry": "addressCountry",
+    "addressLocality": "addressLocality",
+    "postalCode": "postalCode",
+    "streetAddress": "streetAddress"
+  },
+  "contactPoint": "contactPoint",
+  "description": {
+    "en": "description"
+  },
+  "endDate": "2026-01-01T00:00:00Z",
+  "eventStatus": "eventStatus",
+  "id": "urn:ngsi-ld:Event:hel.fi:example:1",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "name": {
+    "en": "name"
+  },
+  "observedAt": "2026-01-01T00:00:00Z",
+  "source": "source",
+  "startDate": "2026-01-01T00:00:00Z",
+  "type": "Event"
+}

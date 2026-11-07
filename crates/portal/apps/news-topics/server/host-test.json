@@ -1,0 +1,341 @@
+{
+  "gateway": [
+    {
+      "path": "/ngsi-ld/v1/entities",
+      "query": {
+        "type": "Article",
+        "offset": "0",
+        "options": "keyValues"
+      },
+      "file": "host-test/articles.json"
+    }
+  ],
+  "steps": [
+    {
+      "call": "GET /api/weeks",
+      "status": 200,
+      "expect": {
+        "/stale": false,
+        "/weeks/0/week": "2026-W42",
+        "/weeks/0/articles": 1,
+        "/weeks/1/week": "2026-W41",
+        "/weeks/1/articles": 3
+      },
+      "length": {
+        "/weeks": 2,
+        "/weeks/0/topics": 1
+      }
+    },
+    {
+      "call": "GET /api/weeks",
+      "status": 200,
+      "length": {
+        "/weeks": 2
+      }
+    },
+    {
+      "call": "GET /api/weeks/2026-W41/corpus",
+      "status": 200,
+      "download": "/url",
+      "downloaded": "Kirjasto avaa uuden lukusalin"
+    },
+    {
+      "call": "GET /api/weeks/2026-W40/corpus",
+      "status": 404
+    },
+    {
+      "call": "GET /api/weeks/2026-41/corpus",
+      "status": 404
+    },
+    {
+      "call": "GET /api/weeks/2026-W41/corpus",
+      "as": "second",
+      "status": 404
+    },
+    {
+      "call": "GET /api/me",
+      "caller": "anonymous",
+      "status": 200,
+      "expect": {
+        "": null
+      }
+    },
+    {
+      "call": "GET /api/me",
+      "caller": "viewer",
+      "status": 200,
+      "expect": {
+        "/id": "u-viewer",
+        "/roles/0": "viewer"
+      }
+    },
+    {
+      "call": "GET /api/follows",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "POST /api/follows",
+      "caller": "anonymous",
+      "body": {
+        "term": "kirjasto"
+      },
+      "status": 401,
+      "rows": {
+        "follows": 0
+      }
+    },
+    {
+      "call": "POST /api/follows",
+      "caller": "viewer",
+      "body": {
+        "term": " "
+      },
+      "status": 400,
+      "rows": {
+        "follows": 0
+      }
+    },
+    {
+      "call": "POST /api/follows",
+      "caller": "viewer",
+      "body": {
+        "term": "kirjasto",
+        "owner_id": "u-2"
+      },
+      "status": 400,
+      "rows": {
+        "follows": 0
+      }
+    },
+    {
+      "call": "POST /api/follows",
+      "caller": "viewer",
+      "body": {
+        "term": " Kirjasto "
+      },
+      "status": 201,
+      "save": {
+        "follow": "/id"
+      },
+      "expect": {
+        "/term": "kirjasto"
+      },
+      "rows": {
+        "follows": 1,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "POST /api/follows",
+      "caller": "viewer",
+      "body": {
+        "term": "kirjasto"
+      },
+      "status": 409,
+      "rows": {
+        "follows": 1
+      }
+    },
+    {
+      "call": "GET /api/follows",
+      "caller": "viewer",
+      "status": 200,
+      "length": {
+        "": 1
+      },
+      "expect": {
+        "/0/term": "kirjasto"
+      }
+    },
+    {
+      "call": "GET /api/follows",
+      "caller": "viewer@u-2",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "DELETE /api/follows/{follow}",
+      "caller": "viewer@u-2",
+      "status": 404,
+      "rows": {
+        "follows": 1,
+        "app_audit": 1
+      }
+    },
+    {
+      "call": "DELETE /api/follows/x",
+      "caller": "viewer",
+      "status": 404
+    },
+    {
+      "call": "GET /api/names",
+      "caller": "anonymous",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "POST /api/names",
+      "caller": "viewer",
+      "body": {
+        "term": "kirjasto",
+        "name": "Libraries"
+      },
+      "status": 403,
+      "rows": {
+        "topic_names": 0
+      }
+    },
+    {
+      "call": "POST /api/names",
+      "caller": "anonymous",
+      "body": {
+        "term": "kirjasto",
+        "name": "Libraries"
+      },
+      "status": 401,
+      "rows": {
+        "topic_names": 0
+      }
+    },
+    {
+      "call": "POST /api/names",
+      "caller": "steward+viewer",
+      "body": {
+        "term": "kirjasto",
+        "name": "\n"
+      },
+      "status": 400,
+      "rows": {
+        "topic_names": 0
+      }
+    },
+    {
+      "call": "POST /api/names",
+      "caller": "steward+viewer",
+      "body": {
+        "term": "Kirjasto",
+        "name": " Libraries "
+      },
+      "status": 201,
+      "save": {
+        "name": "/id"
+      },
+      "expect": {
+        "/term": "kirjasto",
+        "/name": "Libraries"
+      },
+      "rows": {
+        "topic_names": 1,
+        "app_audit": 2
+      }
+    },
+    {
+      "call": "POST /api/names",
+      "caller": "steward+viewer",
+      "body": {
+        "term": "lukusali",
+        "name": "Libraries"
+      },
+      "status": 201,
+      "rows": {
+        "topic_names": 2,
+        "app_audit": 3
+      }
+    },
+    {
+      "call": "POST /api/names",
+      "caller": "steward+viewer",
+      "body": {
+        "term": "kirjasto",
+        "name": "Libraries and reading"
+      },
+      "status": 200,
+      "expect": {
+        "/id": 1
+      },
+      "rows": {
+        "topic_names": 2,
+        "app_audit": 4
+      }
+    },
+    {
+      "call": "GET /api/names",
+      "caller": "anonymous",
+      "status": 200,
+      "length": {
+        "": 2
+      },
+      "expect": {
+        "/0/term": "kirjasto",
+        "/0/name": "Libraries and reading",
+        "/1/name": "Libraries"
+      }
+    },
+    {
+      "call": "DELETE /api/names/{name}",
+      "caller": "viewer",
+      "status": 403,
+      "rows": {
+        "topic_names": 2
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "viewer",
+      "status": 200,
+      "length": {
+        "": 1
+      },
+      "expect": {
+        "/0/summary": "followed kirjasto"
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "steward+viewer",
+      "status": 200,
+      "length": {
+        "": 4
+      },
+      "expect": {
+        "/0/summary": "named the topic of kirjasto Libraries and reading"
+      }
+    },
+    {
+      "call": "DELETE /api/names/{name}",
+      "caller": "steward+viewer",
+      "status": 204,
+      "rows": {
+        "topic_names": 1,
+        "app_audit": 5
+      }
+    },
+    {
+      "call": "DELETE /api/follows/{follow}",
+      "caller": "viewer",
+      "status": 204,
+      "rows": {
+        "follows": 0,
+        "app_audit": 6
+      }
+    },
+    {
+      "call": "GET /api/names",
+      "as": "second",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    }
+  ]
+}

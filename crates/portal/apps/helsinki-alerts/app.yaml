@@ -1,0 +1,73 @@
+# Traffic alerts in the capital region: road works and traffic announcements on a map and in a
+# table, a summary computed by a serverless function, and a steward who keeps the records
+# (AP-01, AP-04, AP-09, AP-40, AP-90…AP-97, T-2598). Hand written, so no generated-by annotation.
+#
+# A React frontend with functions: `static` with a Vite build, and `functions/` bundled by the
+# lane (AP-84). Its source is its own repository on the forge, which the build lane builds at
+# `ref` (AP-75, AP-80); this folder of the portal repository is where CI tests the same tree
+# before it is pushed there (T-2599).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: helsinki-alerts
+  namespace: helsinki
+  title:
+    en: "Helsinki traffic alerts"
+    fi: "Helsingin liikennetiedotteet"
+  description:
+    en: "Road works and traffic announcements in the capital region on a map and in a table, with a steward who adds, corrects and removes records."
+    fi: "Tietyöt ja liikennetiedotteet pääkaupunkiseudulla kartalla ja taulukossa; ylläpitäjä lisää, korjaa ja poistaa tiedotteita."
+spec:
+  kind: ui
+  source:
+    git:
+      url: https://dev.joinedcontext.com/git/joinedcontext/helsinki_helsinki-alerts.git
+      ref: main
+  build:
+    node: "22"
+  # Only a person holding a role of the application opens it (AP-92).
+  visibility: roles
+  lifecycle: published
+  roles:
+    - name: viewer
+      title: { en: "Viewer", fi: "Katselija" }
+      description: "Reads every alert and the summary."
+    - name: steward
+      title: { en: "Steward", fi: "Ylläpitäjä" }
+      description: "Also adds alerts, corrects their fields and removes the alerts a steward added."
+  # Each role goes to its default group, `{app}-{role}`, committed beside the App under
+  # grants/users/groups/ (AP-118, ADR-N-031): who holds a role is that group's members.
+  access:
+    - role: viewer
+      subjects: [{ group: helsinki-alerts-viewer }]
+    - role: steward
+      subjects: [{ group: helsinki-alerts-steward }]
+  dataNeeds:
+    # Everyone the application admits reads the alerts: the attributes of `Alert` in the
+    # `helsinki` model. It has no severity, so the page filters by category and subCategory.
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [Alert]
+      attrs: [name, description, category, subCategory, address, dateIssued, validFrom, validTo, location, source]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]
+    # The steward's record form (AP-09, red lane on purpose): create and correct every attribute
+    # of `Alert` but `source`, which says where Fintraffic published a record and stays
+    # read-only. `name` and `description` are per-language maps, written whole (T-2628).
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [Alert]
+      attrs: [name, description, category, subCategory, address, dateIssued, validFrom, validTo, location]
+      operations: [createEntity, updateAttrs]
+      roles: [steward]
+    # A steward removes only an alert a steward added: those carry no `source`, and the gateway
+    # evaluates this filter against the stored entity before it forwards the delete (R45).
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [Alert]
+      operations: [deleteEntity]
+      q: "!source"
+      roles: [steward]

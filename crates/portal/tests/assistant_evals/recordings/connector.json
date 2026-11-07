@@ -1,0 +1,105 @@
+{
+  "workflow": "connector",
+  "run": "98f96b2c-7c72-4122-b6c1-e42aac656d76",
+  "recordedAt": "2026-11-03T00:13:39.973Z",
+  "model": "app-builder: google/gemini-3.8-flash",
+  "events": [
+    {
+      "kind": "status",
+      "payload": {
+        "status": "queued"
+      }
+    },
+    {
+      "kind": "message",
+      "payload": {
+        "sentBy": "demo.steward@hel.fi",
+        "text": "Create a connector: project helsinki, read only, 30 days, claude.ai only."
+      }
+    },
+    {
+      "kind": "status",
+      "payload": {
+        "status": "starting"
+      }
+    },
+    {
+      "kind": "status",
+      "payload": {
+        "status": "interviewing"
+      }
+    },
+    {
+      "kind": "path",
+      "payload": {
+        "by": "router",
+        "elapsedMs": 2757,
+        "path": "share-data",
+        "reason": "The request specifies creating a connector with access restrictions to expose or share project data."
+      }
+    },
+    {
+      "kind": "usage",
+      "payload": {
+        "cachedTokens": 0,
+        "costUsd": 0.000528,
+        "inputTokens": 249,
+        "latencyMs": 2638,
+        "model": "google/gemini-3.8-flash",
+        "outputTokens": 91,
+        "reasoningEffort": "low",
+        "tokensThisStep": 340
+      }
+    },
+    {
+      "kind": "partial",
+      "payload": {
+        "elapsedMs": 7724,
+        "text": "Connectors are created and managed directly on the connectors page. Opening the connectors page now"
+      }
+    },
+    {
+      "kind": "tool",
+      "payload": {
+        "durationMs": 0,
+        "elapsedMs": 8070,
+        "input": {
+          "endpoint": null,
+          "name": null,
+          "page": "connectors",
+          "plural": null,
+          "q": null,
+          "type": null
+        },
+        "status": "ok",
+        "tool": "jc_ui_navigate"
+      }
+    },
+    {
+      "kind": "navigate",
+      "payload": {
+        "elapsedMs": 8074,
+        "route": "/ai-connectors"
+      }
+    },
+    {
+      "kind": "usage",
+      "payload": {
+        "cachedTokens": 12032,
+        "costUsd": 0.0016054833333333334,
+        "inputTokens": 12061,
+        "latencyMs": 5263,
+        "model": "google/gemini-3.8-flash",
+        "outputTokens": 48,
+        "reasoningEffort": "low",
+        "tokensThisStep": 12109
+      }
+    },
+    {
+      "kind": "thought",
+      "payload": {
+        "text": "Connectors are created and managed directly on the connectors page. Opening the connectors page now."
+      }
+    }
+  ]
+}

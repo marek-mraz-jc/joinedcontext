@@ -1,0 +1,46 @@
+{
+  "color": {
+    "accent": "#38bdf8",
+    "ink": "#e6edf5",
+    "muted": "#9aa7b8",
+    "surface": "#0d1520",
+    "card": "#16212f",
+    "line": "#2a3a4e",
+    "danger": "#f87171",
+    "success": "#4ade80",
+    "warning": "#fbbf24"
+  },
+  "font": {
+    "body": "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif",
+    "mono": "\"IBM Plex Mono\", ui-monospace, monospace",
+    "size": {
+      "sm": "0.8125rem",
+      "md": "0.9375rem",
+      "lg": "1.125rem",
+      "xl": "1.75rem"
+    }
+  },
+  "space": {
+    "1": "0.25rem",
+    "2": "0.5rem",
+    "3": "0.75rem",
+    "4": "1rem",
+    "6": "1.25rem",
+    "8": "1.75rem"
+  },
+  "radius": {
+    "sm": "3px",
+    "md": "6px",
+    "lg": "8px"
+  },
+  "chart": {
+    "palette": ["#38bdf8", "#4ade80", "#fbbf24", "#f87171", "#c084fc", "#2dd4bf", "#fb923c", "#9aa7b8"]
+  },
+  "map": {
+    "point": "#38bdf8",
+    "selected": "#fbbf24",
+    "low": "#4ade80",
+    "high": "#f87171",
+    "stroke": "#0d1520"
+  }
+}

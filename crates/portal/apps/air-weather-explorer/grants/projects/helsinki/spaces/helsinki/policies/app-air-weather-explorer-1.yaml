@@ -1,0 +1,35 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-air-weather-explorer-1
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:helsinki/app-air-weather-explorer
+    kind: role
+  assigner: did:web:hel.fi
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki
+  information:
+  - entities:
+    - type: AirQualityObserved
+    propertyNames:
+    - name
+    - location
+    - dateObserved
+    - pm10
+    - pm25
+    - airQualityIndex
+    relationshipNames:
+    - name
+    - location
+    - dateObserved
+    - pm10
+    - pm25
+    - airQualityIndex
+  operations:
+  - queryEntity
+  - retrieveEntity

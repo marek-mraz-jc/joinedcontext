@@ -1,0 +1,397 @@
+@import "tailwindcss";
+@import "./fonts.css";
+@import "./tokens.css";
+
+/*
+ * Tailwind reads the semantic tokens of tokens.css and nothing else: a component class such as
+ * `bg-surface` or `text-fg-muted` is a token by another name, so the branding that rewrites
+ * the tokens at runtime rewrites every component with them (UI-01, UI-30).
+ */
+@theme {
+  /* The big screen (T-2713) as a named breakpoint: Tailwind sorts named breakpoints by size, but
+     put an arbitrary `min-[1800px]` before `md` in the stylesheet, so `md:grid-cols-2` won at
+     2560 px and no form ever showed three columns (T-2755). */
+  --breakpoint-3xl: 112.5rem;
+  /* Colour: the names the existing pages use, kept, and the fuller set the components use. */
+  --color-bg: var(--portal-bg);
+  --color-surface: var(--portal-surface);
+  --color-surface-subtle: var(--portal-surface-subtle);
+  --color-surface-muted: var(--portal-surface-muted);
+  --color-surface-raised: var(--portal-surface-raised);
+  --color-surface-fg: var(--portal-fg);
+  --color-fg: var(--portal-fg);
+  --color-fg-muted: var(--portal-fg-muted);
+  --color-fg-subtle: var(--portal-fg-subtle);
+  --color-border: var(--portal-border);
+  --color-border-strong: var(--portal-border-strong);
+  --color-border-focus: var(--portal-ring);
+  --color-ring: var(--portal-ring);
+  --color-overlay: var(--portal-overlay);
+  --color-primary: var(--portal-primary);
+  --color-primary-hover: var(--portal-primary-hover);
+  --color-primary-active: var(--portal-primary-active);
+  --color-primary-fg: var(--portal-primary-fg);
+  --color-primary-soft: var(--portal-primary-soft);
+  --color-primary-soft-fg: var(--portal-primary-soft-fg);
+  --color-primary-50: var(--portal-primary-50);
+  --color-primary-100: var(--portal-primary-100);
+  --color-primary-200: var(--portal-primary-200);
+  --color-primary-300: var(--portal-primary-300);
+  --color-primary-400: var(--portal-primary-400);
+  --color-primary-500: var(--portal-primary-500);
+  --color-primary-600: var(--portal-primary-600);
+  --color-primary-700: var(--portal-primary-700);
+  --color-primary-800: var(--portal-primary-800);
+  --color-primary-900: var(--portal-primary-900);
+  --color-neutral-0: var(--portal-neutral-0);
+  --color-neutral-50: var(--portal-neutral-50);
+  --color-neutral-100: var(--portal-neutral-100);
+  --color-neutral-200: var(--portal-neutral-200);
+  --color-neutral-300: var(--portal-neutral-300);
+  --color-neutral-400: var(--portal-neutral-400);
+  --color-neutral-500: var(--portal-neutral-500);
+  --color-neutral-600: var(--portal-neutral-600);
+  --color-neutral-700: var(--portal-neutral-700);
+  --color-neutral-800: var(--portal-neutral-800);
+  --color-neutral-900: var(--portal-neutral-900);
+  --color-secondary: var(--portal-color-secondary);
+  --color-accent: var(--portal-color-accent);
+  --color-danger: var(--portal-danger);
+  --color-danger-fg: var(--portal-danger-fg);
+  --color-danger-hover: var(--portal-danger-hover);
+  --color-danger-active: var(--portal-danger-active);
+  --color-danger-soft: var(--portal-danger-soft);
+  --color-success: var(--portal-success);
+  --color-success-soft: var(--portal-success-soft);
+  --color-warning: var(--portal-warning);
+  --color-warning-soft: var(--portal-warning-soft);
+  --color-info: var(--portal-info);
+  --color-info-soft: var(--portal-info-soft);
+
+  /* Type. */
+  --font-heading: var(--portal-font-heading);
+  --font-sans: var(--portal-font-sans);
+  --font-mono: var(--portal-font-mono);
+  --text-caption: var(--portal-text-caption);
+  --text-caption--line-height: var(--portal-text-caption--line-height);
+  --text-body: var(--portal-text-body);
+  --text-body--line-height: var(--portal-text-body--line-height);
+  --text-title: var(--portal-text-title);
+  --text-title--line-height: var(--portal-text-title--line-height);
+  --text-display: var(--portal-text-display);
+  --text-display--line-height: var(--portal-text-display--line-height);
+
+  /* Spacing, radius, elevation. */
+  --spacing: var(--portal-spacing);
+  --spacing-control-xs: var(--portal-control-xs);
+  --spacing-control: var(--portal-control);
+  --spacing-control-lg: var(--portal-control-lg);
+  --spacing-gutter: var(--portal-space-gutter);
+  --spacing-section: var(--portal-space-section);
+  --spacing-stack: var(--portal-space-stack);
+  --spacing-sidebar: var(--portal-sidebar-width);
+  --spacing-preview: var(--portal-preview-height);
+  --spacing-preview-min: var(--portal-preview-min-height);
+  --spacing-below-header: var(--portal-below-header);
+  --container-content: var(--portal-content-max);
+  --radius-sm: var(--portal-radius-sm);
+  --radius-md: var(--portal-radius-md);
+  --radius-lg: var(--portal-radius-lg);
+  --radius-xl: var(--portal-radius-xl);
+  --shadow-1: var(--portal-shadow-1);
+  --shadow-2: var(--portal-shadow-2);
+  --shadow-3: var(--portal-shadow-3);
+}
+
+/* The one focus treatment of the Portal: visible on the keyboard, silent on the pointer. */
+@utility focus-ring {
+  outline: none;
+  &:focus-visible {
+    outline: var(--portal-ring-width) solid var(--portal-ring);
+    outline-offset: var(--portal-ring-offset);
+  }
+}
+
+/* The same ring on a wrapper whose control is visually hidden inside it: a file input. */
+@utility focus-ring-within {
+  outline: none;
+  &:has(:focus-visible) {
+    outline: var(--portal-ring-width) solid var(--portal-ring);
+    outline-offset: var(--portal-ring-offset);
+  }
+}
+
+/* A link that is a control on a touch screen (a crumb, the brand, a back or export link, a table's
+   name link, the footer's address) grows to the finger's 44 px like a button (WCAG 2.5.8, T-5596).
+   A link inside a sentence stays on its line: it never wears this. */
+/* A phone's sheet that may hold a lot: the page stays in sight above it. */
+@utility max-h-sheet {
+  max-height: 80dvh;
+}
+
+@utility touch-target {
+  @media (pointer: coarse) {
+    display: inline-flex;
+    align-items: center;
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* The same 44 px without a display of its own, for a class list that already sets one and may hide
+   the control at some width (`max-sm:hidden`): a `Link` drawn as a button (`buttonClass`). */
+@utility touch-size {
+  @media (pointer: coarse) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* Same ring, drawn inside the element: for rows and cells that must not grow. */
+@utility focus-ring-inset {
+  outline: none;
+  &:focus-visible {
+    outline: var(--portal-ring-width) solid var(--portal-ring);
+    outline-offset: calc(-1 * var(--portal-ring-width));
+  }
+}
+
+/* A scrolling frame's right edge shadowed while content waits beyond it: the cover scrolls with the
+   content and hides the shadow at its end, so a table cut at a phone's width says it goes on
+   (T-4265, photo audit T-4160; the SDK grid does the same, T-4242). */
+@utility scroll-hint-x {
+  background:
+    linear-gradient(to left, var(--color-surface) 40%, transparent) right / 2rem 100% no-repeat local,
+    linear-gradient(to left, rgb(0 0 0 / 18%), transparent) right / 0.75rem 100% no-repeat scroll,
+    var(--color-surface);
+}
+
+/* The cue over a table's rows while columns wait past its right edge: the frame's own shadow above
+   sits under the rows' zebra and hover fills (T-4992). */
+@utility scroll-cue-x {
+  background: linear-gradient(to left, var(--color-surface) 35%, transparent);
+}
+
+/* A table opted in with `stack` reads as one card per row below 640 px: each cell on its own line
+   beside its column's name (`data-label`), so no column waits past a phone's edge (T-6103). The
+   header stays for a screen reader, which reads the cells as a table at every width. */
+@utility table-stack {
+  @media (width < 40rem) {
+    & thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    & tbody,
+    & tr,
+    & td {
+      display: block;
+    }
+    & tr {
+      padding-block: 0.5rem;
+    }
+    /* The pinned first column's opaque fill would sit as a strip inside a stacked row. */
+    & tbody > tr > :first-child {
+      position: static;
+      background-color: transparent !important;
+    }
+    & td {
+      padding-block: 0.125rem;
+    }
+    & td[data-label] {
+      display: grid;
+      grid-template-columns: 6.5rem minmax(0, 1fr);
+      gap: 0.5rem;
+      align-items: baseline;
+      justify-items: start;
+      overflow-wrap: anywhere;
+    }
+    & td[data-label]::before {
+      content: attr(data-label);
+      color: var(--color-fg-muted);
+      font-size: 0.75rem;
+    }
+  }
+}
+
+/* `table-stack` by the width of the nearest `@container`, for a table in a narrow column at any
+   screen width (the assistant's dock). */
+@utility table-stack-narrow {
+  @container (width < 32rem) {
+    & thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    & tbody,
+    & tr,
+    & td {
+      display: block;
+    }
+    & tr {
+      padding-block: 0.375rem;
+    }
+    & tbody > tr > :first-child {
+      position: static;
+      background-color: transparent !important;
+      font-weight: 600;
+    }
+    & td {
+      padding-block: 0.0625rem;
+    }
+    & td[data-label] {
+      display: grid;
+      grid-template-columns: 5.5rem minmax(0, 1fr);
+      gap: 0.5rem;
+      align-items: baseline;
+      justify-items: start;
+      overflow-wrap: anywhere;
+    }
+    & td[data-label]::before {
+      content: attr(data-label);
+      color: var(--color-fg-muted);
+    }
+    & td[data-label] > span {
+      max-width: none;
+      white-space: normal;
+    }
+  }
+}
+
+/* MapLibre writes its own attribution into the map: a link inside a line of text, told apart
+   from that text by its colour alone, which axe reports as `link-in-text-block` on every
+   dashboard (T-1493, UI-16, UI-30). The control is the library's own DOM, so the underline is
+   set here rather than in the component. Unlayered and with `[href]`: maplibre-gl.css is
+   unlayered, so a rule inside `@layer` lost to its `text-decoration: none` whatever the
+   specificity, and the walker found the link plain on the dataset map (T-6602). */
+.maplibregl-ctrl-attrib a[href] {
+  text-decoration: underline;
+}
+
+@layer base {
+  html {
+    background-color: var(--portal-bg);
+    color: var(--portal-fg);
+    font-family: var(--portal-font-sans);
+    /* 80 % of the browser's 16 px (owner 2026-10-30: the whole UI a fifth smaller); every rem
+       follows, so spacing, controls and text shrink together. */
+    font-size: 12.8px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background-color: var(--portal-bg);
+    color: var(--portal-fg);
+    font-size: var(--portal-text-body);
+    line-height: var(--portal-text-body--line-height);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--portal-font-heading);
+    letter-spacing: -0.01em;
+  }
+
+  ::selection {
+    background-color: var(--portal-primary-200);
+  }
+
+  /* Anything without a class of its own still gets the Portal's focus ring. */
+  :focus-visible {
+    outline: var(--portal-ring-width) solid var(--portal-ring);
+    outline-offset: var(--portal-ring-offset);
+  }
+
+  /*
+   * A finger needs 44 px (WCAG 2.5.5, T-3279). On a touch screen every control grows to it; a
+   * mouse keeps the denser layout the Portal is drawn for. `min-height` wins over a size utility's
+   * `height`, so a 32 px button becomes 44 px without a class of its own.
+   */
+  @media (pointer: coarse) {
+    button,
+    [role="button"],
+    [role="tab"],
+    [role="menuitem"],
+    [role="menuitemcheckbox"],
+    [role="menuitemradio"],
+    [role="option"],
+    select,
+    summary,
+    input:not([type="checkbox"], [type="radio"], [type="hidden"]) {
+      min-height: 44px;
+    }
+
+    button,
+    [role="button"],
+    summary {
+      min-width: 44px;
+    }
+
+    /* A box is ticked by its label, so the label is the target. */
+    label:has(> input[type="checkbox"]),
+    label:has(> input[type="radio"]) {
+      min-height: 44px;
+      align-items: center;
+    }
+  }
+}
+
+/*
+ * The SDK's grid and views draw with their own --jc-color-* tokens and light defaults. In the dark
+ * theme the Portal hands them its own colours, or the grid stays a white island on a dark page
+ * (T-5093). The light theme keeps the SDK's defaults, which every gallery snapshot is drawn with.
+ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --jc-color-ink: var(--portal-fg);
+    --jc-color-surface: var(--portal-surface);
+    --jc-color-card: var(--portal-surface-subtle);
+    --jc-color-line: var(--portal-border);
+    --jc-color-border: var(--portal-border-strong);
+    --jc-color-muted: var(--portal-fg-muted);
+    --jc-color-neutral: var(--portal-fg-subtle);
+    --jc-color-accent: var(--portal-primary);
+    /* A link is text on the row, so the brand towards the ink: the primary fails AA there. */
+    --jc-color-link: var(--portal-primary-soft-fg);
+    --jc-color-primary: var(--portal-primary);
+    --jc-color-focus: var(--portal-ring);
+    --jc-color-danger: var(--portal-danger);
+    --jc-color-success: var(--portal-success);
+    --jc-color-warning: var(--portal-warning);
+    --jc-color-info: var(--portal-info);
+  }
+}
+
+/* Thin, quiet scrollbars everywhere (owner 2026-11-01): a narrow rounded thumb in the border tone,
+   no track; Firefox and Chrome 121+ read the standard pair, older WebKit the pseudo-elements. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--portal-border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--portal-border-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}

@@ -1,0 +1,18 @@
+# T-6488 (S-51, live walk T-5962): a key pasted in the chat is never written or echoed. After a
+# parse refusal the schema names spec.http.authorization.headerRef, and the run ends on the form
+# where the person stores the key.
+workflow: datasource
+as: steward
+says:
+  - "Integrate https://api.example.com/counters.csv as the DataSource counters-api. It takes the key in header X-Api-Key. My key is pineapple-42."
+expect:
+  calls:
+    - tool: change_resource
+      input: { kind: DataSource, name: counters-api, create: true }
+    - tool: jc_schema_get
+      input: { kind: DataSource }
+  outcome: form
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: integrate https://api.example.com/counters.csv as the DataSource counters-api."

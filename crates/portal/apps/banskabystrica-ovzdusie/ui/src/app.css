@@ -1,0 +1,108 @@
+/*
+ * The screen, on the SDK's own tokens (SDK-04): nothing here picks a colour of its own except
+ * the band colours, which are `stations.ts`'s and are the same values the map draws with, so a
+ * dot on the map and a shape in the list cannot disagree.
+ *
+ * The columns are the SDK's layout primitives (Page, Header, Split, Grid; T-2825): the map and
+ * the picked station side by side where there is room, the station cards one to four across.
+ */
+.jc-main {
+  padding: var(--jc-gutter, 1rem);
+}
+
+.subtitle,
+.note,
+.source {
+  color: var(--jc-color-text-muted, #555);
+  margin: 0 0 var(--jc-space-3, 0.75rem);
+}
+
+/* The template's map box: its height follows the window within what a screen can show. */
+.jc-map {
+  height: clamp(18rem, 60vh, 44rem);
+  position: relative;
+  border: 1px solid var(--jc-color-border, #d0d0d0);
+  border-radius: var(--jc-radius-md, 0.5rem);
+  overflow: hidden;
+}
+
+.jc-map-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+/* Over the map's top corner, as the template's map says it has no basemap. */
+.jc-map-notice {
+  position: absolute;
+  z-index: 1;
+  top: var(--jc-space-2, 0.5rem);
+  left: var(--jc-space-2, 0.5rem);
+  margin: 0;
+  padding: var(--jc-space-1, 0.25rem) var(--jc-space-2, 0.5rem);
+  border-radius: var(--jc-radius-sm, 4px);
+  background: var(--jc-color-surface, #fff);
+  color: var(--jc-color-text, #1a1a1a);
+}
+
+.station {
+  border: 1px solid var(--jc-color-border, #d0d0d0);
+  border-left-width: 4px;
+  border-radius: var(--jc-radius-md, 0.5rem);
+  padding: var(--jc-space-3, 0.75rem);
+  background: var(--jc-color-surface, #fff);
+  height: 100%;
+}
+
+.station h3 {
+  margin: 0 0 var(--jc-space-2, 0.5rem);
+  font-size: 1rem;
+}
+
+.station.picked {
+  outline: 2px solid var(--jc-color-focus, #0b5fff);
+}
+
+.station-low {
+  border-left-color: #1a7f37;
+}
+
+.station-raised {
+  border-left-color: #bf8700;
+}
+
+.station-high {
+  border-left-color: #b42318;
+}
+
+.station-stale,
+.station-unknown {
+  border-left-color: #6e7781;
+}
+
+.band {
+  margin: 0 0 var(--jc-space-2, 0.5rem);
+}
+
+.shape {
+  font-size: 1.1em;
+}
+
+.station dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0 var(--jc-space-2, 0.5rem);
+  margin: 0 0 var(--jc-space-2, 0.5rem);
+}
+
+.station dt {
+  color: var(--jc-color-text-muted, #555);
+}
+
+.station dd {
+  margin: 0;
+}
+
+
+.detail h2 {
+  margin-top: 0;
+}

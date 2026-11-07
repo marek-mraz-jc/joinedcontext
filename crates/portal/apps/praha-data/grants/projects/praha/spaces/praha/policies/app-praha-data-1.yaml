@@ -1,0 +1,106 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-praha-data-1
+  namespace: praha
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:praha/app-praha-data
+    kind: role
+  assigner: did:web:praha.eu
+  contextSpaceRef:
+    kind: ContextSpace
+    name: praha-mesto
+  information:
+  - entities:
+    - type: PointOfInterest
+    - type: WasteContainerIsle
+    - type: WasteContainer
+    - type: OffStreetParking
+    - type: BikeHireDockingStation
+    - type: AirQualityObserved
+    - type: AdministrativeArea
+    - type: BudgetLine
+    propertyNames:
+    - name
+    - serviceCategory
+    - facilityType
+    - address
+    - openingHours
+    - wheelchairAccessible
+    - capacity
+    - pupilCount
+    - url
+    - stationCode
+    - accessRestriction
+    - containerCode
+    - wasteKind
+    - fillingLevel
+    - dateModified
+    - totalSpotNumber
+    - availableSpotNumber
+    - occupiedSpotNumber
+    - totalSlotNumber
+    - availableBikeNumber
+    - freeSlotNumber
+    - status
+    - dateObserved
+    - pm10
+    - pm25
+    - no2
+    - o3
+    - so2
+    - co
+    - districtCode
+    - budgetItem
+    - fiscalYear
+    - budgetArea
+    - budgetFunction
+    - budgetPurpose
+    - approvedAmount
+    - adjustedAmount
+    - location
+    relationshipNames:
+    - name
+    - serviceCategory
+    - facilityType
+    - address
+    - openingHours
+    - wheelchairAccessible
+    - capacity
+    - pupilCount
+    - url
+    - stationCode
+    - accessRestriction
+    - containerCode
+    - wasteKind
+    - fillingLevel
+    - dateModified
+    - totalSpotNumber
+    - availableSpotNumber
+    - occupiedSpotNumber
+    - totalSlotNumber
+    - availableBikeNumber
+    - freeSlotNumber
+    - status
+    - dateObserved
+    - pm10
+    - pm25
+    - no2
+    - o3
+    - so2
+    - co
+    - districtCode
+    - budgetItem
+    - fiscalYear
+    - budgetArea
+    - budgetFunction
+    - budgetPurpose
+    - approvedAmount
+    - adjustedAmount
+    - location
+  operations:
+  - queryEntity
+  - retrieveEntity

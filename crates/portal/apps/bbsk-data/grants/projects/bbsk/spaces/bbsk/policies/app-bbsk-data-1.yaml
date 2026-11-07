@@ -1,0 +1,84 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-bbsk-data-1
+  namespace: bbsk
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:bbsk/app-bbsk-data
+    kind: role
+  assigner: did:web:bbsk.sk
+  contextSpaceRef:
+    kind: ContextSpace
+    name: bbsk-registre
+  information:
+  - entities:
+    - type: PointOfInterest
+    - type: Bridge
+    - type: PublicOrganization
+    - type: AdministrativeArea
+    propertyNames:
+    - name
+    - category
+    - hospitalKind
+    - operatorName
+    - medicalSpecialties
+    - address
+    - legalId
+    - serviceKind
+    - serviceForm
+    - targetGroup
+    - capacity
+    - providerKind
+    - districtName
+    - url
+    - bridgeCode
+    - roadClass
+    - roadNumber
+    - yearBuilt
+    - spanCount
+    - bridgedLength
+    - structureMaterial
+    - heritageStatus
+    - managerName
+    - alternateName
+    - organizationCategory
+    - areaCode
+    - divisionLevel
+    - surfaceArea
+    - location
+    relationshipNames:
+    - name
+    - category
+    - hospitalKind
+    - operatorName
+    - medicalSpecialties
+    - address
+    - legalId
+    - serviceKind
+    - serviceForm
+    - targetGroup
+    - capacity
+    - providerKind
+    - districtName
+    - url
+    - bridgeCode
+    - roadClass
+    - roadNumber
+    - yearBuilt
+    - spanCount
+    - bridgedLength
+    - structureMaterial
+    - heritageStatus
+    - managerName
+    - alternateName
+    - organizationCategory
+    - areaCode
+    - divisionLevel
+    - surfaceArea
+    - location
+  operations:
+  - queryEntity
+  - retrieveEntity

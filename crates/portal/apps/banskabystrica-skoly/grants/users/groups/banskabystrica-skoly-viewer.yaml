@@ -1,0 +1,12 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Group
+metadata:
+  name: banskabystrica-skoly-viewer
+  namespace: org
+  annotations:
+    joinedcontext.com/app: banskabystrica/banskabystrica-skoly
+spec:
+  description: The viewers of banskabystrica-skoly, its default group.
+  members:
+  - user: de300000-0000-4000-8000-000000000002 # demo.viewer
+  - user: de300000-0000-4000-8000-000000000001 # demo.steward

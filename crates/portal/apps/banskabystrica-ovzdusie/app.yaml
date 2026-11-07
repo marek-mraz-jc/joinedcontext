@@ -1,0 +1,50 @@
+# Ovzdušie v Banskej Bystrici — the city's air-quality screen (AP-07, AP-14, AP-34, AP-45,
+# T-2435). Hand written, so no generated-by annotation.
+#
+# It reads and never writes, so it is `static`: a bundle the Portal static host serves under
+# /apps/banskabystrica-ovzdusie/. The endpoint behind it, `public-air`, is public, so the app
+# never asks anybody to sign in and never holds a token (AP-28).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: banskabystrica-ovzdusie
+  namespace: banskabystrica
+  annotations:
+    # The Portal image ships this bundle (Dockerfile, /srv/apps), so the App names no
+    # repository of its own; the Portal accepts the mark only where the bundle is (AP-87).
+    joinedcontext.com/shipped-with: portal
+  title:
+    sk: "Mapa ovzdušia v Banskej Bystrici"
+    en: "Air quality map of Banská Bystrica"
+  description:
+    sk: "Meracie stanice na mape, farebne podľa posledného PM10 voči dennému limitu, s posledným meraním a jedným dňom histórie. Stanica, ktorej meranie je staré, je označená ako stará, nie ako čistý vzduch."
+    en: "The measuring stations on a map, coloured by their latest PM10 against the daily limit, with the latest reading and one day of history. A station whose reading is old is marked as old, never as clean air."
+spec:
+  kind: ui
+  source:
+    path: ./apps/banskabystrica-ovzdusie
+  build:
+    node: "22"
+  # The endpoint is public and the screen is the city's own publication, so anybody may open it.
+  # Widening an audience is what puts a publication in the yellow lane (AP-20); nothing here
+  # widens the endpoint, which was already public.
+  visibility: public
+  lifecycle: published
+  embeddable: true
+  dataNeeds:
+    # One space, one type, read only. `banskabystrica-verejne` is the city's public space, where
+    # the pipelines ovzdusie-pm10 and ovzdusie-pm25 write the EEA's hourly readings of station
+    # SK0263A (T-2781, T-2949); `ovzdusie` holds the conformance suite's seeded stations and is
+    # not the city's air. The space's public grant (`policy-verejne-read.yaml`) serves every
+    # attribute of the type, and these are the ones the screen shows.
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: banskabystrica-verejne
+      types: [AirQualityObserved]
+      attrs: [name, dateObserved, location, pm10, pm25, dataProvider]
+      # The day of history is one station's, `GET /temporal/entities/{id}`: retrieveTemporal,
+      # never the type-wide queryTemporal the screen does not ask (T-2972).
+      operations: [queryEntity, retrieveEntity, retrieveTemporal]
+      temporalQ:
+        window: P1D
+      representations: [ngsi-ld, ogc-features]

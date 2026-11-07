@@ -1,0 +1,301 @@
+# Default form arrangement for Endpoint (UI-02).
+# Publishes context data over HTTP; examples match the Helsinki public endpoints.
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: endpoint
+spec:
+  for: Endpoint
+  guide: User-Guide/05-endpoints-and-sharing
+  about:
+    en: >-
+      An endpoint is the door through which other people read a context space: one address, the
+      formats you allow and the limits you set. Pick the space it serves and who may read it —
+      nothing is published until a person approves the change.
+    sk: >-
+      Endpoint sú dvere, ktorými iní ľudia čítajú kontextový priestor: jedna adresa, formáty,
+      ktoré povolíte, a limity, ktoré nastavíte. Vyberte priestor, ktorý obsluhuje, a kto ho smie
+      čítať — nič sa nezverejní, kým zmenu niekto neschváli.
+    cs: >-
+      Endpoint jsou dveře, kterými ostatní lidé čtou kontextový prostor: jedna adresa, formáty,
+      které povolíte, a limity, které nastavíte. Vyberte prostor, který obsluhuje, a kdo jej smí
+      číst — nic se nezveřejní, dokud změnu někdo neschválí.
+    de: >-
+      Ein Endpunkt ist die Tür, durch die andere einen Kontextraum lesen: eine Adresse, die
+      Formate, die Sie erlauben, und die Grenzen, die Sie setzen. Wählen Sie den Raum und wer
+      lesen darf — veröffentlicht wird erst, wenn eine Person die Änderung genehmigt.
+  # Absent from the schema by design while the person has not picked what they belong to: the
+  # project list until the audience is `project-list`, a burst until a rate per minute is set.
+  variants: [allowedProjects, rateLimits.burst]
+  order:
+    [
+      contextSpaceRef,
+      name,
+      title,
+      audience,
+      allowedProjects,
+      enabledRepresentations,
+      representations,
+      rateLimits,
+      caching,
+      publish,
+      catalog,
+    ]
+  groups:
+    - title:
+        en: What it publishes
+        sk: Čo zverejňuje
+        cs: Co zveřejňuje
+        de: Was es veröffentlicht
+      description:
+        en: The context space this endpoint serves and its identifiers.
+        sk: Kontextový priestor, ktorý toto rozhranie obsluhuje, a jeho identifikátory.
+        cs: Kontextový prostor, který toto rozhraní obsluhuje, a jeho identifikátory.
+        de: Der Kontextraum, den dieser Endpunkt bedient, und seine Kennungen.
+      fields: [contextSpaceRef, name, title]
+    - title:
+        en: Who can read it
+        sk: Kto ho môže čítať
+        cs: Kdo jej může číst
+        de: Wer zugreifen darf
+      description:
+        en: Visibility, allowed projects and enabled representations.
+        sk: Viditeľnosť, povolené projekty a zapnuté reprezentácie.
+        cs: Viditelnost, povolené projekty a zapnuté reprezentace.
+        de: Sichtbarkeit, zugelassene Projekte und aktivierte Repräsentationen.
+      fields: [audience, allowedProjects, enabledRepresentations, representations]
+    - title:
+        en: Traffic and caching
+        sk: Prevádzka a vyrovnávacia pamäť
+        cs: Provoz a vyrovnávací paměť
+        de: Datenverkehr und Zwischenspeicher
+      description:
+        en: Optional request rate limit (none unless you set one) and response cache duration.
+        sk: Voliteľný limit požiadaviek (bez limitu, kým ho nenastavíte) a trvanie vyrovnávacej pamäte pre odpovede.
+        cs: Volitelný limit požadavků (bez limitu, dokud jej nenastavíte) a trvání vyrovnávací paměti pro odpovědi.
+        de: Optionales Anfragelimit (keines, solange Sie keines setzen) und Cache-Dauer für Antworten.
+      folded: true
+      fields: [rateLimits, caching]
+    - title:
+        en: Open data
+        sk: Otvorené údaje
+        cs: Otevřená data
+        de: Offene Daten
+      description:
+        en: Publishing this endpoint as a dataset in the installation's open-data catalogue.
+        sk: Zverejnenie tohto rozhrania ako datasetu v katalógu otvorených údajov inštalácie.
+        cs: Zveřejnění tohoto rozhraní jako datasetu v katalogu otevřených dat instalace.
+        de: Diesen Endpunkt als Datensatz im Open-Data-Katalog der Installation veröffentlichen.
+      folded: true
+      fields: [publish]
+    - title:
+        en: Catalogue description
+        sk: Popis v katalógu
+        cs: Popis v katalogu
+        de: Katalogbeschreibung
+      description:
+        en: Who publishes the data, under what licence, what it covers and where it comes from, as every catalogue reads it.
+        sk: Kto údaje zverejňuje, pod akou licenciou, čo pokrývajú a odkiaľ pochádzajú, tak ako to číta každý katalóg.
+        cs: Kdo data zveřejňuje, pod jakou licencí, co pokrývají a odkud pocházejí, tak jak to čte každý katalog.
+        de: Wer die Daten veröffentlicht, unter welcher Lizenz, was sie abdecken und woher sie stammen, wie jeder Katalog es liest.
+      folded: true
+      fields: [catalog]
+  fields:
+    name:
+      placeholder: "parking-public"
+      help:
+        en: Internal identifier for this endpoint; lowercase letters, digits and hyphens only.
+        sk: Interný identifikátor tohto rozhrania; iba malé písmená, číslice a spojovníky.
+        cs: Interní identifikátor tohoto rozhraní; pouze malá písmena, číslice a spojovníky.
+        de: Interne Kennung dieses Endpunkts; nur Kleinbuchstaben, Ziffern und Bindestriche.
+    title:
+      help:
+        en: The name people read in the catalogue when they look for this data.
+        sk: Názov, ktorý ľudia čítajú v katalógu, keď hľadajú tieto údaje.
+        cs: Název, který lidé čtou v katalogu, když hledají tato data.
+        de: Der Name, den Menschen im Katalog lesen, wenn sie diese Daten suchen.
+    contextSpaceRef:
+      help:
+        en: The context space whose entities this endpoint serves.
+        sk: Kontextový priestor, ktorého entity toto rozhranie poskytuje.
+        cs: Kontextový prostor, jehož entity toto rozhraní poskytuje.
+        de: Der Kontextraum, dessen Entitäten dieser Endpunkt bereitstellt.
+    audience:
+      help:
+        en: Who is allowed to connect; public endpoints allow anonymous read access.
+        sk: Kto sa smie pripojiť; verejné rozhrania povoľujú anonymné čítanie.
+        cs: Kdo se smí připojit; veřejná rozhraní povolují anonymní čtení.
+        de: Wer zugreifen darf; öffentliche Endpunkte erlauben anonymen Lesezugriff.
+    enabledRepresentations:
+      widget: checkboxes
+      help:
+        en: >-
+          The standards callers can read it through. Every one but SensorThings is on until you
+          uncheck it; NGSI-LD, GeoJSON and MCP are always on. SensorThings needs a number with its
+          unit in the space's data model, for example pm10 in µg/m³.
+        sk: >-
+          Štandardy, cez ktoré ho volajúci môžu čítať. Všetky okrem SensorThings sú zapnuté, kým
+          ich neodškrtnete; NGSI-LD, GeoJSON a MCP sú zapnuté vždy. SensorThings potrebuje v dátovom
+          modeli priestoru číslo s jednotkou, napríklad pm10 v µg/m³.
+        cs: >-
+          Standardy, přes které jej volající mohou číst. Všechny kromě SensorThings jsou zapnuté,
+          dokud je neodškrtnete; NGSI-LD, GeoJSON a MCP jsou zapnuté vždy. SensorThings potřebuje
+          v datovém modelu prostoru číslo s jednotkou, například pm10 v µg/m³.
+        de: >-
+          Die Standards, über die Aufrufer lesen können. Alle außer SensorThings sind an, bis Sie
+          sie abwählen; NGSI-LD, GeoJSON und MCP sind immer an. SensorThings braucht im Datenmodell
+          des Raums eine Zahl mit Einheit, zum Beispiel pm10 in µg/m³.
+    representations:
+      help:
+        en: Which attribute of the space's model each field of the iCalendar feed comes from; the default reads a Smart Data Models Event.
+        sk: Z ktorého atribútu modelu priestoru pochádza každé pole kalendára iCalendar; predvolené číta Smart Data Models Event.
+        cs: Ze kterého atributu modelu prostoru pochází každé pole kalendáře iCalendar; výchozí čte Smart Data Models Event.
+        de: Aus welchem Attribut des Raummodells jedes Feld des iCalendar-Feeds stammt; der Standard liest ein Smart Data Models Event.
+    allowedProjects:
+      help:
+        en: Other projects in the organization permitted to read this endpoint when audience is restricted.
+        sk: Ostatné projekty v organizácii s povolením čítať toto rozhranie pri obmedzenom publiku.
+        cs: Ostatní projekty v organizaci s povolením číst toto rozhraní při omezeném publiku.
+        de: Andere Projekte der Organisation, die diesen Endpunkt bei eingeschränkter Zielgruppe lesen dürfen.
+    rateLimits.requestsPerMinute:
+      help:
+        en: No limit. Set one to protect a public endpoint; it then caps the requests of each client per minute.
+        sk: Bez limitu. Nastavte ho na ochranu verejného rozhrania; potom obmedzí požiadavky každého klienta za minútu.
+        cs: Bez limitu. Nastavte jej na ochranu veřejného rozhraní; pak omezí požadavky každého klienta za minutu.
+        de: Kein Limit. Setzen Sie eines, um einen öffentlichen Endpunkt zu schützen; es begrenzt dann die Anfragen jedes Clients pro Minute.
+    rateLimits.burst:
+      advanced: true
+      help:
+        en: Number of requests permitted in a brief spike above the normal rate.
+        sk: Počet požiadaviek povolených v krátkej špičke nad bežnú frekvenciu.
+        cs: Počet požadavků povolených v krátké špičce nad běžnou frekvenci.
+        de: Anzahl der Anfragen, die in einer kurzen Spitze über das normale Limit hinaus erlaubt sind.
+    caching.maxAgeSeconds:
+      widget: range
+      advanced: true
+      help:
+        en: How long gateway caches responses to reduce broker load; zero disables caching.
+        sk: Ako dlho brána uchováva odpovede vo vyrovnávacej pamäti; nula ukladanie vypne.
+        cs: Jak dlouho brána uchovává odpovědi ve vyrovnávací paměti; nula ukládání vypne.
+        de: Wie lange das Gateway Antworten zwischenspeichert; Null schaltet den Cache ab.
+    publish.ckan.instanceRef:
+      help:
+        en: The catalogue this endpoint is published to; naming one is what publishes it.
+        sk: Katalóg, do ktorého sa rozhranie publikuje; jeho uvedením sa publikovanie zapne.
+        cs: Katalog, do kterého se rozhraní publikuje; jeho uvedením se publikování zapne.
+        de: Der Katalog, in dem der Endpunkt erscheint; ihn zu nennen schaltet das Publizieren ein.
+    publish.ckan.organization:
+      help:
+        en: The catalogue folder the dataset lands in; the catalogue's own default when empty.
+        sk: Priečinok katalógu, do ktorého dataset patrí; ak je prázdny, použije sa predvolený.
+        cs: Složka katalogu, do níž dataset patří; je-li prázdná, použije se výchozí.
+        de: Der Katalogordner des Datensatzes; leer bedeutet den Standard des Katalogs.
+    publish.ckan.name:
+      help:
+        en: The dataset name in the catalogue, which its address shows; this endpoint's name when empty.
+        sk: Názov datasetu v katalógu, ktorý sa zobrazí v jeho adrese; ak je prázdny, názov rozhrania.
+        cs: Název datasetu v katalogu, který se zobrazí v jeho adrese; je-li prázdný, název rozhraní.
+        de: Der Name des Datensatzes im Katalog, den seine Adresse zeigt; leer heißt der Endpunktname.
+    catalog.publisher.name:
+      help:
+        en: "The organization that publishes this data, as a catalogue names it."
+        sk: "Organizácia, ktorá tieto údaje zverejňuje, tak ako ju uvádza katalóg."
+        cs: "Organizace, která tato data zveřejňuje, tak jak ji uvádí katalog."
+        de: "Die Organisation, die diese Daten veröffentlicht, wie ein Katalog sie nennt."
+    catalog.publisher.uri:
+      help:
+        en: "The publisher's web address, which catalogues use to tell publishers apart."
+        sk: "Webová adresa vydavateľa, podľa ktorej katalógy rozlišujú vydavateľov."
+        cs: "Webová adresa vydavatele, podle které katalogy rozlišují vydavatele."
+        de: "Die Webadresse des Herausgebers, an der Kataloge Herausgeber unterscheiden."
+    catalog.contactPoint.name:
+      help:
+        en: "The desk that answers questions about this data, as a reader should address it."
+        sk: "Pracovisko, ktoré odpovedá na otázky k týmto údajom, tak ako ho má čitateľ osloviť."
+        cs: "Pracoviště, které odpovídá na dotazy k těmto datům, tak jak jej má čtenář oslovit."
+        de: "Die Stelle, die Fragen zu diesen Daten beantwortet, so wie Lesende sie ansprechen sollen."
+    catalog.contactPoint.email:
+      help:
+        en: "A shared mailbox such as the open-data desk; a person's own address is refused, because every catalogue publishes it."
+        sk: "Spoločná schránka, napríklad pracoviska otvorených údajov; osobná adresa sa odmietne, lebo ju zverejní každý katalóg."
+        cs: "Společná schránka, například pracoviště otevřených dat; osobní adresa se odmítne, protože ji zveřejní každý katalog."
+        de: "Ein Sammelpostfach wie das der Open-Data-Stelle; eine persönliche Adresse wird abgelehnt, weil jeder Katalog sie veröffentlicht."
+    catalog.license:
+      help:
+        en: "The licence the data is published under; it decides what a user owes, such as crediting you."
+        sk: "Licencia, pod ktorou sa údaje zverejňujú; určuje, čo používateľ dlhuje, napríklad uviesť vás ako zdroj."
+        cs: "Licence, pod kterou se data zveřejňují; určuje, co uživatel dluží, například uvést vás jako zdroj."
+        de: "Die Lizenz der Daten; sie bestimmt, was Nutzende schulden, etwa Sie als Quelle zu nennen."
+    catalog.attribution:
+      help:
+        en: "The words a user writes when crediting the data, as the licence asks."
+        sk: "Slová, ktorými používateľ uvedie zdroj údajov, ako to žiada licencia."
+        cs: "Slova, kterými uživatel uvede zdroj dat, jak to žádá licence."
+        de: "Die Worte, mit denen Nutzende die Quelle nennen, wie die Lizenz es verlangt."
+    catalog.themes:
+      widget: checkboxes
+      help:
+        en: "The European data themes a person browses by to find this dataset."
+        sk: "Európske témy údajov, podľa ktorých ľudia prehliadajú katalóg a nájdu tento dataset."
+        cs: "Evropská témata dat, podle kterých lidé procházejí katalog a najdou tento dataset."
+        de: "Die europäischen Datenthemen, nach denen Menschen stöbern, um diesen Datensatz zu finden."
+    catalog.keywords:
+      help:
+        en: "Words a person types into a catalogue search, one per entry, in your language."
+        sk: "Slová, ktoré ľudia zadávajú do vyhľadávania v katalógu, jedno na záznam, vo vašom jazyku."
+        cs: "Slova, která lidé zadávají do vyhledávání v katalogu, jedno na záznam, ve vašem jazyce."
+        de: "Wörter, die Menschen in die Katalogsuche eingeben, eines je Eintrag, in Ihrer Sprache."
+    catalog.spatial:
+      help:
+        en: "The area the data covers: a NUTS region code, or the web address of a place in a gazetteer."
+        sk: "Územie, ktoré údaje pokrývajú: kód regiónu NUTS alebo webová adresa miesta v registri."
+        cs: "Území, které data pokrývají: kód regionu NUTS nebo webová adresa místa v rejstříku."
+        de: "Das Gebiet der Daten: ein NUTS-Regionscode oder die Webadresse eines Ortes in einem Ortsverzeichnis."
+    catalog.temporal.start:
+      help:
+        en: "The first day the data covers, when it holds history."
+        sk: "Prvý deň, ktorý údaje pokrývajú, ak obsahujú históriu."
+        cs: "První den, který data pokrývají, pokud obsahují historii."
+        de: "Der erste Tag, den die Daten abdecken, wenn sie eine Historie haben."
+    catalog.temporal.end:
+      help:
+        en: "The last day the data covers; empty while it is still being updated."
+        sk: "Posledný deň, ktorý údaje pokrývajú; prázdne, kým sa ešte aktualizujú."
+        cs: "Poslední den, který data pokrývají; prázdné, dokud se ještě aktualizují."
+        de: "Der letzte abgedeckte Tag; leer, solange die Daten noch aktualisiert werden."
+    catalog.frequency:
+      help:
+        en: "How often the data changes, matching how often its pipeline runs."
+        sk: "Ako často sa údaje menia, v súlade s tým, ako často beží ich tok údajov."
+        cs: "Jak často se data mění, v souladu s tím, jak často běží jejich tok dat."
+        de: "Wie oft sich die Daten ändern, passend dazu, wie oft ihre Pipeline läuft."
+    catalog.source[].url:
+      help:
+        en: "The web address of the original open dataset this data is taken from."
+        sk: "Webová adresa pôvodného otvoreného datasetu, z ktorého tieto údaje pochádzajú."
+        cs: "Webová adresa původního otevřeného datasetu, ze kterého tato data pocházejí."
+        de: "Die Webadresse des ursprünglichen offenen Datensatzes, aus dem diese Daten stammen."
+    catalog.source[].title:
+      help:
+        en: "The original dataset's name, as its own catalogue lists it."
+        sk: "Názov pôvodného datasetu, tak ako ho uvádza jeho vlastný katalóg."
+        cs: "Název původního datasetu, tak jak jej uvádí jeho vlastní katalog."
+        de: "Der Name des ursprünglichen Datensatzes, wie sein eigener Katalog ihn führt."
+    catalog.source[].description:
+      help:
+        en: "One sentence on what the original dataset holds."
+        sk: "Jedna veta o tom, čo pôvodný dataset obsahuje."
+        cs: "Jedna věta o tom, co původní dataset obsahuje."
+        de: "Ein Satz dazu, was der ursprüngliche Datensatz enthält."
+    catalog.pipelineRef:
+      help:
+        en: "The pipeline of this project that fills the space, so a reader sees how the data got here."
+        sk: "Tok údajov tohto projektu, ktorý plní priestor, aby čitateľ videl, ako sa sem údaje dostali."
+        cs: "Tok dat tohoto projektu, který plní prostor, aby čtenář viděl, jak se sem data dostala."
+        de: "Die Pipeline dieses Projekts, die den Raum füllt, damit Lesende sehen, wie die Daten hierher kamen."
+    catalog.applicableLegislation:
+      help:
+        en: "The law that applies to the data, as its ELI address; the high-value datasets regulation for such data."
+        sk: "Právny predpis, ktorý sa na údaje vzťahuje, ako adresa ELI; pri súboroch vysokej hodnoty ich nariadenie."
+        cs: "Právní předpis, který se na data vztahuje, jako adresa ELI; u datových sad vysoké hodnoty jejich nařízení."
+        de: "Das Gesetz, das für die Daten gilt, als ELI-Adresse; für hochwertige Datensätze deren Verordnung."

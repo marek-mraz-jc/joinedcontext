@@ -1,0 +1,39 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-helsinki-events-1
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:helsinki/app-helsinki-events
+    kind: role
+  assigner: did:web:hel.fi
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki
+  information:
+  - entities:
+    - type: Event
+    propertyNames:
+    - name
+    - description
+    - startDate
+    - endDate
+    - eventStatus
+    - address
+    - location
+    - source
+    relationshipNames:
+    - name
+    - description
+    - startDate
+    - endDate
+    - eventStatus
+    - address
+    - location
+    - source
+  operations:
+  - queryEntity
+  - retrieveEntity

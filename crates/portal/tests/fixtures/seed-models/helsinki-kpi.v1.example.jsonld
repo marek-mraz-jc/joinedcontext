@@ -1,0 +1,44 @@
+{
+  "@context": [
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld",
+    "helsinki-kpi.v1.context.jsonld"
+  ],
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:hel.fi:helsinki-kpi:bikes-available-sum",
+  "type": "KeyPerformanceIndicator",
+  "name": {
+    "type": "Property",
+    "value": "bikes-available-sum"
+  },
+  "currentValue": {
+    "type": "Property",
+    "value": 3848,
+    "unitCode": "C62",
+    "observedAt": "2026-09-18T05:46:05Z"
+  },
+  "calculationPeriod": {
+    "type": "Property",
+    "value": {
+      "start": "2026-09-18T05:31:05Z",
+      "end": "2026-09-18T05:46:05Z"
+    }
+  },
+  "calculationFormula": {
+    "type": "Property",
+    "value": "sum(availableBikeNumber) over BikeHireDockingStation"
+  },
+  "derivedFrom": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-bikes"
+  },
+  "computedBy": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:Pipeline:hel.fi:helsinki:bikes-available-sum"
+  },
+  "updatedAt": {
+    "type": "Property",
+    "value": {
+      "@type": "DateTime",
+      "@value": "2026-09-18T05:46:05Z"
+    }
+  }
+}

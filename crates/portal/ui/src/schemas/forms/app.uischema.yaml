@@ -1,0 +1,241 @@
+# Default form arrangement for App (UI-02, T-2343).
+# A generated or hand-written application, its source, its toolchain and what it may read and write (AP-01…AP-20).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: app
+spec:
+  for: App
+  guide: User-Guide/11-apps
+  about:
+    en: >-
+      An app is a small application the platform builds and serves for this project. Say how it is
+      built and who reaches it, where its source is and which toolchain CI pins, and what data it
+      needs; the platform renders its endpoint and policy from those needs, and publishing stays a
+      separate step.
+    sk: >-
+      Aplikácia je malý program, ktorý platforma pre tento projekt zostaví a sprístupní. Uveďte, ako
+      sa zostavuje a kto sa k nej dostane, kde je jej zdrojový kód a akú sadu nástrojov CI používa, a
+      aké údaje potrebuje; endpoint a politiku platforma odvodí z týchto potrieb a zverejnenie je
+      samostatný krok.
+    cs: >-
+      Aplikace je malý program, který platforma pro tento projekt sestaví a zpřístupní. Uveďte, jak
+      se sestavuje a kdo se k ní dostane, kde je její zdrojový kód a jakou sadu nástrojů CI používá, a
+      jaká data potřebuje; endpoint a politiku platforma odvodí z těchto potřeb a zveřejnění je
+      samostatný krok.
+    de: >-
+      Eine App ist eine kleine Anwendung, die die Plattform für dieses Projekt baut und bereitstellt.
+      Nennen Sie Bauart und Publikum, Quelle und die von CI gepinnten Werkzeuge sowie die benötigten
+      Daten; Endpoint und Richtlinie leitet die Plattform daraus ab, das Veröffentlichen ist ein
+      eigener Schritt.
+  order: [name, kind, visibility, embeddable, source, build, dataNeeds, csp, limits, egress]
+  groups:
+    - title:
+        en: The app
+        sk: Aplikácia
+        cs: Aplikace
+        de: Die App
+      description:
+        en: What the app is called, how it is served and who may reach it once published.
+        sk: Ako sa aplikácia volá, ako sa poskytuje a kto sa k nej po zverejnení dostane.
+        cs: Jak se aplikace jmenuje, jak se poskytuje a kdo se k ní po zveřejnění dostane.
+        de: Wie die App heißt, wie sie bereitgestellt wird und wer sie nach der Veröffentlichung erreicht.
+      fields: [name, kind, visibility, embeddable]
+    - title:
+        en: Source and build
+        sk: Zdroj a zostavenie
+        cs: Zdroj a sestavení
+        de: Quelle und Build
+      description:
+        en: Where the source is kept and which tool versions CI builds it with.
+        sk: Kde je zdrojový kód a s akými verziami nástrojov ho CI zostavuje.
+        cs: Kde je zdrojový kód a s jakými verzemi nástrojů jej CI sestavuje.
+        de: Wo die Quelle liegt und mit welchen Werkzeugversionen CI sie baut.
+      fields: [source, build]
+    - title:
+        en: Data it needs
+        sk: Údaje, ktoré potrebuje
+        cs: Data, která potřebuje
+        de: Benötigte Daten
+      description:
+        en: One entry per space the app reads or writes; its endpoint and policy are rendered from these.
+        sk: Jeden záznam na každý priestor, ktorý aplikácia číta alebo zapisuje; odvodí sa z nich endpoint a politika.
+        cs: Jeden záznam na každý prostor, který aplikace čte nebo zapisuje; odvodí se z nich endpoint a politika.
+        de: Ein Eintrag je Raum, den die App liest oder schreibt; Endpoint und Richtlinie folgen daraus.
+      fields: [dataNeeds]
+    - title:
+        en: Security and limits
+        sk: Bezpečnosť a limity
+        cs: Bezpečnost a limity
+        de: Sicherheit und Grenzen
+      description:
+        en: Which origins the app may call and frame it, and how much its endpoint may be asked.
+        sk: Ktoré pôvody smie aplikácia volať a ktoré ju smú vložiť, a koľko smie jej endpoint dostať požiadaviek.
+        cs: Které původy smí aplikace volat a které ji smějí vložit, a kolik smí její endpoint dostat požadavků.
+        de: Welche Origins die App aufrufen und einbetten dürfen und wie stark ihr Endpoint belastet werden darf.
+      folded: true
+      fields: [csp, limits, egress]
+  fields:
+    name:
+      help:
+        en: The short name of the app; its address and its endpoint are named after it.
+        sk: Krátky názov aplikácie; podľa neho sa pomenuje jej adresa aj endpoint.
+        cs: Krátký název aplikace; podle něj se pojmenuje její adresa i endpoint.
+        de: Der kurze Name der App; Adresse und Endpoint werden nach ihm benannt.
+    kind:
+      help:
+        en: A static front end runs in the browser with the person's own rights; a service runs on its own identity.
+        sk: Statický front end beží v prehliadači s právami osoby; služba beží pod vlastnou identitou.
+        cs: Statický front end běží v prohlížeči s právy osoby; služba běží pod vlastní identitou.
+        de: Ein statisches Frontend läuft im Browser mit den Rechten der Person; ein Dienst mit eigener Identität.
+    visibility:
+      help:
+        en: Who reaches the app once it is published; it asks for a login unless you choose public. Public means anyone on the internet opens it without signing in, and a publisher must approve that.
+        sk: Kto sa k aplikácii dostane po zverejnení; pýta si prihlásenie, kým nezvolíte verejnú. Verejná znamená, že ju ktokoľvek na internete otvorí bez prihlásenia, a to musí schváliť publikujúci.
+        cs: Kdo se k aplikaci dostane po zveřejnění; vyžaduje přihlášení, dokud nezvolíte veřejnou. Veřejná znamená, že ji kdokoli na internetu otevře bez přihlášení, a to musí schválit publikující.
+        de: Wer die App nach der Veröffentlichung erreicht; sie verlangt eine Anmeldung, außer Sie wählen öffentlich. Öffentlich heißt, jeder im Internet öffnet sie ohne Anmeldung, und das muss ein Publisher genehmigen.
+    embeddable:
+      help:
+        en: Whether the Portal may show the app inside its own page, in a frame.
+        sk: Či smie Portál zobraziť aplikáciu vo vlastnej stránke, v rámci.
+        cs: Zda smí Portál zobrazit aplikaci ve vlastní stránce, v rámu.
+        de: Ob das Portal die App in einem Rahmen in der eigenen Seite zeigen darf.
+    source.from:
+      help:
+        en: A folder beside the manifest in this repository, or a repository of the organization's forge.
+        sk: Priečinok vedľa manifestu v tomto repozitári, alebo repozitár vo forge organizácie.
+        cs: Složka vedle manifestu v tomto repozitáři, nebo repozitář ve forge organizace.
+        de: Ein Ordner neben dem Manifest in diesem Repository oder ein Repository der Organisation.
+    source.path:
+      help:
+        en: For a folder source, the folder relative to the repository root, without a leading slash.
+        sk: Pri zdroji v priečinku cesta k nemu od koreňa repozitára, bez lomky na začiatku.
+        cs: U zdroje ve složce cesta k ní od kořene repozitáře, bez lomítka na začátku.
+        de: Bei einem Ordner der Pfad ab der Repository-Wurzel, ohne führenden Schrägstrich.
+    source.url:
+      help:
+        en: For a repository source, its https clone address on the organization's forge.
+        sk: Pri zdroji v repozitári jeho adresa na klonovanie cez https vo forge organizácie.
+        cs: U zdroje v repozitáři jeho adresa pro klonování přes https ve forge organizace.
+        de: Bei einem Repository seine https-Klonadresse auf der Forge der Organisation.
+    source.ref:
+      help:
+        en: For a repository source, the branch, tag or commit CI builds.
+        sk: Pri zdroji v repozitári vetva, značka alebo commit, ktorý CI zostaví.
+        cs: U zdroje v repozitáři větev, značka nebo commit, který CI sestaví.
+        de: Bei einem Repository der Branch, Tag oder Commit, den CI baut.
+    source.subdirectory:
+      help:
+        en: For a repository source, the folder inside it that holds the app, when it is not the root.
+        sk: Pri zdroji v repozitári priečinok, v ktorom je aplikácia, ak to nie je koreň.
+        cs: U zdroje v repozitáři složka, ve které je aplikace, pokud to není kořen.
+        de: Bei einem Repository der Unterordner mit der App, falls sie nicht in der Wurzel liegt.
+    build[].tool:
+      help:
+        en: A toolchain CI installs, by its lowercase name.
+        sk: Sada nástrojov, ktorú CI nainštaluje, podľa jej názvu malými písmenami.
+        cs: Sada nástrojů, kterou CI nainstaluje, podle jejího názvu malými písmeny.
+        de: Eine Werkzeugkette, die CI installiert, mit ihrem Namen in Kleinbuchstaben.
+    build[].version:
+      help:
+        en: The exact version it is pinned to, so two builds of one commit are the same build.
+        sk: Presná verzia, na ktorú je pripnutá, aby dve zostavenia jedného commitu boli rovnaké.
+        cs: Přesná verze, na kterou je připnutá, aby dvě sestavení jednoho commitu byla stejná.
+        de: Die genaue Version, damit zwei Builds eines Commits derselbe Build sind.
+    dataNeeds[].contextSpaceRef:
+      help:
+        en: The context space this need reads or writes; one entry per space.
+        sk: Kontextový priestor, ktorý táto potreba číta alebo zapisuje; jeden záznam na priestor.
+        cs: Kontextový prostor, který tato potřeba čte nebo zapisuje; jeden záznam na prostor.
+        de: Der Kontextraum, den dieser Bedarf liest oder schreibt; ein Eintrag je Raum.
+    dataNeeds[].roles:
+      help:
+        en: The app roles this need is granted to; empty grants it to every person the app admits.
+        sk: Roly aplikácie, ktorým sa táto potreba udeľuje; prázdne ju udelí každému, koho aplikácia pustí.
+        cs: Role aplikace, kterým se tato potřeba uděluje; prázdné ji udělí každému, koho aplikace pustí.
+        de: Die App-Rollen, denen dieser Bedarf gewährt wird; leer gewährt ihn jeder Person, die die App zulässt.
+    dataNeeds[].types:
+      help:
+        en: The entity types the app needs from that space; at least one.
+        sk: Typy entít, ktoré aplikácia z toho priestoru potrebuje; aspoň jeden.
+        cs: Typy entit, které aplikace z toho prostoru potřebuje; alespoň jeden.
+        de: Die Entitätstypen, die die App aus diesem Raum braucht; mindestens einer.
+    dataNeeds[].attrs:
+      help:
+        en: The attributes it needs; empty means every readable attribute of those types.
+        sk: Atribúty, ktoré potrebuje; prázdne znamená každý čitateľný atribút tých typov.
+        cs: Atributy, které potřebuje; prázdné znamená každý čitelný atribut těch typů.
+        de: Die benötigten Attribute; leer bedeutet alle lesbaren Attribute dieser Typen.
+    dataNeeds[].operations:
+      help:
+        en: The CIM 009 operations it performs; a write operation makes the change a red-lane one.
+        sk: Operácie CIM 009, ktoré vykonáva; zapisovacia operácia urobí zo zmeny červenú.
+        cs: Operace CIM 009, které provádí; zapisovací operace udělá ze změny červenou.
+        de: Die CIM-009-Operationen der App; eine schreibende macht die Änderung zur roten Spur.
+    dataNeeds[].representations:
+      help:
+        en: The representations its endpoint serves for this need, beside NGSI-LD.
+        sk: Reprezentácie, ktoré jej endpoint pre túto potrebu poskytuje, popri NGSI-LD.
+        cs: Reprezentace, které její endpoint pro tuto potřebu poskytuje, vedle NGSI-LD.
+        de: Die Darstellungen, die ihr Endpoint für diesen Bedarf neben NGSI-LD liefert.
+    dataNeeds[].q:
+      help:
+        en: A condition that narrows what the app may read, in the NGSI-LD query language.
+        sk: Podmienka, ktorá zužuje, čo smie aplikácia čítať, v dopytovacom jazyku NGSI-LD.
+        cs: Podmínka, která zužuje, co smí aplikace číst, v dotazovacím jazyce NGSI-LD.
+        de: Eine Bedingung, die das Lesbare einschränkt, in der NGSI-LD-Abfragesprache.
+    dataNeeds[].scopeQ:
+      help:
+        en: A scope query that narrows what the app may read to part of the scope tree.
+        sk: Dopyt na rozsah, ktorý zužuje čitateľné údaje na časť stromu rozsahov.
+        cs: Dotaz na rozsah, který zužuje čitelná data na část stromu rozsahů.
+        de: Eine Scope-Abfrage, die das Lesbare auf einen Teil des Scope-Baums begrenzt.
+    dataNeeds[].within:
+      help:
+        en: The scope the app may read inside, as an absolute scope string.
+        sk: Rozsah, v ktorom smie aplikácia čítať, ako absolútny reťazec rozsahu.
+        cs: Rozsah, ve kterém smí aplikace číst, jako absolutní řetězec rozsahu.
+        de: Der Scope, innerhalb dessen die App lesen darf, als absoluter Scope-String.
+    dataNeeds[].window:
+      help:
+        en: How far back in time the app may read, as an ISO 8601 duration.
+        sk: Ako ďaleko do minulosti smie aplikácia čítať, ako trvanie podľa ISO 8601.
+        cs: Jak daleko do minulosti smí aplikace číst, jako trvání podle ISO 8601.
+        de: Wie weit zurück die App lesen darf, als ISO-8601-Dauer.
+    csp.connectSrc:
+      help:
+        en: The origins the app may call besides its endpoint; self, none or https without a wildcard.
+        sk: Pôvody, ktoré smie aplikácia volať okrem endpointu; self, none alebo https bez zástupných znakov.
+        cs: Původy, které smí aplikace volat kromě endpointu; self, none nebo https bez zástupných znaků.
+        de: Die Origins, die die App außer ihrem Endpoint aufrufen darf; self, none oder https ohne Platzhalter.
+    csp.frameAncestors:
+      help:
+        en: The pages that may show the app in a frame; empty means none may.
+        sk: Stránky, ktoré smú aplikáciu zobraziť v rámci; prázdne znamená žiadne.
+        cs: Stránky, které smějí aplikaci zobrazit v rámu; prázdné znamená žádné.
+        de: Die Seiten, die die App einbetten dürfen; leer bedeutet keine.
+    limits.requestsPerMinute:
+      help:
+        en: The most requests a minute the app's endpoint answers; empty leaves the default.
+        sk: Najviac požiadaviek za minútu, na ktoré endpoint aplikácie odpovie; prázdne ponechá predvolené.
+        cs: Nejvíce požadavků za minutu, na které endpoint aplikace odpoví; prázdné ponechá výchozí.
+        de: Die höchste Anzahl Anfragen pro Minute; leer gilt der Standard.
+    egress[].cidr:
+      placeholder: "203.0.113.0/24"
+      help:
+        en: A network the app's server may reach besides its endpoint, as an address and prefix; a publisher approves it.
+        sk: Sieť, na ktorú smie server aplikácie okrem endpointu pristupovať, ako adresa a prefix; schvaľuje ju publikovateľ.
+        cs: Síť, na kterou smí server aplikace kromě endpointu přistupovat, jako adresa a prefix; schvaluje ji publikující.
+        de: Ein Netz, das der Server der App außer ihrem Endpoint erreichen darf, als Adresse mit Präfix; ein Publisher genehmigt es.
+    egress[].ports:
+      help:
+        en: The ports the app's server may reach on that network, at least one.
+        sk: Porty, na ktoré smie server aplikácie v tej sieti pristupovať, aspoň jeden.
+        cs: Porty, na které smí server aplikace v té síti přistupovat, alespoň jeden.
+        de: Die Ports, die der Server der App in diesem Netz erreichen darf, mindestens einer.
+    limits.maxFileRows:
+      help:
+        en: The most rows one file download from the app's endpoint may return.
+        sk: Najviac riadkov, ktoré môže vrátiť jedno stiahnutie súboru z endpointu aplikácie.
+        cs: Nejvíce řádků, které může vrátit jedno stažení souboru z endpointu aplikace.
+        de: Die höchste Zeilenzahl eines Datei-Downloads vom Endpoint der App.

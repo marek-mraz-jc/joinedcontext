@@ -1,0 +1,19 @@
+# T-6531 (S-26, live walk T-6490): an ArcGIS layer "end to end" drafts its DataSource first and
+# names the rest of the ask (model, endpoint, pipeline), each with its page.
+workflow: pipeline
+as: steward
+says:
+  - "Integrate this ArcGIS FeatureServer layer end to end: https://sampleserver6.arcgisonline.com/arcgis/rest/services/Wildfire/FeatureServer/0 (GeoJSON with f=geojson). Call the DataSource wildfire-layer."
+expect:
+  calls:
+    - tool: change_resource
+      input:
+        kind: DataSource
+        name: wildfire-layer
+        create: true
+        next: [{ kind: DataModel }, { kind: Endpoint }, { kind: Pipeline }]
+  outcome: form
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: integrate the ArcGIS layer as the DataSource wildfire-layer."

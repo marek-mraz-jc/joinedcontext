@@ -1,0 +1,149 @@
+# Default form arrangement for DataAgreement (UI-02, T-1542).
+# The record of one contract with another participant of the data space; its one example, the
+# constraint query, is neutral (T-2752, T-2882).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: dataagreement
+spec:
+  for: DataAgreement
+  guide: User-Guide/05-endpoints-and-sharing
+  about:
+    en: >-
+      A data agreement records one contract with another participant of the data space: who
+      provides and who consumes, the offer it is about, where the negotiation stands and how long it
+      holds. When it is finalized, the gateway serves what it allows and nothing more.
+    sk: >-
+      Dátová dohoda zaznamenáva jednu zmluvu s iným účastníkom dátového priestoru: kto poskytuje a kto
+      odoberá, ktorej ponuky sa týka, kde je vyjednávanie a ako dlho platí. Keď je finalizovaná,
+      brána poskytuje to, čo dovoľuje, a nič viac.
+    cs: >-
+      Datová dohoda zaznamenává jednu smlouvu s jiným účastníkem datového prostoru: kdo poskytuje a
+      kdo odebírá, které nabídky se týká, kde je vyjednávání a jak dlouho platí. Když je
+      finalizovaná, brána poskytuje to, co dovoluje, a nic víc.
+    de: >-
+      Eine Datenvereinbarung hält einen Vertrag mit einem anderen Teilnehmer des Datenraums fest: wer
+      bereitstellt und wer bezieht, um welches Angebot es geht, wo die Verhandlung steht und wie lange
+      sie gilt. Ist sie abgeschlossen, liefert das Gateway, was sie erlaubt, und nicht mehr.
+  order: [name, role, offerRef, remoteParticipant, agreementId, state, validity, tokenSecretRef, constraints]
+  groups:
+    - title:
+        en: The contract
+        sk: Zmluva
+        cs: Smlouva
+        de: Der Vertrag
+      description:
+        en: Who the agreement is with, which side this project is on, and the offer it is about.
+        sk: S kým je dohoda, na ktorej strane je tento projekt a ktorej ponuky sa týka.
+        cs: S kým je dohoda, na které straně je tento projekt a které nabídky se týká.
+        de: Mit wem die Vereinbarung besteht, auf welcher Seite dieses Projekt steht und um welches Angebot es geht.
+      fields: [name, role, offerRef, remoteParticipant, agreementId]
+    - title:
+        en: State and validity
+        sk: Stav a platnosť
+        cs: Stav a platnost
+        de: Stand und Gültigkeit
+      description:
+        en: Where the negotiation stands and the window in which the agreement holds.
+        sk: Kde je vyjednávanie a obdobie, v ktorom dohoda platí.
+        cs: Kde je vyjednávání a období, ve kterém dohoda platí.
+        de: Wo die Verhandlung steht und in welchem Zeitraum die Vereinbarung gilt.
+      fields: [state, validity]
+    - title:
+        en: Token and limits
+        sk: Token a obmedzenia
+        cs: Token a omezení
+        de: Token und Grenzen
+      description:
+        en: Where a consumer's transfer token is kept, and the query limits the contract sets.
+        sk: Kde je uložený prenosový token odberateľa a obmedzenia dopytov, ktoré zmluva stanovuje.
+        cs: Kde je uložen přenosový token odběratele a omezení dotazů, která smlouva stanoví.
+        de: Wo das Transfertoken eines Beziehers liegt und welche Abfragegrenzen der Vertrag setzt.
+      folded: true
+      fields: [tokenSecretRef, constraints]
+  fields:
+    name:
+      help:
+        en: The short name this agreement is filed under; it cannot change once the agreement exists.
+        sk: Krátky názov, pod ktorým je dohoda uložená; keď dohoda existuje, nemení sa.
+        cs: Krátký název, pod nímž je dohoda uložena; jakmile dohoda existuje, nemění se.
+        de: Der kurze Name der Vereinbarung; er ändert sich nicht mehr, sobald sie besteht.
+    role:
+      help:
+        en: Provider when this project shares data through one of its offers, consumer when it reads another's.
+        sk: Poskytovateľ, keď tento projekt zdieľa údaje cez svoju ponuku, odberateľ, keď číta cudzie.
+        cs: Poskytovatel, když tento projekt sdílí data přes svou nabídku, odběratel, když čte cizí.
+        de: Anbieter, wenn dieses Projekt über ein eigenes Angebot teilt, Bezieher, wenn es fremde Daten liest.
+    offerRef:
+      help:
+        en: The data offer of this project the agreement is about; a provider's agreement needs one.
+        sk: Dátová ponuka tohto projektu, ktorej sa dohoda týka; dohoda poskytovateľa ju potrebuje.
+        cs: Datová nabídka tohoto projektu, které se dohoda týká; dohoda poskytovatele ji potřebuje.
+        de: Das Datenangebot dieses Projekts, um das es geht; eine Anbietervereinbarung braucht eines.
+    remoteParticipant:
+      help:
+        en: The other participant's decentralized identifier, did:web and its verified domain.
+        sk: Decentralizovaný identifikátor druhého účastníka, did:web a jeho overená doména.
+        cs: Decentralizovaný identifikátor druhého účastníka, did:web a jeho ověřená doména.
+        de: Die dezentrale Kennung des anderen Teilnehmers, did:web und seine verifizierte Domain.
+    agreementId:
+      help:
+        en: The identifier the Dataspace Protocol negotiation gave the agreement, as both sides know it.
+        sk: Identifikátor, ktorý dohode dalo vyjednávanie podľa Dataspace Protocol, ako ho poznajú obe strany.
+        cs: Identifikátor, který dohodě dalo vyjednávání podle Dataspace Protocol, jak jej znají obě strany.
+        de: Die Kennung, die die Verhandlung nach dem Dataspace Protocol vergab, wie beide Seiten sie kennen.
+    state:
+      help:
+        en: Where the negotiation stands; only a finalized agreement lets the gateway serve anything.
+        sk: Kde je vyjednávanie; bráne dovolí niečo poskytovať len finalizovaná dohoda.
+        cs: Kde je vyjednávání; bráně dovolí něco poskytovat jen finalizovaná dohoda.
+        de: Wo die Verhandlung steht; nur eine abgeschlossene Vereinbarung lässt das Gateway etwas liefern.
+    validity.from:
+      help:
+        en: When the agreement starts to hold, as a date and time with its offset; left empty, at once.
+        sk: Kedy dohoda začne platiť, ako dátum a čas s posunom; ak je prázdne, hneď.
+        cs: Kdy dohoda začne platit, jako datum a čas s posunem; pokud je prázdné, hned.
+        de: Ab wann die Vereinbarung gilt, als Datum und Uhrzeit mit Versatz; leer gelassen, sofort.
+    validity.to:
+      help:
+        en: When the agreement stops holding; left empty, it holds until it is terminated.
+        sk: Kedy dohoda prestane platiť; ak je prázdne, platí, kým sa neukončí.
+        cs: Kdy dohoda přestane platit; pokud je prázdné, platí, dokud se neukončí.
+        de: Bis wann die Vereinbarung gilt; leer gelassen, gilt sie, bis sie beendet wird.
+    tokenSecretRef.name:
+      help:
+        en: The secret holding a consumer's transfer token, never the token; a finalized consumer agreement needs it.
+        sk: Tajomstvo, ktoré drží prenosový token odberateľa, nikdy nie token; finalizovaná dohoda odberateľa ho potrebuje.
+        cs: Tajemství, které drží přenosový token odběratele, nikdy ne token; finalizovaná dohoda odběratele jej potřebuje.
+        de: Das Secret mit dem Transfertoken eines Beziehers, nie das Token; eine abgeschlossene Bezieher-Vereinbarung braucht es.
+    tokenSecretRef.key:
+      help:
+        en: The key inside that secret the token is stored under.
+        sk: Kľúč v tom tajomstve, pod ktorým je token uložený.
+        cs: Klíč v tom tajemství, pod nímž je token uložen.
+        de: Der Schlüssel in diesem Secret, unter dem das Token liegt.
+    constraints.q:
+      placeholder: "pm10<50"
+      help:
+        en: The NGSI-LD query filter the contract sets, added to every read under this agreement.
+        sk: Filter dopytu NGSI-LD, ktorý zmluva stanovuje, pridaný ku každému čítaniu podľa tejto dohody.
+        cs: Filtr dotazu NGSI-LD, který smlouva stanoví, přidaný ke každému čtení podle této dohody.
+        de: Der NGSI-LD-Abfragefilter des Vertrags, der jeder Abfrage unter dieser Vereinbarung beigefügt wird.
+    constraints.scopeQ:
+      help:
+        en: The scope filter the contract sets, added to every read under this agreement.
+        sk: Filter rozsahu, ktorý zmluva stanovuje, pridaný ku každému čítaniu podľa tejto dohody.
+        cs: Filtr rozsahu, který smlouva stanoví, přidaný ke každému čtení podle této dohody.
+        de: Der Bereichsfilter des Vertrags, der jeder Abfrage unter dieser Vereinbarung beigefügt wird.
+    constraints.geoQ:
+      help:
+        en: The area the contract limits reads to, as an NGSI-LD geo-query.
+        sk: Oblasť, na ktorú zmluva obmedzuje čítanie, ako geodopyt NGSI-LD.
+        cs: Oblast, na kterou smlouva omezuje čtení, jako geodotaz NGSI-LD.
+        de: Das Gebiet, auf das der Vertrag Abfragen beschränkt, als NGSI-LD-Geoabfrage.
+    constraints.temporalQ:
+      help:
+        en: The time window the contract limits history reads to, as an NGSI-LD temporal query.
+        sk: Časové okno, na ktoré zmluva obmedzuje čítanie histórie, ako časový dopyt NGSI-LD.
+        cs: Časové okno, na které smlouva omezuje čtení historie, jako časový dotaz NGSI-LD.
+        de: Das Zeitfenster, auf das der Vertrag Verlaufsabfragen beschränkt, als NGSI-LD-Zeitabfrage.

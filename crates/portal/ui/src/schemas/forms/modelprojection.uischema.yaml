@@ -1,0 +1,114 @@
+# Default form arrangement for ModelProjection (UI-02, T-1548).
+# The named subset of a space's model an Endpoint exposes; examples are a neutral air-quality space
+# (T-2752).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: modelprojection
+spec:
+  for: ModelProjection
+  guide: User-Guide/05-endpoints-and-sharing
+  about:
+    en: >-
+      A model projection names the part of a space's data model an endpoint exposes: which classes,
+      and which of their slots. A class left out is not exposed; a class with no slots is exposed
+      with its identity only. Policies still decide who may read it, and the two narrow each other.
+    sk: >-
+      Projekcia modelu pomenúva časť dátového modelu priestoru, ktorú koncový bod vystavuje: ktoré
+      triedy a ktoré ich sloty. Vynechaná trieda sa nevystavuje; trieda bez slotov sa vystaví len so
+      svojou identitou. Kto ju smie čítať, stále určujú politiky a obe sa navzájom zužujú.
+    cs: >-
+      Projekce modelu pojmenovává část datového modelu prostoru, kterou koncový bod vystavuje: které
+      třídy a které jejich sloty. Vynechaná třída se nevystavuje; třída bez slotů se vystaví jen se
+      svou identitou. Kdo ji smí číst, stále určují politiky a obě se navzájem zužují.
+    de: >-
+      Eine Modellprojektion benennt den Teil des Datenmodells eines Raums, den ein Endpunkt
+      bereitstellt: welche Klassen und welche ihrer Slots. Eine ausgelassene Klasse wird nicht
+      bereitgestellt; eine Klasse ohne Slots nur mit ihrer Identität. Wer lesen darf, entscheiden
+      weiter die Richtlinien, und beide schränken einander ein.
+  order: [name, contextSpaceRef, dataModelRef, classes, filter]
+  groups:
+    - title:
+        en: The model
+        sk: Model
+        cs: Model
+        de: Das Modell
+      description:
+        en: The space and the data model this projection is a subset of.
+        sk: Priestor a dátový model, ktorých podmnožinou je táto projekcia.
+        cs: Prostor a datový model, jejichž podmnožinou je tato projekce.
+        de: Der Raum und das Datenmodell, dessen Teilmenge diese Projektion ist.
+      fields: [name, contextSpaceRef, dataModelRef]
+    - title:
+        en: What is exposed
+        sk: Čo sa vystavuje
+        cs: Co se vystavuje
+        de: Was bereitgestellt wird
+      description:
+        en: The classes and slots an endpoint referencing this projection exposes, and a filter on top.
+        sk: Triedy a sloty, ktoré vystaví koncový bod odkazujúci na túto projekciu, a filter navrch.
+        cs: Třídy a sloty, které vystaví koncový bod odkazující na tuto projekci, a filtr navrch.
+        de: Die Klassen und Slots, die ein Endpunkt mit dieser Projektion bereitstellt, und ein Filter dazu.
+      fields: [classes, filter]
+  fields:
+    name:
+      help:
+        en: The short name an endpoint references the projection by.
+        sk: Krátky názov, ktorým koncový bod na projekciu odkazuje.
+        cs: Krátký název, kterým koncový bod na projekci odkazuje.
+        de: Der kurze Name, mit dem ein Endpunkt die Projektion referenziert.
+    contextSpaceRef:
+      help:
+        en: The context space of this project whose model the projection narrows.
+        sk: Kontextový priestor tohto projektu, ktorého model projekcia zužuje.
+        cs: Kontextový prostor tohoto projektu, jehož model projekce zužuje.
+        de: Der Kontextraum dieses Projekts, dessen Modell die Projektion einschränkt.
+    dataModelRef.name:
+      help:
+        en: The data model of that space.
+        sk: Dátový model toho priestoru.
+        cs: Datový model toho prostoru.
+        de: Das Datenmodell dieses Raums.
+    dataModelRef.version:
+      help:
+        en: The served major version of the model, such as 1 or 2.
+        sk: Poskytovaná hlavná verzia modelu, napríklad 1 alebo 2.
+        cs: Poskytovaná hlavní verze modelu, například 1 nebo 2.
+        de: Die bereitgestellte Hauptversion des Modells, etwa 1 oder 2.
+    classes[].name:
+      help:
+        en: A class of the model, each once; a class not listed is not exposed.
+        sk: Trieda modelu, každá raz; neuvedená trieda sa nevystavuje.
+        cs: Třída modelu, každá jednou; neuvedená třída se nevystavuje.
+        de: Eine Klasse des Modells, jede einmal; eine nicht genannte Klasse wird nicht bereitgestellt.
+    classes[].slots:
+      help:
+        en: The slots kept; none keeps the identity only, the id and the type.
+        sk: Ponechané sloty; žiadny ponechá len identitu, id a typ.
+        cs: Ponechané sloty; žádný ponechá jen identitu, id a typ.
+        de: Die behaltenen Slots; keiner behält nur die Identität, id und type.
+    filter.q:
+      placeholder: "pm10<50"
+      help:
+        en: An NGSI-LD query filter every read through the projection is narrowed by.
+        sk: Filter dopytu NGSI-LD, ktorým sa zúži každé čítanie cez projekciu.
+        cs: Filtr dotazu NGSI-LD, kterým se zúží každé čtení přes projekci.
+        de: Ein NGSI-LD-Abfragefilter, der jede Abfrage über die Projektion einschränkt.
+    filter.scopeQ:
+      help:
+        en: A scope filter every read through the projection is narrowed by.
+        sk: Filter rozsahu, ktorým sa zúži každé čítanie cez projekciu.
+        cs: Filtr rozsahu, kterým se zúží každé čtení přes projekci.
+        de: Ein Bereichsfilter, der jede Abfrage über die Projektion einschränkt.
+    filter.geoQ:
+      help:
+        en: The area reads through the projection are limited to, as an NGSI-LD geo-query.
+        sk: Oblasť, na ktorú sa obmedzí čítanie cez projekciu, ako geodopyt NGSI-LD.
+        cs: Oblast, na kterou se omezí čtení přes projekci, jako geodotaz NGSI-LD.
+        de: Das Gebiet, auf das Abfragen über die Projektion beschränkt sind, als NGSI-LD-Geoabfrage.
+    filter.temporalQ:
+      help:
+        en: The time window history reads through the projection are limited to.
+        sk: Časové okno, na ktoré sa obmedzí čítanie histórie cez projekciu.
+        cs: Časové okno, na které se omezí čtení historie přes projekci.
+        de: Das Zeitfenster, auf das Verlaufsabfragen über die Projektion beschränkt sind.

@@ -1,0 +1,33 @@
+[package]
+name = "transit-reach"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "How far a visitor gets by transit in 10, 20 and 30 minutes from any point of Helsinki, computed in the browser (T-3331) and, from a stop, on the App's server (T-3349)"
+license = "EUPL-1.2"
+
+# Its own workspace, as server/ has its own: the portal's root workspace
+# leaves the app out.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Only for the page: the server component (server/, T-3349) runs the same code without the
+# browser's bindings.
+wasm-bindgen = { version = "=0.2.129", optional = true }
+
+[features]
+default = ["web"]
+web = ["dep:wasm-bindgen"]
+
+[profile.release]
+# The module is downloaded by every visitor: small over fast, one codegen unit, no unwinding.
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

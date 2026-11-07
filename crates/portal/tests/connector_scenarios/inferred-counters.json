@@ -1,0 +1,45 @@
+{
+  "linkml": "id: https://example.org/models/Counters\nname: Counters\nprefixes:\n  linkml: https://w3id.org/linkml/\ndefault_range: string\nimports:\n- linkml:types\n- ngsi-ld-core\nclasses:\n  Counters:\n    is_a: Entity\n    slots:\n    - name\n    - count\nslots:\n  name:\n    range: string\n  count:\n    range: integer\n    minimum_value: 42\n    maximum_value: 42\n",
+  "operations": [
+    {
+      "op": "addClass",
+      "name": "Counters",
+      "is_a": "Entity"
+    },
+    {
+      "op": "addSlot",
+      "name": "name",
+      "class": "Counters",
+      "range": "string"
+    },
+    {
+      "op": "addSlot",
+      "name": "count",
+      "class": "Counters",
+      "range": "integer"
+    },
+    {
+      "op": "setSlot",
+      "name": "count",
+      "field": "minimum_value",
+      "value": 42
+    },
+    {
+      "op": "setSlot",
+      "name": "count",
+      "field": "maximum_value",
+      "value": 42
+    }
+  ],
+  "detectedTypes": {
+    "id": "string",
+    "name": "string",
+    "count": "integer",
+    "observedAt": "datetime"
+  },
+  "matches": {},
+  "untyped": [],
+  "rows": 1,
+  "errors": [],
+  "generatorVersion": "linkml-1.12.0"
+}

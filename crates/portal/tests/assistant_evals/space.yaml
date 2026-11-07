@@ -1,0 +1,14 @@
+# T-2733: the space workflow as one conversation (Testing/07 §3, AG-87).
+workflow: space
+as: steward
+says:
+  - "Create a Context Space called eval-air for air quality sensors of the city."
+expect:
+  calls:
+    - tool: change_resource
+      input: { kind: ContextSpace, create: true }
+  outcome: change
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: create a Context Space called eval-air for air quality sensors of the city."

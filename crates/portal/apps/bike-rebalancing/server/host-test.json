@@ -1,0 +1,426 @@
+{
+  "gateway": [
+    {
+      "path": "/ngsi-ld/v1/entities",
+      "query": {
+        "type": "BikeHireDockingStation",
+        "offset": "0"
+      },
+      "file": "host-test/stations.json"
+    }
+  ],
+  "steps": [
+    {
+      "call": "POST /api/plans",
+      "body": {
+        "operator": ""
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/plans",
+      "body": {
+        "operator": "x",
+        "vanCapacity": 0
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/plans",
+      "body": {
+        "operator": "x",
+        "colour": "red"
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/plans",
+      "body": {
+        "operator": "x",
+        "start": "urn:nowhere"
+      },
+      "status": 400
+    },
+    {
+      "call": "POST /api/plans",
+      "body": {
+        "operator": " Van 1 ",
+        "vanCapacity": 15
+      },
+      "status": 201,
+      "expect": {
+        "/operator": "Van 1",
+        "/moved": 10,
+        "/stops/0/id": "urn:ngsi-ld:BikeHireDockingStation:001",
+        "/stops/0/action": "pick",
+        "/stops/1/id": "urn:ngsi-ld:BikeHireDockingStation:002"
+      },
+      "length": {
+        "/stops": 2
+      },
+      "save": {
+        "plan": "/id"
+      }
+    },
+    {
+      "call": "GET /api/me",
+      "caller": "anonymous",
+      "status": 200,
+      "expect": {
+        "": null
+      }
+    },
+    {
+      "call": "GET /api/levels",
+      "caller": "anonymous",
+      "status": 200,
+      "expect": {
+        "/low": 0.15,
+        "/target": 0.5,
+        "/high": 0.85
+      }
+    },
+    {
+      "call": "GET /api/plans",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "POST /api/plans",
+      "caller": "anonymous",
+      "body": {
+        "operator": "Van 9"
+      },
+      "status": 401,
+      "rows": {
+        "plans": 1
+      }
+    },
+    {
+      "call": "PUT /api/levels",
+      "caller": "anonymous",
+      "body": {
+        "low": 0.2,
+        "high": 0.8,
+        "target": 0.5
+      },
+      "status": 401
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "anonymous",
+      "status": 401
+    },
+    {
+      "call": "GET /api/me",
+      "caller": "viewer",
+      "status": 200,
+      "expect": {
+        "/id": "u-viewer",
+        "/roles/0": "viewer"
+      },
+      "length": {
+        "/roles": 1
+      }
+    },
+    {
+      "call": "GET /api/plans",
+      "caller": "viewer",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/plans/{plan}",
+      "caller": "viewer",
+      "status": 404
+    },
+    {
+      "call": "GET /api/plans/{plan}/sheet",
+      "caller": "viewer",
+      "status": 404
+    },
+    {
+      "call": "DELETE /api/plans/{plan}",
+      "caller": "viewer",
+      "status": 404,
+      "rows": {
+        "plans": 1
+      }
+    },
+    {
+      "call": "POST /api/plans/{plan}/drives",
+      "caller": "viewer",
+      "body": {
+        "stops": [
+          "urn:ngsi-ld:BikeHireDockingStation:001"
+        ]
+      },
+      "status": 404,
+      "rows": {
+        "drives": 0
+      }
+    },
+    {
+      "call": "PUT /api/plans/{plan}/operator",
+      "caller": "viewer",
+      "body": {
+        "operator": "Van 9",
+        "roles": [
+          "steward"
+        ]
+      },
+      "status": 403,
+      "expect": {
+        "/detail": "this needs the role steward"
+      }
+    },
+    {
+      "call": "PUT /api/levels",
+      "caller": "viewer",
+      "body": {
+        "low": 0.2,
+        "high": 0.8,
+        "target": 0.5,
+        "roles": [
+          "steward"
+        ]
+      },
+      "status": 403
+    },
+    {
+      "call": "GET /api/levels",
+      "caller": "anonymous",
+      "status": 200,
+      "expect": {
+        "/low": 0.15
+      }
+    },
+    {
+      "call": "POST /api/plans",
+      "caller": "viewer",
+      "body": {
+        "operator": "Van 2"
+      },
+      "status": 201,
+      "expect": {
+        "/mine": true
+      },
+      "save": {
+        "mine": "/id"
+      },
+      "rows": {
+        "plans": 2
+      }
+    },
+    {
+      "call": "GET /api/plans/{mine}",
+      "caller": "viewer@u-other",
+      "status": 404
+    },
+    {
+      "call": "DELETE /api/plans/{mine}",
+      "caller": "viewer@u-other",
+      "status": 404,
+      "rows": {
+        "plans": 2
+      }
+    },
+    {
+      "call": "GET /api/plans/{mine}",
+      "caller": "steward",
+      "status": 200,
+      "expect": {
+        "/mine": false,
+        "/operator": "Van 2"
+      }
+    },
+    {
+      "call": "PUT /api/plans/{mine}/operator",
+      "caller": "steward",
+      "body": {
+        "operator": " "
+      },
+      "status": 400
+    },
+    {
+      "call": "PUT /api/plans/{mine}/operator",
+      "caller": "steward",
+      "body": {
+        "operator": "Van 3"
+      },
+      "status": 204
+    },
+    {
+      "call": "GET /api/plans/{mine}",
+      "caller": "viewer",
+      "status": 200,
+      "expect": {
+        "/operator": "Van 3",
+        "/mine": true
+      }
+    },
+    {
+      "call": "PUT /api/levels",
+      "caller": "steward",
+      "body": {
+        "low": 0.6,
+        "high": 0.8,
+        "target": 0.5
+      },
+      "status": 400
+    },
+    {
+      "call": "PUT /api/levels",
+      "caller": "steward",
+      "body": {
+        "low": 0.2,
+        "high": 0.8,
+        "target": 0.5
+      },
+      "status": 200,
+      "expect": {
+        "/low": 0.2
+      }
+    },
+    {
+      "call": "GET /api/levels",
+      "caller": "anonymous",
+      "status": 200,
+      "expect": {
+        "/low": 0.2,
+        "/high": 0.8
+      }
+    },
+    {
+      "call": "GET /api/history",
+      "caller": "viewer",
+      "status": 200,
+      "expect": {
+        "/0/action": "insert",
+        "/0/target": "plans/{mine}"
+      },
+      "length": {
+        "": 1
+      }
+    },
+    {
+      "call": "DELETE /api/plans/{mine}",
+      "caller": "viewer",
+      "status": 204,
+      "rows": {
+        "plans": 1
+      }
+    },
+    {
+      "call": "GET /api/plans?operator=Van%201",
+      "status": 200,
+      "expect": {
+        "/0/stopCount": 2,
+        "/0/drives": 0
+      },
+      "length": {
+        "": 1
+      }
+    },
+    {
+      "call": "GET /api/plans?operator=Van%202",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/plans/{plan}/sheet",
+      "status": 200,
+      "download": "/url",
+      "downloaded": "stop,station,name,action,bikes,load_after,leg_km\n1,urn:ngsi-ld:BikeHireDockingStation:001,Kamppi,take,10,10,"
+    },
+    {
+      "call": "POST /api/plans/{plan}/drives",
+      "body": {
+        "stops": [
+          "urn:ngsi-ld:BikeHireDockingStation:001",
+          "urn:ngsi-ld:BikeHireDockingStation:002"
+        ],
+        "km": 2.4,
+        "note": "rain"
+      },
+      "status": 201,
+      "expect": {
+        "/note": "rain"
+      }
+    },
+    {
+      "call": "POST /api/plans/{plan}/drives",
+      "body": {
+        "stops": [
+          "urn:ngsi-ld:BikeHireDockingStation:003"
+        ]
+      },
+      "status": 400
+    },
+    {
+      "call": "GET /api/plans/{plan}",
+      "status": 200,
+      "expect": {
+        "/drives/0/note": "rain",
+        "/vanCapacity": 15
+      },
+      "length": {
+        "/drives": 1
+      }
+    },
+    {
+      "call": "GET /api/plans",
+      "as": "second",
+      "status": 200,
+      "length": {
+        "": 0
+      }
+    },
+    {
+      "call": "GET /api/plans/{plan}",
+      "as": "second",
+      "status": 404
+    },
+    {
+      "call": "GET /api/plans/{plan}/sheet",
+      "as": "second",
+      "status": 404
+    },
+    {
+      "call": "DELETE /api/plans/{plan}",
+      "as": "second",
+      "status": 404
+    },
+    {
+      "call": "GET /api/plans/{plan}",
+      "status": 200
+    },
+    {
+      "call": "DELETE /api/plans/{plan}",
+      "status": 204
+    },
+    {
+      "call": "GET /api/plans/{plan}",
+      "status": 404
+    },
+    {
+      "call": "GET /api/plans/{plan}/sheet",
+      "status": 404
+    },
+    {
+      "call": "GET /api/history",
+      "status": 200,
+      "expect": {
+        "/0/action": "delete",
+        "/6/action": "insert"
+      },
+      "length": {
+        "": 7
+      }
+    }
+  ]
+}

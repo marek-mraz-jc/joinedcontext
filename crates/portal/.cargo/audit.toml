@@ -1,0 +1,7 @@
+# RUSTSEC-2023-0071 — Marvin attack on the `rsa` crate (no fixed version exists).
+# `rsa` reaches this crate only through `openidconnect`, and only its RSA *private key*
+# operations are affected. The portal is an OIDC relying party: it verifies RS256 signatures
+# with the Keycloak realm's public keys and never holds or uses an RSA private key
+# (`CoreRsaPrivateSigningKey` is never constructed). Re-check on every `openidconnect` bump.
+[advisories]
+ignore = ["RUSTSEC-2023-0071"]

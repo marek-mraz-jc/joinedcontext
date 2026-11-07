@@ -1,0 +1,40 @@
+# Data Prahy — Prague's open data as grids (T-2786, AP-07, AP-14, UI-64). Hand written, so no
+# generated-by annotation.
+#
+# It reads and never writes, so it is `static`: a bundle the Portal static host serves under
+# /apps/praha-data/. The space and its endpoint are public, so the app never asks anybody to sign
+# in and never holds a token (AP-28).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: praha-data
+  namespace: praha
+  annotations:
+    # The Portal image ships this bundle (Dockerfile, /srv/apps), so the App names no
+    # repository of its own; the Portal accepts the mark only where the bundle is (AP-87).
+    joinedcontext.com/shipped-with: portal
+  title:
+    cs: "Data Prahy"
+    en: "Data of Prague"
+  description:
+    cs: "Místa, tříděný odpad, P+R, sdílená kola, ovzduší, městské části a rozpočet Prahy v tabulkách: filtr na každém sloupci, číselníky na výběr, detail řádku a stažení v CSV."
+    en: "Prague's places, recycling, park and ride, shared bikes, air, districts and budget as tables: a filter on every column, code lists picked, each row whole, and a CSV download."
+spec:
+  kind: ui
+  source:
+    path: ./apps/praha-data
+  build:
+    node: "22"
+  visibility: public
+  lifecycle: published
+  embeddable: true
+  dataNeeds:
+    # Every type of the city's public space with every column the grids show; the downloads are
+    # the endpoint's own files, under the same grant (API/02 §3, §4).
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: praha-mesto
+      types: [PointOfInterest, WasteContainerIsle, WasteContainer, OffStreetParking, BikeHireDockingStation, AirQualityObserved, AdministrativeArea, BudgetLine]
+      attrs: [name, serviceCategory, facilityType, address, openingHours, wheelchairAccessible, capacity, pupilCount, url, stationCode, accessRestriction, containerCode, wasteKind, fillingLevel, dateModified, totalSpotNumber, availableSpotNumber, occupiedSpotNumber, totalSlotNumber, availableBikeNumber, freeSlotNumber, status, dateObserved, pm10, pm25, no2, o3, so2, co, districtCode, budgetItem, fiscalYear, budgetArea, budgetFunction, budgetPurpose, approvedAmount, adjustedAmount, location]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, csv, ogc-features]

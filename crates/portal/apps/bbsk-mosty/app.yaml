@@ -1,0 +1,47 @@
+# Mosty Banskobystrického kraja — the bridge desk for the region's road management (T-2784,
+# AP-07, AP-14, AP-118). Hand written, so no generated-by annotation.
+#
+# It reads and never writes, so it is `static`: a bundle the Portal static host serves under
+# /apps/bbsk-mosty/. It is a staff desk, so it is opened by its role, never anonymously: the viewer
+# role is held by its default group (T-2686), and the bundle holds no token of its own.
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: bbsk-mosty
+  namespace: bbsk
+  annotations:
+    # The Portal image ships this bundle (Dockerfile, /srv/apps), so the App names no
+    # repository of its own; the Portal accepts the mark only where the bundle is (AP-87).
+    joinedcontext.com/shipped-with: portal
+  title:
+    sk: "Mosty Banskobystrického kraja"
+    en: "Bridges of the Banská Bystrica region"
+  description:
+    sk: "Pracovisko pre správu ciest: vek, dĺžka, polia, materiál a pamiatková ochrana každého mosta, najstaršia a najdlhšia desatina v kraji, výber podľa okresu a triedy cesty a tabuľka na stiahnutie."
+    en: "A desk for road management: every bridge's age, length, spans, material and heritage status, the oldest and longest tenth in the region, a pick by district and road class, and the table as a download."
+spec:
+  kind: ui
+  source:
+    path: ./apps/bbsk-mosty
+  build:
+    node: "22"
+  visibility: roles
+  lifecycle: published
+  roles:
+    - name: viewer
+      title: { sk: "Čitateľ", en: "Viewer" }
+      description: "Reads every bridge's figures and downloads the table."
+  # grants/users/groups/ (AP-118, ADR-N-031): who holds a role is that group's members.
+  access:
+    - role: viewer
+      subjects: [{ group: bbsk-mosty-viewer }]
+  dataNeeds:
+    # The bridges of the region's public register space, the columns the desk shows (T-2783).
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: bbsk-registre
+      types: [Bridge]
+      attrs: [name, bridgeCode, roadClass, roadNumber, yearBuilt, spanCount, bridgedLength, structureMaterial, heritageStatus, managerName, districtName, location]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]
+      roles: [viewer]

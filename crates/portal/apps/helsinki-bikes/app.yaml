@@ -1,0 +1,35 @@
+# Helsinki's city bikes: how many stations, how many bikes now, which stations are empty, and every
+# station on a map and in a table (AP-07, AP-14, T-2596). Hand written, so no generated-by annotation.
+#
+# A frontend only: React on the App SDK, read-only, so `static` with a Vite build. Its source is
+# its own repository on the forge, which the build lane builds at `ref` (AP-75, AP-80); this folder
+# of the portal repository is where CI tests the same tree before it is pushed there (T-2599).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: helsinki-bikes
+  namespace: helsinki
+  title:
+    en: "Helsinki city bikes"
+    fi: "Helsingin kaupunkipyörät"
+  description:
+    en: "Every city bike station in Helsinki: bikes available now, free docks, and which stations are empty, on a map and in a table."
+    fi: "Helsingin kaupunkipyöräasemat: vapaat pyörät, vapaat telineet ja tyhjät asemat kartalla ja taulukossa."
+spec:
+  kind: ui
+  source:
+    git:
+      url: https://dev.joinedcontext.com/git/joinedcontext/helsinki_helsinki-bikes.git
+      ref: main
+  build:
+    node: "22"
+  visibility: organization
+  lifecycle: published
+  dataNeeds:
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: helsinki
+      types: [BikeHireDockingStation]
+      attrs: [name, location, availableBikeNumber, freeSlotNumber, totalSlotNumber, status, dateModified]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]

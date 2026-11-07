@@ -1,0 +1,15 @@
+# Bento 1.21.1's documented example for a CosmosDB connection string (the public emulator key), copied into a
+# secret field's placeholder by ui/scripts/bento-processor-forms.mjs before it dropped examples on secret fields.
+cf4fb8ba5f14b454ed320db8e820449b9191c1f4:ui/src/schemas/bento-processor-forms.json:generic-api-key:1
+# RFC 6455 section 1.3's sample Sec-WebSocket-Key (a public nonce, not a secret) sent by the Endpoint WebSocket probe.
+f789dca0131b1d4b73364f37e5d141bea8dd791a:src/health_probe.rs:generic-api-key:54
+# T-5971: fake API keys the secret-in-argument tests send to prove the refusal (commit a0a246a)
+a0a246a132a0b82a4e847b0a0609b7b67003c30b:src/ops/mod.rs:generic-api-key:1052
+a0a246a132a0b82a4e847b0a0609b7b67003c30b:src/secret_scan.rs:generic-api-key:134
+a0a246a132a0b82a4e847b0a0609b7b67003c30b:src/secret_scan.rs:generic-api-key:135
+a0a246a132a0b82a4e847b0a0609b7b67003c30b:tests/connector_scenarios/scenarios.yaml:generic-api-key:633
+a0a246a132a0b82a4e847b0a0609b7b67003c30b:tests/connector_scenarios/scenarios.yaml:generic-api-key:642
+655115138f0cce99fe42fa4727a6cc94ba5e0f62:tests/connector_scenarios/scenarios.yaml:generic-api-key:1444
+fe96699883dce78bc387cfdedc695d344ac96efb:ui/tests/knowledge_pages.test.tsx:generic-api-key:593
+56827840f474792a273ecdcba6c7ebc28637b9c9:sdk/tests/grid_cells.test.tsx:generic-api-key:53
+e3c263dd94419d37a0c82b6a37eb92b2c3a3357d:sdk/tests/grid_cells.test.tsx:generic-api-key:55

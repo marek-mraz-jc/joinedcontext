@@ -1,0 +1,54 @@
+# Default form arrangement for ScopeDefinition (UI-02, T-2955, R19).
+# One node of the scope tree Policies grant by; the path alone decides whether it is a root and
+# which node it hangs under, so the form asks for the path only.
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: scopedefinition
+spec:
+  for: ScopeDefinition
+  guide: User-Guide/05-endpoints-and-sharing
+  about:
+    en: >-
+      A scope definition names one node of the scope tree: a place under /geo, a subject under
+      /domain or an administrative unit under /admin. Entities carry these paths as their scope,
+      and a policy grants access to everything under one of them.
+    sk: >-
+      Definícia rozsahu pomenúva jeden uzol stromu rozsahov: miesto pod /geo, oblasť pod /domain
+      alebo správny celok pod /admin. Entity nesú tieto cesty ako svoj rozsah a politika sprístupní
+      všetko pod jednou z nich.
+    cs: >-
+      Definice rozsahu pojmenovává jeden uzel stromu rozsahů: místo pod /geo, oblast pod /domain
+      nebo správní celek pod /admin. Entity nesou tyto cesty jako svůj rozsah a politika zpřístupní
+      vše pod jednou z nich.
+    de: >-
+      Eine Bereichsdefinition benennt einen Knoten des Bereichsbaums: einen Ort unter /geo, ein
+      Fachgebiet unter /domain oder eine Verwaltungseinheit unter /admin. Entitäten tragen diese
+      Pfade als ihren Bereich, und eine Richtlinie gibt alles unter einem davon frei.
+  order: [name, scopeString]
+  fields:
+    name:
+      help:
+        en: The short name the definition is filed under, for example geo-sk-bb-radvan.
+        sk: Krátky názov, pod ktorým je definícia uložená, napríklad geo-sk-bb-radvan.
+        cs: Krátký název, pod nímž je definice uložena, například geo-sk-bb-radvan.
+        de: Der kurze Name der Definition, zum Beispiel geo-sk-bb-radvan.
+    scopeString:
+      placeholder: /geo/SK/BB/Radvan
+      help:
+        en: >-
+          The path of the node, starting with /geo, /domain or /admin; each part letters, digits,
+          dot, underscore or hyphen. A path of one part is a root, any other hangs under the path
+          without its last part.
+        sk: >-
+          Cesta uzla, začína /geo, /domain alebo /admin; každá časť sú písmená, číslice, bodka,
+          podčiarkovník alebo pomlčka. Cesta z jednej časti je koreň, každá iná patrí pod cestu bez
+          poslednej časti.
+        cs: >-
+          Cesta uzlu, začíná /geo, /domain nebo /admin; každá část jsou písmena, číslice, tečka,
+          podtržítko nebo pomlčka. Cesta z jedné části je kořen, každá jiná patří pod cestu bez
+          poslední části.
+        de: >-
+          Der Pfad des Knotens, beginnend mit /geo, /domain oder /admin; jeder Teil aus Buchstaben,
+          Ziffern, Punkt, Unterstrich oder Bindestrich. Ein Pfad aus einem Teil ist eine Wurzel, jeder
+          andere hängt unter dem Pfad ohne seinen letzten Teil.

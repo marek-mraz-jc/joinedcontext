@@ -1,0 +1,143 @@
+# Default form arrangement for Mapping (UI-02, T-2354).
+# How rows of one data model become entities of another; examples are a neutral air-quality feed (T-2752).
+# The transformation itself is written on the Models page's Mappings tab and kept as it is here.
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: mapping
+spec:
+  for: Mapping
+  guide: User-Guide/03-data-models
+  about:
+    en: >-
+      A mapping turns entities of one data model into entities of another. The derivations slot by
+      slot are written on the Models page's Mappings tab and stay as they are here; this form holds
+      the models it maps between, the space it belongs to, its golden tests and any native code.
+    sk: >-
+      Mapovanie mení entity jedného dátového modelu na entity iného. Odvodenia slot po slote sa píšu
+      na karte Mapovania na stránke Modely a tu zostávajú, ako sú; tento formulár drží modely, medzi
+      ktorými mapuje, priestor, do ktorého patrí, jeho zlaté testy a prípadný natívny kód.
+    cs: >-
+      Mapování mění entity jednoho datového modelu na entity jiného. Odvození slot po slotu se píší
+      na kartě Mapování na stránce Modely a zde zůstávají, jak jsou; tento formulář drží modely, mezi
+      kterými mapuje, prostor, do něhož patří, jeho zlaté testy a případný nativní kód.
+    de: >-
+      Ein Mapping macht aus Entitäten eines Datenmodells Entitäten eines anderen. Die Ableitungen je
+      Slot werden auf der Seite Modelle im Reiter Mappings geschrieben und bleiben hier unverändert;
+      dieses Formular hält die Modelle, den Raum, die Golden Tests und nativen Code.
+  order: [name, contextSpaceRef, source, target, tests, native, artifacts]
+  groups:
+    - title:
+        en: Between which models
+        sk: Medzi ktorými modelmi
+        cs: Mezi kterými modely
+        de: Zwischen welchen Modellen
+      description:
+        en: The space the mapping belongs to and the two models it translates between.
+        sk: Priestor, do ktorého mapovanie patrí, a dva modely, medzi ktorými prekladá.
+        cs: Prostor, do něhož mapování patří, a dva modely, mezi nimiž překládá.
+        de: Der Raum des Mappings und die zwei Modelle, zwischen denen es übersetzt.
+      fields: [name, contextSpaceRef, source, target]
+    - title:
+        en: Golden tests
+        sk: Zlaté testy
+        cs: Zlaté testy
+        de: Golden Tests
+      description:
+        en: Example pairs CI runs through Bento; the mapping is refused without at least one.
+        sk: Dvojice príkladov, ktoré CI spúšťa cez Bento; bez aspoň jednej je mapovanie odmietnuté.
+        cs: Dvojice příkladů, které CI spouští přes Bento; bez alespoň jedné je mapování odmítnuto.
+        de: Beispielpaare, die CI durch Bento laufen lässt; ohne eines wird das Mapping abgelehnt.
+      fields: [tests]
+    - title:
+        en: Native code and artifacts
+        sk: Natívny kód a artefakty
+        cs: Nativní kód a artefakty
+        de: Nativer Code und Artefakte
+      description:
+        en: Bloblang written by hand for slots the derivations cannot express, and the compiled files.
+        sk: Ručne písaný Bloblang pre sloty, ktoré odvodenia nevyjadria, a skompilované súbory.
+        cs: Ručně psaný Bloblang pro sloty, které odvození nevyjádří, a zkompilované soubory.
+        de: Handgeschriebenes Bloblang für Slots, die Ableitungen nicht ausdrücken, und die Kompilate.
+      folded: true
+      fields: [native, artifacts]
+  fields:
+    name:
+      placeholder: "readings-to-airqualityobserved"
+      help:
+        en: The short name this mapping is filed under; it cannot change once the mapping exists.
+        sk: Krátky názov, pod ktorým je mapovanie uložené; keď mapovanie existuje, nemení sa.
+        cs: Krátký název, pod nímž je mapování uloženo; jakmile mapování existuje, nemění se.
+        de: Der kurze Name des Mappings; er ändert sich nicht mehr, sobald das Mapping besteht.
+    contextSpaceRef:
+      help:
+        en: The context space the mapping belongs to; the same space that serves its target model.
+        sk: Kontextový priestor, do ktorého mapovanie patrí; ten istý, ktorý slúži cieľový model.
+        cs: Kontextový prostor, do něhož mapování patří; tentýž, který slouží cílový model.
+        de: Der Kontextraum des Mappings; derselbe Raum, der sein Zielmodell bereitstellt.
+    source.name:
+      help:
+        en: The data model whose entities the mapping reads, by the name it is published under.
+        sk: Dátový model, ktorého entity mapovanie číta, podľa názvu, pod ktorým je zverejnený.
+        cs: Datový model, jehož entity mapování čte, podle názvu, pod kterým je zveřejněn.
+        de: Das Datenmodell, dessen Entitäten das Mapping liest, unter seinem veröffentlichten Namen.
+    source.version:
+      help:
+        en: The served major version of that model, a whole number such as 1 or 2.
+        sk: Obsluhovaná hlavná verzia toho modelu, celé číslo ako 1 alebo 2.
+        cs: Obsluhovaná hlavní verze toho modelu, celé číslo jako 1 nebo 2.
+        de: Die bereitgestellte Hauptversion dieses Modells, eine ganze Zahl wie 1 oder 2.
+    target.name:
+      help:
+        en: The data model the mapping writes entities of; it cannot be the source at the same version.
+        sk: Dátový model, ktorého entity mapovanie zapisuje; nesmie byť zdrojom v tej istej verzii.
+        cs: Datový model, jehož entity mapování zapisuje; nesmí být zdrojem ve stejné verzi.
+        de: Das Datenmodell, dessen Entitäten das Mapping schreibt; nicht die Quelle in derselben Version.
+    target.version:
+      help:
+        en: The served major version of the target model, a whole number such as 1 or 2.
+        sk: Obsluhovaná hlavná verzia cieľového modelu, celé číslo ako 1 alebo 2.
+        cs: Obsluhovaná hlavní verze cílového modelu, celé číslo jako 1 nebo 2.
+        de: Die bereitgestellte Hauptversion des Zielmodells, eine ganze Zahl wie 1 oder 2.
+    tests[].input:
+      help:
+        en: The input example beside the manifest, a path relative to it without any .. segment.
+        sk: Vstupný príklad vedľa manifestu, cesta relatívna k nemu bez segmentu .. v ceste.
+        cs: Vstupní příklad vedle manifestu, cesta relativní k němu bez segmentu .. v cestě.
+        de: Das Eingabebeispiel neben dem Manifest, ein relativer Pfad ohne ein ..-Segment.
+    tests[].expect:
+      help:
+        en: The output that input has to produce, beside the manifest; CI compares the two.
+        sk: Výstup, ktorý musí ten vstup vytvoriť, vedľa manifestu; CI ich porovná.
+        cs: Výstup, který musí ten vstup vytvořit, vedle manifestu; CI je porovná.
+        de: Die Ausgabe, die diese Eingabe ergeben muss, neben dem Manifest; CI vergleicht beide.
+    native[].targetSlot:
+      help:
+        en: The target slot this code fills, by its name in the data model; letters, digits and underscores.
+        sk: Cieľový slot, ktorý tento kód plní, podľa názvu v dátovom modeli; písmená, číslice, podčiarkovníky.
+        cs: Cílový slot, který tento kód plní, podle názvu v datovém modelu; písmena, číslice, podtržítka.
+        de: Der Ziel-Slot, den dieser Code füllt, per Name im Datenmodell; Buchstaben, Ziffern, Unterstriche.
+    native[].language:
+      help:
+        en: The language the block is written in; Bloblang is the one Bento runs today.
+        sk: Jazyk, v ktorom je blok napísaný; Bloblang je ten, ktorý dnes spúšťa Bento.
+        cs: Jazyk, ve kterém je blok napsán; Bloblang je ten, který dnes spouští Bento.
+        de: Die Sprache des Blocks; Bloblang ist die, die Bento heute ausführt.
+    native[].source:
+      help:
+        en: The code itself; it raises the review lane by one, because no check here can read it.
+        sk: Samotný kód; zvyšuje kontrolnú dráhu o jednu, lebo ho tu žiadna kontrola neprečíta.
+        cs: Samotný kód; zvyšuje kontrolní dráhu o jednu, protože jej zde žádná kontrola nepřečte.
+        de: Der Code selbst; er hebt die Prüfspur um eine Stufe, weil keine Prüfung hier ihn liest.
+    artifacts.bloblang:
+      help:
+        en: The compiled Bloblang Bento runs, beside the manifest; the compiler writes it for you.
+        sk: Skompilovaný Bloblang, ktorý spúšťa Bento, vedľa manifestu; zapíše ho kompilátor.
+        cs: Zkompilovaný Bloblang, který spouští Bento, vedle manifestu; zapíše jej kompilátor.
+        de: Das kompilierte Bloblang, das Bento ausführt, neben dem Manifest; der Compiler schreibt es.
+    artifacts.gatewayIr:
+      help:
+        en: The mapping the gateway interprets for live translation and view endpoints.
+        sk: Mapovanie, ktoré brána interpretuje pre živý preklad a pohľadové endpointy.
+        cs: Mapování, které brána interpretuje pro živý překlad a pohledové endpointy.
+        de: Das Mapping, das das Gateway für Live-Übersetzung und Sicht-Endpunkte auslegt.

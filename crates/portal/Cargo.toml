@@ -1,0 +1,181 @@
+# The reference apps of AP-34 are their own crates beside the Portal, so the repository's
+# existing fmt, clippy and test lanes cover them with no new CI job (AP-36). They depend on
+# nothing here: an app has to run unchanged outside the platform (AP-37).
+[workspace]
+members = ["apps/*"]
+# A `static` app (AP-01) is a bundle and nothing else, so it has no crate for `apps/*` to load;
+# cargo's glob refuses a member directory without a `Cargo.toml` rather than skipping it, so every
+# such app is named here. The app's screens are covered by the `apps/*/ui` lane in CI.
+exclude = [
+  # The Helsinki WASM apps (T-3331..T-3337): the crate is in the app's `wasm/`, its own workspace,
+  # built to WebAssembly by the build lane (AP-142).
+  "apps/alerts-heatmap",
+  "apps/kpi-forecast",
+  "apps/transit-reach",
+  "apps/news-topics",
+  "apps/district-compare",
+  "apps/data-quality-inspector",
+  "apps/bike-weather-demand",
+  "apps/alerts-desk",
+  "apps/bbsk-ukazovatele",
+  "apps/banskabystrica-ovzdusie",
+  "apps/banskabystrica-mapa",
+  "apps/banskabystrica-data",
+  "apps/banskabystrica-skoly",
+  "apps/bbsk-mapa",
+  "apps/bbsk-podujatia",
+  "apps/bbsk-data",
+  "apps/bbsk-mosty",
+  "apps/praha-mapa",
+  "apps/praha-data",
+  "apps/praha-odpad",
+  "apps/helsinki-kartta",
+  "apps/helsinki-data",
+  "apps/bike-stations",
+  "apps/banskabystrica-zaznamy",
+  "apps/bbsk-zaznamy",
+  "apps/helsinki-alerts",
+  "apps/helsinki-bikes",
+  "apps/helsinki-events",
+  "apps/praha-mesto",
+  "apps/zilina-mapa",
+  "apps/zilina-ukazovatele",
+  "apps/zilina-zaznamy",
+  "apps/zilina-vyskum",
+  # The App sharing matrix probe (T-4911): a plain-HTML bundle the Dockerfile ships under five names.
+  "apps/sharing-probe",
+  # `kind: ui` apps with a WebAssembly part (T-3328..T-3330): their Rust is `wasm/`, a workspace of
+  # its own that `pnpm test` runs and `pnpm build` compiles to wasm32.
+  "apps/air-weather-explorer",
+  "apps/bike-rebalancing",
+  "apps/event-day-planner",
+]
+
+[package]
+name = "joinedcontext-portal"
+version = "0.1.0"
+edition = "2021"
+license = "EUPL-1.2"
+description = "joinedcontext Portal: one application that manages the platform (Rust API + reconciler + embedded React UI)"
+
+[lib]
+name = "joinedcontext_portal"
+path = "src/lib.rs"
+
+[[bin]]
+name = "joinedcontext-portal"
+path = "src/main.rs"
+
+[dependencies]
+# The manifest contract, by tag or by full commit, never by path into another agent's clone
+# (T-0249). Pinned to platform 530abc4 (T-5647: a ServiceAccount may not derive the mcp-*, context-gateway, jc-assistant or jc-build-lane client id; before: 068296a: platform main e25be7a with T-5766: archive member requests carry no body, which CloudFront refused 403; before: e3d437f, 3df270c: platform main aacd307 with T-5710: people named by Keycloak id,
+# ADR-N-061; and T-5087: no CKAN DataStore mirror; T-5748: a refused CKAN read says its problem detail; T-5208: a string slot with an ISO 8601 date pattern fits DTSTART); the three crates share one reference, so cargo
+# pulls one copy (T-3167).
+# `version` is the crate's own version at that tag (the tag counts differently); without it
+# cargo-deny reads the requirement as `*` and the supply-chain check goes red (T-0287).
+jc-core = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0", features = ["outbound"] }
+# Blueprint expansion (CC-25) and the loader the reconciler validates a repository with
+# (T-0191), from the same engine the CLI runs, so both sides agree on what a manifest is. Same
+# tag as jc-core on purpose: cargo keys a git source by its reference, so two tags of one
+# repository would pull two copies of `jc-core` and its types would stop matching.
+jcctl = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0", default-features = false, features = ["utoipa"] }
+# The gateway's own write decision (evaluator, write guard), which the record check of a pipeline's
+# sample runs before a proposal (T-4840), and the app-variant matrix asserts (T-2705). Same rev as
+# jc-core.
+context-gateway = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0" }
+# The operations check an input against the schema they publish (T-1659); already in the tree.
+jsonschema = { version = "0.54", default-features = false }
+# Only to render jc-core's schemas into the OpenAPI document; the Portal's own types use utoipa.
+schemars = "0.8"
+axum = { version = "0.8", features = ["macros", "multipart"] }
+axum-extra = { version = "0.12", features = ["cookie-private"] }
+tower = "0.5"
+tower-http = { version = "0.7", features = ["compression-gzip", "cors", "set-header", "trace"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net", "sync", "time"] }
+# The binary's allocator (main.rs, T-5283), as the gateway's (T-4782): glibc kept the runner's
+# freed /metrics texts resident, jemalloc's background thread gives them back.
+tikv-jemallocator = "0.7"
+# The builder run's event stream (AG-45). `sync` alone: the one wrapper needed is the one that
+# turns a broadcast receiver into the `Stream` axum's SSE response wants, and axum has no
+# stream type of its own.
+tokio-stream = { version = "0.1", default-features = false, features = ["sync"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+# The maintained fork of serde_yaml jc-core already links; serde_yaml_ng runs on the unmaintained
+# unsafe-libyaml (RUSTSEC-2024-0449, T-4070), and this crate parses YAML from Git repositories.
+serde_norway = "0.9"
+utoipa = { version = "5", features = ["axum_extras"] }
+# `include-exclude`: the template is embedded without its build output (src/agents/preview.rs).
+rust-embed = { version = "8", features = ["include-exclude"] }
+mime_guess = "2"
+# The public API and User Guide pages rendered to HTML on the server (T-4063).
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+openidconnect = "4"
+jsonwebtoken = "9"
+# App mail and alerts through the relay a secretRef names (T-3583, AP-168): SMTP over rustls on
+# ring, the stack reqwest and sqlx already use.
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls", "ring", "webpki-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking", "stream"] }
+# The capture subscriber of `capture` MqttBrokers (ADR-N-048 §2.10, T-4880): plain MQTT 3.1.1 on a
+# broker's internal listener, which the mesh wraps in mTLS, so no TLS stack of its own.
+rumqttc = { version = "0.25.1", default-features = false }
+# The preferences and API-key tiers (UI-09, PF-36). rustls over ring, the TLS stack reqwest
+# already brought in; `time` because the key rows carry timestamps and the crate is here anyway.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "postgres", "migrate", "json", "macros", "time"] }
+# API keys are stored as Argon2id hashes and never as secrets (PF-36); the gateway verifies the
+# PHC string this writes. Same crate and defaults as the gateway's verifier.
+argon2 = "0.5"
+# The one-click configuration archive (CC-49, MF-16). Deflate only: no encryption, no bzip2.
+zip = { version = "9", default-features = false, features = ["deflate"] }
+thiserror = "2"
+# The SEARCH/REPLACE apply of the kit pass (AP-58); already in the graph through jc-core.
+regex = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+url = "2"
+# Folds diacritics out of a class name a sample file gives (TS-19); already in the graph.
+unicode-normalization = "0.1.25"
+base64 = "0.23"
+# The code preview's transpile (SDK-12, SDK-15): TypeScript and JSX to plain modules in process,
+# with the imports checked on the parsed program rather than by pattern.
+oxc = { version = "0.149", default-features = false, features = ["transformer", "codegen", "semantic", "ast_visit"] }
+hmac = "0.12"
+sha2 = "0.10"
+# The secret form writes the repository's SOPS files (T-5971); jcctl reads them back. Both
+# already in the graph through jcctl.
+age = { version = "0.12", default-features = false, features = ["armor"] }
+aes-gcm = "0.10"
+zeroize = "1"
+# The static host unpacks a published build (AP-102).
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
+
+# The Portal's own Prometheus surface (OPS-16, TS-22). No default features: the exporter's
+# own HTTP listener and push gateway would be a second server on a second port when the
+# Portal already has one.
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.17", default-features = false }
+# The TXT lookup of PF-41 domain verification (T-2377): a stub resolver over the pod's own
+# resolv.conf, so the reconciler asks the cluster DNS the way any lookup does.
+hickory-resolver = { version = "0.26", default-features = false, features = ["tokio", "system-config"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8", "jwk"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+# Only to mint an RS256 test key for the edge client's tokens (ADR-N-019); already in the tree.
+rsa = "0.9"
+tower = { version = "0.5", features = ["util"] }
+wiremock = "0.6"
+# A paused clock, so a timeout test proves the bound without waiting it out.
+tokio = { version = "1", features = ["test-util"] }
+
+# ponytail: line tables only, no full debuginfo — several agents compile on one machine
+[profile.dev]
+debug = "line-tables-only"
+[profile.dev.package."*"]
+opt-level = 1
+debug = false

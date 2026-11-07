@@ -1,0 +1,267 @@
+# Default form arrangement for Pipeline (UI-02).
+# Transforms data from sources or endpoints; examples match Helsinki ingestion pipelines.
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: pipeline
+spec:
+  for: Pipeline
+  guide: User-Guide/04-pipelines
+  about:
+    en: >-
+      A pipeline is what brings data in and keeps it fresh: it reads one source, maps each record
+      onto the entities of your data model and writes them through an endpoint. Say what it reads,
+      how often, and where it writes; the mapping itself is written and tested here before anyone
+      sees it.
+    sk: >-
+      Pipeline je to, čo privádza údaje a drží ich svieže: číta jeden zdroj, mapuje každý záznam
+      na entity vášho dátového modelu a zapisuje ich cez endpoint. Povedzte, čo číta, ako často a
+      kam zapisuje; samotné mapovanie sa tu napíše a otestuje, než ho niekto uvidí.
+    cs: >-
+      Pipeline je to, co přivádí data a drží je svěží: čte jeden zdroj, mapuje každý záznam na
+      entity vašeho datového modelu a zapisuje je přes endpoint. Řekněte, co čte, jak často a kam
+      zapisuje; samotné mapování se zde napíše a otestuje, než je někdo uvidí.
+    de: >-
+      Eine Pipeline holt die Daten herein und hält sie frisch: sie liest eine Quelle, bildet jeden
+      Datensatz auf die Entitäten Ihres Datenmodells ab und schreibt sie über einen Endpunkt. Sagen
+      Sie, was sie liest, wie oft und wohin sie schreibt; das Mapping selbst wird hier geschrieben
+      und getestet.
+  order:
+    [
+      name,
+      title,
+      class,
+      schedule,
+      period,
+      source,
+      compute,
+      targetEndpoint,
+      output,
+      allowFeedback,
+      expiry,
+      secretRefs,
+      quotas,
+    ]
+  groups:
+    # The workbench above the form owns the source, the mapping and the target (PL-58, ADR-N-034):
+    # the form keeps the name and how it runs in the open and folds the rest, with safe defaults.
+    - title:
+        en: Basics
+        sk: Základné údaje
+        cs: Základní údaje
+        de: Basisdaten
+      description:
+        en: The pipeline's identifier, one line saying what it does, and how it runs.
+        sk: Identifikátor pipeline, jedna veta o tom, čo robí, a ako beží.
+        cs: Identifikátor pipeline, jedna věta o tom, co dělá, a jak běží.
+        de: Die Kennung der Pipeline, ein Satz dazu, was sie tut, und wie sie läuft.
+      fields: [name, title, class, targetEndpoint]
+    - title:
+        en: More options
+        sk: Ďalšie možnosti
+        cs: Další možnosti
+        de: Weitere Optionen
+      description:
+        en: Schedule, the kind of step, output, feedback, removal of stale entities, secrets and quotas; the defaults are safe.
+        sk: Plán, druh kroku, výstup, spätná väzba, odstraňovanie zastaraných entít, tajomstvá a kvóty; predvolené hodnoty sú bezpečné.
+        cs: Plán, druh kroku, výstup, zpětná vazba, odstraňování zastaralých entit, tajemství a kvóty; výchozí hodnoty jsou bezpečné.
+        de: Zeitplan, Art des Schritts, Ausgabe, Rückmeldung, Entfernen veralteter Entitäten, Geheimnisse und Kontingente; die Vorgaben sind sicher.
+      folded: true
+      fields: [schedule, period, source, compute, output, allowFeedback, expiry, secretRefs, quotas]
+  fields:
+    name:
+      help:
+        en: Unique identifier for this pipeline; lowercase letters, digits and hyphens only.
+        sk: Jedinečný identifikátor tejto pipeline; iba malé písmená, číslice a spojovníky.
+        cs: Jedinečný identifikátor této pipeline; pouze malá písmena, číslice a spojovníky.
+        de: Eindeutige Kennung für diese Pipeline; nur Kleinbuchstaben, Ziffern und Bindestriche.
+    title:
+      help:
+        en: One line saying what this pipeline reads and where it writes it.
+        sk: Jedna veta o tom, čo táto pipeline číta a kam to zapisuje.
+        cs: Jedna věta o tom, co tato pipeline čte a kam to zapisuje.
+        de: Ein Satz dazu, was diese Pipeline liest und wohin sie schreibt.
+    class:
+      help:
+        en: How the pipeline runs; automatic chooses always running or a schedule from the period.
+        sk: Spôsob behu pipeline; automaticky zvolí stály beh alebo rozvrh podľa periódy.
+        cs: Způsob běhu pipeline; automaticky zvolí stálý běh nebo rozvrh podle periody.
+        de: Ausführungsart der Pipeline; automatisch wählt anhand der Periode zwischen Dauerbetrieb und Zeitplan.
+    schedule:
+      help:
+        en: When the runs start. Pick how often, or write the five cron fields; times are UTC, and the next runs show in your own time.
+        sk: Kedy sa behy spúšťajú. Vyberte, ako často, alebo napíšte päť polí cron; časy sú v UTC a ďalšie behy sa ukážu vo vašom čase.
+        cs: Kdy se běhy spouštějí. Vyberte, jak často, nebo napište pět polí cron; časy jsou v UTC a další běhy se ukážou ve vašem čase.
+        de: Wann die Läufe starten. Wählen Sie, wie oft, oder schreiben Sie die fünf Cron-Felder; Zeiten sind UTC, die nächsten Läufe erscheinen in Ihrer Zeit.
+    period:
+      help:
+        en: Polling interval between successive fetches, such as 60s, 15m, or 1h.
+        sk: Interval medzi jednotlivými načítaniami údajov, napríklad 60s, 15m alebo 1h.
+        cs: Interval mezi jednotlivými načteními dat, například 60s, 15m nebo 1h.
+        de: Abfrageintervall zwischen Datenabrufen, beispielsweise 60s, 15m oder 1h.
+    source.dataSourceRef:
+      help:
+        en: External data source connected to this pipeline as its input feed.
+        sk: Externý zdroj údajov pripojený k tejto pipeline ako vstupný kanál.
+        cs: Externí zdroj dat připojený k této pipeline jako vstupní kanál.
+        de: Externe Datenquelle, die als Eingangs-Feed mit dieser Pipeline verbunden ist.
+    source.endpointRef:
+      help:
+        en: Internal platform endpoint read as the input context for this pipeline.
+        sk: Interné rozhranie platformy čítané ako vstupný kontext pre túto pipeline.
+        cs: Interní rozhraní platformy čtené jako vstupní kontext pro tuto pipeline.
+        de: Interner Plattform-Endpunkt, der als Eingangskontext für diese Pipeline gelesen wird.
+    source.query.type:
+      help:
+        en: Specific entity type to query from the source endpoint.
+        sk: Konkrétny typ entity, ktorý sa má dopytovať zo zdrojového rozhrania.
+        cs: Konkrétní typ entity, který se má dopytovat ze zdrojového rozhraní.
+        de: Bestimmter Entitätstyp, der vom Quell-Endpunkt abgefragt werden soll.
+    source.query.attrs:
+      help:
+        en: List of entity attribute names to fetch instead of retrieving all attributes.
+        sk: Zoznam názvov atribútov entít na načítanie namiesto sťahovania všetkých atribútov.
+        cs: Seznam názvů atributů entit k načtení namísto stahování všech atributů.
+        de: Liste der abzurufenden Attributnamen anstelle aller Attribute.
+    source.query.ids:
+      help:
+        en: Specific entity URNs to process instead of all entities of the type.
+        sk: Konkrétne URN identifikátory entít, ktoré sa majú spracovať namiesto celého typu.
+        cs: Konkrétní URN identifikátory entit, které se mají zpracovat namísto celého typu.
+        de: Bestimmte URN-Kennungen von Entitäten, die anstelle des gesamten Typs verarbeitet werden.
+    source.query.q:
+      help:
+        en: Filter expression selecting only matching entities, such as checking a property threshold.
+        sk: Filtrovací výraz vyberajúci iba vyhovujúce entity, napríklad kontrola prahovej hodnoty.
+        cs: Filtrovací výraz vybírající pouze vyhovující entity, například kontrola prahové hodnoty.
+        de: Filterausdruck zur Auswahl passender Entitäten, etwa zur Prüfung von Schwellenwerten.
+    source.query.scopeQ:
+      help:
+        en: Scope hierarchy path filter selecting entities belonging to a specific domain or region.
+        sk: Hierarchický filter rozsahu vyberajúci entity patriace do určitej oblasti alebo regiónu.
+        cs: Hierarchický filtr rozsahu vybírající entity patřící do určité oblasti nebo regionu.
+        de: Hierarchischer Bereichsfilter zur Auswahl von Entitäten einer bestimmten Region.
+    source.query.geoQ:
+      help:
+        en: Geographic filter restricting entities to a specific bounding area or proximity.
+        sk: Geografický filter obmedzujúci entity na konkrétnu oblasť alebo vzdialenosť.
+        cs: Geografický filtr omezující entity na konkrétní oblast nebo vzdálenost.
+        de: Geografischer Filter, der Entitäten auf ein bestimmtes Gebiet oder einen Umkreis beschränkt.
+    source.query.temporalQ.window:
+      help:
+        en: Time window duration for historical data queries formatted as an ISO 8601 duration.
+        sk: Trvanie časového okna pre dopyty do histórie vo formáte trvania ISO 8601.
+        cs: Trvání časového okna pro dotazy do historie ve formátu trvání ISO 8601.
+        de: Dauer des Zeitfensters für historische Abfragen im ISO-8601-Format.
+    source.trigger.subscription.type:
+      help:
+        en: Entity type that triggers pipeline execution whenever a change notification occurs.
+        sk: Typ entity, ktorý spustí beh pipeline pri každom oznámení o zmene.
+        cs: Typ entity, který spustí běh pipeline při každém oznámení o změně.
+        de: Entitätstyp, der die Pipeline-Ausführung bei jeder Änderungsbenachrichtigung auslöst.
+    source.trigger.subscription.watchedAttributes:
+      help:
+        en: Specific attributes that trigger an event notification when modified.
+        sk: Konkrétne sledované atribúty, ktorých úprava vyvolá oznámenie o udalosti.
+        cs: Konkrétní sledované atributy, jejichž úprava vyvolá oznámení o události.
+        de: Bestimmte überwachte Attribute, deren Änderung eine Benachrichtigung auslöst.
+    compute.kind:
+      help:
+        en: Processing engine used to transform incoming data, such as a mapping or transformation script.
+        sk: Výpočtový mechanizmus na transformáciu vstupných údajov, napríklad mapovanie alebo transformačný skript.
+        cs: Výpočetní mechanismus pro transformaci vstupních dat, například mapování nebo transformační skript.
+        de: Verarbeitungs-Engine zur Transformation der Eingangsdaten, etwa ein Mapping oder Skript.
+    compute.module:
+      help:
+        en: Binary module file path for custom processing logic.
+        sk: Cesta k binárnemu modulu pre vlastnú logiku spracovania.
+        cs: Cesta k binárnímu modulu pro vlastní logiku zpracování.
+        de: Dateipfad des Binärmoduls für eigene Verarbeitungslogik.
+    compute.function:
+      help:
+        en: Function name exported by the compute module to execute on each message.
+        sk: Názov funkcie exportovanej výpočtovým modulom, ktorá sa vykoná pre každú správu.
+        cs: Název funkce exportované výpočetním modulem, která se provede pro každou zprávu.
+        de: Name der Funktion im Rechenmodul, die für jede Nachricht ausgeführt wird.
+    compute.mappingRef:
+      help:
+        en: Name of the schema mapping applied to convert input records into standard entity types.
+        sk: Názov mapovania schém použitého na prevod vstupných záznamov na štandardné typy entít.
+        cs: Název mapování schémat použitého pro převod vstupních záznamů na standardní typy entit.
+        de: Name des Schema-Mappings zur Umwandlung von Datensätzen in Standard-Entitätstypen.
+    compute.bloblang:
+      widget: textarea
+      help:
+        en: Inline transformation script that maps incoming records to standard entity attributes.
+        sk: Vložený transformačný skript, ktorý mapuje prichádzajúce záznamy na štandardné atribúty entít.
+        cs: Vložený transformační skript, který mapuje příchozí záznamy na standardní atributy entit.
+        de: Direktes Transformationsskript, das eingehende Daten auf Standard-Entitätsattribute abbildet.
+    targetEndpoint:
+      help:
+        en: The endpoint that receives the transformed entities; its policy decides what is stored.
+        sk: Endpoint, ktorý prijíma transformované entity; o tom, čo sa uloží, rozhoduje jeho politika.
+        cs: Endpoint, který přijímá transformované entity; o tom, co se uloží, rozhoduje jeho politika.
+        de: Der Endpunkt, der die umgewandelten Entitäten empfängt; seine Richtlinie entscheidet, was gespeichert wird.
+    output.type:
+      help:
+        en: Entity type produced by the pipeline and written through the target endpoint.
+        sk: Typ entity, ktorý pipeline vytvára a zapisuje cez cieľové rozhranie.
+        cs: Typ entity, ktorý pipeline vytváří a zapisuje přes cílové rozhraní.
+        de: Entitätstyp, der von der Pipeline erzeugt und über den Ziel-Endpunkt geschrieben wird.
+    output.mode:
+      help:
+        en: Whether output writes replace whole entities or update existing attributes in place.
+        sk: Či výstupné zápisy nahradia celé entity alebo iba aktualizujú existujúce atribúty.
+        cs: Zda výstupní zápisy nahradí celé entity nebo pouze aktualizují existující atributy.
+        de: Ob Ausgaben ganze Entitäten ersetzen oder bestehende Attribute aktualisieren.
+    allowFeedback:
+      advanced: true
+      help:
+        en: Permits a resident pipeline to process entities produced by its own output space.
+        sk: Povoľuje trvalej pipeline spracovávať entity pochádzajúce z jej vlastného výstupného priestoru.
+        cs: Povoluje trvalé pipeline zpracovávat entity pocházející z jejího vlastního výstupního prostoru.
+        de: Erlaubt einer dauerhaften Pipeline, Entitäten aus ihrem eigenen Ausgaberaum zu verarbeiten.
+    expiry.after:
+      help:
+        en: How long an entity may go without an update before it is removed, in hours or days.
+        sk: Ako dlho môže entita zostať bez aktualizácie, kým sa odstráni, v hodinách alebo dňoch.
+        cs: Jak dlouho může entita zůstat bez aktualizace, než se odstraní, v hodinách nebo dnech.
+        de: Wie lange eine Entität ohne Aktualisierung bleiben darf, bevor sie entfernt wird, in Stunden oder Tagen.
+    expiry.types:
+      help:
+        en: The entity types this pipeline writes; entities of other types are never removed.
+        sk: Typy entít, ktoré táto pipeline zapisuje; entity iných typov sa nikdy neodstránia.
+        cs: Typy entit, které tato pipeline zapisuje; entity jiných typů se nikdy neodstraní.
+        de: Die Entitätstypen, die diese Pipeline schreibt; Entitäten anderer Typen werden nie entfernt.
+    secretRefs[].name:
+      help:
+        en: Name of the stored secret containing credentials required by this pipeline.
+        sk: Názov uloženého tajomstva s prihlasovacími údajmi potrebnými pre túto pipeline.
+        cs: Název uloženého tajemství s přihlašovacími údaji potřebnými pro tuto pipeline.
+        de: Name des gespeicherten Secrets mit Zugangsdaten für diese Pipeline.
+    secretRefs[].key:
+      help:
+        en: Key within the secret where the credential value is located.
+        sk: Kľúč v tajomstve, pod ktorým sa nachádza hodnota prihlasovacieho údaju.
+        cs: Klíč v tajemství, pod kterým se nachází hodnota přihlašovacího údaje.
+        de: Schlüssel innerhalb des Secrets, unter dem der Zugangsdatenwert abgelegt ist.
+    secretRefs[].envVar:
+      help:
+        en: Environment variable name used to expose this credential to the execution runner.
+        sk: Názov premennej prostredia, cez ktorú sa prihlasovací údaj sprístupní pre runner.
+        cs: Název proměnné prostředí, přes kterou se přihlašovací údaj zpřístupní pro runner.
+        de: Name der Umgebungsvariablen, über die der Wert für den Runner bereitgestellt wird.
+    quotas.maxMemoryMb:
+      advanced: true
+      help:
+        en: Maximum memory in megabytes allocated for executing this pipeline.
+        sk: Maximálna pamäť v megabajtoch vyhradená na vykonávanie tejto pipeline.
+        cs: Maximální paměť v megabajtech vyhrazená pro provádění této pipeline.
+        de: Maximaler Arbeitsspeicher in Megabyte, der für die Pipeline reserviert ist.
+    quotas.cpuMillicores:
+      advanced: true
+      help:
+        en: CPU share allocated for executing this pipeline in thousandths of a CPU core.
+        sk: Výpočtový výkon CPU pridelený pre túto pipeline v tisícinách procesorového jadra.
+        cs: Výpočetní výkon CPU přidělený pro tuto pipeline v tisícinách procesorového jádra.
+        de: CPU-Anteil für diese Pipeline in Tausendsteln eines Prozessorkerns.

@@ -1,0 +1,25 @@
+# T-6531 (S-91, live walk T-6490): a space with its model, write Endpoint, source, pipeline, Policy
+# and map drafts the space first and names each other resource with its page.
+workflow: space
+as: steward
+says:
+  - "Create a context space vendor-data for my organization's vendor data, a data model, a write Endpoint, a data source and pipeline from the public CSV https://raw.githubusercontent.com/plotly/datasets/master/2011_february_us_airport_traffic.csv, a Policy giving read to group helsinki-readers, and a map layer."
+expect:
+  calls:
+    - tool: change_resource
+      input:
+        kind: ContextSpace
+        name: vendor-data
+        create: true
+        next:
+          - { kind: DataModel }
+          - { kind: Endpoint }
+          - { kind: DataSource }
+          - { kind: Pipeline }
+          - { kind: Policy }
+          - { kind: Dashboard }
+  outcome: form
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: create the context space vendor-data with its model, endpoint and pipeline."

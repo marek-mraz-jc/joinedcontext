@@ -1,0 +1,13 @@
+# T-2733: the people workflow as one conversation (Testing/07 §3, AG-87).
+workflow: people
+as: steward
+says:
+  - "Who are the people of the organization whose e-mail ends in hel.fi?"
+expect:
+  calls: []
+  outcome: person-only
+  why: "the docked assistant's profile names no person operation yet (T-2732 asks the owner); an MCP client of a people-admin reaches jc_person_list"
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: who are the people of the organization whose e-mail ends in hel.fi?"

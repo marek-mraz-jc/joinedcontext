@@ -1,0 +1,13 @@
+# T-2733: the dashboard workflow as one conversation (Testing/07 §3, AG-87).
+workflow: dashboard
+as: steward
+says:
+  - "What is the average pm10 of the air quality stations today?"
+expect:
+  calls:
+    - tool: jc_kpi_compute
+  outcome: answer
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: what is the average pm10 of the air quality stations today?"

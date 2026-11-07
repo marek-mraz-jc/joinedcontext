@@ -1,0 +1,122 @@
+[
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "avg(pm10) over AirQualityObserved, PT24H ending at the newest reading"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2026-09-01T07:00:00Z",
+    "start": "2026-08-31T07:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:banskabystrica.sk:banskabystrica-kpi:ukazovatele-ovzdusie",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-09-01T07:00:00Z",
+   "type": "Property",
+   "unitCode": "GQ",
+   "value": 35.5
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:banskabystrica.sk:ovzdusie:public-air",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:banskabystrica.sk:banskabystrica-kpi:pm10-24h-mesto",
+  "name": {
+   "type": "Property",
+   "value": "pm10-24h-mesto"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:36Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "avg(pm25) over AirQualityObserved, the calendar year to the newest reading"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2026-09-01T07:00:00Z",
+    "start": "2026-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:banskabystrica.sk:banskabystrica-kpi:ukazovatele-ovzdusie",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-09-01T07:00:00Z",
+   "type": "Property",
+   "unitCode": "GQ",
+   "value": 15.066666666666668
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:banskabystrica.sk:ovzdusie:public-air",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:banskabystrica.sk:banskabystrica-kpi:pm25-rok-mesto",
+  "name": {
+   "type": "Property",
+   "value": "pm25-rok-mesto"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:20:36Z"
+   }
+  }
+ },
+ {
+  "calculationFormula": {
+   "type": "Property",
+   "value": "vh5003rr/U03084 for 2025 (4053 thousand m3 of invoiced water) x 1000000 / 72123 inhabitants in the city register of 2026-09-20 / 365 days"
+  },
+  "calculationPeriod": {
+   "type": "Property",
+   "value": {
+    "end": "2025-12-31T23:59:59Z",
+    "start": "2025-01-01T00:00:00Z"
+   }
+  },
+  "computedBy": {
+   "object": "urn:ngsi-ld:Pipeline:banskabystrica.sk:banskabystrica-kpi:ukazovatele-mesto",
+   "type": "Relationship"
+  },
+  "currentValue": {
+   "observedAt": "2026-09-07T00:00:00Z",
+   "type": "Property",
+   "unitCode": "LTR",
+   "value": 154
+  },
+  "derivedFrom": {
+   "object": "urn:ngsi-ld:Endpoint:banskabystrica.sk:banskabystrica-mesto:banskabystrica-mesto",
+   "type": "Relationship"
+  },
+  "id": "urn:ngsi-ld:KeyPerformanceIndicator:banskabystrica.sk:banskabystrica-kpi:spotreba-vody-obyvatel-mesto",
+  "name": {
+   "type": "Property",
+   "value": "spotreba-vody-obyvatel-mesto"
+  },
+  "type": "KeyPerformanceIndicator",
+  "updatedAt": {
+   "type": "Property",
+   "value": {
+    "@type": "DateTime",
+    "@value": "2026-09-20T13:21:42Z"
+   }
+  }
+ }
+]

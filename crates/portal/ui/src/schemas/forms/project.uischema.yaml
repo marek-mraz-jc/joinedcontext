@@ -1,0 +1,202 @@
+# Default form arrangement for Project (UI-02, T-2606).
+# What Project settings → General edits of project.yaml: its title, its description, its own
+# quotas and its catalogue publisher (T-4595). The examples are neutral; {project} and
+# {orgDomain} are the form's own (T-2752).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: project
+spec:
+  for: Project
+  guide: User-Guide/12-managing-organization-and-projects
+  about:
+    en: >-
+      A project holds one body's spaces, endpoints, pipelines and applications, and the people
+      bound in it work there. Its title and description are what everybody reads in the project
+      switcher, and its quotas may only lower the limits the organization sets.
+    sk: >-
+      Projekt drží priestory, koncové body, pipeline a aplikácie jedného útvaru a pracujú v ňom
+      ľudia, ktorí sú doň priradení. Jeho názov a popis čítajú všetci v prepínači projektov a jeho
+      kvóty môžu limity organizácie iba znížiť.
+    cs: >-
+      Projekt drží prostory, koncové body, pipeline a aplikace jednoho útvaru a pracují v něm
+      lidé, kteří jsou do něj přiřazeni. Jeho název a popis čtou všichni v přepínači projektů a
+      jeho kvóty mohou limity organizace jen snížit.
+    de: >-
+      Ein Projekt hält die Räume, Endpunkte, Pipelines und Anwendungen einer Stelle, und die
+      daran gebundenen Personen arbeiten darin. Titel und Beschreibung lesen alle im
+      Projektwechsler, und seine Kontingente können die Grenzen der Organisation nur senken.
+  order: [title, description, quotas, catalog, apps]
+  groups:
+    - title:
+        en: The project
+        sk: Projekt
+        cs: Projekt
+        de: Das Projekt
+      description:
+        en: How the project is named and described wherever a person picks it.
+        sk: Ako sa projekt volá a opisuje všade, kde si ho človek vyberá.
+        cs: Jak se projekt jmenuje a popisuje všude, kde si jej člověk vybírá.
+        de: Wie das Projekt überall heißt und beschrieben wird, wo man es auswählt.
+      fields: [title, description]
+    - title:
+        en: Its limits
+        sk: Jeho limity
+        cs: Jeho limity
+        de: Seine Grenzen
+      description:
+        en: What the project may hold; empty keeps the organization's limit for a new project.
+        sk: Čo smie projekt obsahovať; prázdne ponechá limit organizácie pre nový projekt.
+        cs: Co smí projekt obsahovat; prázdné ponechá limit organizace pro nový projekt.
+        de: Was das Projekt enthalten darf; leer behält die Grenze der Organisation für neue Projekte.
+      fields: [quotas]
+    - title:
+        en: Its catalogue
+        sk: Jeho katalóg
+        cs: Jeho katalog
+        de: Sein Katalog
+      description:
+        en: The body that publishes the project's open data, which its DCAT-AP catalogue and the national portals name; empty publishes no catalogue.
+        sk: Subjekt, ktorý zverejňuje otvorené dáta projektu a ktorý uvádza jeho katalóg DCAT-AP aj národné portály; prázdne nezverejní žiadny katalóg.
+        cs: Subjekt, který zveřejňuje otevřená data projektu a který uvádí jeho katalog DCAT-AP i národní portály; prázdné nezveřejní žádný katalog.
+        de: Die Stelle, die die offenen Daten des Projekts veröffentlicht und die sein DCAT-AP-Katalog und die nationalen Portale nennen; leer veröffentlicht keinen Katalog.
+      fields: [catalog]
+    - title:
+        en: Its apps
+        sk: Jeho aplikácie
+        cs: Jeho aplikace
+        de: Seine Apps
+      description:
+        en: The platform services the project's apps may call and their daily quotas, within the organization's.
+        sk: Služby platformy, ktoré smú aplikácie projektu volať, a ich denné kvóty, v rámci tých organizácie.
+        cs: Služby platformy, které smějí aplikace projektu volat, a jejich denní kvóty, v rámci těch organizace.
+        de: Die Plattformdienste, die die Apps des Projekts aufrufen dürfen, und ihre Tageskontingente, im Rahmen der Organisation.
+      fields: [apps]
+  fields:
+    catalog.publisherName.sk:
+      help:
+        en: The body's official name in Slovak; the catalogue needs it in at least one language.
+        sk: Úradný názov subjektu v slovenčine; katalóg ho potrebuje aspoň v jednom jazyku.
+        cs: Úřední název subjektu v slovenštině; katalog jej potřebuje alespoň v jednom jazyce.
+        de: Der amtliche Name der Stelle auf Slowakisch; der Katalog braucht ihn in mindestens einer Sprache.
+    catalog.publisherName.cs:
+      help:
+        en: The body's official name in Czech; the catalogue needs it in at least one language.
+        sk: Úradný názov subjektu v češtine; katalóg ho potrebuje aspoň v jednom jazyku.
+        cs: Úřední název subjektu v češtině; katalog jej potřebuje alespoň v jednom jazyce.
+        de: Der amtliche Name der Stelle auf Tschechisch; der Katalog braucht ihn in mindestens einer Sprache.
+    catalog.publisherName.en:
+      help:
+        en: The body's official name in English; the catalogue needs it in at least one language.
+        sk: Úradný názov subjektu v angličtine; katalóg ho potrebuje aspoň v jednom jazyku.
+        cs: Úřední název subjektu v angličtině; katalog jej potřebuje alespoň v jednom jazyce.
+        de: Der amtliche Name der Stelle auf Englisch; der Katalog braucht ihn in mindestens einer Sprache.
+    catalog.publisherName.de:
+      help:
+        en: The body's official name in German; the catalogue needs it in at least one language.
+        sk: Úradný názov subjektu v nemčine; katalóg ho potrebuje aspoň v jednom jazyku.
+        cs: Úřední název subjektu v němčině; katalog jej potřebuje alespoň v jednom jazyce.
+        de: Der amtliche Name der Stelle auf Deutsch; der Katalog braucht ihn in mindestens einer Sprache.
+    catalog.publisherUri:
+      help:
+        en: "Required once the group is filled. Slovak bodies: https://data.gov.sk/id/legal-subject/{IČO}; Czech bodies: https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/{IČO}."
+        sk: "Povinné, keď je skupina vyplnená. Slovenské subjekty: https://data.gov.sk/id/legal-subject/{IČO}; české subjekty: https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/{IČO}."
+        cs: "Povinné, jakmile je skupina vyplněna. Slovenské subjekty: https://data.gov.sk/id/legal-subject/{IČO}; české subjekty: https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/{IČO}."
+        de: "Pflicht, sobald die Gruppe ausgefüllt ist. Slowakische Stellen: https://data.gov.sk/id/legal-subject/{IČO}; tschechische Stellen: https://rpp-opendata.egon.gov.cz/odrpp/zdroj/orgán-veřejné-moci/{IČO}."
+    catalog.contactName:
+      help:
+        en: The desk that answers questions about the datasets, such as Open data desk.
+        sk: Útvar, ktorý odpovedá na otázky k datasetom, napríklad Oddelenie otvorených dát.
+        cs: Útvar, který odpovídá na dotazy k datovým sadám, například Oddělení otevřených dat.
+        de: Die Stelle, die Fragen zu den Datensätzen beantwortet, etwa die Open-Data-Stelle.
+    catalog.contactEmail:
+      help:
+        en: A role address such as opendata@example.org, never a person's own; given with the desk's name.
+        sk: Rolová adresa, napríklad opendata@example.org, nikdy osobná; spolu s názvom útvaru.
+        cs: Rolová adresa, například opendata@example.org, nikdy osobní; spolu s názvem útvaru.
+        de: Eine Funktionsadresse wie opendata@example.org, nie die einer Person; zusammen mit dem Namen der Stelle.
+    apps.services:
+      help:
+        en: The services every app of this project may call; none ticked keeps the organization's list.
+        sk: Služby, ktoré smie volať každá aplikácia projektu; nič nezaškrtnuté ponechá zoznam organizácie.
+        cs: Služby, které smí volat každá aplikace projektu; nic nezaškrtnuté ponechá seznam organizace.
+        de: Die Dienste, die jede App dieses Projekts aufrufen darf; nichts angekreuzt behält die Liste der Organisation.
+    apps.limits.emailsPerDay:
+      help:
+        en: How many messages one app of this project may send in a day; at most the organization's limit.
+        sk: Koľko správ smie jedna aplikácia projektu poslať za deň; najviac limit organizácie.
+        cs: Kolik zpráv smí jedna aplikace projektu poslat za den; nejvýše limit organizace.
+        de: Wie viele Nachrichten eine App dieses Projekts pro Tag senden darf; höchstens die Grenze der Organisation.
+    apps.limits.aiTokensPerDay:
+      help:
+        en: How many model tokens one app of this project may use in a day; at most the organization's limit.
+        sk: Koľko tokenov modelu smie jedna aplikácia projektu použiť za deň; najviac limit organizácie.
+        cs: Kolik tokenů modelu smí jedna aplikace projektu použít za den; nejvýše limit organizace.
+        de: Wie viele Modell-Tokens eine App dieses Projekts pro Tag nutzen darf; höchstens die Grenze der Organisation.
+    apps.limits.filesMiB:
+      help:
+        en: How many MiB of files one app of this project may keep; at most the organization's limit.
+        sk: Koľko MiB súborov smie jedna aplikácia projektu uchovávať; najviac limit organizácie.
+        cs: Kolik MiB souborů smí jedna aplikace projektu uchovávat; nejvýše limit organizace.
+        de: Wie viele MiB Dateien eine App dieses Projekts behalten darf; höchstens die Grenze der Organisation.
+    title:
+      placeholder: "Air quality"
+      help:
+        en: The name people read in the project switcher and at the top of every page of it.
+        sk: Názov, ktorý ľudia čítajú v prepínači projektov a navrchu každej jeho stránky.
+        cs: Název, který lidé čtou v přepínači projektů a nahoře na každé jeho stránce.
+        de: Der Name im Projektwechsler und oben auf jeder Seite des Projekts.
+    description:
+      help:
+        en: One or two sentences on what the project is for, for whoever is deciding whether to join it.
+        sk: Jedna či dve vety o tom, načo projekt je, pre toho, kto sa rozhoduje, či sa pridá.
+        cs: Jedna či dvě věty o tom, k čemu projekt je, pro toho, kdo se rozhoduje, zda se přidá.
+        de: Ein, zwei Sätze, wofür das Projekt da ist, für alle, die überlegen, ob sie mitmachen.
+    quotas.contextSpaces:
+      help:
+        en: How many context spaces this project may run; it cannot exceed the organization's limit.
+        sk: Koľko kontextových priestorov smie projekt prevádzkovať; nesmie prekročiť limit organizácie.
+        cs: Kolik kontextových prostorů smí projekt provozovat; nesmí překročit limit organizace.
+        de: Wie viele Kontexträume dieses Projekt betreiben darf; höchstens die Grenze der Organisation.
+    quotas.residentPipelines:
+      help:
+        en: How many of this project's pipelines may run all the time.
+        sk: Koľko pipeline tohto projektu smie bežať nepretržite.
+        cs: Kolik pipeline tohoto projektu smí běžet nepřetržitě.
+        de: Wie viele Pipelines dieses Projekts dauerhaft laufen dürfen.
+    quotas.publicEndpoints:
+      help:
+        en: How many of this project's endpoints anyone may read without signing in.
+        sk: Koľko koncových bodov tohto projektu smie ktokoľvek čítať bez prihlásenia.
+        cs: Kolik koncových bodů tohoto projektu smí kdokoli číst bez přihlášení.
+        de: Wie viele Endpunkte dieses Projekts alle ohne Anmeldung lesen dürfen.
+    quotas.ingestEventsPerSecond:
+      help:
+        en: How many updates per second this project's sources may write.
+        sk: Koľko aktualizácií za sekundu smú zapísať zdroje tohto projektu.
+        cs: Kolik aktualizací za sekundu smějí zapsat zdroje tohoto projektu.
+        de: Wie viele Aktualisierungen pro Sekunde die Quellen dieses Projekts schreiben dürfen.
+    quotas.apps:
+      help:
+        en: How many applications this project may publish.
+        sk: Koľko aplikácií smie tento projekt zverejniť.
+        cs: Kolik aplikací smí tento projekt zveřejnit.
+        de: Wie viele Anwendungen dieses Projekt veröffentlichen darf.
+    quotas.agentRunsPerDay:
+      help:
+        en: How many assistant runs this project may start in one day.
+        sk: Koľko behov asistenta smie tento projekt spustiť za deň.
+        cs: Kolik běhů asistenta smí tento projekt spustit za den.
+        de: Wie viele Assistentenläufe dieses Projekt pro Tag starten darf.
+    quotas.entitiesPerSpace:
+      help:
+        en: How many entities one context space of this project may hold.
+        sk: Koľko entít smie mať jeden kontextový priestor tohto projektu.
+        cs: Kolik entit smí mít jeden kontextový prostor tohoto projektu.
+        de: Wie viele Entitäten ein Kontextraum dieses Projekts halten darf.
+    quotas.requestsPerMinute:
+      help:
+        en: How many requests per minute one endpoint of this project answers.
+        sk: Na koľko požiadaviek za minútu odpovie jeden koncový bod tohto projektu.
+        cs: Na kolik požadavků za minutu odpoví jeden koncový bod tohoto projektu.
+        de: Wie viele Anfragen pro Minute ein Endpunkt dieses Projekts beantwortet.

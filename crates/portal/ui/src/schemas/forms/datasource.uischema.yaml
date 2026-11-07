@@ -1,0 +1,207 @@
+# Default form arrangement for DataSource (UI-02).
+# Connects to external data sources; examples match Helsinki open data feeds.
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: datasource
+spec:
+  for: DataSource
+  guide: User-Guide/04-pipelines
+  about:
+    en: >-
+      A data source is where the platform fetches from: a feed, a broker, an API. It brings
+      nothing in by itself — a pipeline reads it and writes into a space — so all it needs is the
+      address, how to reach it and, where the source asks for one, the name of a stored secret.
+    sk: >-
+      Dátový zdroj je miesto, odkiaľ platforma číta: kanál, broker, API. Sám nič neprinesie —
+      číta ho pipeline a zapisuje do priestoru — takže potrebuje len adresu, spôsob prístupu a,
+      ak to zdroj žiada, názov uloženého tajomstva.
+    cs: >-
+      Datový zdroj je místo, odkud platforma čte: kanál, broker, API. Sám nic nepřinese — čte jej
+      pipeline a zapisuje do prostoru — takže potřebuje jen adresu, způsob přístupu a, pokud to
+      zdroj žádá, název uloženého tajemství.
+    de: >-
+      Eine Datenquelle ist der Ort, von dem die Plattform abruft: ein Feed, ein Broker, eine API.
+      Sie bringt allein nichts herein — eine Pipeline liest sie und schreibt in einen Raum —, also
+      braucht sie nur die Adresse, den Zugang und, wo die Quelle es verlangt, den Namen eines
+      hinterlegten Secrets.
+  # The form shows one connection at a time, the one the person picked; the others are
+  # arranged here all the same and passed over while they are not on the form.
+  variants: [mqtt, http, webSocket, gtfsRt]
+  order: [name, title, mqtt, http, webSocket, gtfsRt, tls]
+  groups:
+    - title:
+        en: Basics
+        sk: Základné údaje
+        cs: Základní údaje
+        de: Basisdaten
+      description:
+        en: Identifier and descriptive title for this data source.
+        sk: Identifikátor a popisný titulok tohto zdroja údajov.
+        cs: Identifikátor a popisný titulek tohoto zdroje dat.
+        de: Kennung und beschreibender Titel dieser Datenquelle.
+      fields: [name, title]
+    - title:
+        en: Where the data comes from
+        sk: Odkiaľ dáta prichádzajú
+        cs: Odkud data přicházejí
+        de: Woher die Daten stammen
+      description:
+        en: Connection settings and remote endpoint configuration for the selected feed type.
+        sk: Nastavenia pripojenia a vzdialeného rozhrania pre vybraný typ zdroja.
+        cs: Nastavení připojení a vzdáleného rozhraní pro vybraný typ zdroje.
+        de: Verbindungseinstellungen und Konfiguration der Gegenstelle für den gewählten Feed-Typ.
+      fields: [mqtt, http, webSocket, gtfsRt]
+    - title:
+        en: TLS certificates
+        sk: Certifikáty TLS
+        cs: Certifikáty TLS
+        de: TLS-Zertifikate
+      description:
+        en: Optional custom certificate authority for secure connections.
+        sk: Voliteľná vlastná certifikačná autorita pre zabezpečené spojenia.
+        cs: Volitelná vlastní certifikační autorita pro zabezpečená spojení.
+        de: Optionale benutzerdefinierte Zertifizierungsstelle für sichere Verbindungen.
+      folded: true
+      fields: [tls]
+  fields:
+    name:
+      placeholder: "bike-stations-gbfs"
+      help:
+        en: Identifier for this data source used by pipelines to refer to it.
+        sk: Identifikátor tohto zdroja údajov, na ktorý sa odkazujú pipelines.
+        cs: Identifikátor tohoto zdroje dat, na který se odkazují pipelines.
+        de: Kennung dieser Datenquelle, auf die Pipelines verweisen.
+    title:
+      help:
+        en: The name of this feed as people read it in lists and when they build a pipeline.
+        sk: Názov tohto zdroja, ako ho ľudia čítajú v zoznamoch a pri stavbe pipeline.
+        cs: Název tohoto zdroje, jak jej lidé čtou v seznamech a při stavbě pipeline.
+        de: Der Name dieses Feeds in Listen und beim Bauen einer Pipeline.
+    mqtt.brokerRef.name:
+      help:
+        en: An MQTT broker of this project; the pipeline reads it inside the platform with no URL or password. Empty reads an external broker.
+        sk: MQTT broker tohto projektu; pipeline ho číta vnútri platformy bez URL a hesla. Prázdne číta externý broker.
+        cs: MQTT broker tohoto projektu; pipeline ho čte uvnitř platformy bez URL a hesla. Prázdné čte externí broker.
+        de: Ein MQTT-Broker dieses Projekts; die Pipeline liest ihn innerhalb der Plattform ohne URL und Passwort. Leer liest einen externen Broker.
+    mqtt.urls:
+      help:
+        en: Network addresses of the message brokers; each starts with tcp://, tls://, ws:// or wss:// and names the host and port.
+        sk: Sieťové adresy brokerov správ; každá začína tcp://, tls://, ws:// alebo wss:// a uvádza hostiteľa a port.
+        cs: Síťové adresy brokerů zpráv; každá začíná tcp://, tls://, ws:// nebo wss:// a uvádí hostitele a port.
+        de: Netzwerkadressen der Message-Broker; jede beginnt mit tcp://, tls://, ws:// oder wss:// und nennt Host und Port.
+    mqtt.topics:
+      help:
+        en: "Message topics to subscribe to on the broker; + stands for one level of a topic and # for every level below it."
+        sk: "Témy správ, ktoré sa majú odoberať na brokeri; + zastupuje jednu úroveň témy a # všetky úrovne pod ňou."
+        cs: "Témata zpráv, která se mají odebírat na brokeru; + zastupuje jednu úroveň tématu a # všechny úrovně pod ní."
+        de: "Nachrichten-Topics, die auf dem Broker abonniert werden sollen; + steht für eine Ebene eines Topics, # für alle Ebenen darunter."
+    mqtt.qos:
+      help:
+        en: How hard the broker tries to deliver each message; leave it empty for the broker's own, at most once.
+        sk: Ako veľmi sa broker snaží doručiť každú správu; nechajte prázdne pre predvoľbu brokera, najviac raz.
+        cs: Jak moc se broker snaží doručit každou zprávu; nechte prázdné pro výchozí volbu brokeru, nejvýše jednou.
+        de: Wie sehr der Broker jede Nachricht zuzustellen versucht; leer lassen für die Vorgabe des Brokers, höchstens einmal.
+    mqtt.cleanSession:
+      help:
+        en: Discard previous state and start a fresh session on each connection.
+        sk: Zahodiť predchádzajúci stav a začať čistú reláciu pri každom pripojení.
+        cs: Zahodit předchozí stav a začít čistou relaci při každém připojení.
+        de: Vorherigen Zustand verwerfen und bei jeder Verbindung eine neue Sitzung starten.
+    mqtt.username:
+      help:
+        en: Username used to authenticate with the message broker.
+        sk: Používateľské meno použité na overenie voči brokeru správ.
+        cs: Uživatelské jméno použité pro ověření vůči brokeru zpráv.
+        de: Benutzername zur Authentifizierung beim Message-Broker.
+    mqtt.passwordRef.name:
+      help:
+        en: Name of the stored secret holding the broker password.
+        sk: Názov uloženého tajomstva obsahujúceho heslo k brokeru.
+        cs: Název uloženého tajemství obsahujícího heslo k brokeru.
+        de: Name des gespeicherten Secrets mit dem Broker-Passwort.
+    mqtt.passwordRef.key:
+      help:
+        en: Key inside the secret storing the broker password.
+        sk: Kľúč v tajomstve, pod ktorým je uložené heslo k brokeru.
+        cs: Klíč v tajemství, pod kterým je uloženo heslo k brokeru.
+        de: Schlüssel innerhalb des Secrets, unter dem das Broker-Passwort hinterlegt ist.
+    http.url:
+      help:
+        en: Web address of the external JSON, XML, or binary feed to poll; it starts with http:// or https:// and is fetched as written, query included.
+        sk: Webová adresa externého zdroja JSON, XML alebo binárnych dát; začína http:// alebo https:// a načíta sa tak, ako je napísaná, aj s parametrami.
+        cs: Webová adresa externího zdroje JSON, XML nebo binárních dat; začíná http:// nebo https:// a načte se tak, jak je napsaná, i s parametry.
+        de: Webadresse des externen JSON-, XML- oder Binär-Feeds; sie beginnt mit http:// oder https:// und wird so abgerufen, wie sie geschrieben ist, mit Parametern.
+    http.verb:
+      help:
+        en: HTTP request method sent to the remote server, typically GET.
+        sk: Metóda požiadavky HTTP odosielaná na vzdialený server, zvyčajne GET.
+        cs: Metoda požadavku HTTP odesílaná na vzdálený server, obvykle GET.
+        de: An den entfernten Server gesendete HTTP-Anfragemethode, typischerweise GET.
+    http.timeout:
+      help:
+        en: How long to wait for the remote server before giving up, such as 30s.
+        sk: Ako dlho sa čaká na odpoveď vzdialeného servera pred zlyhaním, napríklad 30s.
+        cs: Jak dlouho se čeká na odpověď vzdáleného serveru před selháním, například 30s.
+        de: Wie lange auf eine Antwort des entfernten Servers gewartet wird, etwa 30s.
+    http.records:
+      help:
+        en: For a JSON answer that keeps its records in an array, the path to it, such as data.stations; each item becomes one record.
+        sk: Pre JSON odpoveď so záznamami v poli cesta k nemu, napríklad data.stations; každá položka je jeden záznam.
+        cs: U odpovědi JSON se záznamy v poli cesta k němu, například data.stations; každá položka je jeden záznam.
+        de: Bei einer JSON-Antwort mit Datensätzen in einem Array der Pfad dorthin, etwa data.stations; jedes Element wird ein Datensatz.
+    http.authorization.scheme:
+      help:
+        en: Authentication prefix sent in the header, defaulting to Bearer when left blank.
+        sk: Prefix overenia v hlavičke, pri prázdnom poli sa použije Bearer.
+        cs: Prefix ověření v hlavičce, při prázdném poli se použije Bearer.
+        de: Authentifizierungs-Präfix im Header, standardmäßig Bearer wenn leer gelassen.
+    http.authorization.headerRef.name:
+      help:
+        en: Name of the stored secret holding the API token or credentials.
+        sk: Názov uloženého tajomstva obsahujúceho API token alebo prihlasovacie údaje.
+        cs: Název uloženého tajemství obsahujícího API token nebo přihlašovací údaje.
+        de: Name des gespeicherten Secrets mit dem API-Token oder den Zugangsdaten.
+    http.authorization.headerRef.key:
+      help:
+        en: Property key inside the secret storing the token value.
+        sk: Kľúč vlastnosti v tajomstve, kde je uložená hodnota tokenu.
+        cs: Klíč vlastnosti v tajemství, kde je uložena hodnota tokenu.
+        de: Schlüssel innerhalb des Secrets, unter dem der Token-Wert hinterlegt ist.
+    webSocket.url:
+      help:
+        en: Web address of the WebSocket server to stream messages from; it starts with ws:// or wss://.
+        sk: Webová adresa servera WebSocket, z ktorého prúdia správy; začína ws:// alebo wss://.
+        cs: Webová adresa serveru WebSocket, ze kterého proudí zprávy; začíná ws:// nebo wss://.
+        de: Webadresse des WebSocket-Servers, von dem Nachrichten gestreamt werden; sie beginnt mit ws:// oder wss://.
+    webSocket.openMessage:
+      widget: textarea
+      help:
+        en: Initial message sent to the server immediately after connecting.
+        sk: Úvodná správa odoslaná na server bezprostredne po pripojení.
+        cs: Úvodní zpráva odeslaná na server bezprostředně po připojení.
+        de: Erste Nachricht, die unmittelbar nach dem Verbindungsaufbau an den Server gesendet wird.
+    gtfsRt.url:
+      help:
+        en: Web address of the GTFS-realtime protobuf feed itself, not of its documentation page; it starts with http:// or https://.
+        sk: Webová adresa samotného zdroja GTFS-realtime (protobuf), nie stránky s jeho dokumentáciou; začína http:// alebo https://.
+        cs: Webová adresa samotného zdroje GTFS-realtime (protobuf), ne stránky s jeho dokumentací; začíná http:// nebo https://.
+        de: Webadresse des GTFS-realtime-Feeds (protobuf) selbst, nicht seiner Dokumentationsseite; sie beginnt mit http:// oder https://.
+    gtfsRt.feed:
+      help:
+        en: Type of real-time transit information contained in the feed.
+        sk: Typ informácií o verejnej doprave v reálnom čase obsiahnutých v zdroji.
+        cs: Typ informací o veřejné dopravě v reálném čase obsažených ve zdroji.
+        de: Art der im Feed enthaltenen Echtzeit-Verkehrsinformationen.
+    tls.caCertRef.name:
+      help:
+        en: Name of the secret containing a custom certificate authority file.
+        sk: Názov tajomstva obsahujúceho vlastný certifikát certifikačnej autority.
+        cs: Název tajemství obsahujícího vlastní certifikát certifikační autority.
+        de: Name des Secrets, das eine benutzerdefinierte Zertifizierungsstelle enthält.
+    tls.caCertRef.key:
+      help:
+        en: Key inside the certificate secret containing the PEM certificate.
+        sk: Kľúč v tajomstve s certifikátom obsahujúci formát PEM.
+        cs: Klíč v tajemství s certifikátem obsahující formát PEM.
+        de: Schlüssel im Zertifikats-Secret, der das PEM-Zertifikat enthält.

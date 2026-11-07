@@ -1,0 +1,38 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-praha-odpad-1-viewer
+  namespace: praha
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:praha/app-praha-odpad/viewer
+    kind: role
+  assigner: did:web:praha.eu
+  contextSpaceRef:
+    kind: ContextSpace
+    name: praha-mesto
+  information:
+  - entities:
+    - type: WasteContainer
+    - type: WasteContainerIsle
+    propertyNames:
+    - containerCode
+    - wasteKind
+    - fillingLevel
+    - dateModified
+    - refWasteContainerIsle
+    - name
+    - location
+    relationshipNames:
+    - containerCode
+    - wasteKind
+    - fillingLevel
+    - dateModified
+    - refWasteContainerIsle
+    - name
+    - location
+  operations:
+  - queryEntity
+  - retrieveEntity

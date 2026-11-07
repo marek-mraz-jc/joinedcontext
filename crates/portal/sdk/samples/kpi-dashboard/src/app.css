@@ -1,0 +1,44 @@
+/* The dashboard: roomy, rounded cards where the latest number is the first thing a person reads. */
+
+.app-period {
+  display: flex;
+  align-items: center;
+  gap: var(--jc-space-2, 0.5rem);
+}
+
+.app-period label {
+  font-weight: 600;
+}
+
+.app-period select {
+  min-height: var(--jc-target, 2.75rem);
+}
+
+.app-category,
+.app-target,
+.app-trend {
+  margin: 0;
+  color: var(--jc-color-muted, #48605f);
+  font-size: var(--jc-font-size-sm, 0.875rem);
+}
+
+.app-latest {
+  margin: var(--jc-space-1, 0.25rem) 0;
+  font-size: var(--jc-font-size-xl, 1.75rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.app-standing {
+  margin: var(--jc-space-2, 0.5rem) 0 0;
+  font-weight: 600;
+}
+
+.app-standing[data-standing="on-target"] {
+  color: var(--jc-color-success, #1f6f3a);
+}
+
+.app-standing[data-standing="short"] {
+  color: var(--jc-color-danger, #a3261b);
+}

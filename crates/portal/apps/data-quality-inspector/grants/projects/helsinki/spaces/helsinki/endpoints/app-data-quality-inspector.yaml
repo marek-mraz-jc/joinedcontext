@@ -1,0 +1,28 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Endpoint
+metadata:
+  name: app-data-quality-inspector
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+  title:
+    en: Helsinki data quality
+    fi: Helsingin datan laatu
+spec:
+  audience: public
+  callerRole: true
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki
+  enabledRepresentations:
+  - ngsi-ld
+  - mcp
+  - ogc-features
+  roles:
+  - name: viewer
+    subjects:
+    - group: data-quality-inspector-viewer
+  - name: steward
+    subjects:
+    - group: data-quality-inspector-steward
+  slug: rywjgug3g32ayfjwkzr5j3tqom

@@ -1,0 +1,17 @@
+# T-5950, T-6482: the connector workflow (a person creates a read-only connector for an AI client,
+# edits or revokes it) as one conversation (Testing/07 §3, AG-151). Live walk T-5962, S-46.
+workflow: connector
+as: steward
+says:
+  - "Create a connector: project helsinki, read only, 30 days, claude.ai only."
+expect:
+  calls:
+    - tool: jc_ui_navigate
+      input:
+        page: connectors
+  outcome: person-only
+  why: "a connector is a person's own grant to an AI client, created, edited and revoked by that person on the My connectors page, which the assistant opens; no assistant tool creates, widens or revokes one (AG-151)"
+# A viewer may not propose an App, so the conversation itself is refused (403, AG-70).
+refusal:
+  as: viewer
+  says: "Do this for me: create a read-only connector for my Claude client on the traffic space."

@@ -1,0 +1,43 @@
+# Podujatia v Banskobystrickom kraji: the region's events dashboard (T-4897, AP-07, AP-14, UI-15).
+# Hand written, so no generated-by annotation.
+#
+# It reads and never writes, so it is `static`: a bundle the Portal static host serves under
+# /apps/bbsk-podujatia/. The events are in `bbsk-podujatia` (T-4895), read through the App's own
+# public endpoint whose Policy keeps the region's scope, so the app never asks anybody to sign in
+# and never holds a token (AP-28). The same endpoint serves the calendar a person subscribes to
+# (`ical`, EP-125).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: bbsk-podujatia
+  namespace: bbsk
+  annotations:
+    # The Portal image ships this bundle (Dockerfile, /srv/apps), so the App names no
+    # repository of its own; the Portal accepts the mark only where the bundle is (AP-87).
+    joinedcontext.com/shipped-with: portal
+  title:
+    sk: "Podujatia v Banskobystrickom kraji"
+    en: "Events in the Banská Bystrica Region"
+  description:
+    sk: "Nadchádzajúce podujatia miest, obcí a inštitúcií kraja na mape, v zozname a v kalendári, s filtrom podľa mesta, kategórie a dátumu a s odkazom na odber do vlastného kalendára."
+    en: "Upcoming events of the region's towns, municipalities and bodies on a map, in a list and in a calendar, filtered by town, category and date, with a link to subscribe in your own calendar."
+spec:
+  kind: ui
+  source:
+    path: ./apps/bbsk-podujatia
+  build:
+    node: "22"
+  visibility: public
+  lifecycle: published
+  embeddable: true
+  dataNeeds:
+    # One space, one type, read only, the region's scope only: what the pipelines of T-4896
+    # write, the attributes the screen and the entity panel show.
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: bbsk-podujatia
+      types: [Event]
+      attrs: [name, description, startDate, endDate, venue, address, eventCategory, url, source, dataProvider, location]
+      scopeQ: /SK/BB/#
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features, ical]

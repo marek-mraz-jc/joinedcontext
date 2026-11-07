@@ -1,0 +1,200 @@
+# The Portal UI calls its API through openapi-fetch (ui/src/api/client.ts): `client.GET("/api/v1/…")`
+# with the path as openapi-typescript generated it, so the literal is the route's own spelling.
+[[link]]
+name = "ui-openapi-fetch"
+channel = "http"
+role = "uses"
+files = ["ui/src/**/*.ts", "ui/src/**/*.tsx"]
+pattern = '''\.(?P<verb>GET|POST|PUT|PATCH|DELETE|HEAD)\(\s*[`"'](?P<key>/[^`"']+)[`"']'''
+key = "{verb} {key}"
+
+# Calls no regex keys: a path held in a constant, a template URL handed to EventSource or a raw
+# fetch, a URL a page loads (img, favicon, iframe, navigation), and the App SDK's relative paths.
+# Each names the function that makes the call.
+
+# data views: openapi-fetch through the LIST/ONE constants
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /api/v1/projects/{p}/spaces/{s}/views"
+symbol = "ui/src/api/dataViews.ts::listViews"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "POST /api/v1/projects/{p}/spaces/{s}/views"
+symbol = "ui/src/api/dataViews.ts::createView"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "PUT /api/v1/projects/{p}/spaces/{s}/views/{id}"
+symbol = "ui/src/api/dataViews.ts::updateView"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "DELETE /api/v1/projects/{p}/spaces/{s}/views/{id}"
+symbol = "ui/src/api/dataViews.ts::deleteView"
+
+# a model's LinkML source: openapi-fetch through SOURCE, and a raw fetch for its YAML
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /api/v1/projects/{p}/datamodels/{n}/source"
+symbol = "ui/src/api/datamodelSource.ts::readModelSource"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "PUT /api/v1/projects/{p}/datamodels/{n}/source"
+symbol = "ui/src/api/datamodelSource.ts::writeModelSource"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /api/v1/projects/{p}/datamodels/{n}/source"
+symbol = "ui/src/components/entities/filters.ts::useModelSource"
+
+# server-sent event streams (EventSource on a template URL)
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /api/v1/projects/{p}/activity/stream"
+symbol = "ui/src/api/activity.ts::subscribeActivity"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /api/v1/projects/{p}/agent-runs/{id}/events"
+symbol = "ui/src/pages/apps/useAgentRun.ts::useAgentRun"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /api/v1/projects/{p}/drafts/events"
+symbol = "ui/src/api/drafts.ts::subscribeDrafts"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /api/v1/projects/{p}/spaces/{s}/live"
+symbol = "ui/src/pages/spaces/DataViews.tsx::useLive"
+
+# the basemap: MapLibre reads the style, then the tiles the style names
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /api/v1/projects/{p}/basemap/{b}/style.json"
+symbol = "ui/src/components/dashboards/MapLibreView.tsx::mapStyleFor"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /api/v1/projects/{p}/basemap/{b}/{z}/{x}/{y}"
+symbol = "ui/src/components/dashboards/MapLibreView.tsx::mapStyleFor"
+
+# assets a page loads by URL (img src, favicon, iframe, link, navigation)
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /api/v1/branding/{asset}"
+symbol = "ui/src/branding.tsx::logoUrl"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /api/v1/branding/{asset}"
+symbol = "ui/src/branding.tsx::applyBranding"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /api/v1/app-templates/{name}/screenshot/{width}"
+symbol = "ui/src/pages/apps/AppTemplates.tsx::AppTemplates"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /templates/{name}"
+symbol = "ui/src/pages/apps/AppTemplates.tsx::AppTemplates"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /api/v1/auth/sso-check"
+symbol = "ui/src/pages/apps/AppOpenPage.tsx::AppOpenPage"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /api/v1/auth/login"
+symbol = "ui/src/auth/AuthProvider.tsx::AuthProvider"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /api/v1/projects/{p}/agent-runs/{id}/preview"
+symbol = "ui/src/pages/apps/previewBridge.ts::previewSrc"
+
+# raw fetches the preview bridge and the knowledge chat make on template URLs
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "POST /api/v1/projects/{p}/agent-runs/{id}/preview-observations"
+symbol = "ui/src/pages/apps/previewBridge.ts::observationRelay"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "POST /api/v1/projects/{p}/agent-runs/{id}/functions/{fn}"
+symbol = "ui/src/pages/apps/previewBridge.ts::usePreviewBridge"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "POST /api/v1/projects/{p}/knowledge/deployments/{d}/chat"
+symbol = "ui/src/pages/knowledge/knowledge.ts::askAssistant"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "POST /api/v1/projects/{p}/knowledge/sources/{s}/files"
+symbol = "ui/src/pages/knowledge/knowledge.ts::uploadFile"
+
+# the App SDK's runtime client: paths under the App's own /apps/{name} base
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /apps/{name}/api/services/files"
+symbol = "sdk/src/sdk/client.ts::createClient"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /apps/{name}/api/services/files/{path}"
+symbol = "sdk/src/sdk/client.ts::filePath"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "PUT /apps/{name}/api/services/files/{path}"
+symbol = "sdk/src/sdk/client.ts::filePath"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "DELETE /apps/{name}/api/services/files/{path}"
+symbol = "sdk/src/sdk/client.ts::filePath"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "POST /apps/{name}/api/services/files/{path}"
+symbol = "sdk/src/sdk/client.ts::filePath"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "POST /apps/{name}/api/functions/{fn}"
+symbol = "sdk/src/sdk/client.ts::createClient"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "POST /apps/{name}/api/services/email/send"
+symbol = "sdk/src/sdk/client.ts::createClient"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "POST /apps/{name}/api/services/ai/complete"
+symbol = "sdk/src/sdk/client.ts::createClient"
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /apps/{name}/api/services/jobs"
+symbol = "sdk/src/sdk/client.ts::createClient"
+
+# A pod-backed App asks the Portal for its caller's roles at JC_ME_URL, which the reconciler sets
+# (AP-109, T-4453); the Rust sample is the one App in this repo with a backend that does.
+[[endpoint]]
+channel = "http"
+role = "uses"
+key = "GET /api/v1/projects/{p}/apps/{a}/me"
+symbol = "air_quality::App::roles"

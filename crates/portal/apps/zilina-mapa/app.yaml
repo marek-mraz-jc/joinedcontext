@@ -1,0 +1,40 @@
+# Mapa mesta Žilina — the city's map for its residents (T-3140, AP-07, AP-14, UI-15).
+# Hand written, so no generated-by annotation.
+#
+# It reads and never writes, so it is `static`: a bundle the Portal static host serves under
+# /apps/zilina-mapa/. Everything it shows is in the public space zilina-verejne, read through a
+# public endpoint, so the app never asks anybody to sign in and never holds a token (AP-28).
+apiVersion: joinedcontext.com/v1alpha1
+kind: App
+metadata:
+  name: zilina-mapa
+  namespace: zilina
+  annotations:
+    # The Portal image ships this bundle (Dockerfile, /srv/apps), so the App names no
+    # repository of its own; the Portal accepts the mark only where the bundle is (AP-87).
+    joinedcontext.com/shipped-with: portal
+  title:
+    sk: "Mapa mesta Žilina"
+    en: "Map of Žilina"
+  description:
+    sk: "Kultúrne pamiatky mesta, železničné stanice s počtom odchodov vlakov dnes a meranie ovzdušia na jednej mape, s vyhľadávaním a detailom miesta."
+    en: "The city's cultural monuments, its railway stations with the trains leaving today and the air-quality station on one map, with search and a detail of each place."
+spec:
+  kind: ui
+  source:
+    path: ./apps/zilina-mapa
+  build:
+    node: "22"
+  visibility: public
+  lifecycle: published
+  embeddable: true
+  dataNeeds:
+    # One space, three types, read only: the monuments of pamiatky, the stations of vlaky and the
+    # station of ovzdusie-* (T-3138); the attributes the screen shows.
+    - contextSpaceRef:
+        kind: ContextSpace
+        name: zilina-verejne
+      types: [PointOfInterest, GtfsStop, AirQualityObserved]
+      attrs: [name, location, address, monumentNumber, monumentKind, architecturalStyle, constructionPeriod, cadastralArea, ownershipForm, dailyDepartures, dateObserved, pm10, pm25, no2, o3, co]
+      operations: [queryEntity, retrieveEntity]
+      representations: [ngsi-ld, ogc-features]

@@ -1,0 +1,180 @@
+# Default form arrangement for Policy (UI-02, T-2326).
+# The manifest that decides who reads a city's context data; examples are neutral (T-2752).
+apiVersion: joinedcontext.com/v1alpha1
+kind: UiSchema
+metadata:
+  name: policy
+spec:
+  for: Policy
+  guide: User-Guide/05-endpoints-and-sharing
+  about:
+    en: >-
+      A policy says who may do what with the context data of one space. Pick the space, who it is
+      granted to and which operations they get — the five named groups are what a grant is normally
+      written in — then narrow it to the entities and attributes it should cover.
+    sk: >-
+      Politika hovorí, kto smie čo robiť s kontextovými údajmi jedného priestoru. Vyberte priestor,
+      komu ho udeľujete a ktoré operácie dostane — oprávnenie sa zvyčajne píše piatimi pomenovanými
+      skupinami — a potom ho zúžte na entity a atribúty, ktorých sa má týkať.
+    cs: >-
+      Politika říká, kdo smí co dělat s kontextovými daty jednoho prostoru. Vyberte prostor, komu jej
+      udělujete a které operace dostane — oprávnění se obvykle píše pěti pojmenovanými skupinami — a
+      potom jej zužte na entity a atributy, kterých se má týkat.
+    de: >-
+      Eine Richtlinie sagt, wer was mit den Kontextdaten eines Raums tun darf. Wählen Sie den Raum,
+      den Empfänger und die Operationen — eine Berechtigung wird meist mit den fünf benannten Gruppen
+      geschrieben — und grenzen Sie sie dann auf Entitäten und Attribute ein.
+  order:
+    [
+      name,
+      contextSpaceRef,
+      effect,
+      assignee,
+      operations,
+      information,
+      q,
+      scopeQ,
+      geoQ,
+      temporalQ,
+      validity,
+    ]
+  groups:
+    - title:
+        en: Who and what
+        sk: Kto a čo
+        cs: Kdo a co
+        de: Wer und was
+      description:
+        en: The space this grant is about, who receives it, and which operations it gives them.
+        sk: Priestor, ktorého sa oprávnenie týka, kto ho dostáva a ktoré operácie mu dáva.
+        cs: Prostor, kterého se oprávnění týká, kdo je dostává a které operace mu dává.
+        de: Der Raum, um den es geht, wer die Berechtigung erhält und welche Operationen sie gibt.
+      fields: [name, contextSpaceRef, effect, assignee, operations]
+    - title:
+        en: Entities and attributes
+        sk: Entity a atribúty
+        cs: Entity a atributy
+        de: Entitäten und Attribute
+      description:
+        en: Which entity types the grant covers and which of their attributes are readable.
+        sk: Ktorých typov entít sa oprávnenie týka a ktoré ich atribúty sú čitateľné.
+        cs: Kterých typů entit se oprávnění týká a které jejich atributy jsou čitelné.
+        de: Welche Entitätstypen die Berechtigung umfasst und welche ihrer Attribute lesbar sind.
+      folded: true
+      fields: [information]
+    - title:
+        en: Residual filters and validity
+        sk: Zvyškové filtre a platnosť
+        cs: Zbytkové filtry a platnost
+        de: Restfilter und Gültigkeit
+      description:
+        en: Further conditions every request under this grant has to satisfy, and when it applies.
+        sk: Ďalšie podmienky, ktoré musí spĺňať každá požiadavka podľa tohto oprávnenia, a odkedy platí.
+        cs: Další podmínky, které musí splnit každý požadavek podle tohoto oprávnění, a odkdy platí.
+        de: Weitere Bedingungen für jede Anfrage unter dieser Berechtigung und wann sie gilt.
+      folded: true
+      fields: [q, scopeQ, geoQ, temporalQ, validity]
+  fields:
+    name:
+      help:
+        en: The short name this policy is filed under; two policies of a project cannot share one.
+        sk: Krátky názov, pod ktorým je politika uložená; dve politiky projektu ho nemôžu zdieľať.
+        cs: Krátký název, pod nímž je politika uložena; dvě politiky projektu jej nemohou sdílet.
+        de: Der kurze Name, unter dem die Richtlinie abgelegt ist; zwei Richtlinien teilen ihn nicht.
+    contextSpaceRef:
+      help:
+        en: The context space whose data this policy decides about; a policy covers exactly one.
+        sk: Kontextový priestor, o ktorého údajoch politika rozhoduje; politika pokrýva práve jeden.
+        cs: Kontextový prostor, o jehož datech politika rozhoduje; politika pokrývá právě jeden.
+        de: Der Kontextraum, über dessen Daten die Richtlinie entscheidet; genau einer je Richtlinie.
+    effect:
+      help:
+        en: A grant gives what it lists; a refusal takes it away and is read before every grant.
+        sk: Povolenie dáva, čo vymenúva; zákaz to odoberá a vyhodnocuje sa pred každým povolením.
+        cs: Povolení dává, co vyjmenovává; zákaz to odebírá a vyhodnocuje se před každým povolením.
+        de: Eine Erlaubnis gibt das Gelistete; ein Verbot nimmt es und gilt vor jeder Erlaubnis.
+    assignee.kind:
+      help:
+        en: Whether the grant goes to a role, a group, one person, a service account or a DID.
+        sk: Či oprávnenie patrí roli, skupine, jednej osobe, servisnému účtu alebo DID.
+        cs: Zda oprávnění patří roli, skupině, jedné osobě, servisnímu účtu nebo DID.
+        de: Ob die Berechtigung einer Rolle, Gruppe, Person, einem Dienstkonto oder einer DID gilt.
+    assignee.id:
+      help:
+        en: The name of that role, group, person or account, as the identity provider spells it.
+        sk: Názov tej roly, skupiny, osoby alebo účtu tak, ako ho píše poskytovateľ identity.
+        cs: Název té role, skupiny, osoby nebo účtu tak, jak jej píše poskytovatel identity.
+        de: Der Name dieser Rolle, Gruppe, Person oder des Kontos, wie der Identitätsanbieter ihn schreibt.
+    operations:
+      help:
+        en: What the grantee may do, by the five CIM 009 group names or the operations behind them.
+        sk: Čo smie príjemca robiť, podľa piatich názvov skupín CIM 009 alebo operácií za nimi.
+        cs: Co smí příjemce dělat, podle pěti názvů skupin CIM 009 nebo operací za nimi.
+        de: Was der Empfänger darf, nach den fünf CIM-009-Gruppennamen oder deren Operationen.
+    information[].entities[].type:
+      help:
+        en: One entity type this grant covers; a grant with no type covers nothing at all.
+        sk: Jeden typ entity, ktorého sa oprávnenie týka; oprávnenie bez typu nepokrýva nič.
+        cs: Jeden typ entity, kterého se oprávnění týká; oprávnění bez typu nepokrývá nic.
+        de: Ein Entitätstyp dieser Berechtigung; ohne Typ umfasst eine Berechtigung nichts.
+    information[].entities[].idPattern:
+      help:
+        en: An anchored expression narrowing the grant to the identifiers that match it.
+        sk: Ukotvený výraz, ktorý zužuje oprávnenie na identifikátory, ktoré mu zodpovedajú.
+        cs: Ukotvený výraz, který zužuje oprávnění na identifikátory, jež mu odpovídají.
+        de: Ein verankerter Ausdruck, der die Berechtigung auf passende Kennungen einschränkt.
+    information[].propertyNames:
+      help:
+        en: The properties this grant reaches; leaving the list empty reaches all of them.
+        sk: Vlastnosti, na ktoré oprávnenie dosiahne; prázdny zoznam znamená všetky.
+        cs: Vlastnosti, na které oprávnění dosáhne; prázdný seznam znamená všechny.
+        de: Die Eigenschaften dieser Berechtigung; eine leere Liste bedeutet alle.
+    information[].relationshipNames:
+      help:
+        en: The relationships this grant reaches; leaving the list empty reaches all of them.
+        sk: Vzťahy, na ktoré oprávnenie dosiahne; prázdny zoznam znamená všetky.
+        cs: Vztahy, na které oprávnění dosáhne; prázdný seznam znamená všechny.
+        de: Die Beziehungen dieser Berechtigung; eine leere Liste bedeutet alle.
+    information[].attributes:
+      help:
+        en: "Per attribute, what the grant allows, such as history of pm10 but no edit; unset cells keep today's behaviour."
+        sk: "Pre každý atribút, čo oprávnenie dovoľuje, napríklad históriu pm10 bez úprav; nevyplnené bunky zachovajú dnešné správanie."
+        cs: "Pro každý atribut, co oprávnění dovoluje, například historii pm10 bez úprav; nevyplněné buňky zachovají dnešní chování."
+        de: "Je Attribut, was die Berechtigung erlaubt, etwa den Verlauf von pm10 ohne Bearbeiten; leere Zellen behalten das heutige Verhalten."
+    q:
+      placeholder: "pm10>=0"
+      help:
+        en: "A condition on the attributes in NGSI-LD q syntax, such as pm10>=0; an entity that fails it is not in this grant."
+        sk: "Podmienka na atribúty v syntaxi NGSI-LD q, napríklad pm10>=0; entita, ktorá ju nespĺňa, do oprávnenia nepatrí."
+        cs: "Podmínka na atributy v syntaxi NGSI-LD q, například pm10>=0; entita, která ji nesplní, do oprávnění nepatří."
+        de: "Eine Bedingung an die Attribute in NGSI-LD-q-Syntax, etwa pm10>=0; eine Entität, die sie verfehlt, fällt heraus."
+    scopeQ:
+      help:
+        en: "The branch of the scope tree the grant covers, and everything under it: a path such as /geo/SK/BB."
+        sk: "Vetva stromu rozsahov, ktorú oprávnenie pokrýva, a všetko pod ňou: cesta ako /geo/SK/BB."
+        cs: "Větev stromu rozsahů, kterou oprávnění pokrývá, a vše pod ní: cesta jako /geo/SK/BB."
+        de: "Der Zweig des Bereichsbaums, den die Berechtigung umfasst, samt allem darunter: ein Pfad wie /geo/SK/BB."
+    geoQ:
+      help:
+        en: "The area the grant covers, as georel, geometry and coordinates: georel=within;geometry=Polygon;coordinates=[[[lon,lat],…]]. An entity outside it is neither read nor written."
+        sk: "Oblasť, ktorú oprávnenie pokrýva, ako georel, geometria a súradnice: georel=within;geometry=Polygon;coordinates=[[[lon,lat],…]]. Entita mimo nej sa nečíta ani nezapisuje."
+        cs: "Oblast, kterou oprávnění pokrývá, jako georel, geometrie a souřadnice: georel=within;geometry=Polygon;coordinates=[[[lon,lat],…]]. Entita mimo ni se nečte ani nezapisuje."
+        de: "Das Gebiet der Berechtigung als georel, Geometrie und Koordinaten: georel=within;geometry=Polygon;coordinates=[[[lon,lat],…]]. Außerhalb wird nichts gelesen oder geschrieben."
+    temporalQ:
+      help:
+        en: "The window of history the grant covers, as timerel and timeAt: timerel=after;timeAt=P-1D is the last day. What falls outside it is not answered."
+        sk: "Okno histórie, ktoré oprávnenie pokrýva, ako timerel a timeAt: timerel=after;timeAt=P-1D je posledný deň. Čo je mimo neho, sa neodpovedá."
+        cs: "Okno historie, které oprávnění pokrývá, jako timerel a timeAt: timerel=after;timeAt=P-1D je poslední den. Co je mimo ně, se neodpovídá."
+        de: "Das Zeitfenster der Berechtigung als timerel und timeAt: timerel=after;timeAt=P-1D ist der letzte Tag. Was außerhalb liegt, wird nicht beantwortet."
+    validity.from:
+      help:
+        en: The instant the grant starts to apply; before it the policy decides nothing.
+        sk: Okamih, od ktorého oprávnenie platí; predtým politika nerozhoduje o ničom.
+        cs: Okamžik, od kterého oprávnění platí; předtím politika nerozhoduje o ničem.
+        de: Der Zeitpunkt, ab dem die Berechtigung gilt; davor entscheidet die Richtlinie nichts.
+    validity.to:
+      help:
+        en: The instant the grant stops; after it every request under this policy is refused.
+        sk: Okamih, keď oprávnenie končí; po ňom sa každá požiadavka podľa politiky odmieta.
+        cs: Okamžik, kdy oprávnění končí; po něm se každý požadavek podle politiky odmítá.
+        de: Der Zeitpunkt, an dem die Berechtigung endet; danach wird jede Anfrage abgelehnt.

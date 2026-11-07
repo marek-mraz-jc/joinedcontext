@@ -1,0 +1,32 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Policy
+metadata:
+  name: app-data-quality-inspector-1
+  namespace: helsinki
+  annotations:
+    joinedcontext.com/generated-by: portal/app-reconciler
+spec:
+  assignee:
+    id: endpoint:helsinki/app-data-quality-inspector
+    kind: role
+  assigner: did:web:hel.fi
+  contextSpaceRef:
+    kind: ContextSpace
+    name: helsinki
+  information:
+  - entities:
+    - type: AirQualityObserved
+    - type: Alert
+    - type: BikeHireDockingStation
+    - type: AdministrativeArea
+    - type: Event
+    - type: Article
+    - type: OnStreetParking
+    - type: PointOfInterest
+    - type: CityWork
+    - type: Vehicle
+    - type: WaterQualityObserved
+    - type: WeatherObserved
+  operations:
+  - queryEntity
+  - retrieveEntity
