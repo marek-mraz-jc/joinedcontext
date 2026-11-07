@@ -290,6 +290,103 @@ fn resolve_and_validate_context(ctx_val: &mut Value, depth: usize) -> Result<()>
     }
 }
 
+/// Terms the document's contexts define as aliases of `@type` and `@id` (e.g. CZ `typ`, `iri`).
+#[derive(Default)]
+struct KeywordAliases {
+    type_terms: std::collections::BTreeSet<String>,
+    id_terms: std::collections::BTreeSet<String>,
+}
+
+impl KeywordAliases {
+    fn collect(&mut self, val: &Value) {
+        match val {
+            Value::Array(items) => items.iter().for_each(|item| self.collect(item)),
+            Value::Object(obj) => {
+                if let Some(ctx) = obj.get("@context") {
+                    self.collect_context(ctx);
+                }
+                obj.values().for_each(|v| self.collect(v));
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_context(&mut self, ctx: &Value) {
+        match ctx {
+            Value::Array(items) => items.iter().for_each(|item| self.collect_context(item)),
+            Value::Object(defs) => {
+                for (term, def) in defs {
+                    let target = match def {
+                        Value::String(s) => Some(s.as_str()),
+                        Value::Object(o) => o.get("@id").and_then(Value::as_str),
+                        _ => None,
+                    };
+                    match target {
+                        Some("@type") => {
+                            self.type_terms.insert(term.clone());
+                        }
+                        Some("@id") => {
+                            self.id_terms.insert(term.clone());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn rank(&self, key: &str) -> u8 {
+        if key == "@context" {
+            0
+        } else if key == "@type" || self.type_terms.contains(key) {
+            1
+        } else if key == "@id" || self.id_terms.contains(key) {
+            2
+        } else {
+            3
+        }
+    }
+}
+
+/// Writes `val` as JSON with each object's keys ordered by [`KeywordAliases::rank`].
+fn write_ordered_json(val: &Value, aliases: &KeywordAliases, out: &mut String) -> Result<()> {
+    match val {
+        Value::Array(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_ordered_json(item, aliases, out)?;
+            }
+            out.push(']');
+        }
+        Value::Object(obj) => {
+            let mut entries: Vec<(&String, &Value)> = obj.iter().collect();
+            entries.sort_by_key(|(k, _)| aliases.rank(k));
+            out.push('{');
+            for (i, (k, v)) in entries.into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&json_text(k)?);
+                out.push(':');
+                write_ordered_json(v, aliases, out)?;
+            }
+            out.push('}');
+        }
+        scalar => out.push_str(&json_text(scalar)?),
+    }
+    Ok(())
+}
+
+/// A JSON scalar or key written by `serde_json` (string escaping, number format).
+fn json_text<T: serde::Serialize + ?Sized>(v: &T) -> Result<String> {
+    serde_json::to_string(v)
+        .map_err(|e| DataroomError::Rdf(format!("serialize normalized JSON-LD: {e}")))
+}
+
 /// Parses a JSON-LD byte slice using `oxjsonld::JsonLdParser`, enforcing [`RdfLimits`] (A1).
 pub fn parse_jsonld_bytes(bytes: &[u8], limits: &RdfLimits) -> Result<RdfGraph> {
     if bytes.len() > limits.max_bytes {
@@ -307,8 +404,13 @@ pub fn parse_jsonld_bytes(bytes: &[u8], limits: &RdfLimits) -> Result<RdfGraph> 
 
     inline_and_check_jsonld(&mut val, limits, 0)?;
 
-    let normalized_bytes = serde_json::to_vec(&val)
-        .map_err(|e| DataroomError::Rdf(format!("serialize normalized JSON-LD: {e}")))?;
+    // `serde_json::Map` sorts keys, but `oxjsonld` reads objects in one pass and wants
+    // `@context`, then `@type`, then `@id` (or their aliases) ahead of every other key.
+    let mut aliases = KeywordAliases::default();
+    aliases.collect(&val);
+    let mut normalized = String::with_capacity(bytes.len());
+    write_ordered_json(&val, &aliases, &mut normalized)?;
+    let normalized_bytes = normalized.into_bytes();
 
     let parser = JsonLdParser::new()
         .with_base_iri("https://dataroom.local/")
