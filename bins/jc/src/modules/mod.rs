@@ -14,6 +14,8 @@ use tokio_util::task::TaskTracker;
 mod controlroom;
 #[cfg(feature = "dataroom")]
 mod dataroom;
+#[cfg(feature = "ekiben")]
+mod ekiben;
 #[cfg(feature = "wardkeep")]
 mod wardkeep;
 
@@ -33,6 +35,8 @@ pub async fn build(
         Module::Dataroom => dataroom::build(&cfg.dataroom, mount).await,
         #[cfg(feature = "controlroom")]
         Module::Controlroom => Ok(controlroom::build(mount)),
+        #[cfg(feature = "ekiben")]
+        Module::Ekiben => ekiben::build(&cfg.ekiben),
         #[allow(unreachable_patterns)]
         other => Err(StartError::module(
             other,

@@ -36,6 +36,9 @@ members = [
   "crates/controlroom/server",
   "bins/jc",
 ]
+# Joined repositories keep their own workspace (lockfile, lints, standalone binaries) for now; jc
+# depends on their crates by path. Making them members is a later step (bins/jc/STATUS.md).
+exclude = ["crates/ekiben"]
 
 [workspace.package]
 edition = "2024"

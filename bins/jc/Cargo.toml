@@ -14,7 +14,7 @@ name = "jc"
 path = "src/main.rs"
 
 [features]
-default = ["wardkeep", "dataroom", "controlroom", "jemalloc"]
+default = ["wardkeep", "dataroom", "controlroom", "ekiben", "jemalloc"]
 wardkeep = [
   "dep:wardkeep-server",
   "dep:wardkeep-core",
@@ -34,6 +34,7 @@ controlroom = [
   "dep:controlroom-model",
   "dep:controlroom-store-memory",
 ]
+ekiben = ["dep:ekiben-server", "dep:ekiben-core"]
 jemalloc = ["dep:tikv-jemallocator"]
 
 [dependencies]
@@ -68,6 +69,9 @@ dataroom-store-memory = { path = "../../crates/dataroom/store-memory", optional 
 controlroom-server = { path = "../../crates/controlroom/server", optional = true }
 controlroom-model = { path = "../../crates/controlroom/model", optional = true }
 controlroom-store-memory = { path = "../../crates/controlroom/store-memory", optional = true }
+
+ekiben-server = { path = "../../crates/ekiben/crates/ekiben-server", optional = true }
+ekiben-core = { path = "../../crates/ekiben/crates/ekiben-core", optional = true }
 
 [dev-dependencies]
 http-body-util = "0.1"

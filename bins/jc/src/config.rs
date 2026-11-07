@@ -69,6 +69,13 @@ pub struct Cli {
     /// wardkeep: realm files (JSON) applied at start.
     #[arg(long, env = "JCBIN_WARDKEEP_IMPORT_DIR")]
     pub wardkeep_import_dir: Option<PathBuf>,
+    /// ekiben: file holding the API bearer token (required: hosted ekiben never runs without auth).
+    #[arg(long, env = "JCBIN_EKIBEN_TOKEN_FILE")]
+    pub ekiben_token_file: Option<PathBuf>,
+    /// ekiben: the only directory `file` inputs and outputs may touch (default: a private
+    /// directory under the system temp dir).
+    #[arg(long, env = "JCBIN_EKIBEN_FILE_ROOT")]
+    pub ekiben_file_root: Option<PathBuf>,
 }
 
 /// Log output format.
@@ -94,6 +101,14 @@ pub struct MountOverride {
 pub struct WardkeepSection {
     pub kek_file: Option<PathBuf>,
     pub import_dir: Option<PathBuf>,
+}
+
+/// `[ekiben]` section.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EkibenSection {
+    pub token_file: Option<PathBuf>,
+    pub file_root: Option<PathBuf>,
 }
 
 /// `[dataroom]` section. dataroom runs on its in-memory store inside `jc` for now.
@@ -132,6 +147,8 @@ pub struct FileConfig {
     pub wardkeep: WardkeepSection,
     #[serde(default)]
     pub dataroom: Option<DataroomSection>,
+    #[serde(default)]
+    pub ekiben: EkibenSection,
 }
 
 /// Errors while assembling the configuration.
@@ -156,6 +173,8 @@ pub enum ConfigError {
         "wardkeep needs a key-encryption key file (JCBIN_WARDKEEP_KEK_FILE or [wardkeep] kek_file)"
     )]
     WardkeepKek,
+    #[error("ekiben needs an API token file (JCBIN_EKIBEN_TOKEN_FILE or [ekiben] token_file)")]
+    EkibenToken,
 }
 
 /// The resolved configuration `jc` runs with.
@@ -172,6 +191,7 @@ pub struct Config {
     pub mounts: BTreeMap<Module, MountOverride>,
     pub wardkeep: WardkeepSection,
     pub dataroom: DataroomSection,
+    pub ekiben: EkibenSection,
 }
 
 impl Config {
@@ -245,6 +265,13 @@ impl Config {
         if roles.contains(&Module::Wardkeep) && wardkeep.kek_file.is_none() {
             return Err(ConfigError::WardkeepKek);
         }
+        let ekiben = EkibenSection {
+            token_file: cli.ekiben_token_file.or(file.ekiben.token_file),
+            file_root: cli.ekiben_file_root.or(file.ekiben.file_root),
+        };
+        if roles.contains(&Module::Ekiben) && ekiben.token_file.is_none() {
+            return Err(ConfigError::EkibenToken);
+        }
         Ok(Self {
             roles,
             listen: cli.listen.or(file.listen).unwrap_or_else(|| {
@@ -261,6 +288,7 @@ impl Config {
             mounts,
             wardkeep,
             dataroom: file.dataroom.unwrap_or_default(),
+            ekiben,
         })
     }
 }
@@ -452,6 +480,36 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
         )
         .unwrap();
         assert_eq!(ok.wardkeep.kek_file.as_deref(), Some(Path::new("/run/kek")));
+    }
+
+    #[test]
+    fn ekiben_without_a_token_file_is_refused() {
+        let err = Config::merge(cli(&["--role", "ekiben"]), FileConfig::default()).unwrap_err();
+        assert!(matches!(err, ConfigError::EkibenToken), "{err}");
+        let file = Config::parse_file(
+            Path::new("jc.toml"),
+            "[ekiben]\ntoken_file = \"/run/tok\"\nfile_root = \"/srv/files\"\n",
+        )
+        .unwrap();
+        let ok = Config::merge(cli(&["--role", "ekiben"]), file).unwrap();
+        assert_eq!(ok.ekiben.token_file.as_deref(), Some(Path::new("/run/tok")));
+        assert_eq!(
+            ok.ekiben.file_root.as_deref(),
+            Some(Path::new("/srv/files"))
+        );
+        let ok = Config::merge(
+            cli(&[
+                "--role",
+                "ekiben",
+                "--ekiben-token-file",
+                "/a",
+                "--ekiben-file-root",
+                "/b",
+            ]),
+            FileConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(ok.ekiben.file_root.as_deref(), Some(Path::new("/b")));
     }
 
     #[test]

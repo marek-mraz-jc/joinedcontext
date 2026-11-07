@@ -14,7 +14,11 @@ struct Fixture {
     _dir: tempfile::TempDir,
     kek: PathBuf,
     realms: PathBuf,
+    ekiben_token: PathBuf,
+    ekiben_root: PathBuf,
 }
+
+const EKIBEN_TOKEN: &str = "ekiben-test-token";
 
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -31,10 +35,15 @@ fn fixture() -> Fixture {
         r#"{"realm":"jc","enabled":true,"displayName":"jc test realm"}"#,
     )
     .expect("realm");
+    let ekiben_token = dir.path().join("ekiben-token");
+    std::fs::write(&ekiben_token, format!("{EKIBEN_TOKEN}\n")).expect("token");
+    let ekiben_root = dir.path().join("ekiben-files");
     Fixture {
         _dir: dir,
         kek,
         realms,
+        ekiben_token,
+        ekiben_root,
     }
 }
 
@@ -48,6 +57,8 @@ fn config(fx: &Fixture, mode: MountMode, mounts: BTreeMap<Module, MountOverride>
             scheme: Some("http".into()),
             wardkeep_kek_file: Some(fx.kek.clone()),
             wardkeep_import_dir: Some(fx.realms.clone()),
+            ekiben_token_file: Some(fx.ekiben_token.clone()),
+            ekiben_file_root: Some(fx.ekiben_root.clone()),
             ..Cli::default()
         },
         FileConfig::default(),
@@ -454,4 +465,61 @@ async fn running_exposes_its_shutdown_token() {
             .await
             .is_err()
     );
+}
+
+/// A secret another module reads from the environment must not come back through an ekiben
+/// stream posted to the shared process: not by `${VAR}`, not by Bloblang `env()` (the `file`
+/// input of `/proc/self/environ` is in `tests/binary.rs`, where the secret is in the process's
+/// initial environment). The ekiben API also refuses callers without its token.
+#[tokio::test]
+async fn another_modules_secret_is_not_readable_through_an_ekiben_stream() {
+    const SECRET: &str = "wardkeep-db-password-7f3a91";
+    // SAFETY of the test: a unique variable name, set once before jc starts.
+    unsafe { std::env::set_var("JC_E2E_WARDKEEP_DB_PASSWORD", SECRET) };
+    let fx = fixture();
+    let cfg = config(&fx, MountMode::Slug, BTreeMap::new());
+    let running = jc::start(&cfg, CancellationToken::new())
+        .await
+        .expect("start");
+    let base = format!("http://{}/streams", running.addr);
+    let client = reqwest::Client::new();
+
+    // Without the token: refused, also for the read-only endpoints.
+    for path in ["/streams", "/metrics", "/ready"] {
+        let resp = client.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+
+    // ${VAR}: the foreign variable is undefined in a posted config.
+    let resp = client
+        .post(format!("{base}/streams/leak"))
+        .bearer_auth(EKIBEN_TOKEN)
+        .body("input:\n  generate:\n    interval: 1h\n    mapping: 'root = \"${JC_E2E_WARDKEEP_DB_PASSWORD}\"'\noutput:\n  drop: {}\n")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = resp.text().await.unwrap();
+    assert!(!body.contains(SECRET), "{body}");
+
+    // env(), written to a file in the sandbox the test reads back.
+    let once = "input:\n  generate:\n    count: 1\n    interval: \"\"\n    mapping: 'root = {\"env\": env(\"JC_E2E_WARDKEEP_DB_PASSWORD\")}'\noutput:\n  file:\n    path: env.jsonl\n    codec: lines\n";
+    let resp = client
+        .post(format!("{base}/streams/env-probe?run=once"))
+        .bearer_auth(EKIBEN_TOKEN)
+        .body(once)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "{}",
+        resp.text().await.unwrap()
+    );
+    let written = std::fs::read_to_string(fx.ekiben_root.join("env.jsonl")).expect("env.jsonl");
+    assert!(written.contains("\"env\":null"), "{written}");
+    assert!(!written.contains(SECRET), "{written}");
+
+    running.stop().await.expect("clean stop");
 }
