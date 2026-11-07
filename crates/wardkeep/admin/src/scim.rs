@@ -73,9 +73,9 @@ fn parse_scim_filter_with_depth(input: &str, depth: usize) -> Result<ScimExpr> {
         .filter(|s| !s.is_empty())
         .ok_or_else(|| WardkeepError::BadRequest("missing SCIM filter attribute".into()))?;
     let op_str = parts
-        .remaining_trimmed()
-        .split_whitespace()
         .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .ok_or_else(|| WardkeepError::BadRequest("missing SCIM filter operator".into()))?;
     let op = match op_str.to_ascii_lowercase().as_str() {
         "eq" => ScimOp::Eq,
@@ -98,16 +98,6 @@ fn parse_scim_filter_with_depth(input: &str, depth: usize) -> Result<ScimExpr> {
         op,
         value: value.to_owned(),
     })
-}
-
-trait SplitExt<'a> {
-    fn remaining_trimmed(&self) -> &'a str;
-}
-
-impl<'a> SplitExt<'a> for std::str::SplitN<'a, fn(char) -> bool> {
-    fn remaining_trimmed(&self) -> &'a str {
-        self.clone().collect::<Vec<_>>().join(" ").leak()
-    }
 }
 
 fn is_outer_parens_balanced(s: &str) -> bool {

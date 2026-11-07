@@ -14,6 +14,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use wardkeep_core::store::StoreFuture;
 use wardkeep_core::*;
 use wardkeep_crypto::Kek;
 use wardkeep_store_memory::MemoryStore;
@@ -90,23 +91,24 @@ impl PgStore {
     /// Runs one batch of the expired-row sweeper using `FOR UPDATE SKIP LOCKED` (W2).
     pub async fn sweep_expired_batch(&self, batch_size: i64) -> Result<u64> {
         let mut total = 0u64;
-        for table in [
-            "auth_session",
-            "sso_session",
-            "offline_session",
-            "refresh_token_family",
-            "revoked_token",
+        // sqlx 0.9 refuses format!-built SQL: one static statement per table.
+        macro_rules! sweep_sql {
+            ($table:literal) => {
+                concat!(
+                    "DELETE FROM wardkeep.", $table,
+                    " WHERE ctid IN (SELECT ctid FROM wardkeep.", $table,
+                    " WHERE expires_at < now() LIMIT $1 FOR UPDATE SKIP LOCKED)"
+                )
+            };
+        }
+        for (table, sql) in [
+            ("auth_session", sweep_sql!("auth_session")),
+            ("sso_session", sweep_sql!("sso_session")),
+            ("offline_session", sweep_sql!("offline_session")),
+            ("refresh_token_family", sweep_sql!("refresh_token_family")),
+            ("revoked_token", sweep_sql!("revoked_token")),
         ] {
-            let sql = format!(
-                "DELETE FROM wardkeep.{table}
-                 WHERE ctid IN (
-                     SELECT ctid FROM wardkeep.{table}
-                     WHERE expires_at < now()
-                     LIMIT $1
-                     FOR UPDATE SKIP LOCKED
-                 )"
-            );
-            let res = sqlx::query(&sql)
+            let res = sqlx::query(sql)
                 .bind(batch_size)
                 .execute(&self.pool)
                 .await

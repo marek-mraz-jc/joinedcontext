@@ -525,7 +525,7 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
     .map(str::to_owned)
     .collect();
 
-    if let Some(realm_roles) = obj.pointer("/roles/realm").and_then(Value::as_array) {
+    if let Some(realm_roles) = obj.get("roles").and_then(|r| r.get("realm")).and_then(Value::as_array) {
         for (i, r) in realm_roles.iter().enumerate() {
             let name = r
                 .get("name")
@@ -894,7 +894,7 @@ pub async fn apply_realm_files(
     // 3. Roles (`roles.realm`)
     let existing_roles = store.list_roles(&realm_id, None).await?;
     let mut file_role_names = BTreeSet::new();
-    if let Some(r_arr) = obj.pointer("/roles/realm").and_then(Value::as_array) {
+    if let Some(r_arr) = obj.get("roles").and_then(|r| r.get("realm")).and_then(Value::as_array) {
         for r_val in r_arr {
             let mut role: RoleRepresentation =
                 serde_json::from_value(r_val.clone()).map_err(|e| WardkeepError::BadRequest(e.to_string()))?;

@@ -94,7 +94,7 @@ enum Commands {
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
-    match run(cli).await {
+    match run(cli.into()).await {
         Ok(code) => ExitCode::from(code as u8),
         Err(code) => ExitCode::from(code as u8),
     }

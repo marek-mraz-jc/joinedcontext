@@ -16,7 +16,6 @@ use base64::engine::{general_purpose::STANDARD as B64_STD, Engine};
 use chrono::{Duration, Utc};
 use jc_router::Mount;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -1621,6 +1620,7 @@ async fn handle_refresh_token_grant(
     let acr = family.acr.clone();
     let amr = family.amr.clone();
     let auth_time = family.auth_time;
+    let bound_jkt = dpop_jkt.map(str::to_owned).or_else(|| family.dpop_jkt.clone());
 
     mint_tokens_for_principal(
         state,
@@ -1635,7 +1635,7 @@ async fn handle_refresh_token_grant(
         Some(&sso_id),
         None,
         Some(auth_time),
-        dpop_jkt.or(family.dpop_jkt.as_deref()),
+        bound_jkt.as_deref(),
         None,
         true,
         Some(family),

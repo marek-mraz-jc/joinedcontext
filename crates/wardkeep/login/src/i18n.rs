@@ -359,7 +359,7 @@ impl Bundle {
     }
 
     #[must_use]
-    pub fn get(&self, key: &str) -> &str {
+    pub fn get<'a>(&'a self, key: &'a str) -> &'a str {
         self.messages.get(key).copied().unwrap_or(key)
     }
 

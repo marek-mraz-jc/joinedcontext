@@ -8,6 +8,7 @@ use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use wardkeep_core::store::StoreFuture;
 use wardkeep_core::*;
 use wardkeep_crypto::{Kek, KeyManager};
 
@@ -584,10 +585,12 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'a, Option<UserRepresentation>> {
         Box::pin(async move {
             let st = self.inner.read();
-            let user = st
+            let Some(user) = st
                 .users
                 .iter()
-                .find(|u| u.realm_id == realm_id && u.id == user_id)?;
+                .find(|u| u.realm_id == realm_id && u.id == user_id) else {
+                return Ok(None);
+            };
             if !Self::user_visible(&st, realm_id, allowed_orgs, user) {
                 return Ok(None);
             }
@@ -604,13 +607,15 @@ impl Store for MemoryStore {
         Box::pin(async move {
             let st = self.inner.read();
             let lower = identifier.trim().to_ascii_lowercase();
-            let user = st.users.iter().find(|u| {
+            let Some(user) = st.users.iter().find(|u| {
                 u.realm_id == realm_id
                     && (u.username.eq_ignore_ascii_case(&lower)
                         || u.email
                             .as_deref()
                             .is_some_and(|e| e.eq_ignore_ascii_case(&lower)))
-            })?;
+            }) else {
+                return Ok(None);
+            };
             if !Self::user_visible(&st, realm_id, allowed_orgs, user) {
                 return Ok(None);
             }
@@ -822,10 +827,12 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'a, Option<GroupRepresentation>> {
         Box::pin(async move {
             let st = self.inner.read();
-            let g = st
+            let Some(g) = st
                 .groups
                 .iter()
-                .find(|g| g.realm_id == realm_id && g.id == group_id)?;
+                .find(|g| g.realm_id == realm_id && g.id == group_id) else {
+                return Ok(None);
+            };
             if !Self::org_allowed(allowed_orgs, g.org_id.as_deref()) {
                 return Ok(None);
             }
@@ -846,10 +853,12 @@ impl Store for MemoryStore {
             } else {
                 format!("/{path}")
             };
-            let g = st
+            let Some(g) = st
                 .groups
                 .iter()
-                .find(|g| g.realm_id == realm_id && g.path == norm)?;
+                .find(|g| g.realm_id == realm_id && g.path == norm) else {
+                return Ok(None);
+            };
             if !Self::org_allowed(allowed_orgs, g.org_id.as_deref()) {
                 return Ok(None);
             }
@@ -1373,10 +1382,12 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'a, Option<ClientRepresentation>> {
         Box::pin(async move {
             let st = self.inner.read();
-            let c = st
+            let Some(c) = st
                 .clients
                 .iter()
-                .find(|c| c.realm_id == realm_id && c.id == uuid)?;
+                .find(|c| c.realm_id == realm_id && c.id == uuid) else {
+                return Ok(None);
+            };
             if !Self::org_allowed(allowed_orgs, c.org_id.as_deref()) {
                 return Ok(None);
             }
@@ -1684,12 +1695,14 @@ impl Store for MemoryStore {
         Box::pin(async move {
             let mut st = self.inner.write();
             let now = Utc::now();
-            let rec = st.par_requests.iter_mut().find(|p| {
+            let Some(rec) = st.par_requests.iter_mut().find(|p| {
                 p.realm_id == realm_id
                     && p.request_uri_hash == request_uri_hash
                     && !p.consumed
                     && p.expires_at > now
-            })?;
+            }) else {
+                return Ok(None);
+            };
             rec.consumed = true;
             Ok(Some(rec.clone()))
         })
@@ -1795,10 +1808,12 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'a, Option<SsoSession>> {
         Box::pin(async move {
             let mut st = self.inner.write();
-            let pos = st
+            let Some(pos) = st
                 .sso_sessions
                 .iter()
-                .position(|s| s.realm_id == realm_id && s.id == session_id)?;
+                .position(|s| s.realm_id == realm_id && s.id == session_id) else {
+                return Ok(None);
+            };
             let removed = st.sso_sessions.remove(pos);
             st.client_sessions
                 .retain(|cs| !(cs.realm_id == realm_id && cs.sso_session_id == session_id));

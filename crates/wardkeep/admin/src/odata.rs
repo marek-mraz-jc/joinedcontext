@@ -39,10 +39,16 @@ async fn odata_metadata(
 ) -> Response {
     let service = wardkeep_odata_service();
     let csdl = service.model();
-    let xml = odata_csdl::to_xml(&csdl);
+    let mut xml = Vec::new();
+    if let Err(e) = odata_csdl::write_xml(&csdl, &odata_csdl::Limits::strict(), &mut xml) {
+        return WardkeepError::Storage(format!("CSDL metadata: {e}")).into_response();
+    }
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+        [
+            (header::CONTENT_TYPE, "application/xml; charset=utf-8"),
+            (header::HeaderName::from_static("odata-version"), "4.01"),
+        ],
         xml,
     )
         .into_response()
