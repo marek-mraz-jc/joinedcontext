@@ -218,15 +218,16 @@ pub fn build_ngsild_request(
     let temporal = q_type == "temporal";
     let mut params: Vec<(String, String)> = Vec::new();
 
-    let mut add = |k: &str, v: Option<String>| {
+    fn add(params: &mut Vec<(String, String)>, k: &str, v: Option<String>) {
         if let Some(s) = v {
             if !s.is_empty() {
                 params.push((k.to_owned(), s));
             }
         }
-    };
+    }
 
     add(
+        &mut params,
         "id",
         model
             .get("entityId")
@@ -234,6 +235,7 @@ pub fn build_ngsild_request(
             .map(|s| s.trim().to_owned()),
     );
     add(
+        &mut params,
         "type",
         model
             .get("entityType")
@@ -241,6 +243,7 @@ pub fn build_ngsild_request(
             .map(|s| s.trim().to_owned()),
     );
     add(
+        &mut params,
         "idPattern",
         model
             .get("idPattern")
@@ -286,10 +289,11 @@ pub fn build_ngsild_request(
                 attrs.push(geoprop.to_owned());
             }
         }
-        add("attrs", Some(attrs.join(",")));
+        add(&mut params, "attrs", Some(attrs.join(",")));
     }
 
     add(
+        &mut params,
         "q",
         model
             .get("customQuery")
@@ -297,6 +301,7 @@ pub fn build_ngsild_request(
             .map(|s| s.trim().to_owned()),
     );
     add(
+        &mut params,
         "scopeQ",
         model
             .get("scopeQuery")
@@ -316,14 +321,15 @@ pub fn build_ngsild_request(
             .map(|s| s.replace(char::is_whitespace, ""))
             .filter(|s| !s.is_empty()),
     ) {
-        add("georel", Some(georel.to_owned()));
+        add(&mut params, "georel", Some(georel.to_owned()));
         let geom = model
             .get("geometry")
             .and_then(Value::as_str)
             .unwrap_or("Point");
-        add("geometry", Some(geom.to_owned()));
-        add("coordinates", Some(coords));
+        add(&mut params, "geometry", Some(geom.to_owned()));
+        add(&mut params, "coordinates", Some(coords));
         add(
+            &mut params,
             "geoproperty",
             model
                 .get("geoproperty")
@@ -333,6 +339,7 @@ pub fn build_ngsild_request(
     }
 
     add(
+        &mut params,
         "lang",
         model
             .get("lang")
@@ -345,8 +352,9 @@ pub fn build_ngsild_request(
     } else {
         &["type", "attrs", "q", "georel"]
     };
-    if !params.iter().any(|(k, _)| selectors.contains(&k.as_str())) {
-        add("local", Some("true".to_owned()));
+    let has_selector = params.iter().any(|(k, _)| selectors.contains(&k.as_str()));
+    if !has_selector {
+        add(&mut params, "local", Some("true".to_owned()));
     }
 
     let aggr_method = model
@@ -361,24 +369,24 @@ pub fn build_ngsild_request(
         } else {
             "temporalValues"
         };
-        add("format", Some(fmt.to_owned()));
-        add("timerel", Some("between".to_owned()));
+        add(&mut params, "format", Some(fmt.to_owned()));
+        add(&mut params, "timerel", Some("between".to_owned()));
         let from_iso = chrono::DateTime::from_timestamp_millis(from_ms)
             .unwrap_or_default()
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let to_iso = chrono::DateTime::from_timestamp_millis(to_ms)
             .unwrap_or_default()
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        add("timeAt", Some(from_iso));
-        add("endTimeAt", Some(to_iso));
+        add(&mut params, "timeAt", Some(from_iso));
+        add(&mut params, "endTimeAt", Some(to_iso));
 
         if let Some(tp) = model.get("timeProperty").and_then(Value::as_str) {
             if tp != "observedAt" && !tp.is_empty() {
-                add("timeproperty", Some(tp.to_owned()));
+                add(&mut params, "timeproperty", Some(tp.to_owned()));
             }
         }
         if let Some(methods) = aggr_method {
-            add("aggrMethods", Some(methods.to_owned()));
+            add(&mut params, "aggrMethods", Some(methods.to_owned()));
             if let Some(period) = model
                 .get("aggrPeriodDuration")
                 .and_then(Value::as_str)
@@ -390,12 +398,12 @@ pub fn build_ngsild_request(
                 } else {
                     period.to_owned()
                 };
-                add("aggrPeriodDuration", Some(p));
+                add(&mut params, "aggrPeriodDuration", Some(p));
             }
         }
         if let Some(last_n) = model.get("lastN").and_then(Value::as_u64) {
             if last_n > 0 {
-                add("lastN", Some(last_n.to_string()));
+                add(&mut params, "lastN", Some(last_n.to_string()));
             }
         }
     }
@@ -404,7 +412,7 @@ pub fn build_ngsild_request(
         .get("limit")
         .and_then(Value::as_u64)
         .map_or(page_size, |l| (l as u32).min(page_size));
-    add("limit", Some(limit.to_string()));
+    add(&mut params, "limit", Some(limit.to_string()));
 
     let path = if temporal {
         "/temporal/entities".to_owned()
@@ -501,8 +509,10 @@ fn entities_to_table_frame(ref_id: &str, entities: &[Value], model: &Value) -> F
         })
         .unwrap_or_default();
 
+    // An explicit attribute list is a projection (NGSI-LD `attrs`): the broker answers only
+    // those attributes, and a broker that answers more must not widen the table.
     let mut attr_order: Vec<String> = requested_attrs.clone();
-    for e in entities {
+    for e in entities.iter().filter(|_| requested_attrs.is_empty()) {
         if let Some(obj) = e.as_object() {
             for k in obj.keys() {
                 if !CORE_MEMBERS.contains(&k.as_str()) && !attr_order.contains(k) {

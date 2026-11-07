@@ -12,7 +12,7 @@ use crate::{
     Datasource, DsError, DsFuture, EditorFieldHint, EditorSchema, Health, ImportOutcome, Query,
     QueryCtx, ResourceReq, ResourceResp, SecretResolver,
 };
-use controlroom_model::{FieldColumn, FieldType, Frame, FrameMeta, FrameSet};
+use controlroom_model::{FieldColumn, Frame, FrameMeta, FrameSet};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use regex::Regex;
 use reqwest::Method;
@@ -633,7 +633,7 @@ impl Datasource for PrometheusDatasource {
 
         let mut warnings = Vec::new();
         let mut model = obj.clone();
-        if model.remove("exemplar").and_then(Value::as_bool) == Some(true) {
+        if model.remove("exemplar").as_ref().and_then(Value::as_bool) == Some(true) {
             warnings.push(format!(
                 "target '{ref_id}': exemplar flag is not supported and was dropped"
             ));

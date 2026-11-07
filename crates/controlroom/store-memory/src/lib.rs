@@ -55,9 +55,9 @@ impl MemoryStore {
     }
 }
 
-fn check_folder_depth(
-    folders: &BTreeMap<String, FolderRecord>,
-    mut parent_uid: Option<&str>,
+fn check_folder_depth<'a>(
+    folders: &'a BTreeMap<String, FolderRecord>,
+    mut parent_uid: Option<&'a str>,
 ) -> CrResult<()> {
     let mut depth = 0usize;
     let mut visited = BTreeSet::new();

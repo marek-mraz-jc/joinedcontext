@@ -25,6 +25,15 @@ members = [
   "crates/wardkeep/import",
   "crates/wardkeep/mcp",
   "crates/wardkeep/server",
+  "crates/controlroom/model",
+  "crates/controlroom/expr",
+  "crates/controlroom/query",
+  "crates/controlroom/store-memory",
+  "crates/controlroom/store-pg",
+  "crates/controlroom/import",
+  "crates/controlroom/api",
+  "crates/controlroom/mcp",
+  "crates/controlroom/server",
 ]
 
 [workspace.package]

@@ -177,7 +177,7 @@ mod tests {
     use super::*;
     use crate::guard::GuardConfig;
     use crate::wasm::WasmPluginHost;
-    use crate::{Datasource, MapSecretResolver};
+    use crate::{Datasource, MapSecretResolver, OutboundGuard};
     use controlroom_model::{InstanceId, OrgId, Subject};
     use std::sync::Arc;
 

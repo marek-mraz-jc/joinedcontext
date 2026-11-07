@@ -1,8 +1,8 @@
 [package]
 name = "controlroom-api"
 version = "0.1.0"
-edition = "2024"
-license = "MIT"
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
 axum = { version = "0.8", features = ["json"] }
@@ -17,9 +17,9 @@ http = "1"
 http-body-util = "0.1"
 indexmap = { version = "2", features = ["serde"] }
 jc-router = { path = "../../shared/jc-router" }
-odata-csdl = "0.3"
-odata-table = "0.3"
-odata-url = "0.3"
+odata-csdl = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-csdl" }
+odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table" }
+odata-url = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-url" }
 parking_lot = "0.12"
 percent-encoding = "2"
 rand = "0.8"
@@ -29,7 +29,8 @@ serde_urlencoded = "0.7"
 sha2 = "0.10"
 subtle = "2"
 tokio = { version = "1", features = ["sync", "time"] }
-uuid = { version = "1", features = ["v4", "v7", "serde"] }
+url = "2.5"
+uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
 
 [dev-dependencies]
 controlroom-store-memory = { path = "../store-memory" }

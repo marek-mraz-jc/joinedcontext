@@ -30,7 +30,7 @@ use controlroom_import::{
 use controlroom_model::{Action, CrError, CrResult, ObjectTarget, RequestCtx};
 use controlroom_query::{QueryCtx, ResourceReq};
 use jc_router::ClientAddr;
-use odata_table::{
+use odata_table::{Table,
     MemoryTable, Operation as TableOp, Scope, TableError, allowed as table_allowed,
     export as table_export, key_options, query as table_query,
 };

@@ -251,7 +251,7 @@ fn eval_pg_macro(
     to_sec: i64,
     timescaledb: bool,
 ) -> Result<String, DsError> {
-    let check_col = |col: &str| -> Result<&str, DsError> {
+    fn check_col<'c>(name: &str, col: &'c str) -> Result<&'c str, DsError> {
         if !is_safe_sql_identifier(col) {
             return Err(DsError::InvalidQuery {
                 ref_id: "sql".into(),
@@ -259,25 +259,25 @@ fn eval_pg_macro(
             });
         }
         Ok(col)
-    };
+    }
 
     match name {
         "__time" => {
-            let col = check_col(*args.first().ok_or_else(|| DsError::InvalidQuery {
+            let col = check_col(name, *args.first().ok_or_else(|| DsError::InvalidQuery {
                 ref_id: "sql".into(),
                 reason: "missing time column argument for $__time".into(),
             })?)?;
             Ok(format!("{col} AS \"time\""))
         }
         "__timeEpoch" => {
-            let col = check_col(*args.first().ok_or_else(|| DsError::InvalidQuery {
+            let col = check_col(name, *args.first().ok_or_else(|| DsError::InvalidQuery {
                 ref_id: "sql".into(),
                 reason: "missing time column argument for $__timeEpoch".into(),
             })?)?;
             Ok(format!("extract(epoch from {col}) as \"time\""))
         }
         "__timeFilter" => {
-            let col = check_col(*args.first().ok_or_else(|| DsError::InvalidQuery {
+            let col = check_col(name, *args.first().ok_or_else(|| DsError::InvalidQuery {
                 ref_id: "sql".into(),
                 reason: "missing time column argument for $__timeFilter".into(),
             })?)?;
@@ -292,7 +292,7 @@ fn eval_pg_macro(
                     reason: format!("macro {name} needs time column and interval"),
                 });
             }
-            let col = check_col(args[0])?;
+            let col = check_col(name, args[0])?;
             let iv_raw = args[1].trim_matches(['\'', '"']);
             let iv_ms = parse_duration_ms(iv_raw).map_err(|_| DsError::InvalidQuery {
                 ref_id: "sql".into(),
@@ -317,7 +317,7 @@ fn eval_pg_macro(
             }
         }
         "__unixEpochFilter" => {
-            let col = check_col(*args.first().ok_or_else(|| DsError::InvalidQuery {
+            let col = check_col(name, *args.first().ok_or_else(|| DsError::InvalidQuery {
                 ref_id: "sql".into(),
                 reason: "missing time column argument for $__unixEpochFilter".into(),
             })?)?;
@@ -330,7 +330,7 @@ fn eval_pg_macro(
                     reason: format!("macro {name} needs time column and interval"),
                 });
             }
-            let col = check_col(args[0])?;
+            let col = check_col(name, args[0])?;
             let iv_raw = args[1].trim_matches(['\'', '"']);
             let iv_ms = parse_duration_ms(iv_raw).map_err(|_| DsError::InvalidQuery {
                 ref_id: "sql".into(),
@@ -580,7 +580,7 @@ impl Datasource for PostgresDatasource {
                     continue;
                 };
 
-                let rows = sqlx::query(&verified_sql)
+                let rows = sqlx::query(sqlx::AssertSqlSafe(verified_sql.clone()))
                     .fetch_all(pool)
                     .await
                     .map_err(|e| DsError::Upstream {
