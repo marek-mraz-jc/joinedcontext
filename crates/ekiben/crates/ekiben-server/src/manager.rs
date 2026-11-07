@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 
 use ekiben_core::config::merge_json_patch;
 use ekiben_core::{
-    redact_config_value, CoreError, MetricsRegistry, OrgId, Registry, ResourceManager, RunMode,
-    RunSummary, StreamConfig, StreamMetrics,
+    redact_config_value, CoreError, EnvAccess, MetricsRegistry, OrgId, Registry, ResourceManager,
+    RunMode, RunSummary, StreamConfig, StreamMetrics,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -90,7 +90,9 @@ pub struct StreamManager {
     pub resources: ResourceManager,
     pub metrics_registry: MetricsRegistry,
     pub file_root: Option<std::path::PathBuf>,
-    pub allow_host_env: bool,
+    /// Which process environment variables streams of this manager may read (`${VAR}` in a
+    /// posted config, Bloblang `env()`).
+    pub env_access: EnvAccess,
 }
 
 impl StreamManager {
@@ -98,7 +100,7 @@ impl StreamManager {
         registry: Arc<Registry>,
         resources: ResourceManager,
         file_root: Option<std::path::PathBuf>,
-        allow_host_env: bool,
+        env_access: impl Into<EnvAccess>,
     ) -> Self {
         Self {
             streams: Arc::new(RwLock::new(HashMap::new())),
@@ -106,7 +108,7 @@ impl StreamManager {
             resources,
             metrics_registry: MetricsRegistry::new(),
             file_root,
-            allow_host_env,
+            env_access: env_access.into(),
         }
     }
 
@@ -137,7 +139,7 @@ impl StreamManager {
                 self.registry.clone(),
                 self.resources.clone(),
                 self.file_root.clone(),
-                self.allow_host_env,
+                self.env_access,
             )
             .await?;
             let frozen = Duration::from_millis(summary.duration_ms.max(1));
@@ -172,7 +174,7 @@ impl StreamManager {
             self.resources.clone(),
             Some(&self.metrics_registry),
             self.file_root.clone(),
-            self.allow_host_env,
+            self.env_access,
         )?;
         let metrics = handle.metrics.clone();
 

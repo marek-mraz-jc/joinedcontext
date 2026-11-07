@@ -15,8 +15,9 @@ pub mod traits;
 pub mod transaction;
 
 pub use config::{
-    BackoffConfig, BatchPolicyConfig, BufferConfig, ComponentConfig, InputConfig, OverlapPolicy,
-    PipelineConfig, ProcessorConfig, ResourceConfigs, RunMode, ScheduleConfig, StreamConfig,
+    BackoffConfig, BatchPolicyConfig, BufferConfig, ComponentConfig, EnvAccess, InputConfig,
+    OverlapPolicy, PipelineConfig, ProcessorConfig, ResourceConfigs, RunMode, ScheduleConfig,
+    StreamConfig, ENV_VAR_ALLOW_PREFIX,
 };
 pub use error::{BatchError, CoreError, DetailedError};
 pub use interpolate::{interpolate_env_bytes, interpolate_env_str, EnvLintError};

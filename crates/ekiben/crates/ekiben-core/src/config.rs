@@ -675,11 +675,60 @@ pub fn merge_json_patch(dst: &mut JsonValue, patch: &JsonValue) {
     }
 }
 
+/// Prefix of the process environment variables a stream may read when access is
+/// [`EnvAccess::AllowListed`].
+pub const ENV_VAR_ALLOW_PREFIX: &str = "EKIBEN_VAR_";
+
+/// Which process environment variables a stream configuration can read, through `${VAR}`
+/// substitution of a posted config and through Bloblang `env()`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EnvAccess {
+    /// None: only the stream's own resolved secrets.
+    #[default]
+    None,
+    /// Only variables named `EKIBEN_VAR_*`. The mode of a shared process (`jc`), where the
+    /// environment also holds other modules' secrets.
+    AllowListed,
+    /// The whole process environment (Bento's behaviour, for a standalone ekiben whose
+    /// environment is its own).
+    Process,
+}
+
+impl From<bool> for EnvAccess {
+    /// `true` keeps the old `allow_host_env` meaning (whole process environment), `false` none.
+    fn from(allow_host_env: bool) -> Self {
+        if allow_host_env {
+            EnvAccess::Process
+        } else {
+            EnvAccess::None
+        }
+    }
+}
+
+impl EnvAccess {
+    /// Looks up `key` in the process environment if this access allows it.
+    pub fn lookup(self, key: &str) -> Option<String> {
+        match self {
+            EnvAccess::None => None,
+            EnvAccess::AllowListed => key
+                .starts_with(ENV_VAR_ALLOW_PREFIX)
+                .then(|| std::env::var(key).ok())
+                .flatten(),
+            EnvAccess::Process => std::env::var(key).ok(),
+        }
+    }
+}
+
 pub fn build_blobl_env_for_stream(
     env_vars: &HashMap<String, String>,
-    allow_host_env: bool,
+    access: impl Into<EnvAccess>,
 ) -> ekiben_bloblang::Environment {
-    ekiben_bloblang::Environment::new()
-        .with_env_vars(env_vars.clone())
-        .with_host_env(allow_host_env)
+    let env = ekiben_bloblang::Environment::new().with_env_vars(env_vars.clone());
+    match access.into() {
+        EnvAccess::None => env.with_host_env(false),
+        EnvAccess::AllowListed => env
+            .with_host_env(true)
+            .with_host_env_prefix(ENV_VAR_ALLOW_PREFIX),
+        EnvAccess::Process => env.with_host_env(true),
+    }
 }

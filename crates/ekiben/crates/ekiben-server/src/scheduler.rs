@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
-use ekiben_core::{CoreError, OverlapPolicy, Registry, ResourceManager, RunSummary, StreamConfig};
+use ekiben_core::{
+    CoreError, EnvAccess, OverlapPolicy, Registry, ResourceManager, RunSummary, StreamConfig,
+};
 
 use crate::cron::CronSchedule;
 use crate::runner::run_stream_once;
@@ -32,7 +34,7 @@ pub struct Scheduler {
     registry: Arc<Registry>,
     resources: ResourceManager,
     file_root: Option<std::path::PathBuf>,
-    allow_host_env: bool,
+    env_access: EnvAccess,
 }
 
 impl Scheduler {
@@ -40,14 +42,14 @@ impl Scheduler {
         registry: Arc<Registry>,
         resources: ResourceManager,
         file_root: Option<std::path::PathBuf>,
-        allow_host_env: bool,
+        env_access: impl Into<EnvAccess>,
     ) -> Self {
         Self {
             entries: Arc::new(Mutex::new(BTreeMap::new())),
             registry,
             resources,
             file_root,
-            allow_host_env,
+            env_access: env_access.into(),
         }
     }
 
@@ -185,7 +187,7 @@ impl Scheduler {
                 self.registry.clone(),
                 self.resources.clone(),
                 self.file_root.clone(),
-                self.allow_host_env,
+                self.env_access,
             )
             .await
             {

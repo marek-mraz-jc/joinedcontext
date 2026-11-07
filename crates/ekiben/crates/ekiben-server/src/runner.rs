@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ekiben_core::config::build_blobl_env_for_stream;
+use ekiben_core::EnvAccess;
 use ekiben_core::{
     execute_all, AckResponder, Batch, BatchError, CoreError, MetricsRegistry, OrgId, ProcContext,
     Registry, ResourceManager, RunSummary, SortGroup, StreamConfig, StreamContext, StreamMetrics,
@@ -92,7 +93,7 @@ pub fn spawn_stream(
     resources: ResourceManager,
     metrics_reg: Option<&MetricsRegistry>,
     file_root: Option<std::path::PathBuf>,
-    allow_host_env: bool,
+    env_access: impl Into<EnvAccess>,
 ) -> Result<Arc<RunningStreamHandle>, CoreError> {
     let org_ctx = resources.get_or_create_org(&conf.org);
     let stream_slot_guard = org_ctx.acquire_stream_slot()?;
@@ -104,7 +105,7 @@ pub fn spawn_stream(
             env_vars.insert(secret_name.clone(), val);
         }
     }
-    let blobl_env = build_blobl_env_for_stream(&env_vars, allow_host_env);
+    let blobl_env = build_blobl_env_for_stream(&env_vars, env_access);
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let metrics = StreamMetrics::new(stream_id.clone(), conf.org.0.clone());
@@ -204,7 +205,7 @@ pub async fn run_stream_once(
     registry: Arc<Registry>,
     resources: ResourceManager,
     file_root: Option<std::path::PathBuf>,
-    allow_host_env: bool,
+    env_access: impl Into<EnvAccess>,
 ) -> Result<RunSummary, CoreError> {
     let handle = spawn_stream(
         stream_id.into(),
@@ -213,7 +214,7 @@ pub async fn run_stream_once(
         resources,
         None,
         file_root,
-        allow_host_env,
+        env_access,
     )?;
     let summary = handle
         .wait_for_completion()

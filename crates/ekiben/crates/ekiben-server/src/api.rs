@@ -7,7 +7,6 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use ekiben_bloblang::Environment;
 use ekiben_core::{ComponentConfig, CoreError, OrgId, StreamConfig, StreamContext, StreamMetrics};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
@@ -25,6 +24,10 @@ pub struct ServerAuthConfig {
     pub admin_bearer_token: Option<String>,
     /// Map of per-organization bearer tokens -> `OrgId` (each compared in constant time).
     pub org_tokens: Vec<(String, OrgId)>,
+    /// Refuse every request without a valid token, even when no token is configured, and guard
+    /// every endpoint but `/ping`. Set when ekiben is hosted in a shared process (`jc`), where an
+    /// open API would hand any caller a stream runner inside that process.
+    pub require_auth: bool,
 }
 
 impl ServerAuthConfig {
@@ -45,6 +48,9 @@ impl ServerAuthConfig {
             .map(OrgId::new);
 
         if !self.is_enabled() {
+            if self.require_auth {
+                return Err(StatusCode::UNAUTHORIZED);
+            }
             return Ok(header_org);
         }
 
@@ -156,7 +162,30 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
         .merge(api_routes.clone())
         .nest("/bento", api_routes)
         .layer(DefaultBodyLimit::max(MAX_API_BODY_BYTES))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            require_auth_layer,
+        ))
         .with_state(state)
+}
+
+/// With [`ServerAuthConfig::require_auth`], every request but the liveness ping needs a valid
+/// token before it reaches a handler (the read-only endpoints list stream ids and organizations).
+async fn require_auth_layer(
+    State(state): State<Arc<ServerState>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if state.auth.require_auth {
+        let path = req.uri().path();
+        let public = path == "/ping" || path == "/bento/ping";
+        if !public {
+            if let Err(code) = state.auth.authenticate(req.headers()) {
+                return (code, "Unauthorized").into_response();
+            }
+        }
+    }
+    next.run(req).await
 }
 
 async fn handle_ping() -> &'static str {
@@ -465,8 +494,8 @@ async fn handle_post_resource(
     let chilled = params.is_chilled();
     let body_str = String::from_utf8_lossy(&body);
 
-    let interpolated = match ekiben_core::interpolate_env_str(&body_str, |k| std::env::var(k).ok())
-    {
+    let env_access = state.manager.env_access;
+    let interpolated = match ekiben_core::interpolate_env_str(&body_str, |k| env_access.lookup(k)) {
         Ok(s) => s,
         Err(err) => {
             if !chilled {
@@ -507,7 +536,10 @@ async fn handle_post_resource(
         org: org_ctx,
         resources: state.manager.resources.clone(),
         registry: state.manager.registry.clone(),
-        blobl_env: Environment::new().with_host_env(state.manager.allow_host_env),
+        blobl_env: ekiben_core::config::build_blobl_env_for_stream(
+            &HashMap::new(),
+            state.manager.env_access,
+        ),
         metrics: StreamMetrics::new(&id, &org_id.0),
         label: id.clone(),
         path: format!("resources.{res_type}.{id}"),
@@ -581,7 +613,8 @@ fn parse_and_lint_stream(
     caller_org: Option<&OrgId>,
 ) -> Result<(StreamConfig, Vec<String>), Box<Response>> {
     let mut env_lints = Vec::new();
-    let interpolated = match ekiben_core::interpolate_env_str(body_str, |k| std::env::var(k).ok()) {
+    let env_access = state.manager.env_access;
+    let interpolated = match ekiben_core::interpolate_env_str(body_str, |k| env_access.lookup(k)) {
         Ok(s) => s,
         Err(err) => {
             for m in err.missing {

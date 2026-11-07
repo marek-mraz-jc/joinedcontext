@@ -8,9 +8,10 @@ use std::time::Duration;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use ekiben_bloblang::Environment;
-use ekiben_core::{OrgId, OrgQuotas, Registry, ResourceManager, StreamConfig};
+use ekiben_core::{OrgId, OrgQuotas, ResourceManager, StreamConfig};
 use ekiben_server::{
-    build_router, run_stream_once, Scheduler, ServerAuthConfig, ServerState, StreamManager,
+    build_full_registry, build_router, run_stream_once, Scheduler, ServerAuthConfig, ServerState,
+    StreamManager,
 };
 use tokio::net::TcpListener;
 
@@ -101,19 +102,6 @@ impl ekiben_bloblang::Importer for HostFileImporter {
     fn import(&self, path: &str) -> Result<Vec<u8>, String> {
         std::fs::read(path).map_err(|e| format!("open {path}: {e}"))
     }
-}
-
-fn build_full_registry() -> Arc<Registry> {
-    let reg = Arc::new(Registry::new());
-    ekiben_processors::register_all(&reg);
-    ekiben_io_http::register_all(&reg);
-    ekiben_io_file::register_all(&reg);
-    ekiben_io_nats::register_all(&reg);
-    #[cfg(feature = "parquet")]
-    ekiben_parquet::register(&reg);
-    #[cfg(feature = "protobuf")]
-    ekiben_protobuf::register(&reg);
-    reg
 }
 
 #[tokio::main]
@@ -231,6 +219,7 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
             let auth = ServerAuthConfig {
                 admin_bearer_token: bearer_token,
                 org_tokens: Vec::new(),
+                require_auth: false,
             };
             let state = ServerState::new(manager, auth);
             let app = build_router(state);

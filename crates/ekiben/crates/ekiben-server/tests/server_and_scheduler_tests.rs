@@ -326,6 +326,7 @@ async fn streams_api_crud_uptime_freeze_reset_redaction_and_cross_org_403() {
             ("token-org-a".to_string(), OrgId::new("org-a")),
             ("token-org-b".to_string(), OrgId::new("org-b")),
         ],
+        require_auth: false,
     };
     let state = ServerState::new(manager, auth);
     let app = build_router(state);
