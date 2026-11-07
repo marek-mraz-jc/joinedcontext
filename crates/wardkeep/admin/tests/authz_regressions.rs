@@ -421,3 +421,108 @@ async fn a_revoked_admin_token_is_refused() {
         StatusCode::UNAUTHORIZED
     );
 }
+
+/// Scope links, mappers, role holders and group members of an application or group were served
+/// to any signed-in member of its organization, and a member could attach any client scope (an
+/// audience, a role) to an application of the organization.
+#[tokio::test]
+async fn application_and_group_subresources_are_checked_by_the_authorizer() {
+    let f = Fixture::new().await;
+    f.store
+        .upsert_client_scope(ClientScopeRepresentation {
+            id: "sc-secrets".into(),
+            realm_id: "dev".into(),
+            name: "secrets:read".into(),
+            protocol: "openid-connect".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    f.store
+        .upsert_group(GroupRepresentation {
+            id: "g-hel".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            name: "ops".into(),
+            path: "/helsinki/ops".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let plain = f
+        .token("dev", "plain-1", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    let base = "/admin/realms/dev/clients/uuid-hel-app";
+    for (method, uri) in [
+        (
+            Method::PUT,
+            format!("{base}/default-client-scopes/sc-secrets"),
+        ),
+        (
+            Method::PUT,
+            format!("{base}/optional-client-scopes/sc-secrets"),
+        ),
+        (
+            Method::DELETE,
+            format!("{base}/default-client-scopes/sc-secrets"),
+        ),
+        (
+            Method::DELETE,
+            format!("{base}/optional-client-scopes/sc-secrets"),
+        ),
+        (Method::GET, format!("{base}/default-client-scopes")),
+        (Method::GET, format!("{base}/optional-client-scopes")),
+        (Method::GET, format!("{base}/protocol-mappers/models")),
+        (Method::GET, format!("{base}/roles/viewer/users")),
+        (Method::GET, format!("{base}/roles/viewer/groups")),
+        (
+            Method::GET,
+            "/admin/realms/dev/groups/g-hel/members".to_owned(),
+        ),
+    ] {
+        let st = f.send(method.clone(), &uri, &plain, None).await;
+        assert!(
+            st == StatusCode::FORBIDDEN || st == StatusCode::NOT_FOUND,
+            "{method} {uri} answered {st} to a plain member"
+        );
+    }
+    let app = f
+        .store
+        .get_client_by_uuid("dev", None, "uuid-hel-app")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !app.default_client_scopes
+            .iter()
+            .any(|s| s == "secrets:read")
+    );
+    assert!(
+        !app.optional_client_scopes
+            .iter()
+            .any(|s| s == "secrets:read")
+    );
+
+    // The organization's admin still manages its application.
+    let admin = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    let st = f
+        .send(
+            Method::PUT,
+            &format!("{base}/default-client-scopes/sc-secrets"),
+            &admin,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let st = f
+        .send(
+            Method::GET,
+            "/admin/realms/dev/groups/g-hel/members",
+            &admin,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+}

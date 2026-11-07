@@ -457,6 +457,26 @@ pub(crate) fn merge_user_update(
     user
 }
 
+/// The Authorizer's decision on an application (client) and its sub-resources: mappers, scope
+/// links, role holders.
+fn check_application(
+    state: &AdminState,
+    ctx: &RequestCtx,
+    client: &ClientRepresentation,
+    action: Action,
+) -> Result<()> {
+    check_decision(state.authorizer.check(
+        ctx,
+        action,
+        &ObjectTarget::Application {
+            realm_id: ctx.realm_id.clone(),
+            org_id: client.org_id.clone(),
+            client_id: client.client_id.clone(),
+            managed_by: client.managed_by.clone(),
+        },
+    ))
+}
+
 pub(crate) fn check_decision(dec: Decision) -> Result<()> {
     if dec.allowed {
         Ok(())
@@ -1509,6 +1529,22 @@ async fn compat_list_group_members(
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
     let allowed = ctx.allowed_orgs();
+    let group = state
+        .oidc
+        .store
+        .get_group(&realm, allowed.as_deref(), &id)
+        .await?
+        .ok_or_else(|| WardkeepError::NotFound("group not found".into()))?;
+    check_decision(state.authorizer.check(
+        &ctx,
+        Action::Read,
+        &ObjectTarget::Group {
+            realm_id: realm.clone(),
+            org_id: group.org_id,
+            group_id: group.id.clone(),
+            managed_by: group.managed_by,
+        },
+    ))?;
     let members = state
         .oidc
         .store
@@ -2161,12 +2197,13 @@ async fn compat_list_client_role_groups(
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
     let allowed = ctx.allowed_orgs();
-    let _client = state
+    let client = state
         .oidc
         .store
         .get_client_by_uuid(&realm, allowed.as_deref(), &uuid)
         .await?
         .ok_or_else(|| WardkeepError::NotFound("client not found".into()))?;
+    check_application(&state, &ctx, &client, Action::Read)?;
     let group_ids = state
         .oidc
         .store
@@ -2195,12 +2232,13 @@ async fn compat_list_client_role_users(
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
     let allowed = ctx.allowed_orgs();
-    let _client = state
+    let client = state
         .oidc
         .store
         .get_client_by_uuid(&realm, allowed.as_deref(), &uuid)
         .await?
         .ok_or_else(|| WardkeepError::NotFound("client not found".into()))?;
+    check_application(&state, &ctx, &client, Action::Read)?;
     let user_ids = state
         .oidc
         .store
@@ -2235,6 +2273,7 @@ async fn compat_list_client_mappers(
         .get_client_by_uuid(&realm, allowed.as_deref(), &uuid)
         .await?
         .ok_or_else(|| WardkeepError::NotFound("client not found".into()))?;
+    check_application(&state, &ctx, &client, Action::Read)?;
     Ok(Json(client.protocol_mappers))
 }
 
@@ -2410,6 +2449,7 @@ async fn compat_list_client_default_scopes(
         .get_client_by_uuid(&realm, allowed.as_deref(), &uuid)
         .await?
         .ok_or_else(|| WardkeepError::NotFound("client not found".into()))?;
+    check_application(&state, &ctx, &client, Action::Read)?;
     let scopes =
         resolve_scope_objects(&state.oidc.store, &realm, &client.default_client_scopes).await?;
     Ok(Json(scopes))
@@ -2430,6 +2470,7 @@ async fn compat_link_client_default_scope(
         .get_client_by_uuid(&realm, allowed.as_deref(), &uuid)
         .await?
         .ok_or_else(|| WardkeepError::NotFound("client not found".into()))?;
+    check_application(&state, &ctx, &client, Action::Update)?;
     let scope_name = state
         .oidc
         .store
@@ -2470,6 +2511,7 @@ async fn compat_unlink_client_default_scope(
         .get_client_by_uuid(&realm, allowed.as_deref(), &uuid)
         .await?
         .ok_or_else(|| WardkeepError::NotFound("client not found".into()))?;
+    check_application(&state, &ctx, &client, Action::Update)?;
     let scope_name = state
         .oidc
         .store
@@ -2508,6 +2550,7 @@ async fn compat_list_client_optional_scopes(
         .get_client_by_uuid(&realm, allowed.as_deref(), &uuid)
         .await?
         .ok_or_else(|| WardkeepError::NotFound("client not found".into()))?;
+    check_application(&state, &ctx, &client, Action::Read)?;
     let scopes =
         resolve_scope_objects(&state.oidc.store, &realm, &client.optional_client_scopes).await?;
     Ok(Json(scopes))
@@ -2528,6 +2571,7 @@ async fn compat_link_client_optional_scope(
         .get_client_by_uuid(&realm, allowed.as_deref(), &uuid)
         .await?
         .ok_or_else(|| WardkeepError::NotFound("client not found".into()))?;
+    check_application(&state, &ctx, &client, Action::Update)?;
     let scope_name = state
         .oidc
         .store
@@ -2566,6 +2610,7 @@ async fn compat_unlink_client_optional_scope(
         .get_client_by_uuid(&realm, allowed.as_deref(), &uuid)
         .await?
         .ok_or_else(|| WardkeepError::NotFound("client not found".into()))?;
+    check_application(&state, &ctx, &client, Action::Update)?;
     let scope_name = state
         .oidc
         .store
@@ -2654,13 +2699,22 @@ async fn compat_get_client_scope(
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Json<ClientScopeRepresentation>> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
-    let _ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
+    let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
     let scope = state
         .oidc
         .store
         .get_client_scope(&realm, &id)
         .await?
         .ok_or_else(|| WardkeepError::NotFound("client scope not found".into()))?;
+    check_decision(state.authorizer.check(
+        &ctx,
+        Action::Read,
+        &ObjectTarget::ClientScope {
+            realm_id: realm,
+            org_id: scope.org_id.clone(),
+            scope_id: scope.id.clone(),
+        },
+    ))?;
     Ok(Json(scope))
 }
 
