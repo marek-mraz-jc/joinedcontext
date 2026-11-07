@@ -238,3 +238,9 @@ BEGIN
     END LOOP;
 END
 $$;
+
+-- The anonymous public-dashboard door knows a token, not an organization: one extra SELECT-only
+-- policy shows exactly the row whose token hash the transaction names in `cr.public_token`.
+DROP POLICY IF EXISTS public_token_lookup ON cr_public_dashboard;
+CREATE POLICY public_token_lookup ON cr_public_dashboard FOR SELECT
+    USING (access_token_hash = NULLIF(current_setting('cr.public_token', true), ''));

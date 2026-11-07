@@ -1075,16 +1075,29 @@ impl ControlroomStore for PgStore {
     ) -> StoreFuture<'_, Option<(PublicDashboardRecord, DashboardRecord)>> {
         let th = token_hash.to_owned();
         Box::pin(async move {
-            // Anonymous lookup by access_token_hash is unresolved to an org until matched,
-            // so we look up the org_id of the public dashboard in a minimal query or when cr.org is set.
+            // Forced RLS hides every row while `cr.org` is unset; the `public_token_lookup`
+            // policy shows the one row whose hash this transaction names.
+            let mut tx = self
+                .pool
+                .begin()
+                .await
+                .map_err(|e| CrError::Internal(e.to_string()))?;
+            sqlx::query("SELECT set_config('cr.public_token', $1, true)")
+                .bind(&th)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| CrError::Internal(e.to_string()))?;
             let row = sqlx::query(
                 "SELECT installation_id, org_id, instance_id, uid, dashboard_uid, access_token_hash, is_enabled, time_selection_enabled, annotations_enabled, show_query_text, share, created_by, updated_by, created_at, updated_at
                  FROM cr_public_dashboard WHERE access_token_hash = $1",
             )
             .bind(&th)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(|e| CrError::Internal(e.to_string()))?;
+            tx.commit()
+                .await
+                .map_err(|e| CrError::Internal(e.to_string()))?;
 
             let Some(pd_row) = row else {
                 return Ok(None);
