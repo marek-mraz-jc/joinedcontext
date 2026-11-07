@@ -72,6 +72,7 @@ pub trait Store: Send + Sync {
         allowed_orgs: Option<&'a [String]>,
         identifier: &'a str,
     ) -> StoreFuture<'a, Option<UserRepresentation>>;
+    #[allow(clippy::too_many_arguments)]
     fn list_users<'a>(
         &'a self,
         realm_id: &'a str,
@@ -99,7 +100,10 @@ pub trait Store: Send + Sync {
     ) -> StoreFuture<'a, bool>;
 
     // Groups
-    fn upsert_group<'a>(&'a self, group: GroupRepresentation) -> StoreFuture<'a, GroupRepresentation>;
+    fn upsert_group<'a>(
+        &'a self,
+        group: GroupRepresentation,
+    ) -> StoreFuture<'a, GroupRepresentation>;
     fn get_group<'a>(
         &'a self,
         realm_id: &'a str,
@@ -249,7 +253,8 @@ pub trait Store: Send + Sync {
 
     // Signing Keys
     fn upsert_signing_key<'a>(&'a self, key: SigningKeyRecord) -> StoreFuture<'a, ()>;
-    fn list_signing_keys<'a>(&'a self, realm_id: &'a str) -> StoreFuture<'a, Vec<SigningKeyRecord>>;
+    fn list_signing_keys<'a>(&'a self, realm_id: &'a str)
+    -> StoreFuture<'a, Vec<SigningKeyRecord>>;
 
     // Sessions, Codes, PAR, Refresh Families, Revocations, Brute Force, Consents
     fn put_auth_session<'a>(&'a self, session: AuthSession) -> StoreFuture<'a, ()>;

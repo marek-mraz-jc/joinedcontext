@@ -6,13 +6,13 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
 use jc_router::Mount;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
-use wardkeep_admin::{admin_router, odata_router, AdminState};
+use wardkeep_admin::{AdminState, admin_router, odata_router};
 use wardkeep_core::*;
-use wardkeep_crypto::{sign_jwt, Kek};
-use wardkeep_oidc::{OutboundGuard, OidcState};
+use wardkeep_crypto::{Kek, sign_jwt};
+use wardkeep_oidc::{OidcState, OutboundGuard};
 use wardkeep_store_memory::MemoryStore;
 
 async fn setup_app() -> (axum::Router, Arc<MemoryStore>, String, String) {
@@ -183,14 +183,22 @@ async fn row_01_02_03_realms_and_partial_import() {
         Method::POST,
         "/admin/realms",
         &master_admin_token,
-        Some(json!({ "id": "stage", "realm": "stage", "displayName": "clobbered", "enabled": true })),
+        Some(
+            json!({ "id": "stage", "realm": "stage", "displayName": "clobbered", "enabled": true }),
+        ),
     )
     .await;
     assert_eq!(st, StatusCode::CONFLICT);
 
     // Row 1 & 3: GET & PUT /admin/realms/{realm}
-    let (st, _, body) =
-        send_req(&app, Method::GET, "/admin/realms/stage", &master_admin_token, None).await;
+    let (st, _, body) = send_req(
+        &app,
+        Method::GET,
+        "/admin/realms/stage",
+        &master_admin_token,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body["realm"], "stage");
 
@@ -199,7 +207,9 @@ async fn row_01_02_03_realms_and_partial_import() {
         Method::PUT,
         "/admin/realms/stage",
         &master_admin_token,
-        Some(json!({ "id": "stage", "realm": "stage", "displayName": "Stage Org", "enabled": true })),
+        Some(
+            json!({ "id": "stage", "realm": "stage", "displayName": "Stage Org", "enabled": true }),
+        ),
     )
     .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
@@ -459,7 +469,15 @@ async fn row_18_to_34_groups_roles_and_mappings() {
         Some(json!({ "username": "matti@hel.fi", "email": "matti@hel.fi", "enabled": true })),
     )
     .await;
-    let uid = hdrs.get("location").unwrap().to_str().unwrap().rsplit('/').next().unwrap().to_owned();
+    let uid = hdrs
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_owned();
 
     let (st, ghdrs, _) = send_req(
         &app,
@@ -473,7 +491,15 @@ async fn row_18_to_34_groups_roles_and_mappings() {
     )
     .await;
     assert_eq!(st, StatusCode::CREATED);
-    let gid = ghdrs.get("location").unwrap().to_str().unwrap().rsplit('/').next().unwrap().to_owned();
+    let gid = ghdrs
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_owned();
 
     // Row 19, 18, 26, 20: add user to group, list user groups, list group members, remove from group
     let (st, _, _) = send_req(
@@ -520,7 +546,15 @@ async fn row_18_to_34_groups_roles_and_mappings() {
         })),
     )
     .await;
-    let cuuid = chdrs.get("location").unwrap().to_str().unwrap().rsplit('/').next().unwrap().to_owned();
+    let cuuid = chdrs
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_owned();
 
     let (st, _, _) = send_req(
         &app,
@@ -604,7 +638,15 @@ async fn row_35_to_46_clients_secrets_mappers_and_scopes() {
     )
     .await;
     assert_eq!(st, StatusCode::CREATED);
-    let scope_id = shdrs.get("location").unwrap().to_str().unwrap().rsplit('/').next().unwrap().to_owned();
+    let scope_id = shdrs
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_owned();
 
     // Row 36: POST /clients with serviceAccountsEnabled: true
     let (st, chdrs, _) = send_req(
@@ -623,7 +665,15 @@ async fn row_35_to_46_clients_secrets_mappers_and_scopes() {
     )
     .await;
     assert_eq!(st, StatusCode::CREATED);
-    let cuuid = chdrs.get("location").unwrap().to_str().unwrap().rsplit('/').next().unwrap().to_owned();
+    let cuuid = chdrs
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_owned();
 
     // Row 39 & 40: GET & POST /clients/{uuid}/client-secret
     let (st, _, sec1) = send_req(

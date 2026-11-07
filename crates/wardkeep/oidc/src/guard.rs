@@ -21,6 +21,9 @@ use wardkeep_core::{Result, WardkeepError};
 pub const MAX_OUTBOUND_BYTES: usize = 1024 * 1024;
 pub const OUTBOUND_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Test-only canned answers by URL: `(status, body)`.
+pub type MockResponses = Arc<RwLock<HashMap<String, (u16, Vec<u8>)>>>;
+
 #[derive(Debug, Clone)]
 pub struct OutboundPolicy {
     /// Allowed in-cluster HTTP/HTTPS host suffixes or exact hosts (e.g. `.svc.cluster.local`,
@@ -29,7 +32,7 @@ pub struct OutboundPolicy {
     /// Optional allow-list of public hosts for CIMD fetches (`claude.ai`, `vscode.dev`).
     pub allowed_hosts: Option<Vec<String>>,
     /// Test-only mock responses keyed by URL so unit/e2e tests can run offline.
-    pub mock_responses: Arc<RwLock<HashMap<String, (u16, Vec<u8>)>>>,
+    pub mock_responses: MockResponses,
 }
 
 impl Default for OutboundPolicy {
@@ -128,20 +131,21 @@ impl OutboundGuard {
             )));
         }
 
-        if let Some(domains) = allowed_domains.or(self.policy.allowed_hosts.as_deref()) {
-            if !domains.iter().any(|d| d.eq_ignore_ascii_case(&host)) {
-                return Err(WardkeepError::OutboundRefused(format!(
-                    "host '{host}' is not in the outbound allow-list"
-                )));
-            }
+        if let Some(domains) = allowed_domains.or(self.policy.allowed_hosts.as_deref())
+            && !domains.iter().any(|d| d.eq_ignore_ascii_case(&host))
+        {
+            return Err(WardkeepError::OutboundRefused(format!(
+                "host '{host}' is not in the outbound allow-list"
+            )));
         }
 
-        if let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
-            if !in_cluster && Self::is_forbidden_ip(ip) {
-                return Err(WardkeepError::OutboundRefused(format!(
-                    "outbound IP {ip} is private/loopback/metadata and refused by SSRF guard"
-                )));
-            }
+        if let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>()
+            && !in_cluster
+            && Self::is_forbidden_ip(ip)
+        {
+            return Err(WardkeepError::OutboundRefused(format!(
+                "outbound IP {ip} is private/loopback/metadata and refused by SSRF guard"
+            )));
         }
         let _ = IpNet::default();
         Ok(parsed)
@@ -185,7 +189,9 @@ impl OutboundGuard {
         .collect();
 
         if addrs.is_empty() {
-            return Err(WardkeepError::OutboundRefused("DNS returned no addresses".into()));
+            return Err(WardkeepError::OutboundRefused(
+                "DNS returned no addresses".into(),
+            ));
         }
         for addr in &addrs {
             if !in_cluster && Self::is_forbidden_ip(addr.ip()) {
@@ -233,11 +239,7 @@ impl OutboundGuard {
 
     /// Sends a form POST (used for back-channel logout and upstream OIDC token exchange) through
     /// the W12 outbound guard.
-    pub async fn post_form(
-        &self,
-        raw_url: &str,
-        form: &[(&str, &str)],
-    ) -> Result<(u16, Vec<u8>)> {
+    pub async fn post_form(&self, raw_url: &str, form: &[(&str, &str)]) -> Result<(u16, Vec<u8>)> {
         let url = self.validate_url(raw_url, None)?;
         if let Some((status, body)) = self.policy.mock_responses.read().get(url.as_str()).cloned() {
             return Ok((status, body));
@@ -256,7 +258,9 @@ impl OutboundGuard {
         .collect();
 
         if addrs.is_empty() {
-            return Err(WardkeepError::OutboundRefused("DNS returned no addresses".into()));
+            return Err(WardkeepError::OutboundRefused(
+                "DNS returned no addresses".into(),
+            ));
         }
         for addr in &addrs {
             if !in_cluster && Self::is_forbidden_ip(addr.ip()) {
@@ -316,11 +320,13 @@ mod tests {
             );
         }
         // In-cluster HTTP callback for Portal back-channel logout (RI line 790) is permitted
-        assert!(guard
-            .validate_url(
-                "http://portal.portal.svc.cluster.local:8080/api/v1/auth/backchannel-logout",
-                None
-            )
-            .is_ok());
+        assert!(
+            guard
+                .validate_url(
+                    "http://portal.portal.svc.cluster.local:8080/api/v1/auth/backchannel-logout",
+                    None
+                )
+                .is_ok()
+        );
     }
 }

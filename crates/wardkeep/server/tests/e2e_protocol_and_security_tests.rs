@@ -29,19 +29,19 @@
 //!    - Short/malformed tokens on token/introspect/revoke/userinfo never panicking (Rauthy GHSA-wx92-7mmw-5x82).
 
 use axum::body::Body;
-use axum::http::{header, Method, Request, StatusCode};
-use base64::engine::{general_purpose::URL_SAFE_NO_PAD, Engine};
+use axum::http::{Method, Request, StatusCode, header};
+use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
 use http_body_util::BodyExt;
 use jc_router::{JcRouterBuilder, Mount, MountSpec};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tower::ServiceExt;
 use wardkeep_core::*;
 use wardkeep_crypto::*;
-use wardkeep_import::{apply_realm_files, ApplyMode, ApplyOptions};
+use wardkeep_import::{ApplyMode, ApplyOptions, apply_realm_files};
 use wardkeep_oidc::OutboundGuard;
-use wardkeep_server::{router, WardkeepState};
+use wardkeep_server::{WardkeepState, router};
 use wardkeep_store_memory::MemoryStore;
 
 fn decode_jwt_payload(jwt: &str) -> Value {
@@ -63,12 +63,27 @@ async fn setup_dev_realm_state() -> (WardkeepState, Arc<MemoryStore>, Kek) {
         allow_literal_secrets: false,
         secrets_dir: None,
         env_vars: BTreeMap::from([
-            ("USER_PASSWORD_DEMO_STEWARD".into(), "StewardPass123!Valid".into()),
-            ("USER_TOTP_DEMO_STEWARD".into(), "steward-totp-seed-123456".into()),
-            ("USER_PASSWORD_DEMO_ORGMEMBER".into(), "MemberPass123!Valid".into()),
-            ("USER_PASSWORD_DEMO_ANALYST".into(), "AnalystPass123!Valid".into()),
+            (
+                "USER_PASSWORD_DEMO_STEWARD".into(),
+                "StewardPass123!Valid".into(),
+            ),
+            (
+                "USER_TOTP_DEMO_STEWARD".into(),
+                "steward-totp-seed-123456".into(),
+            ),
+            (
+                "USER_PASSWORD_DEMO_ORGMEMBER".into(),
+                "MemberPass123!Valid".into(),
+            ),
+            (
+                "USER_PASSWORD_DEMO_ANALYST".into(),
+                "AnalystPass123!Valid".into(),
+            ),
             ("CLIENT_SECRET_EDGE".into(), "edge-secret-123".into()),
-            ("CLIENT_SECRET_APISIX_GATEWAY".into(), "apisix-secret-123".into()),
+            (
+                "CLIENT_SECRET_APISIX_GATEWAY".into(),
+                "apisix-secret-123".into(),
+            ),
             ("CLIENT_SECRET_GRAFANA".into(), "grafana-secret-123".into()),
             ("CLIENT_SECRET_GITEA".into(), "gitea-secret-123".into()),
             ("CLIENT_SECRET_CKAN".into(), "ckan-secret-123".into()),
@@ -127,7 +142,11 @@ async fn post_form(
     let status = resp.status();
     let headers = resp.headers().clone();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (status, headers, String::from_utf8_lossy(&bytes).into_owned())
+    (
+        status,
+        headers,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
 }
 
 fn extract_hidden_input(html: &str, name: &str) -> String {
@@ -153,11 +172,17 @@ async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backch
     let challenge = sha256_base64url(verifier);
     let auth_uri = format!(
         "/realms/dev/protocol/openid-connect/auth?client_id=edge&redirect_uri={}&response_type=code&scope=openid%20profile%20email&state=st-123&nonce=n-456&code_challenge={challenge}&code_challenge_method=S256&acr_values=mfa&ui_locales=sk",
-        url::form_urlencoded::byte_serialize(b"https://portal.dev.example.test/callback").collect::<String>()
+        url::form_urlencoded::byte_serialize(b"https://portal.dev.example.test/callback")
+            .collect::<String>()
     );
     let resp1 = app
         .clone()
-        .oneshot(Request::builder().uri(&auth_uri).body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri(&auth_uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(resp1.status(), StatusCode::SEE_OTHER);
@@ -172,7 +197,12 @@ async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backch
     // 2. GET login page: verify Slovak translation (`Prihlásenie: Portál`) and strict CSP
     let resp2 = app
         .clone()
-        .oneshot(Request::builder().uri(&login_loc).body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri(&login_loc)
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(resp2.status(), StatusCode::OK);
@@ -185,7 +215,13 @@ async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backch
         .to_owned();
     assert!(csp.contains("frame-ancestors 'none'"));
     let html2 = String::from_utf8(
-        resp2.into_body().collect().await.unwrap().to_bytes().to_vec(),
+        resp2
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
     )
     .unwrap();
     assert!(html2.contains("Prihlásenie: Portál"));
@@ -211,14 +247,8 @@ async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backch
 
     // 4. Submit valid HMAC-SHA256 TOTP code
     let now_secs = chrono::Utc::now().timestamp() as u64;
-    let totp_code = generate_totp_code(
-        "steward-totp-seed-123456",
-        6,
-        30,
-        "HmacSHA256",
-        now_secs,
-    )
-    .unwrap();
+    let totp_code =
+        generate_totp_code("steward-totp-seed-123456", 6, 30, "HmacSHA256", now_secs).unwrap();
     let (st4, hdrs4, _) = post_form(
         &app,
         &login_loc,
@@ -273,35 +303,33 @@ async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backch
     assert_eq!(id_header.alg, jsonwebtoken::Algorithm::RS256);
 
     let access_claims = decode_jwt_payload(access_token);
-    assert_eq!(
-        access_claims["sub"],
-        "de300000-0000-4000-8000-000000000001"
-    );
+    assert_eq!(access_claims["sub"], "de300000-0000-4000-8000-000000000001");
     assert_eq!(access_claims["acr"], "mfa");
     assert_eq!(access_claims["amr"], json!(["pwd", "otp"]));
     assert_eq!(access_claims["preferred_username"], "demo.steward@hel.fi");
-    assert!(access_claims["groups"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("/helsinki")));
-    assert!(access_claims["realm_access"]["roles"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("portal-approver")));
-    assert!(access_claims["realm_access"]["roles"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("mfa-required")));
+    assert!(
+        access_claims["groups"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("/helsinki"))
+    );
+    assert!(
+        access_claims["realm_access"]["roles"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("portal-approver"))
+    );
+    assert!(
+        access_claims["realm_access"]["roles"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("mfa-required"))
+    );
 
     // 6. Standard Token Exchange V2: `portal-api` (authenticated by federated-jwt) exchanges the
     // person's `edge` token for `audience=mcp-hub` and `scope=gateway-hub endpoint:counters1234`
-    let k8s_key = KeyManager::generate_es256(
-        "k8s",
-        &Kek::generate_for_tests(),
-        100,
-        "ACTIVE",
-    )
-    .unwrap();
+    let k8s_key =
+        KeyManager::generate_es256("k8s", &Kek::generate_for_tests(), 100, "ACTIVE").unwrap();
     let k8s_pub_jwk: Value = serde_json::from_str(&k8s_key.public_jwk_json).unwrap();
     state.guard().insert_mock(
         "https://kubernetes.default.svc.cluster.local/openid/v1/jwks",
@@ -369,10 +397,12 @@ async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backch
     );
     assert_eq!(exchanged_claims["azp"], "portal-api");
     assert_eq!(exchanged_claims["act"]["sub"], "portal-api");
-    assert!(exchanged_claims["scope"]
-        .as_str()
-        .unwrap()
-        .contains("endpoint:counters1234"));
+    assert!(
+        exchanged_claims["scope"]
+            .as_str()
+            .unwrap()
+            .contains("endpoint:counters1234")
+    );
     // Verify `mcp-hub` is in `aud` (as `context-gateway/src/auth/subject.rs` `scoped_subject` requires)
     let aud_list = exchanged_claims["aud"].as_array().unwrap();
     assert!(aud_list.contains(&json!("mcp-hub")));
@@ -455,13 +485,19 @@ async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
     let auth_uri = format!(
         "/realms/dev/protocol/openid-connect/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&state=cimd-st&code_challenge={challenge}&code_challenge_method=S256",
         url::form_urlencoded::byte_serialize(cimd_url.as_bytes()).collect::<String>(),
-        url::form_urlencoded::byte_serialize(b"https://claude.ai/api/mcp/auth_callback").collect::<String>(),
+        url::form_urlencoded::byte_serialize(b"https://claude.ai/api/mcp/auth_callback")
+            .collect::<String>(),
         url::form_urlencoded::byte_serialize(connector_scope.as_bytes()).collect::<String>(),
     );
 
     let resp1 = app
         .clone()
-        .oneshot(Request::builder().uri(&auth_uri).body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri(&auth_uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(resp1.status(), StatusCode::SEE_OTHER);
@@ -476,11 +512,22 @@ async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
     // Load login page, submit credentials for `demo.analyst@hel.fi` (in `/helsinki/members` and `/helsinki/traffic-analysts`)
     let resp2 = app
         .clone()
-        .oneshot(Request::builder().uri(&login_loc).body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri(&login_loc)
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     let html2 = String::from_utf8(
-        resp2.into_body().collect().await.unwrap().to_bytes().to_vec(),
+        resp2
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
     )
     .unwrap();
     let csrf_token = extract_hidden_input(&html2, "csrf_token");
@@ -506,10 +553,7 @@ async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
     let (st4, hdrs4, _) = post_form(
         &app,
         &login_loc,
-        &[
-            ("csrf_token", &csrf_token),
-            ("session_code", &session_code),
-        ],
+        &[("csrf_token", &csrf_token), ("session_code", &session_code)],
         None,
     )
     .await;
@@ -544,10 +588,12 @@ async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
 
     // Verify `connector:{id}` scope, `portal-connectors` and `portal-api` audiences, `jc_org`, `jc_groups`,
     // `fullScopeAllowed: false` (no `realm_access`), and `Offline` refresh token
-    assert!(access_claims["scope"]
-        .as_str()
-        .unwrap()
-        .contains("connector:abcdefghij2345672345672345"));
+    assert!(
+        access_claims["scope"]
+            .as_str()
+            .unwrap()
+            .contains("connector:abcdefghij2345672345672345")
+    );
     assert_eq!(
         access_claims["aud"],
         json!(["portal-connectors", "portal-api"])
@@ -608,15 +654,8 @@ async fn e2e_w9_mount_under_slug_and_dedicated_host_and_w12_attack_regression_su
         .unwrap();
     let disc_res1 = combined.dispatch(disc_req1, None).await;
     assert_eq!(disc_res1.status(), StatusCode::OK);
-    let disc_json1: Value = serde_json::from_slice(
-        &disc_res1
-            .into_body()
-            .collect()
-            .await
-            .unwrap()
-            .to_bytes(),
-    )
-    .unwrap();
+    let disc_json1: Value =
+        serde_json::from_slice(&disc_res1.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(disc_json1["issuer"], "https://city.example/id/realms/dev");
     assert!(disc_json1.get("registration_endpoint").is_none());
 
@@ -628,15 +667,8 @@ async fn e2e_w9_mount_under_slug_and_dedicated_host_and_w12_attack_regression_su
         .unwrap();
     let disc_res2 = combined.dispatch(disc_req2, None).await;
     assert_eq!(disc_res2.status(), StatusCode::OK);
-    let disc_json2: Value = serde_json::from_slice(
-        &disc_res2
-            .into_body()
-            .collect()
-            .await
-            .unwrap()
-            .to_bytes(),
-    )
-    .unwrap();
+    let disc_json2: Value =
+        serde_json::from_slice(&disc_res2.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(disc_json2["issuer"], "https://id.example/realms/dev");
 
     // 3. W12 Attack 1: CIMD URL pointing at cloud metadata `169.254.169.254` -> refused
@@ -755,7 +787,14 @@ async fn e2e_w9_mount_under_slug_and_dedicated_host_and_w12_attack_regression_su
 
     // 6. W12 Attack 4: Short / malformed tokens on token, introspect, revoke, and userinfo
     // never panic (Rauthy GHSA-wx92-7mmw-5x82 regression test)
-    for bad_token in ["", ".", "..", "a.b.c", "not-a-jwt-at-all", "eyJ0eXAiOiJKV1QifQ.!!!.sig"] {
+    for bad_token in [
+        "",
+        ".",
+        "..",
+        "a.b.c",
+        "not-a-jwt-at-all",
+        "eyJ0eXAiOiJKV1QifQ.!!!.sig",
+    ] {
         let (st, _, _) = post_form(
             &wk_root_router,
             "/realms/dev/protocol/openid-connect/token",

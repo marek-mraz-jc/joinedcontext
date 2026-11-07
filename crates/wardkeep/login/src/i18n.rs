@@ -418,10 +418,10 @@ pub fn negotiate_locale(
             }
         }
     }
-    if let Some(ck) = cookie_locale {
-        if let Some(found) = pick(ck) {
-            return found;
-        }
+    if let Some(ck) = cookie_locale
+        && let Some(found) = pick(ck)
+    {
+        return found;
     }
     if let Some(al) = accept_language {
         for part in al.split(',') {
@@ -438,7 +438,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_message_key_exists_in_all_five_shipped_languages_and_template_has_no_literal_strings() {
+    fn every_message_key_exists_in_all_five_shipped_languages_and_template_has_no_literal_strings()
+    {
         let en = Bundle::for_locale("en");
         let en_keys: Vec<&str> = en.keys().collect();
         assert!(!en_keys.is_empty());

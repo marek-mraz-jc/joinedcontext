@@ -22,12 +22,12 @@ pub mod broker;
 pub mod cimd;
 pub mod dpop;
 pub mod guard;
-pub mod redirect;
 pub mod handlers;
+pub mod redirect;
 
 pub use broker::UpstreamOidcBroker;
-pub use cimd::{validate_and_build_cimd_client, CimdMetadata};
-pub use dpop::{verify_dpop_proof, DpopProof};
+pub use cimd::{CimdMetadata, validate_and_build_cimd_client};
+pub use dpop::{DpopProof, verify_dpop_proof};
 pub use guard::{OutboundGuard, OutboundPolicy};
-pub use handlers::{dispatch_backchannel_logout, oidc_router, OidcState};
+pub use handlers::{OidcState, dispatch_backchannel_logout, oidc_router};
 pub use redirect::{validate_post_logout_redirect_uri, validate_redirect_uri};

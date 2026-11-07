@@ -8,15 +8,15 @@ use crate::dpop::verify_dpop_proof;
 use crate::guard::OutboundGuard;
 use crate::redirect::{validate_post_logout_redirect_uri, validate_redirect_uri};
 use axum::extract::{OriginalUri, Path, Query, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Form, Json, Router};
-use base64::engine::{general_purpose::STANDARD as B64_STD, Engine};
+use base64::engine::{Engine, general_purpose::STANDARD as B64_STD};
 use chrono::{Duration, Utc};
 use jc_router::Mount;
 use regex::Regex;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use wardkeep_core::claims::ActClaim;
@@ -250,7 +250,10 @@ pub async fn resolve_scopes_for_client(
             }
             active_scopes.push(sc.clone());
         } else if !granted_tokens.contains(def_name)
-            && matches!(def_name.as_str(), "profile" | "email" | "roles" | "acr" | "basic")
+            && matches!(
+                def_name.as_str(),
+                "profile" | "email" | "roles" | "acr" | "basic"
+            )
         {
             granted_tokens.push(def_name.clone());
         }
@@ -260,55 +263,49 @@ pub async fn resolve_scopes_for_client(
         if token == "openid" {
             continue;
         }
-        if matches!(token, "profile" | "email" | "roles" | "acr" | "basic" | "address" | "phone") {
+        if matches!(
+            token,
+            "profile" | "email" | "roles" | "acr" | "basic" | "address" | "phone"
+        ) {
             if !granted_tokens.iter().any(|t| t == token) {
                 granted_tokens.push(token.to_owned());
             }
             continue;
         }
         // Parameterized scope check (`family:param`, e.g. `connector:abcdefghij2345672345672345`)
-        if let Some((family, param)) = token.split_once(':') {
-            if let Some(param_scope) = all_scopes
+        if let Some((family, param)) = token.split_once(':')
+            && let Some(param_scope) = all_scopes
                 .iter()
                 .find(|s| s.name == family && s.is_parameterized())
-            {
-                let allowed_on_client = client.default_client_scopes.contains(&param_scope.name)
-                    || client.optional_client_scopes.contains(&param_scope.name);
-                if !allowed_on_client {
+        {
+            let allowed_on_client = client.default_client_scopes.contains(&param_scope.name)
+                || client.optional_client_scopes.contains(&param_scope.name);
+            if !allowed_on_client {
+                return Err(WardkeepError::invalid_scope(format!(
+                    "Invalid scopes: {token}"
+                )));
+            }
+            if let Some(pattern) = param_scope.parameterized_regexp() {
+                let anchored = format!("^(?:{pattern})$");
+                let re = Regex::new(&anchored)
+                    .map_err(|_| WardkeepError::invalid_scope("invalid scope regexp"))?;
+                if !re.is_match(param) {
                     return Err(WardkeepError::invalid_scope(format!(
-                        "Invalid scopes: {token}"
+                        "parameterized scope '{token}' does not match required pattern"
                     )));
                 }
-                if let Some(pattern) = param_scope.parameterized_regexp() {
-                    let anchored = format!("^(?:{pattern})$");
-                    let re = Regex::new(&anchored)
-                        .map_err(|_| WardkeepError::invalid_scope("invalid scope regexp"))?;
-                    if !re.is_match(param) {
-                        return Err(WardkeepError::invalid_scope(format!(
-                            "parameterized scope '{token}' does not match required pattern"
-                        )));
-                    }
-                }
-                if !active_scopes.iter().any(|s| s.id == param_scope.id) {
-                    active_scopes.push(param_scope.clone());
-                }
-                if param_scope.include_in_token_scope()
-                    && !granted_tokens.iter().any(|t| t == token)
-                {
-                    granted_tokens.push(token.to_owned());
-                }
-                continue;
             }
+            if !active_scopes.iter().any(|s| s.id == param_scope.id) {
+                active_scopes.push(param_scope.clone());
+            }
+            if param_scope.include_in_token_scope() && !granted_tokens.iter().any(|t| t == token) {
+                granted_tokens.push(token.to_owned());
+            }
+            continue;
         }
         // Exact client scope check (e.g. `endpoint:{slug}`, `mcp:portal`, `gateway-hub`, `offline_access`)
-        let allowed_on_client = client
-            .default_client_scopes
-            .iter()
-            .any(|s| s == token)
-            || client
-                .optional_client_scopes
-                .iter()
-                .any(|s| s == token);
+        let allowed_on_client = client.default_client_scopes.iter().any(|s| s == token)
+            || client.optional_client_scopes.iter().any(|s| s == token);
         if !allowed_on_client {
             return Err(WardkeepError::invalid_scope(format!(
                 "Invalid scopes: {token}"
@@ -403,17 +400,20 @@ async fn validate_auth_request_params(
         .attributes
         .get("pkce.code.challenge.method")
         .map_or("S256", String::as_str);
-    let challenge = params.get("code_challenge").map(String::as_str).unwrap_or_default();
+    let challenge = params
+        .get("code_challenge")
+        .map(String::as_str)
+        .unwrap_or_default();
     let method = params
         .get("code_challenge_method")
         .map(String::as_str)
         .unwrap_or_default();
-    if !pkce_required_method.is_empty() || client.public_client || !challenge.is_empty() {
-        if method != "S256" || challenge.len() < 43 {
-            return Err(WardkeepError::invalid_request(
-                "PKCE S256 code_challenge is required; plain is refused (W1)",
-            ));
-        }
+    if (!pkce_required_method.is_empty() || client.public_client || !challenge.is_empty())
+        && (method != "S256" || challenge.len() < 43)
+    {
+        return Err(WardkeepError::invalid_request(
+            "PKCE S256 code_challenge is required; plain is refused (W1)",
+        ));
     }
 
     let _ = resolve_scopes_for_client(
@@ -431,18 +431,19 @@ fn extract_requested_acr(params: &BTreeMap<String, String>) -> Option<String> {
     if let Some(acr) = params.get("acr_values").filter(|s| !s.is_empty()) {
         return Some(acr.split_whitespace().next().unwrap_or(acr).to_owned());
     }
-    if let Some(claims_json) = params.get("claims") {
-        if let Ok(val) = serde_json::from_str::<Value>(claims_json) {
-            if let Some(acr_obj) = val.pointer("/id_token/acr").or_else(|| val.pointer("/userinfo/acr")) {
-                if let Some(v) = acr_obj.get("value").and_then(Value::as_str) {
-                    return Some(v.to_owned());
-                }
-                if let Some(arr) = acr_obj.get("values").and_then(Value::as_array) {
-                    if let Some(first) = arr.first().and_then(Value::as_str) {
-                        return Some(first.to_owned());
-                    }
-                }
-            }
+    if let Some(claims_json) = params.get("claims")
+        && let Ok(val) = serde_json::from_str::<Value>(claims_json)
+        && let Some(acr_obj) = val
+            .pointer("/id_token/acr")
+            .or_else(|| val.pointer("/userinfo/acr"))
+    {
+        if let Some(v) = acr_obj.get("value").and_then(Value::as_str) {
+            return Some(v.to_owned());
+        }
+        if let Some(arr) = acr_obj.get("values").and_then(Value::as_array)
+            && let Some(first) = arr.first().and_then(Value::as_str)
+        {
+            return Some(first.to_owned());
         }
     }
     None
@@ -458,7 +459,9 @@ fn redirect_with_params(
         for (k, v) in pairs {
             let ek = html_escape(k);
             let ev = html_escape(v);
-            inputs.push_str(&format!(r#"<input type="hidden" name="{ek}" value="{ev}"/>"#));
+            inputs.push_str(&format!(
+                r#"<input type="hidden" name="{ek}" value="{ev}"/>"#
+            ));
         }
         let action = html_escape(redirect_uri);
         let html = format!(
@@ -509,10 +512,11 @@ fn read_sso_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
     for val in headers.get_all(header::COOKIE) {
         if let Ok(s) = val.to_str() {
             for part in s.split(';').map(str::trim) {
-                if let Some((name, v)) = part.split_once('=') {
-                    if name == target && !v.is_empty() {
-                        return Some(v.to_owned());
-                    }
+                if let Some((name, v)) = part.split_once('=')
+                    && name == target
+                    && !v.is_empty()
+                {
+                    return Some(v.to_owned());
                 }
             }
         }
@@ -579,14 +583,14 @@ async fn authorize_get(
     };
 
     let now_unix = Utc::now().timestamp();
-    let force_reauth = prompt
-        .as_deref()
-        .is_some_and(|p| p.split_whitespace().any(|t| matches!(t, "login" | "select_account")))
-        || max_age.is_some_and(|ma| {
-            existing_sso
-                .as_ref()
-                .is_none_or(|sso| now_unix - sso.auth_time > ma)
-        });
+    let force_reauth = prompt.as_deref().is_some_and(|p| {
+        p.split_whitespace()
+            .any(|t| matches!(t, "login" | "select_account"))
+    }) || max_age.is_some_and(|ma| {
+        existing_sso
+            .as_ref()
+            .is_none_or(|sso| now_unix - sso.auth_time > ma)
+    });
 
     let needs_step_up = acr_requested.as_deref() == Some("mfa")
         && existing_sso.as_ref().is_none_or(|sso| sso.acr != "mfa");
@@ -654,10 +658,11 @@ async fn authorize_get(
     }
 
     // If an active SSO session already satisfies the request and requires no consent, issue code immediately (W8 SSO)
-    if let Some(mut sso) = existing_sso.clone().filter(|_| !force_reauth && !needs_step_up) {
-        let has_consent = if client.consent_required
-            || prompt.as_deref() == Some("consent")
-        {
+    if let Some(mut sso) = existing_sso
+        .clone()
+        .filter(|_| !force_reauth && !needs_step_up)
+    {
+        let has_consent = if client.consent_required || prompt.as_deref() == Some("consent") {
             if prompt.as_deref() == Some("consent") {
                 false
             } else {
@@ -729,7 +734,9 @@ async fn authorize_get(
     let handle = random_handle_256();
     let csrf_token = random_handle_256();
 
-    let (initial_step_json, pre_user_id, pre_amr, pre_acr) = match existing_sso.filter(|_| !force_reauth && needs_step_up) {
+    let (initial_step_json, pre_user_id, pre_amr, pre_acr) = match existing_sso
+        .filter(|_| !force_reauth && needs_step_up)
+    {
         Some(sso) => (
             serde_json::to_string(&json!({ "step": "SecondFactorOtp", "user_id": sso.user_id }))
                 .unwrap_or_default(),
@@ -827,7 +834,13 @@ pub async fn authenticate_client(
                 "unsupported client_assertion_type",
             ));
         }
-        return verify_client_assertion(state, realm, assertion, form.get("client_id").map(String::as_str)).await;
+        return verify_client_assertion(
+            state,
+            realm,
+            assertion,
+            form.get("client_id").map(String::as_str),
+        )
+        .await;
     }
 
     // 2. Check HTTP Basic Authorization header
@@ -855,19 +868,19 @@ pub async fn authenticate_client(
             .next()
             .map(|(k, _)| k.into_owned())
             .unwrap_or_else(|| csec.to_owned());
-        if let Some(form_cid) = &client_id_opt {
-            if form_cid != &cid_dec {
-                return Err(WardkeepError::invalid_client(
-                    "client_id in body does not match Basic header",
-                ));
-            }
+        if let Some(form_cid) = &client_id_opt
+            && form_cid != &cid_dec
+        {
+            return Err(WardkeepError::invalid_client(
+                "client_id in body does not match Basic header",
+            ));
         }
         client_id_opt = Some(cid_dec);
         client_secret_opt = Some(csec_dec);
     }
 
-    let client_id = client_id_opt
-        .ok_or_else(|| WardkeepError::invalid_client("missing client credentials"))?;
+    let client_id =
+        client_id_opt.ok_or_else(|| WardkeepError::invalid_client("missing client credentials"))?;
     let client = resolve_or_fetch_client(state, realm, &client_id).await?;
 
     if client.public_client {
@@ -881,8 +894,8 @@ pub async fn authenticate_client(
         ));
     }
 
-    let presented = client_secret_opt
-        .ok_or_else(|| WardkeepError::invalid_client("missing client_secret"))?;
+    let presented =
+        client_secret_opt.ok_or_else(|| WardkeepError::invalid_client("missing client_secret"))?;
     let expected = client
         .secret
         .as_deref()
@@ -917,7 +930,10 @@ async fn verify_client_assertion(
         .and_then(Value::as_str)
         .unwrap_or(assertion);
 
-    let all_clients = state.store.list_clients(&realm.id, None, None, false).await?;
+    let all_clients = state
+        .store
+        .list_clients(&realm.id, None, None, false)
+        .await?;
 
     // Case A: `federated-jwt` (Kubernetes ServiceAccount token, `jwt.credential.sub == sub`)
     if let Some(fed_client) = all_clients.iter().find(|c| {
@@ -925,12 +941,12 @@ async fn verify_client_assertion(
             && c.attributes.get("jwt.credential.sub").map(String::as_str) == Some(sub)
     }) {
         // PF-47 / Portal client_auth.rs: Keycloak refuses `client_id` if it does not match
-        if let Some(fcid) = form_client_id {
-            if fcid != fed_client.client_id {
-                return Err(WardkeepError::invalid_client(
-                    "client_id parameter does not match sub claim",
-                ));
-            }
+        if let Some(fcid) = form_client_id
+            && fcid != fed_client.client_id
+        {
+            return Err(WardkeepError::invalid_client(
+                "client_id parameter does not match sub claim",
+            ));
         }
         let idp_alias = fed_client
             .attributes
@@ -946,11 +962,10 @@ async fn verify_client_assertion(
             .get("issuer")
             .map(String::as_str)
             .unwrap_or("https://kubernetes.default.svc.cluster.local");
-        let jwks_url = idp
-            .config
-            .get("jwksUrl")
-            .cloned()
-            .unwrap_or_else(|| format!("{}/openid/v1/jwks", expected_iss.trim_end_matches('/')));
+        let jwks_url =
+            idp.config.get("jwksUrl").cloned().unwrap_or_else(|| {
+                format!("{}/openid/v1/jwks", expected_iss.trim_end_matches('/'))
+            });
 
         let jwks: Value = state.guard.get_json(&jwks_url, None, None).await?;
         let keys = jwks
@@ -1114,9 +1129,7 @@ async fn mint_tokens_for_principal(
         response["session_state"] = Value::String(sid.to_owned());
     }
 
-    let wants_id_token = granted_scope_str
-        .split_whitespace()
-        .any(|s| s == "openid");
+    let wants_id_token = granted_scope_str.split_whitespace().any(|s| s == "openid");
     if wants_id_token {
         let id_jti = uuid::Uuid::now_v7().to_string();
         let mut id_ctx = mapper_ctx.clone();
@@ -1302,15 +1315,8 @@ async fn token_endpoint(
             .await?
         }
         "refresh_token" => {
-            handle_refresh_token_grant(
-                &state,
-                &mount,
-                &realm,
-                &client,
-                &form,
-                dpop_jkt.as_deref(),
-            )
-            .await?
+            handle_refresh_token_grant(&state, &mount, &realm, &client, &form, dpop_jkt.as_deref())
+                .await?
         }
         "client_credentials" => {
             handle_client_credentials_grant(
@@ -1324,42 +1330,21 @@ async fn token_endpoint(
             .await?
         }
         "urn:ietf:params:oauth:grant-type:token-exchange" => {
-            handle_token_exchange_grant(
-                &state,
-                &mount,
-                &realm,
-                &client,
-                &form,
-                dpop_jkt.as_deref(),
-            )
-            .await?
+            handle_token_exchange_grant(&state, &mount, &realm, &client, &form, dpop_jkt.as_deref())
+                .await?
         }
         "urn:ietf:params:oauth:grant-type:jwt-bearer" => {
-            handle_jwt_bearer_grant(
-                &state,
-                &mount,
-                &realm,
-                &client,
-                &form,
-                dpop_jkt.as_deref(),
-            )
-            .await?
+            handle_jwt_bearer_grant(&state, &mount, &realm, &client, &form, dpop_jkt.as_deref())
+                .await?
         }
         "password" => {
-            handle_password_grant(
-                &state,
-                &mount,
-                &realm,
-                &client,
-                &form,
-                dpop_jkt.as_deref(),
-            )
-            .await?
+            handle_password_grant(&state, &mount, &realm, &client, &form, dpop_jkt.as_deref())
+                .await?
         }
         _ => {
             return Err(WardkeepError::unsupported_grant_type(format!(
                 "unsupported grant_type: {grant_type}"
-            )))
+            )));
         }
     };
 
@@ -1392,10 +1377,7 @@ async fn handle_authorization_code_grant(
         .ok_or_else(|| WardkeepError::invalid_request("missing redirect_uri"))?;
 
     let code_hash = sha256_hex(raw_code);
-    let (code_opt, already_consumed) = state
-        .store
-        .consume_auth_code(&realm.id, &code_hash)
-        .await?;
+    let (code_opt, already_consumed) = state.store.consume_auth_code(&realm.id, &code_hash).await?;
     let code_rec = code_opt.ok_or_else(|| {
         WardkeepError::invalid_grant("Code not valid or belongs to another realm")
     })?;
@@ -1447,7 +1429,9 @@ async fn handle_authorization_code_grant(
             .get("code_verifier")
             .ok_or_else(|| WardkeepError::invalid_grant("PKCE code_verifier missing"))?;
         if verifier.len() < 43 || verifier.len() > 128 {
-            return Err(WardkeepError::invalid_grant("PKCE code_verifier invalid length"));
+            return Err(WardkeepError::invalid_grant(
+                "PKCE code_verifier invalid length",
+            ));
         }
         let computed = sha256_base64url(verifier);
         if !constant_time_str_eq(&computed, &code_rec.code_challenge) {
@@ -1455,12 +1439,12 @@ async fn handle_authorization_code_grant(
         }
     }
 
-    if let Some(bound_jkt) = &code_rec.dpop_jkt {
-        if dpop_jkt != Some(bound_jkt.as_str()) {
-            return Err(WardkeepError::invalid_dpop_proof(
-                "authorization code is bound to a DPoP key",
-            ));
-        }
+    if let Some(bound_jkt) = &code_rec.dpop_jkt
+        && dpop_jkt != Some(bound_jkt.as_str())
+    {
+        return Err(WardkeepError::invalid_dpop_proof(
+            "authorization code is bound to a DPoP key",
+        ));
     }
 
     let user = state
@@ -1470,13 +1454,8 @@ async fn handle_authorization_code_grant(
         .filter(|u| u.enabled)
         .ok_or_else(|| WardkeepError::invalid_grant("User disabled or not found"))?;
 
-    let (active_scopes, granted_scope_str) = resolve_scopes_for_client(
-        &state.store,
-        realm,
-        client,
-        Some(&code_rec.scope),
-    )
-    .await?;
+    let (active_scopes, granted_scope_str) =
+        resolve_scopes_for_client(&state.store, realm, client, Some(&code_rec.scope)).await?;
 
     state
         .store
@@ -1533,12 +1512,18 @@ async fn handle_refresh_token_grant(
     let (_, claims): (_, Value) = verify_jwt(raw_refresh, &keys, Some(&issuer), None)
         .map_err(|_| WardkeepError::invalid_grant("Invalid refresh token"))?;
 
-    let typ = claims.get("typ").and_then(Value::as_str).unwrap_or_default();
+    let typ = claims
+        .get("typ")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if !matches!(typ, "Refresh" | "Offline") {
         return Err(WardkeepError::invalid_grant("Token is not a refresh token"));
     }
     // Regression check for Rauthy GHSA-7qh2-3hc5-2vqp: verify `azp` == authenticated client_id
-    let azp = claims.get("azp").and_then(Value::as_str).unwrap_or_default();
+    let azp = claims
+        .get("azp")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if azp != client.client_id {
         return Err(WardkeepError::invalid_grant(
             "Refresh token was issued to another client",
@@ -1580,12 +1565,12 @@ async fn handle_refresh_token_grant(
     }
 
     // W1: Public clients that bound their refresh token with DPoP must present the matching DPoP proof
-    if let Some(bound_jkt) = &family.dpop_jkt {
-        if dpop_jkt != Some(bound_jkt.as_str()) {
-            return Err(WardkeepError::invalid_dpop_proof(
-                "Refresh token is bound to a DPoP key",
-            ));
-        }
+    if let Some(bound_jkt) = &family.dpop_jkt
+        && dpop_jkt != Some(bound_jkt.as_str())
+    {
+        return Err(WardkeepError::invalid_dpop_proof(
+            "Refresh token is bound to a DPoP key",
+        ));
     }
 
     if !family.offline {
@@ -1608,19 +1593,16 @@ async fn handle_refresh_token_grant(
         .filter(|u| u.enabled)
         .ok_or_else(|| WardkeepError::invalid_grant("User disabled or not found"))?;
 
-    let (active_scopes, granted_scope_str) = resolve_scopes_for_client(
-        &state.store,
-        realm,
-        client,
-        Some(&family.scope),
-    )
-    .await?;
+    let (active_scopes, granted_scope_str) =
+        resolve_scopes_for_client(&state.store, realm, client, Some(&family.scope)).await?;
 
     let sso_id = family.sso_session_id.clone();
     let acr = family.acr.clone();
     let amr = family.amr.clone();
     let auth_time = family.auth_time;
-    let bound_jkt = dpop_jkt.map(str::to_owned).or_else(|| family.dpop_jkt.clone());
+    let bound_jkt = dpop_jkt
+        .map(str::to_owned)
+        .or_else(|| family.dpop_jkt.clone());
 
     mint_tokens_for_principal(
         state,
@@ -1773,19 +1755,18 @@ async fn handle_token_exchange_grant(
     if subj_claims.get("typ").and_then(Value::as_str) != Some("Bearer") {
         return Err(WardkeepError::invalid_request("Invalid token"));
     }
-    if let Some(jti) = subj_claims.get("jti").and_then(Value::as_str) {
-        if state
+    if let Some(jti) = subj_claims.get("jti").and_then(Value::as_str)
+        && state
             .store
             .is_token_revoked(&realm.id, &sha256_hex(jti))
             .await?
-        {
-            return Err(WardkeepError::invalid_request("Invalid token"));
-        }
+    {
+        return Err(WardkeepError::invalid_request("Invalid token"));
     }
-    if let Some(sid) = subj_claims.get("sid").and_then(Value::as_str) {
-        if state.store.get_sso_session(&realm.id, sid).await?.is_none() {
-            return Err(WardkeepError::invalid_request("Invalid token"));
-        }
+    if let Some(sid) = subj_claims.get("sid").and_then(Value::as_str)
+        && state.store.get_sso_session(&realm.id, sid).await?.is_none()
+    {
+        return Err(WardkeepError::invalid_request("Invalid token"));
     }
 
     let subject_id = subj_claims
@@ -1908,7 +1889,8 @@ async fn handle_token_exchange_grant(
         None,
     )
     .await?;
-    out["issued_token_type"] = Value::String("urn:ietf:params:oauth:token-type:access_token".into());
+    out["issued_token_type"] =
+        Value::String("urn:ietf:params:oauth:token-type:access_token".into());
     Ok(out)
 }
 
@@ -1956,7 +1938,11 @@ async fn handle_jwt_bearer_grant(
         Some(u) => u,
         None => state
             .store
-            .get_user_by_username_or_email(&realm.id, None, &format!("service-account-{}", client.client_id))
+            .get_user_by_username_or_email(
+                &realm.id,
+                None,
+                &format!("service-account-{}", client.client_id),
+            )
             .await?
             .ok_or_else(|| WardkeepError::invalid_grant("subject not found"))?,
     };
@@ -2013,14 +1999,8 @@ async fn handle_password_grant(
         ));
     }
 
-    let username = form
-        .get("username")
-        .map(String::as_str)
-        .unwrap_or_default();
-    let password = form
-        .get("password")
-        .map(String::as_str)
-        .unwrap_or_default();
+    let username = form.get("username").map(String::as_str).unwrap_or_default();
+    let password = form.get("password").map(String::as_str).unwrap_or_default();
 
     let Some(user) = state
         .store
@@ -2189,19 +2169,18 @@ async fn introspect_endpoint(
         return Ok(Json(json!({ "active": false })));
     };
 
-    if let Some(jti) = claims.get("jti").and_then(Value::as_str) {
-        if state
+    if let Some(jti) = claims.get("jti").and_then(Value::as_str)
+        && state
             .store
             .is_token_revoked(&realm.id, &sha256_hex(jti))
             .await?
-        {
-            return Ok(Json(json!({ "active": false })));
-        }
+    {
+        return Ok(Json(json!({ "active": false })));
     }
-    if let Some(sid) = claims.get("sid").and_then(Value::as_str) {
-        if state.store.get_sso_session(&realm.id, sid).await?.is_none() {
-            return Ok(Json(json!({ "active": false })));
-        }
+    if let Some(sid) = claims.get("sid").and_then(Value::as_str)
+        && state.store.get_sso_session(&realm.id, sid).await?.is_none()
+    {
+        return Ok(Json(json!({ "active": false })));
     }
 
     claims.insert("active".into(), Value::Bool(true));
@@ -2233,28 +2212,24 @@ async fn revoke_endpoint(
     };
     let keys = state.store.list_signing_keys(&realm.id).await?;
     let issuer = mount.realm_issuer(&realm.realm);
-    if let Ok((_, claims)) = verify_jwt::<Value>(token, &keys, Some(&issuer), None) {
-        if claims.get("azp").and_then(Value::as_str) == Some(client.client_id.as_str()) {
-            if let Some(jti) = claims.get("jti").and_then(Value::as_str) {
-                let _ = state
-                    .store
-                    .mark_token_revoked(RevokedTokenRecord {
-                        jti_hash: sha256_hex(jti),
-                        realm_id: realm.id.clone(),
-                        expires_at: Utc::now() + Duration::hours(24),
-                    })
-                    .await;
-            }
-            if let Some(sid) = claims.get("sid").and_then(Value::as_str) {
-                state
-                    .store
-                    .revoke_refresh_families_for_session(
-                        &realm.id,
-                        sid,
-                        Some(&client.client_id),
-                    )
-                    .await?;
-            }
+    if let Ok((_, claims)) = verify_jwt::<Value>(token, &keys, Some(&issuer), None)
+        && claims.get("azp").and_then(Value::as_str) == Some(client.client_id.as_str())
+    {
+        if let Some(jti) = claims.get("jti").and_then(Value::as_str) {
+            let _ = state
+                .store
+                .mark_token_revoked(RevokedTokenRecord {
+                    jti_hash: sha256_hex(jti),
+                    realm_id: realm.id.clone(),
+                    expires_at: Utc::now() + Duration::hours(24),
+                })
+                .await;
+        }
+        if let Some(sid) = claims.get("sid").and_then(Value::as_str) {
+            state
+                .store
+                .revoke_refresh_families_for_session(&realm.id, sid, Some(&client.client_id))
+                .await?;
         }
     }
     Ok(StatusCode::OK)
@@ -2276,7 +2251,10 @@ async fn userinfo_endpoint(
     let raw_token = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("DPoP ")))
+        .and_then(|v| {
+            v.strip_prefix("Bearer ")
+                .or_else(|| v.strip_prefix("DPoP "))
+        })
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| WardkeepError::Unauthorized("missing bearer token".into()))?;
@@ -2420,10 +2398,7 @@ async fn logout_endpoint(
         let issuer = mount.realm_issuer(&realm.realm);
         let (_, claims): (_, Value) = verify_jwt(hint, &keys, Some(&issuer), None)
             .map_err(|_| WardkeepError::BadRequest("invalid id_token_hint".into()))?;
-        hint_client_id = claims
-            .get("azp")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+        hint_client_id = claims.get("azp").and_then(Value::as_str).map(str::to_owned);
         if let Some(sid) = claims.get("sid").and_then(Value::as_str) {
             session_to_end = state.store.get_sso_session(&realm.id, sid).await?;
         } else if let Some(sub) = claims.get("sub").and_then(Value::as_str) {
@@ -2436,24 +2411,22 @@ async fn logout_endpoint(
         }
     }
 
-    if session_to_end.is_none() {
-        if let Some(handle) = read_sso_cookie(&headers, &mount) {
-            session_to_end = state
-                .store
-                .get_sso_session_by_handle(&realm.id, &sha256_hex(&handle))
-                .await?;
-        }
+    if session_to_end.is_none()
+        && let Some(handle) = read_sso_cookie(&headers, &mount)
+    {
+        session_to_end = state
+            .store
+            .get_sso_session_by_handle(&realm.id, &sha256_hex(&handle))
+            .await?;
     }
 
     // Validate `post_logout_redirect_uri` against the client's registered URIs (W1, W12)
     if let Some(target_uri) = post_logout {
-        let cid = client_id_param
-            .or(hint_client_id.as_ref())
-            .ok_or_else(|| {
-                WardkeepError::BadRequest(
-                    "post_logout_redirect_uri requires id_token_hint or client_id".into(),
-                )
-            })?;
+        let cid = client_id_param.or(hint_client_id.as_ref()).ok_or_else(|| {
+            WardkeepError::BadRequest(
+                "post_logout_redirect_uri requires id_token_hint or client_id".into(),
+            )
+        })?;
         let client = state
             .store
             .get_client_by_client_id(&realm.id, cid)

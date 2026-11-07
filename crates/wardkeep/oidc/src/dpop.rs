@@ -1,11 +1,11 @@
 #![forbid(unsafe_code)]
 //! DPoP (RFC 9449) proof verification and JWK thumbprint (`cnf.jkt`) calculation (W1, W12).
 
-use base64::engine::{general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
 use jsonwebtoken::decode_header;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use wardkeep_core::{Result, WardkeepError};
 use wardkeep_crypto::{sha256_base64url, verify_jwt_with_jwk};
@@ -152,10 +152,12 @@ pub fn verify_dpop_proof(
             return Err(WardkeepError::invalid_dpop_proof("DPoP ath mismatch"));
         }
     }
-    if let Some(req_nonce) = expected_nonce {
-        if claims.nonce.as_deref() != Some(req_nonce) {
-            return Err(WardkeepError::use_dpop_nonce("DPoP nonce required or mismatched"));
-        }
+    if let Some(req_nonce) = expected_nonce
+        && claims.nonce.as_deref() != Some(req_nonce)
+    {
+        return Err(WardkeepError::use_dpop_nonce(
+            "DPoP nonce required or mismatched",
+        ));
     }
 
     // Verify signature using `jsonwebtoken`

@@ -12,11 +12,11 @@ pub mod keys;
 pub mod password;
 pub mod totp;
 
-pub use jose::{sign_jwt, verify_jwt, verify_jwt_with_jwk, DecodedHeader, JwtHeader};
+pub use jose::{DecodedHeader, JwtHeader, sign_jwt, verify_jwt, verify_jwt_with_jwk};
 pub use keys::{Kek, KeyManager, PublicJwk, PublicJwkSet};
 pub use password::{
-     check_password_policy, hash_password, verify_and_maybe_rehash, verify_keycloak_credential,
-    PasswordVerifyOutcome,
+    PasswordVerifyOutcome, check_password_policy, hash_password, verify_and_maybe_rehash,
+    verify_keycloak_credential,
 };
 pub use totp::{
     generate_recovery_codes, generate_totp_code, verify_recovery_code, verify_totp_code,
@@ -52,7 +52,7 @@ pub fn sha256_hex(input: &str) -> String {
 /// Base64url-no-pad SHA-256 digest (for PKCE S256 and DPoP `ath`).
 #[must_use]
 pub fn sha256_base64url(input: &str) -> String {
-    use base64::engine::{general_purpose::URL_SAFE_NO_PAD, Engine};
+    use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
     let digest = Sha256::digest(input.as_bytes());
     URL_SAFE_NO_PAD.encode(digest)
 }
@@ -60,7 +60,7 @@ pub fn sha256_base64url(input: &str) -> String {
 /// Generates a 256-bit (32-byte) CSPRNG opaque token/session handle encoded as base64url (W2, W10).
 #[must_use]
 pub fn random_handle_256() -> String {
-    use base64::engine::{general_purpose::URL_SAFE_NO_PAD, Engine};
+    use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)

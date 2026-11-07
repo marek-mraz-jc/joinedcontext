@@ -195,7 +195,7 @@ impl RealmConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SmtpServerConfig {
     pub host: String,
@@ -207,6 +207,22 @@ pub struct SmtpServerConfig {
     pub starttls: String,
     pub auth: String,
     pub ssl: String,
+}
+
+/// Redacts the password so a logged realm never carries the SMTP secret.
+impl std::fmt::Debug for SmtpServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SmtpServerConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("from", &self.from)
+            .field("user", &self.user)
+            .field("password", &"<redacted>")
+            .field("starttls", &self.starttls)
+            .field("auth", &self.auth)
+            .field("ssl", &self.ssl)
+            .finish()
+    }
 }
 
 impl Default for SmtpServerConfig {
@@ -334,6 +350,7 @@ impl Default for UserRepresentation {
 /// Group (`GroupRepresentation` in Keycloak Admin REST, W1, W3).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", default)]
+#[derive(Default)]
 pub struct GroupRepresentation {
     pub id: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -356,24 +373,6 @@ pub struct GroupRepresentation {
     pub managed_by: Option<String>,
 }
 
-impl Default for GroupRepresentation {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            realm_id: String::new(),
-            org_id: None,
-            parent_id: None,
-            name: String::new(),
-            path: String::new(),
-            attributes: HashMap::new(),
-            realm_roles: Vec::new(),
-            client_roles: HashMap::new(),
-            sub_groups: Vec::new(),
-            managed_by: None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupMemberRecord {
@@ -388,6 +387,7 @@ pub struct GroupMemberRecord {
 /// Role (`RoleRepresentation` in Keycloak Admin REST, W1, W3).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", default)]
+#[derive(Default)]
 pub struct RoleRepresentation {
     pub id: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -407,24 +407,6 @@ pub struct RoleRepresentation {
     pub attributes: HashMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub managed_by: Option<String>,
-}
-
-impl Default for RoleRepresentation {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            realm_id: String::new(),
-            org_id: None,
-            name: String::new(),
-            description: None,
-            composite: false,
-            client_role: false,
-            container_id: None,
-            composites: RoleComposites::default(),
-            attributes: HashMap::new(),
-            managed_by: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -538,7 +520,7 @@ impl ClientScopeRepresentation {
     pub fn include_in_token_scope(&self) -> bool {
         self.attributes
             .get("include.in.token.scope")
-            .map_or(true, |v| v != "false")
+            .is_none_or(|v| v != "false")
     }
 }
 
@@ -1066,4 +1048,22 @@ pub struct AdminEvent {
     pub actor_client_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub representation: Option<Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn smtp_debug_output_redacts_password() {
+        let cfg = SmtpServerConfig {
+            host: "smtp.example.org".into(),
+            password: "hunter2-smtp".into(),
+            ..SmtpServerConfig::default()
+        };
+        let shown = format!("{cfg:?}");
+        assert!(shown.contains("smtp.example.org"));
+        assert!(!shown.contains("hunter2-smtp"));
+        assert!(shown.contains("<redacted>"));
+    }
 }

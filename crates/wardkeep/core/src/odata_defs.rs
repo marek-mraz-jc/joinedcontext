@@ -14,7 +14,7 @@ use crate::authz::{Action, Authorizer, ObjectTarget, RequestCtx};
 use crate::branding::BrandingBlock;
 use crate::model::*;
 use odata_table::{EntityDef, Field, FieldKind, Operation, Rule, Scope, Service};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn req_field(name: &str, kind: FieldKind, description: &str) -> Field {
     Field {
@@ -84,10 +84,26 @@ pub fn wardkeep_odata_service() -> Service {
                     req_field("realm", FieldKind::String, "Realm slug."),
                     req_field("displayName", FieldKind::String, "Display name."),
                     req_field("enabled", FieldKind::Boolean, "Enabled flag."),
-                    req_field("defaultSignatureAlgorithm", FieldKind::String, "Default JWS algorithm."),
-                    req_field("accessTokenLifespan", FieldKind::Integer, "Access token TTL (s)."),
-                    req_field("ssoSessionIdleTimeout", FieldKind::Integer, "SSO idle timeout (s)."),
-                    req_field("ssoSessionMaxLifespan", FieldKind::Integer, "SSO max lifespan (s)."),
+                    req_field(
+                        "defaultSignatureAlgorithm",
+                        FieldKind::String,
+                        "Default JWS algorithm.",
+                    ),
+                    req_field(
+                        "accessTokenLifespan",
+                        FieldKind::Integer,
+                        "Access token TTL (s).",
+                    ),
+                    req_field(
+                        "ssoSessionIdleTimeout",
+                        FieldKind::Integer,
+                        "SSO idle timeout (s).",
+                    ),
+                    req_field(
+                        "ssoSessionMaxLifespan",
+                        FieldKind::Integer,
+                        "SSO max lifespan (s).",
+                    ),
                 ],
                 rules: set_rules("write:Realm"),
             },
@@ -116,7 +132,11 @@ pub fn wardkeep_odata_service() -> Service {
                     req_field("realm_id", FieldKind::String, "Realm ID."),
                     req_field("org_id", FieldKind::String, "Organization ID."),
                     req_field("name", FieldKind::String, "DNS domain name."),
-                    req_field("verified", FieldKind::Boolean, "Whether DNS TXT is verified."),
+                    req_field(
+                        "verified",
+                        FieldKind::Boolean,
+                        "Whether DNS TXT is verified.",
+                    ),
                 ],
                 rules: set_rules("write:Organization"),
             },
@@ -196,7 +216,11 @@ pub fn wardkeep_odata_service() -> Service {
                     opt_field("description", FieldKind::String, "Role description."),
                     req_field("composite", FieldKind::Boolean, "Composite flag."),
                     req_field("clientRole", FieldKind::Boolean, "Client role flag."),
-                    opt_field("containerId", FieldKind::String, "Client UUID for client roles."),
+                    opt_field(
+                        "containerId",
+                        FieldKind::String,
+                        "Client UUID for client roles.",
+                    ),
                 ],
                 rules: set_rules("write:Role"),
             },
@@ -213,7 +237,11 @@ pub fn wardkeep_odata_service() -> Service {
                     req_field("principal_id", FieldKind::String, "User or group ID."),
                     req_field("role_id", FieldKind::String, "Role ID."),
                     req_field("role_name", FieldKind::String, "Role name."),
-                    opt_field("client_uuid", FieldKind::String, "Client UUID if client role."),
+                    opt_field(
+                        "client_uuid",
+                        FieldKind::String,
+                        "Client UUID if client role.",
+                    ),
                 ],
                 rules: set_rules("write:Role"),
             },
@@ -232,10 +260,26 @@ pub fn wardkeep_odata_service() -> Service {
                     req_field("enabled", FieldKind::Boolean, "Enabled flag."),
                     req_field("publicClient", FieldKind::Boolean, "Public client flag."),
                     req_field("bearerOnly", FieldKind::Boolean, "Bearer-only flag."),
-                    req_field("standardFlowEnabled", FieldKind::Boolean, "Code flow enabled."),
-                    req_field("directAccessGrantsEnabled", FieldKind::Boolean, "Password grant enabled."),
-                    req_field("serviceAccountsEnabled", FieldKind::Boolean, "Service account enabled."),
-                    req_field("clientAuthenticatorType", FieldKind::String, "Authenticator type."),
+                    req_field(
+                        "standardFlowEnabled",
+                        FieldKind::Boolean,
+                        "Code flow enabled.",
+                    ),
+                    req_field(
+                        "directAccessGrantsEnabled",
+                        FieldKind::Boolean,
+                        "Password grant enabled.",
+                    ),
+                    req_field(
+                        "serviceAccountsEnabled",
+                        FieldKind::Boolean,
+                        "Service account enabled.",
+                    ),
+                    req_field(
+                        "clientAuthenticatorType",
+                        FieldKind::String,
+                        "Authenticator type.",
+                    ),
                     opt_field("managed_by", FieldKind::String, "Managed-by marker."),
                 ],
                 rules: set_rules("write:Application"),
@@ -297,7 +341,11 @@ pub fn wardkeep_odata_service() -> Service {
                     req_field("realm_id", FieldKind::String, "Realm ID."),
                     opt_field("org_id", FieldKind::String, "Organization ID."),
                     req_field("user_id", FieldKind::String, "Owner user ID."),
-                    req_field("type", FieldKind::String, "Credential type (password, otp, webauthn)."),
+                    req_field(
+                        "type",
+                        FieldKind::String,
+                        "Credential type (password, otp, webauthn).",
+                    ),
                     opt_field("userLabel", FieldKind::String, "User label."),
                     req_field("createdDate", FieldKind::Integer, "Created epoch ms."),
                 ],
@@ -330,7 +378,11 @@ pub fn wardkeep_odata_service() -> Service {
                     req_field("id", FieldKind::String, "Client session ID."),
                     req_field("realm_id", FieldKind::String, "Realm ID."),
                     opt_field("org_id", FieldKind::String, "Organization ID."),
-                    req_field("sso_session_id", FieldKind::String, "Parent SSO session ID."),
+                    req_field(
+                        "sso_session_id",
+                        FieldKind::String,
+                        "Parent SSO session ID.",
+                    ),
                     req_field("client_id", FieldKind::String, "Client ID."),
                     req_field("user_id", FieldKind::String, "User ID."),
                 ],
@@ -412,8 +464,16 @@ pub fn wardkeep_odata_service() -> Service {
                     req_field("id", FieldKind::String, "Key record ID."),
                     req_field("realm_id", FieldKind::String, "Realm ID."),
                     req_field("kid", FieldKind::String, "JWK key ID."),
-                    req_field("algorithm", FieldKind::String, "Algorithm (ES256, RS256, EdDSA)."),
-                    req_field("status", FieldKind::String, "Status (ACTIVE, PASSIVE, RETIRED)."),
+                    req_field(
+                        "algorithm",
+                        FieldKind::String,
+                        "Algorithm (ES256, RS256, EdDSA).",
+                    ),
+                    req_field(
+                        "status",
+                        FieldKind::String,
+                        "Status (ACTIVE, PASSIVE, RETIRED).",
+                    ),
                     req_field("priority", FieldKind::Integer, "Key priority."),
                     req_field("created_at", FieldKind::DateTime, "Created timestamp."),
                     opt_field("activate_at", FieldKind::DateTime, "Activation timestamp."),
@@ -449,8 +509,16 @@ pub fn wardkeep_odata_service() -> Service {
                     opt_field("org_id", FieldKind::String, "Organization ID."),
                     req_field("instanceName", FieldKind::String, "Instance name."),
                     req_field("shortName", FieldKind::String, "Short name."),
-                    req_field("organisation", FieldKind::String, "Organisation display name."),
-                    req_field("primaryForeground", FieldKind::String, "Computed WCAG foreground."),
+                    req_field(
+                        "organisation",
+                        FieldKind::String,
+                        "Organisation display name.",
+                    ),
+                    req_field(
+                        "primaryForeground",
+                        FieldKind::String,
+                        "Computed WCAG foreground.",
+                    ),
                 ],
                 rules: set_rules("write:Organization"),
             },
@@ -459,11 +527,7 @@ pub fn wardkeep_odata_service() -> Service {
 }
 
 /// Builds the `odata_table::Scope` for `ctx` and `set_name` before `$filter` runs (W4, W6).
-pub fn scope_for_context(
-    ctx: &RequestCtx,
-    authorizer: &dyn Authorizer,
-    set_name: &str,
-) -> Scope {
+pub fn scope_for_context(ctx: &RequestCtx, authorizer: &dyn Authorizer, set_name: &str) -> Scope {
     let mut perms = Vec::new();
     let sample_org = ctx.active_org_id.clone();
 
@@ -556,18 +620,15 @@ pub fn scope_for_context(
         "AdminEvents",
         "BrandingBlocks",
     ];
-    if org_scoped_sets.contains(&set_name) {
-        if let Some(allowed) = ctx.allowed_orgs() {
-            let field = if set_name == "Organizations" {
-                "id"
-            } else {
-                "org_id"
-            };
-            scope = scope.and(
-                &[field],
-                allowed.into_iter().map(Value::String).collect(),
-            );
-        }
+    if org_scoped_sets.contains(&set_name)
+        && let Some(allowed) = ctx.allowed_orgs()
+    {
+        let field = if set_name == "Organizations" {
+            "id"
+        } else {
+            "org_id"
+        };
+        scope = scope.and(&[field], allowed.into_iter().map(Value::String).collect());
     }
 
     scope

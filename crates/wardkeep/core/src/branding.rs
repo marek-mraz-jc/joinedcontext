@@ -80,7 +80,13 @@ impl Default for Languages {
     fn default() -> Self {
         Self {
             default: "en".into(),
-            offered: vec!["en".into(), "sk".into(), "cs".into(), "de".into(), "hu".into()],
+            offered: vec![
+                "en".into(),
+                "sk".into(),
+                "cs".into(),
+                "de".into(),
+                "hu".into(),
+            ],
         }
     }
 }
@@ -138,7 +144,9 @@ impl BrandingBlock {
             self.languages.default = fb.languages.default;
         }
         if !self.languages.offered.contains(&self.languages.default) {
-            self.languages.offered.insert(0, self.languages.default.clone());
+            self.languages
+                .offered
+                .insert(0, self.languages.default.clone());
         }
         if self.instance_name.trim().is_empty() {
             self.instance_name = fb.instance_name;
@@ -218,7 +226,10 @@ fn is_locale(value: &str) -> bool {
         && value
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-        && value.bytes().next().is_some_and(|b| b.is_ascii_alphabetic())
+        && value
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_alphabetic())
 }
 
 /// Checks that an SVG contains no script, foreignObject, event handler, or external href (W7, W9).

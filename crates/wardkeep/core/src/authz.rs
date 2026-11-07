@@ -298,10 +298,10 @@ pub struct LocalAuthorizer;
 impl LocalAuthorizer {
     fn check_org_scope(&self, ctx: &RequestCtx, target_org: Option<&str>) -> Option<Decision> {
         if ctx.principal.is_realm_admin() {
-            if let (Some(active), Some(target)) = (ctx.active_org_id.as_deref(), target_org) {
-                if active != target {
-                    return Some(Decision::deny_hidden("outside active organization"));
-                }
+            if let (Some(active), Some(target)) = (ctx.active_org_id.as_deref(), target_org)
+                && active != target
+            {
+                return Some(Decision::deny_hidden("outside active organization"));
             }
             return None;
         }
@@ -315,15 +315,19 @@ impl LocalAuthorizer {
             return None;
         }
         let Some(target) = target_org else {
-            return Some(Decision::deny_hidden("realm-level object hidden from org caller"));
+            return Some(Decision::deny_hidden(
+                "realm-level object hidden from org caller",
+            ));
         };
-        if let Some(active) = ctx.active_org_id.as_deref() {
-            if active != target {
-                return Some(Decision::deny_hidden("outside active organization"));
-            }
+        if let Some(active) = ctx.active_org_id.as_deref()
+            && active != target
+        {
+            return Some(Decision::deny_hidden("outside active organization"));
         }
         if !ctx.principal.organizations.iter().any(|o| o == target) {
-            return Some(Decision::deny_hidden("object belongs to another organization"));
+            return Some(Decision::deny_hidden(
+                "object belongs to another organization",
+            ));
         }
         None
     }
@@ -340,12 +344,14 @@ impl Authorizer for LocalAuthorizer {
 
         // Self-service checks on own profile, credentials, sessions, consents
         match object {
-            ObjectTarget::Person { person_id, .. } | ObjectTarget::Session { person_id, .. } => {
+            ObjectTarget::Person { person_id, .. } | ObjectTarget::Session { person_id, .. }
                 if ctx.principal.subject.as_deref() == Some(person_id.as_str())
-                    && matches!(action, Action::Read | Action::SelfService | Action::Update | Action::Delete)
-                {
-                    return Decision::allow("self-service on own account");
-                }
+                    && matches!(
+                        action,
+                        Action::Read | Action::SelfService | Action::Update | Action::Delete
+                    ) =>
+            {
+                return Decision::allow("self-service on own account");
             }
             _ => {}
         }
@@ -358,7 +364,10 @@ impl Authorizer for LocalAuthorizer {
             return Decision::allow("realm-admin");
         }
 
-        let org_id = object.org_id().or(ctx.active_org_id.as_deref()).unwrap_or_default();
+        let org_id = object
+            .org_id()
+            .or(ctx.active_org_id.as_deref())
+            .unwrap_or_default();
 
         match object {
             ObjectTarget::Realm { .. } => {

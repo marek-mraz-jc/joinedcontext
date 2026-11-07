@@ -162,7 +162,12 @@ pub fn validate_and_build_cimd_client(
         base_url: doc.client_uri,
         redirect_uris: doc.redirect_uris,
         web_origins: Vec::new(),
-        default_client_scopes: vec!["basic".into(), "email".into(), "profile".into(), "acr".into()],
+        default_client_scopes: vec![
+            "basic".into(),
+            "email".into(),
+            "profile".into(),
+            "acr".into(),
+        ],
         optional_client_scopes: realm.default_optional_client_scopes.clone(),
         attributes,
         protocol_mappers: Vec::new(),
@@ -213,7 +218,10 @@ mod tests {
         .expect("valid cimd");
         assert!(client.public_client);
         assert!(!client.full_scope_allowed);
-        assert_eq!(client.optional_client_scopes, vec!["connector", "offline_access"]);
+        assert_eq!(
+            client.optional_client_scopes,
+            vec!["connector", "offline_access"]
+        );
 
         // Unknown field outside RFC 7591 + CIMD draft is refused
         let unknown_field = serde_json::json!({

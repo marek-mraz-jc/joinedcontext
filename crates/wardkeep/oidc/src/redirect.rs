@@ -94,16 +94,17 @@ pub fn validate_redirect_uri(registered_patterns: &[String], candidate: &str) ->
 /// Validates `post_logout_redirect_uri` against the client's `post.logout.redirect.uris` attribute
 /// (supporting `+` and `##`-separated patterns, W1, W12).
 #[must_use]
-pub fn validate_post_logout_redirect_uri(
-    client: &ClientRepresentation,
-    candidate: &str,
-) -> bool {
+pub fn validate_post_logout_redirect_uri(client: &ClientRepresentation, candidate: &str) -> bool {
     let raw_attr = client
         .attributes
         .get("post.logout.redirect.uris")
         .map_or("+", String::as_str);
     let mut patterns: Vec<String> = Vec::new();
-    for entry in raw_attr.split("##").map(str::trim).filter(|s| !s.is_empty()) {
+    for entry in raw_attr
+        .split("##")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         if entry == "+" {
             patterns.extend(client.redirect_uris.iter().cloned());
         } else {

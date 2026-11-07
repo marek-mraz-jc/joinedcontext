@@ -5,10 +5,10 @@
 use crate::keys::{Kek, PublicJwk};
 use jsonwebtoken::jwk::Jwk;
 use jsonwebtoken::{
-    decode, decode_header, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation,
+    Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, decode_header, encode,
 };
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use wardkeep_core::{Result, SigningKeyRecord, WardkeepError};
 
@@ -85,7 +85,9 @@ pub fn verify_jwt<T: DeserializeOwned>(
         .ok_or_else(|| WardkeepError::Unauthorized("unknown or retired kid".into()))?;
     let key_alg = parse_alg(&rec.algorithm)?;
     if header.alg != key_alg {
-        return Err(WardkeepError::Unauthorized("algorithm mismatch with key".into()));
+        return Err(WardkeepError::Unauthorized(
+            "algorithm mismatch with key".into(),
+        ));
     }
     let pub_jwk: PublicJwk = serde_json::from_str(&rec.public_jwk_json)
         .map_err(|_| WardkeepError::Crypto("invalid stored public JWK".into()))?;
@@ -98,8 +100,8 @@ pub fn verify_jwt_with_public_jwk<T: DeserializeOwned>(
     expected_issuer: Option<&str>,
     expected_audience: Option<&str>,
 ) -> Result<(Header, T)> {
-    let jwk_val = serde_json::to_value(pub_jwk)
-        .map_err(|e| WardkeepError::Crypto(e.to_string()))?;
+    let jwk_val =
+        serde_json::to_value(pub_jwk).map_err(|e| WardkeepError::Crypto(e.to_string()))?;
     verify_jwt_with_jwk(token, &jwk_val, expected_issuer, expected_audience)
 }
 
@@ -113,7 +115,10 @@ pub fn verify_jwt_with_jwk<T: DeserializeOwned>(
 ) -> Result<(Header, T)> {
     let header = decode_header(token)
         .map_err(|_| WardkeepError::Unauthorized("malformed JWT header".into()))?;
-    if !matches!(header.alg, Algorithm::ES256 | Algorithm::RS256 | Algorithm::EdDSA) {
+    if !matches!(
+        header.alg,
+        Algorithm::ES256 | Algorithm::RS256 | Algorithm::EdDSA
+    ) {
         return Err(WardkeepError::Unauthorized(
             "unsupported JWT signature algorithm".into(),
         ));
@@ -134,8 +139,9 @@ pub fn verify_jwt_with_jwk<T: DeserializeOwned>(
     validation.validate_exp = true;
     validation.validate_nbf = true;
     validation.leeway = 30;
-    let data = decode::<T>(token, &decoding_key, &validation)
-        .map_err(|_| WardkeepError::Unauthorized("JWT signature or claim validation failed".into()))?;
+    let data = decode::<T>(token, &decoding_key, &validation).map_err(|_| {
+        WardkeepError::Unauthorized("JWT signature or claim validation failed".into())
+    })?;
     Ok((data.header, data.claims))
 }
 

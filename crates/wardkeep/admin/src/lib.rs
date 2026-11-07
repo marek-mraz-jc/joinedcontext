@@ -13,6 +13,6 @@ pub mod compat;
 pub mod odata;
 pub mod scim;
 
-pub use compat::{admin_router, extract_admin_ctx, AdminState};
+pub use compat::{AdminState, admin_router, extract_admin_ctx};
 pub use odata::odata_router;
-pub use scim::{parse_scim_filter, scim_router, ScimExpr};
+pub use scim::{ScimExpr, parse_scim_filter, scim_router};

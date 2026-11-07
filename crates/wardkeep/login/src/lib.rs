@@ -19,7 +19,7 @@ pub mod machine;
 pub use brute_force::BruteForceProtector;
 pub use email::{EmailSender, SignedActionToken};
 pub use handlers::login_router;
-pub use i18n::{negotiate_locale, Bundle, SUPPORTED_LOCALES};
+pub use i18n::{Bundle, SUPPORTED_LOCALES, negotiate_locale};
 pub use machine::{
-    transition, FactorRequirement, LoginInput, LoginPolicyContext, LoginState, TransitionError,
+    FactorRequirement, LoginInput, LoginPolicyContext, LoginState, TransitionError, transition,
 };

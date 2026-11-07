@@ -3,7 +3,7 @@
 //! every entity set and enforcing the same organization isolation as PostgreSQL RLS (W2, W4).
 
 use chrono::{Duration, Utc};
-use odata_table::{query, Answer, MemoryTable, QueryOptions, TableInfo};
+use odata_table::{Answer, MemoryTable, QueryOptions, TableInfo, query};
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -118,17 +118,15 @@ impl MemoryStore {
         let Some(allowed) = allowed_orgs else {
             return true;
         };
-        if let Some(org) = &user.org_id {
-            if allowed.contains(org) {
-                return true;
-            }
+        if let Some(org) = &user.org_id
+            && allowed.contains(org)
+        {
+            return true;
         }
         // Check memberships or group paths under `/{org}/...`
-        if st
-            .memberships
-            .iter()
-            .any(|m| m.realm_id == realm_id && m.person_id == user.id && allowed.contains(&m.org_id))
-        {
+        if st.memberships.iter().any(|m| {
+            m.realm_id == realm_id && m.person_id == user.id && allowed.contains(&m.org_id)
+        }) {
             return true;
         }
         for gm in st
@@ -144,10 +142,10 @@ impl MemoryStore {
                 if g.org_id.as_ref().is_some_and(|o| allowed.contains(o)) {
                     return true;
                 }
-                if let Some(root) = g.path.strip_prefix('/').and_then(|p| p.split('/').next()) {
-                    if allowed.iter().any(|a| a == root) {
-                        return true;
-                    }
+                if let Some(root) = g.path.strip_prefix('/').and_then(|p| p.split('/').next())
+                    && allowed.iter().any(|a| a == root)
+                {
+                    return true;
                 }
             }
         }
@@ -339,7 +337,9 @@ impl Store for MemoryStore {
                 .ok_or_else(|| WardkeepError::NotFound(format!("unknown entity set {set_name}")))?;
             let scope = scope_for_context(ctx, authorizer, set_name);
             if !scope.holds("read") {
-                return Err(WardkeepError::NotFound(format!("{set_name} not accessible")));
+                return Err(WardkeepError::NotFound(format!(
+                    "{set_name} not accessible"
+                )));
             }
             let rows = {
                 let st = self.inner.read();
@@ -392,8 +392,9 @@ impl Store for MemoryStore {
                 org.id = org.alias.clone();
             }
             let mut st = self.inner.write();
-            st.organizations
-                .retain(|o| !(o.realm_id == org.realm_id && (o.id == org.id || o.alias == org.alias)));
+            st.organizations.retain(|o| {
+                !(o.realm_id == org.realm_id && (o.id == org.id || o.alias == org.alias))
+            });
             st.organizations.push(org);
             Ok(())
         })
@@ -486,7 +487,10 @@ impl Store for MemoryStore {
         })
     }
 
-    fn create_user<'a>(&'a self, mut user: UserRepresentation) -> StoreFuture<'a, UserRepresentation> {
+    fn create_user<'a>(
+        &'a self,
+        mut user: UserRepresentation,
+    ) -> StoreFuture<'a, UserRepresentation> {
         Box::pin(async move {
             if user.id.is_empty() {
                 user.id = uuid::Uuid::now_v7().to_string();
@@ -517,7 +521,10 @@ impl Store for MemoryStore {
         })
     }
 
-    fn update_user<'a>(&'a self, mut user: UserRepresentation) -> StoreFuture<'a, UserRepresentation> {
+    fn update_user<'a>(
+        &'a self,
+        mut user: UserRepresentation,
+    ) -> StoreFuture<'a, UserRepresentation> {
         Box::pin(async move {
             user.username = user.username.to_ascii_lowercase();
             if let Some(em) = &mut user.email {
@@ -588,7 +595,8 @@ impl Store for MemoryStore {
             let Some(user) = st
                 .users
                 .iter()
-                .find(|u| u.realm_id == realm_id && u.id == user_id) else {
+                .find(|u| u.realm_id == realm_id && u.id == user_id)
+            else {
                 return Ok(None);
             };
             if !Self::user_visible(&st, realm_id, allowed_orgs, user) {
@@ -665,19 +673,19 @@ impl Store for MemoryStore {
                             return false;
                         }
                     }
-                    if let Some(q) = &search_lower {
-                        if !q.is_empty() {
-                            let hay = format!(
-                                "{} {} {} {}",
-                                u.username,
-                                u.email.as_deref().unwrap_or_default(),
-                                u.first_name.as_deref().unwrap_or_default(),
-                                u.last_name.as_deref().unwrap_or_default(),
-                            )
-                            .to_ascii_lowercase();
-                            if !hay.contains(q) {
-                                return false;
-                            }
+                    if let Some(q) = &search_lower
+                        && !q.is_empty()
+                    {
+                        let hay = format!(
+                            "{} {} {} {}",
+                            u.username,
+                            u.email.as_deref().unwrap_or_default(),
+                            u.first_name.as_deref().unwrap_or_default(),
+                            u.last_name.as_deref().unwrap_or_default(),
+                        )
+                        .to_ascii_lowercase();
+                        if !hay.contains(q) {
+                            return false;
                         }
                     }
                     true
@@ -701,8 +709,8 @@ impl Store for MemoryStore {
             st.credentials
                 .retain(|c| !(c.realm_id == cred.realm_id && c.id == cred.id));
             // Keep password history up to 5 entries if type == "password-history"
-            if cred.credential_type == "password" {
-                if let Some(prev) = st
+            if cred.credential_type == "password"
+                && let Some(prev) = st
                     .credentials
                     .iter()
                     .find(|c| {
@@ -711,17 +719,16 @@ impl Store for MemoryStore {
                             && c.credential_type == "password"
                     })
                     .cloned()
-                {
-                    st.credentials.retain(|c| {
-                        !(c.realm_id == cred.realm_id
-                            && c.user_id == cred.user_id
-                            && c.credential_type == "password")
-                    });
-                    let mut hist = prev;
-                    hist.id = uuid::Uuid::now_v7().to_string();
-                    hist.credential_type = "password-history".into();
-                    st.credentials.insert(0, hist);
-                }
+            {
+                st.credentials.retain(|c| {
+                    !(c.realm_id == cred.realm_id
+                        && c.user_id == cred.user_id
+                        && c.credential_type == "password")
+                });
+                let mut hist = prev;
+                hist.id = uuid::Uuid::now_v7().to_string();
+                hist.credential_type = "password-history".into();
+                st.credentials.insert(0, hist);
             }
             st.credentials.push(cred);
             Ok(())
@@ -753,9 +760,8 @@ impl Store for MemoryStore {
         Box::pin(async move {
             let mut st = self.inner.write();
             let before = st.credentials.len();
-            st.credentials.retain(|c| {
-                !(c.realm_id == realm_id && c.user_id == user_id && c.id == cred_id)
-            });
+            st.credentials
+                .retain(|c| !(c.realm_id == realm_id && c.user_id == user_id && c.id == cred_id));
             Ok(st.credentials.len() < before)
         })
     }
@@ -771,19 +777,17 @@ impl Store for MemoryStore {
             if group.path.is_empty() {
                 group.path = format!("/{}", group.name);
             }
-            if group.org_id.is_none() {
-                if let Some(first_seg) = group
+            if group.org_id.is_none()
+                && let Some(first_seg) = group
                     .path
                     .strip_prefix('/')
                     .and_then(|p| p.split('/').next())
-                {
-                    let st = self.inner.read();
-                    if st.organizations.iter().any(|o| {
-                        o.realm_id == group.realm_id
-                            && (o.id == first_seg || o.alias == first_seg)
-                    }) {
-                        group.org_id = Some(first_seg.to_owned());
-                    }
+            {
+                let st = self.inner.read();
+                if st.organizations.iter().any(|o| {
+                    o.realm_id == group.realm_id && (o.id == first_seg || o.alias == first_seg)
+                }) {
+                    group.org_id = Some(first_seg.to_owned());
                 }
             }
             let subs = std::mem::take(&mut group.sub_groups);
@@ -793,8 +797,7 @@ impl Store for MemoryStore {
                     .groups
                     .iter()
                     .find(|g| {
-                        g.realm_id == group.realm_id
-                            && (g.id == group.id || g.path == group.path)
+                        g.realm_id == group.realm_id && (g.id == group.id || g.path == group.path)
                     })
                     .cloned()
                 {
@@ -830,7 +833,8 @@ impl Store for MemoryStore {
             let Some(g) = st
                 .groups
                 .iter()
-                .find(|g| g.realm_id == realm_id && g.id == group_id) else {
+                .find(|g| g.realm_id == realm_id && g.id == group_id)
+            else {
                 return Ok(None);
             };
             if !Self::org_allowed(allowed_orgs, g.org_id.as_deref()) {
@@ -856,7 +860,8 @@ impl Store for MemoryStore {
             let Some(g) = st
                 .groups
                 .iter()
-                .find(|g| g.realm_id == realm_id && g.path == norm) else {
+                .find(|g| g.realm_id == realm_id && g.path == norm)
+            else {
                 return Ok(None);
             };
             if !Self::org_allowed(allowed_orgs, g.org_id.as_deref()) {
@@ -886,10 +891,7 @@ impl Store for MemoryStore {
 
             // Build nested tree for subgroups so `/groups?search=members&exact=true` returns
             // root groups with `subGroups` populated (matching Portal `people.rs:503` `GroupNode`).
-            fn attach_children(
-                parent: &mut GroupRepresentation,
-                all: &[GroupRepresentation],
-            ) {
+            fn attach_children(parent: &mut GroupRepresentation, all: &[GroupRepresentation]) {
                 let mut children: Vec<GroupRepresentation> = all
                     .iter()
                     .filter(|c| {
@@ -965,7 +967,8 @@ impl Store for MemoryStore {
             st.group_members
                 .retain(|gm| !(gm.realm_id == realm_id && gm.group_id == group_id));
             for u in st.users.iter_mut().filter(|u| u.realm_id == realm_id) {
-                u.groups.retain(|p| p != &removed.path && p != &removed.name);
+                u.groups
+                    .retain(|p| p != &removed.path && p != &removed.name);
             }
             Ok(true)
         })
@@ -1000,10 +1003,9 @@ impl Store for MemoryStore {
                 .users
                 .iter_mut()
                 .find(|u| u.realm_id == realm_id && u.id == user_id)
+                && !u.groups.contains(&group.path)
             {
-                if !u.groups.contains(&group.path) {
-                    u.groups.push(group.path);
-                }
+                u.groups.push(group.path);
             }
             Ok(())
         })
@@ -1025,14 +1027,13 @@ impl Store for MemoryStore {
             st.group_members.retain(|gm| {
                 !(gm.realm_id == realm_id && gm.user_id == user_id && gm.group_id == group_id)
             });
-            if let Some(path) = group_path {
-                if let Some(u) = st
+            if let Some(path) = group_path
+                && let Some(u) = st
                     .users
                     .iter_mut()
                     .find(|u| u.realm_id == realm_id && u.id == user_id)
-                {
-                    u.groups.retain(|p| p != &path);
-                }
+            {
+                u.groups.retain(|p| p != &path);
             }
             Ok(())
         })
@@ -1112,7 +1113,10 @@ impl Store for MemoryStore {
         })
     }
 
-    fn upsert_role<'a>(&'a self, mut role: RoleRepresentation) -> StoreFuture<'a, RoleRepresentation> {
+    fn upsert_role<'a>(
+        &'a self,
+        mut role: RoleRepresentation,
+    ) -> StoreFuture<'a, RoleRepresentation> {
         Box::pin(async move {
             if role.id.is_empty() {
                 role.id = uuid::Uuid::now_v7().to_string();
@@ -1385,7 +1389,8 @@ impl Store for MemoryStore {
             let Some(c) = st
                 .clients
                 .iter()
-                .find(|c| c.realm_id == realm_id && c.id == uuid) else {
+                .find(|c| c.realm_id == realm_id && c.id == uuid)
+            else {
                 return Ok(None);
             };
             if !Self::org_allowed(allowed_orgs, c.org_id.as_deref()) {
@@ -1456,9 +1461,8 @@ impl Store for MemoryStore {
             }
             let removed = st.clients.remove(pos);
             let sa_user = format!("service-account-{}", removed.client_id);
-            st.users.retain(|u| {
-                !(u.realm_id == realm_id && u.username.eq_ignore_ascii_case(&sa_user))
-            });
+            st.users
+                .retain(|u| !(u.realm_id == realm_id && u.username.eq_ignore_ascii_case(&sa_user)));
             Ok(true)
         })
     }
@@ -1599,7 +1603,10 @@ impl Store for MemoryStore {
         })
     }
 
-    fn list_signing_keys<'a>(&'a self, realm_id: &'a str) -> StoreFuture<'a, Vec<SigningKeyRecord>> {
+    fn list_signing_keys<'a>(
+        &'a self,
+        realm_id: &'a str,
+    ) -> StoreFuture<'a, Vec<SigningKeyRecord>> {
         Box::pin(async move {
             let _ = self.ensure_realm_keys(realm_id);
             let st = self.inner.read();
@@ -1609,7 +1616,7 @@ impl Store for MemoryStore {
                 .filter(|k| k.realm_id == realm_id)
                 .cloned()
                 .collect();
-            keys.sort_by(|a, b| b.priority.cmp(&a.priority));
+            keys.sort_by_key(|k| std::cmp::Reverse(k.priority));
             Ok(keys)
         })
     }
@@ -1713,7 +1720,7 @@ impl Store for MemoryStore {
             let mut st = self.inner.write();
             st.sso_sessions
                 .retain(|s| !(s.realm_id == session.realm_id && s.id == session.id));
-            for (cid, _) in &session.clients {
+            for cid in session.clients.keys() {
                 if !st.client_sessions.iter().any(|cs| {
                     cs.realm_id == session.realm_id
                         && cs.sso_session_id == session.id
@@ -1811,7 +1818,8 @@ impl Store for MemoryStore {
             let Some(pos) = st
                 .sso_sessions
                 .iter()
-                .position(|s| s.realm_id == realm_id && s.id == session_id) else {
+                .position(|s| s.realm_id == realm_id && s.id == session_id)
+            else {
                 return Ok(None);
             };
             let removed = st.sso_sessions.remove(pos);
@@ -1942,7 +1950,9 @@ impl Store for MemoryStore {
                 .iter()
                 .any(|r| r.realm_id == rec.realm_id && r.jti_hash == rec.jti_hash)
             {
-                return Err(WardkeepError::Conflict("token or jti already used/revoked".into()));
+                return Err(WardkeepError::Conflict(
+                    "token or jti already used/revoked".into(),
+                ));
             }
             st.revoked_tokens.push(rec);
             Ok(())
@@ -2104,14 +2114,13 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'a, Option<BrandingBlock>> {
         Box::pin(async move {
             let st = self.inner.read();
-            if let Some(org) = org_id {
-                if let Some(b) = st
+            if let Some(org) = org_id
+                && let Some(b) = st
                     .brandings
                     .iter()
                     .find(|b| b.realm_id == realm_id && b.org_id.as_deref() == Some(org))
-                {
-                    return Ok(Some(b.clone()));
-                }
+            {
+                return Ok(Some(b.clone()));
             }
             Ok(st
                 .brandings
@@ -2172,8 +2181,7 @@ impl Store for MemoryStore {
                 .admin_events
                 .iter()
                 .filter(|ae| {
-                    ae.realm_id == realm_id
-                        && Self::org_allowed(allowed_orgs, ae.org_id.as_deref())
+                    ae.realm_id == realm_id && Self::org_allowed(allowed_orgs, ae.org_id.as_deref())
                 })
                 .cloned()
                 .collect())

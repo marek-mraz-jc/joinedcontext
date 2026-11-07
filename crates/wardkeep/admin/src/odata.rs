@@ -2,21 +2,24 @@
 //! OData v4.01 router serving all 23 entity sets of `wardkeep` (`$metadata`, `$count`, `$export`,
 //! `$allowed`, entity by key, and collection queries, W4, W5).
 
-use crate::compat::{extract_admin_ctx, AdminState};
+use crate::compat::{AdminState, extract_admin_ctx};
 use axum::extract::{OriginalUri, Path, Query, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Extension, Json, Router};
 use jc_router::Mount;
-use odata_table::{allowed, export, key_options, query, Operation};
-use serde_json::{json, Value};
+use odata_table::{Operation, allowed, export, key_options, query};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use wardkeep_core::*;
 
 pub fn odata_router(state: AdminState) -> Router {
     Router::new()
-        .route("/api/v1/realms/{realm}/odata/$metadata", get(odata_metadata))
+        .route(
+            "/api/v1/realms/{realm}/odata/$metadata",
+            get(odata_metadata),
+        )
         .route(
             "/api/v1/realms/{realm}/odata/{set}/$count",
             get(odata_set_count),
@@ -33,10 +36,7 @@ pub fn odata_router(state: AdminState) -> Router {
         .with_state(state)
 }
 
-async fn odata_metadata(
-    State(_state): State<AdminState>,
-    Path(_realm): Path<String>,
-) -> Response {
+async fn odata_metadata(State(_state): State<AdminState>, Path(_realm): Path<String>) -> Response {
     let service = wardkeep_odata_service();
     let csdl = service.model();
     let mut xml = Vec::new();
@@ -79,7 +79,9 @@ fn parse_odata_options(
     let parsed = odata_url::parse(&uri_str, &edm, &odata_url::Limits::strict())
         .map_err(|e| WardkeepError::BadRequest(format!("invalid OData URL: {e:?}")))?;
     let odata_url::ODataUri::Resource { options, .. } = parsed else {
-        return Err(WardkeepError::BadRequest("not an OData resource URI".into()));
+        return Err(WardkeepError::BadRequest(
+            "not an OData resource URI".into(),
+        ));
     };
     Ok((set_name, key_in_parens, options))
 }

@@ -9,12 +9,12 @@ use std::sync::Arc;
 use wardkeep_core::{LocalAuthorizer, Store};
 use wardkeep_crypto::Kek;
 use wardkeep_import::{
-    apply_plan, apply_realm_files, check_realm_value, compute_realm_state_checksum, create_plan,
-    export_realm, ApplyMode, ApplyOptions, ApplyPlan, EXIT_CHANGES_OR_APPLIED, EXIT_INVALID_INPUT,
-    EXIT_NO_CHANGE, EXIT_STALE_OR_LOCK_TIMEOUT,
+    ApplyMode, ApplyOptions, ApplyPlan, EXIT_CHANGES_OR_APPLIED, EXIT_INVALID_INPUT,
+    EXIT_NO_CHANGE, EXIT_STALE_OR_LOCK_TIMEOUT, apply_plan, apply_realm_files, check_realm_value,
+    compute_realm_state_checksum, create_plan, export_realm,
 };
 use wardkeep_oidc::OutboundGuard;
-use wardkeep_server::{load_realm_files_from_path, router, WardkeepState};
+use wardkeep_server::{WardkeepState, load_realm_files_from_path, router};
 use wardkeep_store_memory::MemoryStore;
 
 #[derive(Parser)]
@@ -108,7 +108,8 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
             allow_literal_secrets,
         } => {
             let files = load_realm_files_from_path(&file).map_err(|_| EXIT_INVALID_INPUT)?;
-            let merged = wardkeep_import::merge_realm_files(&files).map_err(|_| EXIT_INVALID_INPUT)?;
+            let merged =
+                wardkeep_import::merge_realm_files(&files).map_err(|_| EXIT_INVALID_INPUT)?;
             let opts = ApplyOptions {
                 allow_literal_secrets,
                 ..Default::default()
@@ -166,28 +167,25 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
                 ..Default::default()
             };
             // Check if `file` is a saved ApplyPlan JSON
-            if file.is_file() {
-                if let Ok(raw) = std::fs::read_to_string(&file) {
-                    if let Ok(plan) = serde_json::from_str::<ApplyPlan>(&raw) {
-                        let report = apply_plan(&store, &plan, &opts)
-                            .await
-                            .map_err(|e| match e {
-                                wardkeep_core::WardkeepError::StalePlan(_) => {
-                                    EXIT_STALE_OR_LOCK_TIMEOUT
-                                }
-                                _ => EXIT_INVALID_INPUT,
-                            })?;
-                        if output == "markdown" {
-                            println!("{}", report.to_markdown());
-                        } else {
-                            println!(
-                                "{}",
-                                serde_json::to_string_pretty(&report).unwrap_or_default()
-                            );
-                        }
-                        return Ok(report.exit_code());
-                    }
+            if file.is_file()
+                && let Ok(raw) = std::fs::read_to_string(&file)
+                && let Ok(plan) = serde_json::from_str::<ApplyPlan>(&raw)
+            {
+                let report = apply_plan(&store, &plan, &opts)
+                    .await
+                    .map_err(|e| match e {
+                        wardkeep_core::WardkeepError::StalePlan(_) => EXIT_STALE_OR_LOCK_TIMEOUT,
+                        _ => EXIT_INVALID_INPUT,
+                    })?;
+                if output == "markdown" {
+                    println!("{}", report.to_markdown());
+                } else {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report).unwrap_or_default()
+                    );
                 }
+                return Ok(report.exit_code());
             }
             let files = load_realm_files_from_path(&file).map_err(|_| EXIT_INVALID_INPUT)?;
             let report = apply_realm_files(&store, &files, &opts)
@@ -205,7 +203,8 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
         }
         Commands::Diff { file } => {
             let files = load_realm_files_from_path(&file).map_err(|_| EXIT_INVALID_INPUT)?;
-            let merged = wardkeep_import::merge_realm_files(&files).map_err(|_| EXIT_INVALID_INPUT)?;
+            let merged =
+                wardkeep_import::merge_realm_files(&files).map_err(|_| EXIT_INVALID_INPUT)?;
             let realm_name = merged["realm"].as_str().unwrap_or("default");
             let sum = compute_realm_state_checksum(&store, realm_name)
                 .await

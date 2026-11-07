@@ -6,7 +6,7 @@
 //! - Filter subset `eq`, `co`, `sw`, `and` with a strict recursion/nesting depth bound of 16
 //!   (regression protection against Kanidm GHSA-2pm5-6m23-h692 and GHSA-r5fr-9gmv-jggh stack overflow).
 
-use crate::compat::{extract_admin_ctx, AdminState};
+use crate::compat::{AdminState, extract_admin_ctx};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -14,7 +14,7 @@ use axum::routing::get;
 use axum::{Extension, Json, Router};
 use jc_router::Mount;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use wardkeep_core::*;
 
@@ -84,14 +84,16 @@ fn parse_scim_filter_with_depth(input: &str, depth: usize) -> Result<ScimExpr> {
         other => {
             return Err(WardkeepError::BadRequest(format!(
                 "unsupported SCIM filter operator: {other}"
-            )))
+            )));
         }
     };
     let after_op = trimmed[attr.len()..].trim_start()[op_str.len()..].trim();
     let value = after_op
         .strip_prefix('"')
         .and_then(|s| s.strip_suffix('"'))
-        .ok_or_else(|| WardkeepError::BadRequest("SCIM filter value must be double-quoted".into()))?;
+        .ok_or_else(|| {
+            WardkeepError::BadRequest("SCIM filter value must be double-quoted".into())
+        })?;
 
     Ok(ScimExpr::Compare {
         attr: attr.to_owned(),
@@ -137,7 +139,9 @@ fn split_top_level_and(s: &str) -> Result<Option<(&str, &str)>> {
             }
             b')' if !in_quotes => {
                 if paren_depth == 0 {
-                    return Err(WardkeepError::BadRequest("unbalanced ')' in SCIM filter".into()));
+                    return Err(WardkeepError::BadRequest(
+                        "unbalanced ')' in SCIM filter".into(),
+                    ));
                 }
                 paren_depth -= 1;
             }
@@ -470,11 +474,7 @@ mod tests {
 
         // Regression test for Kanidm GHSA-2pm5-6m23-h692 / GHSA-r5fr-9gmv-jggh: deeply nested
         // filter must return 400 BadRequest instead of overflowing the stack.
-        let deep = format!(
-            "{}userName eq \"a\"{}",
-            "(".repeat(200),
-            ")".repeat(200)
-        );
+        let deep = format!("{}userName eq \"a\"{}", "(".repeat(200), ")".repeat(200));
         let err = parse_scim_filter(&deep).expect_err("deep filter must be refused");
         assert_eq!(err.status_code(), 400);
     }

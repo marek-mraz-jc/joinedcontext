@@ -9,7 +9,7 @@
 //!   dry-run non-mutation, plan/apply with stale-plan refusal (`EXIT_STALE_OR_LOCK_TIMEOUT`), and
 //!   export round-trip fixed point.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use wardkeep_core::{ClientRepresentation, Store};
@@ -28,12 +28,27 @@ fn default_opts() -> ApplyOptions {
         allow_literal_secrets: false,
         secrets_dir: None,
         env_vars: BTreeMap::from([
-            ("USER_PASSWORD_DEMO_STEWARD".into(), "StewardPass123!Valid".into()),
-            ("USER_TOTP_DEMO_STEWARD".into(), "steward-totp-seed-123456".into()),
-            ("USER_PASSWORD_DEMO_ORGMEMBER".into(), "MemberPass123!Valid".into()),
-            ("USER_PASSWORD_DEMO_ANALYST".into(), "AnalystPass123!Valid".into()),
+            (
+                "USER_PASSWORD_DEMO_STEWARD".into(),
+                "StewardPass123!Valid".into(),
+            ),
+            (
+                "USER_TOTP_DEMO_STEWARD".into(),
+                "steward-totp-seed-123456".into(),
+            ),
+            (
+                "USER_PASSWORD_DEMO_ORGMEMBER".into(),
+                "MemberPass123!Valid".into(),
+            ),
+            (
+                "USER_PASSWORD_DEMO_ANALYST".into(),
+                "AnalystPass123!Valid".into(),
+            ),
             ("CLIENT_SECRET_EDGE".into(), "edge-secret-123".into()),
-            ("CLIENT_SECRET_APISIX_GATEWAY".into(), "apisix-secret-123".into()),
+            (
+                "CLIENT_SECRET_APISIX_GATEWAY".into(),
+                "apisix-secret-123".into(),
+            ),
             ("CLIENT_SECRET_GRAFANA".into(), "grafana-secret-123".into()),
             ("CLIENT_SECRET_GITEA".into(), "gitea-secret-123".into()),
             ("CLIENT_SECRET_CKAN".into(), "ckan-secret-123".into()),
@@ -65,7 +80,11 @@ async fn ri_and_all_keycloak_clients_apply_cleanly_and_second_apply_is_idempoten
         .await
         .expect("first apply");
     assert_eq!(report1.exit_code(), EXIT_CHANGES_OR_APPLIED);
-    assert!(report1.to_markdown().contains("wardkeep plan for realm `dev`"));
+    assert!(
+        report1
+            .to_markdown()
+            .contains("wardkeep plan for realm `dev`")
+    );
 
     // Verify fixed user IDs (PF-126) survived import
     let steward = store
@@ -116,18 +135,28 @@ async fn prune_deletes_only_apply_managed_objects_and_preserves_portal_created_o
     let report = apply_realm_files(&store, &[("ri_dev.json".into(), doc)], &opts)
         .await
         .unwrap();
-    assert!(report
-        .changes
-        .iter()
-        .any(|c| c.kind == "Client" && c.id == "ckan" && c.action == ChangeAction::Delete));
+    assert!(
+        report
+            .changes
+            .iter()
+            .any(|c| c.kind == "Client" && c.id == "ckan" && c.action == ChangeAction::Delete)
+    );
 
     // `ckan` (managedBy: apply) was pruned; `app-city-bikes` (managed-by: joinedcontext) is untouched!
-    assert!(store.get_client_by_client_id("dev", "ckan").await.unwrap().is_none());
-    assert!(store
-        .get_client_by_client_id("dev", "app-city-bikes")
-        .await
-        .unwrap()
-        .is_some());
+    assert!(
+        store
+            .get_client_by_client_id("dev", "ckan")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .get_client_by_client_id("dev", "app-city-bikes")
+            .await
+            .unwrap()
+            .is_some()
+    );
 }
 
 #[tokio::test]
@@ -146,7 +175,10 @@ async fn dangling_reference_unknown_mapper_and_file_escape_fail_and_plan_refuses
         }]
     });
     let err = check_realm_value(&bad_scope_doc, &opts).unwrap_err();
-    assert!(err.to_string().contains("$.clients[0].defaultClientScopes[0]"));
+    assert!(
+        err.to_string()
+            .contains("$.clients[0].defaultClientScopes[0]")
+    );
 
     // 2. Unknown mapper kind fails
     let bad_mapper_doc = json!({
@@ -198,7 +230,10 @@ async fn dangling_reference_unknown_mapper_and_file_escape_fail_and_plan_refuses
     let stale_err = apply_plan(&store, &plan, &opts)
         .await
         .expect_err("stale plan must be refused");
-    assert!(matches!(stale_err, wardkeep_core::WardkeepError::StalePlan(_)));
+    assert!(matches!(
+        stale_err,
+        wardkeep_core::WardkeepError::StalePlan(_)
+    ));
 
     // 5. Export round-trip fixed point
     let store2: Arc<dyn Store> = Arc::new(MemoryStore::default());
@@ -206,9 +241,13 @@ async fn dangling_reference_unknown_mapper_and_file_escape_fail_and_plan_refuses
         .await
         .unwrap();
     let exported1 = export_realm(&store2, "dev", false).await.unwrap();
-    apply_realm_files(&store2, &[("exported.json".into(), exported1.clone())], &opts)
-        .await
-        .unwrap();
+    apply_realm_files(
+        &store2,
+        &[("exported.json".into(), exported1.clone())],
+        &opts,
+    )
+    .await
+    .unwrap();
     let exported2 = export_realm(&store2, "dev", false).await.unwrap();
     assert_eq!(exported1, exported2);
 }

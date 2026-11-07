@@ -31,25 +31,22 @@ impl BruteForceProtector {
             return Ok(false);
         }
         let now = Utc::now();
-        if let Some(uid) = user_id {
-            if let Some(rec) = self
+        if let Some(uid) = user_id
+            && let Some(rec) = self
                 .store
                 .get_login_failure(&realm.id, &format!("user:{uid}"))
                 .await?
-            {
-                if rec.locked_until.is_some_and(|until| until > now) {
-                    return Ok(true);
-                }
-            }
+            && rec.locked_until.is_some_and(|until| until > now)
+        {
+            return Ok(true);
         }
         if let Some(rec) = self
             .store
             .get_login_failure(&realm.id, &format!("ip:{ip_address}"))
             .await?
+            && rec.locked_until.is_some_and(|until| until > now)
         {
-            if rec.locked_until.is_some_and(|until| until > now) {
-                return Ok(true);
-            }
+            return Ok(true);
         }
         Ok(false)
     }
@@ -94,7 +91,9 @@ impl BruteForceProtector {
 
         let mut rec = match self.store.get_login_failure(&realm.id, target_key).await? {
             Some(existing)
-                if now.signed_duration_since(existing.window_started_at).num_seconds()
+                if now
+                    .signed_duration_since(existing.window_started_at)
+                    .num_seconds()
                     <= max_delta =>
             {
                 existing
@@ -123,7 +122,7 @@ impl BruteForceProtector {
 
         let mut wait_secs = 0i64;
         if delta_ms < realm.quick_login_check_milli_seconds {
-            wait_secs = realm.minimum_quick_loginWait_or_default();
+            wait_secs = realm.minimum_quick_login_wait_or_default();
         }
         if rec.num_failures >= factor && rec.num_failures % factor == 0 {
             let multiplier = i64::from(rec.num_failures / factor);
@@ -141,11 +140,11 @@ impl BruteForceProtector {
 }
 
 trait RealmBruteForceExt {
-    fn minimum_quick_loginWait_or_default(&self) -> i64;
+    fn minimum_quick_login_wait_or_default(&self) -> i64;
 }
 
 impl RealmBruteForceExt for RealmConfig {
-    fn minimum_quick_loginWait_or_default(&self) -> i64 {
+    fn minimum_quick_login_wait_or_default(&self) -> i64 {
         self.minimum_quick_login_wait_seconds.max(60)
     }
 }
@@ -171,7 +170,11 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(wait, None, "unexpected lock on attempt {i}");
-            assert!(!bf.is_locked(&realm, Some("u1"), "198.51.100.1").await.unwrap());
+            assert!(
+                !bf.is_locked(&realm, Some("u1"), "198.51.100.1")
+                    .await
+                    .unwrap()
+            );
         }
 
         // 10th failure -> 60 s lock
@@ -180,11 +183,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(wait10, Some(60));
-        assert!(bf.is_locked(&realm, Some("u1"), "198.51.100.1").await.unwrap());
+        assert!(
+            bf.is_locked(&realm, Some("u1"), "198.51.100.1")
+                .await
+                .unwrap()
+        );
 
         // 20th failure -> 120 s lock
         for _ in 11..=19 {
-            let _ = bf.record_failure(&realm, Some("u1"), "198.51.100.1").await.unwrap();
+            let _ = bf
+                .record_failure(&realm, Some("u1"), "198.51.100.1")
+                .await
+                .unwrap();
         }
         let wait20 = bf
             .record_failure(&realm, Some("u1"), "198.51.100.1")

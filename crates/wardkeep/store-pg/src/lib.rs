@@ -11,8 +11,8 @@
 use sqlx::postgres::{PgConnectOptions, PgListener, PgPool, PgPoolOptions};
 use std::path::Path;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use wardkeep_core::store::StoreFuture;
 use wardkeep_core::*;
@@ -95,8 +95,10 @@ impl PgStore {
         macro_rules! sweep_sql {
             ($table:literal) => {
                 concat!(
-                    "DELETE FROM wardkeep.", $table,
-                    " WHERE ctid IN (SELECT ctid FROM wardkeep.", $table,
+                    "DELETE FROM wardkeep.",
+                    $table,
+                    " WHERE ctid IN (SELECT ctid FROM wardkeep.",
+                    $table,
                     " WHERE expires_at < now() LIMIT $1 FOR UPDATE SKIP LOCKED)"
                 )
             };
@@ -158,7 +160,10 @@ impl PgStore {
 /// Reads a database password from a file in the secrets mount (W2).
 pub fn read_password_file(path: &Path) -> Result<String> {
     let raw = std::fs::read_to_string(path).map_err(|e| {
-        WardkeepError::Storage(format!("cannot read db password file {}: {e}", path.display()))
+        WardkeepError::Storage(format!(
+            "cannot read db password file {}: {e}",
+            path.display()
+        ))
     })?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -176,12 +181,11 @@ pub fn read_password_file(path: &Path) -> Result<String> {
 /// 3. Request role has no table privileges on non-system schemas outside `wardkeep`.
 /// 4. Every table in schema `wardkeep` has both `relrowsecurity` and `relforcerowsecurity` enabled.
 pub async fn verify_boot_rls(pool: &PgPool) -> Result<()> {
-    let (is_super, is_bypass): (bool, bool) = sqlx::query_as(
-        "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| WardkeepError::Storage(format!("boot check role query failed: {e}")))?;
+    let (is_super, is_bypass): (bool, bool) =
+        sqlx::query_as("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| WardkeepError::Storage(format!("boot check role query failed: {e}")))?;
 
     if is_super || is_bypass {
         return Err(WardkeepError::Storage(
@@ -356,8 +360,16 @@ impl Store for PgStore {
         first: usize,
         max: usize,
     ) -> StoreFuture<'a, Vec<UserRepresentation>> {
-        self.cache
-            .list_users(realm_id, allowed_orgs, search, email, username, exact, first, max)
+        self.cache.list_users(
+            realm_id,
+            allowed_orgs,
+            search,
+            email,
+            username,
+            exact,
+            first,
+            max,
+        )
     }
 
     fn upsert_credential<'a>(&'a self, cred: CredentialRecord) -> StoreFuture<'a, ()> {
@@ -413,7 +425,8 @@ impl Store for PgStore {
         search: Option<&'a str>,
         exact: bool,
     ) -> StoreFuture<'a, Vec<GroupRepresentation>> {
-        self.cache.list_groups(realm_id, allowed_orgs, search, exact)
+        self.cache
+            .list_groups(realm_id, allowed_orgs, search, exact)
     }
 
     fn delete_group<'a>(
@@ -632,7 +645,10 @@ impl Store for PgStore {
         self.cache.upsert_signing_key(key)
     }
 
-    fn list_signing_keys<'a>(&'a self, realm_id: &'a str) -> StoreFuture<'a, Vec<SigningKeyRecord>> {
+    fn list_signing_keys<'a>(
+        &'a self,
+        realm_id: &'a str,
+    ) -> StoreFuture<'a, Vec<SigningKeyRecord>> {
         self.cache.list_signing_keys(realm_id)
     }
 

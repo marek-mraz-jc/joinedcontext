@@ -7,7 +7,7 @@ use crate::model::{
     ProtocolMapperRepresentation, RealmConfig, RoleRepresentation, UserRepresentation,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 
 /// Which token or response the mapper pipeline is building.
@@ -81,11 +81,11 @@ pub struct MapperContext<'a> {
 }
 
 fn mapper_applies_to(mapper: &ProtocolMapperRepresentation, kind: TokenKind) -> bool {
-    let flag = match kind {
+    match kind {
         TokenKind::AccessToken => mapper
             .config
             .get("access.token.claim")
-            .map_or(true, |v| v == "true"),
+            .is_none_or(|v| v == "true"),
         TokenKind::IdToken => mapper
             .config
             .get("id.token.claim")
@@ -98,9 +98,8 @@ fn mapper_applies_to(mapper: &ProtocolMapperRepresentation, kind: TokenKind) -> 
             .config
             .get("introspection.token.claim")
             .or_else(|| mapper.config.get("access.token.claim"))
-            .map_or(true, |v| v == "true"),
-    };
-    flag
+            .is_none_or(|v| v == "true"),
+    }
 }
 
 /// Inserts a value at a dotted claim path (`realm_access.roles` -> `{"realm_access":{"roles":...}}`).
@@ -142,7 +141,10 @@ pub fn resolve_effective_realm_roles(
         if !visited.insert(role_name.clone()) {
             continue;
         }
-        if let Some(def) = all_roles.iter().find(|r| !r.client_role && r.name == role_name) {
+        if let Some(def) = all_roles
+            .iter()
+            .find(|r| !r.client_role && r.name == role_name)
+        {
             for child in &def.composites.realm {
                 if !visited.contains(child) {
                     stack.push(child.clone());
@@ -178,12 +180,15 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
             claims.insert("auth_time".into(), json!(auth_time));
         }
         if kind == TokenKind::AccessToken || kind == TokenKind::Introspection {
-            claims.insert("scope".into(), Value::String(ctx.granted_scope_string.to_owned()));
+            claims.insert(
+                "scope".into(),
+                Value::String(ctx.granted_scope_string.to_owned()),
+            );
         }
-        if kind == TokenKind::IdToken {
-            if let Some(nonce) = ctx.nonce {
-                claims.insert("nonce".into(), Value::String(nonce.to_owned()));
-            }
+        if kind == TokenKind::IdToken
+            && let Some(nonce) = ctx.nonce
+        {
+            claims.insert("nonce".into(), Value::String(nonce.to_owned()));
         }
         if !ctx.acr.is_empty() {
             claims.insert("acr".into(), Value::String(ctx.acr.to_owned()));
@@ -206,13 +211,13 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
         .chain(ctx.granted_scope_string.split_whitespace())
         .collect();
 
-    if scope_names.contains("profile") || scope_names.contains("basic") {
-        if !ctx.user.username.is_empty() {
-            claims.insert(
-                "preferred_username".into(),
-                Value::String(ctx.user.username.clone()),
-            );
-        }
+    if (scope_names.contains("profile") || scope_names.contains("basic"))
+        && !ctx.user.username.is_empty()
+    {
+        claims.insert(
+            "preferred_username".into(),
+            Value::String(ctx.user.username.clone()),
+        );
     }
     if scope_names.contains("profile") {
         if let Some(first) = &ctx.user.first_name {
@@ -236,7 +241,10 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
         if let Some(email) = &ctx.user.email {
             claims.insert("email".into(), Value::String(email.clone()));
         }
-        claims.insert("email_verified".into(), Value::Bool(ctx.user.email_verified));
+        claims.insert(
+            "email_verified".into(),
+            Value::Bool(ctx.user.email_verified),
+        );
     }
 
     let group_realm_roles: Vec<String> = ctx
@@ -250,7 +258,10 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
         ctx.all_realm_roles,
     );
 
-    if scope_names.contains("roles") && ctx.client.full_scope_allowed && kind == TokenKind::AccessToken {
+    if scope_names.contains("roles")
+        && ctx.client.full_scope_allowed
+        && kind == TokenKind::AccessToken
+    {
         if !effective_realm_roles.is_empty() {
             insert_at_claim_path(
                 &mut claims,
@@ -300,10 +311,9 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                     .get("included.custom.audience")
                     .or_else(|| mapper.config.get("included.client.audience"))
                     .filter(|s| !s.is_empty())
+                    && !audiences.contains(aud)
                 {
-                    if !audiences.contains(aud) {
-                        audiences.push(aud.clone());
-                    }
+                    audiences.push(aud.clone());
                 }
             }
             "oidc-group-membership-mapper" => {
@@ -311,10 +321,7 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                     .config
                     .get("claim.name")
                     .map_or("groups", String::as_str);
-                let full_path = mapper
-                    .config
-                    .get("full.path")
-                    .map_or(true, |v| v == "true");
+                let full_path = mapper.config.get("full.path").is_none_or(|v| v == "true");
                 let mut groups: Vec<String> = ctx
                     .user_groups
                     .iter()
@@ -383,22 +390,21 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                 if aggregate || vals.is_empty() {
                     // Only allow managed user attributes; `jc_org` and `jc_groups` come from groups
                     // unless explicitly present on a transient user.
-                    if ctx.user.transient || !matches!(attr_name.as_str(), "jc_org" | "jc_groups") {
-                        if let Some(uv) = ctx.user.attributes.get(&attr_name) {
-                            for item in uv {
-                                if !vals.contains(item) {
-                                    vals.push(item.clone());
-                                }
+                    if (ctx.user.transient || !matches!(attr_name.as_str(), "jc_org" | "jc_groups"))
+                        && let Some(uv) = ctx.user.attributes.get(&attr_name)
+                    {
+                        for item in uv {
+                            if !vals.contains(item) {
+                                vals.push(item.clone());
                             }
                         }
                     }
                 }
-                if attr_name == "jc_org" {
-                    if let Some(pinned_org) = ctx.active_org {
-                        if !vals.iter().any(|v| v == pinned_org) {
-                            vals.push(pinned_org.to_owned());
-                        }
-                    }
+                if attr_name == "jc_org"
+                    && let Some(pinned_org) = ctx.active_org
+                    && !vals.iter().any(|v| v == pinned_org)
+                {
+                    vals.push(pinned_org.to_owned());
                 }
                 if !vals.is_empty() {
                     let val = if multivalued {
@@ -452,10 +458,7 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                     .config
                     .get("user.attribute")
                     .map_or("", String::as_str);
-                let claim_name = mapper
-                    .config
-                    .get("claim.name")
-                    .map_or(prop, String::as_str);
+                let claim_name = mapper.config.get("claim.name").map_or(prop, String::as_str);
                 let val = match prop {
                     "id" => Some(ctx.user.id.clone()),
                     "username" => Some(ctx.user.username.clone()),
@@ -529,16 +532,16 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
         claims.insert("aud".into(), aud_value);
     }
 
-    if let Some(jkt) = ctx.dpop_jkt {
-        if kind == TokenKind::AccessToken || kind == TokenKind::Introspection {
-            claims.insert("cnf".into(), json!({ "jkt": jkt }));
-        }
+    if let Some(jkt) = ctx.dpop_jkt
+        && (kind == TokenKind::AccessToken || kind == TokenKind::Introspection)
+    {
+        claims.insert("cnf".into(), json!({ "jkt": jkt }));
     }
 
-    if let Some(act) = &ctx.act {
-        if let Ok(v) = serde_json::to_value(act) {
-            claims.insert("act".into(), v);
-        }
+    if let Some(act) = &ctx.act
+        && let Ok(v) = serde_json::to_value(act)
+    {
+        claims.insert("act".into(), v);
     }
 
     Ok(claims)

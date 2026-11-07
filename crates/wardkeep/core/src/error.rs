@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 //! RFC 9457 Problem Details and RFC 6749 OAuth error responses (W12).
 
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -210,9 +210,8 @@ impl IntoResponse for WardkeepError {
                         Some(description.clone())
                     },
                 };
-                let json = serde_json::to_string(&body).unwrap_or_else(|_| {
-                    r#"{"error":"server_error"}"#.to_owned()
-                });
+                let json = serde_json::to_string(&body)
+                    .unwrap_or_else(|_| r#"{"error":"server_error"}"#.to_owned());
                 (
                     code,
                     [
@@ -261,7 +260,9 @@ impl From<odata_table::TableError> for WardkeepError {
     fn from(err: odata_table::TableError) -> Self {
         match err {
             odata_table::TableError::NotImplemented(w) => Self::NotSupported(w),
-            odata_table::TableError::UnknownProperty(p) => Self::BadRequest(format!("unknown property: {p}")),
+            odata_table::TableError::UnknownProperty(p) => {
+                Self::BadRequest(format!("unknown property: {p}"))
+            }
             odata_table::TableError::BadRequest(msg) => Self::BadRequest(msg),
             odata_table::TableError::Source(msg) => Self::Storage(msg),
         }

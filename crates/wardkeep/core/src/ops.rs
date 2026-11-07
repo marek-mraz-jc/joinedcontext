@@ -3,7 +3,7 @@
 
 use crate::authz::Action;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -74,13 +74,17 @@ impl OperationRegistry {
             ops.push(OperationDef {
                 name: Box::leak(format!("wk_{singular}_list").into_boxed_str()),
                 title: Box::leak(format!("List {set}").into_boxed_str()),
-                description: Box::leak(format!("List and filter {set} via OData.").into_boxed_str()),
+                description: Box::leak(
+                    format!("List and filter {set} via OData.").into_boxed_str(),
+                ),
                 entity_set: Some(set),
                 action: Action::Read,
                 permission: perm,
                 audit_kind: "READ",
                 rest_method: "GET",
-                rest_path: Box::leak(format!("/api/v1/realms/{{realm}}/odata/{set}").into_boxed_str()),
+                rest_path: Box::leak(
+                    format!("/api/v1/realms/{{realm}}/odata/{set}").into_boxed_str(),
+                ),
                 keycloak_compat_path: None,
                 input_schema: obj_schema(
                     json!({
@@ -284,7 +288,18 @@ impl OperationRegistry {
             ),
         ];
 
-        for (name, title, description, action, permission, audit_kind, rest_method, rest_path, compat) in extra {
+        for (
+            name,
+            title,
+            description,
+            action,
+            permission,
+            audit_kind,
+            rest_method,
+            rest_path,
+            compat,
+        ) in extra
+        {
             ops.push(OperationDef {
                 name,
                 title,

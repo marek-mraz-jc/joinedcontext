@@ -396,7 +396,9 @@ pub fn transition(
             LoginInput::CompleteRegisterWebAuthnOk,
         ) => {
             let mut next_ctx = ctx.clone();
-            next_ctx.pending_actions.retain(|a| a != "webauthn-register");
+            next_ctx
+                .pending_actions
+                .retain(|a| a != "webauthn-register");
             advance_post_factors(user_id, true, second_factor_passed, &next_ctx, None)
         }
         (
@@ -521,7 +523,12 @@ mod tests {
             &ctx,
         )
         .unwrap();
-        assert_eq!(s1, LoginState::Password { user_id: "u1".into() });
+        assert_eq!(
+            s1,
+            LoginState::Password {
+                user_id: "u1".into()
+            }
+        );
 
         let s2 = transition(s1, LoginInput::VerifyPasswordOk, &ctx).unwrap();
         assert_eq!(

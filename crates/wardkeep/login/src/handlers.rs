@@ -3,13 +3,13 @@
 //! nonce, `frame-ancestors 'none'`, timing-equal unknown-user handling, and SSO cookie issuance (W7, W9, W12).
 
 use crate::brute_force::BruteForceProtector;
-use crate::i18n::{negotiate_locale, Bundle};
-use crate::machine::{transition, LoginInput, LoginPolicyContext, LoginState};
+use crate::i18n::{Bundle, negotiate_locale};
+use crate::machine::{LoginInput, LoginPolicyContext, LoginState, transition};
 use askama::Template;
 use axum::extract::{Path, Query, State};
-use axum::http::{header, HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Redirect, Response};
-use axum::routing::{get, post};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
 use axum::{Extension, Form, Router};
 use chrono::{Duration, Utc};
 use jc_router::Mount;
@@ -75,6 +75,13 @@ struct AuthPageQuery {
     client_id: String,
 }
 
+impl AuthPageQuery {
+    /// A `client_id` in the link, when present, must name the client the session was opened for.
+    fn matches_client(&self, session_client_id: &str) -> bool {
+        self.client_id.is_empty() || self.client_id == session_client_id
+    }
+}
+
 fn render_with_security_headers(tpl: &LoginPageTemplate, extra_cookie: Option<String>) -> Response {
     let html = tpl.render().unwrap_or_default();
     let csp = format!(
@@ -88,15 +95,18 @@ fn render_with_security_headers(tpl: &LoginPageTemplate, extra_cookie: Option<St
             (header::CONTENT_SECURITY_POLICY, csp),
             (header::X_FRAME_OPTIONS, "DENY".to_owned()),
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_owned()),
-            (header::CACHE_CONTROL, "no-store, no-cache, must-revalidate".to_owned()),
+            (
+                header::CACHE_CONTROL,
+                "no-store, no-cache, must-revalidate".to_owned(),
+            ),
         ],
         html,
     )
         .into_response();
-    if let Some(ck) = extra_cookie {
-        if let Ok(val) = header::HeaderValue::from_str(&ck) {
-            resp.headers_mut().append(header::SET_COOKIE, val);
-        }
+    if let Some(ck) = extra_cookie
+        && let Ok(val) = header::HeaderValue::from_str(&ck)
+    {
+        resp.headers_mut().append(header::SET_COOKIE, val);
     }
     resp
 }
@@ -155,7 +165,9 @@ async fn build_policy_context(
     let has_consent = consents.iter().any(|c| c.client_id == client.client_id);
 
     let mut pending = user.required_actions.clone();
-    if creds.iter().any(|c| c.credential_type == "password" && c.temporary)
+    if creds
+        .iter()
+        .any(|c| c.credential_type == "password" && c.temporary)
         && !pending.iter().any(|a| a == "UPDATE_PASSWORD")
     {
         pending.push("UPDATE_PASSWORD".into());
@@ -413,6 +425,7 @@ async fn authenticate_page_get(
         .store
         .get_auth_session_by_id(&realm.id, &query.session_code)
         .await?
+        .filter(|s| query.matches_client(&s.client_id))
     else {
         let bundle = Bundle::for_locale(&realm.default_locale);
         let tpl = LoginPageTemplate {
@@ -438,8 +451,8 @@ async fn authenticate_page_get(
         return Ok(render_with_security_headers(&tpl, None));
     };
 
-    let current_state: LoginState = serde_json::from_str(&auth_session.step_state_json)
-        .unwrap_or(LoginState::IdentityFirst);
+    let current_state: LoginState =
+        serde_json::from_str(&auth_session.step_state_json).unwrap_or(LoginState::IdentityFirst);
 
     render_state_page(
         &state,
@@ -477,6 +490,7 @@ async fn authenticate_page_post(
         .store
         .get_auth_session_by_id(&realm.id, &session_code)
         .await?
+        .filter(|s| query.matches_client(&s.client_id))
         .ok_or_else(|| WardkeepError::BadRequest("login session expired".into()))?;
 
     // Verify CSRF token bound to `auth_session` (W7)
@@ -500,20 +514,20 @@ async fn authenticate_page_post(
     let bundle = Bundle::for_locale(locale);
     let bf = BruteForceProtector::new(state.store.clone());
 
-    let mut current_state: LoginState = serde_json::from_str(&auth_session.step_state_json)
-        .unwrap_or(LoginState::IdentityFirst);
+    let mut current_state: LoginState =
+        serde_json::from_str(&auth_session.step_state_json).unwrap_or(LoginState::IdentityFirst);
 
     // Handle combined username + password form submission from `IdentityFirst` or `Password`
-    if matches!(current_state, LoginState::IdentityFirst | LoginState::Password { .. }) {
+    if matches!(
+        current_state,
+        LoginState::IdentityFirst | LoginState::Password { .. }
+    ) {
         let username = form
             .get("username")
             .map(String::as_str)
             .unwrap_or_default()
             .trim();
-        let password = form
-            .get("password")
-            .map(String::as_str)
-            .unwrap_or_default();
+        let password = form.get("password").map(String::as_str).unwrap_or_default();
 
         if username.is_empty() {
             return render_state_page(
@@ -616,9 +630,17 @@ async fn authenticate_page_post(
             .map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
 
         // If `otp` was also submitted in the same POST (or transition reached `Code`), handle next
-        if form.get("otp").is_none() || !matches!(current_state, LoginState::SecondFactorOtp { .. }) {
-            return advance_or_render(&state, &mount, &realm, auth_session, current_state, &headers)
-                .await;
+        if !form.contains_key("otp") || !matches!(current_state, LoginState::SecondFactorOtp { .. })
+        {
+            return advance_or_render(
+                &state,
+                &mount,
+                &realm,
+                auth_session,
+                current_state,
+                &headers,
+            )
+            .await;
         }
     }
 
@@ -630,7 +652,11 @@ async fn authenticate_page_post(
             .get_user_by_id(&realm.id, None, user_id)
             .await?
             .ok_or_else(|| WardkeepError::Unauthorized("user not found".into()))?;
-        let otp_code = form.get("otp").map(String::as_str).unwrap_or_default().trim();
+        let otp_code = form
+            .get("otp")
+            .map(String::as_str)
+            .unwrap_or_default()
+            .trim();
 
         if let LoginState::EnrolTotp { .. } = current_state {
             let new_secret = form
@@ -655,8 +681,13 @@ async fn authenticate_page_post(
                 temporary: false,
             };
             let now_secs = Utc::now().timestamp() as u64;
-            if verify_totp_code(&cred, otp_code, realm.otp_policy_look_ahead_window, now_secs)?
-                .is_none()
+            if verify_totp_code(
+                &cred,
+                otp_code,
+                realm.otp_policy_look_ahead_window,
+                now_secs,
+            )?
+            .is_none()
             {
                 return render_state_page(
                     &state,
@@ -767,10 +798,7 @@ async fn authenticate_page_post(
             .get_user_by_id(&realm.id, None, user_id)
             .await?
             .ok_or_else(|| WardkeepError::Unauthorized("user not found".into()))?;
-        let chosen = form
-            .get("org_id")
-            .cloned()
-            .unwrap_or_default();
+        let chosen = form.get("org_id").cloned().unwrap_or_default();
         let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
         let next = transition(
             current_state,
@@ -877,9 +905,13 @@ async fn advance_or_render(
         let cookie_path = mount.realm_cookie_path(&realm.realm);
         let ttl = realm.sso_session_max_lifespan.max(3600);
         let set_cookie = if mount.path_prefix.is_empty() {
-            format!("{cookie_name}={sso_handle}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={ttl}")
+            format!(
+                "{cookie_name}={sso_handle}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={ttl}"
+            )
         } else {
-            format!("{cookie_name}={sso_handle}; Path={cookie_path}; HttpOnly; Secure; SameSite=Lax; Max-Age={ttl}")
+            format!(
+                "{cookie_name}={sso_handle}; Path={cookie_path}; HttpOnly; Secure; SameSite=Lax; Max-Age={ttl}"
+            )
         };
 
         let mut redirect_url = url::Url::parse(&auth_session.redirect_uri)
@@ -905,16 +937,7 @@ async fn advance_or_render(
 
     auth_session.step_state_json = serde_json::to_string(&next_state).unwrap_or_default();
     state.store.put_auth_session(auth_session.clone()).await?;
-    render_state_page(
-        state,
-        mount,
-        realm,
-        &auth_session,
-        &next_state,
-        headers,
-        "",
-    )
-    .await
+    render_state_page(state, mount, realm, &auth_session, &next_state, headers, "").await
 }
 
 async fn reset_credentials_get(

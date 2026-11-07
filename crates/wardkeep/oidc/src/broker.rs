@@ -120,7 +120,8 @@ impl UpstreamOidcBroker {
         // W7, research-keycloak §5.3: link or create by verified e-mail only when IdP is trusted
         if !idp.trust_email || claims.email_verified != Some(true) {
             return Err(WardkeepError::Forbidden(
-                "upstream identity provider email is not verified or not trusted for linking".into(),
+                "upstream identity provider email is not verified or not trusted for linking"
+                    .into(),
             ));
         }
         let email = claims

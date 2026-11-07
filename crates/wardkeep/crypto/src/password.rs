@@ -8,7 +8,7 @@ use crate::constant_time_eq;
 use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use argon2::{Algorithm, Argon2, Params, Version};
-use base64::engine::{general_purpose::STANDARD as B64_STD, Engine};
+use base64::engine::{Engine, general_purpose::STANDARD as B64_STD};
 use hmac::Hmac;
 use pbkdf2::pbkdf2;
 use serde::Deserialize;
@@ -86,14 +86,14 @@ fn param_u32(map: &serde_json::Map<String, serde_json::Value>, key: &str, defaul
     if let Some(s) = val.as_str() {
         return s.parse().unwrap_or(default);
     }
-    if let Some(arr) = val.as_array() {
-        if let Some(first) = arr.first() {
-            if let Some(s) = first.as_str() {
-                return s.parse().unwrap_or(default);
-            }
-            if let Some(n) = first.as_u64() {
-                return n as u32;
-            }
+    if let Some(arr) = val.as_array()
+        && let Some(first) = arr.first()
+    {
+        if let Some(s) = first.as_str() {
+            return s.parse().unwrap_or(default);
+        }
+        if let Some(n) = first.as_u64() {
+            return n as u32;
         }
     }
     default
@@ -169,7 +169,11 @@ pub fn verify_keycloak_credential(
                 .filter(|&i| i > 0)
                 .map(|i| i as u32)
                 .unwrap_or_else(|| {
-                    param_u32(&meta.additional_parameters, "iterations", DEFAULT_ITERATIONS)
+                    param_u32(
+                        &meta.additional_parameters,
+                        "iterations",
+                        DEFAULT_ITERATIONS,
+                    )
                 });
             let parallelism = param_u32(
                 &meta.additional_parameters,
@@ -208,34 +212,19 @@ pub fn verify_keycloak_credential(
         "pbkdf2-sha512" => {
             let rounds = meta.hash_iterations.unwrap_or(210_000).max(1) as u32;
             let mut computed = vec![0u8; expected_hash.len()];
-            let _ = pbkdf2::<Hmac<Sha512>>(
-                password.as_bytes(),
-                &salt_bytes,
-                rounds,
-                &mut computed,
-            );
+            let _ = pbkdf2::<Hmac<Sha512>>(password.as_bytes(), &salt_bytes, rounds, &mut computed);
             Ok(constant_time_eq(&computed, &expected_hash))
         }
         "pbkdf2-sha256" => {
             let rounds = meta.hash_iterations.unwrap_or(27_500).max(1) as u32;
             let mut computed = vec![0u8; expected_hash.len()];
-            let _ = pbkdf2::<Hmac<Sha256>>(
-                password.as_bytes(),
-                &salt_bytes,
-                rounds,
-                &mut computed,
-            );
+            let _ = pbkdf2::<Hmac<Sha256>>(password.as_bytes(), &salt_bytes, rounds, &mut computed);
             Ok(constant_time_eq(&computed, &expected_hash))
         }
         "pbkdf2" | "pbkdf2-sha1" => {
             let rounds = meta.hash_iterations.unwrap_or(1_300_000).max(1) as u32;
             let mut computed = vec![0u8; expected_hash.len()];
-            let _ = pbkdf2::<Hmac<Sha1>>(
-                password.as_bytes(),
-                &salt_bytes,
-                rounds,
-                &mut computed,
-            );
+            let _ = pbkdf2::<Hmac<Sha1>>(password.as_bytes(), &salt_bytes, rounds, &mut computed);
             Ok(constant_time_eq(&computed, &expected_hash))
         }
         other => Err(WardkeepError::Crypto(format!(
@@ -253,7 +242,11 @@ pub fn check_password_policy(
     email: Option<&str>,
     history_records: &[CredentialRecord],
 ) -> Result<()> {
-    for clause in policy.split(" and ").map(str::trim).filter(|s| !s.is_empty()) {
+    for clause in policy
+        .split(" and ")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         if let Some(arg) = clause
             .strip_prefix("length(")
             .and_then(|s| s.strip_suffix(')'))
@@ -303,12 +296,7 @@ pub fn check_password_policy(
             .and_then(|s| s.strip_suffix(')'))
         {
             let min: usize = arg.parse().unwrap_or(1);
-            if password
-                .chars()
-                .filter(|c| !c.is_alphanumeric())
-                .count()
-                < min
-            {
+            if password.chars().filter(|c| !c.is_alphanumeric()).count() < min {
                 return Err(WardkeepError::field_error(
                     "password",
                     format!("must contain at least {min} special character(s)"),
@@ -326,16 +314,15 @@ pub fn check_password_policy(
                 ));
             }
         } else if clause.starts_with("notEmail") {
-            if let Some(em) = email.filter(|e| !e.is_empty()) {
-                if password
+            if let Some(em) = email.filter(|e| !e.is_empty())
+                && password
                     .to_ascii_lowercase()
                     .contains(&em.to_ascii_lowercase())
-                {
-                    return Err(WardkeepError::field_error(
-                        "password",
-                        "must not contain the e-mail address",
-                    ));
-                }
+            {
+                return Err(WardkeepError::field_error(
+                    "password",
+                    "must not contain the e-mail address",
+                ));
             }
         } else if let Some(arg) = clause
             .strip_prefix("passwordHistory(")
@@ -343,13 +330,13 @@ pub fn check_password_policy(
         {
             let count: usize = arg.parse().unwrap_or(5);
             for old in history_records.iter().take(count) {
-                if let Ok(outcome) = verify_and_maybe_rehash(password, old) {
-                    if outcome.valid {
-                        return Err(WardkeepError::field_error(
-                            "password",
-                            format!("must not match any of the last {count} passwords"),
-                        ));
-                    }
+                if let Ok(outcome) = verify_and_maybe_rehash(password, old)
+                    && outcome.valid
+                {
+                    return Err(WardkeepError::field_error(
+                        "password",
+                        format!("must not match any of the last {count} passwords"),
+                    ));
                 }
             }
         }
@@ -398,7 +385,13 @@ mod tests {
         };
         let outcome = verify_and_maybe_rehash(password, &rec).expect("verify");
         assert!(outcome.valid);
-        assert!(outcome.rehashed_phc.as_deref().unwrap().starts_with("$argon2id$"));
+        assert!(
+            outcome
+                .rehashed_phc
+                .as_deref()
+                .unwrap()
+                .starts_with("$argon2id$")
+        );
 
         // 2. Keycloak pbkdf2-sha256
         let mut pbkdf2_out = [0u8; 32];
@@ -426,37 +419,39 @@ mod tests {
             ..Default::default()
         }];
 
-        assert!(check_password_policy(
-            policy,
-            "Short1a",
-            "alice",
-            Some("alice@hel.fi"),
-            &history
-        )
-        .is_err());
-        assert!(check_password_policy(
-            policy,
-            "aliceValidPass123",
-            "alice",
-            Some("alice@hel.fi"),
-            &history
-        )
-        .is_err());
-        assert!(check_password_policy(
-            policy,
-            "OldValidPass123",
-            "alice",
-            Some("alice@hel.fi"),
-            &history
-        )
-        .is_err());
-        assert!(check_password_policy(
-            policy,
-            "NewValidPass456",
-            "alice",
-            Some("alice@hel.fi"),
-            &history
-        )
-        .is_ok());
+        assert!(
+            check_password_policy(policy, "Short1a", "alice", Some("alice@hel.fi"), &history)
+                .is_err()
+        );
+        assert!(
+            check_password_policy(
+                policy,
+                "aliceValidPass123",
+                "alice",
+                Some("alice@hel.fi"),
+                &history
+            )
+            .is_err()
+        );
+        assert!(
+            check_password_policy(
+                policy,
+                "OldValidPass123",
+                "alice",
+                Some("alice@hel.fi"),
+                &history
+            )
+            .is_err()
+        );
+        assert!(
+            check_password_policy(
+                policy,
+                "NewValidPass456",
+                "alice",
+                Some("alice@hel.fi"),
+                &history
+            )
+            .is_ok()
+        );
     }
 }

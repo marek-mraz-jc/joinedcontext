@@ -125,31 +125,43 @@ async fn run_shared_isolation_suite(store: Arc<dyn Store>) {
     assert_eq!(people_a[0].id, "user-helsinki-1");
 
     // 2. Organization A admin fetches B's person, group, client by ID: gets None (404)
-    assert!(store
-        .get_user_by_id("dev", allowed_a.as_deref(), "user-zilina-1")
-        .await
-        .expect("get user")
-        .is_none());
-    assert!(store
-        .get_group("dev", allowed_a.as_deref(), "grp-zilina-members")
-        .await
-        .expect("get group")
-        .is_none());
-    assert!(store
-        .get_client_by_uuid("dev", allowed_a.as_deref(), "client-uuid-zilina")
-        .await
-        .expect("get client")
-        .is_none());
+    assert!(
+        store
+            .get_user_by_id("dev", allowed_a.as_deref(), "user-zilina-1")
+            .await
+            .expect("get user")
+            .is_none()
+    );
+    assert!(
+        store
+            .get_group("dev", allowed_a.as_deref(), "grp-zilina-members")
+            .await
+            .expect("get group")
+            .is_none()
+    );
+    assert!(
+        store
+            .get_client_by_uuid("dev", allowed_a.as_deref(), "client-uuid-zilina")
+            .await
+            .expect("get client")
+            .is_none()
+    );
 
     // 3. OData query on People, Groups, Applications, Events with $count=true counts only A
     for set in ["People", "Groups", "Applications", "Events"] {
-        let mut opts = QueryOptions::default();
-        opts.count = Some(true);
+        let opts = QueryOptions {
+            count: Some(true),
+            ..QueryOptions::default()
+        };
         let ans = store
             .query_entity_set(&admin_a, &authorizer, set, &opts, 100)
             .await
             .expect("odata query");
-        assert_eq!(ans.count, Some(1), "set {set} leaked rows across organizations");
+        assert_eq!(
+            ans.count,
+            Some(1),
+            "set {set} leaked rows across organizations"
+        );
         assert_eq!(ans.rows.len(), 1);
     }
 
@@ -219,11 +231,15 @@ fn migration_ddl_enforces_rls_and_leakproof_indexes_on_every_table() {
     ];
     for t in tables {
         assert!(
-            MIGRATION_0001_SQL.contains(&format!("ALTER TABLE wardkeep.{t} ENABLE ROW LEVEL SECURITY;")),
+            MIGRATION_0001_SQL.contains(&format!(
+                "ALTER TABLE wardkeep.{t} ENABLE ROW LEVEL SECURITY;"
+            )),
             "table {t} missing ENABLE ROW LEVEL SECURITY"
         );
         assert!(
-            MIGRATION_0001_SQL.contains(&format!("ALTER TABLE wardkeep.{t} FORCE ROW LEVEL SECURITY;")),
+            MIGRATION_0001_SQL.contains(&format!(
+                "ALTER TABLE wardkeep.{t} FORCE ROW LEVEL SECURITY;"
+            )),
             "table {t} missing FORCE ROW LEVEL SECURITY"
         );
     }
@@ -239,7 +255,9 @@ async fn pg_store_isolation_and_boot_checks() {
         println!("SKIP: WARDKEEP_TEST_DATABASE_URL is unset; skipping live PostgreSQL test");
         return;
     };
-    let migrate_pool = sqlx::PgPool::connect(&db_url).await.expect("connect test db");
+    let migrate_pool = sqlx::PgPool::connect(&db_url)
+        .await
+        .expect("connect test db");
     wardkeep_store_pg::PgStore::run_migrations(&migrate_pool)
         .await
         .expect("migrations");

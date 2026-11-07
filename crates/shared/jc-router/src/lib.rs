@@ -10,10 +10,10 @@
 //!   trusted proxy list.
 //! - Answers 404 for unmounted paths.
 
+use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, Response, StatusCode, Uri};
 use axum::response::IntoResponse;
-use axum::Router;
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
@@ -103,7 +103,9 @@ pub struct MountSpec {
 pub enum RouterError {
     #[error("invalid mount prefix '{0}': must start with '/' and contain no '..' or query")]
     InvalidPrefix(String),
-    #[error("overlapping mounts between module '{first}' and '{second}' on host '{host}' prefix '{prefix}'")]
+    #[error(
+        "overlapping mounts between module '{first}' and '{second}' on host '{host}' prefix '{prefix}'"
+    )]
     OverlappingMounts {
         first: String,
         second: String,
@@ -117,7 +119,11 @@ pub fn normalize_prefix(raw: &str) -> Result<String, RouterError> {
     if trimmed.is_empty() || trimmed == "/" {
         return Ok(String::new());
     }
-    if !trimmed.starts_with('/') || trimmed.contains("..") || trimmed.contains('?') || trimmed.contains("//") {
+    if !trimmed.starts_with('/')
+        || trimmed.contains("..")
+        || trimmed.contains('?')
+        || trimmed.contains("//")
+    {
         return Err(RouterError::InvalidPrefix(raw.to_owned()));
     }
     Ok(trimmed.trim_end_matches('/').to_owned())
@@ -196,7 +202,11 @@ impl JcRouterBuilder {
                         first: existing.module.clone(),
                         second: spec.module,
                         host: host.unwrap_or_else(|| "*".into()),
-                        prefix: if prefix.is_empty() { "/".into() } else { prefix },
+                        prefix: if prefix.is_empty() {
+                            "/".into()
+                        } else {
+                            prefix
+                        },
                     });
                 }
             }
@@ -231,7 +241,11 @@ impl JcRouter {
         self.trusted_proxies.iter().any(|net| net.contains(&ip))
     }
 
-    fn resolve_scheme_and_host(&self, req: &Request<Body>, peer: Option<IpAddr>) -> (String, String) {
+    fn resolve_scheme_and_host(
+        &self,
+        req: &Request<Body>,
+        peer: Option<IpAddr>,
+    ) -> (String, String) {
         let trust_fwd = self.is_trusted_proxy(peer);
         let scheme = if trust_fwd {
             req.headers()
@@ -258,7 +272,11 @@ impl JcRouter {
         };
 
         let host = forwarded_host
-            .or_else(|| req.headers().get(axum::http::header::HOST).and_then(|v| v.to_str().ok()))
+            .or_else(|| {
+                req.headers()
+                    .get(axum::http::header::HOST)
+                    .and_then(|v| v.to_str().ok())
+            })
             .or_else(|| req.uri().host())
             .unwrap_or(&self.default_host)
             .to_ascii_lowercase();
@@ -327,7 +345,6 @@ impl JcRouter {
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
     }
 
-    #[must_use]
     pub fn into_axum_router(self) -> Router {
         let this = self.clone();
         Router::new().fallback(move |req: Request<Body>| {
@@ -340,8 +357,8 @@ impl JcRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::routing::get;
     use axum::Extension;
+    use axum::routing::get;
     use http_body_util::BodyExt;
 
     async fn echo_mount(Extension(mount): Extension<Mount>, uri: Uri) -> String {
@@ -375,7 +392,10 @@ mod tests {
                 Router::new(),
             )
             .build();
-        assert!(matches!(overlap, Err(RouterError::OverlappingMounts { .. })));
+        assert!(matches!(
+            overlap,
+            Err(RouterError::OverlappingMounts { .. })
+        ));
 
         // 2. Valid one-domain slugs + dedicated host + 404 on unmounted path
         let id_router = Router::new().route("/realms/dev", get(echo_mount));
@@ -420,7 +440,12 @@ mod tests {
         let res1 = jc.dispatch(req1, None).await;
         assert_eq!(res1.status(), StatusCode::OK);
         let body1 = String::from_utf8(
-            res1.into_body().collect().await.unwrap().to_bytes().to_vec(),
+            res1.into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
         )
         .unwrap();
         assert_eq!(
@@ -437,7 +462,12 @@ mod tests {
         let res2 = jc.dispatch(req2, None).await;
         assert_eq!(res2.status(), StatusCode::OK);
         let body2 = String::from_utf8(
-            res2.into_body().collect().await.unwrap().to_bytes().to_vec(),
+            res2.into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
         )
         .unwrap();
         assert_eq!(

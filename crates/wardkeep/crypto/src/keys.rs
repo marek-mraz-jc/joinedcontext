@@ -2,14 +2,14 @@
 //! Signing key generation (ES256, RS256, EdDSA), AES-256-GCM encryption at rest under a KEK
 //! read from a file in the secrets mount, rotation, and JWKS publication (W10).
 
-use aws_lc_rs::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
+use aws_lc_rs::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
 use aws_lc_rs::encoding::AsDer;
-use aws_lc_rs::rand::{fill as lc_fill, SystemRandom};
+use aws_lc_rs::rand::{SystemRandom, fill as lc_fill};
 use aws_lc_rs::rsa::{KeyPair as RsaKeyPair, KeySize};
 use aws_lc_rs::signature::{
-    EcdsaKeyPair, Ed25519KeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING,
+    ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, Ed25519KeyPair, KeyPair,
 };
-use base64::engine::{general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -67,12 +67,11 @@ impl Kek {
             if let Ok(decoded) = base64::engine::general_purpose::STANDARD
                 .decode(text)
                 .or_else(|_| URL_SAFE_NO_PAD.decode(text))
+                && decoded.len() == 32
             {
-                if decoded.len() == 32 {
-                    let mut bytes = [0u8; 32];
-                    bytes.copy_from_slice(&decoded);
-                    return Ok(Self { bytes });
-                }
+                let mut bytes = [0u8; 32];
+                bytes.copy_from_slice(&decoded);
+                return Ok(Self { bytes });
             }
         }
         Err(WardkeepError::Crypto(
@@ -93,8 +92,7 @@ impl Kek {
             .map_err(|_| WardkeepError::Crypto("failed to init AES-256-GCM key".into()))?;
         let key = LessSafeKey::new(unbound);
         let mut nonce_bytes = [0u8; 12];
-        lc_fill(&mut nonce_bytes)
-            .map_err(|_| WardkeepError::Crypto("CSPRNG failure".into()))?;
+        lc_fill(&mut nonce_bytes).map_err(|_| WardkeepError::Crypto("CSPRNG failure".into()))?;
         let nonce = Nonce::assume_unique_for_key(nonce_bytes);
         let mut buf = Vec::with_capacity(12 + plaintext.len() + 16);
         buf.extend_from_slice(&nonce_bytes);
@@ -119,7 +117,9 @@ impl Kek {
         let mut in_out = ciphertext[12..].to_vec();
         let plain = key
             .open_in_place(nonce, Aad::from(aad), &mut in_out)
-            .map_err(|_| WardkeepError::Crypto("AES-256-GCM open failed (wrong KEK or AAD)".into()))?;
+            .map_err(|_| {
+                WardkeepError::Crypto("AES-256-GCM open failed (wrong KEK or AAD)".into())
+            })?;
         Ok(plain.to_vec())
     }
 }
@@ -152,7 +152,12 @@ pub struct KeyManager;
 
 impl KeyManager {
     /// Generates an ES256 (P-256) signing key encrypted under `kek` (W10).
-    pub fn generate_es256(realm_id: &str, kek: &Kek, priority: i32, status: &str) -> Result<SigningKeyRecord> {
+    pub fn generate_es256(
+        realm_id: &str,
+        kek: &Kek,
+        priority: i32,
+        status: &str,
+    ) -> Result<SigningKeyRecord> {
         let rng = SystemRandom::new();
         let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
             .map_err(|_| WardkeepError::Crypto("ECDSA P-256 generation failed".into()))?;
@@ -161,7 +166,9 @@ impl KeyManager {
         let pub_bytes = pair.public_key().as_ref();
         // Uncompressed P-256 point: 0x04 || X (32 bytes) || Y (32 bytes)
         if pub_bytes.len() != 65 || pub_bytes[0] != 0x04 {
-            return Err(WardkeepError::Crypto("unexpected P-256 public key format".into()));
+            return Err(WardkeepError::Crypto(
+                "unexpected P-256 public key format".into(),
+            ));
         }
         let x = URL_SAFE_NO_PAD.encode(&pub_bytes[1..33]);
         let y = URL_SAFE_NO_PAD.encode(&pub_bytes[33..65]);
@@ -196,7 +203,12 @@ impl KeyManager {
     }
 
     /// Generates an RS256 signing key via `aws-lc-rs` (W10, for `edge` / lua-resty-openidc).
-    pub fn generate_rs256(realm_id: &str, kek: &Kek, priority: i32, status: &str) -> Result<SigningKeyRecord> {
+    pub fn generate_rs256(
+        realm_id: &str,
+        kek: &Kek,
+        priority: i32,
+        status: &str,
+    ) -> Result<SigningKeyRecord> {
         let priv_key = RsaKeyPair::generate(KeySize::Rsa2048)
             .map_err(|_| WardkeepError::Crypto("RSA key generation failed".into()))?;
         let pkcs8_der = AsDer::<aws_lc_rs::encoding::Pkcs8V1Der<'static>>::as_der(&priv_key)
@@ -235,7 +247,12 @@ impl KeyManager {
     }
 
     /// Generates an EdDSA (Ed25519) signing key via `aws-lc-rs` (W10).
-    pub fn generate_eddsa(realm_id: &str, kek: &Kek, priority: i32, status: &str) -> Result<SigningKeyRecord> {
+    pub fn generate_eddsa(
+        realm_id: &str,
+        kek: &Kek,
+        priority: i32,
+        status: &str,
+    ) -> Result<SigningKeyRecord> {
         let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new())
             .map_err(|_| WardkeepError::Crypto("Ed25519 key generation failed".into()))?;
         let pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref())
@@ -321,7 +338,10 @@ impl KeyManager {
             )?,
         };
         if immediate {
-            for k in existing.iter_mut().filter(|k| k.algorithm == algorithm && k.status == "ACTIVE") {
+            for k in existing
+                .iter_mut()
+                .filter(|k| k.algorithm == algorithm && k.status == "ACTIVE")
+            {
                 k.status = "PASSIVE".into();
                 k.expires_at = Some(now + Duration::seconds(token_ttl_secs.max(300) * 2));
             }

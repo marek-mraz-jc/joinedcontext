@@ -10,12 +10,12 @@ use axum::Router;
 use jc_router::Mount;
 use std::path::PathBuf;
 use std::sync::Arc;
-use wardkeep_admin::{admin_router, odata_router, scim_router, AdminState};
+use wardkeep_admin::{AdminState, admin_router, odata_router, scim_router};
 use wardkeep_core::{Authorizer, LocalAuthorizer, Result, Store};
 use wardkeep_crypto::Kek;
 use wardkeep_login::login_router;
 use wardkeep_mcp::mcp_router;
-use wardkeep_oidc::{oidc_router, OutboundGuard, OidcState};
+use wardkeep_oidc::{OidcState, OutboundGuard, oidc_router};
 use wardkeep_store_memory::MemoryStore;
 
 /// Server state with private key-encryption key and private store pool (W2, W9).
@@ -65,7 +65,6 @@ impl WardkeepState {
 }
 
 /// Builds the complete `wardkeep` Axum [`Router`] for `mount` (W9).
-#[must_use]
 pub fn router(state: WardkeepState, mount: Mount) -> Router {
     let oidc_state = OidcState {
         store: state.store.clone(),
@@ -94,7 +93,9 @@ pub struct ServerConfig {
     pub import_dir: Option<PathBuf>,
 }
 
-pub fn load_realm_files_from_path(path: & std::path::Path) -> Result<Vec<(String, serde_json::Value)>> {
+pub fn load_realm_files_from_path(
+    path: &std::path::Path,
+) -> Result<Vec<(String, serde_json::Value)>> {
     let mut out = Vec::new();
     if path.is_file() {
         let name = path
@@ -112,21 +113,20 @@ pub fn load_realm_files_from_path(path: & std::path::Path) -> Result<Vec<(String
             .map_err(|e| wardkeep_core::WardkeepError::BadRequest(e.to_string()))?;
         for entry in entries.flatten() {
             let p = entry.path();
-            if p.is_file() {
-                if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-                    if matches!(ext, "json" | "yaml" | "yml") {
-                        let name = p
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("realm.json")
-                            .to_owned();
-                        let raw = std::fs::read_to_string(&p)
-                            .map_err(|e| wardkeep_core::WardkeepError::BadRequest(e.to_string()))?;
-                        let val: serde_json::Value = serde_json::from_str(&raw)
-                            .map_err(|e| wardkeep_core::WardkeepError::BadRequest(e.to_string()))?;
-                        out.push((name, val));
-                    }
-                }
+            if p.is_file()
+                && let Some(ext) = p.extension().and_then(|e| e.to_str())
+                && matches!(ext, "json" | "yaml" | "yml")
+            {
+                let name = p
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("realm.json")
+                    .to_owned();
+                let raw = std::fs::read_to_string(&p)
+                    .map_err(|e| wardkeep_core::WardkeepError::BadRequest(e.to_string()))?;
+                let val: serde_json::Value = serde_json::from_str(&raw)
+                    .map_err(|e| wardkeep_core::WardkeepError::BadRequest(e.to_string()))?;
+                out.push((name, val));
             }
         }
     }

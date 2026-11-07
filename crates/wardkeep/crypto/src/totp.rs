@@ -4,9 +4,9 @@
 
 use crate::{constant_time_str_eq, sha256_hex};
 use hmac::{Hmac, KeyInit, Mac};
+use rand::Rng as _;
 use serde::Deserialize;
 use sha1::Sha1;
-use rand::Rng as _;
 use sha2::{Sha256, Sha512};
 use wardkeep_core::{CredentialRecord, Result, WardkeepError};
 
@@ -180,11 +180,14 @@ mod tests {
         let cred = CredentialRecord {
             credential_type: "otp".into(),
             secret_data: r#"{"value":"my-test-journey-seed-12345"}"#.into(),
-            credential_data: r#"{"subType":"totp","digits":6,"counter":0,"period":30,"algorithm":"HmacSHA256"}"#.into(),
+            credential_data:
+                r#"{"subType":"totp","digits":6,"counter":0,"period":30,"algorithm":"HmacSHA256"}"#
+                    .into(),
             ..Default::default()
         };
         let now = 1_700_000_000u64;
-        let code = generate_totp_code("my-test-journey-seed-12345", 6, 30, "HmacSHA256", now).unwrap();
+        let code =
+            generate_totp_code("my-test-journey-seed-12345", 6, 30, "HmacSHA256", now).unwrap();
         assert_eq!(code.len(), 6);
         let step = verify_totp_code(&cred, &code, 1, now + 15).unwrap();
         assert_eq!(step, Some(now / 30));

@@ -7,19 +7,19 @@
 //! never 403.
 
 use axum::extract::{Path, Query, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
 use chrono::Utc;
 use jc_router::Mount;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use wardkeep_core::*;
 use wardkeep_crypto::{random_handle_256, verify_jwt};
-use wardkeep_oidc::{dispatch_backchannel_logout, OidcState};
+use wardkeep_oidc::{OidcState, dispatch_backchannel_logout};
 
 #[derive(Clone)]
 pub struct AdminState {
@@ -203,9 +203,15 @@ pub fn admin_router(state: AdminState) -> Router {
             delete(compat_clear_brute_force),
         )
         // Native registry-driven REST endpoints (`/api/v1/realms/{realm}/...`, W5)
-        .route("/api/v1/realms/{realm}/operations", get(native_list_operations))
+        .route(
+            "/api/v1/realms/{realm}/operations",
+            get(native_list_operations),
+        )
         .route("/api/v1/realms/{realm}/allowed", get(native_check_allowed))
-        .route("/api/v1/realms/{realm}/keys/rotate", post(native_rotate_keys))
+        .route(
+            "/api/v1/realms/{realm}/keys/rotate",
+            post(native_rotate_keys),
+        )
         .with_state(state)
 }
 
@@ -229,11 +235,11 @@ pub async fn extract_admin_ctx(
     for candidate_realm in [realm_id, "master"] {
         if let Ok(keys) = state.oidc.store.list_signing_keys(candidate_realm).await {
             let issuer = mount.realm_issuer(candidate_realm);
-            if let Ok((_, claims)) = verify_jwt::<Value>(raw_token, &keys, Some(&issuer), None) {
-                if claims.get("typ").and_then(Value::as_str) == Some("Bearer") {
-                    verified_claims = Some(claims);
-                    break;
-                }
+            if let Ok((_, claims)) = verify_jwt::<Value>(raw_token, &keys, Some(&issuer), None)
+                && claims.get("typ").and_then(Value::as_str) == Some("Bearer")
+            {
+                verified_claims = Some(claims);
+                break;
             }
         }
     }
@@ -241,14 +247,8 @@ pub async fn extract_admin_ctx(
     let claims = verified_claims
         .ok_or_else(|| WardkeepError::Unauthorized("invalid admin bearer token".into()))?;
 
-    let sub = claims
-        .get("sub")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let azp = claims
-        .get("azp")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
+    let sub = claims.get("sub").and_then(Value::as_str).map(str::to_owned);
+    let azp = claims.get("azp").and_then(Value::as_str).map(str::to_owned);
 
     let mut realm_roles: Vec<String> = claims
         .pointer("/realm_access/roles")
@@ -311,10 +311,10 @@ pub async fn extract_admin_ctx(
                         }
                     }
                 }
-                if let Some(u_org) = u.org_id {
-                    if !organizations.contains(&u_org) {
-                        organizations.push(u_org);
-                    }
+                if let Some(u_org) = u.org_id
+                    && !organizations.contains(&u_org)
+                {
+                    organizations.push(u_org);
                 }
             }
         }
@@ -549,7 +549,7 @@ async fn compat_partial_import(
                 return Err(WardkeepError::Conflict(format!(
                     "partialImport FAIL: user {} already exists",
                     u.username
-                )))
+                )));
             }
             (Some(_), "SKIP") => {
                 skipped += 1;
@@ -570,7 +570,7 @@ async fn compat_partial_import(
             _ => {
                 return Err(WardkeepError::BadRequest(format!(
                     "invalid ifResourceExists: {mode}"
-                )))
+                )));
             }
         }
     }
@@ -1392,10 +1392,10 @@ async fn compat_create_group(
     if group.org_id.is_none() {
         group.org_id = ctx.active_org_id.clone();
     }
-    if let Some(vals) = group.attributes.get("managed-by") {
-        if let Some(first) = vals.first() {
-            group.managed_by = Some(first.clone());
-        }
+    if let Some(vals) = group.attributes.get("managed-by")
+        && let Some(first) = vals.first()
+    {
+        group.managed_by = Some(first.clone());
     }
     check_decision(state.authorizer.check(
         &ctx,
@@ -1487,10 +1487,10 @@ async fn compat_update_group(
     if group.org_id.is_none() {
         group.org_id = existing.org_id;
     }
-    if let Some(vals) = group.attributes.get("managed-by") {
-        if let Some(first) = vals.first() {
-            group.managed_by = Some(first.clone());
-        }
+    if let Some(vals) = group.attributes.get("managed-by")
+        && let Some(first) = vals.first()
+    {
+        group.managed_by = Some(first.clone());
     }
     let updated = state.oidc.store.upsert_group(group).await?;
     record_admin_write(
@@ -1535,7 +1535,15 @@ async fn compat_delete_group(
         .store
         .delete_group(&realm, allowed.as_deref(), &id)
         .await?;
-    record_admin_write(&state, &ctx, "DELETE", "GROUP", &format!("groups/{id}"), None).await?;
+    record_admin_write(
+        &state,
+        &ctx,
+        "DELETE",
+        "GROUP",
+        &format!("groups/{id}"),
+        None,
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1950,7 +1958,15 @@ async fn compat_delete_client(
         .store
         .delete_client(&realm, allowed.as_deref(), &uuid)
         .await?;
-    record_admin_write(&state, &ctx, "DELETE", "CLIENT", &format!("clients/{uuid}"), None).await?;
+    record_admin_write(
+        &state,
+        &ctx,
+        "DELETE",
+        "CLIENT",
+        &format!("clients/{uuid}"),
+        None,
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -2839,7 +2855,10 @@ async fn native_check_allowed(
                 found.is_some(),
                 ObjectTarget::Group {
                     realm_id: realm,
-                    org_id: found.as_ref().and_then(|g| g.org_id.clone()).or(ctx.active_org_id.clone()),
+                    org_id: found
+                        .as_ref()
+                        .and_then(|g| g.org_id.clone())
+                        .or(ctx.active_org_id.clone()),
                     group_id: gid.to_owned(),
                     managed_by: found.and_then(|g| g.managed_by),
                 },
@@ -2855,18 +2874,16 @@ async fn native_check_allowed(
                 found.is_some(),
                 ObjectTarget::Application {
                     realm_id: realm,
-                    org_id: found.as_ref().and_then(|c| c.org_id.clone()).or(ctx.active_org_id.clone()),
+                    org_id: found
+                        .as_ref()
+                        .and_then(|c| c.org_id.clone())
+                        .or(ctx.active_org_id.clone()),
                     client_id: uuid.to_owned(),
                     managed_by: found.and_then(|c| c.managed_by),
                 },
             )
         }
-        _ => (
-            true,
-            ObjectTarget::Realm {
-                realm_id: realm,
-            },
-        ),
+        _ => (true, ObjectTarget::Realm { realm_id: realm }),
     };
 
     if id.is_some() && !exists_and_visible {

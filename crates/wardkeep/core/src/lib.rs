@@ -11,9 +11,11 @@ pub mod odata_defs;
 pub mod ops;
 pub mod store;
 
-pub use authz::{Action, Authorizer, Decision, LocalAuthorizer, ObjectTarget, Principal, RequestCtx};
+pub use authz::{
+    Action, Authorizer, Decision, LocalAuthorizer, ObjectTarget, Principal, RequestCtx,
+};
 pub use branding::{BrandingBlock, Colours, Fonts, Languages};
-pub use claims::{evaluate_mappers, known_mapper_kinds, MapperContext, TokenKind};
+pub use claims::{MapperContext, TokenKind, evaluate_mappers, known_mapper_kinds};
 pub use error::{OAuthErrorResponse, ProblemDetails, Result, WardkeepError};
 pub use model::*;
 pub use odata_defs::{scope_for_context, wardkeep_odata_service};

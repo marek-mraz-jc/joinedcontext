@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
 use wardkeep_core::{Result, RevokedTokenRecord, SmtpServerConfig, Store, WardkeepError};
-use wardkeep_crypto::{ Kek, sha256_hex, sign_jwt, verify_jwt};
+use wardkeep_crypto::{Kek, sha256_hex, sign_jwt, verify_jwt};
 
 /// Action token lifespan: 15 minutes, single-use (W7).
 pub const ACTION_TOKEN_TTL_SECS: i64 = 15 * 60;
@@ -53,6 +53,7 @@ impl EmailSender {
     }
 
     /// Mints a signed, single-use 15-minute action token (W7).
+    #[allow(clippy::too_many_arguments)]
     pub async fn mint_action_token(
         store: &Arc<dyn Store>,
         kek: &Kek,
@@ -110,18 +111,82 @@ impl EmailSender {
         Ok(claims)
     }
 
-    /// Builds a localized action e-mail message using `lettre` (W7).
+    /// Builds a localized action e-mail as `(subject, body)` (W7).
     pub fn build_localized_email(
         &self,
         to_address: &str,
         locale: &str,
         action_link: &str,
     ) -> Result<(String, String)> {
+        to_address
+            .parse::<lettre::Address>()
+            .map_err(|_| WardkeepError::BadRequest("invalid recipient address".into()))?;
         let bundle = Bundle::for_locale(locale);
         let subject = bundle.get("emailForgotTitle").to_owned();
         let body = format!("{}\n\n{action_link}", bundle.get("emailSentMessage"));
-        let _ = to_address;
         Ok((subject, body))
+    }
+
+    /// Builds the `lettre` message for `to_address` from the realm `from` address.
+    pub fn build_message(
+        &self,
+        to_address: &str,
+        subject: &str,
+        body: String,
+    ) -> Result<lettre::Message> {
+        let smtp = self
+            .smtp
+            .as_ref()
+            .ok_or_else(|| WardkeepError::BadRequest("SMTP is not configured".into()))?;
+        let from = smtp
+            .from
+            .parse::<lettre::message::Mailbox>()
+            .map_err(|_| WardkeepError::BadRequest("invalid SMTP from address".into()))?;
+        let to = to_address
+            .parse::<lettre::message::Mailbox>()
+            .map_err(|_| WardkeepError::BadRequest("invalid recipient address".into()))?;
+        lettre::Message::builder()
+            .from(from)
+            .to(to)
+            .subject(subject)
+            .header(lettre::message::header::ContentType::TEXT_PLAIN)
+            .body(body)
+            .map_err(|_| WardkeepError::BadRequest("cannot build e-mail".into()))
+    }
+
+    /// Sends `message` over SMTP with TLS (implicit TLS when `ssl`, otherwise STARTTLS) (W7).
+    /// The error never carries the SMTP password or the server's reply text.
+    pub async fn send(&self, message: lettre::Message) -> Result<()> {
+        use lettre::AsyncTransport as _;
+        let smtp = self
+            .smtp
+            .as_ref()
+            .ok_or_else(|| WardkeepError::BadRequest("SMTP is not configured".into()))?;
+        let port: u16 = smtp
+            .port
+            .parse()
+            .map_err(|_| WardkeepError::BadRequest("invalid SMTP port".into()))?;
+        let builder = if smtp.ssl == "true" {
+            lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::relay(&smtp.host)
+        } else {
+            lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::starttls_relay(&smtp.host)
+        }
+        .map_err(|_| WardkeepError::BadRequest("invalid SMTP host".into()))?
+        .port(port);
+        let builder = if smtp.auth == "true" {
+            builder.credentials(lettre::transport::smtp::authentication::Credentials::new(
+                smtp.user.clone(),
+                smtp.password.clone(),
+            ))
+        } else {
+            builder
+        };
+        builder
+            .build()
+            .send(message)
+            .await
+            .map(|_| ())
+            .map_err(|_| WardkeepError::Storage("SMTP delivery failed".into()))
     }
 }
 
@@ -129,6 +194,60 @@ impl EmailSender {
 mod tests {
     use super::*;
     use wardkeep_store_memory::MemoryStore;
+
+    #[test]
+    fn from_secret_mount_reads_password_file_and_requires_tls() {
+        let dir = std::env::temp_dir().join(format!("wk-smtp-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pw = dir.join("password");
+        std::fs::write(&pw, "s3cret\n").unwrap();
+        let cfg = SmtpServerConfig {
+            host: "smtp.example.org".into(),
+            from: "idm@example.org".into(),
+            ..SmtpServerConfig::default()
+        };
+        let sender = EmailSender::from_secret_mount(cfg.clone(), &pw).unwrap();
+        assert_eq!(sender.smtp.as_ref().unwrap().password, "s3cret");
+        let msg = sender
+            .build_message("anna@example.org", "subject", "body".into())
+            .unwrap();
+        let raw = String::from_utf8(msg.formatted()).unwrap();
+        assert!(raw.contains("To: anna@example.org"));
+        assert!(!raw.contains("s3cret"));
+
+        let plain = SmtpServerConfig {
+            starttls: "false".into(),
+            ssl: "false".into(),
+            ..cfg
+        };
+        assert!(EmailSender::from_secret_mount(plain, &pw).is_err());
+        let missing = dir.join("absent");
+        let err = EmailSender::from_secret_mount(SmtpServerConfig::default(), &missing)
+            .err()
+            .unwrap();
+        assert!(!err.to_string().contains("s3cret"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn unconfigured_sender_refuses_to_send_and_rejects_bad_addresses() {
+        let sender = EmailSender::default();
+        assert!(
+            sender
+                .build_message("a@example.org", "s", "b".into())
+                .is_err()
+        );
+        assert!(
+            sender
+                .build_localized_email("not an address", "en", "https://x")
+                .is_err()
+        );
+        let (subject, body) = sender
+            .build_localized_email("a@example.org", "en", "https://idm/link")
+            .unwrap();
+        assert!(!subject.is_empty());
+        assert!(body.ends_with("https://idm/link"));
+    }
 
     #[tokio::test]
     async fn signed_action_link_is_single_use_and_15_minutes_by_default() {
@@ -183,13 +302,15 @@ mod tests {
         assert_eq!(claims.exp - claims.iat, 900);
 
         // Second use is refused
-        assert!(EmailSender::consume_action_token(
-            &store_arc,
-            "dev",
-            "https://idm.example.test/realms/dev",
-            &token
-        )
-        .await
-        .is_err());
+        assert!(
+            EmailSender::consume_action_token(
+                &store_arc,
+                "dev",
+                "https://idm.example.test/realms/dev",
+                &token
+            )
+            .await
+            .is_err()
+        );
     }
 }

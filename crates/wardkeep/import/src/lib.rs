@@ -325,11 +325,7 @@ fn sha256_json(val: &Value) -> String {
 /// Resolves `$(env:NAME)`, `$(NAME)`, and `$(file:/path)` in a secret field (W1b).
 /// Refuses literal secrets unless `opts.allow_literal_secrets` is true, and refuses `$(file:...)`
 /// outside `opts.secrets_dir`.
-fn resolve_secret_value(
-    raw: &str,
-    field_path: &str,
-    opts: &ApplyOptions,
-) -> Result<String> {
+fn resolve_secret_value(raw: &str, field_path: &str, opts: &ApplyOptions) -> Result<String> {
     let trimmed = raw.trim();
     if let Some(inner) = trimmed.strip_prefix("$(").and_then(|s| s.strip_suffix(')')) {
         if let Some(file_path) = inner.strip_prefix("file:") {
@@ -415,9 +411,9 @@ pub fn merge_realm_files(files: &[(String, Value)]) -> Result<Value> {
     sorted.sort_by(|a, b| a.0.cmp(&b.0));
     let mut merged = Map::new();
     for (_, doc) in sorted {
-        let obj = doc
-            .as_object()
-            .ok_or_else(|| WardkeepError::BadRequest("realm file must be a JSON/YAML object".into()))?;
+        let obj = doc.as_object().ok_or_else(|| {
+            WardkeepError::BadRequest("realm file must be a JSON/YAML object".into())
+        })?;
         for (k, v) in obj {
             match (merged.get_mut(k), v) {
                 (Some(Value::Array(existing)), Value::Array(more)) => {
@@ -483,10 +479,9 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
 
     if let Some(scopes) = obj.get("clientScopes").and_then(Value::as_array) {
         for (i, sc) in scopes.iter().enumerate() {
-            let name = sc
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or_else(|| WardkeepError::BadRequest(format!("$.clientScopes[{i}].name missing")))?;
+            let name = sc.get("name").and_then(Value::as_str).ok_or_else(|| {
+                WardkeepError::BadRequest(format!("$.clientScopes[{i}].name missing"))
+            })?;
             known_scopes.insert(name.to_owned());
             if let Some(mappers) = sc.get("protocolMappers").and_then(Value::as_array) {
                 for (mi, m) in mappers.iter().enumerate() {
@@ -504,7 +499,10 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
         }
     }
 
-    if let Some(def_opt) = obj.get("defaultOptionalClientScopes").and_then(Value::as_array) {
+    if let Some(def_opt) = obj
+        .get("defaultOptionalClientScopes")
+        .and_then(Value::as_array)
+    {
         for (i, s) in def_opt.iter().enumerate() {
             let name = s.as_str().unwrap_or_default();
             if !known_scopes.contains(name) {
@@ -525,12 +523,15 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
     .map(str::to_owned)
     .collect();
 
-    if let Some(realm_roles) = obj.get("roles").and_then(|r| r.get("realm")).and_then(Value::as_array) {
+    if let Some(realm_roles) = obj
+        .get("roles")
+        .and_then(|r| r.get("realm"))
+        .and_then(Value::as_array)
+    {
         for (i, r) in realm_roles.iter().enumerate() {
-            let name = r
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or_else(|| WardkeepError::BadRequest(format!("$.roles.realm[{i}].name missing")))?;
+            let name = r.get("name").and_then(Value::as_str).ok_or_else(|| {
+                WardkeepError::BadRequest(format!("$.roles.realm[{i}].name missing"))
+            })?;
             known_realm_roles.insert(name.to_owned());
         }
         for (i, r) in realm_roles.iter().enumerate() {
@@ -579,26 +580,24 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
     let mut known_idps: BTreeSet<String> = BTreeSet::new();
     if let Some(idps) = obj.get("identityProviders").and_then(Value::as_array) {
         for (i, idp) in idps.iter().enumerate() {
-            let alias = idp
-                .get("alias")
-                .and_then(Value::as_str)
-                .ok_or_else(|| WardkeepError::BadRequest(format!("$.identityProviders[{i}].alias missing")))?;
+            let alias = idp.get("alias").and_then(Value::as_str).ok_or_else(|| {
+                WardkeepError::BadRequest(format!("$.identityProviders[{i}].alias missing"))
+            })?;
             known_idps.insert(alias.to_owned());
         }
     }
 
-    if let Some(smtp) = obj.get("smtpServer").and_then(Value::as_object) {
-        if let Some(pw) = smtp.get("password").and_then(Value::as_str) {
-            let _ = resolve_secret_value(pw, "$.smtpServer.password", opts)?;
-        }
+    if let Some(smtp) = obj.get("smtpServer").and_then(Value::as_object)
+        && let Some(pw) = smtp.get("password").and_then(Value::as_str)
+    {
+        let _ = resolve_secret_value(pw, "$.smtpServer.password", opts)?;
     }
 
     if let Some(clients) = obj.get("clients").and_then(Value::as_array) {
         for (i, c) in clients.iter().enumerate() {
-            let cid = c
-                .get("clientId")
-                .and_then(Value::as_str)
-                .ok_or_else(|| WardkeepError::BadRequest(format!("$.clients[{i}].clientId missing")))?;
+            let cid = c.get("clientId").and_then(Value::as_str).ok_or_else(|| {
+                WardkeepError::BadRequest(format!("$.clients[{i}].clientId missing"))
+            })?;
             // Policy: no implicit flow
             if c.get("implicitFlowEnabled").and_then(Value::as_bool) == Some(true) {
                 return Err(WardkeepError::BadRequest(format!(
@@ -606,8 +605,14 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
                 )));
             }
             // Policy: PKCE S256 on public browser clients
-            let is_public = c.get("publicClient").and_then(Value::as_bool).unwrap_or(false);
-            let is_std = c.get("standardFlowEnabled").and_then(Value::as_bool).unwrap_or(true);
+            let is_public = c
+                .get("publicClient")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let is_std = c
+                .get("standardFlowEnabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
             if is_public && is_std {
                 let pkce = c
                     .pointer("/attributes/pkce.code.challenge.method")
@@ -637,12 +642,11 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
             if let Some(fed_iss) = c
                 .pointer("/attributes/jwt.credential.issuer")
                 .and_then(Value::as_str)
+                && !known_idps.contains(fed_iss)
             {
-                if !known_idps.contains(fed_iss) {
-                    return Err(WardkeepError::BadRequest(format!(
-                        "$.clients[{i}].attributes['jwt.credential.issuer']: dangling reference to IdP '{fed_iss}'"
-                    )));
-                }
+                return Err(WardkeepError::BadRequest(format!(
+                    "$.clients[{i}].attributes['jwt.credential.issuer']: dangling reference to IdP '{fed_iss}'"
+                )));
             }
             for field in ["defaultClientScopes", "optionalClientScopes"] {
                 if let Some(sc_list) = c.get(field).and_then(Value::as_array) {
@@ -735,21 +739,24 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
                     "$.authenticationFlows[{fi}].alias: unmappable authentication flow '{alias}'"
                 )));
             }
-            if let Some(execs) = flow.get("authenticationExecutions").and_then(Value::as_array) {
+            if let Some(execs) = flow
+                .get("authenticationExecutions")
+                .and_then(Value::as_array)
+            {
                 for (ei, ex) in execs.iter().enumerate() {
-                    if let Some(auth) = ex.get("authenticator").and_then(Value::as_str) {
-                        if !KNOWN_AUTHENTICATORS.contains(&auth) {
-                            return Err(WardkeepError::BadRequest(format!(
-                                "$.authenticationFlows[{fi}].authenticationExecutions[{ei}].authenticator: unknown authenticator '{auth}'"
-                            )));
-                        }
+                    if let Some(auth) = ex.get("authenticator").and_then(Value::as_str)
+                        && !KNOWN_AUTHENTICATORS.contains(&auth)
+                    {
+                        return Err(WardkeepError::BadRequest(format!(
+                            "$.authenticationFlows[{fi}].authenticationExecutions[{ei}].authenticator: unknown authenticator '{auth}'"
+                        )));
                     }
-                    if let Some(cfg_alias) = ex.get("authenticatorConfig").and_then(Value::as_str) {
-                        if !known_auth_configs.contains(cfg_alias) {
-                            return Err(WardkeepError::BadRequest(format!(
-                                "$.authenticationFlows[{fi}].authenticationExecutions[{ei}].authenticatorConfig: dangling reference '{cfg_alias}'"
-                            )));
-                        }
+                    if let Some(cfg_alias) = ex.get("authenticatorConfig").and_then(Value::as_str)
+                        && !known_auth_configs.contains(cfg_alias)
+                    {
+                        return Err(WardkeepError::BadRequest(format!(
+                            "$.authenticationFlows[{fi}].authenticationExecutions[{ei}].authenticatorConfig: dangling reference '{cfg_alias}'"
+                        )));
                     }
                 }
             }
@@ -827,9 +834,10 @@ pub async fn apply_realm_files(
 
     let realm_action = match &existing_realm {
         None => ChangeAction::Create,
-        Some(prev) if prev.display_name == realm_cfg.display_name
-            && prev.access_token_lifespan == realm_cfg.access_token_lifespan
-            && prev.password_policy == realm_cfg.password_policy =>
+        Some(prev)
+            if prev.display_name == realm_cfg.display_name
+                && prev.access_token_lifespan == realm_cfg.access_token_lifespan
+                && prev.password_policy == realm_cfg.password_policy =>
         {
             ChangeAction::Unchanged
         }
@@ -850,8 +858,8 @@ pub async fn apply_realm_files(
     let mut file_scope_names = BTreeSet::new();
     if let Some(scopes) = obj.get("clientScopes").and_then(Value::as_array) {
         for sc_val in scopes {
-            let mut sc: ClientScopeRepresentation =
-                serde_json::from_value(sc_val.clone()).map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
+            let mut sc: ClientScopeRepresentation = serde_json::from_value(sc_val.clone())
+                .map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
             sc.realm_id = realm_id.clone();
             sc.managed_by = Some("apply".into());
             file_scope_names.insert(sc.name.clone());
@@ -875,10 +883,9 @@ pub async fn apply_realm_files(
         }
     }
     if opts.mode == ApplyMode::Full {
-        for old in existing_scopes
-            .iter()
-            .filter(|s| s.managed_by.as_deref() == Some("apply") && !file_scope_names.contains(&s.name))
-        {
+        for old in existing_scopes.iter().filter(|s| {
+            s.managed_by.as_deref() == Some("apply") && !file_scope_names.contains(&s.name)
+        }) {
             changes.push(ObjectChange {
                 kind: "ClientScope".into(),
                 id: old.name.clone(),
@@ -894,10 +901,14 @@ pub async fn apply_realm_files(
     // 3. Roles (`roles.realm`)
     let existing_roles = store.list_roles(&realm_id, None).await?;
     let mut file_role_names = BTreeSet::new();
-    if let Some(r_arr) = obj.get("roles").and_then(|r| r.get("realm")).and_then(Value::as_array) {
+    if let Some(r_arr) = obj
+        .get("roles")
+        .and_then(|r| r.get("realm"))
+        .and_then(Value::as_array)
+    {
         for r_val in r_arr {
-            let mut role: RoleRepresentation =
-                serde_json::from_value(r_val.clone()).map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
+            let mut role: RoleRepresentation = serde_json::from_value(r_val.clone())
+                .map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
             role.realm_id = realm_id.clone();
             role.managed_by = Some("apply".into());
             file_role_names.insert(role.name.clone());
@@ -921,10 +932,9 @@ pub async fn apply_realm_files(
         }
     }
     if opts.mode == ApplyMode::Full {
-        for old in existing_roles
-            .iter()
-            .filter(|r| r.managed_by.as_deref() == Some("apply") && !file_role_names.contains(&r.name))
-        {
+        for old in existing_roles.iter().filter(|r| {
+            r.managed_by.as_deref() == Some("apply") && !file_role_names.contains(&r.name)
+        }) {
             changes.push(ObjectChange {
                 kind: "Role".into(),
                 id: old.name.clone(),
@@ -941,8 +951,8 @@ pub async fn apply_realm_files(
     let mut file_group_paths = BTreeSet::new();
     if let Some(g_arr) = obj.get("groups").and_then(Value::as_array) {
         for g_val in g_arr {
-            let mut grp: GroupRepresentation =
-                serde_json::from_value(g_val.clone()).map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
+            let mut grp: GroupRepresentation = serde_json::from_value(g_val.clone())
+                .map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
             grp.realm_id = realm_id.clone();
             grp.managed_by = Some("apply".into());
             for sub in &mut grp.sub_groups {
@@ -972,7 +982,8 @@ pub async fn apply_realm_files(
     if let Some(idps) = obj.get("identityProviders").and_then(Value::as_array) {
         for idp_val in idps {
             let mut idp: IdentityProviderRepresentation =
-                serde_json::from_value(idp_val.clone()).map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
+                serde_json::from_value(idp_val.clone())
+                    .map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
             idp.realm_id = realm_id.clone();
             idp.managed_by = Some("apply".into());
             let prev = store.get_idp(&realm_id, &idp.alias).await?;
@@ -1000,8 +1011,8 @@ pub async fn apply_realm_files(
     let mut file_client_ids = BTreeSet::new();
     if let Some(c_arr) = obj.get("clients").and_then(Value::as_array) {
         for c_val in c_arr {
-            let mut client: ClientRepresentation =
-                serde_json::from_value(c_val.clone()).map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
+            let mut client: ClientRepresentation = serde_json::from_value(c_val.clone())
+                .map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
             client.realm_id = realm_id.clone();
             if client.managed_by.is_none() {
                 client.managed_by = Some("apply".into());
@@ -1057,8 +1068,8 @@ pub async fn apply_realm_files(
     // 7. Users & Credentials
     if let Some(u_arr) = obj.get("users").and_then(Value::as_array) {
         for u_val in u_arr {
-            let mut user: UserRepresentation =
-                serde_json::from_value(u_val.clone()).map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
+            let mut user: UserRepresentation = serde_json::from_value(u_val.clone())
+                .map_err(|e| WardkeepError::BadRequest(e.to_string()))?;
             user.realm_id = realm_id.clone();
             if user.managed_by.is_none() {
                 user.managed_by = Some("apply".into());
@@ -1078,10 +1089,10 @@ pub async fn apply_realm_files(
                 }
                 Some(_) => ChangeAction::Update,
             };
-            if let Some(p) = &prev {
-                if user.id.is_empty() {
-                    user.id = p.id.clone();
-                }
+            if let Some(p) = &prev
+                && user.id.is_empty()
+            {
+                user.id = p.id.clone();
             }
             changes.push(ObjectChange {
                 kind: "User".into(),
@@ -1209,7 +1220,10 @@ pub async fn apply_realm_files(
 
     // Record one AdminEvent per changed object with the apply's file checksum as the cause (W1b)
     if !opts.dry_run {
-        for ch in changes.iter().filter(|c| c.action != ChangeAction::Unchanged) {
+        for ch in changes
+            .iter()
+            .filter(|c| c.action != ChangeAction::Unchanged)
+        {
             store
                 .append_admin_event(AdminEvent {
                     id: uuid::Uuid::now_v7().to_string(),
@@ -1306,7 +1320,8 @@ pub async fn export_realm(
     let groups = store.list_groups(realm_id, None, None, false).await?;
     let idps = store.list_idps(realm_id).await?;
 
-    let mut out = serde_json::to_value(&realm).map_err(|e| WardkeepError::Storage(e.to_string()))?;
+    let mut out =
+        serde_json::to_value(&realm).map_err(|e| WardkeepError::Storage(e.to_string()))?;
     if let Value::Object(ref mut map) = out {
         map.remove("applyChecksum");
         map.insert(
@@ -1317,10 +1332,7 @@ pub async fn export_realm(
             "clients".into(),
             serde_json::to_value(&clients).unwrap_or(Value::Array(Vec::new())),
         );
-        map.insert(
-            "roles".into(),
-            serde_json::json!({ "realm": roles }),
-        );
+        map.insert("roles".into(), serde_json::json!({ "realm": roles }));
         map.insert(
             "groups".into(),
             serde_json::to_value(&groups).unwrap_or(Value::Array(Vec::new())),
