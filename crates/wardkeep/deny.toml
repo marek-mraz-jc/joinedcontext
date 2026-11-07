@@ -1,0 +1,32 @@
+# W10: cargo-deny bans for wardkeep
+[advisories]
+version = 2
+ignore = []
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "ISC",
+    "BSD-3-Clause",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "EUPL-1.2",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = [
+    { name = "openssl", reason = "W10: openssl is banned; use rustls and aws-lc-rs" },
+    { name = "openssl-sys", reason = "W10: openssl-sys is banned; use rustls and aws-lc-rs" },
+    { name = "boring", reason = "W10: boring is banned; RUSTSEC-2026-0141" },
+    { name = "boring-sys", reason = "W10: boring-sys is banned" },
+    { name = "rsa", reason = "W10: RUSTSEC-2023-0071 Marvin timing side-channel has no fix; use aws-lc-rs for RSA" },
+    { name = "tower-sessions", reason = "W10: pinned to sqlx 0.8; wardkeep uses its own session tables" },
+    { name = "tower-sessions-sqlx-store", reason = "W10: pinned to sqlx 0.8" },
+    { name = "axum-login", reason = "W10: pinned to tower-sessions 0.14" },
+    { name = "oxide-auth", reason = "W10: stale OP library" },
+    { name = "josekit", reason = "W10: mandatory openssl dependency" },
+]

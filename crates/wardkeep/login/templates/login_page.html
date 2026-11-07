@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}" dir="ltr">
+<head>
+    <meta charset="utf-8">
+    <meta name="color-scheme" content="light">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ page_title }} · {{ org_display }}</title>
+    <style nonce="{{ csp_nonce }}">
+        {{ branding_css|safe }}
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: var(--jc-background);
+            color: var(--jc-text);
+            font-family: var(--jc-font-body);
+            line-height: 1.5;
+        }
+        .pf-v5-c-login {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+        .pf-v5-c-login__container {
+            width: 100%;
+            max-width: 25rem;
+        }
+        #kc-header-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1.25rem;
+            font-family: var(--jc-font-heading);
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+        .pf-v5-c-login__main {
+            background: var(--jc-background);
+            border: 1px solid #cbd5e1;
+            border-top: 4px solid var(--jc-primary);
+            border-radius: 0.375rem;
+            padding: 1.5rem;
+        }
+        .jc-context {
+            margin: 0 0 0.25rem;
+            font-size: 0.875rem;
+        }
+        #kc-page-title {
+            margin: 0 0 1rem;
+            font-family: var(--jc-font-heading);
+            font-size: 1.5rem;
+            overflow-wrap: anywhere;
+        }
+        .kc-alert {
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+            border: 1px solid #b91c1c;
+            border-radius: 0.25rem;
+            color: #991b1b;
+            background: #fef2f2;
+        }
+        .kc-form-group {
+            margin-bottom: 1rem;
+        }
+        .kc-form-label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+        .kc-input {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            font-size: 1rem;
+            border: 1px solid #64748b;
+            border-radius: 0.25rem;
+            color: var(--jc-text);
+            background: var(--jc-background);
+        }
+        .kc-field-hint {
+            font-size: 0.8125rem;
+            margin-top: 0.25rem;
+            color: var(--jc-text);
+        }
+        .kc-field-error {
+            font-size: 0.8125rem;
+            margin-top: 0.25rem;
+            color: #991b1b;
+        }
+        .pf-v5-c-button {
+            display: inline-block;
+            width: 100%;
+            padding: 0.625rem 1rem;
+            font-size: 1rem;
+            font-weight: 600;
+            text-align: center;
+            border: none;
+            border-radius: 0.25rem;
+            background: var(--jc-primary);
+            color: var(--jc-primary-fg);
+            cursor: pointer;
+            text-decoration: none;
+        }
+        a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible {
+            outline: 3px solid var(--jc-primary);
+            outline-offset: 2px;
+        }
+    </style>
+</head>
+<body id="keycloak-bg" data-page-id="login-{{ page_id }}">
+<div class="pf-v5-c-login">
+    <div class="pf-v5-c-login__container">
+        <header id="kc-header" class="pf-v5-c-login__header">
+            <div id="kc-header-wrapper" class="pf-v5-c-brand">
+                <span class="jc-org">{{ org_display }}</span>
+            </div>
+        </header>
+        <main class="pf-v5-c-login__main">
+            <div class="pf-v5-c-login__main-header">
+                <div class="jc-heading">
+                    {% if !app_context.is_empty() %}
+                    <p class="jc-context" id="jc-context">{{ app_context }}</p>
+                    {% endif %}
+                    <h1 id="kc-page-title">{{ heading_text }}</h1>
+                </div>
+            </div>
+            <div class="pf-v5-c-login__main-body">
+                {% if !alert_message.is_empty() %}
+                <div class="kc-alert" role="alert">
+                    <span class="kc-feedback-text">{{ alert_message }}</span>
+                </div>
+                {% endif %}
+                {% if !instruction_text.is_empty() %}
+                <p class="instruction" id="instruction1">{{ instruction_text }}</p>
+                {% endif %}
+                {% if show_form %}
+                <form id="kc-form-login" action="{{ form_action }}" method="post" novalidate="novalidate">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
+                    <input type="hidden" name="session_code" value="{{ session_code }}"/>
+                    {% for field in fields %}
+                    <div class="kc-form-group">
+                        <label for="{{ field.name }}" class="kc-form-label">{{ field.label }}</label>
+                        <input
+                            class="kc-input"
+                            id="{{ field.name }}"
+                            name="{{ field.name }}"
+                            type="{{ field.input_type }}"
+                            value="{{ field.value }}"
+                            autocomplete="{{ field.autocomplete }}"
+                            aria-describedby="hint-{{ field.name }}{% if !field.error.is_empty() %} input-error-{{ field.name }}{% endif %}"
+                            {% if !field.error.is_empty() %}aria-invalid="true"{% endif %}
+                        />
+                        <div class="kc-field-hint" id="hint-{{ field.name }}">{{ field.hint }}</div>
+                        {% if !field.error.is_empty() %}
+                        <div class="kc-field-error" id="input-error-{{ field.name }}" aria-live="polite">{{ field.error }}</div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                    <div id="kc-form-buttons" class="kc-form-group">
+                        <button class="pf-v5-c-button" id="kc-login" name="login" type="submit">{{ submit_label }}</button>
+                    </div>
+                </form>
+                {% endif %}
+                {% if !secondary_link_url.is_empty() %}
+                <p><a id="secondaryLink" href="{{ secondary_link_url }}">{{ secondary_link_label }}</a></p>
+                {% endif %}
+            </div>
+        </main>
+    </div>
+</div>
+</body>
+</html>

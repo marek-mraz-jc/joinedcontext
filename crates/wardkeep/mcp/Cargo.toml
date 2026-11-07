@@ -1,0 +1,19 @@
+[package]
+name = "wardkeep-mcp"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wardkeep-core = { path = "../core" }
+wardkeep-admin = { path = "../admin" }
+wardkeep-oidc = { path = "../oidc" }
+axum = { version = "0.8", features = ["json"] }
+http = "1.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+wardkeep-store-memory = { path = "../store-memory" }
+wardkeep-crypto = { path = "../crypto" }
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }

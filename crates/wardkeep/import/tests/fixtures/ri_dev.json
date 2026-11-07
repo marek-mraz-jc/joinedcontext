@@ -1,0 +1,947 @@
+{
+  "id": "dev",
+  "realm": "dev",
+  "displayName": "joinedcontext",
+  "notBefore": 0,
+  "defaultSignatureAlgorithm": "ES256",
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+  "accessTokenLifespan": 3600,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "ssoSessionIdleTimeout": 3600,
+  "ssoSessionMaxLifespan": 36000,
+  "ssoSessionIdleTimeoutRememberMe": 0,
+  "ssoSessionMaxLifespanRememberMe": 0,
+  "offlineSessionIdleTimeout": 2592000,
+  "offlineSessionMaxLifespanEnabled": true,
+  "offlineSessionMaxLifespan": 5184000,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanUserAction": 300,
+  "accessCodeLifespanLogin": 1800,
+  "actionTokenGeneratedByAdminLifespan": 43200,
+  "actionTokenGeneratedByUserLifespan": 300,
+  "enabled": true,
+  "adminPermissionsEnabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": true,
+  "rememberMe": false,
+  "verifyEmail": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": true,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 10,
+  "defaultRoles": ["offline_access", "uma_authorization"],
+  "passwordPolicy": "length(12) and upperCase(1) and lowerCase(1) and digits(1) and notUsername(undefined) and notEmail(undefined) and passwordHistory(5)",
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA256",
+  "otpPolicyInitialCounter": 0,
+  "otpPolicyDigits": 6,
+  "otpPolicyLookAheadWindow": 1,
+  "otpPolicyPeriod": 30,
+  "otpSupportedApplications": ["FreeOTP", "Google Authenticator"],
+  "loginTheme": "joinedcontext",
+  "accountTheme": "joinedcontext",
+  "adminTheme": "keycloak",
+  "emailTheme": "keycloak",
+  "eventsEnabled": true,
+  "eventsExpiration": 2592000,
+  "eventsListeners": ["jboss-logging"],
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": true,
+  "internationalizationEnabled": true,
+  "supportedLocales": ["en", "sk", "cs", "de"],
+  "defaultLocale": "en",
+  "browserFlow": "custom browser",
+  "directGrantFlow": "custom direct grant",
+  "resetCredentialsFlow": "reset credentials",
+  "attributes": {
+    "acr.loa.map": "{\"pwd\":1,\"mfa\":2}"
+  },
+  "defaultOptionalClientScopes": ["connector", "offline_access"],
+  "clientScopes": [
+    {
+      "name": "connector",
+      "description": "One AI connector you created in the Portal",
+      "protocol": "openid-connect",
+      "attributes": {
+        "is.parameterized.scope": "true",
+        "parameterized.scope.type": "custom",
+        "parameterized.scope.regexp": "[a-z2-7]{26}",
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "Use one AI connector you created in the Portal, with the rights you gave it"
+      },
+      "protocolMappers": [
+        {
+          "name": "portal-connectors-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "portal-connectors",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "portal-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "portal-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "jc_org",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "jc_org",
+            "claim.name": "jc_org",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "aggregate.attrs": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "jc_groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "jc_groups",
+            "claim.name": "jc_groups",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "aggregate.attrs": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "amr",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-amr-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "mcp:portal",
+      "description": "Audience of the Portal MCP server at /api/v1/mcp",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "portal-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "portal-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "name": "gateway-hub",
+      "description": "Audience of the MCP hub in the Portal's exchanged token for one Endpoint",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "mcp-hub-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "mcp-hub",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "name": "endpoint:*",
+      "description": "Every Endpoint you may read, through the MCP hub",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "Read every dataset and Endpoint you may read, through one AI connector"
+      }
+    },
+    {
+      "name": "context-broker-main",
+      "description": "Audience of the Context Broker main",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "context-broker-main-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "context-broker-main",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "groups": [
+    { "name": "platform-readers", "path": "/platform-readers" },
+    { "name": "banskabystrica", "path": "/banskabystrica" },
+    { "name": "bbsk", "path": "/bbsk" },
+    {
+      "name": "helsinki",
+      "path": "/helsinki",
+      "subGroups": [
+        {
+          "name": "members",
+          "path": "/helsinki/members",
+          "attributes": {
+            "jc_org": ["helsinki"],
+            "jc_groups": ["/helsinki/members"]
+          }
+        },
+        {
+          "name": "traffic-analysts",
+          "path": "/helsinki/traffic-analysts",
+          "attributes": {
+            "jc_org": ["helsinki"],
+            "jc_groups": ["/helsinki/traffic-analysts"]
+          }
+        }
+      ]
+    },
+    { "name": "helsinki-mobility", "path": "/helsinki-mobility" },
+    { "name": "praha", "path": "/praha" },
+    { "name": "slovensko", "path": "/slovensko" },
+    { "name": "zilina", "path": "/zilina" },
+    { "name": "barcelona", "path": "/barcelona" },
+    { "name": "bratislava", "path": "/bratislava" },
+    { "name": "sharing-other", "path": "/sharing-other" },
+    { "name": "sharing", "path": "/sharing" }
+  ],
+  "defaultGroups": ["/platform-readers"],
+  "identityProviders": [
+    {
+      "alias": "kubernetes",
+      "providerId": "kubernetes",
+      "enabled": true,
+      "config": {
+        "issuer": "https://kubernetes.default.svc.cluster.local"
+      }
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "mfa-required",
+        "description": "Must sign in with a second factor (TOTP)",
+        "composite": false
+      },
+      {
+        "name": "portal-approver",
+        "description": "May approve and merge change proposals in the Portal",
+        "composite": true,
+        "composites": {
+          "realm": ["mfa-required"]
+        }
+      },
+      {
+        "name": "platform-admin",
+        "description": "Administers the operator UIs (Argo CD, Grafana)",
+        "composite": true,
+        "composites": {
+          "realm": ["mfa-required"]
+        }
+      }
+    ]
+  },
+  "requiredActions": [
+    {
+      "alias": "CONFIGURE_TOTP",
+      "name": "Configure OTP",
+      "providerId": "CONFIGURE_TOTP",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 10
+    }
+  ],
+  "authenticatorConfig": [
+    { "alias": "otp reference required", "config": { "default.reference.value": "otp" } },
+    { "alias": "otp reference step-up", "config": { "default.reference.value": "otp" } },
+    { "alias": "otp reference grant required", "config": { "default.reference.value": "otp" } },
+    { "alias": "otp reference grant", "config": { "default.reference.value": "otp" } },
+    { "alias": "otp reference optional", "config": { "default.reference.value": "otp" } },
+    { "alias": "password level", "config": { "loa-condition-level": "1", "loa-max-age": "36000" } },
+    { "alias": "step-up level", "config": { "loa-condition-level": "2", "loa-max-age": "300" } },
+    { "alias": "mfa required", "config": { "condUserRole": "mfa-required", "negate": "false" } },
+    { "alias": "mfa not required", "config": { "condUserRole": "mfa-required", "negate": "true" } }
+  ],
+  "authenticationFlows": [
+    {
+      "alias": "custom browser",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "authenticationExecutions": [
+        { "authenticator": "auth-cookie", "requirement": "ALTERNATIVE", "priority": 10 },
+        { "authenticator": "identity-provider-redirector", "requirement": "ALTERNATIVE", "priority": 20 },
+        { "authenticatorFlow": true, "requirement": "ALTERNATIVE", "priority": 30, "flowAlias": "custom browser forms" }
+      ]
+    },
+    {
+      "alias": "custom browser required 2fa",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "authenticationExecutions": [
+        { "authenticator": "conditional-user-role", "authenticatorConfig": "mfa required", "requirement": "REQUIRED", "priority": 10 },
+        { "authenticator": "auth-otp-form", "authenticatorConfig": "otp reference required", "requirement": "REQUIRED", "priority": 20 }
+      ]
+    },
+    {
+      "alias": "custom direct grant",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "authenticationExecutions": [
+        { "authenticator": "direct-grant-validate-username", "requirement": "REQUIRED", "priority": 10 },
+        { "authenticator": "direct-grant-validate-password", "requirement": "REQUIRED", "priority": 20 }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "id": "de300000-0000-4000-8000-000000000001",
+      "username": "demo.steward@hel.fi",
+      "email": "demo.steward@hel.fi",
+      "firstName": "Demo",
+      "lastName": "Steward",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        { "type": "password", "value": "$(USER_PASSWORD_DEMO_STEWARD)", "temporary": false },
+        {
+          "type": "otp",
+          "id": "00000000-0000-4000-8000-000000000099",
+          "userLabel": "journey seed",
+          "secretData": "{\"value\":\"$(USER_TOTP_DEMO_STEWARD)\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA256\"}"
+        }
+      ],
+      "realmRoles": ["default-roles-dev", "portal-approver"],
+      "groups": ["/platform-readers", "/banskabystrica", "/bbsk", "/helsinki", "/helsinki-mobility", "/praha", "/slovensko"]
+    },
+    {
+      "id": "de300000-0000-4000-8000-00000000000f",
+      "username": "demo.orgmember@hel.fi",
+      "email": "demo.orgmember@hel.fi",
+      "firstName": "Organization",
+      "lastName": "Member",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        { "type": "password", "value": "$(USER_PASSWORD_DEMO_ORGMEMBER)", "temporary": false }
+      ],
+      "realmRoles": ["default-roles-dev"],
+      "groups": ["/platform-readers", "/helsinki/members"]
+    },
+    {
+      "id": "de300000-0000-4000-8000-000000000010",
+      "username": "demo.analyst@hel.fi",
+      "email": "demo.analyst@hel.fi",
+      "firstName": "Traffic",
+      "lastName": "Analyst",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        { "type": "password", "value": "$(USER_PASSWORD_DEMO_ANALYST)", "temporary": false }
+      ],
+      "realmRoles": ["default-roles-dev"],
+      "groups": ["/platform-readers", "/helsinki/members", "/helsinki/traffic-analysts"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "portal-ui",
+      "name": "${jcClientPortal}",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["https://portal.dev.example.test/*"],
+      "webOrigins": ["https://portal.dev.example.test"],
+      "defaultClientScopes": ["basic", "email", "profile", "roles", "web-origins"],
+      "optionalClientScopes": ["address", "phone", "microprofile-jwt"],
+      "attributes": {
+        "post.logout.redirect.uris": "+",
+        "pkce.code.challenge.method": "S256"
+      }
+    },
+    {
+      "clientId": "portal-api",
+      "name": "${jcClientPortal}",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "clientAuthenticatorType": "federated-jwt",
+      "redirectUris": ["https://portal.dev.example.test/api/v1/auth/callback"],
+      "webOrigins": ["https://portal.dev.example.test"],
+      "defaultClientScopes": ["basic", "email", "profile", "roles", "web-origins"],
+      "optionalClientScopes": ["address", "phone", "microprofile-jwt", "gateway-hub"],
+      "attributes": {
+        "post.logout.redirect.uris": "+",
+        "pkce.code.challenge.method": "S256",
+        "backchannel.logout.url": "http://portal.portal.svc.cluster.local:8080/api/v1/auth/backchannel-logout",
+        "backchannel.logout.session.required": "true",
+        "jwt.credential.issuer": "kubernetes",
+        "jwt.credential.sub": "system:serviceaccount:portal:portal",
+        "standard.token.exchange.enabled": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "amr",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-amr-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "jc_org",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "jc_org",
+            "claim.name": "jc_org",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "aggregate.attrs": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "jc_groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "jc_groups",
+            "claim.name": "jc_groups",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "aggregate.attrs": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "realm-roles-in-id-token",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "jc-functions-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "jc-functions",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "agent-proxy-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "helsinki-agent-proxy",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "portal-reconciler",
+      "name": "Portal reconciler",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "clientAuthenticatorType": "federated-jwt",
+      "redirectUris": ["https://portal.dev.example.test/*"],
+      "webOrigins": ["https://portal.dev.example.test"],
+      "defaultClientScopes": ["basic", "email", "profile", "roles", "web-origins"],
+      "optionalClientScopes": ["address", "phone", "microprofile-jwt"],
+      "attributes": {
+        "jwt.credential.issuer": "kubernetes",
+        "jwt.credential.sub": "system:serviceaccount:portal:portal-reconciler"
+      },
+      "protocolMappers": [
+        {
+          "name": "context-gateway-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "context-gateway",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "edge",
+      "name": "${jcClientPortal}",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "$(CLIENT_SECRET_EDGE)",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["https://portal.dev.example.test/*", "https://dev.example.test/apps/*"],
+      "webOrigins": [],
+      "defaultClientScopes": ["basic", "email", "profile", "roles", "web-origins"],
+      "optionalClientScopes": ["address", "phone", "microprofile-jwt", "mcp:portal"],
+      "attributes": {
+        "post.logout.redirect.uris": "+",
+        "pkce.code.challenge.method": "S256",
+        "access.token.signed.response.alg": "RS256",
+        "id.token.signed.response.alg": "RS256",
+        "backchannel.logout.url": "http://portal.portal.svc.cluster.local:8080/api/v1/auth/backchannel-logout",
+        "backchannel.logout.session.required": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "portal-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "portal-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "context-gateway-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "context-gateway",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "agent-proxy-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "helsinki-agent-proxy",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "apisix-gateway",
+      "name": "APISIX Gateway",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "$(CLIENT_SECRET_APISIX_GATEWAY)",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "redirectUris": [],
+      "webOrigins": [],
+      "defaultClientScopes": ["basic", "email", "profile", "roles"],
+      "optionalClientScopes": [],
+      "protocolMappers": [
+        {
+          "name": "portal-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "portal-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "context-gateway",
+      "name": "Context Gateway",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "clientAuthenticatorType": "federated-jwt",
+      "defaultClientScopes": ["basic", "email", "profile", "roles", "web-origins"],
+      "optionalClientScopes": ["address", "phone", "microprofile-jwt", "context-broker-main"],
+      "attributes": {
+        "jwt.credential.issuer": "kubernetes",
+        "jwt.credential.sub": "system:serviceaccount:context-gateway:context-gateway",
+        "standard.token.exchange.enabled": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "portal-internal-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "portal-internal",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "helsinki-agent-proxy",
+      "name": "Helsinki agent proxy",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "clientAuthenticatorType": "federated-jwt",
+      "defaultClientScopes": ["basic", "email", "profile", "roles", "web-origins"],
+      "optionalClientScopes": ["address", "phone", "microprofile-jwt"],
+      "attributes": {
+        "jwt.credential.issuer": "kubernetes",
+        "jwt.credential.sub": "system:serviceaccount:agent-runner:agent-proxy",
+        "standard.token.exchange.enabled": "true",
+        "standard.token.exchange.enableRefreshRequestedTokenType": "SAME_SESSION"
+      },
+      "protocolMappers": [
+        {
+          "name": "context-gateway-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "context-gateway",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "portal-internal-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "portal-internal",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "mcp-mobile",
+      "name": "MCP mobile connector",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://claude.ai/api/mcp/auth_callback",
+        "https://claude.com/api/mcp/auth_callback",
+        "https://chatgpt.com/connector_platform_oauth_redirect",
+        "https://platform.openai.com/chatkit-oauth-callback"
+      ],
+      "defaultClientScopes": ["acr", "basic", "email", "profile"],
+      "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt", "mcp:portal", "connector"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "mcp-local",
+      "name": "MCP connector on your computer",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost/callback", "http://127.0.0.1/callback"],
+      "defaultClientScopes": ["acr", "basic", "email", "profile"],
+      "optionalClientScopes": ["mcp:portal", "connector"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "access.token.lifespan": "300",
+        "client.session.idle.timeout": "1800",
+        "client.session.max.lifespan": "28800"
+      }
+    },
+    {
+      "clientId": "mcp-hub",
+      "name": "MCP hub connector",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "consentRequired": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://claude.ai/api/mcp/auth_callback",
+        "https://claude.com/api/mcp/auth_callback",
+        "https://chatgpt.com/connector_platform_oauth_redirect",
+        "https://platform.openai.com/chatkit-oauth-callback"
+      ],
+      "defaultClientScopes": ["acr", "basic", "email", "profile", "roles", "endpoint:*"],
+      "optionalClientScopes": ["offline_access"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "mcp-hub-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "mcp-hub",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "argocd",
+      "name": "Argo CD",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["https://argocd.dev.example.test/auth/callback", "https://argocd.dev.example.test/pkce/verify"],
+      "defaultClientScopes": ["basic", "email", "profile", "roles", "web-origins"],
+      "optionalClientScopes": ["address", "phone", "microprofile-jwt"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "grafana",
+      "name": "${jcClientMonitoring}",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "$(CLIENT_SECRET_GRAFANA)",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["https://dev.example.test/grafana/login/generic_oauth"],
+      "defaultClientScopes": ["basic", "email", "profile", "roles", "web-origins"],
+      "optionalClientScopes": ["address", "phone", "microprofile-jwt"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm-roles-in-id-token",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "gitea",
+      "name": "${jcClientForge}",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "$(CLIENT_SECRET_GITEA)",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["https://dev.example.test/git/user/oauth2/keycloak/callback"],
+      "defaultClientScopes": ["basic", "email", "profile", "roles", "web-origins"],
+      "optionalClientScopes": ["address", "phone", "microprofile-jwt"],
+      "attributes": {
+        "post.logout.redirect.uris": "+",
+        "pkce.code.challenge.method": ""
+      }
+    },
+    {
+      "clientId": "ckan",
+      "name": "${jcClientCatalogue}",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "$(CLIENT_SECRET_CKAN)",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["https://data.dev.example.test/user/login/oidc-pkce/callback"],
+      "defaultClientScopes": ["basic", "email", "profile", "roles", "web-origins"],
+      "optionalClientScopes": ["address", "phone", "microprofile-jwt"]
+    }
+  ]
+}
