@@ -230,8 +230,10 @@ pub fn parse_arcgis_hub_items(
             continue;
         }
 
-        let lic_code = item.get("license").and_then(Value::as_str).unwrap();
-        let (licence_id, licence_url) = open_licences[lic_code];
+        let lic_code = item.get("license").and_then(Value::as_str).unwrap_or("");
+        let Some(&(licence_id, licence_url)) = open_licences.get(lic_code) else {
+            continue;
+        };
         let hub_base = source.url.trim_end_matches('/');
         let source_url = format!("{hub_base}/datasets/{item_id}");
         let fixed_uuid = Uuid::new_v5(&Uuid::NAMESPACE_URL, source_url.as_bytes()).to_string();
