@@ -490,22 +490,10 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
     }
 
     // 1. Collect known scopes (built-in + declared in `clientScopes`)
-    let mut known_scopes: BTreeSet<String> = [
-        "openid",
-        "basic",
-        "email",
-        "profile",
-        "roles",
-        "web-origins",
-        "address",
-        "phone",
-        "offline_access",
-        "microprofile-jwt",
-        "acr",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect();
+    let mut known_scopes: BTreeSet<String> = std::iter::once("openid")
+        .chain(kaisatsu_core::BUILTIN_CLIENT_SCOPES)
+        .map(str::to_owned)
+        .collect();
 
     if let Some(scopes) = obj.get("clientScopes").and_then(Value::as_array) {
         for (i, sc) in scopes.iter().enumerate() {

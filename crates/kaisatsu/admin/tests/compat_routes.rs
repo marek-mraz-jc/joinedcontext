@@ -699,8 +699,10 @@ async fn people_lifecycle_through_the_compat_routes() {
         Some("espoo"),
         "a realm admin moves a person"
     );
-    assert!(
-        stored.realm_roles.is_empty(),
+    // The realm's default roles from the create, and no `realm-admin` from the PUT body.
+    assert_eq!(
+        stored.realm_roles,
+        ["offline_access", "uma_authorization"],
         "role mappings are not written by PUT"
     );
 

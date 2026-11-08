@@ -486,6 +486,14 @@ pub(crate) async fn ensure_may_map_client_roles(
             "admin client roles are granted by a realm admin only".into(),
         ));
     }
+    // Keycloak lets a `manage-users` holder map any non-admin role (RolePermissions.canMapRole);
+    // here only the roles of a platform-managed client, which is what the Portal's member
+    // credential maps (app_clients.rs converge_grants, `portal-reconciler`).
+    if ctx.principal.has_realm_mgmt_role("manage-users")
+        && client.attributes.get("managed-by").map(String::as_str) == Some("joinedcontext")
+    {
+        return Ok(());
+    }
     check_decision(state.authorizer.check(
         ctx,
         Action::Update,
@@ -855,21 +863,48 @@ async fn compat_list_users(
         },
     ))?;
     let allowed = ctx.allowed_orgs();
-    let users = state
-        .oidc
-        .store
-        .list_users(
+    let (first, max) = (q.first.unwrap_or(0), q.max.unwrap_or(100));
+    let page = |first, max| {
+        state.oidc.store.list_users(
             &realm,
             allowed.as_deref(),
             q.search.as_deref(),
             q.email.as_deref(),
             q.username.as_deref(),
             q.exact.unwrap_or(false),
-            q.first.unwrap_or(0),
-            q.max.unwrap_or(100),
+            first,
+            max,
         )
-        .await?;
-    Ok(Json(users))
+    };
+    // Keycloak's `search` leaves service accounts out (UsersResource includeServiceAccounts
+    // false), so the Portal's People page never lists `service-account-*`; `first`/`max` count
+    // people only, so the store is paged until `max` of them are found.
+    if q.search.is_none() || max == 0 {
+        return Ok(Json(page(first, max).await?));
+    }
+    let batch = max.max(100);
+    let (mut users, mut skip, mut offset) = (Vec::new(), first, 0);
+    loop {
+        let read = page(offset, batch).await?;
+        let full = read.len() == batch;
+        offset += batch;
+        for user in read {
+            if user.service_account_client_id.is_some() {
+                continue;
+            }
+            if skip > 0 {
+                skip -= 1;
+                continue;
+            }
+            users.push(user);
+            if users.len() == max {
+                return Ok(Json(users));
+            }
+        }
+        if !full {
+            return Ok(Json(users));
+        }
+    }
 }
 
 async fn compat_create_user(
@@ -894,6 +929,23 @@ async fn compat_create_user(
             person_id: "*".into(),
         },
     ))?;
+    // As Keycloak's POST /users: no role mapping and no service-account link comes from the
+    // body (an organization admin could otherwise create a realm admin); the person holds the
+    // realm's default roles, `offline_access` among them (T-6301).
+    let default_roles = state
+        .oidc
+        .store
+        .get_realm(&realm)
+        .await?
+        .map(|r| r.default_roles)
+        .unwrap_or_default();
+    user.realm_roles = default_roles;
+    user.client_roles.clear();
+    user.groups.clear();
+    user.service_account_client_id = None;
+    if user.id.is_empty() || !ctx.principal.is_realm_admin() {
+        user.id = uuid::Uuid::now_v7().to_string();
+    }
     let created = state.oidc.store.create_user(user).await?;
     let location = format!(
         "{}/admin/realms/{realm}/users/{}",
@@ -1921,10 +1973,19 @@ async fn compat_create_client(
     Path(realm): Path<String>,
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
-    Json(mut client): Json<ClientRepresentation>,
+    Json(body): Json<Value>,
 ) -> Result<Response> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
+    // As Keycloak: a client created without `defaultClientScopes` gets the realm's default
+    // scopes (`roles`, `profile`, `email`, ...), an explicit list is kept as sent. The realm's
+    // default optional scopes are not linked (T-6301: they carry the connectors' audience).
+    let default_scopes = body.get("defaultClientScopes").is_none();
+    let mut client: ClientRepresentation = serde_json::from_value(body)
+        .map_err(|e| KaisatsuError::BadRequest(format!("invalid client: {e}")))?;
+    if default_scopes {
+        client.default_client_scopes = ClientRepresentation::default().default_client_scopes;
+    }
     client.realm_id = realm.clone();
     if client.org_id.is_none() {
         client.org_id = ctx.active_org_id.clone();
@@ -2774,6 +2835,38 @@ async fn compat_unlink_client_optional_scope(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// The `managed-by` mark a scope's write is judged on: only a scope without protocol mappers
+/// keeps it, so the `view-clients` grant on marked scopes never reaches a token claim.
+fn scope_mark(scope: &ClientScopeRepresentation) -> Option<String> {
+    if scope.protocol_mappers.is_empty() {
+        scope.attributes.get("managed-by").cloned()
+    } else {
+        None
+    }
+}
+
+/// 409 when another scope of the realm (not `except`) holds `name`.
+async fn scope_name_free(
+    state: &AdminState,
+    realm: &str,
+    name: &str,
+    except: Option<&str>,
+) -> Result<()> {
+    let taken = state
+        .oidc
+        .store
+        .list_client_scopes(realm)
+        .await?
+        .into_iter()
+        .any(|s| s.name == name && Some(s.id.as_str()) != except);
+    if taken {
+        return Err(KaisatsuError::Conflict(format!(
+            "Client Scope {name} already exists"
+        )));
+    }
+    Ok(())
+}
+
 async fn compat_list_client_scopes(
     State(state): State<AdminState>,
     Path(realm): Path<String>,
@@ -2789,9 +2882,23 @@ async fn compat_list_client_scopes(
             realm_id: realm.clone(),
             org_id: ctx.active_org_id.clone(),
             scope_id: "*".into(),
+            managed_by: None,
         },
     ))?;
-    let scopes = state.oidc.store.list_client_scopes(&realm).await?;
+    let mut scopes = state.oidc.store.list_client_scopes(&realm).await?;
+    // The built-in scopes the realm does not store, as a client's scope list shows them
+    // (`resolve_scope_objects`): workload_clients.rs finds `basic` here to link it back.
+    let unstored: Vec<ClientScopeRepresentation> = BUILTIN_CLIENT_SCOPES
+        .into_iter()
+        .filter(|name| !scopes.iter().any(|s| s.name == *name))
+        .map(|name| ClientScopeRepresentation {
+            id: name.to_owned(),
+            realm_id: realm.clone(),
+            name: name.to_owned(),
+            ..Default::default()
+        })
+        .collect();
+    scopes.extend(unstored);
     Ok(Json(scopes))
 }
 
@@ -2807,6 +2914,7 @@ async fn compat_create_client_scope(
     if scope.org_id.is_none() {
         scope.org_id = ctx.active_org_id.clone();
     }
+    scope.managed_by = scope.attributes.get("managed-by").cloned();
     // Authorized on the organization the scope is stored under (none = realm-wide).
     check_decision(state.authorizer.check(
         &ctx,
@@ -2815,8 +2923,11 @@ async fn compat_create_client_scope(
             realm_id: realm.clone(),
             org_id: scope.org_id.clone(),
             scope_id: "*".into(),
+            managed_by: scope_mark(&scope),
         },
     ))?;
+    // Keycloak answers 409 for a name in use; the store would replace that scope instead.
+    scope_name_free(&state, &realm, &scope.name, None).await?;
     scope.realm_id = realm.clone();
     let created = state.oidc.store.upsert_client_scope(scope).await?;
     let location = format!(
@@ -2857,6 +2968,7 @@ async fn compat_get_client_scope(
             realm_id: realm,
             org_id: scope.org_id.clone(),
             scope_id: scope.id.clone(),
+            managed_by: None,
         },
     ))?;
     Ok(Json(scope))
@@ -2886,8 +2998,23 @@ async fn compat_update_client_scope(
             realm_id: realm.clone(),
             org_id: existing.org_id.clone(),
             scope_id: existing.id.clone(),
+            managed_by: scope_mark(&existing),
         },
     ))?;
+    // The new representation is judged too: a caller may not drop the mark or add a mapper to
+    // a scope it may write only because it is a bare marked scope.
+    scope.managed_by = scope.attributes.get("managed-by").cloned();
+    check_decision(state.authorizer.check(
+        &ctx,
+        Action::Update,
+        &ObjectTarget::ClientScope {
+            realm_id: realm.clone(),
+            org_id: existing.org_id.clone(),
+            scope_id: existing.id.clone(),
+            managed_by: scope_mark(&scope),
+        },
+    ))?;
+    scope_name_free(&state, &realm, &scope.name, Some(&existing.id)).await?;
     scope.id = id.clone();
     scope.realm_id = realm;
     if scope.org_id.is_none() || !ctx.principal.is_realm_admin() {
@@ -2925,6 +3052,7 @@ async fn compat_delete_client_scope(
         Action::Delete,
         &ObjectTarget::ClientScope {
             realm_id: realm.clone(),
+            managed_by: scope_mark(&existing),
             org_id: existing.org_id,
             scope_id: existing.id,
         },

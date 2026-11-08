@@ -32,6 +32,7 @@ fn targets(org: Option<&str>) -> Vec<ObjectTarget> {
             realm_id: "dev".into(),
             org_id: o.clone(),
             scope_id: "s1".into(),
+            managed_by: None,
         },
         ObjectTarget::Application {
             realm_id: "dev".into(),
@@ -261,6 +262,7 @@ fn realm_management_roles() {
         realm_id: "dev".into(),
         org_id: None,
         scope_id: "s1".into(),
+        managed_by: None,
     };
     for obj in [&role_target, &scope_target] {
         assert!(check(&portal, None, Action::Read, obj).allowed);
@@ -273,6 +275,29 @@ fn realm_management_roles() {
             );
         }
     }
+    // The Portal's hub scopes: view-clients writes a bare scope marked managed-by joinedcontext
+    // (compat.rs passes None for a scope with mappers), and nothing else.
+    let marked = |m: Option<&str>| ObjectTarget::ClientScope {
+        realm_id: "dev".into(),
+        org_id: None,
+        scope_id: "s1".into(),
+        managed_by: m.map(Into::into),
+    };
+    for write_act in [Action::Create, Action::Update, Action::Delete] {
+        assert!(check(&portal, None, write_act, &marked(Some("joinedcontext"))).allowed);
+        for other in [None, Some("apply"), Some("JoinedContext")] {
+            let dec = check(&portal, None, write_act, &marked(other));
+            assert!(!dec.allowed && !dec.visible, "view-clients {other:?}");
+        }
+        // The mark alone grants nothing to a role without view-clients.
+        let dec = check(
+            &mgmt(&["query-groups"]),
+            None,
+            write_act,
+            &marked(Some("joinedcontext")),
+        );
+        assert!(!dec.allowed, "query-groups writes a marked scope");
+    }
     // manage-clients in an org writes roles and client scopes.
     for obj in [
         ObjectTarget::Role {
@@ -284,6 +309,7 @@ fn realm_management_roles() {
             realm_id: "dev".into(),
             org_id: Some("hel".into()),
             scope_id: "s1".into(),
+            managed_by: None,
         },
     ] {
         for write_act in [Action::Create, Action::Update, Action::Delete] {
