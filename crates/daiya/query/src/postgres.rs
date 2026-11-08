@@ -1081,6 +1081,125 @@ fn numeric_to_f64(value: &PgValueRef<'_>) -> Option<f64> {
 /// The frame columns of a result: time, number, bool, text, JSON and uuid columns by their
 /// Postgres type; a column of another type is a text column of empty values with a notice
 /// naming it, never a silent gap.
+/// Grafana's epoch precision guess for a numeric time column (`sqleng` `epochPrecisionToMS`):
+/// seconds (1e9) and nanoseconds (1e18) become milliseconds, anything else is kept.
+fn epoch_to_ms(v: f64) -> f64 {
+    let magnitude = v.abs();
+    if (1e9..1e10).contains(&magnitude) {
+        v * 1e3
+    } else if (1e18..1e19).contains(&magnitude) {
+        v / 1e6
+    } else {
+        v
+    }
+}
+
+/// Shapes a SQL result for `format: time_series` as Grafana's `sqleng` does: the `time` column
+/// becomes the time field `Time` (numeric epochs read as seconds, milliseconds or nanoseconds),
+/// and a long result (string columns beside the values) turns wide, one field per value column
+/// and label set (`data.LongToWide`, missing points null). A three-column result with a `metric`
+/// column names each series by its metric, as Grafana 7 did.
+///
+/// # Errors
+/// No `time` column, or a long result not sorted ascending by time (Grafana refuses both).
+pub fn sql_time_series(mut fields: Vec<FieldColumn>) -> Result<Vec<FieldColumn>, String> {
+    let Some(t) = fields
+        .iter()
+        .position(|f| f.name == "time" || f.name == "time_sec")
+    else {
+        return Err("no time column found".into());
+    };
+    let time = &mut fields[t];
+    if time.field_type == FieldType::Number {
+        for v in &mut time.values {
+            if let Some(ms) = v.as_f64() {
+                *v = Value::from(epoch_to_ms(ms) as i64);
+            }
+        }
+        time.field_type = FieldType::Time;
+    }
+    time.name = "Time".into();
+    let factors: Vec<usize> = (0..fields.len())
+        .filter(|&i| i != t && fields[i].field_type == FieldType::String)
+        .collect();
+    if factors.is_empty() {
+        return Ok(fields);
+    }
+    let values: Vec<usize> = (0..fields.len())
+        .filter(|&i| i != t && matches!(fields[i].field_type, FieldType::Number | FieldType::Bool))
+        .collect();
+    let times = &fields[t].values;
+    let mut wide_times: Vec<Value> = Vec::new();
+    let mut last: Option<i64> = None;
+    // Label set (as factor values) -> index of its first wide field.
+    let mut series: Vec<(Vec<String>, usize)> = Vec::new();
+    let mut wide: Vec<FieldColumn> = Vec::new();
+    for (row, tv) in times.iter().enumerate() {
+        let Some(ms) = tv.as_i64() else {
+            return Err("long series must be sorted ascending by time to be converted".into());
+        };
+        if last.is_some_and(|l| ms < l) {
+            return Err("long series must be sorted ascending by time to be converted".into());
+        }
+        if last != Some(ms) {
+            wide_times.push(tv.clone());
+            for f in &mut wide {
+                f.values.push(Value::Null);
+            }
+            last = Some(ms);
+        }
+        let key: Vec<String> = factors
+            .iter()
+            .map(|&i| {
+                fields[i].values[row]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect();
+        let first = if let Some((_, first)) = series.iter().find(|(k, _)| *k == key) {
+            *first
+        } else {
+            let first = wide.len();
+            let labels: BTreeMap<String, String> = factors
+                .iter()
+                .zip(&key)
+                .map(|(&i, v)| (fields[i].name.clone(), v.clone()))
+                .collect();
+            for &v in &values {
+                wide.push(FieldColumn {
+                    name: fields[v].name.clone(),
+                    field_type: fields[v].field_type,
+                    unit: None,
+                    display_name: None,
+                    labels: labels.clone(),
+                    values: vec![Value::Null; wide_times.len()],
+                });
+            }
+            series.push((key, first));
+            first
+        };
+        for (n, &v) in values.iter().enumerate() {
+            if let Some(slot) = wide[first + n].values.last_mut() {
+                *slot = fields[v].values[row].clone();
+            }
+        }
+    }
+    if fields.len() == 3 {
+        for f in &mut wide {
+            if f.labels.len() == 1
+                && let Some(metric) = f.labels.remove("metric")
+            {
+                f.name = metric;
+            }
+        }
+    }
+    let mut time = fields.swap_remove(t);
+    time.values = wide_times;
+    wide.insert(0, time);
+    Ok(wide)
+}
+
 fn rows_to_fields(rows: &[sqlx::postgres::PgRow]) -> (Vec<FieldColumn>, Vec<Notice>) {
     let Some(first) = rows.first() else {
         return (Vec::new(), Vec::new());
@@ -1273,7 +1392,15 @@ impl Datasource for PostgresDatasource {
                 };
 
                 let (rows, truncated) = run_read_only(pool, &verified_sql, ctx.timeout).await?;
-                let (fields, mut notices) = rows_to_fields(&rows);
+                let (mut fields, mut notices) = rows_to_fields(&rows);
+                if !fields.is_empty()
+                    && q.model.get("format").and_then(Value::as_str) == Some("time_series")
+                {
+                    fields = sql_time_series(fields).map_err(|reason| DsError::InvalidQuery {
+                        ref_id: q.ref_id.clone(),
+                        reason,
+                    })?;
+                }
                 if truncated {
                     notices.push(Notice {
                         severity: NoticeSeverity::Warning,

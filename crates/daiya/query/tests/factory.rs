@@ -534,7 +534,27 @@ async fn stored_postgres_record_runs_a_checked_select_on_a_real_server() {
         .unwrap();
     let frame = &sets[0].frames[0];
     assert_eq!(frame.fields.len(), 2);
+    assert_eq!(frame.fields[0].name, "Time");
     assert_eq!(frame.fields[1].values.len(), 5);
+    // A long result (a string column beside the value) comes back wide, a field per label set.
+    let sets = driver
+        .query(
+            &ctx(Subject::anonymous()),
+            &q(json!({ "rawSql": "SELECT time, CASE WHEN value < 2 THEN 'low' ELSE 'high' END AS band, value FROM daiya_ds_metrics ORDER BY time", "format": "time_series" })),
+        )
+        .await
+        .unwrap();
+    let fields = &sets[0].frames[0].fields;
+    assert_eq!(fields.len(), 3, "{fields:?}");
+    assert_eq!(
+        fields[1].labels.get("band").map(String::as_str),
+        Some("low")
+    );
+    assert_eq!(
+        fields[2].labels.get("band").map(String::as_str),
+        Some("high")
+    );
+    assert_eq!(fields[1].values[4], serde_json::Value::Null);
 
     // A relation outside the granted views is refused before anything runs, and the
     // database itself refuses what the reader role was never granted.

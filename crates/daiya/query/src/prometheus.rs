@@ -561,12 +561,9 @@ impl Datasource for PrometheusDatasource {
                     .and_then(Value::as_u64)
                     .unwrap_or(1)
                     .max(1);
-                let effective_step_ms = prometheus_step_ms(
-                    range_ms,
-                    ctx.max_data_points,
-                    floor_ms.max(min_step_ms),
-                )
-                .saturating_mul(interval_factor);
+                let effective_step_ms =
+                    prometheus_step_ms(range_ms, ctx.max_data_points, floor_ms.max(min_step_ms))
+                        .saturating_mul(interval_factor);
 
                 let expr = interpolate_promql_variables(
                     raw_expr,

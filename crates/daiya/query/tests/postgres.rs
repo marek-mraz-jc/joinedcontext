@@ -6,9 +6,10 @@
 mod common;
 
 use common::{closed_port, ctx, q};
-use daiya_model::{FieldType, NoticeSeverity, Subject};
+use daiya_model::{FieldColumn, FieldType, NoticeSeverity, Subject};
 use daiya_query::postgres::{
-    MAX_SQL_ROWS, interpolate_postgres_macros, strip_sql_comments, validate_readonly_select,
+    MAX_SQL_ROWS, interpolate_postgres_macros, sql_time_series, strip_sql_comments,
+    validate_readonly_select,
 };
 use daiya_query::{Datasource, DsError, HealthState, PostgresDatasource, Query, ResourceReq};
 use serde_json::{Value, json};
@@ -458,4 +459,118 @@ async fn a_result_past_the_row_limit_is_cut_with_a_notice() {
         .unwrap();
     assert_eq!(sets[0].frames[0].fields[0].values.len(), MAX_SQL_ROWS);
     assert!(sets[0].frames[0].meta.notices.is_empty());
+}
+
+fn column(name: &str, field_type: FieldType, values: Vec<Value>) -> FieldColumn {
+    FieldColumn {
+        name: name.into(),
+        field_type,
+        unit: None,
+        display_name: None,
+        labels: BTreeMap::new(),
+        values,
+    }
+}
+
+/// `format: time_series` turns a long result wide as Grafana's `sqleng` does (`LongToWide`).
+#[test]
+fn a_long_time_series_turns_wide_with_a_field_per_label_set() {
+    let long = vec![
+        column(
+            "time",
+            FieldType::Time,
+            vec![json!(1000), json!(1000), json!(2000)],
+        ),
+        column(
+            "host",
+            FieldType::String,
+            vec![json!("a"), json!("b"), json!("a")],
+        ),
+        column(
+            "cpu",
+            FieldType::Number,
+            vec![json!(1.0), json!(2.0), json!(3.0)],
+        ),
+        column(
+            "mem",
+            FieldType::Number,
+            vec![json!(10), json!(20), json!(30)],
+        ),
+    ];
+    let wide = sql_time_series(long).unwrap();
+    let names: Vec<(&str, Option<&String>)> = wide
+        .iter()
+        .map(|f| (f.name.as_str(), f.labels.get("host")))
+        .collect();
+    let (a, b) = ("a".to_owned(), "b".to_owned());
+    assert_eq!(
+        names,
+        [
+            ("Time", None),
+            ("cpu", Some(&a)),
+            ("mem", Some(&a)),
+            ("cpu", Some(&b)),
+            ("mem", Some(&b)),
+        ]
+    );
+    assert_eq!(wide[0].values, [json!(1000), json!(2000)]);
+    assert_eq!(wide[1].values, [json!(1.0), json!(3.0)]);
+    // b has no point at 2000: the gap is null.
+    assert_eq!(wide[3].values, [json!(2.0), Value::Null]);
+    assert_eq!(wide[4].values, [json!(20), Value::Null]);
+}
+
+#[test]
+fn a_metric_column_names_its_series_and_epochs_become_milliseconds() {
+    let long = vec![
+        column(
+            "time",
+            FieldType::Number,
+            vec![json!(1_700_000_000), json!(1_700_000_060)],
+        ),
+        column(
+            "metric",
+            FieldType::String,
+            vec![json!("up"), json!("down")],
+        ),
+        column("value", FieldType::Number, vec![json!(1), json!(0)]),
+    ];
+    let wide = sql_time_series(long).unwrap();
+    assert_eq!(wide[0].field_type, FieldType::Time);
+    assert_eq!(
+        wide[0].values,
+        [json!(1_700_000_000_000_i64), json!(1_700_000_060_000_i64)]
+    );
+    assert_eq!(wide[1].name, "up");
+    assert!(wide[1].labels.is_empty());
+    assert_eq!(wide[2].name, "down");
+    assert_eq!(wide[2].values, [Value::Null, json!(0)]);
+}
+
+#[test]
+fn a_wide_result_keeps_its_columns_and_refusals_name_grafanas_reason() {
+    let wide = vec![
+        column("time", FieldType::Time, vec![json!(1000)]),
+        column("value", FieldType::Number, vec![json!(1)]),
+    ];
+    let out = sql_time_series(wide).unwrap();
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[0].name, "Time");
+    assert_eq!(out[1].name, "value");
+
+    let no_time = vec![column("value", FieldType::Number, vec![json!(1)])];
+    assert_eq!(
+        sql_time_series(no_time).unwrap_err(),
+        "no time column found"
+    );
+    let unsorted = vec![
+        column("time", FieldType::Time, vec![json!(2000), json!(1000)]),
+        column("host", FieldType::String, vec![json!("a"), json!("a")]),
+        column("v", FieldType::Number, vec![json!(1), json!(2)]),
+    ];
+    assert!(
+        sql_time_series(unsorted)
+            .unwrap_err()
+            .contains("sorted ascending")
+    );
 }
