@@ -1,0 +1,28 @@
+[package]
+name = "ekiben-io-ngsild"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ekiben-bloblang = { workspace = true }
+ekiben-core = { workspace = true }
+ekiben-io-http = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+axum = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+url = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+subtle = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+ekiben-processors = { workspace = true }
+tracing-subscriber = { workspace = true }

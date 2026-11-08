@@ -45,7 +45,9 @@ fn same_as_bento(case: &Value) -> (bool, String) {
         _ => {
             let config = dir.path().join("c.json");
             std::fs::write(&config, blob(&text(case, "config"))).expect("write config");
-            cmd.arg("run").arg(&config);
+            // `--host-env`: a parity case reads the whole environment, as Bento does (E1 keeps
+            // `run` to `EKIBEN_VAR_*` otherwise).
+            cmd.arg("run").arg("--host-env").arg(&config);
             // A mapping reading now() runs on the second Bento ran it (praha drops readings
             // older than 3 h, so on today's clock its recorded answer would expire).
             if let Some(clock) = case["clock"].as_str() {

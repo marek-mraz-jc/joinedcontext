@@ -2,11 +2,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use ekiben_core::config::build_blobl_env_for_stream;
 use ekiben_core::{ComponentConfig, CoreError, OrgId, StreamConfig, StreamContext, StreamMetrics};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
@@ -14,81 +16,239 @@ use subtle::ConstantTimeEq;
 use tokio::sync::watch;
 
 use crate::manager::StreamManager;
+use crate::tokens::OrgTokenFile;
 
 pub const MAX_API_BODY_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
 
 /// Authentication & multi-tenant token configuration for the Streams HTTP API (`Section 5 & 7`).
+///
+/// - No token configured and `require_auth` off: one tenant. Every call serves the default
+///   organization and `X-Jc-Org` is ignored (honouring it would let any caller pick any
+///   organization).
+/// - `require_auth` on: every route but `/ping` and `/ready` needs a valid token; with no token
+///   configured at all, every such call is refused (fail closed).
+/// - `guard_probes` on as well (ekiben hosted in a shared process such as `jc`, which has probes
+///   of its own): `/ready` needs a token too, only `/ping` answers without one.
+/// - The admin token may act for the organization named by `X-Jc-Org` (default otherwise); an
+///   organization token acts for its own organization only.
 #[derive(Clone, Default)]
 pub struct ServerAuthConfig {
     /// Optional single admin bearer token (compared in constant time).
     pub admin_bearer_token: Option<String>,
     /// Map of per-organization bearer tokens -> `OrgId` (each compared in constant time).
     pub org_tokens: Vec<(String, OrgId)>,
-    /// Refuse every request without a valid token, even when no token is configured, and guard
-    /// every endpoint but `/ping`. Set when ekiben is hosted in a shared process (`jc`), where an
-    /// open API would hand any caller a stream runner inside that process.
+    /// Refuse every unauthenticated call but `/ping` and `/ready`, even with no token configured.
     pub require_auth: bool,
+    /// `--org-tokens-file`: `<org> <sha256 hex of token>` lines, re-read when the file changes.
+    pub org_token_file: Option<Arc<OrgTokenFile>>,
+    /// With `require_auth`, guard `/ready` as well, leaving only `/ping` open. Set when ekiben is
+    /// hosted in a shared process (`jc`), where an open API would hand any caller a stream runner
+    /// inside that process and no orchestrator probes ekiben's own `/ready`.
+    pub guard_probes: bool,
+}
+
+impl std::fmt::Debug for ServerAuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServerAuthConfig")
+            .field(
+                "admin_bearer_token",
+                &self.admin_bearer_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "org_tokens",
+                &self
+                    .org_tokens
+                    .iter()
+                    .map(|(_, org)| ("[REDACTED]", org.0.as_str()))
+                    .collect::<Vec<_>>(),
+            )
+            .field("require_auth", &self.require_auth)
+            .field("guard_probes", &self.guard_probes)
+            .field(
+                "org_token_file",
+                &self.org_token_file.as_ref().map(|f| f.path().to_path_buf()),
+            )
+            .finish()
+    }
+}
+
+/// Who is calling: the organization the call acts for, and whether it may see every
+/// organization (`/metrics`, `/ready` stream names).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Caller {
+    pub org: OrgId,
+    /// The admin token was presented.
+    pub admin: bool,
+    /// No auth is configured at all (one tenant, everything is the default organization's).
+    pub open: bool,
+}
+
+impl Caller {
+    /// Sees every organization's series and stream names.
+    pub fn sees_all(&self) -> bool {
+        self.admin || self.open
+    }
+}
+
+fn bearer_token(headers: &HeaderMap) -> Option<&[u8]> {
+    let auth_str = headers.get("authorization")?.to_str().ok()?;
+    auth_str
+        .strip_prefix("Bearer ")
+        .or_else(|| auth_str.strip_prefix("bearer "))
+        .map(str::as_bytes)
 }
 
 impl ServerAuthConfig {
     pub fn is_enabled(&self) -> bool {
-        self.admin_bearer_token.is_some() || !self.org_tokens.is_empty()
+        self.admin_bearer_token.is_some()
+            || !self.org_tokens.is_empty()
+            || self.org_token_file.is_some()
     }
 
-    /// Verifies the request's `Authorization: Bearer <token>` header in constant time.
-    /// Returns:
-    /// - `Ok(None)` if auth is disabled (or admin token matched and no `X-Jc-Org` header was provided).
-    /// - `Ok(Some(OrgId))` if an organization token matched (or `X-Jc-Org` was provided with admin/local auth).
-    /// - `Err(StatusCode)` (`401 Unauthorized` or `403 Forbidden`) if token is missing/invalid.
-    pub fn authenticate(&self, headers: &HeaderMap) -> Result<Option<OrgId>, StatusCode> {
-        let header_org = headers
-            .get("x-jc-org")
-            .and_then(|v| v.to_str().ok())
-            .filter(|s| !s.is_empty())
-            .map(OrgId::new);
+    /// Whether the auth middleware guards the API.
+    pub fn guards_routes(&self) -> bool {
+        self.require_auth || self.is_enabled()
+    }
 
+    /// Verifies the request's `Authorization: Bearer <token>` header in constant time and
+    /// returns the organization the call acts for (always `Some`): the default organization
+    /// without auth, the `X-Jc-Org` organization (or the default) for the admin token, the
+    /// token's organization for an organization token. `401` for a missing or wrong token,
+    /// `403` for an organization token naming another organization in `X-Jc-Org`.
+    pub fn authenticate(&self, headers: &HeaderMap) -> Result<Option<OrgId>, StatusCode> {
+        self.identify(headers).map(|c| Some(c.org))
+    }
+
+    /// As [`Self::authenticate`], with whether the caller is the admin.
+    pub fn identify(&self, headers: &HeaderMap) -> Result<Caller, StatusCode> {
         if !self.is_enabled() {
             if self.require_auth {
                 return Err(StatusCode::UNAUTHORIZED);
             }
-            return Ok(header_org);
+            return Ok(Caller {
+                org: OrgId::default(),
+                admin: false,
+                open: true,
+            });
         }
 
-        let auth_str = headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .ok_or(StatusCode::UNAUTHORIZED)?;
+        let header_org = match headers.get("x-jc-org").map(|v| v.to_str()) {
+            None => None,
+            Some(Ok("")) => None,
+            Some(Ok(s)) if validate_stream_id(s).is_ok() => Some(OrgId::new(s)),
+            Some(_) => return Err(StatusCode::BAD_REQUEST),
+        };
 
-        let provided = auth_str
-            .strip_prefix("Bearer ")
-            .or_else(|| auth_str.strip_prefix("bearer "))
-            .ok_or(StatusCode::UNAUTHORIZED)?
-            .as_bytes();
+        let provided = bearer_token(headers).ok_or(StatusCode::UNAUTHORIZED)?;
 
         if let Some(ref admin_tok) = self.admin_bearer_token {
             if constant_time_eq_slices(provided, admin_tok.as_bytes()) {
-                return Ok(header_org);
+                return Ok(Caller {
+                    org: header_org.unwrap_or_default(),
+                    admin: true,
+                    open: false,
+                });
             }
         }
 
-        let mut matched_org: Option<OrgId> = None;
-        for (tok, org_id) in &self.org_tokens {
-            if constant_time_eq_slices(provided, tok.as_bytes()) {
-                matched_org = Some(org_id.clone());
-            }
-        }
-
-        if let Some(org) = matched_org {
+        if let Some(org) = self.match_org_token(provided) {
             if let Some(ref requested_org) = header_org {
                 if requested_org != &org {
                     return Err(StatusCode::FORBIDDEN);
                 }
             }
-            return Ok(Some(org));
+            return Ok(Caller {
+                org,
+                admin: false,
+                open: false,
+            });
         }
 
         Err(StatusCode::UNAUTHORIZED)
     }
+
+    /// The organization of an organization token (static list, then the tokens file); every
+    /// entry is compared, in constant time, whatever matches first.
+    fn match_org_token(&self, provided: &[u8]) -> Option<OrgId> {
+        let mut matched_org: Option<OrgId> = None;
+        for (tok, org_id) in &self.org_tokens {
+            if constant_time_eq_slices(provided, tok.as_bytes()) && matched_org.is_none() {
+                matched_org = Some(org_id.clone());
+            }
+        }
+        if let Some(file) = &self.org_token_file {
+            if let Some(org) = file.match_token(provided) {
+                if matched_org.is_none() {
+                    matched_org = Some(org);
+                }
+            }
+        }
+        matched_org
+    }
+
+    /// Admits only the admin bearer token: `401` without a valid token, `403` for an organization
+    /// token or when no admin token is configured (a server without auth has no admin).
+    pub fn authenticate_admin(&self, headers: &HeaderMap) -> Result<(), StatusCode> {
+        let Some(ref admin_tok) = self.admin_bearer_token else {
+            return Err(StatusCode::FORBIDDEN);
+        };
+        let provided = headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| {
+                s.strip_prefix("Bearer ")
+                    .or_else(|| s.strip_prefix("bearer "))
+            })
+            .ok_or(StatusCode::UNAUTHORIZED)?
+            .as_bytes();
+        if constant_time_eq_slices(provided, admin_tok.as_bytes()) {
+            return Ok(());
+        }
+        if self.match_org_token(provided).is_some() {
+            return Err(StatusCode::FORBIDDEN);
+        }
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+/// Routes that answer without a token: the liveness probe, and the readiness probe unless
+/// [`ServerAuthConfig::guard_probes`] closes it.
+fn is_open_route(path: &str, guard_probes: bool) -> bool {
+    match path {
+        "/ping" | "/bento/ping" => true,
+        "/ready" | "/bento/ready" => !guard_probes,
+        _ => false,
+    }
+}
+
+/// The `require_auth` middleware: every route but `/ping` and `/ready` (only `/ping` with
+/// `guard_probes`) needs a valid token whenever auth is configured or required. Missing and
+/// wrong tokens get the same 401 body.
+async fn require_auth_layer(
+    State(state): State<Arc<ServerState>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    if state.auth.guards_routes() && !is_open_route(req.uri().path(), state.auth.guard_probes) {
+        match state.auth.identify(req.headers()) {
+            Ok(_) => {}
+            Err(StatusCode::FORBIDDEN) => {
+                return (StatusCode::FORBIDDEN, "Forbidden").into_response()
+            }
+            Err(StatusCode::BAD_REQUEST) => {
+                return (StatusCode::BAD_REQUEST, "invalid X-Jc-Org header").into_response()
+            }
+            Err(_) => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    [("www-authenticate", "Bearer")],
+                    "Unauthorized",
+                )
+                    .into_response()
+            }
+        }
+    }
+    next.run(req).await
 }
 
 fn constant_time_eq_slices(a: &[u8], b: &[u8]) -> bool {
@@ -156,36 +316,21 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
                 .delete(handle_delete_stream),
         )
         .route("/streams/{id}/stats", get(handle_stream_stats))
-        .route("/resources/{type}/{id}", post(handle_post_resource));
+        .route("/resources/{type}/{id}", post(handle_post_resource))
+        .route(
+            "/orgs/{org}/quotas",
+            get(handle_get_quotas).put(handle_put_quotas),
+        );
 
     Router::new()
         .merge(api_routes.clone())
         .nest("/bento", api_routes)
-        .layer(DefaultBodyLimit::max(MAX_API_BODY_BYTES))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             require_auth_layer,
         ))
+        .layer(DefaultBodyLimit::max(MAX_API_BODY_BYTES))
         .with_state(state)
-}
-
-/// With [`ServerAuthConfig::require_auth`], every request but the liveness ping needs a valid
-/// token before it reaches a handler (the read-only endpoints list stream ids and organizations).
-async fn require_auth_layer(
-    State(state): State<Arc<ServerState>>,
-    req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> Response {
-    if state.auth.require_auth {
-        let path = req.uri().path();
-        let public = path == "/ping" || path == "/bento/ping";
-        if !public {
-            if let Err(code) = state.auth.authenticate(req.headers()) {
-                return (code, "Unauthorized").into_response();
-            }
-        }
-    }
-    next.run(req).await
 }
 
 async fn handle_ping() -> &'static str {
@@ -216,24 +361,49 @@ async fn handle_endpoints() -> Response {
     .into_response()
 }
 
-async fn handle_ready(State(state): State<Arc<ServerState>>) -> Response {
+/// `GET /ready` stays open for probes; the names of streams that are not connected are shown
+/// only to an authenticated caller, and only its own organization's (all for the admin).
+async fn handle_ready(State(state): State<Arc<ServerState>>, headers: HeaderMap) -> Response {
     let not_ready = state.manager.not_ready_streams().await;
     if not_ready.is_empty() {
-        (StatusCode::OK, "OK").into_response()
-    } else {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            format!("streams {} are not connected\n", not_ready.join(", ")),
-        )
-            .into_response()
+        return (StatusCode::OK, "OK").into_response();
     }
+    let body = match state.auth.identify(&headers) {
+        Ok(caller) => {
+            let names: Vec<String> = not_ready
+                .into_iter()
+                .filter(|(org, _)| caller.sees_all() || org == &caller.org)
+                .map(|(_, id)| id)
+                .collect();
+            if names.is_empty() {
+                "streams are not connected\n".to_string()
+            } else {
+                format!("streams {} are not connected\n", names.join(", "))
+            }
+        }
+        Err(_) => "streams are not connected\n".to_string(),
+    };
+    (StatusCode::SERVICE_UNAVAILABLE, body).into_response()
 }
 
-async fn handle_metrics(State(state): State<Arc<ServerState>>) -> Response {
-    let body = state.manager.metrics_registry.render_prometheus();
+/// `GET /metrics`: Bento's Prometheus exposition. An organization token sees only its own
+/// organization's series; the admin (or a server without auth) sees them all.
+async fn handle_metrics(State(state): State<Arc<ServerState>>, headers: HeaderMap) -> Response {
+    let caller = match state.auth.identify(&headers) {
+        Ok(c) => c,
+        Err(code) => return (code, "Unauthorized").into_response(),
+    };
+    let body = if caller.sees_all() {
+        state.manager.metrics_registry.render_prometheus()
+    } else {
+        state
+            .manager
+            .metrics_registry
+            .render_prometheus_for_org(&caller.org.0)
+    };
     (
         StatusCode::OK,
-        [("content-type", "text/plain; version=0.0.4")],
+        [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
         body,
     )
         .into_response()
@@ -278,11 +448,11 @@ async fn handle_set_streams(
         }
         let val_str = serde_json::to_string(val).unwrap_or_default();
         match parse_and_lint_stream(&state, &val_str, chilled, caller_org.as_ref()) {
-            Ok((conf, lints)) => {
+            Ok((conf, lints, _)) => {
                 for l in lints {
                     all_lints.push(format!("stream '{id}': {l}"));
                 }
-                parsed_streams.push((id.clone(), conf));
+                parsed_streams.push((id.clone(), conf, Some(val.clone())));
             }
             Err(resp) => return *resp,
         }
@@ -306,11 +476,14 @@ async fn handle_set_streams(
         }
     }
 
-    for (id, conf) in parsed_streams {
+    for (id, conf, posted) in parsed_streams {
         let res = if existing.contains_key(&id) {
-            state.manager.update(&id, conf, caller_org.as_ref()).await
+            state
+                .manager
+                .update_posted(&id, conf, caller_org.as_ref(), posted)
+                .await
         } else {
-            state.manager.create(id, conf).await
+            state.manager.create_posted(id, conf, posted).await
         };
         if let Err(e) = res {
             return map_core_err_to_response(e);
@@ -352,9 +525,9 @@ async fn handle_create_stream(
     let chilled = params.is_chilled();
     let body_str = String::from_utf8_lossy(&body);
 
-    let (mut conf, lints) =
+    let (mut conf, lints, posted) =
         match parse_and_lint_stream(&state, &body_str, chilled, caller_org.as_ref()) {
-            Ok(pair) => pair,
+            Ok(parsed) => parsed,
             Err(resp) => return *resp,
         };
 
@@ -373,7 +546,7 @@ async fn handle_create_stream(
         conf.run = ekiben_core::RunMode::Once;
     }
 
-    match state.manager.create(id, conf).await {
+    match state.manager.create_posted(id, conf, posted).await {
         Ok(Some(summary)) => Json(summary).into_response(),
         Ok(None) => StatusCode::OK.into_response(),
         Err(e) => map_core_err_to_response(e),
@@ -397,9 +570,9 @@ async fn handle_put_stream(
     let chilled = params.is_chilled();
     let body_str = String::from_utf8_lossy(&body);
 
-    let (mut conf, lints) =
+    let (mut conf, lints, posted) =
         match parse_and_lint_stream(&state, &body_str, chilled, caller_org.as_ref()) {
-            Ok(pair) => pair,
+            Ok(parsed) => parsed,
             Err(resp) => return *resp,
         };
 
@@ -418,7 +591,11 @@ async fn handle_put_stream(
         conf.run = ekiben_core::RunMode::Once;
     }
 
-    match state.manager.update(&id, conf, caller_org.as_ref()).await {
+    match state
+        .manager
+        .update_posted(&id, conf, caller_org.as_ref(), posted)
+        .await
+    {
         Ok(Some(summary)) => Json(summary).into_response(),
         Ok(None) => StatusCode::OK.into_response(),
         Err(e) => map_core_err_to_response(e),
@@ -494,8 +671,7 @@ async fn handle_post_resource(
     let chilled = params.is_chilled();
     let body_str = String::from_utf8_lossy(&body);
 
-    let env_access = state.manager.env_access;
-    let interpolated = match ekiben_core::interpolate_env_str(&body_str, |k| env_access.lookup(k)) {
+    let interpolated = match state.manager.interpolate(&org_id, &body_str) {
         Ok(s) => s,
         Err(err) => {
             if !chilled {
@@ -531,15 +707,13 @@ async fn handle_post_resource(
 
     let (_tx, rx) = watch::channel(false);
     let org_ctx = state.manager.resources.get_or_create_org(&org_id);
+    let org_vars = org_ctx.secrets_snapshot();
     let sctx = StreamContext {
         stream_id: format!("resource_{id}"),
         org: org_ctx,
         resources: state.manager.resources.clone(),
         registry: state.manager.registry.clone(),
-        blobl_env: ekiben_core::config::build_blobl_env_for_stream(
-            &HashMap::new(),
-            state.manager.env_access,
-        ),
+        blobl_env: build_blobl_env_for_stream(&org_vars, state.manager.env_access),
         metrics: StreamMetrics::new(&id, &org_id.0),
         label: id.clone(),
         path: format!("resources.{res_type}.{id}"),
@@ -606,15 +780,20 @@ async fn handle_post_resource(
     }
 }
 
+/// A parsed stream config, its lint errors and the config as posted (before interpolation).
+type ParsedStream = (StreamConfig, Vec<String>, Option<JsonValue>);
+
 fn parse_and_lint_stream(
     state: &ServerState,
     body_str: &str,
     chilled: bool,
     caller_org: Option<&OrgId>,
-) -> Result<(StreamConfig, Vec<String>), Box<Response>> {
+) -> Result<ParsedStream, Box<Response>> {
     let mut env_lints = Vec::new();
-    let env_access = state.manager.env_access;
-    let interpolated = match ekiben_core::interpolate_env_str(body_str, |k| env_access.lookup(k)) {
+    // `${VAR}` comes from the caller's organization's variables, then the process environment
+    // only as the server's `EnvAccess` allows (E1).
+    let vars_org = caller_org.cloned().unwrap_or_default();
+    let interpolated = match state.manager.interpolate(&vars_org, body_str) {
         Ok(s) => s,
         Err(err) => {
             for m in err.missing {
@@ -643,13 +822,100 @@ fn parse_and_lint_stream(
         conf.org = c_org.clone();
     }
 
-    let lint_report = state.manager.registry.lint_stream_config(&conf, env_lints);
+    let mut lint_report = state.manager.registry.lint_stream_config(&conf, env_lints);
+    // Streams mode: an http_server input serves on the shared ingest listener (E4).
+    for err in ekiben_io_http::http_server::lint_streams_mode(&conf.raw_source) {
+        lint_report.add_error(err);
+    }
 
     let _ = chilled;
-    Ok((conf, lint_report.lint_errors))
+    let posted = StreamConfig::posted_json(body_str);
+    Ok((conf, lint_report.lint_errors, posted))
 }
 
-fn validate_stream_id(id: &str) -> Result<(), String> {
+/// `GET /orgs/{org}/quotas` (admin only): the organization's current quotas.
+async fn handle_get_quotas(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(org): Path<String>,
+) -> Response {
+    if let Err(code) = state.auth.authenticate_admin(&headers) {
+        return (code, "the quota API needs the admin token").into_response();
+    }
+    if let Err(msg) = validate_stream_id(&org) {
+        return (
+            StatusCode::BAD_REQUEST,
+            msg.replace("stream id", "organization id"),
+        )
+            .into_response();
+    }
+    let ctx = state.manager.resources.get_or_create_org(&OrgId::new(org));
+    Json(ctx.get_quotas()).into_response()
+}
+
+/// `PUT /orgs/{org}/quotas` (admin only): replaces the organization's quotas (a missing field
+/// takes its default). Running streams of that organization pace by the new rates within one
+/// second, without a restart; other organizations are untouched.
+async fn handle_put_quotas(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(org): Path<String>,
+    body: Bytes,
+) -> Response {
+    if let Err(code) = state.auth.authenticate_admin(&headers) {
+        return (code, "the quota API needs the admin token").into_response();
+    }
+    if let Err(msg) = validate_stream_id(&org) {
+        return (
+            StatusCode::BAD_REQUEST,
+            msg.replace("stream id", "organization id"),
+        )
+            .into_response();
+    }
+    let quotas = match parse_quotas(&body) {
+        Ok(q) => q,
+        Err(msg) => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!("invalid quotas: {msg} (e.g. {{\"max_messages_per_sec\": 50000}})"),
+            )
+                .into_response()
+        }
+    };
+    if let Err(field) = quotas.validate() {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("{field} must be at least 1"),
+        )
+            .into_response();
+    }
+    let ctx = state
+        .manager
+        .resources
+        .set_org_quotas(&OrgId::new(org), quotas);
+    Json(ctx.get_quotas()).into_response()
+}
+
+/// Parses a quotas body; an error names the offending field (serde alone omits it for a bad value).
+fn parse_quotas(body: &[u8]) -> Result<ekiben_core::OrgQuotas, String> {
+    let value: JsonValue = serde_json::from_slice(body).map_err(|e| e.to_string())?;
+    serde_json::from_value(value.clone()).map_err(|e| {
+        let field = value.as_object().and_then(|map| {
+            map.iter().find_map(|(k, v)| {
+                let one = serde_json::json!({ k: v });
+                serde_json::from_value::<ekiben_core::OrgQuotas>(one)
+                    .is_err()
+                    .then_some(k.clone())
+            })
+        });
+        match field {
+            Some(name) => format!("field `{name}`: {e}"),
+            None => e.to_string(),
+        }
+    })
+}
+
+pub(crate) fn validate_stream_id(id: &str) -> Result<(), String> {
     if id.is_empty() || id.len() > 256 {
         return Err("invalid stream id length".to_string());
     }

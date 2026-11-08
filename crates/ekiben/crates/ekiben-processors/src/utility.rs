@@ -635,18 +635,12 @@ impl Processor for BoundsCheckProcessor {
         if batch.len() < self.min_parts || batch.len() > self.max_parts {
             return Ok(Vec::new());
         }
-        let filtered: Batch = batch
-            .into_iter()
-            .filter(|p| {
-                let len = p.as_bytes_ref().len();
-                len >= self.min_part_size && len <= self.max_part_size
-            })
-            .collect();
-        if filtered.len() < self.min_parts {
-            Ok(Vec::new())
-        } else {
-            Ok(vec![filtered])
-        }
+        // Bento drops the whole batch when any part is outside the size bounds.
+        let fits = batch.iter().all(|p| {
+            let len = p.as_bytes_ref().len();
+            len >= self.min_part_size && len <= self.max_part_size
+        });
+        Ok(if fits { vec![batch] } else { Vec::new() })
     }
 }
 

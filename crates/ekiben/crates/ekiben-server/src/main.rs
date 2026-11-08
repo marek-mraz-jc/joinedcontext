@@ -8,10 +8,10 @@ use std::time::Duration;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use ekiben_bloblang::Environment;
-use ekiben_core::{OrgId, OrgQuotas, ResourceManager, StreamConfig};
+use ekiben_core::{EnvAccess, MetricsRegistry, OrgId, OrgQuotas, ResourceManager, StreamConfig};
 use ekiben_server::{
-    build_full_registry, build_router, run_stream_once, Scheduler, ServerAuthConfig, ServerState,
-    StreamManager,
+    build_full_registry, build_router, load_metrics_config, run_stream_once, OrgTokenFile,
+    OrgVarsDir, Scheduler, ServerAuthConfig, ServerState, StreamManager,
 };
 use tokio::net::TcpListener;
 
@@ -22,6 +22,10 @@ use tokio::net::TcpListener;
     about = "Multi-organization Rust stream processor with Bento's core"
 )]
 struct Cli {
+    /// Set a config field, as Bento's `--set` (only `metrics.*` is read, by `streams`; example:
+    /// --set metrics.prometheus.use_histogram_timing=true)
+    #[arg(long = "set", global = true)]
+    set: Vec<String>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -43,6 +47,10 @@ enum Commands {
         /// run on its own clock (example: 2026-11-07T09:16:19Z)
         #[arg(long, value_parser = parse_clock)]
         clock: Option<chrono::DateTime<chrono::Utc>>,
+        /// Let `${VAR}` and Bloblang env() read the whole process environment (Bento's
+        /// behaviour); without it they read only EKIBEN_VAR_* variables
+        #[arg(long, default_value_t = false)]
+        host_env: bool,
     },
     /// Run the streams-mode HTTP API server (listens on 127.0.0.1:4195 by default)
     Streams {
@@ -55,6 +63,32 @@ enum Commands {
         /// Optional bearer token for authenticating API calls
         #[arg(long, env = "EKIBEN_BEARER_TOKEN")]
         bearer_token: Option<String>,
+        /// A directory every replica reads once a second without a restart: each *.yaml is a
+        /// stream (id = file stem), quotas.yaml maps organization ids to quotas (example:
+        /// /etc/ekiben/streams, a ConfigMap mounted in each pod)
+        #[arg(long)]
+        config_dir: Option<PathBuf>,
+        /// Refuse every API call without a valid token but /ping and /ready, even when no token
+        /// is configured (a hosted server)
+        #[arg(long, default_value_t = false)]
+        require_auth: bool,
+        /// Organization tokens as `<org> <sha256 hex of the token>` lines, re-read on change
+        #[arg(long)]
+        org_tokens_file: Option<PathBuf>,
+        /// A directory of `<org>.yaml` variable maps (`NAME: value`) for `${NAME}` and env()
+        /// of each organization's streams, re-read once a second
+        #[arg(long)]
+        org_vars: Option<PathBuf>,
+        /// Address of the shared ingest listener serving every http_server input at
+        /// /{org}/{stream}{path} (example: 0.0.0.0:4196)
+        #[arg(long)]
+        ingest_addr: Option<String>,
+        /// A file with the `metrics:` section (Bento's prometheus exporter fields and mapping)
+        #[arg(long)]
+        metrics: Option<PathBuf>,
+        /// Resource config files, as Bento's `-r`: their `metrics:` section is read
+        #[arg(short = 'r', long = "resources")]
+        resources: Vec<PathBuf>,
         /// Optional static stream config files to load at startup
         configs: Vec<PathBuf>,
     },
@@ -149,20 +183,27 @@ fn load_quotas(path: &std::path::Path) -> Result<OrgQuotas, String> {
 }
 
 async fn run_cli(cli: Cli) -> Result<i32, String> {
+    let global_sets = cli.set;
     match cli.command {
         Commands::Run {
             config,
             allow_private_ips,
             quotas,
             clock,
+            host_env,
         } => {
             if let Some(at) = clock {
                 ekiben_bloblang::functions::freeze_clock(at);
             }
+            let access = if host_env {
+                EnvAccess::Process
+            } else {
+                EnvAccess::AllowListed
+            };
             let raw = std::fs::read_to_string(&config)
                 .map_err(|e| format!("failed to read '{}': {e}", config.display()))?;
             let (stream_conf, _) =
-                StreamConfig::parse_str_with_env(&raw, false, |k| std::env::var(k).ok())
+                StreamConfig::parse_str_with_env(&raw, false, |k| access.lookup(k))
                     .map_err(|e| e.to_string())?;
             let reg = build_full_registry();
             let resources = ResourceManager::new();
@@ -179,7 +220,7 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "run".to_string());
 
-            let summary = run_stream_once(stream_id, stream_conf, reg, resources, None, true)
+            let summary = run_stream_once(stream_id, stream_conf, reg, resources, None, access)
                 .await
                 .map_err(|e| e.to_string())?;
 
@@ -197,29 +238,89 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
             host,
             port,
             bearer_token,
+            config_dir,
+            require_auth,
+            org_tokens_file,
+            org_vars,
+            ingest_addr,
+            metrics,
+            resources: resource_files,
             configs,
         } => {
+            ekiben_io_http::http_server::set_streams_mode();
             let reg = build_full_registry();
             let resources = ResourceManager::new();
-            let manager = StreamManager::new(reg, resources, None, true);
+            let metrics_conf =
+                load_metrics_config(metrics.as_ref(), &resource_files, &global_sets)?;
+            let metrics_registry =
+                MetricsRegistry::with_config(metrics_conf).map_err(|e| e.to_string())?;
+            // Streams mode reads only EKIBEN_VAR_* process variables and each organization's
+            // own variables (E1): a hosted process's environment holds other modules' secrets.
+            let manager = StreamManager::new(reg, resources.clone(), None, EnvAccess::AllowListed)
+                .with_metrics_registry(metrics_registry);
+
+            if let Some(dir) = org_vars {
+                let mut vars = OrgVarsDir::new(dir);
+                let errors = vars.sync(&resources);
+                if !errors.is_empty() {
+                    return Err(errors.join("; "));
+                }
+                tokio::spawn(vars.watch(resources.clone()));
+            }
+
+            if let Some(addr) = ingest_addr {
+                let listener = TcpListener::bind(&addr)
+                    .await
+                    .map_err(|e| format!("failed to bind ingest listener {addr}: {e}"))?;
+                ekiben_io_http::ingest::activate();
+                tokio::spawn(async move {
+                    if let Err(e) = ekiben_io_http::ingest::serve(listener).await {
+                        tracing::error!("ingest listener: {e}");
+                    }
+                });
+            }
 
             for path in configs {
                 let raw = std::fs::read_to_string(&path)
                     .map_err(|e| format!("failed to read '{}': {e}", path.display()))?;
-                let (conf, _) =
-                    StreamConfig::parse_str_with_env(&raw, false, |k| std::env::var(k).ok())
-                        .map_err(|e| e.to_string())?;
+                let (conf, _) = manager
+                    .parse_config(&raw, false)
+                    .map_err(|e| e.to_string())?;
+                let lints = ekiben_io_http::http_server::lint_streams_mode(&conf.raw_source);
+                if !lints.is_empty() {
+                    return Err(format!("{}: {}", path.display(), lints.join("; ")));
+                }
                 let id = path
                     .file_stem()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "stream".to_string());
-                manager.create(id, conf).await.map_err(|e| e.to_string())?;
+                manager
+                    .create_posted(id, conf, StreamConfig::posted_json(&raw))
+                    .await
+                    .map_err(|e| e.to_string())?;
             }
 
+            if let Some(dir) = config_dir {
+                let mut watcher = ekiben_server::config_dir::ConfigDir::new(dir);
+                // The first pass must hold: a pod that cannot read its config is not ready.
+                let errors = watcher.sync(&manager).await;
+                if !errors.is_empty() {
+                    return Err(errors.join("; "));
+                }
+                tokio::spawn(watcher.watch(manager.clone()));
+            }
+
+            let org_token_file = match org_tokens_file {
+                Some(p) => Some(Arc::new(OrgTokenFile::load(p)?)),
+                None => None,
+            };
             let auth = ServerAuthConfig {
                 admin_bearer_token: bearer_token,
                 org_tokens: Vec::new(),
-                require_auth: false,
+                require_auth,
+                org_token_file,
+                // A standalone server keeps /ready open for its orchestrator's probe.
+                guard_probes: false,
             };
             let state = ServerState::new(manager, auth);
             let app = build_router(state);
@@ -236,14 +337,14 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
         Commands::Schedule { configs } => {
             let reg = build_full_registry();
             let resources = ResourceManager::new();
-            let scheduler = Scheduler::new(reg, resources, None, true);
+            let access = EnvAccess::AllowListed;
+            let scheduler = Scheduler::new(reg, resources, None, access);
 
             for path in configs {
                 let raw = std::fs::read_to_string(&path)
                     .map_err(|e| format!("failed to read '{}': {e}", path.display()))?;
-                let (conf, _) =
-                    StreamConfig::parse_str_with_env(&raw, false, |k| std::env::var(k).ok())
-                        .map_err(|e| e.to_string())?;
+                let (conf, _) = StreamConfig::parse_str_with_env(&raw, false, |k| access.lookup(k))
+                    .map_err(|e| e.to_string())?;
                 let id = path
                     .file_stem()
                     .map(|s| s.to_string_lossy().into_owned())
@@ -296,6 +397,19 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
             let env = Environment::new();
             names.insert("bloblang-functions".into(), env.function_names().into());
             names.insert("bloblang-methods".into(), env.method_names().into());
+            // Names Bento refuses: a config using one of them runs on ekiben only.
+            let mut extensions: Vec<String> = Vec::new();
+            #[cfg(feature = "ngsild")]
+            for (kind, name) in ekiben_io_ngsild::EXTENSION_COMPONENTS {
+                extensions.push(format!("{kind}/{name}"));
+            }
+            for f in ekiben_bloblang::ngsild::EXTENSION_FUNCTIONS {
+                extensions.push(format!("bloblang-functions/{f}"));
+            }
+            for m in ekiben_bloblang::ngsild::EXTENSION_METHODS {
+                extensions.push(format!("bloblang-methods/{m}"));
+            }
+            names.insert("ekiben-extensions".into(), extensions.into());
             println!("{}", serde_json::Value::Object(names));
             Ok(0)
         }

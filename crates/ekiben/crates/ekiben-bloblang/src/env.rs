@@ -47,7 +47,8 @@ pub struct Environment {
     pub(crate) importer: Arc<dyn Importer>,
     pub(crate) max_map_recursion: usize,
     pub(crate) allow_host_env: bool,
-    /// When set, host `env()` reads only variables whose name starts with this prefix.
+    /// When set, host `env()` reads only `<prefix><NAME>` (or `NAME` itself when it already
+    /// carries the prefix): the `AllowListed` access of `ekiben-core`'s `EnvAccess`.
     pub(crate) host_env_prefix: Option<Arc<str>>,
     pub(crate) allow_host_file: bool,
     pub(crate) env_overrides: Arc<HashMap<String, String>>,
@@ -84,9 +85,9 @@ impl Environment {
         self
     }
 
-    /// Restricts host `env()` reads (when enabled) to variables named with `prefix`, so a mapping
-    /// can never read the rest of the process environment (other modules' secrets when ekiben is
-    /// hosted in a shared process).
+    /// Restricts host `env()` reads (when enabled) to the allow-list `prefix`: `env("NAME")` reads
+    /// `<prefix>NAME`, and `env("<prefix>NAME")` reads itself, so a mapping never reaches the rest
+    /// of the process environment (other modules' secrets when ekiben is hosted in `jc`).
     pub fn with_host_env_prefix(mut self, prefix: impl Into<Arc<str>>) -> Self {
         self.host_env_prefix = Some(prefix.into());
         self
@@ -160,9 +161,12 @@ impl Environment {
         }
         if self.allow_host_env {
             if let Some(prefix) = &self.host_env_prefix {
-                if !key.starts_with(&**prefix) {
-                    return None;
-                }
+                let name = if key.starts_with(&**prefix) {
+                    key.to_string()
+                } else {
+                    format!("{prefix}{key}")
+                };
+                return std::env::var(name).ok();
             }
             return std::env::var(key).ok();
         }

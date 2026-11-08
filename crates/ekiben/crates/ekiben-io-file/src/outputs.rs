@@ -138,6 +138,10 @@ impl Output for StdoutOutput {
 pub struct FileOutput {
     path: FieldExpression,
     codec: String,
+    /// Pipeline workers write batches in parallel: one batch at a time keeps every batch's lines
+    /// together and in order. Holds the open file of the last appended path, which Bento's file
+    /// output also keeps open until the path changes.
+    write_lock: Arc<std::sync::Mutex<Option<(std::path::PathBuf, std::fs::File)>>>,
 }
 
 impl FileOutput {
@@ -156,7 +160,11 @@ impl FileOutput {
             .and_then(JsonValue::as_str)
             .unwrap_or("lines")
             .to_string();
-        Ok(Self { path, codec })
+        Ok(Self {
+            path,
+            codec,
+            write_lock: Arc::default(),
+        })
     }
 }
 
@@ -171,26 +179,53 @@ impl Output for FileOutput {
             let _ = p.as_bytes();
         }
         let view = PartsView(&batch);
-        let mut writes: Vec<(std::path::PathBuf, bytes::Bytes)> = Vec::with_capacity(batch.len());
+        let append_mode = self.codec == "lines" || self.codec == "append";
+        let lines = self.codec == "lines";
+        // One write per run of messages to the same file: appended messages join one buffer, while
+        // a truncating codec writes each message (the last one per file stays, as in Bento).
+        let mut writes: Vec<(std::path::PathBuf, Vec<u8>)> = Vec::new();
         for (i, part) in batch.iter().enumerate() {
             let resolved = self
                 .path
                 .resolve_string(i, &view)
                 .map_err(|e| CoreError::other(format!("path interpolation error: {e}")))?;
             let safe_path = sanitize_file_path(&resolved, ctx.file_root.as_deref())?;
-            writes.push((safe_path, part.as_bytes_ref()));
+            let bytes = part.as_bytes_ref();
+            if !(append_mode && writes.last().is_some_and(|(p, _)| *p == safe_path)) {
+                writes.push((safe_path, Vec::with_capacity(bytes.len() + 1)));
+            }
+            if let Some((_, buf)) = writes.last_mut() {
+                buf.extend_from_slice(&bytes);
+                if lines && !bytes.ends_with(b"\n") {
+                    buf.push(b'\n');
+                }
+            }
         }
 
-        let codec = self.codec.clone();
+        let write_lock = self.write_lock.clone();
         tokio::task::spawn_blocking(move || -> Result<(), CoreError> {
+            let mut held = write_lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             for (path, bytes) in writes {
+                if append_mode {
+                    if let Some((_, file)) = held.as_mut().filter(|(p, _)| *p == path) {
+                        if let Err(e) = file.write_all(&bytes) {
+                            *held = None;
+                            return Err(CoreError::other(format!(
+                                "failed to write '{}': {e}",
+                                path.display()
+                            )));
+                        }
+                        continue;
+                    }
+                }
                 if let Some(parent) = path.parent() {
                     if !parent.as_os_str().is_empty() {
                         std::fs::create_dir_all(parent)
                             .map_err(|e| CoreError::other(e.to_string()))?;
                     }
                 }
-                let append_mode = codec == "lines" || codec == "append";
                 let mut file = std::fs::OpenOptions::new()
                     .create(true)
                     .write(true)
@@ -202,9 +237,8 @@ impl Output for FileOutput {
                     })?;
                 file.write_all(&bytes)
                     .map_err(|e| CoreError::other(e.to_string()))?;
-                if codec == "lines" && !bytes.ends_with(b"\n") {
-                    file.write_all(b"\n")
-                        .map_err(|e| CoreError::other(e.to_string()))?;
+                if append_mode {
+                    *held = Some((path, file));
                 }
             }
             Ok(())

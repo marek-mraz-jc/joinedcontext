@@ -915,6 +915,8 @@ impl Input for ResourceInput {
 
 /// Implements `stdin` input (`internal/impl/io/input_stdin.go`): the `lines` scanner (default) streams one
 /// message per line; any other scanner reads stdin to its end first.
+const STDIN_BUFFER: usize = 1 << 20;
+
 pub struct StdinInput {
     scanner: FileScannerKind,
     lines: Option<tokio::io::Lines<tokio::io::BufReader<tokio::io::Stdin>>>,
@@ -958,9 +960,11 @@ impl Input for StdinInput {
             return Err(CoreError::EndOfInput);
         }
         if matches!(self.scanner, FileScannerKind::Lines) {
-            let lines = self
-                .lines
-                .get_or_insert_with(|| tokio::io::BufReader::new(tokio::io::stdin()).lines());
+            let lines = self.lines.get_or_insert_with(|| {
+                // tokio reads stdin on the blocking pool, one hop per buffer fill: a large
+                // buffer keeps the hops rare (8 KiB capped a stream at ~60k lines/s).
+                tokio::io::BufReader::with_capacity(STDIN_BUFFER, tokio::io::stdin()).lines()
+            });
             return match lines.next_line().await {
                 Ok(Some(line)) => Ok((vec![Part::from_str(&line)], AckResponder::noop())),
                 Ok(None) => Err(CoreError::EndOfInput),

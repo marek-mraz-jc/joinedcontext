@@ -421,6 +421,7 @@ impl HttpClient {
         }
 
         let parsed_token_url = validate_resolved_url(&oa.token_url, org)?;
+        org.admit_http_request().await;
         // As golang.org/x/oauth2 under Bento (AuthStyleAutoDetect): the client's credentials in a
         // Basic header first, and only when the endpoint refuses that, in the form instead.
         let mut resp = self
@@ -485,6 +486,7 @@ impl HttpClient {
             .map_err(|e| CoreError::other(format!("url interpolation error: {e}")))?;
 
         let parsed_url = validate_resolved_url(&resolved_url_str, org)?;
+        org.admit_http_request().await;
         let redacted_url = redact_url_str(parsed_url.as_str());
 
         let mut req = self.client_for(org).request(self.verb.clone(), parsed_url);
@@ -738,7 +740,8 @@ pub fn validate_url_scheme_prefix(raw_url: &str) -> Result<(), CoreError> {
 /// Validates a fully resolved URL at request time:
 /// 1. Scheme must be `http` or `https`.
 /// 2. Checks SSRF private/loopback/link-local addresses unless `org.get_quotas().allow_private_ips` is true.
-/// 3. Checks `org.check_http_request(host)` (allow-list + RPS quota).
+/// 3. Checks `org.check_http_host(host)` (allow-list); the caller then waits on
+///    `org.admit_http_request()` (the RPS quota paces, it never fails).
 pub fn validate_resolved_url(url_str: &str, org: &OrgContext) -> Result<Url, CoreError> {
     let parsed = Url::parse(url_str).map_err(|e| {
         CoreError::config(format!("invalid URL '{}': {e}", redact_url_str(url_str)))
@@ -764,7 +767,7 @@ pub fn validate_resolved_url(url_str: &str, org: &OrgContext) -> Result<Url, Cor
         });
     }
 
-    org.check_http_request(host)?;
+    org.check_http_host(host)?;
     Ok(parsed)
 }
 

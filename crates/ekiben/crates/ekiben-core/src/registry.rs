@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
@@ -29,6 +30,63 @@ pub type RateLimitCtor = Arc<
 pub type BufferCtor = Arc<
     dyn Fn(&ComponentConfig, &StreamContext) -> Result<Arc<dyn Buffer>, CoreError> + Send + Sync,
 >;
+
+/// A component being built: children built while its constructor runs get their Bento config
+/// path from it (constructors are synchronous, so a thread-local stack follows them exactly).
+struct BuildFrame {
+    path: String,
+    component_type: String,
+    children: usize,
+}
+
+thread_local! {
+    static BUILD_FRAMES: RefCell<Vec<BuildFrame>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Pops the frame pushed for a constructor, also when it fails or panics.
+struct FrameGuard;
+
+impl Drop for FrameGuard {
+    fn drop(&mut self) {
+        BUILD_FRAMES.with(|f| {
+            f.borrow_mut().pop();
+        });
+    }
+}
+
+fn push_frame(path: &str, component_type: &str) -> FrameGuard {
+    BUILD_FRAMES.with(|f| {
+        f.borrow_mut().push(BuildFrame {
+            path: path.to_string(),
+            component_type: component_type.to_string(),
+            children: 0,
+        });
+    });
+    FrameGuard
+}
+
+/// The Bento path of the next input (`kind == "input"`) or output child of the component being
+/// built, or `default` for a top-level component.
+fn next_child_path(kind: &str, default: &str) -> String {
+    BUILD_FRAMES.with(|f| {
+        let mut frames = f.borrow_mut();
+        let Some(top) = frames.last_mut() else {
+            return default.to_string();
+        };
+        let n = top.children;
+        top.children += 1;
+        let ty = top.component_type.as_str();
+        let seg = match (kind, ty) {
+            ("output", "fallback") => format!("fallback.{n}"),
+            ("output", "switch") => format!("switch.cases.{n}.output"),
+            ("output", "retry" | "drop_on" | "drop" | "resource") => format!("{ty}.output"),
+            ("input", "read_until" | "resource") => format!("{ty}.input"),
+            ("input", _) => format!("{ty}.inputs.{n}"),
+            (_, _) => format!("{ty}.outputs.{n}"),
+        };
+        format!("{}.{seg}", top.path)
+    })
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct LintReport {
@@ -206,7 +264,11 @@ impl Registry {
         let child_ctx =
             parent_ctx.into_child(conf.component_type.clone(), conf.label.clone(), path_seg);
         let inner = ctor(conf, &child_ctx)?;
-        Ok(Arc::new(ObservedProcessor::new(inner, child_ctx)))
+        Ok(Arc::new(ObservedProcessor::with_identity(
+            inner,
+            child_ctx,
+            &conf.label,
+        )))
     }
 
     pub fn build_processor_list(
@@ -221,10 +283,24 @@ impl Registry {
         Ok(out)
     }
 
+    /// Builds an input. A top-level input has the path `root.input`; a child built by a broker,
+    /// sequence or read_until constructor gets its path below its parent's.
     pub fn build_input(
         &self,
         conf: &ComponentConfig,
         ctx: &StreamContext,
+    ) -> Result<Box<dyn Input>, CoreError> {
+        let path = next_child_path("input", "root.input");
+        self.build_input_at(conf, ctx, &path)
+    }
+
+    /// Builds an input observed under the Bento config path `path` (e.g.
+    /// `root.input_resources.<label>`).
+    pub fn build_input_at(
+        &self,
+        conf: &ComponentConfig,
+        ctx: &StreamContext,
+        path: &str,
     ) -> Result<Box<dyn Input>, CoreError> {
         let ctor = self
             .inputs
@@ -242,14 +318,19 @@ impl Registry {
         if !conf.label.is_empty() {
             sctx.label = conf.label.clone();
         }
-        let inner = ctor(conf, &sctx)?;
+        let inner = {
+            let _frame = push_frame(path, &conf.component_type);
+            ctor(conf, &sctx)?
+        };
+        let ns = ctx.metrics.component(&conf.label, path);
+        let inner: Box<dyn Input> = Box::new(crate::observed::ObservedInput::new(inner, ns));
         if conf.processors.is_empty() {
             return Ok(inner);
         }
         let pctx = sctx.to_proc_context(
             conf.component_type.clone(),
             conf.label.clone(),
-            "input.processors",
+            proc_ctx_path(path, "input"),
         );
         let procs = self.build_processor_list(&conf.processors, &pctx)?;
         Ok(Box::new(crate::pipeline::InputWithProcessors::new(
@@ -257,10 +338,23 @@ impl Registry {
         )))
     }
 
+    /// Builds an output. A top-level output has the path `root.output`; a child built by a
+    /// broker, fallback, switch or retry constructor gets its path below its parent's.
     pub fn build_output(
         &self,
         conf: &ComponentConfig,
         ctx: &StreamContext,
+    ) -> Result<Arc<dyn Output>, CoreError> {
+        let path = next_child_path("output", "root.output");
+        self.build_output_at(conf, ctx, &path)
+    }
+
+    /// Builds an output observed under the Bento config path `path`.
+    pub fn build_output_at(
+        &self,
+        conf: &ComponentConfig,
+        ctx: &StreamContext,
+        path: &str,
     ) -> Result<Arc<dyn Output>, CoreError> {
         let ctor = self
             .outputs
@@ -278,14 +372,19 @@ impl Registry {
         if !conf.label.is_empty() {
             sctx.label = conf.label.clone();
         }
-        let inner = ctor(conf, &sctx)?;
+        let inner = {
+            let _frame = push_frame(path, &conf.component_type);
+            ctor(conf, &sctx)?
+        };
+        let ns = ctx.metrics.component(&conf.label, path);
+        let inner: Arc<dyn Output> = Arc::new(crate::observed::ObservedOutput::new(inner, ns));
         if conf.processors.is_empty() {
             return Ok(inner);
         }
         let pctx = sctx.to_proc_context(
             conf.component_type.clone(),
             conf.label.clone(),
-            "output.processors",
+            proc_ctx_path(path, "output"),
         );
         let procs = self.build_processor_list(&conf.processors, &pctx)?;
         Ok(Arc::new(crate::pipeline::OutputWithProcessors::new(
@@ -332,7 +431,21 @@ impl Registry {
             })?;
         ctor(conf, ctx)
     }
+}
 
+/// The processor context path below a component at Bento path `path`: the top-level ones keep
+/// their historical `input.processors` / `output.processors` (the `DetailedError` path), the
+/// others are `<path without root.>.processors`.
+fn proc_ctx_path(path: &str, kind: &str) -> String {
+    let top = format!("root.{kind}");
+    if path == top {
+        format!("{kind}.processors")
+    } else {
+        format!("{}.processors", path.strip_prefix("root.").unwrap_or(path))
+    }
+}
+
+impl Registry {
     /// Lints a `StreamConfig` for unknown component types, duplicate labels, invalid Bloblang mappings,
     /// `resource:` with a label, and `try` nested directly inside `catch` without clearing errors first.
     pub fn lint_stream_config(&self, conf: &StreamConfig, env_lints: Vec<String>) -> LintReport {

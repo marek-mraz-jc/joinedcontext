@@ -444,9 +444,30 @@ impl StreamConfig {
         Ok((cfg, env_lints))
     }
 
+    /// Parses with `${VAR}` filled from the whole process environment ([`EnvAccess::Process`]):
+    /// for tests and a person's own configs only; servers use [`Self::parse_str_with_env`] with
+    /// their access.
     pub fn from_yaml_or_json(raw_text: &str) -> Result<Self, CoreError> {
-        let (cfg, _) = Self::parse_str_with_env(raw_text, false, |k| std::env::var(k).ok())?;
+        let (cfg, _) = Self::parse_str_with_env(raw_text, false, |k| EnvAccess::Process.lookup(k))?;
         Ok(cfg)
+    }
+
+    /// Reads the `org` (or `org_id`) field of a config text without interpolating it, so the
+    /// organization whose variables fill `${VAR}` is known before the substitution.
+    pub fn peek_org(raw_text: &str) -> OrgId {
+        serde_norway::from_str::<JsonValue>(raw_text)
+            .ok()
+            .as_ref()
+            .and_then(|v| v.get("org").or_else(|| v.get("org_id")))
+            .and_then(JsonValue::as_str)
+            .map(OrgId::new)
+            .unwrap_or_default()
+    }
+
+    /// The config as written, before `${VAR}` interpolation, as a JSON value (what
+    /// `GET /streams/{id}` answers after redaction); `None` when the raw text does not parse.
+    pub fn posted_json(raw_text: &str) -> Option<JsonValue> {
+        serde_norway::from_str::<JsonValue>(raw_text).ok()
     }
 
     pub fn from_json_value(raw_json: &JsonValue) -> Result<Self, CoreError> {
@@ -680,17 +701,21 @@ pub fn merge_json_patch(dst: &mut JsonValue, patch: &JsonValue) {
 pub const ENV_VAR_ALLOW_PREFIX: &str = "EKIBEN_VAR_";
 
 /// Which process environment variables a stream configuration can read, through `${VAR}`
-/// substitution of a posted config and through Bloblang `env()`.
+/// substitution of a config and through Bloblang `env()` alike.
+///
+/// Under [`EnvAccess::AllowListed`] `${NAME}` resolves in this order: the stream organization's
+/// variable map ([`EnvAccess::resolve`]); the process variable `EKIBEN_VAR_<NAME>` when `NAME`
+/// lacks the prefix, or `NAME` when it has it; else unset (a lint error unless `${NAME:default}`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EnvAccess {
-    /// None: only the stream's own resolved secrets.
+    /// No process variable: only the organization's map and the stream's own secrets.
     #[default]
     None,
-    /// Only variables named `EKIBEN_VAR_*`. The mode of a shared process (`jc`), where the
-    /// environment also holds other modules' secrets.
+    /// Only variables named `EKIBEN_VAR_*`: `streams`, `schedule` and `run` (the mode of a shared
+    /// process such as `jc`, whose environment also holds other modules' secrets).
     AllowListed,
-    /// The whole process environment (Bento's behaviour, for a standalone ekiben whose
-    /// environment is its own).
+    /// The whole process environment (Bento's behaviour): `run --host-env` and `blobl`, a
+    /// person's own shell.
     Process,
 }
 
@@ -705,20 +730,35 @@ impl From<bool> for EnvAccess {
     }
 }
 
-impl EnvAccess {
-    /// Looks up `key` in the process environment if this access allows it.
-    pub fn lookup(self, key: &str) -> Option<String> {
-        match self {
-            EnvAccess::None => None,
-            EnvAccess::AllowListed => key
-                .starts_with(ENV_VAR_ALLOW_PREFIX)
-                .then(|| std::env::var(key).ok())
-                .flatten(),
-            EnvAccess::Process => std::env::var(key).ok(),
-        }
+/// The process variable an allow-listed `${NAME}` reads: `EKIBEN_VAR_NAME`, or `NAME` itself when
+/// it already carries the prefix.
+pub fn allow_listed_name(name: &str) -> String {
+    if name.starts_with(ENV_VAR_ALLOW_PREFIX) {
+        name.to_string()
+    } else {
+        format!("{ENV_VAR_ALLOW_PREFIX}{name}")
     }
 }
 
+impl EnvAccess {
+    /// Looks up `name` in the process environment as this access allows it.
+    pub fn lookup(self, name: &str) -> Option<String> {
+        match self {
+            EnvAccess::None => None,
+            EnvAccess::AllowListed => std::env::var(allow_listed_name(name)).ok(),
+            EnvAccess::Process => std::env::var(name).ok(),
+        }
+    }
+
+    /// The whole resolution of `${NAME}` for a stream: the organization's variable map first,
+    /// then the process environment as this access allows.
+    pub fn resolve(self, org_vars: &HashMap<String, String>, name: &str) -> Option<String> {
+        org_vars.get(name).cloned().or_else(|| self.lookup(name))
+    }
+}
+
+/// The Bloblang environment of a stream: `env()` reads `env_vars` (the organization's variable
+/// map and the stream's secrets) first, then the process environment as `access` allows.
 pub fn build_blobl_env_for_stream(
     env_vars: &HashMap<String, String>,
     access: impl Into<EnvAccess>,

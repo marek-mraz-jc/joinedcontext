@@ -1,17 +1,18 @@
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ekiben_core::config::merge_json_patch;
 use ekiben_core::{
-    redact_config_value, CoreError, EnvAccess, MetricsRegistry, OrgId, Registry, ResourceManager,
-    RunMode, RunSummary, StreamConfig, StreamMetrics,
+    interpolate_env_str, redact_config_value, CoreError, EnvAccess, EnvLintError, MetricsRegistry,
+    OrgId, Registry, ResourceManager, RunMode, RunSummary, StreamConfig, StreamMetrics,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tokio::sync::RwLock;
 
-use crate::runner::{run_stream_once, spawn_stream, RunningStreamHandle};
+use crate::runner::{spawn_stream, RunningStreamHandle};
 
 /// Status of a managed stream in streams mode (`internal/stream/manager/type.go:StreamStatus`).
 pub struct ManagedStream {
@@ -24,6 +25,8 @@ pub struct ManagedStream {
     pub frozen_uptime: Option<Duration>,
     pub metrics: Arc<StreamMetrics>,
     pub last_run: Option<RunSummary>,
+    /// The config as posted, before `${VAR}` interpolation (what a PATCH merges into).
+    pub posted: Option<JsonValue>,
 }
 
 impl ManagedStream {
@@ -82,16 +85,32 @@ pub fn format_go_duration(d: Duration) -> String {
     format!("{:.3}s", d.as_secs_f64())
 }
 
+/// A stream's identity: its organization and its id (two organizations may each own `ingest`).
+type StreamKey = (OrgId, String);
+
+fn stream_key(caller_org: Option<&OrgId>, id: &str) -> StreamKey {
+    (caller_org.cloned().unwrap_or_default(), id.to_string())
+}
+
+/// Missing and foreign streams answer alike, so an id never reveals another organization's
+/// stream (the API maps this to 404 "Stream not found").
+fn not_found(id: &str) -> CoreError {
+    CoreError::KeyNotFound(format!("stream '{id}' does not exist"))
+}
+
 /// Manages multiple isolated streams in `streams` mode (`internal/stream/manager/type.go`).
+///
+/// Streams are keyed by `(organization, id)`. Every method takes the caller's organization;
+/// `None` means the default organization (a server without auth serves only that one).
 #[derive(Clone)]
 pub struct StreamManager {
-    streams: Arc<RwLock<HashMap<String, ManagedStream>>>,
+    streams: Arc<RwLock<HashMap<StreamKey, ManagedStream>>>,
     pub registry: Arc<Registry>,
     pub resources: ResourceManager,
     pub metrics_registry: MetricsRegistry,
     pub file_root: Option<std::path::PathBuf>,
-    /// Which process environment variables streams of this manager may read (`${VAR}` in a
-    /// posted config, Bloblang `env()`).
+    /// Which process variables configs and `env()` read (E1); `true`/`false` convert as the old
+    /// `allow_host_env` flag did.
     pub env_access: EnvAccess,
 }
 
@@ -112,7 +131,34 @@ impl StreamManager {
         }
     }
 
-    /// Creates and starts a new stream under `id`.
+    /// Uses `metrics_registry` (built from the `metrics:` section) instead of the defaults.
+    pub fn with_metrics_registry(mut self, metrics_registry: MetricsRegistry) -> Self {
+        self.metrics_registry = metrics_registry;
+        self
+    }
+
+    /// Fills `${VAR}` in `raw` for organization `org`: its variable map, then the process
+    /// environment as `env_access` allows.
+    pub fn interpolate(&self, org: &OrgId, raw: &str) -> Result<String, EnvLintError> {
+        let vars = self.resources.get_or_create_org(org).secrets_snapshot();
+        let access = self.env_access;
+        interpolate_env_str(raw, |k| access.resolve(&vars, k))
+    }
+
+    /// Parses a config file as this server reads it: the organization is read from the text
+    /// first, then `${VAR}` is filled from that organization's variables.
+    pub fn parse_config(
+        &self,
+        raw: &str,
+        chilled: bool,
+    ) -> Result<(StreamConfig, Vec<String>), CoreError> {
+        let org = StreamConfig::peek_org(raw);
+        let vars = self.resources.get_or_create_org(&org).secrets_snapshot();
+        let access = self.env_access;
+        StreamConfig::parse_str_with_env(raw, chilled, |k| access.resolve(&vars, k))
+    }
+
+    /// Creates and starts a new stream under `id` in the organization `conf.org`.
     /// If `conf.run == RunMode::Once`, runs the stream to completion, freezes its uptime,
     /// stores its `last_run` summary, and drops its runtime state (`Section 6`).
     pub async fn create(
@@ -120,52 +166,26 @@ impl StreamManager {
         id: String,
         conf: StreamConfig,
     ) -> Result<Option<RunSummary>, CoreError> {
-        {
-            let guard = self.streams.read().await;
-            if guard.contains_key(&id) {
-                return Err(CoreError::KeyAlreadyExists(format!(
-                    "stream '{id}' already exists"
-                )));
-            }
+        self.create_posted(id, conf, None).await
+    }
+
+    /// As [`Self::create`], remembering the config as posted (before interpolation): `GET`
+    /// answers it redacted, so a `${SECRET}` never comes back filled in.
+    pub async fn create_posted(
+        &self,
+        id: String,
+        conf: StreamConfig,
+        posted: Option<JsonValue>,
+    ) -> Result<Option<RunSummary>, CoreError> {
+        let key: StreamKey = (conf.org.clone(), id.clone());
+        if self.streams.read().await.contains_key(&key) {
+            return Err(CoreError::KeyAlreadyExists(format!(
+                "stream '{id}' already exists"
+            )));
         }
 
-        let redacted = redact_config_value(&conf.raw_source);
+        let redacted = redact_config_value(posted.as_ref().unwrap_or(&conf.raw_source));
         let created_at = Instant::now();
-
-        if conf.run == RunMode::Once {
-            let summary = run_stream_once(
-                &id,
-                conf.clone(),
-                self.registry.clone(),
-                self.resources.clone(),
-                self.file_root.clone(),
-                self.env_access,
-            )
-            .await?;
-            let frozen = Duration::from_millis(summary.duration_ms.max(1));
-            let metrics = StreamMetrics::new(id.clone(), conf.org.0.clone());
-            metrics
-                .input_received
-                .store(summary.messages_in, std::sync::atomic::Ordering::Relaxed);
-            metrics
-                .output_sent
-                .store(summary.messages_out, std::sync::atomic::Ordering::Relaxed);
-            self.metrics_registry.register_stream(metrics.clone());
-
-            let managed = ManagedStream {
-                id: id.clone(),
-                org: conf.org.clone(),
-                config: conf,
-                redacted_config: redacted,
-                created_at,
-                handle: None,
-                frozen_uptime: Some(frozen),
-                metrics,
-                last_run: Some(summary.clone()),
-            };
-            self.streams.write().await.insert(id, managed);
-            return Ok(Some(summary));
-        }
 
         let handle = spawn_stream(
             id.clone(),
@@ -178,22 +198,66 @@ impl StreamManager {
         )?;
         let metrics = handle.metrics.clone();
 
+        if conf.run == RunMode::Once {
+            let summary = handle
+                .wait_for_completion()
+                .await
+                .ok_or_else(|| CoreError::other("stream task terminated without summary"))?;
+            let frozen = Duration::from_millis(summary.duration_ms.max(1));
+            let managed = ManagedStream {
+                id: id.clone(),
+                org: conf.org.clone(),
+                config: conf,
+                redacted_config: redacted,
+                created_at,
+                handle: None,
+                frozen_uptime: Some(frozen),
+                metrics,
+                last_run: Some(summary.clone()),
+                posted,
+            };
+            let mut guard = self.streams.write().await;
+            if guard.contains_key(&key) {
+                return Err(CoreError::KeyAlreadyExists(format!(
+                    "stream '{id}' already exists"
+                )));
+            }
+            guard.insert(key, managed);
+            return Ok(Some(summary));
+        }
+
         let managed = ManagedStream {
             id: id.clone(),
             org: conf.org.clone(),
             config: conf,
             redacted_config: redacted,
             created_at,
-            handle: Some(handle),
+            handle: Some(handle.clone()),
             frozen_uptime: None,
             metrics,
             last_run: None,
+            posted,
         };
-        self.streams.write().await.insert(id, managed);
+        let raced = {
+            let mut guard = self.streams.write().await;
+            match guard.entry(key) {
+                Entry::Occupied(_) => true,
+                Entry::Vacant(slot) => {
+                    slot.insert(managed);
+                    false
+                }
+            }
+        };
+        if raced {
+            let _ = handle.stop(Duration::from_secs(5)).await;
+            return Err(CoreError::KeyAlreadyExists(format!(
+                "stream '{id}' already exists"
+            )));
+        }
         Ok(None)
     }
 
-    /// Reads the status and redacted config of stream `id`, enforcing organization ownership when `caller_org` is set.
+    /// Reads the status and redacted config of the caller's stream `id`.
     pub async fn read(
         &self,
         id: &str,
@@ -201,16 +265,8 @@ impl StreamManager {
     ) -> Result<StreamEntryStatus, CoreError> {
         let guard = self.streams.read().await;
         let strm = guard
-            .get(id)
-            .ok_or_else(|| CoreError::KeyNotFound(format!("stream '{id}' does not exist")))?;
-        if let Some(c_org) = caller_org {
-            if &strm.org != c_org {
-                return Err(CoreError::AccessDenied {
-                    org: c_org.0.clone(),
-                    reason: format!("stream '{id}' belongs to another organization"),
-                });
-            }
-        }
+            .get(&stream_key(caller_org, id))
+            .ok_or_else(|| not_found(id))?;
         let up = strm.uptime();
         Ok(StreamEntryStatus {
             active: strm.is_active(),
@@ -228,28 +284,20 @@ impl StreamManager {
     ) -> Result<JsonValue, CoreError> {
         let guard = self.streams.read().await;
         let strm = guard
-            .get(id)
-            .ok_or_else(|| CoreError::KeyNotFound(format!("stream '{id}' does not exist")))?;
-        if let Some(c_org) = caller_org {
-            if &strm.org != c_org {
-                return Err(CoreError::AccessDenied {
-                    org: c_org.0.clone(),
-                    reason: format!("stream '{id}' belongs to another organization"),
-                });
-            }
-        }
-        let up_ns = strm.uptime().as_nanos() as u64;
+            .get(&stream_key(caller_org, id))
+            .ok_or_else(|| not_found(id))?;
+        let up_ns = u64::try_from(strm.uptime().as_nanos()).unwrap_or(u64::MAX);
         Ok(strm.metrics.snapshot_json(up_ns))
     }
 
+    /// The caller's streams (only its organization's).
     pub async fn list(&self, caller_org: Option<&OrgId>) -> HashMap<String, StreamEntryStatus> {
+        let org = caller_org.cloned().unwrap_or_default();
         let guard = self.streams.read().await;
         let mut out = HashMap::new();
-        for (id, strm) in guard.iter() {
-            if let Some(c_org) = caller_org {
-                if &strm.org != c_org {
-                    continue;
-                }
+        for ((strm_org, id), strm) in guard.iter() {
+            if strm_org != &org {
+                continue;
             }
             let up = strm.uptime();
             out.insert(
@@ -273,8 +321,20 @@ impl StreamManager {
         conf: StreamConfig,
         caller_org: Option<&OrgId>,
     ) -> Result<Option<RunSummary>, CoreError> {
+        self.update_posted(id, conf, caller_org, None).await
+    }
+
+    /// As [`Self::update`], remembering the config as posted.
+    pub async fn update_posted(
+        &self,
+        id: &str,
+        mut conf: StreamConfig,
+        caller_org: Option<&OrgId>,
+        posted: Option<JsonValue>,
+    ) -> Result<Option<RunSummary>, CoreError> {
         self.delete(id, caller_org).await?;
-        self.create(id.to_string(), conf).await
+        conf.org = caller_org.cloned().unwrap_or_default();
+        self.create_posted(id.to_string(), conf, posted).await
     }
 
     /// Patches stream `id`'s configuration and restarts it (`PATCH /streams/{id}`).
@@ -284,63 +344,50 @@ impl StreamManager {
         patch_json: &JsonValue,
         caller_org: Option<&OrgId>,
     ) -> Result<Option<RunSummary>, CoreError> {
-        let mut merged_raw = {
+        let (mut merged_raw, mut posted) = {
             let guard = self.streams.read().await;
             let strm = guard
-                .get(id)
-                .ok_or_else(|| CoreError::KeyNotFound(format!("stream '{id}' does not exist")))?;
-            if let Some(c_org) = caller_org {
-                if &strm.org != c_org {
-                    return Err(CoreError::AccessDenied {
-                        org: c_org.0.clone(),
-                        reason: format!("stream '{id}' belongs to another organization"),
-                    });
-                }
-            }
-            strm.config.raw_source.clone()
+                .get(&stream_key(caller_org, id))
+                .ok_or_else(|| not_found(id))?;
+            (strm.config.raw_source.clone(), strm.posted.clone())
         };
         merge_json_patch(&mut merged_raw, patch_json);
+        if let Some(p) = posted.as_mut() {
+            merge_json_patch(p, patch_json);
+        }
         let new_conf = StreamConfig::from_json_value(&merged_raw)?;
-        self.update(id, new_conf, caller_org).await
+        self.update_posted(id, new_conf, caller_org, posted).await
     }
 
-    /// Stops and removes stream `id` (`DELETE /streams/{id}`).
+    /// Stops and removes the caller's stream `id` (`DELETE /streams/{id}`). Its counters stay
+    /// in `/metrics` (and continue if the id is created again); its timings go.
     pub async fn delete(&self, id: &str, caller_org: Option<&OrgId>) -> Result<(), CoreError> {
-        let removed = {
-            let mut guard = self.streams.write().await;
-            let Some(strm) = guard.get(id) else {
-                return Err(CoreError::KeyNotFound(format!(
-                    "stream '{id}' does not exist"
-                )));
-            };
-            if let Some(c_org) = caller_org {
-                if &strm.org != c_org {
-                    return Err(CoreError::AccessDenied {
-                        org: c_org.0.clone(),
-                        reason: format!("stream '{id}' belongs to another organization"),
-                    });
-                }
-            }
-            guard.remove(id).unwrap()
-        };
+        let key = stream_key(caller_org, id);
+        let removed = self
+            .streams
+            .write()
+            .await
+            .remove(&key)
+            .ok_or_else(|| not_found(id))?;
 
-        self.metrics_registry.remove_stream(id);
         if let Some(handle) = removed.handle {
             let _ = handle.stop(Duration::from_secs(5)).await;
         }
+        self.metrics_registry.stream_deleted(&key.0 .0, id);
         Ok(())
     }
 
-    /// Returns names of active streams that are not yet connected on both input and output (`GET /ready`).
-    pub async fn not_ready_streams(&self) -> Vec<String> {
+    /// Active streams that are not connected on both input and output (`GET /ready`), as
+    /// `(organization, id)` sorted.
+    pub async fn not_ready_streams(&self) -> Vec<(OrgId, String)> {
         let guard = self.streams.read().await;
         let mut not_ready = Vec::new();
-        for (id, strm) in guard.iter() {
+        for ((org, id), strm) in guard.iter() {
             if strm.is_active() && !strm.is_ready() {
-                not_ready.push(id.clone());
+                not_ready.push((org.clone(), id.clone()));
             }
         }
-        not_ready.sort();
+        not_ready.sort_by(|a, b| (&a.0 .0, &a.1).cmp(&(&b.0 .0, &b.1)));
         not_ready
     }
 

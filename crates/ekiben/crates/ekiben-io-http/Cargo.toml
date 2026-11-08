@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# The websocket input (tokio-websockets client over ekiben's own TCP and TLS).
+default = ["websocket"]
+websocket = ["dep:tokio-websockets", "dep:rustls", "dep:tokio-rustls", "dep:rustls-native-certs", "dep:rustls-pki-types"]
+
 [dependencies]
 ekiben-bloblang = { workspace = true }
 ekiben-core = { workspace = true }
@@ -18,8 +23,20 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
+axum = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+sha1 = { workspace = true }
+hex = { workspace = true }
+subtle = { workspace = true }
+uuid = { workspace = true }
+tokio-websockets = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+tokio-rustls = { workspace = true, optional = true }
+rustls-native-certs = { workspace = true, optional = true }
+rustls-pki-types = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_norway = { workspace = true }
 ekiben-processors = { workspace = true }
-axum = { workspace = true }
+sha1 = { workspace = true }

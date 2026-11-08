@@ -9,6 +9,7 @@ members = [
     "crates/ekiben-parquet",
     "crates/ekiben-protobuf",
     "crates/ekiben-io-nats",
+    "crates/ekiben-io-ngsild",
     "crates/ekiben-server",
     "crates/ekiben-testkit",
 ]
@@ -47,6 +48,7 @@ ekiben-io-file = { path = "crates/ekiben-io-file" }
 ekiben-parquet = { path = "crates/ekiben-parquet" }
 ekiben-protobuf = { path = "crates/ekiben-protobuf" }
 ekiben-io-nats = { path = "crates/ekiben-io-nats" }
+ekiben-io-ngsild = { path = "crates/ekiben-io-ngsild" }
 ekiben-testkit = { path = "crates/ekiben-testkit" }
 
 tokio = { version = "1.54", features = ["full", "test-util"] }
@@ -97,5 +99,13 @@ subtle = "2.6"
 glob = "0.3.4"
 async-nats = "0.51"
 nkeys = "0.4"
+rustls-native-certs = "0.8"
 criterion = { version = "0.8", features = ["async_tokio"] }
 tempfile = "3.27"
+# E3 websocket input: tokio-websockets 0.13.3 is in Cargo.lock through async-nats; only features whose
+# crates are in the lock are enabled (sha1_smol and rand back the handshake key and mask). TLS is done
+# by ekiben itself over tokio-rustls so the outbound rule picks the address (no second DNS lookup).
+tokio-websockets = { version = "0.13.3", default-features = false, features = ["client", "server", "sha1_smol", "rand"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls-pki-types = "1"

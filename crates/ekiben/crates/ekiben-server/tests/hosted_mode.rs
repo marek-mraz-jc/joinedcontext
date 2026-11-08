@@ -37,6 +37,8 @@ fn hosted_state(
             admin_bearer_token: admin_token.map(str::to_owned),
             org_tokens: Vec::new(),
             require_auth: true,
+            guard_probes: true,
+            ..Default::default()
         },
     )
 }
@@ -87,7 +89,8 @@ fn bloblang_env_of_an_allow_listed_stream_cannot_read_other_variables() {
 async fn a_posted_config_cannot_substitute_another_modules_secret() {
     std::env::set_var("JC_HOSTED_API_SECRET", "s3cr3t-of-another-module");
     std::env::set_var("EKIBEN_VAR_HOSTED_API", "allowed-value");
-    let base = serve(hosted_state(None, Some("tok"))).await;
+    let root = tempfile::tempdir().unwrap();
+    let base = serve(hosted_state(Some(root.path().to_path_buf()), Some("tok"))).await;
     let client = reqwest::Client::new();
     let config = |var: &str| {
         format!(
@@ -146,7 +149,28 @@ async fn a_posted_config_cannot_substitute_another_modules_secret() {
         .text()
         .await
         .unwrap();
-    assert!(read.contains("allowed-value"), "{read}");
+    // The stored config is answered as posted (E1): the variable stays a placeholder, so no
+    // substituted value, allowed or not, ever comes back through GET.
+    assert!(read.contains("${EKIBEN_VAR_HOSTED_API}"), "{read}");
+    assert!(!read.contains("allowed-value"), "{read}");
+    // The running stream gets the substituted value.
+    let resp = client
+        .post(format!("{base}/streams/ok-run"))
+        .bearer_auth("tok")
+        .body(
+            "run: once\ninput:\n  generate:\n    count: 1\n    interval: \"\"\n    mapping: 'root = \"${EKIBEN_VAR_HOSTED_API}\"'\noutput:\n  file:\n    path: ok.jsonl\n    codec: lines\n",
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::OK,
+        "{}",
+        resp.text().await.unwrap()
+    );
+    let out = std::fs::read_to_string(root.path().join("ok.jsonl")).expect("output file");
+    assert!(out.contains("allowed-value"), "{out}");
 
     // The resources endpoint substitutes the same way.
     let resp = client

@@ -7,8 +7,10 @@ pub mod error;
 pub mod interpolate;
 pub mod message;
 pub mod metrics;
+pub mod observed;
 pub mod org;
 pub mod pipeline;
+pub mod prometheus;
 pub mod redact;
 pub mod registry;
 pub mod traits;
@@ -25,9 +27,13 @@ pub use message::{
     deserialize_bytes, serialize_bytes, Batch, Part, PartMetaAdapter, PartsView, SortGroup,
 };
 pub use metrics::{MetricsRegistry, StreamMetrics, TimingStats};
+pub use observed::{ObservedInput, ObservedOutput};
 pub use org::{OrgContext, OrgId, OrgQuotas, ResourceManager};
 pub use pipeline::{
     execute_all, execute_catch_all, execute_try_all, Batcher, ObservedProcessor, PipelineWorkerPool,
+};
+pub use prometheus::{
+    Counter, Gauge, MetricMapping, MetricsConfig, Namespaced, PromExporter, SeriesOwner, Timer,
 };
 pub use redact::{redact_config_value, redact_url_str, SecretString};
 pub use registry::{LintReport, Registry};

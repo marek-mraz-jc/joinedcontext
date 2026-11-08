@@ -180,16 +180,24 @@ fn multi_org_isolation_and_quotas() {
     let _guard_a1 = ctx_a.acquire_stream_slot().unwrap();
     let _guard_a2 = ctx_a.acquire_stream_slot().unwrap();
 
-    // Org B hits its message rate limit of 2/sec without affecting Org A
-    assert!(ctx_b.check_message_admission(2, 100).is_ok());
-    assert!(ctx_b.check_message_admission(1, 50).is_err());
-    assert!(ctx_a.check_message_admission(100, 1000).is_ok());
+    // A batch over the per-run memory limit is a hard failure
+    assert!(ctx_b.check_batch_memory(100).is_ok());
+    assert!(ctx_b
+        .check_batch_memory(OrgQuotas::default().max_memory_bytes_per_run + 1)
+        .is_err());
 
     // Org B outbound HTTP host allow-list and NATS subject prefix
-    assert!(ctx_b.check_http_request("api.allowed.example").is_ok());
-    assert!(ctx_b.check_http_request("evil.example.com").is_err());
+    assert!(ctx_b.check_http_host("api.allowed.example").is_ok());
+    assert!(ctx_b.check_http_host("evil.example.com").is_err());
     assert!(ctx_b.validate_nats_subject("org_b.events.created").is_ok());
     assert!(ctx_b.validate_nats_subject("org_a.events.created").is_err());
+    // A KV bucket sits outside the subject prefix: only buckets named after the prefix.
+    for ok in ["org_b", "org_b_cache", "org_b-cache"] {
+        assert!(ctx_b.validate_nats_bucket(ok).is_ok(), "{ok}");
+    }
+    for refused in ["org_a_cache", "org_bx", "cache", "org_"] {
+        assert!(ctx_b.validate_nats_bucket(refused).is_err(), "{refused}");
+    }
 
     // Stream config parsing
     let sc = StreamConfig::from_yaml_or_json(
@@ -210,4 +218,92 @@ output:
     .unwrap();
     assert_eq!(sc.org, OrgId::new("org-a"));
     assert_eq!(sc.run, ekiben_core::RunMode::Once);
+}
+
+/// Admits `batches` batches of `size` messages and returns the elapsed time.
+async fn admit_n(ctx: &ekiben_core::OrgContext, batches: usize, size: u64) -> std::time::Duration {
+    let started = std::time::Instant::now();
+    for _ in 0..batches {
+        assert!(ctx.admit_messages(size, || false).await);
+    }
+    started.elapsed()
+}
+
+fn rate(per_sec: u64) -> OrgQuotas {
+    OrgQuotas {
+        max_messages_per_sec: per_sec,
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn message_rate_quota_waits_instead_of_failing() {
+    let rm = ResourceManager::new();
+    let ctx = rm.set_org_quotas(&OrgId::new("slow"), rate(1_000));
+    // One second of burst passes at once, then 500 more messages at 1000/s take ~0.5 s.
+    assert!(admit_n(&ctx, 10, 100).await < std::time::Duration::from_millis(100));
+    let paced = admit_n(&ctx, 5, 100).await;
+    assert!(paced >= std::time::Duration::from_millis(400), "{paced:?}");
+    assert!(paced < std::time::Duration::from_millis(900), "{paced:?}");
+    assert_eq!(
+        ctx.total_messages_processed
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1_500
+    );
+}
+
+#[tokio::test]
+async fn a_waiting_admission_gives_up_when_cancelled() {
+    let rm = ResourceManager::new();
+    let ctx = rm.set_org_quotas(&OrgId::new("slow"), rate(10));
+    assert!(ctx.admit_messages(10, || false).await);
+    assert!(ctx.admit_messages(10, || false).await);
+    // The next 10 would wait ~1 s; a cancelled stream returns without admitting.
+    assert!(!ctx.admit_messages(10, || true).await);
+}
+
+#[tokio::test]
+async fn a_changed_rate_applies_within_a_second_and_only_to_its_org() {
+    let rm = ResourceManager::new();
+    let org = OrgId::new("org-live");
+    let other = OrgId::new("org-other");
+    let ctx = rm.set_org_quotas(&org, rate(1_000_000));
+    let other_ctx = rm.set_org_quotas(&other, rate(1_000_000));
+    assert!(admit_n(&ctx, 20, 1_000).await < std::time::Duration::from_millis(100));
+
+    // Lowered: 1000/s with a 1 s burst lets 1000 pass, the next 1000 take ~1 s.
+    rm.set_org_quotas(&org, rate(1_000));
+    let slowed = admit_n(&ctx, 20, 100).await;
+    assert!(
+        slowed >= std::time::Duration::from_millis(800),
+        "{slowed:?}"
+    );
+    // The other organization keeps its own rate.
+    assert!(admit_n(&other_ctx, 20, 1_000).await < std::time::Duration::from_millis(100));
+
+    // A stream stuck behind the low rate speeds up as soon as the rate is raised.
+    let stuck = {
+        let ctx = ctx.clone();
+        tokio::spawn(async move { admit_n(&ctx, 50, 100).await })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    rm.set_org_quotas(&org, rate(1_000_000));
+    let restored = stuck.await.unwrap();
+    assert!(
+        restored < std::time::Duration::from_millis(600),
+        "{restored:?}"
+    );
+}
+
+#[test]
+fn quotas_refuse_zero_limits_and_unknown_fields() {
+    assert!(OrgQuotas::default().validate().is_ok());
+    assert_eq!(rate(0).validate(), Err("max_messages_per_sec"));
+    let zero_cpu = OrgQuotas {
+        max_cpu_time_ms_per_run: 0,
+        ..Default::default()
+    };
+    assert_eq!(zero_cpu.validate(), Err("max_cpu_time_ms_per_run"));
+    assert!(serde_json::from_str::<OrgQuotas>(r#"{"max_messages_per_sec": -5}"#).is_err());
+    assert!(serde_json::from_str::<OrgQuotas>(r#"{"max_mesages_per_sec": 5}"#).is_err());
 }

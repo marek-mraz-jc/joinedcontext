@@ -356,7 +356,7 @@ impl InMemoryNatsCluster {
             revision: rev,
             delta: 0,
             operation: "KeyValuePutOp",
-            created: Utc::now().to_rfc3339(),
+            created: crate::kv_backend::go_rfc3339_nano(Utc::now()),
         });
         rev
     }
@@ -411,7 +411,7 @@ impl InMemoryNatsCluster {
             revision: rev,
             delta: 0,
             operation: "KeyValueDeleteOp",
-            created: Utc::now().to_rfc3339(),
+            created: crate::kv_backend::go_rfc3339_nano(Utc::now()),
         });
         rev
     }
@@ -429,7 +429,7 @@ impl InMemoryNatsCluster {
             revision: rev,
             delta: 0,
             operation: "KeyValuePurgeOp",
-            created: Utc::now().to_rfc3339(),
+            created: crate::kv_backend::go_rfc3339_nano(Utc::now()),
         });
         rev
     }

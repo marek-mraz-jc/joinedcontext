@@ -7,9 +7,9 @@ A text is identical when every case that runs it is, different when one of them 
 difference may sit in another step of that case), not runnable when no case runs it.
 
 - Bloblang texts: 4546
-- identical: 1523, different: 128, not runnable: 2895
-- identical of runnable: 92.2 %
-- cases: 904 (613 identical, 7 different, 284 not runnable)
+- identical: 1626, different: 25, not runnable: 2895
+- identical of runnable: 98.5 %
+- cases: 904 (620 identical, 2 different, 282 not runnable)
 
 | File | Path | Input (case ids in cases.json) | Result |
 |---|---|---|---|
@@ -1558,128 +1558,128 @@ difference may sit in another step of that case), not runnable when no case runs
 | bratislava/bratislava-pipeline-pedestrian-counters-bento.yaml | `pipeline.processors[5].switch[0].processors[0].log.message` | 9e1dbb6d2134 | identical |
 | bratislava/bratislava-pipeline-pedestrian-counters-bento.yaml | `pipeline.processors[6].mapping` | 9e1dbb6d2134 | identical |
 | bratislava/bratislava-pipeline-places-bento.yaml | `pipeline.processors[0].mapping` | 221008de2cca, af9fe504ff5f | identical |
-| bratislava/bratislava-pipeline-places-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | different |
+| bratislava/bratislava-pipeline-places-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | identical |
 | bratislava/bratislava-pipeline-places-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 221008de2cca, af9fe504ff5f | identical |
 | bratislava/bratislava-pipeline-places-bento.yaml | `pipeline.processors[3].branch.request_map` | 221008de2cca, af9fe504ff5f | identical |
 | bratislava/bratislava-pipeline-places-bento.yaml | `pipeline.processors[3].branch.processors[1].http.url` | - | not runnable (no deployment test feeds this mapping an input) |
 | bratislava/bratislava-pipeline-places-bento.yaml | `pipeline.processors[3].branch.result_map` | 221008de2cca, af9fe504ff5f | identical |
 | bratislava/bratislava-pipeline-places-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 221008de2cca, af9fe504ff5f | identical |
-| bratislava/bratislava-pipeline-places-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | different |
+| bratislava/bratislava-pipeline-places-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | identical |
 | bratislava/bratislava-pipeline-places-bento.yaml | `pipeline.processors[6].mapping` | 221008de2cca, af9fe504ff5f | identical |
 | bratislava/bratislava-pipeline-places-bento.yaml | `pipeline.processors[7].log.message` | 221008de2cca, af9fe504ff5f | identical |
 | bratislava/bratislava-pipeline-places-bento.yaml | `pipeline.processors[9].mapping` | 221008de2cca, af9fe504ff5f | identical |
-| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[0].mapping` | a0b003fde978, bbbd309246c7 | different |
-| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | different |
-| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[3].for_each[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.check` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
+| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[0].mapping` | a0b003fde978, bbbd309246c7 | identical |
+| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | identical |
+| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[3].for_each[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.check` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
 | bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.processors[1].http.url` | - | not runnable (no deployment test feeds this mapping an input) |
-| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[3].for_each[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | different |
-| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[6].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[7].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[9].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
+| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[3].for_each[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | identical |
+| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[6].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[7].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-bento.yaml | `pipeline.processors[9].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
 | bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[0].mapping` | 78016f4f9a27 | identical |
-| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | different |
-| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[3].for_each[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.check` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
+| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | identical |
+| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[3].for_each[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.check` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
 | bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.processors[1].http.url` | - | not runnable (no deployment test feeds this mapping an input) |
-| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[3].for_each[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | different |
-| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[6].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[7].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[9].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[0].mapping` | 4447072d9185, 528005fb8768, ae15cb556172 | different |
-| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | different |
-| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[3].for_each[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.check` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
+| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[3].for_each[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | identical |
+| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[6].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[7].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-denne-bento.yaml | `pipeline.processors[9].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[0].mapping` | 4447072d9185, 528005fb8768, ae15cb556172 | identical |
+| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | identical |
+| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[3].for_each[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.check` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
 | bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.processors[1].http.url` | - | not runnable (no deployment test feeds this mapping an input) |
-| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[3].for_each[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | different |
-| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[6].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[7].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[9].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
+| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[3].for_each[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | identical |
+| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[6].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[7].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-mesto-bento.yaml | `pipeline.processors[9].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
 | bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[0].mapping` | 3a65ed120fae, f0b806cb8d77 | identical |
-| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | different |
-| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[3].for_each[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.check` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
+| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | identical |
+| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[3].for_each[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.check` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
 | bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.processors[1].http.url` | - | not runnable (no deployment test feeds this mapping an input) |
-| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[3].for_each[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | different |
-| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[6].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[7].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[9].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
+| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[3].for_each[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | identical |
+| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[6].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[7].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-obce-bento.yaml | `pipeline.processors[9].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
 | bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[0].mapping` | 07a9d26faa63, 615b76717444 | identical |
-| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | different |
-| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[3].for_each[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.check` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
+| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | identical |
+| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[3].for_each[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.check` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
 | bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.processors[1].http.url` | - | not runnable (no deployment test feeds this mapping an input) |
-| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[3].for_each[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | different |
-| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[6].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[7].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[9].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
+| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[3].for_each[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | identical |
+| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[6].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[7].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-okresy-bento.yaml | `pipeline.processors[9].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
 | bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[0].mapping` | 571eb7abf7dc, f97de20ac992 | identical |
-| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[3].for_each[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.check` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
+| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[3].for_each[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.check` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
 | bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.processors[1].http.url` | - | not runnable (no deployment test feeds this mapping an input) |
-| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[3].for_each[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[6].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[7].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[9].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
+| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[3].for_each[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[6].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[7].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-bento.yaml | `pipeline.processors[9].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
 | bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[0].mapping` | ec6eb9348efd | identical |
-| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[3].for_each[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.check` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
+| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[3].for_each[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.check` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
 | bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.processors[1].http.url` | - | not runnable (no deployment test feeds this mapping an input) |
-| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[3].for_each[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[6].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[7].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[9].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
+| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[3].for_each[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[6].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[7].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-obyvatelia-bento.yaml | `pipeline.processors[9].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
 | bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[0].mapping` | a75536da7b6a | identical |
-| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[3].for_each[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.check` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
+| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[1].switch[0].check` | 07a9d26faa63, 221008de2cca, 3a65ed120fae, 4447072d9185 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[1].switch[0].processors[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[3].for_each[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.check` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.request_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
 | bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.processors[1].http.url` | - | not runnable (no deployment test feeds this mapping an input) |
-| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[3].for_each[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[6].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[7].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
-| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[9].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | different |
+| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[3].for_each[0].branch.processors[0].while.processors[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[3].for_each[0].branch.result_map` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[4].catch[0].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[4].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[6].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[7].log.message` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
+| bratislava/bratislava-pipeline-statistics-zsj-vek-bento.yaml | `pipeline.processors[9].mapping` | 07a9d26faa63, 3a65ed120fae, 4447072d9185, 528005fb8768 … | identical |
 | helsinki/helsinki-pipeline-air-quality-bento.yaml | `pipeline.processors[1].mapping` | 07f599ee971f, 1025d1841257 | identical |
 | helsinki/helsinki-pipeline-area-events-bento.yaml | `pipeline.processors[0].mapping` | cc0f85fe4eb9 | identical |
 | helsinki/helsinki-pipeline-beach-water-bento.yaml | `pipeline.processors[0].mapping` | - | not runnable (no deployment test feeds this mapping an input) |
@@ -1768,7 +1768,7 @@ difference may sit in another step of that case), not runnable when no case runs
 | helsinki/helsinki-pipeline-gtfs-daily-departures-bento.yaml | `pipeline.processors[0].mapping` | 1b3192f9ec3a, 1b6110ab597e, 2694a1ef338b, 5138552b094c … | identical |
 | helsinki/helsinki-pipeline-gtfs-daily-departures-bento.yaml | `pipeline.processors[2].mapping` | 1b3192f9ec3a, 1b6110ab597e, 2694a1ef338b, 5138552b094c … | identical |
 | helsinki/helsinki-pipeline-gtfs-daily-departures-bento.yaml | `pipeline.processors[3].catch[0].log.message` | 1b3192f9ec3a, 1b6110ab597e, 2694a1ef338b, 5138552b094c … | identical |
-| helsinki/helsinki-pipeline-gtfs-daily-departures-bento.yaml | `pipeline.processors[3].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | different |
+| helsinki/helsinki-pipeline-gtfs-daily-departures-bento.yaml | `pipeline.processors[3].catch[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | identical |
 | helsinki/helsinki-pipeline-gtfs-routes-bento.yaml | `pipeline.processors[0].mapping` | 221f23b45572, 30de756dfc4b, 3e7a3419355f, 6adb50cdce23 … | identical |
 | helsinki/helsinki-pipeline-gtfs-routes-bento.yaml | `pipeline.processors[2].cache.key` | 221f23b45572, 30de756dfc4b, 3e7a3419355f, 6adb50cdce23 … | identical |
 | helsinki/helsinki-pipeline-gtfs-shapes-bento.yaml | `pipeline.processors[0].mapping` | 091d39bb3892, 2740f43cef53, 8646f6f7c767, 9dc3b4202bf5 … | identical |
@@ -1870,7 +1870,7 @@ difference may sit in another step of that case), not runnable when no case runs
 | helsinki/helsinki-pipeline-service-property-energy-bento.yaml | `pipeline.processors[0].try[4].mapping` | 0188fa0cc445, 101a3cfea5a1, 2711eefd726a, 308b718198d6 … | identical |
 | helsinki/helsinki-pipeline-service-property-energy-bento.yaml | `pipeline.processors[0].try[5].switch[0].check` | 0188fa0cc445, 101a3cfea5a1, 2711eefd726a, 308b718198d6 … | identical |
 | helsinki/helsinki-pipeline-service-property-energy-bento.yaml | `pipeline.processors[0].try[5].switch[0].processors[0].log.message` | 0188fa0cc445, 101a3cfea5a1, 2711eefd726a, 308b718198d6 … | identical |
-| helsinki/helsinki-pipeline-service-property-energy-bento.yaml | `pipeline.processors[0].try[5].switch[0].processors[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | different |
+| helsinki/helsinki-pipeline-service-property-energy-bento.yaml | `pipeline.processors[0].try[5].switch[0].processors[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | identical |
 | helsinki/helsinki-pipeline-service-usage-bento.yaml | `pipeline.processors[0].try[0].mapping` | 5df261d5b59b, 6c35644b7da0, baabdce6388a | identical |
 | helsinki/helsinki-pipeline-service-usage-bento.yaml | `pipeline.processors[0].try[1].branch.request_map` | - | not runnable (no deployment test feeds this mapping an input) |
 | helsinki/helsinki-pipeline-service-usage-bento.yaml | `pipeline.processors[0].try[1].branch.processors[0].http.url` | - | not runnable (no deployment test feeds this mapping an input) |
@@ -1962,7 +1962,7 @@ difference may sit in another step of that case), not runnable when no case runs
 | helsinki/helsinki-pipeline-traffic-volumes-bento.yaml | `pipeline.processors[0].try[7].group_by_value.value` | ed446b3499a9 | identical |
 | helsinki/helsinki-pipeline-traffic-volumes-bento.yaml | `pipeline.processors[0].try[9].switch[0].check` | ed446b3499a9 | identical |
 | helsinki/helsinki-pipeline-traffic-volumes-bento.yaml | `pipeline.processors[0].try[9].switch[0].processors[0].log.message` | ed446b3499a9 | identical |
-| helsinki/helsinki-pipeline-traffic-volumes-bento.yaml | `pipeline.processors[0].try[9].switch[0].processors[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | different |
+| helsinki/helsinki-pipeline-traffic-volumes-bento.yaml | `pipeline.processors[0].try[9].switch[0].processors[1].mapping` | 00d7011f1f9b, 018839a0687c, 0188fa0cc445, 02a83f5ed0ea … | identical |
 | helsinki/helsinki-pipeline-traffic-volumes-bento.yaml | `pipeline.processors[0].try[10].mapping` | ed446b3499a9 | identical |
 | helsinki/helsinki-pipeline-transit-routes-bento.yaml | `pipeline.processors[0].mapping` | - | not runnable (no deployment test feeds this mapping an input) |
 | helsinki/helsinki-pipeline-transit-routes-bento.yaml | `pipeline.processors[2].group_by_value.value` | - | not runnable (no deployment test feeds this mapping an input) |
@@ -2050,16 +2050,16 @@ difference may sit in another step of that case), not runnable when no case runs
 | praha/praha-pipeline-budget-drawing-bento.yaml | `pipeline.processors[0].try[2].mapping` | 4466718fbee6, aed0166f6dcd, e95a78014f1c | identical |
 | praha/praha-pipeline-budget-drawing-bento.yaml | `pipeline.processors[0].try[3].log.message` | 4466718fbee6, aed0166f6dcd, e95a78014f1c | identical |
 | praha/praha-pipeline-budget-drawing-bento.yaml | `pipeline.processors[0].try[4].mapping` | 4466718fbee6, aed0166f6dcd, e95a78014f1c | identical |
-| praha/praha-pipeline-chmi-weather-bento.yaml | `pipeline.processors[0].try[0].mapping` | 8817424efb56 | identical |
-| praha/praha-pipeline-chmi-weather-bento.yaml | `pipeline.processors[0].try[1].mapping` | 8817424efb56 | identical |
+| praha/praha-pipeline-chmi-weather-bento.yaml | `pipeline.processors[0].try[0].mapping` | 6dd6126cf280, 8817424efb56, 8ed8207e537d | identical |
+| praha/praha-pipeline-chmi-weather-bento.yaml | `pipeline.processors[0].try[1].mapping` | 6dd6126cf280, 8817424efb56, 8ed8207e537d | identical |
 | praha/praha-pipeline-chmi-weather-bento.yaml | `pipeline.processors[0].try[3].branch.request_map` | 8817424efb56 | identical |
 | praha/praha-pipeline-chmi-weather-bento.yaml | `pipeline.processors[0].try[3].branch.processors[0].http.url` | 8817424efb56 | identical |
 | praha/praha-pipeline-chmi-weather-bento.yaml | `pipeline.processors[0].try[3].branch.processors[1].mapping` | 8817424efb56 | identical |
 | praha/praha-pipeline-chmi-weather-bento.yaml | `pipeline.processors[0].try[3].branch.processors[2].catch[0].mapping` | 12bc186eb47d, 3e124738c306, 8817424efb56, 9e0aa5015a25 … | identical |
 | praha/praha-pipeline-chmi-weather-bento.yaml | `pipeline.processors[0].try[3].branch.result_map` | 8817424efb56 | identical |
-| praha/praha-pipeline-chmi-weather-bento.yaml | `pipeline.processors[0].try[4].mapping` | 8817424efb56 | identical |
-| praha/praha-pipeline-chmi-weather-bento.yaml | `pipeline.processors[0].try[5].log.message` | 8817424efb56 | identical |
-| praha/praha-pipeline-chmi-weather-bento.yaml | `pipeline.processors[0].try[6].mapping` | 8817424efb56 | identical |
+| praha/praha-pipeline-chmi-weather-bento.yaml | `pipeline.processors[0].try[4].mapping` | 6dd6126cf280, 8817424efb56, 8ed8207e537d | identical |
+| praha/praha-pipeline-chmi-weather-bento.yaml | `pipeline.processors[0].try[5].log.message` | 6dd6126cf280, 8817424efb56, 8ed8207e537d | identical |
+| praha/praha-pipeline-chmi-weather-bento.yaml | `pipeline.processors[0].try[6].mapping` | 6dd6126cf280, 8817424efb56, 8ed8207e537d | identical |
 | praha/praha-pipeline-culture-bento.yaml | `pipeline.processors[0].mapping` | 6a95af0c5c92, 8709e686f175, 9cab9875ccb9, d2fba35b3e85 | identical |
 | praha/praha-pipeline-district-transfers-bento.yaml | `pipeline.processors[0].try[0].mapping` | bceab3cc5df2, ed031078fcb4 | identical |
 | praha/praha-pipeline-district-transfers-bento.yaml | `pipeline.processors[0].try[1].mapping` | bceab3cc5df2, ed031078fcb4 | identical |

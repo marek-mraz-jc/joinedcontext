@@ -76,7 +76,8 @@ impl ProcContext {
     /// and increments the processor's error metric counter (`BatchProcContext.OnError`).
     pub fn on_error(&self, part: &mut Part, err: impl Into<String>) {
         let msg = err.into();
-        self.metrics.incr_processor_error(&self.label, 1);
+        self.metrics
+            .incr_processor_error_at(&self.label, &self.path, 1);
         let detailed = DetailedError::new(
             msg,
             self.component_type.clone(),

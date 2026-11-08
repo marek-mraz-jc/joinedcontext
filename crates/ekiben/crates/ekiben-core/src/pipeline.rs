@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 use crate::config::BatchPolicyConfig;
 use crate::error::{BatchError, CoreError};
 use crate::message::{Batch, Part, PartsView, SortGroup};
+use crate::prometheus::{Counter, Timer};
 use crate::traits::{Input, Output, ProcContext, Processor, StreamContext};
 use crate::transaction::{AckResponder, CombinedAcker, Transaction};
 
@@ -116,11 +117,62 @@ pub async fn execute_catch_all(
 pub struct ObservedProcessor {
     inner: Arc<dyn Processor>,
     ctx: ProcContext,
+    prom: ProcessorMetrics,
+}
+
+/// Bento's processor series for one processor (labels `label` and `path`).
+struct ProcessorMetrics {
+    received: Counter,
+    batch_received: Counter,
+    sent: Counter,
+    batch_sent: Counter,
+    latency: Timer,
+}
+
+/// The Bento metric path of a processor context path (`pipeline.processors.0` is
+/// `root.pipeline.processors.0`).
+pub fn metric_path(ctx_path: &str) -> String {
+    if ctx_path == "root" || ctx_path.starts_with("root.") {
+        ctx_path.to_string()
+    } else if ctx_path.is_empty() {
+        "root".to_string()
+    } else {
+        format!("root.{ctx_path}")
+    }
 }
 
 impl ObservedProcessor {
+    /// Observes `inner` under the label its context carries.
     pub fn new(inner: Arc<dyn Processor>, ctx: ProcContext) -> Self {
-        Self { inner, ctx }
+        let label = ctx.label.clone();
+        Self::with_identity(inner, ctx, &label)
+    }
+
+    /// Observes `inner` with Bento's metric identity: the processor's own `label` (empty when it
+    /// has none) and its config path.
+    pub fn with_identity(inner: Arc<dyn Processor>, ctx: ProcContext, label: &str) -> Self {
+        let path = metric_path(&ctx.path);
+        let prom = match ctx.metrics.component(label, &path) {
+            Some(ns) => {
+                ctx.metrics
+                    .register_processor_error(&ctx.path, ns.counter("processor_error"));
+                ProcessorMetrics {
+                    received: ns.counter("processor_received"),
+                    batch_received: ns.counter("processor_batch_received"),
+                    sent: ns.counter("processor_sent"),
+                    batch_sent: ns.counter("processor_batch_sent"),
+                    latency: ns.timer("processor_latency_ns"),
+                }
+            }
+            None => ProcessorMetrics {
+                received: Counter::noop(),
+                batch_received: Counter::noop(),
+                sent: Counter::noop(),
+                batch_sent: Counter::noop(),
+                latency: Timer::noop(),
+            },
+        };
+        Self { inner, ctx, prom }
     }
 }
 
@@ -141,18 +193,22 @@ impl Processor for ObservedProcessor {
     ) -> Result<Vec<Batch>, CoreError> {
         let in_len = batch.len();
         let bytes: usize = batch.iter().map(Part::size_estimate).sum();
-        self.ctx.org.check_message_admission(in_len, bytes)?;
+        self.ctx.org.check_batch_memory(bytes)?;
 
         self.ctx
             .metrics
             .incr_processor_received(&self.ctx.label, in_len as u64);
+        self.prom.received.incr(in_len as u64);
+        self.prom.batch_received.incr(1);
         let started = Instant::now();
 
         match self.inner.process_batch(&self.ctx, batch.clone()).await {
             Ok(out_batches) => {
+                let elapsed = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
                 self.ctx
                     .metrics
-                    .record_processor_latency(&self.ctx.label, started.elapsed().as_nanos() as u64);
+                    .record_processor_latency(&self.ctx.label, elapsed);
+                self.prom.latency.timing(elapsed);
                 if out_batches.is_empty() {
                     return Ok(Vec::new());
                 }
@@ -162,6 +218,8 @@ impl Processor for ObservedProcessor {
                     sent_msgs,
                     out_batches.len() as u64,
                 );
+                self.prom.sent.incr(sent_msgs);
+                self.prom.batch_sent.incr(out_batches.len() as u64);
                 Ok(out_batches)
             }
             Err(CoreError::QuotaExceeded { org, reason }) => {
@@ -176,14 +234,18 @@ impl Processor for ObservedProcessor {
                 for part in &mut errored_batch {
                     self.ctx.on_error(part, err_msg.clone());
                 }
+                let elapsed = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
                 self.ctx
                     .metrics
-                    .record_processor_latency(&self.ctx.label, started.elapsed().as_nanos() as u64);
+                    .record_processor_latency(&self.ctx.label, elapsed);
+                self.prom.latency.timing(elapsed);
                 self.ctx.metrics.incr_processor_sent(
                     &self.ctx.label,
                     errored_batch.len() as u64,
                     1,
                 );
+                self.prom.sent.incr(errored_batch.len() as u64);
+                self.prom.batch_sent.incr(1);
                 Ok(vec![errored_batch])
             }
         }

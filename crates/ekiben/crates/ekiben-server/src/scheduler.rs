@@ -38,6 +38,8 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
+    /// `env_access`: which process variables the scheduled configs read (`true` is the whole
+    /// environment, `false` none, or an explicit [`EnvAccess`]).
     pub fn new(
         registry: Arc<Registry>,
         resources: ResourceManager,
