@@ -2,7 +2,6 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Link } from "@tanstack/react-router";
 import { api, reasonOf, unwrap } from "../../api/client";
 import type { components } from "../../api/schema";
 import { DashboardList } from "./DashboardList";

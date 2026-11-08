@@ -45500,6 +45500,13 @@
           "tags"
         ],
         "properties": {
+          "folder": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The folder the dashboard sits in; none for Grafana's General."
+          },
           "tags": {
             "type": "array",
             "items": {
@@ -45519,6 +45526,7 @@
         "description": "One dashboard: what the page lays out. Panel queries stay on the server.",
         "required": [
           "uid",
+          "orgId",
           "title",
           "from",
           "to",
@@ -45536,6 +45544,11 @@
           "from": {
             "type": "string",
             "description": "The saved time range, Grafana's words (`now-6h`, `now`)."
+          },
+          "orgId": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The number of the dashboards service organization that holds it (Grafana's `orgId`)."
           },
           "panels": {
             "type": "array",

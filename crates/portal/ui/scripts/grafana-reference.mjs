@@ -6,6 +6,7 @@
 // tests/fixtures/grafana-reference/panels.json, which the vitests compare value by value.
 //
 //   GRAFANA=http://localhost:42161 SHOTS=<dir> node scripts/grafana-reference.mjs
+/* global document */
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";

@@ -5,6 +5,7 @@
 // tests/dashboard_calcs.test.ts compares with frames.ts `reduce`, value by value.
 //
 //   GRAFANA=http://localhost:42161 REF=<provisioned dashboards dir> node scripts/grafana-calcs.mjs
+/* global window */
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

@@ -897,9 +897,13 @@ mod tests {
 
     #[test]
     fn a_panel_refusal_reads_daiyas_error_envelope_and_never_an_address_or_token() {
-        let daiya = json!({ "error": { "code": "bad-request", "message": "the query names no type" } });
+        let daiya =
+            json!({ "error": { "code": "bad-request", "message": "the query names no type" } });
         assert_eq!(panel_reason(&daiya), "the query names no type");
-        assert_eq!(panel_reason(&json!({ "message": "datasource not found" })), "datasource not found");
+        assert_eq!(
+            panel_reason(&json!({ "message": "datasource not found" })),
+            "datasource not found"
+        );
         for leaking in [
             json!({ "error": { "message": "GET https://broker.internal/ngsi-ld/v1 failed" } }),
             json!({ "message": "upstream said Bearer eyJhbGciOi.x.y" }),
@@ -908,7 +912,10 @@ mod tests {
             Value::Null,
         ] {
             let reason = panel_reason(&leaking);
-            assert!(reason.starts_with("the panel's datasource did not answer"), "{reason}");
+            assert!(
+                reason.starts_with("the panel's datasource did not answer"),
+                "{reason}"
+            );
         }
     }
 

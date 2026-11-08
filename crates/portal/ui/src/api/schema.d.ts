@@ -9000,6 +9000,8 @@ export interface components {
         };
         /** @description One dashboard in the list. */
         DashboardSummary: {
+            /** @description The folder the dashboard sits in; none for Grafana's General. */
+            folder?: string | null;
             tags: string[];
             title: string;
             uid: string;
@@ -9009,6 +9011,11 @@ export interface components {
             description?: string | null;
             /** @description The saved time range, Grafana's words (`now-6h`, `now`). */
             from: string;
+            /**
+             * Format: int64
+             * @description The number of the dashboards service organization that holds it (Grafana's `orgId`).
+             */
+            orgId: number;
             /**
              * @description Each panel's `id`, `type`, `title`, `description`, `gridPos`, `fieldConfig`, `options`,
              *     `maxDataPoints`, its own range (`timeFrom`, `timeShift`, `hideTimeOverride`), and for a

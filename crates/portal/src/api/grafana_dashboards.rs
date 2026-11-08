@@ -281,7 +281,11 @@ fn variable_view(variable: &Value) -> VariableView {
         current = if include_all {
             vec!["$__all".to_owned()]
         } else {
-            options.first().map(|o| o.value.clone()).into_iter().collect()
+            options
+                .first()
+                .map(|o| o.value.clone())
+                .into_iter()
+                .collect()
         };
     }
     VariableView {
