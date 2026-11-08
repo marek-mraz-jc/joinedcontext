@@ -99,7 +99,7 @@ def main(argv=None) -> int:
               "directAccessGrantsEnabled": True, "serviceAccountsEnabled": False, "fullScopeAllowed": False,
               "redirectUris": [], "webOrigins": [], "defaultClientScopes": ["basic"], "protocolMappers": mappers}
     st, found = j("GET", f"/clients?clientId={a.client_id}")
-    if found:
+    if isinstance(found, list) and found:
         st, body = j("PUT", f"/clients/{found[0]['id']}", {**found[0], **client})
     else:
         st, body = j("POST", "/clients", client)
