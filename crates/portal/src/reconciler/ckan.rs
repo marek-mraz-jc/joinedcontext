@@ -1131,6 +1131,7 @@ mod tests {
             instance_title: None,
             history: Default::default(),
             granted: Vec::new(),
+            slice: None,
         }
     }
 
