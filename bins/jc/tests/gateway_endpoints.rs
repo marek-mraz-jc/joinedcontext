@@ -306,26 +306,38 @@ fn manifests() -> Vec<(String, String)> {
 }
 
 /// Writes `path` on `main` of shako's organization repository (Gitea contents API).
+/// jc provisions that repository beside the Portal after it listens, so a first write waits for it.
 async fn put_file(jc: &Jc, path: &str, content: &str) {
-    let resp = Client::new()
-        .put(jc.url(&format!(
-            "/git/api/v1/repos/{FORGE_OWNER}/{FORGE_REPO}/contents/{path}"
-        )))
-        .header(
-            "authorization",
-            format!("token {}", jc.secret("shako-token")),
-        )
-        .json(&json!({
-            "content": base64::engine::general_purpose::STANDARD.encode(content),
-            "message": format!("Add {path}"),
-            "branch": "main",
-        }))
-        .send()
-        .await
-        .unwrap();
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
-    assert!(status.is_success(), "PUT contents/{path}: {status} {body}");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let resp = Client::new()
+            .put(jc.url(&format!(
+                "/git/api/v1/repos/{FORGE_OWNER}/{FORGE_REPO}/contents/{path}"
+            )))
+            .header(
+                "authorization",
+                format!("token {}", jc.secret("shako-token")),
+            )
+            .json(&json!({
+                "content": base64::engine::general_purpose::STANDARD.encode(content),
+                "message": format!("Add {path}"),
+                "branch": "main",
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if status == StatusCode::NOT_FOUND
+            && body.contains("repository not found")
+            && Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            continue;
+        }
+        assert!(status.is_success(), "PUT contents/{path}: {status} {body}");
+        return;
+    }
 }
 
 async fn eventually<F, Fut, T>(what: &str, jc: &Jc, secs: u64, mut probe: F) -> T
