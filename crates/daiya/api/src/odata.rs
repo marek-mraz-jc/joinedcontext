@@ -64,20 +64,7 @@ async fn build_entity_table(
             .list_dashboards(ctx.org_id)
             .await?
             .into_iter()
-            .filter(|d| {
-                state
-                    .authorizer
-                    .check(
-                        ctx,
-                        Action::Read,
-                        &ObjectTarget::Dashboard {
-                            org_id: ctx.org_id,
-                            dashboard_uid: d.uid.clone(),
-                            folder_uid: d.folder_uid.clone(),
-                        },
-                    )
-                    .allowed
-            })
+            .filter(|d| can_read_dashboard(state, ctx, &d.uid, d.folder_uid.as_deref()))
             .map(|d| {
                 json!({
                     "uid": d.uid,
@@ -97,6 +84,9 @@ async fn build_entity_table(
             let dashboards = state.store.list_dashboards(ctx.org_id).await?;
             let mut vers = Vec::new();
             for d in dashboards {
+                if !can_read_dashboard(state, ctx, &d.uid, d.folder_uid.as_deref()) {
+                    continue;
+                }
                 for v in state
                     .store
                     .list_dashboard_versions(ctx.org_id, &d.uid)
@@ -121,6 +111,19 @@ async fn build_entity_table(
             .list_folders(ctx.org_id)
             .await?
             .into_iter()
+            .filter(|f| {
+                state
+                    .authorizer
+                    .check(
+                        ctx,
+                        Action::Read,
+                        &ObjectTarget::Folder {
+                            org_id: ctx.org_id,
+                            folder_uid: f.uid.clone(),
+                        },
+                    )
+                    .allowed
+            })
             .map(|f| {
                 json!({
                     "uid": f.uid,
@@ -169,6 +172,20 @@ async fn build_entity_table(
             .list_library_panels(ctx.org_id)
             .await?
             .into_iter()
+            .filter(|p| {
+                state
+                    .authorizer
+                    .check(
+                        ctx,
+                        Action::Read,
+                        &ObjectTarget::LibraryPanel {
+                            org_id: ctx.org_id,
+                            panel_uid: p.uid.clone(),
+                            folder_uid: p.folder_uid.clone(),
+                        },
+                    )
+                    .allowed
+            })
             .map(|p| {
                 json!({
                     "uid": p.uid,
@@ -185,6 +202,19 @@ async fn build_entity_table(
             .list_public_dashboards(ctx.org_id)
             .await?
             .into_iter()
+            .filter(|p| {
+                state
+                    .authorizer
+                    .check(
+                        ctx,
+                        Action::Read,
+                        &ObjectTarget::PublicDashboard {
+                            org_id: ctx.org_id,
+                            dashboard_uid: p.dashboard_uid.clone(),
+                        },
+                    )
+                    .allowed
+            })
             .map(|p| {
                 json!({
                     "uid": p.uid,
@@ -244,6 +274,28 @@ async fn build_entity_table(
     };
 
     MemoryTable::new(info, rows).map_err(map_table_error)
+}
+
+/// Read decision on a dashboard in its folder: every set listing a dashboard or what hangs
+/// off one (its versions) keeps only the rows this decision allows.
+fn can_read_dashboard(
+    state: &DaiyaState,
+    ctx: &RequestCtx,
+    uid: &str,
+    folder_uid: Option<&str>,
+) -> bool {
+    state
+        .authorizer
+        .check(
+            ctx,
+            Action::Read,
+            &ObjectTarget::Dashboard {
+                org_id: ctx.org_id,
+                dashboard_uid: uid.to_owned(),
+                folder_uid: folder_uid.map(str::to_owned),
+            },
+        )
+        .allowed
 }
 
 fn map_table_error(err: TableError) -> CrError {
@@ -1160,14 +1212,15 @@ async fn odata_batch(
             "GET" => match build_entity_table(&state, &ctx, seg_name).await {
                 Ok(table) => {
                     let scope = scope_for_ctx(&state, &ctx);
-                    let opts = parse_odata_query_options(&table.info().model, seg_name, query_part)
-                        .unwrap_or_default();
-                    match table_query(&table, &opts, &scope, MAX_PAGE_SIZE).await {
-                        Ok(ans) => (200, json!({ "value": ans.rows })),
-                        Err(e) => {
-                            let ce = map_table_error(e);
-                            (ce.status_code(), ce.to_odata_error())
-                        }
+                    match parse_odata_query_options(&table.info().model, seg_name, query_part) {
+                        Ok(opts) => match table_query(&table, &opts, &scope, MAX_PAGE_SIZE).await {
+                            Ok(ans) => (200, json!({ "value": ans.rows })),
+                            Err(e) => {
+                                let ce = map_table_error(e);
+                                (ce.status_code(), ce.to_odata_error())
+                            }
+                        },
+                        Err(e) => (e.status_code(), e.to_odata_error()),
                     }
                 }
                 Err(e) => (e.status_code(), e.to_odata_error()),
