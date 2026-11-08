@@ -453,13 +453,12 @@ async fn a_host_subject_naming_the_server_admin_actor_is_anonymous() {
         .await;
     assert!(status.is_client_error(), "{status} {body}");
     assert!(
-        grafana
+        !grafana
             .state
             .org_registry
             .read()
             .by_name
-            .get("forged")
-            .is_none()
+            .contains_key("forged")
     );
 }
 
