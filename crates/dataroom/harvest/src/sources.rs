@@ -773,6 +773,12 @@ pub fn parse_ckan_search_page(
         .cloned()
         .unwrap_or_default();
 
+    let ckan_base = source
+        .url
+        .split("/api/3/")
+        .next()
+        .unwrap_or(&source.url)
+        .trim_end_matches('/');
     let mut out = Vec::new();
     for pkg in results {
         let mut ds = dataroom_core::ckan_compat::dataset_from_ckan(
@@ -788,6 +794,13 @@ pub fn parse_ckan_search_page(
             .and_then(Value::as_str)
             .unwrap_or(&ds.name)
             .to_owned();
+        // The remote CKAN picks its own ids: a local id taken from it could name a dataset this
+        // catalogue already holds, so the record id is derived from the source's own address.
+        ds.id = Uuid::new_v5(
+            &Uuid::NAMESPACE_URL,
+            format!("{ckan_base}/dataset/{item_id}").as_bytes(),
+        )
+        .to_string();
         ds.publisher_id = source.publisher_id.clone();
         ds.harvest_source_id = Some(source.name.clone());
         ds.harvest_source_item_id = Some(item_id.clone());
