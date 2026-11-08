@@ -18,7 +18,8 @@ use std::time::Duration;
 
 #[test]
 fn driver_errors_map_to_problem_kinds_without_the_secret() {
-    let cases: Vec<(DsError, fn(&CrError) -> bool)> = vec![
+    type Case = (DsError, fn(&CrError) -> bool);
+    let cases: Vec<Case> = vec![
         (
             DsError::InvalidQuery {
                 ref_id: "A".into(),

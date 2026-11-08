@@ -50,6 +50,46 @@ fn query_types_units_and_values_follow_the_plugin() {
     }
     assert_eq!(grafana_unit(Some(" CEL ")).as_deref(), Some("celsius"));
     assert_eq!(grafana_unit(Some("KTM")).as_deref(), Some("lengthkm"));
+    for (code, unit) in [
+        ("FAH", "fahrenheit"),
+        ("KEL", "kelvin"),
+        ("P1", "percent"),
+        ("59", "ppm"),
+        ("61", "conppb"),
+        ("GP", "conmgm3"),
+        ("MMT", "lengthmm"),
+        ("MTR", "lengthm"),
+        ("KMT", "lengthkm"),
+        ("DD", "degree"),
+        ("C26", "ms"),
+        ("SEC", "s"),
+        ("MIN", "m"),
+        ("HUR", "h"),
+        ("DAY", "d"),
+        ("MTS", "velocityms"),
+        ("KMH", "velocitykmh"),
+        ("KGM", "masskg"),
+        ("GRM", "massg"),
+        ("TNE", "masst"),
+        ("PAL", "pressurepa"),
+        ("A97", "pressurehpa"),
+        ("KPA", "pressurekpa"),
+        ("MBR", "pressurembar"),
+        ("BAR", "pressurebar"),
+        ("JOU", "joule"),
+        ("WHR", "watth"),
+        ("KWH", "kwatth"),
+        ("WTT", "watt"),
+        ("KWT", "kwatt"),
+        ("AMP", "amp"),
+        ("VLT", "volt"),
+        ("HTZ", "hertz"),
+        ("MTK", "areaM2"),
+        ("MTQ", "m3"),
+        ("LTR", "litre"),
+    ] {
+        assert_eq!(grafana_unit(Some(code)).as_deref(), Some(unit), "{code}");
+    }
     assert_eq!(grafana_unit(Some("XYZ")).as_deref(), Some("suffix: XYZ"));
     assert_eq!(grafana_unit(Some("  ")), None);
     assert_eq!(grafana_unit(None), None);

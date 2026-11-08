@@ -411,6 +411,45 @@ async fn bad_records_and_kinds_without_a_driver_are_refused_with_a_reason() {
     };
     assert!(matches!(err, DsError::SecretResolution { .. }), "{err}");
 
+    // A URL without a host names nothing to guard.
+    let err = match build_driver(&record("f", "prometheus", "file:///etc/x", json!({})), &d).await {
+        Ok(_) => panic!("built without a host"),
+        Err(e) => e,
+    };
+    assert!(err.to_string().contains("no host"), "{err}");
+
+    // The other supported sslmodes build (the pool connects lazily, on first use).
+    for mode in ["allow", "require", "prefer"] {
+        let rec = record(
+            "p",
+            "postgres",
+            "127.0.0.1:5432",
+            json!({ "database": "d", "user": "u", "allowedViews": ["v"], "sslmode": mode }),
+        );
+        assert!(build_driver(&rec, &d).await.is_ok(), "{mode}");
+    }
+
+    // The JSON-LD context may be given as `@context`.
+    let (url, seen) = mock(vec![("/ngsi-ld/v1/entities", json!([]))]).await;
+    let ngsi = build_driver(
+        &record(
+            "n",
+            "ngsild",
+            &url,
+            json!({ "@context": "https://ctx.example/a.jsonld" }),
+        ),
+        &d,
+    )
+    .await
+    .unwrap();
+    ngsi.query(
+        &ctx(Subject::anonymous()),
+        &q(json!({ "queryType": "entity", "entityType": "T" })),
+    )
+    .await
+    .unwrap();
+    assert!(seen.lock()[0].contains("<https://ctx.example/a.jsonld>"));
+
     // Loki is a slot: it builds, and answers that it is not implemented.
     let loki = build_driver(&record("l", "loki", "https://loki.example", json!({})), &d)
         .await

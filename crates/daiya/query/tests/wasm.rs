@@ -570,6 +570,92 @@ async fn host_imports_go_through_the_guard_and_the_declared_secret_refs() {
     assert!(!err.to_string().contains("nope"));
 }
 
+/// A guest that reports no memory or fuel of its own: the host assumes the defaults.
+struct Plain;
+
+impl WasmPluginGuest for Plain {
+    fn plugin_id(&self) -> &'static str {
+        "wasm:plain"
+    }
+    fn component_bytes(&self) -> &[u8] {
+        b"plain component"
+    }
+    fn export_query<'a>(
+        &'a self,
+        _host: WasmHostImports<'a>,
+        _ctx: &'a QueryCtx,
+        _queries_json: &'a str,
+    ) -> DsFuture<'a, Result<String, String>> {
+        Box::pin(async move { Ok("[]".to_owned()) })
+    }
+    fn export_health<'a>(
+        &'a self,
+        _host: WasmHostImports<'a>,
+        _ctx: &'a QueryCtx,
+    ) -> DsFuture<'a, (bool, String)> {
+        Box::pin(async move { (true, String::new()) })
+    }
+    fn export_resource<'a>(
+        &'a self,
+        _host: WasmHostImports<'a>,
+        _ctx: &'a QueryCtx,
+        _path: &'a str,
+        _params_json: &'a str,
+    ) -> DsFuture<'a, Result<String, String>> {
+        Box::pin(async move { Ok("null".to_owned()) })
+    }
+    fn export_editor_schema(&self) -> String {
+        String::new()
+    }
+    fn export_import_target(&self, _grafana_target_json: &str) -> Result<String, String> {
+        Err(String::new())
+    }
+    fn export_export_target(&self, _query_json: &str) -> String {
+        String::new()
+    }
+}
+
+#[tokio::test]
+async fn default_memory_and_fuel_fit_the_default_limits_but_not_tight_ones() {
+    let ok = Arc::new(WasmPluginHost::default());
+    let digest = ok.register_component(Arc::new(Plain));
+    let load = |h: &Arc<WasmPluginHost>| {
+        h.instantiate(
+            ORG,
+            "wasm:plain",
+            Some(&digest),
+            loopback_guard(),
+            Arc::new(MapSecretResolver::new()),
+            BTreeMap::new(),
+        )
+    };
+    let a = load(&ok).unwrap();
+    assert!(
+        a.query(&ctx(Subject::anonymous()), &q(json!({})))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    // Defaults: 1 MiB of memory, 1 000 000 units of fuel.
+    let tight = Arc::new(WasmPluginHost::new(WasmLimits {
+        fuel: 999_999,
+        ..WasmLimits::default()
+    }));
+    tight.register_component(Arc::new(Plain));
+    let a = load(&tight).unwrap();
+    let err = a
+        .query(&ctx(Subject::anonymous()), &q(json!({})))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("fuel 1000000"), "{err}");
+    let small = Arc::new(WasmPluginHost::new(WasmLimits {
+        memory_bytes: (1 << 20) - 1,
+        ..WasmLimits::default()
+    }));
+    small.register_component(Arc::new(Plain));
+    assert!(load(&small).is_err());
+}
+
 #[tokio::test]
 async fn the_sample_plugin_runs_inside_the_host() {
     let h = Arc::new(WasmPluginHost::default());
@@ -654,5 +740,13 @@ async fn the_sample_plugin_runs_inside_the_host() {
     // The guest's own exports refuse what is not JSON.
     let guest = SampleMetricsWasmPlugin::default();
     assert!(guest.export_import_target("{").is_err());
+    let empty_refs = BTreeMap::new();
+    let imports = WasmHostImports {
+        org_id: ORG,
+        guard: &loopback_guard(),
+        secrets: &MapSecretResolver::new(),
+        allowed_secret_refs: &empty_refs,
+    };
+    assert!(guest.export_query(imports, &c, "not json").await.is_err());
     assert_eq!(guest.export_export_target("{"), "{}");
 }
