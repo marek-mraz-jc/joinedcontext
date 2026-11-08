@@ -674,7 +674,7 @@ def retain_once(a, now: dt.datetime) -> dict:
         sql = (f'PREPARE d(timestamptz) AS DELETE FROM "{table}" WHERE "{col}" < $1;\n'
                f"EXECUTE d('{iso(cutoff)}');\n")
         r = subprocess.run(psql, input=sql, env=env, capture_output=True, text=True)
-        out = (r.stdout.strip() or r.stderr.strip())[-200:]
+        out = (r.stdout.strip().splitlines()[-1:] or [r.stderr.strip()])[0][-200:]
         done["tables"][table] = out.replace("DELETE ", "deleted ") if r.returncode == 0 else f"failed: {out}"
     return done
 
