@@ -303,12 +303,31 @@ async fn k6_dpop_enforced_across_admin_odata_mcp_and_scim_and_server_nonce_round
             }
         };
 
-        // 1. Bearer with a DPoP-bound token -> 401 Unauthorized.
+        // 1. Bearer with a DPoP-bound token -> 401 Unauthorized, with or without a valid proof
+        // (RFC 9449 §7.1: a bound token travels only under the DPoP scheme).
         let r = send(format!("Bearer {bound_admin_token}"), None).await;
         assert_eq!(
             r.status(),
             StatusCode::UNAUTHORIZED,
             "Bearer accepted at {path}"
+        );
+        let valid_under_bearer = resource_proof(
+            &h,
+            &format!("bearer-scheme-{i}"),
+            method,
+            &htu,
+            Some(&bound_admin_token),
+            None,
+        );
+        let r = send(
+            format!("Bearer {bound_admin_token}"),
+            Some(valid_under_bearer),
+        )
+        .await;
+        assert_eq!(
+            r.status(),
+            StatusCode::UNAUTHORIZED,
+            "Bearer with a valid proof accepted at {path}"
         );
 
         // 2. Wrong htu, missing ath, wrong jkt -> 401 Unauthorized.

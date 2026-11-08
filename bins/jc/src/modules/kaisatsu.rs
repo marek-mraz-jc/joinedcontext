@@ -1,5 +1,6 @@
 //! kaisatsu (identity provider) inside `jc`: the same state the standalone `kaisatsu serve`
-//! builds, on the in-memory store, with the KEK read from its file.
+//! builds, on PostgreSQL when `database_url_file` is set (else the in-memory store), with the
+//! KEK read from its file.
 
 use crate::app::StartError;
 use crate::config::KaisatsuSection;
@@ -129,5 +130,126 @@ mod tests {
         };
         let store = open_kaisatsu_store(&mem_section, kek).await.unwrap();
         assert!(store.list_realms().await.unwrap().is_empty());
+    }
+
+    /// K16 Postgres path (runs with `KAISATSU_TEST_DATABASE_URL`, a superuser URL): a superuser
+    /// URL is refused by the boot RLS check; the request role on a migrated database opens a
+    /// `PgStore` whose writes persist across connections.
+    #[tokio::test]
+    async fn k16_postgres_store_runs_the_boot_rls_check_and_persists() {
+        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+        use std::str::FromStr;
+        let Ok(url) = std::env::var("KAISATSU_TEST_DATABASE_URL") else {
+            println!("SKIP k16 postgres path: KAISATSU_TEST_DATABASE_URL is unset");
+            return;
+        };
+        let base = PgConnectOptions::from_str(&url).unwrap();
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(base.clone())
+            .await
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let kek_path = dir.path().join("kek");
+        std::fs::write(&kek_path, "07".repeat(32)).unwrap();
+        let kek = Kek::from_file(&kek_path).unwrap();
+        let host = format!("{}:{}", base.get_host(), base.get_port());
+        let section = |user: &str, db: &str, pw: &str| {
+            let url_file = dir.path().join(format!("url-{user}"));
+            std::fs::write(&url_file, format!("postgres://{user}@{host}/{db}\n")).unwrap();
+            let pw_file = dir.path().join(format!("pw-{user}"));
+            std::fs::write(&pw_file, pw).unwrap();
+            KaisatsuSection {
+                kek_file: Some(kek_path.clone()),
+                import_dir: None,
+                database_url_file: Some(url_file),
+                db_password_file: Some(pw_file),
+                db_max_connections: Some(2),
+            }
+        };
+
+        // 1. The superuser connects but the boot check refuses it.
+        let su_pw = url
+            .split_once("://")
+            .and_then(|(_, rest)| rest.split_once('@'))
+            .and_then(|(cred, _)| cred.split_once(':'))
+            .map(|(_, pw)| pw.to_owned())
+            .unwrap_or_default();
+        let err = open_kaisatsu_store(
+            &section(
+                base.get_username(),
+                base.get_database().unwrap_or("postgres"),
+                &su_pw,
+            ),
+            kek.clone(),
+        )
+        .await
+        .err()
+        .expect("a superuser request role is refused");
+        assert!(err.to_string().contains("boot check refused"), "{err}");
+
+        // 2. kaisatsu_app on a database migrated by kaisatsu_migrate opens and persists.
+        let app_pw = uuid_like();
+        let mig_pw = uuid_like();
+        for (role, pw) in [("kaisatsu_app", &app_pw), ("kaisatsu_migrate", &mig_pw)] {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "DO $$ BEGIN CREATE ROLE {role}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+                 ALTER ROLE {role} LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD '{pw}';"
+            )))
+            .execute(&admin)
+            .await
+            .unwrap();
+        }
+        let db = format!("kaisatsu_jc_{}", uuid_like());
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "CREATE DATABASE {db} OWNER kaisatsu_migrate"
+        )))
+        .execute(&admin)
+        .await
+        .unwrap();
+        let mig = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                base.clone()
+                    .database(&db)
+                    .username("kaisatsu_migrate")
+                    .password(&mig_pw),
+            )
+            .await
+            .unwrap();
+        PgStore::run_migrations(&mig).await.unwrap();
+        mig.close().await;
+        let app = section("kaisatsu_app", &db, &app_pw);
+        let store = open_kaisatsu_store(&app, kek.clone()).await.unwrap();
+        store
+            .upsert_realm(kaisatsu_core::RealmConfig {
+                id: "k16".into(),
+                realm: "k16".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        drop(store);
+        let again = open_kaisatsu_store(&app, kek).await.unwrap();
+        assert!(
+            again.get_realm("k16").await.unwrap().is_some(),
+            "persisted in PostgreSQL"
+        );
+        drop(again);
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE {db} WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await
+        .unwrap();
+    }
+
+    fn uuid_like() -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let n = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        format!("{n:x}{:x}", std::process::id())
     }
 }
