@@ -1240,3 +1240,80 @@ async fn a_lost_database_is_an_internal_error_that_leaks_nothing() {
     }
     assert!(daiya_store_pg::migrate(store.pool()).await.is_err());
 }
+
+#[test]
+fn the_rls_catalog_check_refuses_every_unsafe_shape() {
+    use daiya_store_pg::{TableRlsStatus, validate_rls_catalog_rows};
+    let safe = |name: &str| TableRlsStatus {
+        table_name: name.into(),
+        rls_enabled: true,
+        rls_forced: true,
+        policy_count: 1,
+    };
+    let required: Vec<TableRlsStatus> = daiya_store_pg::REQUIRED_RLS_TABLES
+        .iter()
+        .map(|t| safe(t))
+        .collect();
+    validate_rls_catalog_rows(false, false, &required).unwrap();
+
+    let refuse = |bypass: bool, sup: bool, tables: &[TableRlsStatus], needle: &str| {
+        let err = validate_rls_catalog_rows(bypass, sup, tables).unwrap_err();
+        assert_eq!(err.slug(), "cr.rls_not_enforced");
+        assert!(err.to_string().contains(needle), "{needle}: {err}");
+    };
+    refuse(true, false, &required, "BYPASSRLS");
+    refuse(false, true, &required, "SUPERUSER");
+    refuse(false, false, &required[1..], "is missing from schema");
+
+    let mut unforced = required.clone();
+    unforced[0].rls_forced = false;
+    refuse(
+        false,
+        false,
+        &unforced,
+        "does not have FORCE ROW LEVEL SECURITY",
+    );
+    let mut disabled = required.clone();
+    disabled[0].rls_enabled = false;
+    refuse(
+        false,
+        false,
+        &disabled,
+        "does not have FORCE ROW LEVEL SECURITY",
+    );
+    let mut no_policy = required.clone();
+    no_policy[0].policy_count = 0;
+    refuse(false, false, &no_policy, "has no RLS policy attached");
+
+    // An extra cr_* table is held to the same rule as the required ones.
+    let mut extra = required.clone();
+    extra.push(TableRlsStatus {
+        policy_count: 0,
+        ..safe("cr_extra")
+    });
+    refuse(false, false, &extra, "cr_extra");
+}
+
+#[tokio::test]
+async fn migrations_run_for_the_owner_and_fail_cleanly_for_the_app_role() {
+    let _schema = SCHEMA_LOCK.write().await;
+    let Some(db) = pg().await else { return };
+    // The owner's store re-runs nothing when the recorded checksum matches.
+    PgStore::new(db.admin.clone())
+        .run_migrations()
+        .await
+        .unwrap();
+    // The application role owns nothing and may not migrate.
+    let err = db.app.run_migrations().await.unwrap_err();
+    assert_eq!(err.slug(), "cr.migration_failed", "{err}");
+}
+
+#[test]
+fn a_url_the_driver_cannot_use_is_refused() {
+    let err = parse_url_without_password("postgres://role@db/dash?sslmode=sometimes").unwrap_err();
+    assert_eq!(err.status_code(), 400);
+    assert!(
+        err.to_string().contains("not a valid postgres URL"),
+        "{err}"
+    );
+}
