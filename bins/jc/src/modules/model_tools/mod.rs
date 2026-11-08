@@ -144,12 +144,23 @@ async fn generate_route(state: State, body: Body) -> Response {
         );
     };
     // The permit goes with the job: a compilation past the timeout still holds its slot.
+    let started = std::time::Instant::now();
     let job = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         generate(&body)
     });
     match tokio::time::timeout(COMPILE_TIMEOUT, job).await {
-        Ok(Ok((status, payload))) => answer(status, &payload),
+        Ok(Ok((status, payload))) => {
+            let errors = payload["errors"].as_array().map_or(0, Vec::len);
+            tracing::info!(
+                status = status.as_u16(),
+                errors,
+                broker_schema = payload.get("brokerSchema").is_some(),
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "model-tools: generate answered"
+            );
+            answer(status, &payload)
+        }
         Ok(Err(e)) => errors(
             StatusCode::INTERNAL_SERVER_ERROR,
             &[format!("the generator stopped before it answered ({e}); try again")],

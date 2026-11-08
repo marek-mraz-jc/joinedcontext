@@ -1317,7 +1317,13 @@ pub async fn build_state(
     // pod's table within one interval of the store. After the engine: the
     // reload hands it its rule documents (ADR-0020 amendment).
     #[cfg(feature = "views")]
-    antares_ops::views::install(&state).await?;
+    {
+        // The host's schema cap when the environment names none (`jc`, T-3628).
+        if let Some(bytes) = cfg.defaults.get(antares_ops::views::SCHEMA_MAX_ENV) {
+            antares_ops::views::default_schema_max(bytes);
+        }
+        antares_ops::views::install(&state).await?;
+    }
     // The MCP write decisions a deployment's decision page records
     // (`/q/mcp-confirmations/{id}`, T-5816), behind the admin credential.
     #[cfg(feature = "mcp")]
