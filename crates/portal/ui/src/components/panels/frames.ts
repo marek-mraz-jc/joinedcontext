@@ -3,6 +3,8 @@
  * frame per query result, columns of `time`, `number`, `string`, `bool`, `json` or `geo` values.
  */
 
+import { calcValueOf, reduceField, reducerId } from "./reducers";
+
 export type FieldKind = "time" | "number" | "string" | "bool" | "json" | "geo";
 
 export interface FrameField {
@@ -109,38 +111,15 @@ export function rowsOf(frames: Frame[]): { columns: FrameField[]; names: string[
   return { columns, names, rows };
 }
 
-/** Grafana's reducers a legend, a stat or a gauge names (`options.reduceOptions.calcs`). */
-export type Reducer = "lastNotNull" | "last" | "first" | "firstNotNull" | "max" | "min" | "mean" | "sum" | "count" | "range" | "delta" | "diff";
-
-export function reduce(values: (number | null)[], reducer: string): number | null {
-  const present = values.filter((value): value is number => value !== null);
-  switch (reducer) {
-    case "last":
-      return values.length ? values[values.length - 1] : null;
-    case "first":
-      return values.length ? values[0] : null;
-    case "firstNotNull":
-      return present.length ? present[0] : null;
-    case "max":
-      return present.length ? Math.max(...present) : null;
-    case "min":
-      return present.length ? Math.min(...present) : null;
-    case "mean":
-    case "avg":
-      return present.length ? present.reduce((a, b) => a + b, 0) / present.length : null;
-    case "sum":
-      return present.length ? present.reduce((a, b) => a + b, 0) : null;
-    case "count":
-      return values.length;
-    case "range":
-      return present.length ? Math.max(...present) - Math.min(...present) : null;
-    case "delta":
-    case "diff":
-      return present.length ? present[present.length - 1] - present[0] : null;
-    case "lastNotNull":
-    default:
-      return present.length ? present[present.length - 1] : null;
-  }
+/**
+ * One Grafana reducer (`options.reduceOptions.calcs`, a legend's `calcs`) over a number field's
+ * values, as a number to draw: Grafana's own result (reducers.ts), a boolean as 1 or 0, anything
+ * else (a text, an array, NaN or a missing result) as `null`, which the panels draw as no value.
+ */
+export function reduce(values: readonly (number | null)[], reducer: string): number | null {
+  const value = reduceField({ values, numeric: true }, [reducer])[reducerId(reducer)];
+  if (typeof value === "boolean") return value ? 1 : 0;
+  return typeof value === "number" && !Number.isNaN(value) ? value : null;
 }
 
 /** One value per numeric field: what a stat, a gauge, a bar gauge or a pie draws. */
@@ -164,6 +143,8 @@ export function reducedOf(frames: Frame[], reducer = "lastNotNull", allValues = 
     for (const field of frame.fields) {
       if (field.type !== "number") continue;
       const values = field.values.map(numberOf);
+      // The reducer meets the field as Grafana's does: NaN and infinities kept, not gaps.
+      const raw = field.values.map(calcValueOf);
       if (allValues) {
         values.forEach((value, index) => {
           out.push({
@@ -177,15 +158,15 @@ export function reducedOf(frames: Frame[], reducer = "lastNotNull", allValues = 
       }
       const trend = time
         ? time.values
-            .map((at, index) => ({ t: timeOf(at), v: values[index] }))
-            .filter((point): point is { t: number; v: number | null } => point.t !== null)
+            .map((at, index) => ({ t: timeOf(at), v: values[index], raw: raw[index] }))
+            .filter((point): point is { t: number; v: number | null; raw: number | null } => point.t !== null)
             .sort((a, b) => a.t - b.t)
         : [];
       out.push({
         name: displayNameOf(field, frame),
         field,
-        value: reduce(trend.length ? trend.map((point) => point.v) : values, reducer),
-        trend,
+        value: reduce(trend.length ? trend.map((point) => point.raw) : raw, reducer),
+        trend: trend.map(({ t, v }) => ({ t, v })),
       });
     }
   }
