@@ -414,6 +414,105 @@ fn enforce_decision(decision: Decision) -> Result<()> {
     }
 }
 
+/// Whether `dataset.get` (and `allowed` about it) shows `ds` to the caller: the caller may read
+/// it, and, as `package_show` does, a withdrawn dataset or one of a withdrawn publisher is not
+/// shown to anonymous callers, and a dataset hidden by the publish gate only to its editors.
+async fn dataset_shown(
+    op_ctx: &OpContext,
+    req_ctx: &RequestCtx,
+    ds: &Dataset,
+    pub_rec: Option<&Publisher>,
+) -> Result<bool> {
+    let target = ObjectTarget::from_dataset(ds, pub_rec);
+    if !op_ctx
+        .authorizer
+        .check(req_ctx, Action::Read, &target)
+        .allowed
+    {
+        return Ok(false);
+    }
+    if req_ctx.subject.is_anonymous()
+        && (ds.state != RecordState::Active
+            || pub_rec.is_some_and(|p| p.state == RecordState::Withdrawn))
+    {
+        return Ok(false);
+    }
+    let hidden = op_ctx
+        .store
+        .get_catalogue(req_ctx.org_id, req_ctx.catalogue_id)
+        .await?
+        .is_some_and(|c| c.hidden_datasets.contains_key(&ds.name));
+    Ok(!hidden
+        || op_ctx
+            .authorizer
+            .check(req_ctx, Action::Propose, &target)
+            .allowed)
+}
+
+/// Authorizes saving `proposed` (C16). An update is decided on the stored record, never on the
+/// grants the caller sends along; creating a publisher needs Propose without any editor grant;
+/// and changing who may edit a publisher (its editor grants) needs Admin on it.
+pub fn authorize_publisher_write(
+    authorizer: &dyn Authorizer,
+    req_ctx: &RequestCtx,
+    existing: Option<&Publisher>,
+    proposed: &Publisher,
+) -> Result<()> {
+    let base = match existing {
+        Some(p) => p.clone(),
+        None => Publisher {
+            editor_grants: Vec::new(),
+            ..proposed.clone()
+        },
+    };
+    let target = ObjectTarget::from_publisher(&base);
+    enforce_decision(authorizer.check(req_ctx, Action::Propose, &target))?;
+    if proposed.editor_grants != base.editor_grants {
+        enforce_decision(authorizer.check(req_ctx, Action::Admin, &target))?;
+    }
+    Ok(())
+}
+
+/// The stored publisher a proposal addresses: by its id when it carries one, else by name,
+/// without following merges (the record written is the record decided on).
+async fn proposed_publisher_record(
+    store: &dyn Store,
+    req_ctx: &RequestCtx,
+    id: &str,
+    name: &str,
+) -> Result<Option<Publisher>> {
+    Ok(store.list_publishers(req_ctx).await?.into_iter().find(|p| {
+        if id.is_empty() {
+            p.name == name
+        } else {
+            p.id == id
+        }
+    }))
+}
+
+/// One activity row for a change (C13).
+fn activity_row(
+    req_ctx: &RequestCtx,
+    operation: &str,
+    object_type: &str,
+    object_id: &str,
+    summary: String,
+    details: Value,
+) -> ActivityRow {
+    ActivityRow {
+        org_id: req_ctx.org_id,
+        catalogue_id: req_ctx.catalogue_id,
+        id: format!("act-{}", Uuid::now_v7()),
+        at: Utc::now(),
+        actor: req_ctx.actor_name().to_owned(),
+        operation: operation.into(),
+        object_type: object_type.into(),
+        object_id: object_id.into(),
+        summary,
+        details,
+    }
+}
+
 /// Executes a registered operation through the single authorization and validation pipeline (C11).
 pub async fn execute_operation(
     op_ctx: &OpContext,
@@ -616,8 +715,11 @@ pub async fn execute_operation(
                 .store
                 .get_publisher(req_ctx, &ds.publisher_id)
                 .await?;
-            let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
-            enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Read, &target))?;
+            if !dataset_shown(op_ctx, req_ctx, &ds, pub_rec.as_ref()).await? {
+                return Err(DataroomError::NotFound(format!(
+                    "dataset '{name}' not found"
+                )));
+            }
             let mut views = BTreeMap::new();
             for dist in &ds.distributions {
                 let v = op_ctx.store.list_resource_views(req_ctx, &dist.id).await?;
@@ -629,14 +731,27 @@ pub async fn execute_operation(
         }
         "dataset.propose" => {
             let raw_ds = input.get("dataset").cloned().unwrap_or(input);
-            let existing_name = raw_ds
-                .get("id")
-                .or_else(|| raw_ds.get("name"))
-                .and_then(Value::as_str);
-            let existing = match existing_name {
-                Some(n) => op_ctx.store.get_dataset(req_ctx, n).await?,
+            let non_empty = |key: &str| {
+                raw_ds
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned)
+            };
+            let existing = match non_empty("id").or_else(|| non_empty("name")) {
+                Some(n) => op_ctx.store.get_dataset(req_ctx, &n).await?,
                 None => None,
             };
+            // An update is decided on the stored record first: a caller who may not edit (or
+            // see) the dataset cannot overwrite it by naming it under a publisher of its own.
+            if let Some(ex) = &existing {
+                let ex_pub = op_ctx
+                    .store
+                    .get_publisher(req_ctx, &ex.publisher_id)
+                    .await?;
+                let target = ObjectTarget::from_dataset(ex, ex_pub.as_ref());
+                enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Propose, &target))?;
+            }
             let cat = op_ctx
                 .store
                 .get_catalogue(req_ctx.org_id, req_ctx.catalogue_id)
@@ -649,6 +764,9 @@ pub async fn execute_operation(
                 })?;
                 parsed.org_id = req_ctx.org_id;
                 parsed.catalogue_id = req_ctx.catalogue_id;
+                if let (true, Some(ex)) = (parsed.id.is_empty(), &existing) {
+                    parsed.id = ex.id.clone();
+                }
                 parsed
             } else {
                 dataset_from_ckan(
@@ -803,21 +921,41 @@ pub async fn execute_operation(
             Ok(json!({ "publishers": publishers }))
         }
         "publisher.propose" => {
-            let raw_pub = scoped_record(
+            let mut raw_pub = scoped_record(
                 input.get("publisher").cloned().unwrap_or(input),
                 req_ctx,
                 &["created", "modified"],
             )?;
+            let str_of = |v: &Value, key: &str| {
+                v.get(key)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            let existing = proposed_publisher_record(
+                op_ctx.store.as_ref(),
+                req_ctx,
+                &str_of(&raw_pub, "id"),
+                &str_of(&raw_pub, "name"),
+            )
+            .await?;
+            // An update that leaves out the editor grants keeps the stored ones.
+            if let (Some(ex), Some(obj)) = (&existing, raw_pub.as_object_mut()) {
+                if !obj.contains_key("editorGrants") {
+                    obj.insert("editorGrants".into(), json!(ex.editor_grants));
+                }
+            }
             let mut publisher: Publisher = serde_json::from_value(raw_pub).map_err(|e| {
                 DataroomError::field_error("publisher", format!("invalid publisher: {e}"))
             })?;
             publisher.org_id = req_ctx.org_id;
             publisher.catalogue_id = req_ctx.catalogue_id;
-            let target = ObjectTarget::from_publisher(&publisher);
-            let decision = op_ctx.authorizer.check(req_ctx, Action::Propose, &target);
-            if !decision.allowed {
-                return Err(DataroomError::Forbidden(decision.reason));
-            }
+            authorize_publisher_write(
+                op_ctx.authorizer.as_ref(),
+                req_ctx,
+                existing.as_ref(),
+                &publisher,
+            )?;
             let saved = op_ctx.store.upsert_publisher(req_ctx, publisher).await?;
             op_ctx
                 .store
@@ -867,6 +1005,20 @@ pub async fn execute_operation(
             };
             enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Propose, &target))?;
             let saved = op_ctx.store.upsert_harvest_source(req_ctx, source).await?;
+            op_ctx
+                .store
+                .record_activity(
+                    req_ctx,
+                    activity_row(
+                        req_ctx,
+                        "harvest_source.propose",
+                        "HarvestSource",
+                        &saved.id,
+                        format!("Saved harvest source {}", saved.name),
+                        json!({"name": saved.name, "url": saved.url}),
+                    ),
+                )
+                .await?;
             Ok(serde_json::to_value(saved).unwrap_or(Value::Null))
         }
         "harvest_run.start" => {
@@ -965,6 +1117,20 @@ pub async fn execute_operation(
             };
             enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Propose, &target))?;
             let saved = op_ctx.store.upsert_plugin(req_ctx, plugin).await?;
+            op_ctx
+                .store
+                .record_activity(
+                    req_ctx,
+                    activity_row(
+                        req_ctx,
+                        "plugin.propose",
+                        "CataloguePlugin",
+                        &saved.name,
+                        format!("Saved plugin {} {}", saved.name, saved.version),
+                        json!({"name": saved.name, "version": saved.version, "enabled": saved.enabled}),
+                    ),
+                )
+                .await?;
             Ok(serde_json::to_value(saved).unwrap_or(Value::Null))
         }
         "catalogue.activity" => {
@@ -1199,8 +1365,35 @@ pub async fn execute_operation(
                     "permission": asked_def.permission.as_str(),
                 }));
             }
-            let target = match (asked_def.target_kind, object_id) {
-                ("Dataset", Some(id)) => {
+            let target = match (asked_def.name, asked_def.target_kind, object_id) {
+                // Decided on the catalogue, as the call is.
+                ("publisher.merge", _, _) => ObjectTarget::Catalogue {
+                    org_id: req_ctx.org_id,
+                    catalogue_id: req_ctx.catalogue_id,
+                },
+                // The object of a run operation is a run, decided on every source like the call.
+                ("harvest_run.get" | "harvest_run.logs", _, run) => {
+                    if let Some(run_id) = run {
+                        if op_ctx
+                            .store
+                            .get_harvest_run(req_ctx, run_id)
+                            .await?
+                            .is_none()
+                        {
+                            return Ok(json!({
+                                "allowed": false,
+                                "reason": "not found",
+                                "permission": asked_def.permission.as_str(),
+                            }));
+                        }
+                    }
+                    ObjectTarget::HarvestSource {
+                        org_id: req_ctx.org_id,
+                        catalogue_id: req_ctx.catalogue_id,
+                        source_id: "*".into(),
+                    }
+                }
+                (_, "Dataset", Some(id)) => {
                     let Some(ds) = op_ctx.store.get_dataset(req_ctx, id).await? else {
                         return Ok(json!({
                             "allowed": false,
@@ -1213,8 +1406,7 @@ pub async fn execute_operation(
                         .get_publisher(req_ctx, &ds.publisher_id)
                         .await?;
                     let t = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
-                    let read_dec = op_ctx.authorizer.check(req_ctx, Action::Read, &t);
-                    if !read_dec.allowed {
+                    if !dataset_shown(op_ctx, req_ctx, &ds, pub_rec.as_ref()).await? {
                         // Never reveal a hidden record (C11, F2).
                         return Ok(json!({
                             "allowed": false,
@@ -1224,7 +1416,7 @@ pub async fn execute_operation(
                     }
                     t
                 }
-                ("Dataset", None) => ObjectTarget::Dataset {
+                (_, "Dataset", None) => ObjectTarget::Dataset {
                     org_id: req_ctx.org_id,
                     catalogue_id: req_ctx.catalogue_id,
                     dataset_id: "*".into(),
@@ -1233,7 +1425,7 @@ pub async fn execute_operation(
                     restricted_grants: Vec::new(),
                     publisher_editor_grants: Vec::new(),
                 },
-                ("Publisher", Some(id)) => {
+                (_, "Publisher", Some(id)) => {
                     let Some(pub_rec) = op_ctx.store.get_publisher(req_ctx, id).await? else {
                         return Ok(json!({
                             "allowed": false,
@@ -1243,13 +1435,13 @@ pub async fn execute_operation(
                     };
                     ObjectTarget::from_publisher(&pub_rec)
                 }
-                ("Publisher", None) => ObjectTarget::Publisher {
+                (_, "Publisher", None) => ObjectTarget::Publisher {
                     org_id: req_ctx.org_id,
                     catalogue_id: req_ctx.catalogue_id,
                     publisher_id: "*".into(),
                     editor_grants: Vec::new(),
                 },
-                ("HarvestSource", Some(id)) => {
+                (_, "HarvestSource", Some(id)) => {
                     let Some(src) = op_ctx.store.get_harvest_source(req_ctx, id).await? else {
                         return Ok(json!({
                             "allowed": false,
@@ -1263,17 +1455,17 @@ pub async fn execute_operation(
                         source_id: src.id,
                     }
                 }
-                ("HarvestSource", None) => ObjectTarget::HarvestSource {
+                (_, "HarvestSource", None) => ObjectTarget::HarvestSource {
                     org_id: req_ctx.org_id,
                     catalogue_id: req_ctx.catalogue_id,
                     source_id: "*".into(),
                 },
-                ("Profile", id_opt) => ObjectTarget::Profile {
+                (_, "Profile", id_opt) => ObjectTarget::Profile {
                     org_id: req_ctx.org_id,
                     catalogue_id: req_ctx.catalogue_id,
                     profile_id: id_opt.unwrap_or("*").to_owned(),
                 },
-                ("CataloguePlugin", id_opt) => ObjectTarget::Plugin {
+                (_, "CataloguePlugin", id_opt) => ObjectTarget::Plugin {
                     org_id: req_ctx.org_id,
                     catalogue_id: req_ctx.catalogue_id,
                     plugin_name: id_opt.unwrap_or("*").to_owned(),

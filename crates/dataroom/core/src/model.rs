@@ -343,6 +343,8 @@ impl Catalogue {
 pub struct Publisher {
     pub org_id: OrgId,
     pub catalogue_id: CatalogueId,
+    /// Left empty by a caller creating a publisher; the store assigns `pub-{name}`.
+    #[serde(default)]
     pub id: String,
     pub name: String,
     pub title: Texts,
@@ -756,6 +758,8 @@ impl HarvestSourceKind {
 pub struct HarvestSource {
     pub org_id: OrgId,
     pub catalogue_id: CatalogueId,
+    /// Left empty by a caller creating a source; the store assigns `hs-{name}`.
+    #[serde(default)]
     pub id: String,
     pub name: String,
     pub kind: HarvestSourceKind,

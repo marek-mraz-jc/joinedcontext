@@ -973,6 +973,19 @@ async fn dispatch_ckan_action(
             if let Err(e) = dataroom_core::validate_slug("name", name) {
                 return ckan_err(&base, &action, e);
             }
+            // CKAN refuses a second organization on a taken name; updates go through
+            // organization_update/patch, which decide on the stored record.
+            match state.store.get_publisher(&ctx, name).await {
+                Ok(None) => {}
+                Ok(Some(_)) => {
+                    return ckan_err(
+                        &base,
+                        &action,
+                        DataroomError::field_error("name", "Group name already exists in database"),
+                    )
+                }
+                Err(e) => return ckan_err(&base, &action, e),
+            }
             let title_str = payload.get("title").and_then(Value::as_str).unwrap_or(name);
             let desc_str = payload
                 .get("description")
@@ -1041,10 +1054,14 @@ async fn dispatch_ckan_action(
                 created: now,
                 modified: now,
             };
-            let target = ObjectTarget::from_publisher(&pub_rec);
-            let dec = state.authorizer.check(&ctx, Action::Propose, &target);
-            if !dec.allowed {
-                return ckan_err(&base, &action, DataroomError::Forbidden(dec.reason));
+            // Decided without the grants the caller sends: naming oneself an editor grants nothing.
+            if let Err(e) = dataroom_core::ops::authorize_publisher_write(
+                state.authorizer.as_ref(),
+                &ctx,
+                None,
+                &pub_rec,
+            ) {
+                return ckan_err(&base, &action, e);
             }
             match state.store.upsert_publisher(&ctx, pub_rec).await {
                 Ok(saved) => ckan_ok(
