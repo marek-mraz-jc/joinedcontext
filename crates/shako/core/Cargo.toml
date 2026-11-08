@@ -11,7 +11,6 @@ testkit = []
 [dependencies]
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
-ecdsa = { version = "0.17", features = ["signing", "verifying", "der", "pem"] }
 globset = "0.4"
 gix-validate = "0.13"
 hex = "0.4"

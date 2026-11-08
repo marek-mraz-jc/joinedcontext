@@ -483,9 +483,9 @@ fn handle_v2_fetch(repo_path: &Path, args: &[String]) -> ShakoResult<Vec<u8>> {
         return Err(ShakoError::BadRequest("fetch requires at least one want".into()));
     }
 
-    let reachable_Pool = collect_reachable_objects_for_check(&repo)?;
+    let reachable_pool = collect_reachable_objects_for_check(&repo)?;
     for w in &params.wants {
-        if !repo.has_object(*w) || !reachable_Pool.contains(w) {
+        if !repo.has_object(*w) || !reachable_pool.contains(w) {
             let mut err_out = Vec::new();
             write_err_line(&mut err_out, &format!("upload-pack: not our ref {w}"))?;
             return Err(ShakoError::BadRequest(format!(
@@ -946,14 +946,14 @@ pub fn build_pack_bytes(
     object_ids: &[ObjectId],
     allow_thin_pack: bool,
 ) -> ShakoResult<Vec<u8>> {
-    let mut odb = repo.objects.clone();
+    let mut odb = repo.objects.clone().into_inner();
     // Critical: prevent pack unload while pack locations are held in `Count` (Contract S3, T-6639)
     odb.prevent_pack_unload();
 
     let should_interrupt = AtomicBool::new(false);
-    let progress = gix_features::progress::Discard;
-    let oid_iter: Box<dyn Iterator<Item = Result<ObjectId, std::convert::Infallible>> + Send> =
-        Box::new(object_ids.iter().copied().map(Ok));
+    let progress = gix::progress::Discard;
+    let oid_iter: Box<dyn Iterator<Item = gix::Result<ObjectId>> + Send> =
+        Box::new(object_ids.to_vec().into_iter().map(Ok));
 
     let (counts, _outcome) = output::count::objects(
         odb.clone(),
@@ -974,20 +974,22 @@ pub fn build_pack_bytes(
     let entries_iter = output::entry::iter_from_counts(
         counts,
         odb,
-        Box::new(gix_features::progress::Discard),
+        Box::new(gix::progress::Discard),
         output::entry::iter_from_counts::Options {
             thread_limit: Some(1),
             mode: output::entry::iter_from_counts::Mode::PackCopyAndBaseObjects,
             allow_thin_pack,
             chunk_size: 1000,
             version: gix_pack::data::Version::V2,
-            compression: gix_zlib::Compression::default(),
+            compression: gix::zlib::Compression::default(),
         },
-    );
+    )
+    .map_err(|e| ShakoError::Git(format!("pack entry generation failed: {e}")))?;
+    let ordered = gix::parallel::InOrderIter::from(entries_iter);
 
     let mut pack_bytes = Vec::new();
     let mut bytes_iter = output::bytes::FromEntriesIter::new(
-        entries_iter,
+        ordered,
         &mut pack_bytes,
         num_entries,
         gix_pack::data::Version::V2,

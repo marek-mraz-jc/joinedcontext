@@ -1415,8 +1415,10 @@ mod tests {
         ] {
             assert!(xml.contains(required), "CSDL missing {required}");
         }
-        // Secrets are never declared in CSDL
-        assert!(!xml.contains("SecretRef"));
+        // Secrets are never declared in CSDL: no entity type carries a secret or its reference;
+        // a `SecretRef` action parameter only names a secret the reconciler resolves.
+        assert!(!xml.contains("Property Name=\"SecretRef\""));
+        assert!(!xml.contains("Property Name=\"PreviousSecretRef\""));
         assert!(!xml.contains("RemotePassword"));
     }
 }

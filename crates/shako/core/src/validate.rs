@@ -74,10 +74,10 @@ pub fn validate_branch_name(branch: &str) -> ShakoResult<()> {
             "invalid branch name '{branch}'"
         )));
     }
-    gix_validate::reference::branch_name(branch.as_bytes().into()).map_err(|e| {
+    let full = format!("refs/heads/{branch}");
+    gix_validate::reference::branch_name(full.as_bytes().into()).map_err(|e| {
         ShakoError::Unprocessable(format!("invalid branch name '{branch}': {e}"))
     })?;
-    let full = format!("refs/heads/{branch}");
     validate_full_ref_name(&full)
 }
 

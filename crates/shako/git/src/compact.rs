@@ -141,7 +141,7 @@ pub fn compact_repository(
     let pack_bytes = build_pack_bytes(&repo, &oid_vec, false)?;
 
     let mut cursor = std::io::Cursor::new(pack_bytes);
-    let mut progress = gix_features::progress::Discard;
+    let mut progress = gix::progress::Discard;
     let should_interrupt = AtomicBool::new(false);
     let outcome = gix_pack::Bundle::write_to_directory(
         &mut cursor,
@@ -187,12 +187,12 @@ pub fn fsck_repository(repo_path: &Path) -> ShakoResult<FsckOutcome> {
     for pack_path in &packs {
         let bundle = gix_pack::Bundle::at(pack_path, gix_hash::Kind::Sha1)
             .map_err(|e| ShakoError::Git(format!("fsck open bundle {}: {e}", pack_path.display())))?;
-        let mut progress = gix_features::progress::Discard;
+        let mut progress = gix::progress::Discard;
         bundle
             .verify_integrity(
                 &mut progress,
                 &should_interrupt,
-                gix_pack::bundle::verify::integrity::Options {
+                gix_pack::index::verify::integrity::Options {
                     verify_mode: gix_pack::index::verify::Mode::HashCrc32Decode,
                     traversal: gix_pack::index::traverse::Algorithm::Lookup,
                     make_pack_lookup_cache: || gix_pack::cache::Never,

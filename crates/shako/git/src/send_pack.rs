@@ -2,7 +2,7 @@
 //! Git Smart HTTP `send-pack` client on `gix` for pushing to push mirrors over HTTPS
 //! through `OutboundGuard` (Contract S15, R§2.1, Threat T3).
 
-use crate::pktline::{PktLine, parse_all_pkt_lines, write_flush, write_text_line};
+use crate::pktline::{parse_all_pkt_lines, write_flush, write_text_line};
 use crate::repo::open_isolated;
 use crate::upload_pack::{build_pack_bytes, collect_advertised_refs};
 use base64::Engine as _;

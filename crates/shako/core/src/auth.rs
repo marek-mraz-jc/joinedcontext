@@ -7,7 +7,7 @@ use crate::ids::{InstanceId, OrgId, constant_time_eq, sha256_hex};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use chrono::Utc;
-use ecdsa::signature::Signer;
+use p256::ecdsa::signature::Signer;
 use jsonwebtoken::jwk::Jwk;
 use jsonwebtoken::{
     Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, decode_header, encode,
@@ -627,7 +627,7 @@ impl ShakoSigningKey {
     /// Verifies a base64-encoded ASN.1 DER ECDSA P-256 SHA-256 signature over `payload`.
     #[must_use]
     pub fn verify_cosign_payload(&self, payload: &[u8], sig_base64: &str) -> bool {
-        use ecdsa::signature::Verifier;
+        use p256::ecdsa::signature::Verifier;
         let Ok(der_bytes) = STANDARD.decode(sig_base64.trim()) else {
             return false;
         };

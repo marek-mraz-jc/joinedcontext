@@ -2,7 +2,7 @@
 //! Isolated bare Git repository lifecycle, per-repository write locks, tree/commit/file reads,
 //! and pack-backed API commits (S2, S11, R§2.4, R§2.5, Threat T1, T2).
 
-use bstr::{BStr, BString, ByteSlice};
+use bstr::{BString, ByteSlice};
 use gix_hash::ObjectId;
 use gix_object::WriteTo;
 use gix_object::tree::EntryKind;
@@ -131,8 +131,8 @@ pub fn init_bare_repo(
                 name: head_name,
                 deref: false,
             }],
-            gix_ref::file::transaction::Fail::Immediately,
-            gix_ref::file::transaction::Fail::Immediately,
+            gix::lock::acquire::Fail::Immediately,
+            gix::lock::acquire::Fail::Immediately,
         )
         .map_err(|e| ShakoError::Git(format!("prepare HEAD failed: {e}")))?
         .commit(None)
@@ -257,8 +257,8 @@ pub fn copy_bare_repo(
         .transaction()
         .prepare(
             edits,
-            gix_ref::file::transaction::Fail::Immediately,
-            gix_ref::file::transaction::Fail::Immediately,
+            gix::lock::acquire::Fail::Immediately,
+            gix::lock::acquire::Fail::Immediately,
         )
         .map_err(|e| ShakoError::Git(format!("migrate ref prepare: {e}")))?
         .commit(None)
@@ -326,17 +326,17 @@ pub fn write_objects_as_pack(
     let mut entries = Vec::with_capacity(objects.len());
     for (oid, kind, raw) in objects {
         let count = output::Count::from_data(*oid, None);
-        let data = gix_pack::data::Data::new(*kind, raw.as_slice());
-        let entry = output::Entry::from_data(&count, &data, gix_zlib::Compression::default())
+        let data = gix_object::Data::new(raw.as_slice(), *kind, gix_hash::Kind::Sha1);
+        let entry = output::Entry::from_data(&count, &data, gix::zlib::Compression::default())
             .map_err(|e| ShakoError::Git(format!("pack entry deflate failed: {e}")))?;
-        entries.push(Ok::<_, output::entry::Error>(entry));
+        entries.push(entry);
     }
 
     let mut pack_bytes = Vec::new();
     let num_entries = u32::try_from(entries.len())
         .map_err(|_| ShakoError::BadRequest("too many objects in commit".into()))?;
     let mut iter = output::bytes::FromEntriesIter::new(
-        std::iter::once(entries),
+        std::iter::once(gix::Result::Ok(entries)),
         &mut pack_bytes,
         num_entries,
         gix_pack::data::Version::V2,
@@ -350,7 +350,7 @@ pub fn write_objects_as_pack(
     std::fs::create_dir_all(&pack_dir)
         .map_err(|e| ShakoError::Storage(format!("mkdir pack dir: {e}")))?;
     let mut cursor = std::io::Cursor::new(pack_bytes);
-    let mut progress = gix_features::progress::Discard;
+    let mut progress = gix::progress::Discard;
     let should_interrupt = AtomicBool::new(false);
     let outcome = gix_pack::Bundle::write_to_directory(
         &mut cursor,
@@ -364,7 +364,7 @@ pub fn write_objects_as_pack(
             iteration_mode: gix_pack::data::input::Mode::Verify,
             index_version: gix_pack::index::Version::V2,
             alloc_limit_bytes: Some(32 * 1024 * 1024),
-            compression: gix_zlib::Compression::default(),
+            compression: gix::zlib::Compression::default(),
         },
     )
     .map_err(|e| ShakoError::Git(format!("write pack bundle failed: {e}")))?;
@@ -407,7 +407,7 @@ pub fn resolve_commit_oid(repo: &gix::Repository, git_ref: &str) -> ShakoResult<
         format!("refs/tags/{trimmed}"),
         format!("refs/pull/{trimmed}"),
     ] {
-        let Ok(partial) = candidate.as_str().try_into() else {
+        let Ok(partial) = <&gix_ref::PartialNameRef>::try_from(candidate.as_str()) else {
             continue;
         };
         if let Ok(Some(mut r)) = repo.try_find_reference(partial) {
@@ -544,21 +544,18 @@ pub fn commit_file_changes(
 
     let root_tree_oid = build_nested_trees(&tree_entries, &mut new_objects)?;
     let now_secs = chrono::Utc::now().timestamp();
-    let time = gix_date::Time::new(now_secs, 0);
-    let author_sig = gix_actor::Signature {
+    let time = gix::date::Time::new(now_secs, 0);
+    let author_sig = gix::actor::Signature {
         name: BString::from(sanitize_actor_field(&author.name, "shako")),
         email: BString::from(sanitize_actor_field(&author.email, "shako@local")),
         time,
     };
-    let committer_sig = gix_actor::Signature {
+    let committer_sig = gix::actor::Signature {
         name: BString::from(sanitize_actor_field(&committer.name, "shako")),
         email: BString::from(sanitize_actor_field(&committer.email, "shako@local")),
         time,
     };
-    let mut parents = gix_object::Commit::default().parents;
-    if let Some(p) = parent_commit_oid {
-        parents.push(p);
-    }
+    let parents = parent_commit_oid.into_iter().collect();
     let commit_obj = gix_object::Commit {
         tree: root_tree_oid,
         parents,
@@ -595,8 +592,8 @@ pub fn commit_file_changes(
                 name: full_ref,
                 deref: false,
             }],
-            gix_ref::file::transaction::Fail::Immediately,
-            gix_ref::file::transaction::Fail::Immediately,
+            gix::lock::acquire::Fail::Immediately,
+            gix::lock::acquire::Fail::Immediately,
         )
         .map_err(|e| ShakoError::Conflict(format!("concurrent ref update on {branch}: {e}")))?
         .commit(None)
@@ -834,7 +831,7 @@ pub fn read_file_at_ref(
     let mut tree = commit
         .tree()
         .map_err(|e| ShakoError::Git(format!("find tree: {e}")))?;
-    let parts: Vec<&BStr> = clean.split('/').map(|s| s.as_bytes().as_bstr()).collect();
+    let parts: Vec<&str> = clean.split('/').collect();
     let Some(entry) = tree
         .peel_to_entry(parts)
         .map_err(|e| ShakoError::Git(format!("lookup entry: {e}")))?
@@ -879,10 +876,10 @@ fn decode_commit_info(commit: &gix::Commit<'_>) -> ShakoResult<CommitInfo> {
         .map_err(|e| ShakoError::Git(format!("decode commit: {e}")))?;
     let author = decoded.author().unwrap_or_default();
     let committer = decoded.committer().unwrap_or_default();
-    let author_dt = chrono::DateTime::from_timestamp(author.time.seconds, 0)
+    let author_dt = chrono::DateTime::from_timestamp(author.time().map(|t| t.seconds).unwrap_or(0), 0)
         .unwrap_or_else(chrono::Utc::now)
         .to_rfc3339();
-    let committer_dt = chrono::DateTime::from_timestamp(committer.time.seconds, 0)
+    let committer_dt = chrono::DateTime::from_timestamp(committer.time().map(|t| t.seconds).unwrap_or(0), 0)
         .unwrap_or_else(chrono::Utc::now)
         .to_rfc3339();
     Ok(CommitInfo {
@@ -917,7 +914,7 @@ pub fn list_commits(
     let walk = repo
         .rev_walk([start_oid])
         .sorting(gix::revision::walk::Sorting::ByCommitTime(
-            gix_traverse::commit::simple::CommitTimeOrder::NewestFirst,
+            gix::traverse::commit::simple::CommitTimeOrder::NewestFirst,
         ))
         .all()
         .map_err(|e| ShakoError::Git(format!("rev_walk failed: {e}")))?;
@@ -949,12 +946,12 @@ fn commit_touches_path(repo: &gix::Repository, commit: &gix::Commit<'_>, path: &
     let Ok(mut tree) = commit.tree() else {
         return false;
     };
-    let parts: Vec<&BStr> = path.split('/').map(|s| s.as_bytes().as_bstr()).collect();
+    let parts: Vec<&str> = path.split('/').collect();
     let cur_oid = tree
         .peel_to_entry(parts.clone())
         .ok()
         .flatten()
-        .map(|e| e.oid());
+        .map(|e| e.object_id());
 
     let parents: Vec<ObjectId> = commit.parent_ids().map(|id| id.detach()).collect();
     if parents.is_empty() {
@@ -971,7 +968,7 @@ fn commit_touches_path(repo: &gix::Repository, commit: &gix::Commit<'_>, path: &
             .peel_to_entry(parts.clone())
             .ok()
             .flatten()
-            .map(|e| e.oid());
+            .map(|e| e.object_id());
         if cur_oid != p_oid {
             return true;
         }
@@ -1071,8 +1068,8 @@ pub fn create_branch(repo_path: &Path, new_branch: &str, from_ref: &str) -> Shak
                 name: full_name,
                 deref: false,
             }],
-            gix_ref::file::transaction::Fail::Immediately,
-            gix_ref::file::transaction::Fail::Immediately,
+            gix::lock::acquire::Fail::Immediately,
+            gix::lock::acquire::Fail::Immediately,
         )
         .map_err(|_| ShakoError::Conflict("The branch already exists.".into()))?
         .commit(None)
@@ -1106,8 +1103,8 @@ pub fn delete_branch(repo_path: &Path, branch: &str) -> ShakoResult<bool> {
                 name: full_name,
                 deref: false,
             }],
-            gix_ref::file::transaction::Fail::Immediately,
-            gix_ref::file::transaction::Fail::Immediately,
+            gix::lock::acquire::Fail::Immediately,
+            gix::lock::acquire::Fail::Immediately,
         )
         .map_err(|e| ShakoError::Git(format!("delete branch prepare: {e}")))?
         .commit(None)
@@ -1140,8 +1137,8 @@ pub fn set_ref_direct(repo_path: &Path, full_ref_str: &str, oid_hex: &str) -> Sh
                 name: full_name,
                 deref: false,
             }],
-            gix_ref::file::transaction::Fail::Immediately,
-            gix_ref::file::transaction::Fail::Immediately,
+            gix::lock::acquire::Fail::Immediately,
+            gix::lock::acquire::Fail::Immediately,
         )
         .map_err(|e| ShakoError::Git(e.to_string()))?
         .commit(None)

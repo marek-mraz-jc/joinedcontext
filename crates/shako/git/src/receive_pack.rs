@@ -8,7 +8,6 @@ use crate::pktline::{
     write_sideband_chunks, write_text_line,
 };
 use crate::repo::{collect_tree_blobs, is_ancestor, open_isolated};
-use bstr::ByteSlice;
 use gix_hash::ObjectId;
 use gix_pack::data::input::{BytesToEntriesIter, EntryDataMode, Mode as InputMode};
 use gix_packetline::Channel;
@@ -324,8 +323,8 @@ pub fn handle_receive_pack(
                 .transaction()
                 .prepare(
                     edits,
-                    gix_ref::file::transaction::Fail::Immediately,
-                    gix_ref::file::transaction::Fail::Immediately,
+                    gix::lock::acquire::Fail::Immediately,
+                    gix::lock::acquire::Fail::Immediately,
                 )
                 .and_then(|tx| tx.commit(None).map_err(Into::into))
             {
@@ -361,8 +360,8 @@ pub fn handle_receive_pack(
                         .transaction()
                         .prepare(
                             [edit],
-                            gix_ref::file::transaction::Fail::Immediately,
-                            gix_ref::file::transaction::Fail::Immediately,
+                            gix::lock::acquire::Fail::Immediately,
+                            gix::lock::acquire::Fail::Immediately,
                         )
                         .and_then(|tx| tx.commit(None).map_err(Into::into))
                     {
@@ -446,7 +445,7 @@ fn validate_and_index_pack_in_quarantine(
     let repo = open_isolated(repo_path).map_err(|e| e.to_string())?;
     let odb = repo.objects.clone();
     let mut pack_reader = std::io::Cursor::new(pack_data);
-    let mut progress = gix_features::progress::Discard;
+    let mut progress = gix::progress::Discard;
     let should_interrupt = AtomicBool::new(false);
 
     let outcome = gix_pack::Bundle::write_to_directory(
@@ -461,7 +460,7 @@ fn validate_and_index_pack_in_quarantine(
             iteration_mode: InputMode::Verify,
             index_version: gix_pack::index::Version::V2,
             alloc_limit_bytes: Some(MAX_SINGLE_OBJECT_BYTES as usize),
-            compression: gix_zlib::Compression::default(),
+            compression: gix::zlib::Compression::default(),
         },
     )
     .map_err(|e| format!("index-pack failed: {e}"))?;

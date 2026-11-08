@@ -11,7 +11,6 @@ axum = { version = "0.8", features = ["json"] }
 base64 = "0.22"
 bytes = "1.12"
 chrono = { version = "0.4", features = ["serde"] }
-ecdsa = { version = "0.17", features = ["signing", "verifying", "der"] }
 futures-util = "0.3"
 hex = "0.4"
 http = "1.5"

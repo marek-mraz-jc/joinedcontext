@@ -252,8 +252,8 @@ pub fn execute_pr_merge(
                     name: base_ref_name,
                     deref: false,
                 }],
-                gix_ref::file::transaction::Fail::Immediately,
-                gix_ref::file::transaction::Fail::Immediately,
+                gix::lock::acquire::Fail::Immediately,
+                gix::lock::acquire::Fail::Immediately,
             )
             .map_err(|e| ShakoError::Conflict(format!("concurrent update on {base_branch}: {e}")))?
             .commit(None)
@@ -286,23 +286,23 @@ pub fn execute_pr_merge(
     let root_tree_oid = build_nested_trees(&flat_entries, &mut new_objects)?;
 
     let now_secs = chrono::Utc::now().timestamp();
-    let time = gix_date::Time::new(now_secs, 0);
-    let author_sig = gix_actor::Signature {
+    let time = gix::date::Time::new(now_secs, 0);
+    let author_sig = gix::actor::Signature {
         name: BString::from(author.name.as_str()),
         email: BString::from(author.email.as_str()),
         time,
     };
-    let committer_sig = gix_actor::Signature {
+    let committer_sig = gix::actor::Signature {
         name: BString::from(committer.name.as_str()),
         email: BString::from(committer.email.as_str()),
         time,
     };
 
-    let mut parents = gix_object::Commit::default().parents;
-    parents.push(base_oid);
+    let mut parent_list = vec![base_oid];
     if style == MergeStyle::Merge && base_oid != head_oid {
-        parents.push(head_oid);
+        parent_list.push(head_oid);
     }
+    let parents = parent_list.into_iter().collect();
 
     let commit_obj = gix_object::Commit {
         tree: root_tree_oid,
@@ -340,8 +340,8 @@ pub fn execute_pr_merge(
                 name: base_ref_name,
                 deref: false,
             }],
-            gix_ref::file::transaction::Fail::Immediately,
-            gix_ref::file::transaction::Fail::Immediately,
+            gix::lock::acquire::Fail::Immediately,
+            gix::lock::acquire::Fail::Immediately,
         )
         .map_err(|e| ShakoError::Conflict(format!("concurrent update on {base_branch}: {e}")))?
         .commit(None)

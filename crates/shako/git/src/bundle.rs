@@ -70,7 +70,7 @@ pub fn restore_from_bundle(repo_path: &Path, bundle_bytes: &[u8]) -> ShakoResult
     std::fs::create_dir_all(&pack_dir)
         .map_err(|e| ShakoError::Storage(format!("mkdir pack dir: {e}")))?;
     let mut cursor = std::io::Cursor::new(pack);
-    let mut progress = gix_features::progress::Discard;
+    let mut progress = gix::progress::Discard;
     let should_interrupt = std::sync::atomic::AtomicBool::new(false);
     let outcome = gix_pack::Bundle::write_to_directory(
         &mut cursor,
