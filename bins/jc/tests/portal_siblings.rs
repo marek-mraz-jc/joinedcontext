@@ -160,7 +160,7 @@ async fn start() -> Jc {
         ("dashboards-password", "--daiya-portal-password-file"),
     ] {
         let file = given.join(name);
-        std::fs::write(&file, format!("test-{name}-{:x}", std::process::id())).unwrap();
+        std::fs::write(&file, format!("test-{name}-{:032x}", std::process::id())).unwrap();
         cmd.arg(flag).arg(file);
     }
     for (key, _) in std::env::vars() {
