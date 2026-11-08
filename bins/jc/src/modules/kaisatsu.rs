@@ -68,7 +68,14 @@ async fn apply_portal_realm(store: &Arc<dyn Store>, ctx: BuildCtx<'_>) -> Result
     ) else {
         return Ok(());
     };
-    let files = setup::portal_realm_files(&base).map_err(|e| err(&e))?;
+    let mut files = setup::portal_realm_files(&base).map_err(|e| err(&e))?;
+    if ctx
+        .setup
+        .value(setup::Secret::GatewayClientSecret)
+        .is_some()
+    {
+        files.push(setup::gateway_realm_file());
+    }
     let options = ApplyOptions {
         env_vars: setup::realm_env(ctx.setup),
         ..ApplyOptions::default()

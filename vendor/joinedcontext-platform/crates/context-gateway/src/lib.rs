@@ -38,6 +38,7 @@ pub mod query;
 pub use jc_relationships as relationships;
 pub mod resolver;
 pub mod revocations;
+pub mod serve;
 pub mod store;
 pub mod telemetry;
 pub use jc_ngsi_input::units;

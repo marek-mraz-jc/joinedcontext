@@ -62,6 +62,22 @@ pub struct MountPlan {
     pub module: Module,
     pub spec: MountSpec,
     pub mount: Mount,
+    /// More router-table entries of the same router: the other root paths of a module that
+    /// answers at whole paths (`Module::root_paths`), whose router then sees the path unstripped.
+    pub also: Vec<MountSpec>,
+}
+
+impl MountPlan {
+    /// Every router-table entry of this module.
+    pub fn specs(&self) -> impl Iterator<Item = &MountSpec> {
+        std::iter::once(&self.spec).chain(&self.also)
+    }
+
+    /// Whether the module answers at whole root paths rather than under a prefix of its own.
+    #[must_use]
+    pub fn at_root(&self) -> bool {
+        !self.also.is_empty()
+    }
 }
 
 /// Places every configured module: an explicit `[mounts.<module>]` entry wins, otherwise the mode
@@ -70,6 +86,25 @@ pub struct MountPlan {
 pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
     let mut plans = Vec::with_capacity(cfg.roles.len());
     for &module in &cfg.roles {
+        let roots = module.root_paths();
+        if cfg.mode == MountMode::Slug && !roots.is_empty() && !cfg.mounts.contains_key(&module) {
+            let mount = Mount::new(module.name(), cfg.scheme.clone(), cfg.base_host.clone(), "")?;
+            let mut specs = roots.iter().map(|prefix| MountSpec {
+                module: module.name().to_owned(),
+                host: None,
+                path_prefix: Some((*prefix).to_owned()),
+            });
+            let spec = specs
+                .next()
+                .ok_or(RouterError::InvalidPrefix(String::new()))?;
+            plans.push(MountPlan {
+                module,
+                spec,
+                mount,
+                also: specs.collect(),
+            });
+            continue;
+        }
         let (host, prefix) = match cfg.mounts.get(&module) {
             Some(o) => (
                 o.host.clone().map(|h| h.trim().to_ascii_lowercase()),
@@ -98,12 +133,13 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
             module,
             spec,
             mount,
+            also: Vec::new(),
         });
     }
     // Dry run of the router table: overlap is refused before any module state exists.
     let mut dry = JcRouterBuilder::new(cfg.scheme.clone(), cfg.base_host.clone());
-    for plan in &plans {
-        dry = dry.mount(plan.spec.clone(), Router::new());
+    for spec in plans.iter().flat_map(MountPlan::specs) {
+        dry = dry.mount(spec.clone(), Router::new());
     }
     dry.build()?;
     Ok(plans)
@@ -145,6 +181,15 @@ impl LateRouter {
 pub struct Built {
     pub router: Router,
     portal: Option<(LateRouter, Mount)>,
+    gateway: Option<LateGateway>,
+}
+
+/// The gateway's late slot: built after the forge holds the organization repository it reads,
+/// over Antares' hop when Antares runs beside it.
+struct LateGateway {
+    slot: LateRouter,
+    mount: Mount,
+    hop: Option<modules::Hop>,
 }
 
 /// Builds every module's router (the Portal's as a late slot) and the one `jc-router` in front
@@ -162,6 +207,8 @@ pub async fn build_router(
         builder = builder.trust_proxy(*net);
     }
     let mut portal = None;
+    let mut gateway = None;
+    let mut hop = None;
     for plan in plans {
         tracing::info!(
             module = plan.module.name(),
@@ -189,12 +236,48 @@ pub async fn build_router(
             portal = Some((late, plan.mount));
             continue;
         }
+        #[cfg(feature = "antares")]
+        if plan.module == Module::Antares {
+            let hop_secret = cfg
+                .roles
+                .contains(&Module::Gateway)
+                .then(|| ctx.setup.value(crate::setup::Secret::GatewayHopToken))
+                .flatten();
+            let built =
+                modules::antares::build(&cfg.antares, ctx.setup, hop_secret, shutdown).await?;
+            builder = builder.mount(plan.spec, built.router);
+            hop = built.hop;
+            continue;
+        }
+        if plan.module == Module::Gateway {
+            let late = LateRouter::default();
+            for spec in plan.specs() {
+                let router = late.router();
+                #[cfg(feature = "gateway")]
+                let router = if plan.at_root() {
+                    modules::gateway::at_root(router)
+                } else {
+                    router
+                };
+                builder = builder.mount(spec.clone(), router);
+            }
+            gateway = Some(LateGateway {
+                slot: late,
+                mount: plan.mount,
+                hop: None,
+            });
+            continue;
+        }
         let router = modules::build(plan.module, cfg, ctx, plan.mount, shutdown, tasks).await?;
         builder = builder.mount(plan.spec, router);
+    }
+    if let Some(late) = gateway.as_mut() {
+        late.hop = hop;
     }
     Ok(Built {
         router: builder.build()?.into_axum_router(),
         portal,
+        gateway,
     })
 }
 
@@ -343,11 +426,24 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         tasks,
         servers,
     };
+    if cfg.portal_siblings
+        && (built.portal.is_some() || built.gateway.is_some())
+        && let Err(e) = crate::provision::forge(&siblings, &setup).await
+    {
+        let _ = running.stop().await;
+        return Err(e);
+    }
+    if let Some(late) = built.gateway {
+        match build_gateway(ctx, late.mount, late.hop).await {
+            Ok(router) => late.slot.set(router),
+            Err(e) => {
+                let _ = running.stop().await;
+                return Err(e);
+            }
+        }
+    }
     if let Some((late, mount)) = built.portal {
         let portal = async {
-            if cfg.portal_siblings {
-                crate::provision::forge(&siblings, &setup).await?;
-            }
             modules::build(
                 Module::Portal,
                 cfg,
@@ -368,6 +464,26 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     }
     tracing::info!(%addr, admin = ?admin_addr, "jc listening");
     Ok(running)
+}
+
+/// Builds the gateway, over Antares' hop when Antares runs beside it.
+async fn build_gateway(
+    ctx: modules::BuildCtx<'_>,
+    mount: Mount,
+    hop: Option<modules::Hop>,
+) -> Result<Router, StartError> {
+    #[cfg(feature = "gateway")]
+    {
+        modules::gateway::build(ctx, mount, hop).await
+    }
+    #[cfg(not(feature = "gateway"))]
+    {
+        let _ = (ctx, mount, hop);
+        Err(StartError::module(
+            Module::Gateway,
+            "not compiled into this jc binary",
+        ))
+    }
 }
 
 /// Runs `jc` until `stop` resolves (the binary passes SIGTERM/Ctrl-C), then shuts down cleanly.

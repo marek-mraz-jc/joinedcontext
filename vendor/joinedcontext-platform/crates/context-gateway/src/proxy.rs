@@ -50,6 +50,9 @@ pub struct Broker {
     template: Option<String>,
     /// Which broker each space and view lives on, swapped whole on a reload.
     routes: std::sync::Arc<arc_swap::ArcSwap<Routes>>,
+    /// A header every hop to a broker carries, set by the host and never by a client: `jc`'s
+    /// private broker listener admits the gateway by it ([`Broker::with_hop_header`]).
+    hop: Option<(HeaderName, axum::http::HeaderValue)>,
 }
 
 /// The broker address of each space (by tenant) and each view (by name) whose broker is not
@@ -255,6 +258,25 @@ impl Broker {
             base: base.into(),
             template: None,
             routes: Default::default(),
+            hop: None,
+        }
+    }
+
+    /// Every request and WebSocket to a broker carries `name: value`, replacing whatever a client
+    /// sent under that name. For a host whose broker admits the gateway by a secret on a private
+    /// listener (`jc`); a deployment with a mesh needs none.
+    #[must_use]
+    pub fn with_hop_header(mut self, name: HeaderName, mut value: axum::http::HeaderValue) -> Self {
+        // `Debug` of the broker (and of every log line naming it) prints `Sensitive`.
+        value.set_sensitive(true);
+        self.hop = Some((name, value));
+        self
+    }
+
+    /// Sets the hop header on `headers` (see [`Broker::with_hop_header`]).
+    pub fn stamp(&self, headers: &mut HeaderMap) {
+        if let Some((name, value)) = &self.hop {
+            headers.insert(name.clone(), value.clone());
         }
     }
 
@@ -327,6 +349,7 @@ impl Broker {
         // sends its message re-serialised, and a client's spaced JSON then promised the broker
         // bytes that never came (T-4337). hyper writes it from the body itself.
         out.remove(CONTENT_LENGTH);
+        self.stamp(out);
 
         let request = upstream
             .body(body)

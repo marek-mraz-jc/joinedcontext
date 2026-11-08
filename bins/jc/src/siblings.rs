@@ -100,6 +100,7 @@ fn origin(url: &str) -> String {
 /// | `JC_PORTAL_CKAN_URL`, `JC_PORTAL_CKAN_API_URL` (only when the public scheme is https, EP-67) | dataroom |
 /// | `JC_PORTAL_GRAFANA_URL`, `_PUBLIC_URL`, `_USER`, `_PASSWORD` | daiya |
 /// | `JC_PORTAL_BROKER_URL`, `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` | antares |
+/// | `JC_PORTAL_GATEWAY_URL`, `JC_PORTAL_GATEWAY_CLIENT_ID` | gateway |
 #[must_use]
 pub fn portal_vars(
     siblings: &Siblings,
@@ -221,6 +222,19 @@ pub fn portal_vars(
                     setup
                         .path(Secret::AntaresAdminToken)
                         .map(|p| p.display().to_string()),
+                ),
+            ],
+        );
+    }
+    if let Some(gateway) = siblings.get(Module::Gateway) {
+        // The gateway reads the internal listener with its own client's token (PF-46).
+        group(
+            "JC_PORTAL_GATEWAY_URL",
+            vec![
+                ("JC_PORTAL_GATEWAY_URL", Some(gateway.internal.clone())),
+                (
+                    "JC_PORTAL_GATEWAY_CLIENT_ID",
+                    Some(setup::GATEWAY_CLIENT.to_owned()),
                 ),
             ],
         );

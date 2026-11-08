@@ -100,6 +100,8 @@ fn probe(module: Module) -> (&'static str, &'static str) {
         Module::Antares => ("/ngsi-ld/v1/info/sourceIdentity", "antares"),
         Module::Portal => ("/api/v1/health", "\"status\":\"ok\""),
         Module::Shako => ("/api/healthz", "\"status\":\"ok\""),
+        // The gateway's slug is "api" and it answers at its root paths: "/api/endpoints".
+        Module::Gateway => ("/endpoints", "endpoints"),
     }
 }
 
