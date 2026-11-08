@@ -14,6 +14,7 @@ use std::sync::OnceLock;
 
 pub mod access_tools;
 pub mod admin;
+pub mod administration;
 pub(crate) mod bounds;
 pub mod changes;
 pub mod compute;
@@ -211,6 +212,7 @@ impl Caller {
         // (AG-11). Their refusal used to live in the body alone, which left `listing` — and so
         // `GET …/ops` and `tools/list` — offering a run an operation it would always be denied.
         runs::refuse_agent(self, op.name)?;
+        administration::refuse_agent(self, op.name)?;
         self.grants(op)
     }
 }
@@ -279,6 +281,7 @@ pub fn requires(op: &Operation) -> Requires {
     };
     match (op.kind, op.verb) {
         (kind, Some(verb)) => rule(verb, kind, "registry"),
+        _ if op.name == administration::DECIDE => rule(Verb::Approve, "ContextSpace", "route"),
         _ if ORGANIZATION_OPERATIONS.contains(&op.name) => {
             rule(verb_of_write(), op.kind, "organization")
         }
@@ -612,6 +615,9 @@ pub fn may_try(
             "project '{project}' not found"
         ))));
     }
+    if op.name == administration::DECIDE {
+        return administration::may_decide(&effective, project);
+    }
     match missing_right(op.name, &effective, input.and_then(named_kind)) {
         None => Ok(()),
         Some(what) => Err(OpError::Api(ApiError::Denied(format!(
@@ -770,6 +776,7 @@ fn init_registry() -> Vec<Operation> {
     operations.extend(model_catalog::operations());
     operations.extend(access_tools::operations());
     operations.extend(space_reads::operations());
+    operations.extend(administration::operations());
     operations
 }
 
@@ -1222,7 +1229,9 @@ mod tests {
             "jc_person_enable",
             "jc_person_sign_out",
         ];
-        let all: Vec<&str> = [PROPOSING, DELETING, ORGANIZATION].concat();
+        // A decision on an access request asks approve on a space, as its route does (PL-91).
+        const APPROVING: &[&str] = &[administration::DECIDE];
+        let all: Vec<&str> = [PROPOSING, DELETING, ORGANIZATION, APPROVING].concat();
         // Every writing operation without a verb is in one family, so a new one gets a test.
         let unlisted: Vec<&str> = registry()
             .iter()
@@ -1303,6 +1312,7 @@ mod tests {
         assert!(refusal("jc_draft_put").contains("propose"));
         assert!(refusal("jc_person_create").contains("Person"));
         assert!(refusal("jc_project_create").contains("Project"));
+        assert!(refusal(administration::DECIDE).contains("approve on ContextSpace"));
 
         // A kind the call names is checked by name: the editor proposes Endpoints, not Spaces,
         // and a stranger to the project is refused there.

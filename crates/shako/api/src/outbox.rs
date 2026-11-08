@@ -198,12 +198,29 @@ pub async fn deliver_webhook_with_retries(
 ) -> ShakoResult<DeliveryRecord> {
     let body_bytes =
         serde_json::to_vec(payload).map_err(|e| ShakoError::Internal(e.to_string()))?;
-    let secret = state
+    let delivery_id = uuid::Uuid::now_v7();
+    // A hook whose secret is gone is not delivered: a body signed with an empty key would
+    // pass any receiver that, like this forge, accepts an empty secret, and fail the others.
+    let Some(secret) = state
         .secret_store
         .get_secret(hook.org_id, &hook.secret_ref)
-        .unwrap_or_default();
+        .filter(|s| !s.is_empty())
+    else {
+        return state
+            .store()
+            .record_delivery(DeliveryRecord {
+                id: delivery_id,
+                instance_id: hook.instance_id,
+                org_id: hook.org_id,
+                webhook_id: hook.id,
+                event: event_kind.to_owned(),
+                status: "failed".into(),
+                response_code: None,
+                delivered_at: Utc::now(),
+            })
+            .await;
+    };
     let sig = compute_gitea_signature(&secret, &body_bytes)?;
-    let delivery_id = uuid::Uuid::now_v7();
     let ts = Utc::now().timestamp().to_string();
 
     let mut headers = vec![
@@ -240,6 +257,11 @@ pub async fn deliver_webhook_with_retries(
                 last_status_code = Some(code);
                 if (200..300).contains(&code) {
                     delivered = true;
+                    break;
+                }
+                // A receiver's 4xx (a refused signature, a gone route) is its verdict on this
+                // body; sending the same body again only repeats it.
+                if (400..500).contains(&code) {
                     break;
                 }
             }

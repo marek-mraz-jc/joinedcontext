@@ -32,6 +32,9 @@ tracing = "0.1"
 uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
 
 [dev-dependencies]
+# The Portal's own forge client drives tests/portal_contract.rs, so every call is the Portal's request
+# and every answer goes through the Portal's own parsing.
+joinedcontext-portal = { path = "../../portal" }
 base64 = "0.22"
 hmac = "0.12"
 http-body-util = "0.1"
@@ -43,3 +46,4 @@ sha2 = "0.10"
 tempfile = "3.27"
 tower = { version = "0.5", features = ["util"] }
 url = "2.5"
+zip = { version = "9.2", default-features = false, features = ["deflate"] }

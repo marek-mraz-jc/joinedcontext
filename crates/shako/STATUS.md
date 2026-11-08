@@ -3,6 +3,14 @@
 Note: This code was written in one pass without running `cargo build` or `cargo test` yet, so every
 item below is marked **not verified (not compiled)** alongside the implemented code and tests.
 
+## Portal contract (2026-11-08, jc-shako-portal)
+
+- `crates/shako/PORTAL-CALLS.md`: every forge call of `crates/portal/src` (46 rows) with its
+  status. `crates/shako/server/tests/portal_contract.rs` (9 tests) drives them with the Portal's
+  own `GiteaClient` over TCP and delivers webhooks to the Portal's real receiver: green.
+- Gaps left: anonymous reads for SyncSource origins (owner decision), Actions and the runner
+  protocol (App builds, S16/S17).
+
 ## Contract Items
 
 - **S1 Module, mount and binaries (`shako-server`, `bins/jc/src/modules/shako.rs`)**: partial / not verified (not compiled).

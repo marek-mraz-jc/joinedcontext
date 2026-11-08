@@ -81,7 +81,7 @@ async fn compat_create_org(
     if reg.by_name.contains_key(&req.name) {
         return error_response(&CrError::Conflict("Organization name taken".into()));
     }
-    let new_org_id = OrgId::new();
+    let new_org_id = org_id_for_name(&state, &req.name);
     let (num, _, _) = reg.register_org(&req.name, new_org_id);
     (
         StatusCode::OK,
@@ -93,6 +93,17 @@ async fn compat_create_org(
         })),
     )
         .into_response()
+}
+
+/// The id of organization `name`: the same in every process of the installation, so the rows a
+/// Postgres store keeps under it are found again when `provision.sh` creates it after a restart
+/// (the directory of names is held in memory, as Grafana's database in its pod).
+fn org_id_for_name(state: &DaiyaState, name: &str) -> OrgId {
+    use sha2::Digest as _;
+    let digest = sha2::Sha256::digest(format!("daiya-org\n{}\n{name}", state.installation_id));
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    OrgId::from(uuid::Builder::from_custom_bytes(bytes).into_uuid())
 }
 
 async fn compat_get_org_by_name(

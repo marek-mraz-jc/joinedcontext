@@ -659,6 +659,18 @@ async fn the_portal_runs_on_its_sibling_modules() {
                 .unwrap();
             let log = String::from_utf8_lossy(&log.stdout).into_owned();
             assert!(log.contains("e2e-editors"), "shako has the commit: {log}");
+            // First-start provisioning seeded the Organization and the steward Role.
+            let org = std::fs::read_to_string(clone.path().join("config/org.yaml")).unwrap();
+            assert!(
+                org.contains("kind: Organization") && org.contains("installation: true"),
+                "{org}"
+            );
+            assert!(
+                clone
+                    .path()
+                    .join("config/users/roles/steward.yaml")
+                    .is_file()
+            );
             let group_id = eventually("the group in kaisatsu", 60, || {
                 let token = admin_token.clone();
                 let jc = &jc;
@@ -720,12 +732,45 @@ async fn the_portal_runs_on_its_sibling_modules() {
         .unwrap();
     let org_status = org.status();
     let org_body = org.text().await.unwrap_or_default();
-    println!("dataroom organization_create: {org_status} {org_body}");
-    if !org_status.is_success() {
-        gaps.push(format!(
-            "e dataroom: POST /opendata/api/3/action/organization_create with the Portal token -> {org_status} {org_body}"
-        ));
-    }
+    assert!(
+        org_status.is_success(),
+        "W2 organization_create with the Portal token: {org_status} {org_body}"
+    );
+    // W5, the dataset jcctl publishes for a public Endpoint, then the anonymous catalogue read.
+    let created = Client::new()
+        .post(jc.url("/opendata/api/3/action/package_create"))
+        .header("authorization", jc.secret("catalogue-token"))
+        .json(&json!({
+            "name": "e2e-air-quality",
+            "owner_org": "e2e-org",
+            "title": "E2E air quality",
+            "notes": "A public Endpoint of the e2e.",
+            "private": false,
+            "resources": [{"name": "NGSI-LD", "url": "https://example.org/api/endpoint/e2e", "format": "NGSI-LD"}],
+            "extras": [{"key": "generated_by", "value": "joinedcontext"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    let created_status = created.status();
+    let created_body = created.text().await.unwrap_or_default();
+    assert!(
+        created_status.is_success(),
+        "W5 package_create with the Portal token: {created_status} {created_body}"
+    );
+    let listed: Value = Client::new()
+        .get(jc.url("/opendata/api/3/action/package_show?id=e2e-air-quality"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        listed["result"]["title"], "E2E air quality",
+        "the public dataset is in the anonymous catalogue: {listed}"
+    );
+    gaps.push("e Portal: JC_PORTAL_CKAN_URL must be https (EP-67), so on an http install the Portal's own sync never calls dataroom; the e2e makes the Portal's W2 and W5 calls with its token".into());
 
     // f. daiya: the Portal's Grafana credential authenticates.
     let dash = Client::new()
@@ -807,22 +852,73 @@ async fn the_portal_runs_on_its_sibling_modules() {
         "a stream ({created_status}) reached jc's listener: {shown_status} {shown_body}"
     );
 
-    // f. The Portal finds a project's dashboards organization by name before it writes one
-    // (`GET /api/orgs/name/{project}`): record what daiya answers for the Portal's credential.
-    let org = Client::new()
-        .get(jc.url("/dashboards/api/orgs/name/org"))
-        .basic_auth("portal", Some(jc.secret("dashboards-password")))
+    // f. provision.sh's steps as the Portal's server administrator: the project's organization,
+    // its folder and a dashboard, then the Portal's own reads G1 and G5 find them.
+    let admin = |req: reqwest::RequestBuilder| {
+        req.basic_auth("portal", Some(jc.secret("dashboards-password")))
+    };
+    let made = admin(Client::new().post(jc.url("/dashboards/api/orgs")))
+        .json(&json!({"name": "e2e"}))
         .send()
         .await
         .unwrap();
-    let org_status = org.status();
-    let org_body = org.text().await.unwrap_or_default();
-    println!("daiya org by name: {org_status} {org_body}");
-    if !org_status.is_success() {
-        gaps.push(format!(
-            "f daiya: GET /dashboards/api/orgs/name/{{project}} with the Portal Basic credential -> {org_status} {org_body}"
-        ));
-    }
+    let made_status = made.status();
+    let made: Value = made.json().await.unwrap_or_default();
+    assert!(
+        made_status.is_success(),
+        "POST /api/orgs: {made_status} {made}"
+    );
+    let org_id = made["orgId"]
+        .as_i64()
+        .or(made["id"].as_i64())
+        .expect("org id");
+    let found: Value = admin(Client::new().get(jc.url("/dashboards/api/orgs/name/e2e")))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        found["id"].as_i64(),
+        Some(org_id),
+        "G1 finds the organization: {found}"
+    );
+    let folder = admin(Client::new().post(jc.url("/dashboards/api/folders")))
+        .header("x-grafana-org-id", org_id.to_string())
+        .json(&json!({"uid": "project-e2e", "title": "e2e"}))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        folder.status().is_success(),
+        "POST /api/folders: {}",
+        folder.status()
+    );
+    let saved = admin(Client::new().post(jc.url("/dashboards/api/dashboards/db")))
+        .header("x-grafana-org-id", org_id.to_string())
+        .json(&json!({
+            "dashboard": {"uid": "e2e-overview", "title": "e2e overview", "schemaVersion": 39, "panels": []},
+            "folderUid": "project-e2e",
+            "overwrite": true,
+            "message": "e2e"
+        }))
+        .send()
+        .await
+        .unwrap();
+    let saved_status = saved.status();
+    let saved_body = saved.text().await.unwrap_or_default();
+    assert!(
+        saved_status.is_success(),
+        "G4 POST /api/dashboards/db: {saved_status} {saved_body}"
+    );
+    let held = admin(Client::new().get(jc.url("/dashboards/api/dashboards/uid/e2e-overview")))
+        .header("x-grafana-org-id", org_id.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(held.status(), StatusCode::OK, "G5 finds the dashboard");
+    gaps.push("f jc: nothing runs provision.sh's steps per project (POST /dashboards/api/orgs, POST /api/folders); the e2e makes them as the Portal's server administrator".into());
 
     println!("GAPS:\n{}", gaps.join("\n"));
     std::fs::write(

@@ -441,3 +441,58 @@ fn the_binary_prints_json_and_exits_by_result() {
     assert!(String::from_utf8_lossy(&failed.stderr).starts_with("error: "));
     assert!(failed.stdout.is_empty());
 }
+
+/// `serve --portal-token-file`: the Portal's token writes through the CKAN Action API, and
+/// without the file every token is refused (PORTAL-CALLS.md).
+#[tokio::test]
+async fn serve_binds_the_portal_publisher_only_from_its_token_file() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use http_body_util::BodyExt;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    let org_id = OrgId::from_uuid(Uuid::from_u128(0x5e));
+    let cat_id = CatalogueId::from_uuid(Uuid::from_u128(0x5e0));
+    let token = "portal-publisher-token-0123456789abcdef";
+    let file = temp_file(&format!("{token}\n"));
+    let create = |token: &str| {
+        Request::post("/api/3/action/organization_create")
+            .header("Host", "127.0.0.1")
+            .header("Authorization", token)
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"name":"mesto","title":"Mesto"}"#))
+            .unwrap()
+    };
+    let answer = |state| async move {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        ensure_default_catalogue(store.as_ref(), org_id, cat_id, "opendata.localhost")
+            .await
+            .unwrap();
+        let state: dataroom_api::DataroomState = state_with(store, state);
+        let res = dataroom_api::router(state)
+            .oneshot(create(token))
+            .await
+            .unwrap();
+        let status = res.status();
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        (status, serde_json::from_slice::<Value>(&body).unwrap())
+    };
+    fn state_with(store: Arc<dyn Store>, file: Option<PathBuf>) -> dataroom_api::DataroomState {
+        let org_id = OrgId::from_uuid(Uuid::from_u128(0x5e));
+        let cat_id = CatalogueId::from_uuid(Uuid::from_u128(0x5e0));
+        dataroom_server::serve_state(store, org_id, cat_id, file.as_deref()).unwrap()
+    }
+
+    let (status, body) = answer(Some(file.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["result"]["name"], "mesto");
+    let (status, body) = answer(None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(body["success"], false);
+
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+    let missing = std::env::temp_dir().join(format!("dataroom-none-{}", Uuid::new_v4()));
+    assert!(dataroom_server::serve_state(store, org_id, cat_id, Some(&missing)).is_err());
+    std::fs::remove_file(file).unwrap();
+}

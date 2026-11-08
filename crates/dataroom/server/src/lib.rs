@@ -64,6 +64,10 @@ pub enum Command {
         listen: String,
         #[arg(long, env = "DATAROOM_HOST", default_value = "opendata.localhost")]
         host: String,
+        /// The Portal's CKAN publisher token, one line in a secret file (PORTAL-CALLS.md);
+        /// without it nobody may write through the CKAN Action API.
+        #[arg(long, env = "DATAROOM_PORTAL_TOKEN_FILE")]
+        portal_token_file: Option<PathBuf>,
     },
     /// Apply PostgreSQL schema migrations and verify forced Row-Level Security (C1).
     Migrate,
@@ -387,9 +391,12 @@ pub async fn run_cli(cli: Cli) -> Result<Value> {
 
     match cli.command {
         Command::Migrate => Ok(serde_json::json!({ "migrated": true, "store": "memory" })),
-        Command::Serve { listen, .. } => {
-            let authz = Arc::new(PolicyAuthorizer::default());
-            let state = DataroomState::new(store, authz, org_id, catalogue_id);
+        Command::Serve {
+            listen,
+            portal_token_file,
+            ..
+        } => {
+            let state = serve_state(store, org_id, catalogue_id, portal_token_file.as_deref())?;
             let app = router(state);
             let listener = tokio::net::TcpListener::bind(&listen)
                 .await
@@ -448,6 +455,23 @@ pub async fn run_cli(cli: Cli) -> Result<Value> {
             execute_operation(&state.op_context(), &ctx, &name, input_val).await
         }
     }
+}
+
+/// The state `serve` runs: the policy authorizer, holding only the Portal publisher's grant
+/// when a token file is given.
+pub fn serve_state(
+    store: Arc<dyn Store>,
+    org_id: OrgId,
+    catalogue_id: CatalogueId,
+    portal_token_file: Option<&std::path::Path>,
+) -> Result<DataroomState> {
+    let Some(path) = portal_token_file else {
+        let authz = Arc::new(PolicyAuthorizer::default());
+        return Ok(DataroomState::new(store, authz, org_id, catalogue_id));
+    };
+    let (binding, grant) = dataroom_api::portal_publisher_from_file(path, org_id, catalogue_id)?;
+    let authz = Arc::new(PolicyAuthorizer::new(vec![grant]));
+    Ok(DataroomState::new(store, authz, org_id, catalogue_id).with_tokens(vec![binding]))
 }
 
 #[cfg(test)]
