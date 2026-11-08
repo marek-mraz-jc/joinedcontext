@@ -1304,19 +1304,17 @@ pub async fn apply_realm_files(
                                 .get("secretData")
                                 .and_then(Value::as_str)
                                 .unwrap_or_default();
-                            let secret_data = if let Ok(parsed_sd) =
-                                serde_json::from_str::<Value>(raw_sec_data)
-                            {
-                                if let Some(v) = parsed_sd.get("value").and_then(Value::as_str) {
-                                    let resolved =
-                                        resolve_secret_value(v, "otp.secretData.value", opts)?;
-                                    serde_json::json!({ "value": resolved }).to_string()
-                                } else {
-                                    raw_sec_data.to_owned()
-                                }
-                            } else {
-                                raw_sec_data.to_owned()
-                            };
+                            // The seed is a secret like any other: a `$(...)` reference, or a
+                            // literal only where literal secrets are allowed.
+                            let seed = serde_json::from_str::<Value>(raw_sec_data)
+                                .ok()
+                                .and_then(|sd| {
+                                    sd.get("value").and_then(Value::as_str).map(str::to_owned)
+                                })
+                                .unwrap_or_else(|| raw_sec_data.to_owned());
+                            let resolved =
+                                resolve_secret_value(&seed, "otp.secretData.value", opts)?;
+                            let secret_data = serde_json::json!({ "value": resolved }).to_string();
                             store
                                 .upsert_credential(CredentialRecord {
                                     id: cid,
