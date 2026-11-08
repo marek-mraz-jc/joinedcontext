@@ -186,7 +186,8 @@ async fn start() -> Jc {
         .env("E2E_PERSON_PASSWORD", PERSON_PASSWORD)
         .env("JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR", "false")
         .env("JC_PORTAL_SYNC_INTERVAL", "3")
-        // The Portal's internal listener (revocations, connectors, usage) on a free port.
+        // The Portal's internal listener (revocations, connectors, usage) at a fixed address:
+        // the gateway learns it only from this setting.
         .env("JC_INTERNAL_BIND", format!("127.0.0.1:{}", free_port()))
         .env("RUST_LOG", "info,sqlx=warn")
         .stdout(Stdio::null())

@@ -47,11 +47,12 @@ pub fn env_key(key: &str) -> String {
     }
 }
 
-/// The Portal's internal listener as the gateway reaches it.
+/// The Portal's internal listener as the gateway reaches it: only an explicit `JC_INTERNAL_BIND`
+/// with a port names it, because inside `jc` the Portal binds a free loopback port by default
+/// (`modules::portal`) and does not hand the address on.
 fn portal_internal(env: &impl Fn(&str) -> Option<String>) -> Option<String> {
-    let bind = env("JC_INTERNAL_BIND").unwrap_or_else(|| "0.0.0.0:9090".to_owned());
-    let addr: std::net::SocketAddr = bind.trim().parse().ok()?;
-    Some(format!("http://{}", reach(addr)))
+    let addr: std::net::SocketAddr = env("JC_INTERNAL_BIND")?.trim().parse().ok()?;
+    (addr.port() != 0).then(|| format!("http://{}", reach(addr)))
 }
 
 /// Where `jc` keeps the gateway's checkouts.
@@ -269,6 +270,16 @@ pub async fn build(
         keys = ?filled.keys().collect::<Vec<_>>(),
         "gateway: settings filled from sibling modules"
     );
+    if wire
+        && ctx.siblings.get(Module::Kaisatsu).is_some()
+        && !filled.contains_key("JC_OIDC_ISSUER")
+        && env(&env_key("JC_OIDC_ISSUER")).is_none()
+    {
+        tracing::warn!(
+            "gateway: no realm, so every token is refused: the Portal's internal listener \
+             (revocations) has no known address; set JC_INTERNAL_BIND to a fixed host:port"
+        );
+    }
     let config = config(env, &filled)?;
     if filled.contains_key("JC_GATEWAY_REPO_DIR") {
         let forge = ctx
@@ -340,8 +351,8 @@ mod tests {
             addr: "127.0.0.1:4242".parse().unwrap(),
             secret: "s".into(),
         };
-        let none = |_: &str| None;
-        let v = vars(&siblings, &setup, true, &mount, Some(&hop), none);
+        let bind = |k: &str| (k == "JC_INTERNAL_BIND").then(|| "0.0.0.0:9090".to_owned());
+        let v = vars(&siblings, &setup, true, &mount, Some(&hop), bind);
         assert_eq!(v["JC_GATEWAY_BROKER_URL"], "http://127.0.0.1:4242");
         assert_eq!(v["JC_GATEWAY_PUBLIC_URL"], "https://city.example");
         assert_eq!(v["JC_OIDC_ISSUER"], "https://city.example/id/realms/jc");
@@ -359,8 +370,17 @@ mod tests {
             "http://127.0.0.1:9090/internal/revocations"
         );
         assert!(v["JC_GATEWAY_REPO_DIR"].ends_with("gateway/repo/current"));
+        // The Portal's default internal listener (a free port) names no address: no realm.
+        let none = |_: &str| None;
+        let v = vars(&siblings, &setup, true, &mount, Some(&hop), none);
+        assert!(!v.contains_key("JC_OIDC_ISSUER") && !v.contains_key("JC_GATEWAY_REVOCATIONS_URL"));
+        let port0 = |k: &str| (k == "JC_INTERNAL_BIND").then(|| "127.0.0.1:0".to_owned());
+        assert!(
+            !vars(&siblings, &setup, true, &mount, Some(&hop), port0)
+                .contains_key("JC_OIDC_ISSUER")
+        );
         // Without the wiring: the broker and the addresses only, no realm and no forge.
-        let bare = vars(&siblings, &setup, false, &mount, Some(&hop), none);
+        let bare = vars(&siblings, &setup, false, &mount, Some(&hop), bind);
         assert_eq!(
             bare.keys().map(String::as_str).collect::<Vec<_>>(),
             [
@@ -374,6 +394,7 @@ mod tests {
         // out of the fill; the hop without its secret is not offered.
         let env =
             |k: &str| (k == "JC_GATEWAY_OIDC_ISSUER").then(|| "https://idp.example/r".to_owned());
+        let env = |k: &str| bind(k).or_else(|| env(k));
         let v = vars(&siblings, &setup, true, &mount, None, env);
         assert!(!v.contains_key("JC_OIDC_CLIENT_SECRET"));
         assert!(!v.contains_key("JC_GATEWAY_BROKER_URL"));

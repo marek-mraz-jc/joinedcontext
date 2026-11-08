@@ -304,7 +304,7 @@ documents. The Portal keeps `/`, `/api/v1/*` and `/.well-known/oauth-protected-r
 |---|---|
 | `JC_GATEWAY_BROKER_URL` + hop header | Antares' loopback hop (below) |
 | `JC_OIDC_ISSUER` (public), `JC_OIDC_JWKS_URL` (listener), `JC_OIDC_CLIENT_ID=context-gateway`, secret | kaisatsu; realm file `30-jc-gateway.json`: client_credentials only, `fullScopeAllowed` false, audience `portal-internal` |
-| `JC_GATEWAY_REVOCATIONS_URL`, `_CONNECTORS_URL`, `_USAGE_URL` | the Portal's internal listener (`JC_INTERNAL_BIND`, default `0.0.0.0:9090`, reached on loopback) |
+| `JC_GATEWAY_REVOCATIONS_URL`, `_CONNECTORS_URL`, `_USAGE_URL` | the Portal's internal listener, only when `JC_INTERNAL_BIND` names a fixed `host:port` (reached on loopback); the realm group needs it too |
 | `JC_GATEWAY_REPO_DIR`, `_PROJECTS_DIR`, `_ASSEMBLY_DIR` | shako `jc/config`, checked out under `{state}/gateway` with jc-manifest `GitCheckouts` every 10 s (`repo/current` swapped by one rename; layout 2 projects through `jcctl checkouts`) |
 | `JC_GATEWAY_ORG_DOMAIN`, `_PUBLIC_URL`, `_PREVIEWS_DIR` | the mounts and the state dir |
 
@@ -357,7 +357,7 @@ project `e2e` (layout 1: project, space `things`, a `public` and a `project-list
 
 ### Gates (stage 8)
 
-- `jc`: fmt, clippy `--all-targets -D warnings --locked`, tests: lib 47, binary 4, one_binary 12, outbound_guard 1,
+- `jc` (after merging jc-portal-1 `c0a410a7`): fmt, clippy `--all-targets -D warnings --locked`, tests: lib 48, binary 4, one_binary 12, outbound_guard 1,
   gateway_endpoints 1, portal_siblings 1 (kaisatsu on Postgres 17 and on memory): green.
 - context-gateway: the vendored copy cannot build its own tests (no `tools/model-tools`, dev-dependencies outside
   the root lock), so its gates ran in a clone of joinedcontext-platform at `e59ceb9f` with the same patch (files
@@ -378,6 +378,11 @@ project `e2e` (layout 1: project, space `things`, a `public` and a `project-list
   with an audience mapper.
 - The gateway's own token comes from the public issuer URL: a jc whose public origin the process cannot reach
   (no hairpin through the TLS proxy) gets no token, and the Portal's internal listener refuses its polls (401).
+- `JC_INTERNAL_BIND` unset (jc-portal-1 `c0a410a7`: the Portal binds a free loopback port and `portal::build`
+  drops the address `server::spawn_internal_listener` returns): the gateway gets no realm, because a gateway with
+  a realm must poll the revocations (`JC_GATEWAY_REVOCATIONS_URL`), so every token on an Endpoint is 401 and a
+  warning names the setting; public Endpoints answer. Fix for the owner of `modules/portal.rs`: hand that address
+  to `jc` (built before the gateway), or keep a fixed default.
 - Not filled from siblings: `JC_GATEWAY_PREVIEWS_URL` (workspace previews), `_ACTIVITY_URL`, `_ASSISTANT_URL`,
   `_DOMAIN_VERIFICATIONS_URL`, `_INTERNAL_BIND` (no `/internal/mqtt/auth`; jc runs no MQTT broker).
 - OGC `f=parquet|csv|zip`: features `parquet` and `tabular` are not built.
