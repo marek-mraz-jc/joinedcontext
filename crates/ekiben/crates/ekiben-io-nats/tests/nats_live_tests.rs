@@ -85,6 +85,8 @@ fn make_ctx(org_id: &str, prefix: Option<&str>) -> (Arc<Registry>, StreamContext
         &oid,
         OrgQuotas {
             nats_subject_prefix: prefix.map(String::from),
+            // The test server listens on loopback, which the default outbound rule refuses.
+            allow_private_ips: true,
             ..Default::default()
         },
     );

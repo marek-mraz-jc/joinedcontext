@@ -249,12 +249,12 @@ routes:
     expect: [401, 403, 403, 403, 403, allow, 403, 403]
   - route: GET /organization/agents
     rule: "signed-in, filtered per namespace by read on each agent kind; 403 for a caller who reads none (AG-126)"
-    expect: [401, allow, allow, allow, allow, allow, 403, allow]
-    note: "every agent identity the caller may read, nothing counted that they may not; the other member reads no agent kind of the fixture, so 403 (API/01 §48, T-4849)"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+    note: "every agent identity the caller may read, nothing counted that they may not; the other member reads the agent kinds of praha, a project its Project manifest registers (PF-05), so 200 with nothing of helsinki (the_other_member_sees_no_agent_and_no_run_of_a_project_it_does_not_read; API/01 §48, T-4849)"
   - route: GET /organization/agents/activity
     rule: "signed-in, the runs of each project the caller reads: their own, every person's where they approve; 403 for a caller who reads no project (AG-134)"
-    expect: [401, allow, allow, allow, allow, allow, 403, allow]
-    note: "the other member reads no project of the fixture, so 403; never a step's arguments or output; Stop is the existing cancel route (API/01 §49, T-4851)"
+    expect: [401, allow, allow, allow, allow, allow, allow, allow]
+    note: "the other member reads praha, a project its Project manifest registers (PF-05), so 200 with no run of helsinki (the_other_member_sees_no_agent_and_no_run_of_a_project_it_does_not_read); never a step's arguments or output; Stop is the existing cancel route (API/01 §49, T-4851)"
   - route: GET /organization/brokers
     rule: "org-admin (approve and delete on RoleBinding, PF-03)"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]
@@ -520,6 +520,22 @@ routes:
     rule: "propose on Dashboard"
     note: "no such row in the fixture"
     expect: [403, 403, 403, allow, 403, allow, 404, 403]
+  - route: GET /projects/{project}/grafana/dashboards
+    rule: "project-read"
+    note: "the fixture has no dashboards service: `allow` answers 200 with its reason"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/grafana/dashboards/{uid}
+    rule: "project-read"
+    note: "the fixture has no dashboards service: `allow` answers 409"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/grafana/dashboards/{uid}/panels/{panel}
+    rule: "project-read, then read on each Endpoint the panel's datasources read"
+    note: "the fixture has no dashboards service: `allow` answers 409"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/grafana/dashboards/{uid}/variables/{name}
+    rule: "project-read, then read on the Endpoint of a query variable's datasource"
+    note: "the fixture has no dashboards service: `allow` answers 409"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
   - route: GET /projects/{project}/activity
     rule: "project-read"
     expect: [401, allow, allow, allow, allow, allow, 404, allow]

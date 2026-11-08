@@ -30,6 +30,7 @@ import { FormRouteHost } from "./components/forms/FormRoute";
 import type { FormTarget } from "./components/forms/FormRoute";
 import { ActivityPage } from "./routes/ActivityPage";
 import { GrafanaPage } from "./pages/grafana/GrafanaPage";
+import { DashboardPage } from "./pages/grafana/DashboardPage";
 import { HealthPage } from "./pages/health/HealthLog";
 const SecretFormPage = lazy(() => import("./pages/secrets/SecretFormPage").then((module) => ({ default: module.SecretFormPage })));
 const ApprovalsPage = lazy(() => import("./routes/ApprovalsPage").then((module) => ({ default: module.ApprovalsPage })));
@@ -554,6 +555,20 @@ const grafanaRoute = createRoute({
     return (
       <Shell project={project}>
         <GrafanaPage project={project} />
+      </Shell>
+    );
+  },
+});
+
+/** One dashboard of the project's daiya, drawn in the Portal (item 15). */
+const dashboardViewRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "/projects/$project/grafana/dashboards/$uid",
+  component: function DashboardViewRoute() {
+    const { project, uid } = dashboardViewRoute.useParams();
+    return (
+      <Shell project={project}>
+        <DashboardPage project={project} uid={uid} />
       </Shell>
     );
   },
@@ -1490,6 +1505,7 @@ export const routeTree = rootRoute.addChildren([
     homeRoute,
     activityRoute,
     grafanaRoute,
+    dashboardViewRoute,
     healthRoute,
     approvalsRoute,
     approvalDetailRoute,

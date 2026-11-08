@@ -17,8 +17,20 @@ use std::time::{Duration, Instant};
 
 const REALM: &str = "jc";
 
+/// Where jc places its modules: one host with a slug each, or a host per module (`--mode host`,
+/// the Portal on `portal.localhost`).
+#[derive(Clone, Copy, PartialEq)]
+enum Placement {
+    Slug,
+    Host,
+}
+
+const SLUGS: [&str; 6] = ["id", "git", "streams", "opendata", "dashboards", "broker"];
+
 struct Jc {
     child: Child,
+    placement: Placement,
+    port: u16,
     base: String,
     state: PathBuf,
     _dir: tempfile::TempDir,
@@ -54,7 +66,18 @@ impl Jc {
             .to_owned()
     }
 
+    /// The public URL of `path` as slug mode spells it (`/id/...` is kaisatsu, anything else the
+    /// Portal): in host mode each module's slug becomes its own host.
     fn url(&self, path: &str) -> String {
+        if self.placement == Placement::Host {
+            for slug in SLUGS {
+                if let Some(rest) = path.strip_prefix(&format!("/{slug}"))
+                    && (rest.is_empty() || rest.starts_with('/'))
+                {
+                    return format!("http://{slug}.localhost:{}{rest}", self.port);
+                }
+            }
+        }
         format!("{}{path}", self.base)
     }
 
@@ -85,6 +108,11 @@ async fn kaisatsu_pg(dir: &Path) -> Option<(PathBuf, PathBuf)> {
         .unwrap();
     let suffix = format!("{:x}", std::process::id());
     let (app_pw, mig_pw) = (format!("app{suffix}x9"), format!("mig{suffix}x9"));
+    // Both tests of this binary set the shared roles: two ALTER ROLE at once fail with "tuple
+    // concurrently updated", so they take turns; each test gets its own database.
+    static ROLES: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let roles = ROLES.lock().await;
     for (role, pw) in [("kaisatsu_app", &app_pw), ("kaisatsu_migrate", &mig_pw)] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "DO $$ BEGIN CREATE ROLE {role}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -94,7 +122,9 @@ async fn kaisatsu_pg(dir: &Path) -> Option<(PathBuf, PathBuf)> {
         .await
         .unwrap();
     }
-    let db = format!("kaisatsu_e2e_{suffix}");
+    drop(roles);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let db = format!("kaisatsu_e2e_{suffix}_{n}");
     for statement in [
         format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
         format!("CREATE DATABASE {db} OWNER kaisatsu_migrate"),
@@ -134,6 +164,10 @@ async fn kaisatsu_pg(dir: &Path) -> Option<(PathBuf, PathBuf)> {
 }
 
 async fn start() -> Jc {
+    start_placed(Placement::Slug).await
+}
+
+async fn start_placed(placement: Placement) -> Jc {
     assert!(
         Command::new("docker")
             .args(["run", "--rm", "alpine", "true"])
@@ -147,9 +181,23 @@ async fn start() -> Jc {
     let state = dir.path().join("state");
     let port = free_port();
     let base_host = format!("localhost:{port}");
-    // The Portal at the root of the one domain: its redirects and UI assets are absolute paths.
+    // Slug mode: the Portal at the root of the one domain (its redirects and UI assets are
+    // absolute paths). Host mode: every module on `<slug>.localhost`, the Portal on
+    // `portal.localhost`, which resolves to ::1.
     let config = dir.path().join("jc.toml");
-    std::fs::write(&config, "[mounts.portal]\npath_prefix = \"\"\n").unwrap();
+    let (mounts, listen, base) = match placement {
+        Placement::Slug => (
+            "[mounts.portal]\npath_prefix = \"\"\n",
+            format!("127.0.0.1:{port}"),
+            format!("http://{base_host}"),
+        ),
+        Placement::Host => (
+            "mode = \"host\"\n",
+            format!("[::1]:{port}"),
+            format!("http://portal.{base_host}"),
+        ),
+    };
+    std::fs::write(&config, mounts).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
     for (key, _) in std::env::vars() {
         if key.starts_with("JCBIN_") || key.starts_with("JC_") {
@@ -159,7 +207,7 @@ async fn start() -> Jc {
     cmd.args(["--role", "all", "--scheme", "http", "--log-format", "text"])
         .arg("--config")
         .arg(&config)
-        .args(["--listen", &format!("127.0.0.1:{port}")])
+        .args(["--listen", &listen])
         .args(["--base-host", &base_host])
         .arg("--state-dir")
         .arg(&state)
@@ -185,7 +233,7 @@ async fn start() -> Jc {
     let sink = log.clone();
     std::thread::spawn(move || {
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            if line.contains("jc listening") {
+            if line.contains("portal: ready") {
                 let _ = tx.send(Ok(()));
             } else if line.contains("Error:") || line.contains("ERROR") {
                 eprintln!("{line}");
@@ -196,7 +244,9 @@ async fn start() -> Jc {
     });
     let jc = Jc {
         child,
-        base: format!("http://{base_host}"),
+        placement,
+        port,
+        base,
         state,
         _dir: dir,
         log,
@@ -317,7 +367,7 @@ async fn the_portal_runs_on_its_sibling_modules() {
 
     // a. Sign-in through kaisatsu.
     let password = jc.secret("first-admin-password");
-    sign_in(&jc.base, &mut browser, "admin", &password).await;
+    sign_in(&|p| jc.url(p), &mut browser, "admin", &password).await;
     let who = me(&jc, &mut browser).await;
     assert_eq!(who["username"], "admin", "{who}");
     // kaisatsu holds the session the Portal's sign-in opened.
@@ -368,6 +418,14 @@ async fn the_portal_runs_on_its_sibling_modules() {
     let st = kaisatsu_admin_write(
         &jc,
         &admin_token,
+        &format!("/users/{person_id}/reset-password"),
+        &json!({"type": "password", "value": approver_pw, "temporary": false}),
+    )
+    .await;
+    assert!(st.is_success(), "reset-password {st}");
+    let st = kaisatsu_admin_write(
+        &jc,
+        &admin_token,
         &format!("/users/{person_id}"),
         &json!({
             "username": "e2e.person@jc.invalid",
@@ -381,14 +439,6 @@ async fn the_portal_runs_on_its_sibling_modules() {
     )
     .await;
     assert!(st.is_success(), "user update {st}");
-    let st = kaisatsu_admin_write(
-        &jc,
-        &admin_token,
-        &format!("/users/{person_id}/reset-password"),
-        &json!({"type": "password", "value": approver_pw, "temporary": false}),
-    )
-    .await;
-    assert!(st.is_success(), "reset-password {st}");
     let (_, groups) = kaisatsu_admin(
         &jc,
         &admin_token,
@@ -441,7 +491,7 @@ async fn the_portal_runs_on_its_sibling_modules() {
             .to_owned();
         let mut approver = Browser::new();
         sign_in(
-            &jc.base,
+            &|p| jc.url(p),
             &mut approver,
             "e2e.person@jc.invalid",
             approver_pw,
@@ -534,7 +584,7 @@ async fn the_portal_runs_on_its_sibling_modules() {
         .to_owned();
     let mut approver = Browser::new();
     sign_in(
-        &jc.base,
+        &|p| jc.url(p),
         &mut approver,
         "e2e.person@jc.invalid",
         approver_pw,
@@ -807,7 +857,199 @@ async fn the_portal_runs_on_its_sibling_modules() {
         .await
         .unwrap();
     assert_eq!(held.status(), StatusCode::OK, "G5 finds the dashboard");
-    gaps.push("f jc: nothing runs provision.sh's steps per project (POST /dashboards/api/orgs, POST /api/folders); the e2e makes them as the Portal's server administrator".into());
+
+    // g. Item 6: a project opened in the config repository gets its daiya organization and its
+    // folder from the Portal's provisioning loop, provision.sh's per-project steps. The commit
+    // stands in for an approved project change (jc-portal-integrate's open item).
+    let clone = tempfile::tempdir().unwrap();
+    let repo = clone.path().join("config");
+    let out = git_clone(&jc, &repo);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let org_yaml = std::fs::read_to_string(repo.join("org.yaml")).unwrap();
+    let org_name = org_yaml
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("name:"))
+        .map(|n| n.trim().trim_matches('"').to_owned())
+        .expect("the Organization's name");
+    std::fs::create_dir_all(repo.join("projects/e2edash")).unwrap();
+    std::fs::write(
+        repo.join("projects/e2edash/project.yaml"),
+        format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: e2edash\n  namespace: org\nspec:\n  organizationRef: {org_name}\n"
+        ),
+    )
+    .unwrap();
+    let token = jc.secret("shako-token");
+    for args in [
+        vec!["add", "projects/e2edash/project.yaml"],
+        vec![
+            "-c",
+            "user.name=e2e",
+            "-c",
+            "user.email=e2e@jc.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "Open project e2edash",
+        ],
+    ] {
+        let out = Command::new("git")
+            .args(&args)
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let pushed = Command::new("git")
+        .args([
+            "-c",
+            &format!("http.extraHeader=Authorization: token {token}"),
+            "push",
+            "--quiet",
+            "origin",
+            "HEAD:main",
+        ])
+        .current_dir(&repo)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .unwrap();
+    assert!(
+        pushed.status.success(),
+        "push: {}",
+        String::from_utf8_lossy(&pushed.stderr)
+    );
+    let project_org = eventually("daiya's organization e2edash", 120, || {
+        let jc = &jc;
+        async move {
+            let found = admin(Client::new().get(jc.url("/dashboards/api/orgs/name/e2edash")))
+                .send()
+                .await
+                .ok()?;
+            if found.status() != StatusCode::OK {
+                return None;
+            }
+            found.json::<Value>().await.ok()?["id"].as_i64()
+        }
+    })
+    .await;
+    let folder = admin(Client::new().get(jc.url("/dashboards/api/folders/project-e2edash")))
+        .header("x-grafana-org-id", project_org.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(folder.status(), StatusCode::OK, "the project's folder");
+
+    // h. Item 15: the deployment's context-broker and helsinki dashboards, imported the way
+    // provision.sh imports them, drawn through the Portal's dashboard routes: the queries stay
+    // in jc, each panel answers frames or the reason it has none.
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../crates/portal/ui/tests/fixtures/dashboards");
+    for (file, org, project, folder_uid) in [
+        ("context-broker.json", 1, "org", None),
+        (
+            "helsinki.json",
+            project_org,
+            "e2edash",
+            Some("project-e2edash"),
+        ),
+    ] {
+        let board: Value =
+            serde_json::from_str(&std::fs::read_to_string(fixtures.join(file)).unwrap()).unwrap();
+        let uid = board["uid"].as_str().unwrap().to_owned();
+        let panels = board["panels"].as_array().unwrap().len();
+        let mut body = json!({"dashboard": board, "overwrite": true, "message": "e2e import"});
+        if let Some(f) = folder_uid {
+            body["folderUid"] = json!(f);
+        }
+        let saved = admin(Client::new().post(jc.url("/dashboards/api/dashboards/db")))
+            .header("x-grafana-org-id", org.to_string())
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            saved.status().is_success(),
+            "import {file}: {}",
+            saved.status()
+        );
+        let base = format!("/api/v1/projects/{project}/grafana/dashboards");
+        let listed = browser.send(Method::GET, &jc.url(&base), None, false).await;
+        assert_eq!(
+            listed.status,
+            StatusCode::OK,
+            "{file} list: {}",
+            listed.text
+        );
+        assert!(listed.text.contains(&uid), "{file} listed: {}", listed.text);
+        let view = browser
+            .send(Method::GET, &jc.url(&format!("{base}/{uid}")), None, false)
+            .await;
+        assert_eq!(view.status, StatusCode::OK, "{file} view: {}", view.text);
+        let view = view.json();
+        assert_eq!(
+            view["panels"].as_array().map(Vec::len),
+            Some(panels),
+            "{file}"
+        );
+        assert!(
+            !view.to_string().contains("\"targets\""),
+            "{file}: the queries left the server"
+        );
+        for panel in view["panels"].as_array().unwrap() {
+            let id = panel["id"].as_i64().unwrap();
+            let read = browser
+                .send(
+                    Method::GET,
+                    &jc.url(&format!("{base}/{uid}/panels/{id}?from=now-6h&to=now")),
+                    None,
+                    false,
+                )
+                .await;
+            assert_eq!(
+                read.status,
+                StatusCode::OK,
+                "{file} panel {id}: {}",
+                read.text
+            );
+            let data = read.json();
+            assert!(
+                data["frames"].is_array()
+                    && (data.get("error").is_some()
+                        || data.get("accessDenied").is_some()
+                        || !data["frames"].as_array().unwrap().is_empty()),
+                "{file} panel {id}: {data}"
+            );
+            println!(
+                "{file} panel {id}: {}",
+                data.get("error")
+                    .or(data.get("accessDenied"))
+                    .map(Value::to_string)
+                    .unwrap_or_else(|| "frames".into())
+            );
+        }
+    }
+    let outsider = Client::new()
+        .get(jc.url("/api/v1/projects/e2edash/grafana/dashboards/project-helsinki/panels/1"))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            outsider.status(),
+            StatusCode::UNAUTHORIZED | StatusCode::FOUND | StatusCode::SEE_OTHER
+        ),
+        "a request without a session reads no panel: {}",
+        outsider.status()
+    );
+    gaps.push("h jc: no Prometheus and no NGSI-LD datasource in jc, so the context-broker and helsinki panels answer their error state, not frames".into());
 
     println!("GAPS:\n{}", gaps.join("\n"));
     std::fs::write(
@@ -815,4 +1057,113 @@ async fn the_portal_runs_on_its_sibling_modules() {
         gaps.join("\n"),
     )
     .ok();
+}
+
+/// Host mode: every module on its own host name, the Portal on `portal.localhost`. The Portal
+/// signs a person in through kaisatsu on `id.localhost`, keeps its cookies on its own host, writes
+/// people to kaisatsu and proposals to shako, and a module's slug on the Portal's host reaches the
+/// Portal, not the module.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_portal_runs_on_its_own_host_in_host_mode() {
+    let jc = start_placed(Placement::Host).await;
+    let mut browser = Browser::new();
+
+    // a. Sign-in across hosts.
+    let password = jc.secret("first-admin-password");
+    sign_in(&|p| jc.url(p), &mut browser, "admin", &password).await;
+    let who = me(&jc, &mut browser).await;
+    assert_eq!(who["username"], "admin", "{who}");
+    let portal_cookies = browser.jar.names_for(&jc.url("/"));
+    let id_cookies = browser.jar.names_for(&jc.url("/id/"));
+    assert!(
+        portal_cookies.iter().any(|n| n == "__Host-jc_session"),
+        "{portal_cookies:?}"
+    );
+    assert!(
+        id_cookies.iter().all(|n| !n.starts_with("__Host-jc_")),
+        "a Portal cookie on kaisatsu's host: {id_cookies:?}"
+    );
+    assert!(!id_cookies.is_empty(), "kaisatsu's own session cookie");
+
+    // b. A person written through the Portal lands in kaisatsu.
+    let created = browser
+        .send(
+            Method::POST,
+            &jc.url("/api/v1/organization/people"),
+            Some(Body::Json(&json!({
+                "email": "host.person@jc.invalid",
+                "firstName": "Hana",
+                "lastName": "Host",
+            }))),
+            true,
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.text);
+    let admin_token = kaisatsu_admin_token(&jc).await;
+    let (status, found) = kaisatsu_admin(
+        &jc,
+        &admin_token,
+        "/users?email=host.person@jc.invalid&exact=true",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{found}");
+    assert_eq!(found[0]["firstName"], "Hana", "{found}");
+
+    // c. The Portal's forge: a proposal checks against shako, and shako serves git on its host.
+    let group = json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": "Group",
+        "metadata": {"name": "host-editors", "namespace": "org"},
+        "spec": {"members": []}
+    });
+    let dry = browser
+        .send(
+            Method::POST,
+            &jc.url("/api/v1/projects/org/groups?dryRun=All"),
+            Some(Body::Json(&group)),
+            true,
+        )
+        .await;
+    assert_eq!(dry.status, StatusCode::OK, "{}", dry.text);
+    assert_eq!(dry.json()["valid"], true, "{}", dry.text);
+    let checkout = tempfile::tempdir().unwrap();
+    let cloned = git_clone(&jc, &checkout.path().join("config"));
+    assert!(
+        cloned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cloned.stderr)
+    );
+
+    // Every other module answers on its own host.
+    let client = Client::new();
+    for (path, needle) in [
+        ("/opendata/api/3/action/status_show", "\"success\""),
+        ("/dashboards/api/health", "\"database\""),
+        ("/streams/ping", "pong"),
+        ("/broker/ngsi-ld/v1/info/sourceIdentity", "antares"),
+        ("/git/api/healthz", "\"status\":\"ok\""),
+    ] {
+        let body = client
+            .get(jc.url(path))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(body.contains(needle), "{}: {body}", jc.url(path));
+    }
+    // A module's slug on the Portal's host is the Portal's path, not the module.
+    let on_portal = client
+        .get(format!(
+            "{}/id/realms/{REALM}/.well-known/openid-configuration",
+            jc.base
+        ))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(!on_portal.contains("\"issuer\""), "{on_portal}");
 }

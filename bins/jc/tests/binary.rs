@@ -200,3 +200,59 @@ fn serves_from_a_config_file_and_stops_on_sigterm() {
     let rest: Vec<String> = lines.map_while(Result::ok).collect();
     assert!(rest.iter().any(|l| l.contains("shutting down")), "{rest:?}");
 }
+
+/// A Portal whose realm does not answer (discovery refused) delays the Portal, never stops jc:
+/// the siblings serve, the Portal's mount answers 503 while jc retries, and jc stays up.
+#[test]
+fn a_portal_whose_realm_does_not_answer_keeps_jc_serving() {
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let issuer = format!("http://{}/realms/jc", closed.local_addr().unwrap());
+    drop(closed);
+    let mut child = jc()
+        .args([
+            "--role",
+            "daiya,portal",
+            "--listen",
+            "127.0.0.1:0",
+            "--log-format",
+            "text",
+        ])
+        .env("JCBIN_PORTAL_SIBLINGS", "false")
+        .env("JC_OIDC_ISSUER", &issuer)
+        .env("JC_OIDC_CLIENT_ID", "portal")
+        .env("JC_OIDC_CLIENT_SECRET", "not-used-the-realm-never-answers")
+        .env("JC_PORTAL_COOKIE_KEY", "k".repeat(64))
+        .env("RUST_LOG", "info")
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("spawn jc");
+    let mut lines = BufReader::new(child.stderr.take().unwrap()).lines();
+    let addr = listening_addr(&mut lines);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in lines.map_while(Result::ok) {
+            if line.contains("portal: not built, retrying") {
+                let _ = tx.send(());
+            }
+        }
+    });
+    for _ in 0..2 {
+        rx.recv_timeout(Duration::from_secs(30))
+            .expect("jc logs a failed Portal build and retries");
+    }
+    let (portal, daiya) = block_on(async {
+        let get = |path: &str| {
+            let url = format!("http://{addr}{path}");
+            async move { reqwest::get(url).await.unwrap().status() }
+        };
+        (
+            get("/portal/api/v1/health").await,
+            get("/dashboards/api/health").await,
+        )
+    });
+    assert_eq!(portal, reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(daiya, reqwest::StatusCode::OK);
+    assert!(child.try_wait().unwrap().is_none(), "jc stopped");
+    sigterm_and_wait(&mut child);
+}

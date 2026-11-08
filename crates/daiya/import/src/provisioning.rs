@@ -124,7 +124,14 @@ pub fn parse_dashboard_providers_yaml(
     yaml_text: &str,
     allowed_root: Option<&Path>,
 ) -> CrResult<Vec<DashboardProviderConfig>> {
-    let doc = parse_yaml_to_json(yaml_text)?;
+    parse_dashboard_providers_doc(&parse_yaml_to_json(yaml_text)?, allowed_root)
+}
+
+/// [`parse_dashboard_providers_yaml`] over an already parsed document.
+pub fn parse_dashboard_providers_doc(
+    doc: &Value,
+    allowed_root: Option<&Path>,
+) -> CrResult<Vec<DashboardProviderConfig>> {
     let providers_arr = if let Some(arr) = doc.as_array() {
         arr.clone()
     } else if let Some(arr) = doc.get("providers").and_then(Value::as_array) {
@@ -249,7 +256,21 @@ pub fn parse_datasources_yaml(
     org_id: OrgId,
     instance_id: InstanceId,
 ) -> CrResult<DatasourceProvisioningOutcome> {
-    let doc = parse_yaml_to_json(yaml_text)?;
+    parse_datasources_doc(
+        &parse_yaml_to_json(yaml_text)?,
+        installation_id,
+        org_id,
+        instance_id,
+    )
+}
+
+/// [`parse_datasources_yaml`] over an already parsed document.
+pub fn parse_datasources_doc(
+    doc: &Value,
+    installation_id: InstallationId,
+    org_id: OrgId,
+    instance_id: InstanceId,
+) -> CrResult<DatasourceProvisioningOutcome> {
     let obj = doc.as_object().ok_or_else(|| {
         CrError::BadRequest("datasource provisioning YAML must be a mapping".into())
     })?;

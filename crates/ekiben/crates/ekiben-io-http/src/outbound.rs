@@ -178,9 +178,19 @@ pub async fn resolve_checked(url: &Url, org: &OrgContext) -> Result<Vec<SocketAd
             redact_url_str(url.as_str())
         ))
     })?;
+    resolve_host_checked(host, url.port().unwrap_or(default_port), org).await
+}
+
+/// Resolves `host` (a name or an IP literal, IPv6 in brackets or bare) and refuses it unless every
+/// address passes the organization's outbound rule. For callers whose scheme is not a URL one
+/// (`nats`, `tls`).
+pub async fn resolve_host_checked(
+    host: &str,
+    port: u16,
+    org: &OrgContext,
+) -> Result<Vec<SocketAddr>, CoreError> {
     let bare = host.trim_start_matches('[').trim_end_matches(']');
     org.check_http_host(bare)?;
-    let port = url.port().unwrap_or(default_port);
     let quotas = org.get_quotas();
     let private_host = org.is_private_host_allowed(bare);
 

@@ -626,6 +626,14 @@ pub fn search_datasets(
             _ => continue,
         }
         let pub_rec = pub_map.get(&ds.publisher_id);
+        // The flags widen a member's search only: an anonymous caller never sees a draft, a
+        // withdrawn record or a withdrawn publisher's dataset, whatever it asks (as `package_show`).
+        if ctx.subject.is_anonymous()
+            && (ds.state != RecordState::Active
+                || pub_rec.is_some_and(|p| p.state == RecordState::Withdrawn))
+        {
+            continue;
+        }
         // Withdrawn publisher's datasets leave public feeds/listings unless include_private is requested (C16).
         if pub_rec.is_some_and(|p| p.state == RecordState::Withdrawn) && !filter.include_private {
             continue;
@@ -1373,31 +1381,41 @@ mod tests {
         // Drafts, withdrawn records, a withdrawn publisher's datasets and other organizations' are out.
         let res = run(base.clone());
         assert_eq!(res.total, 4, "{:?}", names(&res));
-        assert_eq!(
-            run(DatasetFilter {
-                include_drafts: true,
-                ..base.clone()
-            })
-            .total,
-            5
+        // The flags widen a member's search; an anonymous caller asking for them gets the same 4.
+        let member = RequestCtx::new(
+            org_id,
+            catalogue_id,
+            Subject::authenticated("alice", vec![org_id], Vec::new()),
         );
-        assert_eq!(
-            run(DatasetFilter {
-                include_withdrawn: true,
-                ..base.clone()
-            })
-            .total,
-            5
-        );
-        assert_eq!(
-            run(DatasetFilter {
-                include_private: true,
-                ..base.clone()
-            })
-            .total,
-            5,
-            "include_private keeps the withdrawn publisher's"
-        );
+        let run_member = |f: DatasetFilter| {
+            search_datasets(&member, &authz, &all, &pubs, &f, "sk").expect("search")
+        };
+        for (flags, widened) in [
+            (
+                DatasetFilter {
+                    include_drafts: true,
+                    ..base.clone()
+                },
+                5,
+            ),
+            (
+                DatasetFilter {
+                    include_withdrawn: true,
+                    ..base.clone()
+                },
+                5,
+            ),
+            (
+                DatasetFilter {
+                    include_private: true,
+                    ..base.clone()
+                },
+                5,
+            ),
+        ] {
+            assert_eq!(run_member(flags.clone()).total, widened, "{flags:?}");
+            assert_eq!(run(flags.clone()).total, 4, "anonymous {flags:?}");
+        }
 
         // Facets: themes deduplicated, formats case-folded and sorted, blank ones dropped,
         // unknown licences labelled by id, GeoJSON spatial skipped, years spanned and bounded.
