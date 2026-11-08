@@ -65,6 +65,7 @@ function view(board: Board) {
   });
   return {
     uid: board.uid,
+    orgId: 4,
     title: board.title,
     description: board.description ?? null,
     from: board.time?.from ?? "now-6h",
@@ -92,11 +93,25 @@ async function stubApi(page: Page, asked: string[]): Promise<void> {
       const found = BOARDS.get(decodeURIComponent(one[1]));
       return found ? json(view(found.board)) : json({ status: 404, title: "Not Found", detail: "no such dashboard" }, 404);
     }
+    if (url.pathname.endsWith("/grafana/dashboards")) return json({ ready: true, items: LIST });
+    if (url.pathname.endsWith("/grafana")) return json({ ready: true, mayCreate: false, items: [] });
     if (url.pathname.endsWith("/auth/me")) return json(IDENTITY);
     if (url.pathname === "/api/v1/projects") return json({ kind: "ProjectList", items: [{ name: "helsinki" }] });
     return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items: [] });
   });
 }
+
+/** The project's dashboards as daiya's search lists them, in folders as the deployment files them. */
+const LIST = [
+  { uid: "project-helsinki", title: "Helsinki air and traffic", tags: ["helsinki", "air"], folder: "Helsinki" },
+  { uid: "helsinki-history", title: "Helsinki pm25 history", tags: ["air"], folder: "Helsinki" },
+  { uid: "project-bbsk", title: "Banská Bystrica region", tags: ["bbsk"], folder: "Banská Bystrica" },
+  { uid: "jc-k6-load", title: "k6 load", tags: ["load", "platform"], folder: "Platform" },
+  { uid: "jc-context-broker", title: "Context broker", tags: ["platform"], folder: "Platform" },
+  { uid: "jc-context-gateway", title: "Context gateway", tags: ["platform"], folder: "Platform" },
+  { uid: "jc-slo", title: "Service levels", tags: ["platform", "slo"], folder: "Platform" },
+  { uid: "scratch", title: "Scratch board", tags: [] },
+];
 
 const SHOTS = process.env.PARITY_SHOTS;
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
@@ -144,6 +159,35 @@ for (const width of [1440, 400]) {
       await page.getByLabel("Refresh", { exact: true }).focus();
       await shot(page, "context-broker-refresh", width);
     });
+  });
+}
+
+for (const width of [1440, 400]) {
+  test(`the dashboard list browses folders, searches, filters by tag and sorts at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await stubApi(page, []);
+    await page.goto("/projects/helsinki/grafana");
+    const tree = page.getByRole("list", { name: "Dashboards by folder" });
+    await expect(tree).toBeVisible();
+    await expect(tree.getByRole("button")).toHaveText([/^Banská Bystrica/, /^Helsinki/, /^Platform/]);
+    await expect(tree.getByRole("link", { name: "Scratch board" })).toBeVisible();
+    await shot(page, "list-folders", width);
+    await tree.getByRole("button", { name: /^Platform/ }).click();
+    await expect(tree.getByRole("link", { name: "k6 load" })).toBeVisible();
+    await shot(page, "list-folder-open", width);
+    await page.getByLabel("Search dashboards").fill("helsinki");
+    const results = page.getByRole("list", { name: "Search results" });
+    await expect(results.getByRole("link")).toHaveText(["Helsinki air and traffic", "Helsinki pm25 history"]);
+    await shot(page, "list-search", width);
+    await page.getByLabel("Search dashboards").fill("");
+    await page.getByLabel("Tag").selectOption("platform");
+    await page.getByLabel("Sort").selectOption("alpha-desc");
+    await expect(page.getByRole("list", { name: "Search results" }).getByRole("link")).toHaveText(["Service levels", "k6 load", "Context gateway", "Context broker"]);
+    await shot(page, "list-tag", width);
+    await page.getByLabel("Search dashboards").fill("no such board");
+    await expect(page.getByRole("status").filter({ hasText: "No dashboard matches this search." })).toBeVisible();
+    await shot(page, "list-no-match", width);
+    expect(await page.evaluate(pageFindings, { namespaces: NAMESPACES, layout: true })).toEqual([]);
   });
 }
 
