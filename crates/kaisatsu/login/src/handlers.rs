@@ -642,11 +642,7 @@ async fn render_state_page(
                 &org_display,
                 &account,
                 secret,
-                &format!(
-                    "{} {}",
-                    bundle.get("otpScanHint"),
-                    bundle.get("otpAppsHint")
-                ),
+                bundle.get("otpScanHint"),
             )
         }
         _ => String::new(),
@@ -671,7 +667,11 @@ async fn render_state_page(
         secondary_link_url: sec_url,
         secondary_link_label: sec_label,
         qr_svg,
-        qr_hint: bundle.get("otpScanHint").to_owned(),
+        qr_hint: format!(
+            "{} {}",
+            bundle.get("otpScanHint"),
+            bundle.get("otpAppsHint")
+        ),
     };
 
     Ok(render_with_security_headers(&tpl, None))
