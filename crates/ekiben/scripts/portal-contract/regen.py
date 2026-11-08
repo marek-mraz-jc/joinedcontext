@@ -55,11 +55,16 @@ for s in streams:
     s["outcome"] = outcomes.get((s["project"], s["name"]), "")
 streams.sort(key=lambda s: s["id"])
 os.makedirs(out, exist_ok=True)
-with gzip.open(os.path.join(out, "streams.jsonl.gz"), "wt", compresslevel=9) as f:
-    for s in streams:
-        f.write(json.dumps(s, sort_keys=True, ensure_ascii=False) + "\n")
-with gzip.open(os.path.join(out, "schemas.json.gz"), "wt", compresslevel=9) as f:
-    json.dump(schemas, f, sort_keys=True)
+
+
+def gz(name, text):
+    # mtime 0: the same dump writes the same bytes.
+    with open(os.path.join(out, name), "wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", compresslevel=9, mtime=0) as f:
+        f.write(text.encode())
+
+
+gz("streams.jsonl.gz", "".join(json.dumps(s, sort_keys=True, ensure_ascii=False) + "\n" for s in streams))
+gz("schemas.json.gz", json.dumps(schemas, sort_keys=True))
 with open(os.path.join(out, "calls.txt"), "w") as f:
     for c in sorted(set(calls)):
         f.write(f"{calls.count(c):5} {c}\n")
@@ -79,4 +84,9 @@ with open(os.path.join(out, "SOURCE.md"), "w") as f:
             "components/pipeline-runner/streams/resources.yaml; proto/ holds its "
             "components/pipeline-runner/streams/gtfs-realtime.proto (Apache-2.0, google/transit), which "
             "the runner mounts at /proto.\n")
+    refused = sorted((k, v) for k, v in outcomes.items() if v.startswith("Error"))
+    if refused:
+        f.write("\nThe Portal renders no stream for these (its own refusal, no runner call):\n\n")
+        for (project, name), why in refused:
+            f.write(f"- {project}/{name}: {why}\n")
 print(len(streams), "streams,", len(schemas), "schemas,", len(set(calls)), "distinct calls")
