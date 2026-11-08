@@ -936,3 +936,46 @@ fn labels_to_fields_moves_labels_into_columns_or_rows() {
     let out = tx_labels_to_fields(vec![f], &json!({ "mode": "rows", "keepLabels": ["zone"] }));
     assert!(out.is_empty(), "no kept label, no row frame");
 }
+
+#[test]
+fn edge_cases_of_names_replacements_and_join_keys() {
+    let a = frame("a", vec![nums("v", &[Some(3.0), Some(1.0), Some(2.0)])]);
+    let out = tx_reduce(
+        vec![a.clone()],
+        &json!({ "reducers": ["min", "last", "median"] }),
+    );
+    assert_eq!(names(&out[0]), ["Field", "Min", "Last", "Median"]);
+    assert_eq!(floats(&out[0].fields[3]), [Some(2.0)]);
+
+    // An operator Grafana does not list adds; an operand with neither field nor value is blank.
+    let f =
+        calc(json!({ "mode": "binary", "binary": { "left": "a", "operator": "?", "right": {} } }));
+    assert_eq!(f.fields.last().unwrap().name, "a ? ");
+    assert_eq!(floats(f.fields.last().unwrap())[0], Some(6.0));
+
+    // $10 reads group 10 when it exists; a group that does not exist and a lone $ stay text.
+    let g = frame("g", vec![nums("abcdefghij", &[Some(1.0)])]);
+    let out = tx_rename_by_regex(
+        vec![g.clone()],
+        &json!({ "regex": "/(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)/y", "renamePattern": "$10$1-$11" }),
+    );
+    assert_eq!(names(&out[0]), ["ja-a1"]);
+    let out = tx_rename_by_regex(
+        vec![g],
+        &json!({ "regex": "(abc)(.*)", "renamePattern": "$2.$9 $" }),
+    );
+    assert_eq!(names(&out[0]), ["defghij.$9 $"]);
+
+    // A null key sorts before the numbers of an outer join.
+    let k1 = frame(
+        "k1",
+        vec![
+            nums("k", &[Some(2.0), None]),
+            nums("v", &[Some(1.0), Some(0.0)]),
+        ],
+    );
+    let k2 = frame("k2", vec![nums("k", &[Some(1.0)]), nums("w", &[Some(5.0)])]);
+    let out = tx_join_by_field(vec![k1, k2], &json!({ "byField": "k" }));
+    assert_eq!(floats(col(&out[0], "k")), [None, Some(1.0), Some(2.0)]);
+    assert_eq!(floats(col(&out[0], "v")), [Some(0.0), None, Some(1.0)]);
+}
