@@ -275,27 +275,38 @@ pub fn serialize_rdfxml(graph: &RdfGraph) -> String {
 }
 
 fn split_qname(iri: &str, prefixes: &[(&str, &str)]) -> (String, String) {
-    for (p, ns_uri) in prefixes {
-        if let Some(local) = iri.strip_prefix(ns_uri) {
-            if !local.is_empty()
-                && local
-                    .chars()
-                    .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-'))
-            {
-                return (format!("{p}:{local}"), String::new());
-            }
-        }
+    let Some((ns_part, local)) = xml_name_split(iri) else {
+        // ponytail: lossy for a predicate with no XML-name suffix (`…/m²`); no DCAT mapping
+        // predicate has one. A Result from serialize_rdfxml would let it refuse instead.
+        return ("rdf:value".into(), String::new());
+    };
+    match prefixes.iter().find(|(_, ns_uri)| *ns_uri == ns_part) {
+        Some((p, _)) => (format!("{p}:{local}"), String::new()),
+        None => (
+            format!("ns0:{local}"),
+            format!(" xmlns:ns0=\"{}\"", xml_escape(ns_part)),
+        ),
     }
-    if let Some(pos) = iri.rfind(['/', '#']) {
-        let (ns_part, local) = iri.split_at(pos + 1);
-        if !local.is_empty() {
-            return (
-                format!("ns0:{local}"),
-                format!(" xmlns:ns0=\"{}\"", xml_escape(ns_part)),
-            );
-        }
-    }
-    ("rdf:value".into(), String::new())
+}
+
+/// Splits an IRI into a namespace and its longest suffix that is an XML `NCName`, the only
+/// form in which RDF/XML can write a predicate. A local part such as `1st` or `m²` is no XML
+/// name, and writing it as an element name made the document ill-formed.
+fn xml_name_split(iri: &str) -> Option<(&str, &str)> {
+    let name_start = |c: char| crate::turtle::pn_chars_base(c) || c == '_';
+    let name_char = |c: char| {
+        name_start(c)
+            || c.is_ascii_digit()
+            || matches!(c, '-' | '.' | '\u{B7}' | '\u{300}'..='\u{36F}' | '\u{203F}'..='\u{2040}')
+    };
+    let tail = iri
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| name_char(*c))
+        .last()?
+        .0;
+    let (start, _) = iri[tail..].char_indices().find(|(_, c)| name_start(*c))?;
+    Some(iri.split_at(tail + start))
 }
 
 fn xml_escape(s: &str) -> String {
@@ -593,5 +604,57 @@ mod tests {
             .triples
             .iter()
             .any(|t| t.object.string_value() == "it's"));
+    }
+
+    #[test]
+    fn serialize_writes_only_valid_xml_names() {
+        // Predicates whose local part is no XML name under a known prefix (a leading digit, a
+        // superscript, a micro sign) or under no known prefix at all: each must still come out
+        // as well-formed RDF/XML that parses back to the same predicate.
+        let predicates = [
+            format!("{}1st", ns::DCT),
+            format!("{}µg", ns::DCAT),
+            format!("{}ľúbivý", ns::DCT),
+            format!("{}a/b2", ns::DCT),
+            "https://other.example/v#2026-value".to_owned(),
+            "urn:example:nolocal".to_owned(),
+        ];
+        let mut g = RdfGraph::new();
+        let s = SubjectNode::Named("https://e.org/s".into());
+        for p in &predicates {
+            g.insert(
+                s.clone(),
+                p.clone(),
+                Term::Literal(crate::graph::LiteralValue::plain("v")),
+            );
+        }
+        let xml = serialize_rdfxml(&g);
+        let back =
+            parse_rdfxml(&xml, &RdfLimits::default()).unwrap_or_else(|e| panic!("{e}\n{xml}"));
+        let mut got: Vec<&str> = back.triples.iter().map(|t| t.predicate.as_str()).collect();
+        let mut want: Vec<&str> = predicates.iter().map(String::as_str).collect();
+        got.sort();
+        want.sort();
+        assert_eq!(got, want, "{xml}");
+        assert!(
+            xml.contains("<dct:ľúbivý"),
+            "letters keep the known prefix: {xml}"
+        );
+        // XML 1.0 names start with a letter or `_` and hold no `²` or `µ`; oxrdfxml reads
+        // such element names anyway, other RDF/XML readers refuse the document.
+        for bad in ["<dct:1st", "<dcat:µg", ":2026-value"] {
+            assert!(!xml.contains(bad), "{bad} is no XML name: {xml}");
+        }
+        // A predicate with no XML-name suffix at all cannot be written in RDF/XML; the
+        // document stays well-formed.
+        let mut g = RdfGraph::new();
+        g.insert(
+            s,
+            format!("{}m²", ns::DCT),
+            Term::Literal(crate::graph::LiteralValue::plain("v")),
+        );
+        let xml = serialize_rdfxml(&g);
+        assert!(!xml.contains("m²>"), "{xml}");
+        assert!(parse_rdfxml(&xml, &RdfLimits::default()).is_ok());
     }
 }
