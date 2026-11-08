@@ -236,12 +236,7 @@ fn with_cors(mut resp: Response, origin: Option<HeaderValue>) -> Response {
 }
 
 /// Runs an account REST handler: CORS first, then the caller, then `f`.
-async fn rest<F, Fut>(
-    state: OidcState,
-    realm_name: String,
-    parts: Parts,
-    f: F,
-) -> Response
+async fn rest<F, Fut>(state: OidcState, realm_name: String, parts: Parts, f: F) -> Response
 where
     F: FnOnce(OidcState, Caller) -> Fut,
     Fut: std::future::Future<Output = Result<Response>>,
@@ -257,9 +252,7 @@ where
         Ok(o) => o,
         Err(e) => return with_cors(e.into_response(), None),
     };
-    let answer = match caller(&state, &realm_name, method, &uri, headers, mount_ext)
-    .await
-    {
+    let answer = match caller(&state, &realm_name, method, &uri, headers, mount_ext).await {
         Ok(c) => f(state, c).await,
         Err(e) => Err(e),
     };
@@ -360,12 +353,9 @@ async fn account_get(
         )
         .await;
     }
-    rest(
-        state,
-        realm_name,
-        parts,
-        |_, c| async move { Ok(Json(personal_info(&c.user)).into_response()) },
-    )
+    rest(state, realm_name, parts, |_, c| async move {
+        Ok(Json(personal_info(&c.user)).into_response())
+    })
     .await
 }
 
@@ -451,12 +441,9 @@ async fn personal_info_post(
     ip: ClientIp,
     body: axum::body::Bytes,
 ) -> Response {
-    rest(
-        state,
-        realm_name,
-        parts,
-        |state, c| async move { update_personal_info(&state, c, &ip, &body).await },
-    )
+    rest(state, realm_name, parts, |state, c| async move {
+        update_personal_info(&state, c, &ip, &body).await
+    })
     .await
 }
 
@@ -605,12 +592,9 @@ async fn credentials_get(
     Path(realm_name): Path<String>,
     parts: Parts,
 ) -> Response {
-    rest(
-        state,
-        realm_name,
-        parts,
-        |state, c| async move { Ok(Json(credential_groups(&state, &c).await?).into_response()) },
-    )
+    rest(state, realm_name, parts, |state, c| async move {
+        Ok(Json(credential_groups(&state, &c).await?).into_response())
+    })
     .await
 }
 
@@ -680,12 +664,9 @@ async fn credential_delete(
     parts: Parts,
     ip: ClientIp,
 ) -> Response {
-    rest(
-        state,
-        realm_name,
-        parts,
-        |state, c| async move { remove_credential(&state, c, &id, &ip).await },
-    )
+    rest(state, realm_name, parts, |state, c| async move {
+        remove_credential(&state, c, &id, &ip).await
+    })
     .await
 }
 
@@ -754,41 +735,36 @@ async fn sessions_get(
     Path(realm_name): Path<String>,
     parts: Parts,
 ) -> Response {
-    rest(
-        state,
-        realm_name,
-        parts,
-        |state, c| async move {
-            let mut out = Vec::new();
-            for s in state
-                .store
-                .list_user_sso_sessions(&c.realm.id, &c.user.id)
-                .await?
-            {
-                let mut clients = Vec::new();
-                for client_id in s.clients.keys() {
-                    let name = state
-                        .store
-                        .get_client_by_client_id(&c.realm.id, client_id)
-                        .await?
-                        .and_then(|cl| cl.name)
-                        .unwrap_or_else(|| client_id.clone());
-                    clients.push(json!({ "clientId": client_id, "clientName": name }));
-                }
-                clients.sort_by(|a, b| a["clientId"].as_str().cmp(&b["clientId"].as_str()));
-                out.push(json!({
-                    "id": s.id,
-                    "ipAddress": s.ip_address,
-                    "started": s.start / 1000,
-                    "lastAccess": s.last_access / 1000,
-                    "expires": s.max_expires_at.timestamp(),
-                    "clients": clients,
-                    "current": s.id == c.session_id,
-                }));
+    rest(state, realm_name, parts, |state, c| async move {
+        let mut out = Vec::new();
+        for s in state
+            .store
+            .list_user_sso_sessions(&c.realm.id, &c.user.id)
+            .await?
+        {
+            let mut clients = Vec::new();
+            for client_id in s.clients.keys() {
+                let name = state
+                    .store
+                    .get_client_by_client_id(&c.realm.id, client_id)
+                    .await?
+                    .and_then(|cl| cl.name)
+                    .unwrap_or_else(|| client_id.clone());
+                clients.push(json!({ "clientId": client_id, "clientName": name }));
             }
-            Ok(Json(out).into_response())
-        },
-    )
+            clients.sort_by(|a, b| a["clientId"].as_str().cmp(&b["clientId"].as_str()));
+            out.push(json!({
+                "id": s.id,
+                "ipAddress": s.ip_address,
+                "started": s.start / 1000,
+                "lastAccess": s.last_access / 1000,
+                "expires": s.max_expires_at.timestamp(),
+                "clients": clients,
+                "current": s.id == c.session_id,
+            }));
+        }
+        Ok(Json(out).into_response())
+    })
     .await
 }
 
@@ -814,31 +790,26 @@ async fn sessions_delete(
     parts: Parts,
     ip: ClientIp,
 ) -> Response {
-    rest(
-        state,
-        realm_name,
-        parts,
-        |state, c| async move {
-            for s in state
-                .store
-                .list_user_sso_sessions(&c.realm.id, &c.user.id)
-                .await?
-            {
-                if q.current || s.id != c.session_id {
-                    end_session(&state, &c, &s).await?;
-                }
+    rest(state, realm_name, parts, |state, c| async move {
+        for s in state
+            .store
+            .list_user_sso_sessions(&c.realm.id, &c.user.id)
+            .await?
+        {
+            if q.current || s.id != c.session_id {
+                end_session(&state, &c, &s).await?;
             }
-            audit(
-                &state,
-                &c,
-                "LOGOUT",
-                &ip,
-                &[("scope", if q.current { "all" } else { "others" })],
-            )
-            .await;
-            Ok(StatusCode::NO_CONTENT.into_response())
-        },
-    )
+        }
+        audit(
+            &state,
+            &c,
+            "LOGOUT",
+            &ip,
+            &[("scope", if q.current { "all" } else { "others" })],
+        )
+        .await;
+        Ok(StatusCode::NO_CONTENT.into_response())
+    })
     .await
 }
 
@@ -849,24 +820,19 @@ async fn session_delete(
     parts: Parts,
     ip: ClientIp,
 ) -> Response {
-    rest(
-        state,
-        realm_name,
-        parts,
-        |state, c| async move {
-            let Some(sso) = state
-                .store
-                .get_sso_session(&c.realm.id, &id)
-                .await?
-                .filter(|s| s.user_id == c.user.id)
-            else {
-                return Err(KaisatsuError::NotFound("session not found".into()));
-            };
-            end_session(&state, &c, &sso).await?;
-            audit(&state, &c, "LOGOUT", &ip, &[("session_id", &id)]).await;
-            Ok(StatusCode::NO_CONTENT.into_response())
-        },
-    )
+    rest(state, realm_name, parts, |state, c| async move {
+        let Some(sso) = state
+            .store
+            .get_sso_session(&c.realm.id, &id)
+            .await?
+            .filter(|s| s.user_id == c.user.id)
+        else {
+            return Err(KaisatsuError::NotFound("session not found".into()));
+        };
+        end_session(&state, &c, &sso).await?;
+        audit(&state, &c, "LOGOUT", &ip, &[("session_id", &id)]).await;
+        Ok(StatusCode::NO_CONTENT.into_response())
+    })
     .await
 }
 
