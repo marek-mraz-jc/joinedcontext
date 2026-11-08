@@ -520,6 +520,22 @@ routes:
     rule: "propose on Dashboard"
     note: "no such row in the fixture"
     expect: [403, 403, 403, allow, 403, allow, 404, 403]
+  - route: GET /projects/{project}/grafana/dashboards
+    rule: "project-read"
+    note: "the fixture has no dashboards service: `allow` answers 200 with its reason"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/grafana/dashboards/{uid}
+    rule: "project-read"
+    note: "the fixture has no dashboards service: `allow` answers 409"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/grafana/dashboards/{uid}/panels/{panel}
+    rule: "project-read, then read on each Endpoint the panel's datasources read"
+    note: "the fixture has no dashboards service: `allow` answers 409"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/grafana/dashboards/{uid}/variables/{name}
+    rule: "project-read, then read on the Endpoint of a query variable's datasource"
+    note: "the fixture has no dashboards service: `allow` answers 409"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
   - route: GET /projects/{project}/activity
     rule: "project-read"
     expect: [401, allow, allow, allow, allow, allow, 404, allow]

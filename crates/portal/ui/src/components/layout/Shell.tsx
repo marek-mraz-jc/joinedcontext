@@ -397,6 +397,8 @@ export function addressItem(pathname: string): { itemName?: string; spacePage?: 
   if (segments[0] !== "projects" || segments.length < 4) return {};
   const spacePage = segments[2] === "spaces" && segments.length === 4 ? SPACE_PAGES[segments[3] ?? ""] : undefined;
   if (spacePage) return { spacePage };
+  // A dashboard drawn in the Portal is named by its uid, not by the word `dashboards` before it.
+  if (segments[2] === "grafana" && segments[3] === "dashboards") return segments[4] ? { itemName: segments[4] } : {};
   return segments[3] === "new" ? { creating: true } : { itemName: segments[3] };
 }
 

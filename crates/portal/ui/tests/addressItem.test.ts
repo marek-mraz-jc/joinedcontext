@@ -5,6 +5,7 @@ describe("addressItem", () => {
   it("names the item of a section by its address", () => {
     expect(addressItem("/projects/p/endpoints/air-quality")).toEqual({ itemName: "air-quality" });
     expect(addressItem("/projects/p/spaces/city/data")).toEqual({ itemName: "city" });
+    expect(addressItem("/projects/p/grafana/dashboards/project-helsinki")).toEqual({ itemName: "project-helsinki" });
   });
 
   it("decodes a segment and keeps a broken escape as typed", () => {

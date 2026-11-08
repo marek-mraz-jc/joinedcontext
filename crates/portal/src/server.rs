@@ -347,8 +347,8 @@ pub fn spawn_background(state: &AppState) {
     crate::answers::spawn_periodic(state.clone());
     // What a restart of Grafana took, put back from the Portal's rows (T-6509).
     crate::grafana::spawn_periodic(state.clone());
-    // Each project's Grafana organization and folder, made once it is opened.
-    crate::grafana::spawn_organizations(state.clone());
+    // Each project's organization and folder in daiya, which Grafana gets from provision.sh.
+    crate::grafana::spawn_provisioning(state.clone());
 }
 
 /// The internal listener runs beside the public one, on the same replica, whenever this Portal

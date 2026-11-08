@@ -1,0 +1,455 @@
+{
+  "uid": "project-helsinki",
+  "title": "Helsinki live",
+  "description": "Live readings of the City of Helsinki, read through its Endpoints with your own rights.",
+  "tags": [
+    "project",
+    "helsinki",
+    "ngsi-ld"
+  ],
+  "schemaVersion": 39,
+  "editable": false,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "timezone": "browser",
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Cyclists per day, by counting station",
+      "description": "Eco-Counter stations of the city; each point is the count of one day. Endpoint helsinki-cycle-counts, public.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "ngsild-grafana-datasource",
+        "uid": "helsinki-cycle-counts"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "ngsild-grafana-datasource",
+            "uid": "helsinki-cycle-counts"
+          },
+          "queryType": "temporal",
+          "entityType": "TrafficFlowObserved",
+          "attributes": [
+            "intensity"
+          ],
+          "entityName": "name",
+          "namePattern": "entity_name",
+          "limit": 100,
+          "lang": "fi"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "locale",
+          "custom": {
+            "showPoints": "always",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": true,
+            "pointSize": 4
+          },
+          "decimals": 0,
+          "noValue": "No readings in this range"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "PM2.5 by station, µg/m³ (6 h average)",
+      "description": "Finnish Meteorological Institute stations, µg/m³. Endpoint helsinki-air-quality, public.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "ngsild-grafana-datasource",
+        "uid": "helsinki-air-quality"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 12,
+        "h": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "ngsild-grafana-datasource",
+            "uid": "helsinki-air-quality"
+          },
+          "queryType": "temporal",
+          "entityType": "AirQualityObserved",
+          "attributes": [
+            "pm25"
+          ],
+          "entityName": "name",
+          "namePattern": "entity_name",
+          "aggrMethod": "avg",
+          "aggrPeriodDuration": "PT6H",
+          "lang": "fi",
+          "limit": 100
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "showPoints": "never",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": true
+          },
+          "decimals": 1,
+          "noValue": "No readings in this range"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "max"
+          ],
+          "sortBy": "Max",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Air quality now, µg/m³",
+      "description": "Latest particle readings per station, in µg/m³; yellow from 15, red from 45. Endpoint helsinki-air-quality, public.",
+      "type": "table",
+      "datasource": {
+        "type": "ngsild-grafana-datasource",
+        "uid": "helsinki-air-quality"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 14,
+        "w": 12,
+        "h": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "ngsild-grafana-datasource",
+            "uid": "helsinki-air-quality"
+          },
+          "queryType": "entity",
+          "format": "table",
+          "entityType": "AirQualityObserved",
+          "attributes": [
+            "name",
+            "pm25",
+            "pm10"
+          ],
+          "lang": "fi",
+          "limit": 100
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "id": true,
+              "type": true,
+              "observedAt": true
+            },
+            "indexByName": {
+              "name": 0,
+              "pm25": 1,
+              "pm10": 2
+            },
+            "renameByName": {
+              "name": "Station",
+              "pm25": "PM2.5",
+              "pm10": "PM10"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No readings in this range"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PM2.5"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 76
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 15
+                    },
+                    {
+                      "color": "red",
+                      "value": 45
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PM10"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 76
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 15
+                    },
+                    {
+                      "color": "red",
+                      "value": 45
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "PM2.5",
+            "desc": true
+          }
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "title": "City bikes, members",
+      "description": "Bikes and free slots per station. Endpoint helsinki-bikes-ops: it answers members of the organization only, so a person outside Helsinki sees a refusal here.",
+      "type": "table",
+      "datasource": {
+        "type": "ngsild-grafana-datasource",
+        "uid": "helsinki-bikes-ops"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 11
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "ngsild-grafana-datasource",
+            "uid": "helsinki-bikes-ops"
+          },
+          "queryType": "entity",
+          "format": "table",
+          "entityType": "BikeHireDockingStation",
+          "attributes": [
+            "name",
+            "availableBikeNumber",
+            "freeSlotNumber",
+            "status"
+          ],
+          "lang": "fi",
+          "limit": 100
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "id": true,
+              "type": true,
+              "observedAt": true
+            },
+            "indexByName": {
+              "name": 0,
+              "availableBikeNumber": 1,
+              "freeSlotNumber": 2,
+              "status": 3
+            },
+            "renameByName": {
+              "name": "Station",
+              "availableBikeNumber": "Bikes",
+              "freeSlotNumber": "Free",
+              "status": "Status"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No readings in this range"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bikes"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 60
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Free"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 60
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Status"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "working": {
+                        "text": "Open",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "outOfService": {
+                        "text": "Closed",
+                        "color": "red",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "custom.width",
+                "value": 70
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    }
+  ]
+}
