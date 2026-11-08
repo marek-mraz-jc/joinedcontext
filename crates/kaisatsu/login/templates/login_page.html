@@ -110,6 +110,10 @@
         }
         .kc-check input { width: 1.25rem; height: 1.25rem; margin: 0.125rem 0 0; }
         .kc-check .kc-field-hint { grid-column: 2; margin-top: 0; }
+        .kc-qr { margin: 0 0 1rem; text-align: center; }
+        .kc-qr svg { display: block; margin: 0 auto 0.5rem; border: 1px solid #cbd5e1; }
+        .kc-qr figcaption { font-size: 0.875rem; }
+        .instruction { overflow-wrap: anywhere; }
         .kc-instruction-secret { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
         #secondaryLink { display: inline-block; margin-top: 0.25rem; }
         a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible {
@@ -140,6 +144,9 @@
                 <div class="kc-alert" role="alert">
                     <span class="kc-feedback-text">{{ alert_message }}</span>
                 </div>
+                {% endif %}
+                {% if !qr_svg.is_empty() %}
+                <figure class="kc-qr" id="kc-totp-qr">{{ qr_svg|safe }}<figcaption id="kc-qr-hint">{{ qr_hint }}</figcaption></figure>
                 {% endif %}
                 {% if !instruction_text.is_empty() %}
                 <p class="instruction" id="instruction1">{{ instruction_text }}</p>

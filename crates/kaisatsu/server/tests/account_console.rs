@@ -747,6 +747,7 @@ async fn configure_totp_adds_a_named_authenticator_and_reports_success() {
     let page = authorize(&app, "&kc_action=CONFIGURE_TOTP", Some(&me.sso)).await.ok().unwrap();
     assert_eq!(page_id(&page.html), "config-totp", "{}", page.html);
     assert!(page.html.contains("name=\"userLabel\""));
+    assert!(page.html.contains("id=\"kc-totp-qr\"") && page.html.contains("<svg"));
     let secret = store
         .get_auth_session_by_id("dev", &page.session)
         .await

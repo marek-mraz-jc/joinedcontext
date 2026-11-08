@@ -143,6 +143,7 @@ accountEmailRequired=Enter your e-mail address.
 accountEmailInvalid=Enter a valid e-mail address, for example name@organization.org.
 accountEmailInUse=Another account already uses this e-mail address.
 accountAttributeReadOnly=This attribute is managed by your administrator and cannot be changed here.
+otpScanHint=Scan this code with your authenticator app, or type the key below.
 "#;
 
 const SK_PROPERTIES: &str = r#"
@@ -276,6 +277,7 @@ accountEmailRequired=Zadajte svoju e-mailovú adresu.
 accountEmailInvalid=Zadajte platnú e-mailovú adresu, napríklad meno@organizacia.sk.
 accountEmailInUse=Túto e-mailovú adresu už používa iný účet.
 accountAttributeReadOnly=Tento atribút spravuje váš správca a tu ho nemožno zmeniť.
+otpScanHint=Naskenujte tento kód overovacou aplikáciou alebo zadajte kľúč uvedený nižšie.
 "#;
 
 const CS_PROPERTIES: &str = r#"
@@ -409,6 +411,7 @@ accountEmailRequired=Zadejte svou e-mailovou adresu.
 accountEmailInvalid=Zadejte platnou e-mailovou adresu, například jmeno@organizace.cz.
 accountEmailInUse=Tuto e-mailovou adresu už používá jiný účet.
 accountAttributeReadOnly=Tento atribut spravuje váš správce a zde jej nelze změnit.
+otpScanHint=Naskenujte tento kód ověřovací aplikací nebo zadejte klíč uvedený níže.
 "#;
 
 const DE_PROPERTIES: &str = r#"
@@ -542,6 +545,7 @@ accountEmailRequired=Geben Sie Ihre E-Mail-Adresse ein.
 accountEmailInvalid=Geben Sie eine gültige E-Mail-Adresse ein, zum Beispiel name@organisation.de.
 accountEmailInUse=Ein anderes Konto verwendet diese E-Mail-Adresse bereits.
 accountAttributeReadOnly=Dieses Attribut verwaltet Ihr Administrator; es kann hier nicht geändert werden.
+otpScanHint=Scannen Sie diesen Code mit Ihrer Authenticator-App oder geben Sie den Schlüssel unten ein.
 "#;
 
 const HU_PROPERTIES: &str = r#"
@@ -675,6 +679,7 @@ accountEmailRequired=Adja meg az e-mail-címét.
 accountEmailInvalid=Adjon meg érvényes e-mail-címet, például nev@szervezet.hu.
 accountEmailInUse=Ezt az e-mail-címet már egy másik fiók használja.
 accountAttributeReadOnly=Ezt az attribútumot a rendszergazda kezeli, itt nem módosítható.
+otpScanHint=Olvassa be ezt a kódot a hitelesítő alkalmazással, vagy írja be az alábbi kulcsot.
 "#;
 
 fn parse_properties(raw: &'static str) -> BTreeMap<&'static str, &'static str> {

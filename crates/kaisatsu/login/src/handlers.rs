@@ -52,6 +52,10 @@ struct LoginPageTemplate {
     submit_label: String,
     secondary_link_url: String,
     secondary_link_label: String,
+    /// Inline SVG QR code of the `otpauth://` URI on the authenticator set-up page (our own
+    /// markup, never user input), else empty.
+    qr_svg: String,
+    qr_hint: String,
 }
 
 pub fn login_router(state: OidcState) -> Router {
@@ -286,6 +290,7 @@ async fn render_state_page(
         mount.path_prefix, realm.realm, auth_session.id, auth_session.client_id
     );
 
+    let mut enrol_secret: Option<String> = None;
     let (page_id, heading_text, instruction_text, fields, submit_label, sec_url, sec_label) =
         match login_state {
             LoginState::IdentityFirst | LoginState::Password { .. } => {
@@ -347,6 +352,7 @@ async fn render_state_page(
                             fresh
                         }
                     };
+                    enrol_secret = Some(secret.clone());
                     bundle.format(
                         "otpEnrolInstruction",
                         &[
@@ -598,6 +604,18 @@ async fn render_state_page(
             ),
         };
 
+    let qr_svg = match (&enrol_secret, login_state) {
+        (Some(secret), LoginState::EnrolTotp { user_id, .. }) => {
+            let account = state
+                .store
+                .get_user_by_id(&realm.id, None, user_id)
+                .await?
+                .map(|u| u.username)
+                .unwrap_or_default();
+            totp_qr_svg(realm, &org_display, &account, secret, bundle.get("otpScanHint"))
+        }
+        _ => String::new(),
+    };
     let tpl = LoginPageTemplate {
         lang: bundle.locale.to_owned(),
         page_title: bundle.format("jcSignInTo", &[&app_name, &org_display]),
@@ -617,9 +635,57 @@ async fn render_state_page(
         submit_label,
         secondary_link_url: sec_url,
         secondary_link_label: sec_label,
+        qr_svg: qr_svg,
+        qr_hint: bundle.get("otpScanHint").to_owned(),
     };
 
     Ok(render_with_security_headers(&tpl, None))
+}
+
+/// The `otpauth://` URI of a new authenticator as an inline SVG QR code (Keycloak shows one on
+/// its set-up page). Every value is percent-encoded into the URI; the SVG holds only rects.
+fn totp_qr_svg(
+    realm: &RealmConfig,
+    issuer: &str,
+    account: &str,
+    secret: &str,
+    title: &str,
+) -> String {
+    let enc = |s: &str| url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>();
+    let algorithm = realm
+        .otp_policy_algorithm
+        .trim_start_matches("Hmac")
+        .to_ascii_uppercase();
+    let uri = format!(
+        "otpauth://totp/{}:{}?secret={}&issuer={}&algorithm={algorithm}&digits={}&period={}",
+        enc(issuer),
+        enc(account),
+        enc(secret),
+        enc(issuer),
+        realm.otp_policy_digits,
+        realm.otp_policy_period,
+    );
+    let Ok(qr) = qrcodegen::QrCode::encode_text(&uri, qrcodegen::QrCodeEcc::Medium) else {
+        return String::new();
+    };
+    let size = qr.size();
+    let border = 4;
+    let dim = size + 2 * border;
+    let mut path = String::new();
+    for y in 0..size {
+        for x in 0..size {
+            if qr.get_module(x, y) {
+                path.push_str(&format!("M{},{}h1v1h-1z", x + border, y + border));
+            }
+        }
+    }
+    let title = title
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {dim} {dim}\" width=\"180\" height=\"180\" role=\"img\" aria-labelledby=\"qr-title\" shape-rendering=\"crispEdges\"><title id=\"qr-title\">{title}</title><rect width=\"100%\" height=\"100%\" fill=\"#fff\"/><path d=\"{path}\" fill=\"#000\"/></svg>"
+    )
 }
 
 /// The label a person gives a new authenticator: trimmed, at most 64 characters, control
@@ -754,6 +820,8 @@ pub(crate) fn render_expired_session_page(realm: &RealmConfig, status: StatusCod
         submit_label: String::new(),
         secondary_link_url: String::new(),
         secondary_link_label: String::new(),
+        qr_svg: String::new(),
+        qr_hint: String::new(),
     };
     let mut resp = render_with_security_headers(&tpl, None);
     *resp.status_mut() = status;
@@ -1939,6 +2007,8 @@ async fn reset_credentials_get(
         submit_label: bundle.get("proceedWithAction").to_owned(),
         secondary_link_url: String::new(),
         secondary_link_label: String::new(),
+        qr_svg: String::new(),
+        qr_hint: String::new(),
     };
     Ok(render_with_security_headers(&tpl, None))
 }
@@ -2025,6 +2095,8 @@ async fn reset_credentials_post(
         submit_label: String::new(),
         secondary_link_url: String::new(),
         secondary_link_label: String::new(),
+        qr_svg: String::new(),
+        qr_hint: String::new(),
     };
     Ok(render_with_security_headers(&tpl, None))
 }
@@ -2222,6 +2294,8 @@ async fn action_token_get(
             submit_label: bundle.get("proceedWithAction").to_owned(),
             secondary_link_url: String::new(),
             secondary_link_label: String::new(),
+            qr_svg: String::new(),
+            qr_hint: String::new(),
         };
         return Ok(render_with_security_headers(&tpl, Some(set_cookie)));
     }
@@ -2418,6 +2492,8 @@ fn finish_action_token_response(
         submit_label: String::new(),
         secondary_link_url: String::new(),
         secondary_link_label: String::new(),
+        qr_svg: String::new(),
+        qr_hint: String::new(),
     };
     Ok(render_with_security_headers(&tpl, None))
 }
