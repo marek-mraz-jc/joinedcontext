@@ -142,9 +142,12 @@ async fn world() -> (MockServer, AppState) {
         json!({ "files": [{ "filename": "src/page.html", "status": "modified" }] }),
     )
     .await;
-    get(
+    // Only a read in the walk's order is answered: by key, commits come back in sha order.
+    get_with(
         &server,
         "/odata/Commits",
+        "$orderby",
+        "Position",
         json!({ "value": [{
         "Sha": HEAD, "Message": "Change b", "Author": "Alice", "Date": "2026-11-08T10:00:00Z",
     }], "@odata.count": 1 }),

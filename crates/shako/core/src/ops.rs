@@ -219,6 +219,11 @@ pub fn shako_odata_service() -> Service {
                     req_field("Author", FieldKind::String, "Author name"),
                     opt_field("Email", FieldKind::String, "Author email"),
                     req_field("Date", FieldKind::String, "Author timestamp"),
+                    req_field(
+                        "Position",
+                        FieldKind::Integer,
+                        "Place in the history walked from Ref, newest first; 0 is Ref's own commit",
+                    ),
                 ],
                 rules: read_only_rules("forge:read"),
             },

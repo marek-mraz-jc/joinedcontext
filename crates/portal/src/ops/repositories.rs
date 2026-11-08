@@ -859,6 +859,8 @@ async fn commits(state: &AppState, project: &str, input: CommitsInput) -> Result
         "Commits",
         &[
             ("$filter", &filter),
+            // The walk's order: a page without $orderby comes back by key, the commits' shas.
+            ("$orderby", "Position"),
             ("$top", &top),
             ("$skip", &skip),
             ("$count", "true"),
