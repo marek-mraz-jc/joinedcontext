@@ -15,7 +15,9 @@ odata-url = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Br
 regex = "1.13"
 schemars = { version = "0.8", features = ["uuid1", "chrono"] }
 serde = { version = "1.0", features = ["derive"] }
+base64 = "0.22"
 serde_json = "1.0"
+sha2 = "0.11"
 subtle = "2.6"
 thiserror = "2.0"
 url = "2.5"

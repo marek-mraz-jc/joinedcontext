@@ -74,6 +74,15 @@ pub struct Cli {
     /// kaisatsu: realm files (JSON) applied at start.
     #[arg(long, env = "JCBIN_KAISATSU_IMPORT_DIR")]
     pub kaisatsu_import_dir: Option<PathBuf>,
+    /// kaisatsu: file holding the PostgreSQL connection URL without password (secrets mount).
+    #[arg(long, env = "JCBIN_KAISATSU_DATABASE_URL_FILE")]
+    pub kaisatsu_database_url_file: Option<PathBuf>,
+    /// kaisatsu: file holding the PostgreSQL password (secrets mount).
+    #[arg(long, env = "JCBIN_KAISATSU_DB_PASSWORD_FILE")]
+    pub kaisatsu_db_password_file: Option<PathBuf>,
+    /// kaisatsu: PostgreSQL connection pool size (default 5).
+    #[arg(long, env = "JCBIN_KAISATSU_DB_MAX_CONNECTIONS")]
+    pub kaisatsu_db_max_connections: Option<u32>,
     /// ekiben: file holding the API bearer token (required: hosted ekiben never runs without auth).
     #[arg(long, env = "JCBIN_EKIBEN_TOKEN_FILE")]
     pub ekiben_token_file: Option<PathBuf>,
@@ -111,6 +120,9 @@ pub struct MountOverride {
 pub struct KaisatsuSection {
     pub kek_file: Option<PathBuf>,
     pub import_dir: Option<PathBuf>,
+    pub database_url_file: Option<PathBuf>,
+    pub db_password_file: Option<PathBuf>,
+    pub db_max_connections: Option<u32>,
 }
 
 /// `[ekiben]` section.
@@ -289,6 +301,15 @@ impl Config {
         let kaisatsu = KaisatsuSection {
             kek_file: cli.kaisatsu_kek_file.or(file.kaisatsu.kek_file),
             import_dir: cli.kaisatsu_import_dir.or(file.kaisatsu.import_dir),
+            database_url_file: cli
+                .kaisatsu_database_url_file
+                .or(file.kaisatsu.database_url_file),
+            db_password_file: cli
+                .kaisatsu_db_password_file
+                .or(file.kaisatsu.db_password_file),
+            db_max_connections: cli
+                .kaisatsu_db_max_connections
+                .or(file.kaisatsu.db_max_connections),
         };
         if roles.contains(&Module::Kaisatsu) && kaisatsu.kek_file.is_none() {
             return Err(ConfigError::KaisatsuKek);

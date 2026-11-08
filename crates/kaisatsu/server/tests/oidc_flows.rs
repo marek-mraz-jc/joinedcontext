@@ -95,6 +95,16 @@ fn sso_cookie(h: &HeaderMap) -> String {
         .expect("sso cookie")
 }
 
+/// The `__Host-wk_auth=...` auth-session cookie a response set, as a Cookie header value (K1).
+fn auth_cookie(h: &HeaderMap) -> String {
+    h.get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|v| v.starts_with("__Host-wk_auth="))
+        .map(|v| v.split(';').next().unwrap().to_owned())
+        .expect("auth cookie")
+}
+
 fn auth_query(extra: &str) -> String {
     format!(
         "{AUTH}?client_id=edge&redirect_uri={}&response_type=code&scope=openid&state=st-1&nonce=n-1&code_challenge={}&code_challenge_method=S256{extra}",
@@ -105,8 +115,8 @@ fn auth_query(extra: &str) -> String {
 
 /// Walks the login form for `demo.orgmember@hel.fi` from an authorization request that
 /// redirected to the login page; returns the final response.
-async fn login_from(app: &Router, login_loc: &str) -> (StatusCode, HeaderMap, String) {
-    let (st, _, html) = get(app, login_loc, None, None).await;
+async fn login_from(app: &Router, login_loc: &str, auth: &str) -> (StatusCode, HeaderMap, String) {
+    let (st, _, html) = get(app, login_loc, Some(auth), None).await;
     assert_eq!(st, StatusCode::OK, "{html}");
     let csrf = extract_hidden_input(&html, "csrf_token");
     let session = extract_hidden_input(&html, "session_code");
@@ -119,7 +129,7 @@ async fn login_from(app: &Router, login_loc: &str) -> (StatusCode, HeaderMap, St
             ("username", "demo.orgmember@hel.fi"),
             ("password", "MemberPass123!Valid"),
         ],
-        None,
+        Some(auth),
     )
     .await
 }
@@ -128,7 +138,7 @@ async fn login_from(app: &Router, login_loc: &str) -> (StatusCode, HeaderMap, St
 async fn browser_login(app: &Router) -> (String, String) {
     let (st, h, _) = get(app, &auth_query(""), None, None).await;
     assert_eq!(st, StatusCode::SEE_OTHER);
-    let (st, h2, body) = login_from(app, &location(&h)).await;
+    let (st, h2, body) = login_from(app, &location(&h), &auth_cookie(&h)).await;
     assert_eq!(st, StatusCode::SEE_OTHER, "{body}");
     let loc = location(&h2);
     assert!(loc.starts_with(CALLBACK), "{loc}");
@@ -352,7 +362,7 @@ async fn sso_session_prompt_max_age_step_up_and_response_modes() {
             login.contains("/login-actions/authenticate"),
             "{extra}: {login}"
         );
-        let (st, _, html) = login_from(&app, &login).await;
+        let (st, _, html) = login_from(&app, &login, &auth_cookie(&h)).await;
         assert_eq!(st, StatusCode::OK, "{extra}: {html}");
         assert!(
             html.contains(r#"name="otp""#),
@@ -454,7 +464,7 @@ async fn interactive_login_answers_in_the_requested_response_mode() {
     let (app, _, _, _) = app().await;
     let (st, h, _) = get(&app, &auth_query("&response_mode=form_post"), None, None).await;
     assert_eq!(st, StatusCode::SEE_OTHER);
-    let (st, h2, html) = login_from(&app, &location(&h)).await;
+    let (st, h2, html) = login_from(&app, &location(&h), &auth_cookie(&h)).await;
     assert_eq!(st, StatusCode::OK, "{html}");
     assert!(html.contains(&format!(r#"action="{CALLBACK}""#)), "{html}");
     assert!(html.contains(r#"name="code""#));
@@ -463,7 +473,7 @@ async fn interactive_login_answers_in_the_requested_response_mode() {
 
     let (st, h, _) = get(&app, &auth_query("&response_mode=fragment"), None, None).await;
     assert_eq!(st, StatusCode::SEE_OTHER);
-    let (st, h2, _) = login_from(&app, &location(&h)).await;
+    let (st, h2, _) = login_from(&app, &location(&h), &auth_cookie(&h)).await;
     assert_eq!(st, StatusCode::SEE_OTHER);
     let loc = location(&h2);
     assert!(
@@ -520,7 +530,7 @@ async fn pushed_authorization_requests() {
     )
     .await;
     assert_eq!(st, StatusCode::SEE_OTHER);
-    let (st, h2, _) = login_from(&app, &location(&h)).await;
+    let (st, h2, _) = login_from(&app, &location(&h), &auth_cookie(&h)).await;
     assert_eq!(st, StatusCode::SEE_OTHER);
     assert_eq!(
         query_param(&location(&h2), "state").as_deref(),

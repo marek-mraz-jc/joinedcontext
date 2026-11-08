@@ -89,7 +89,7 @@ pub fn oidc_router(state: OidcState) -> Router {
         )
         .route(
             "/realms/{realm}/protocol/openid-connect/logout",
-            get(logout_endpoint).post(logout_endpoint),
+            get(logout_get_endpoint).post(logout_post_endpoint),
         )
         .with_state(state)
 }
@@ -271,6 +271,25 @@ pub async fn resolve_scopes_for_client(
         ) {
             if !granted_tokens.iter().any(|t| t == token) {
                 granted_tokens.push(token.to_owned());
+            }
+            continue;
+        }
+        // K2: `organization:<alias>` scope (Keycloak 26 organization pinning, W3).
+        // Verify that the organization exists and is enabled in the realm; membership is
+        // enforced before pinning `active_org` onto a session or token.
+        if let Some(org_alias) = token.strip_prefix("organization:")
+            && !org_alias.is_empty()
+        {
+            let org = store
+                .get_organization(&realm.id, org_alias)
+                .await?
+                .filter(|o| o.enabled)
+                .ok_or_else(|| {
+                    KaisatsuError::invalid_scope(format!("Invalid scopes: {token}"))
+                })?;
+            let canonical = format!("organization:{}", org.alias);
+            if !granted_tokens.iter().any(|t| t == &canonical) {
+                granted_tokens.push(canonical);
             }
             continue;
         }
@@ -786,6 +805,9 @@ async fn authorize_get(
         csrf_token,
         step_state_json: initial_step_json,
         pending_totp_secret: None,
+        webauthn_challenge: None,
+        pending_email_code_hash: None,
+        broker_state_json: None,
         user_id: pre_user_id,
         amr: pre_amr,
         acr_achieved: pre_acr,
@@ -1142,6 +1164,19 @@ async fn mint_tokens_for_principal(
     let access_exp = now + access_ttl;
     let access_jti = uuid::Uuid::now_v7().to_string();
 
+    // K2: Determine active_org for token claims. If `organization:<alias>` was requested in
+    // `granted_scope_str` (or pinned on the SSO session), verify that `user` is actually a
+    // member of that organization before emitting it as `active_org`.
+    let resolved_active_org = resolve_verified_active_org(
+        &state.store,
+        &realm.id,
+        user,
+        &user_groups,
+        granted_scope_str,
+        sso_session_id,
+    )
+    .await?;
+
     let mapper_ctx = MapperContext {
         realm,
         issuer: &issuer,
@@ -1161,7 +1196,7 @@ async fn mint_tokens_for_principal(
         auth_time,
         dpop_jkt,
         act,
-        active_org: user.org_id.as_deref(),
+        active_org: resolved_active_org.as_deref(),
     };
 
     let access_claims = evaluate_mappers(&mapper_ctx, TokenKind::AccessToken)?;
@@ -1315,6 +1350,73 @@ async fn mint_tokens_for_principal(
     Ok(response)
 }
 
+/// K2: Checks whether `user` is a member of `org_alias_or_id` (via `user.org_id`, `Membership`
+/// rows, or `jc_org` group attributes).
+pub async fn user_is_member_of_org(
+    store: &Arc<dyn Store>,
+    realm_id: &str,
+    user: &UserRepresentation,
+    user_groups: &[GroupRepresentation],
+    org_alias_or_id: &str,
+) -> Result<Option<String>> {
+    let Some(org) = store
+        .get_organization(realm_id, org_alias_or_id)
+        .await?
+        .filter(|o| o.enabled)
+    else {
+        return Ok(None);
+    };
+    let matches_org = |val: &str| val == org.id || val == org.alias;
+    if user.org_id.as_deref().is_some_and(matches_org) {
+        return Ok(Some(org.alias));
+    }
+    let memberships = store.list_memberships_for_person(realm_id, &user.id).await?;
+    if memberships.iter().any(|m| matches_org(&m.org_id)) {
+        return Ok(Some(org.alias));
+    }
+    for g in user_groups {
+        if g.org_id.as_deref().is_some_and(matches_org) {
+            return Ok(Some(org.alias));
+        }
+        if let Some(jc_orgs) = g.attributes.get("jc_org")
+            && jc_orgs.iter().any(|o| matches_org(o))
+        {
+            return Ok(Some(org.alias));
+        }
+    }
+    Ok(None)
+}
+
+async fn resolve_verified_active_org(
+    store: &Arc<dyn Store>,
+    realm_id: &str,
+    user: &UserRepresentation,
+    user_groups: &[GroupRepresentation],
+    granted_scope_str: &str,
+    sso_session_id: Option<&str>,
+) -> Result<Option<String>> {
+    if let Some(requested_org) = granted_scope_str
+        .split_whitespace()
+        .find_map(|s| s.strip_prefix("organization:"))
+    {
+        return user_is_member_of_org(store, realm_id, user, user_groups, requested_org).await;
+    }
+    if let Some(sid) = sso_session_id
+        && let Some(sso) = store.get_sso_session(realm_id, sid).await?
+        && let Some(ref sso_org) = sso.org_id
+    {
+        if let Some(verified) =
+            user_is_member_of_org(store, realm_id, user, user_groups, sso_org).await?
+        {
+            return Ok(Some(verified));
+        }
+        if user.org_id.as_deref() == Some(sso_org.as_str()) {
+            return Ok(Some(sso_org.clone()));
+        }
+    }
+    Ok(user.org_id.clone())
+}
+
 /// `POST /realms/{realm}/protocol/openid-connect/token` (W1, W12).
 async fn token_endpoint(
     State(state): State<OidcState>,
@@ -1333,16 +1435,46 @@ async fn token_endpoint(
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let client = authenticate_client(&state, &realm, &mount, &headers, &form).await?;
 
-    // Verify optional DPoP header (RFC 9449)
-    let dpop_jkt = if let Some(dpop_hdr) = headers.get("dpop").and_then(|v| v.to_str().ok()) {
-        let full_htu = format!(
-            "{}://{}{}{}",
-            mount.scheme,
-            mount.host,
-            mount.path_prefix,
-            orig_uri.path()
-        );
+    // Verify optional DPoP header (RFC 9449 §4.3 & §8)
+    let now_unix = Utc::now().timestamp();
+    let issued_as_nonce = crate::dpop::issue_dpop_nonce(&state.kek, &realm.id, "as", now_unix);
+    let dpop_headers: Vec<_> = headers.get_all("dpop").iter().collect();
+    if dpop_headers.len() > 1 {
+        return Err(KaisatsuError::invalid_dpop_proof(
+            "multiple DPoP headers are not allowed",
+        ));
+    }
+    let dpop_jkt = if let Some(dpop_hdr) = dpop_headers.first().and_then(|v| v.to_str().ok()) {
+        let full_htu = crate::dpop_guard::external_htu(&mount, orig_uri.path());
         let proof = verify_dpop_proof(dpop_hdr.trim(), "POST", &full_htu, None, None)?;
+        if crate::dpop::realm_requires_dpop_nonce(&realm) {
+            let valid_nonce = proof
+                .nonce
+                .as_deref()
+                .is_some_and(|n| crate::dpop::verify_dpop_nonce(&state.kek, &realm.id, "as", n, now_unix));
+            if !valid_nonce {
+                let err_body = serde_json::to_string(&OAuthErrorResponse {
+                    error: "use_dpop_nonce".into(),
+                    error_description: Some(
+                        "Authorization server requires nonce in DPoP proof".into(),
+                    ),
+                })
+                .unwrap_or_default();
+                return Ok((
+                    StatusCode::BAD_REQUEST,
+                    [
+                        (header::CONTENT_TYPE, "application/json".to_owned()),
+                        (header::CACHE_CONTROL, "no-store".to_owned()),
+                        (
+                            header::HeaderName::from_static("dpop-nonce"),
+                            issued_as_nonce,
+                        ),
+                    ],
+                    err_body,
+                )
+                    .into_response());
+            }
+        }
         state
             .store
             .mark_token_revoked(RevokedTokenRecord {
@@ -1442,7 +1574,7 @@ async fn token_endpoint(
         }
     };
 
-    Ok((
+    let mut resp = (
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, "application/json"),
@@ -1451,7 +1583,14 @@ async fn token_endpoint(
         ],
         serde_json::to_string(&body).unwrap_or_default(),
     )
-        .into_response())
+        .into_response();
+    if dpop_jkt.is_some()
+        && let Ok(val) = header::HeaderValue::from_str(&issued_as_nonce)
+    {
+        resp.headers_mut()
+            .insert(header::HeaderName::from_static("dpop-nonce"), val);
+    }
+    Ok(resp)
 }
 
 async fn handle_authorization_code_grant(
@@ -2344,11 +2483,24 @@ async fn introspect_endpoint(
         if !current || family.revoked || family.expires_at <= Utc::now() || !session_alive {
             return Ok(Json(json!({ "active": false })));
         }
+        let fam_client = state
+            .store
+            .get_client_by_client_id(&realm.id, &family.client_id)
+            .await?
+            .unwrap_or_default();
+        let (fam_scopes, _) =
+            resolve_scopes_for_client(&state.store, &realm, &fam_client, Some(&family.scope))
+                .await?;
+        let sub = kaisatsu_core::claims::compute_subject_for_client(
+            &fam_client,
+            &fam_scopes,
+            &family.user_id,
+        )?;
         let mut out = json!({
             "active": true,
             "typ": if family.offline { "Offline" } else { "Refresh" },
             "iss": mount.realm_issuer(&realm.realm),
-            "sub": family.user_id,
+            "sub": sub,
             "azp": family.client_id,
             "client_id": family.client_id,
             "scope": family.scope,
@@ -2464,51 +2616,6 @@ async fn revoke_endpoint(
 /// RFC 9449 §7: a token bound to a key (`cnf.jkt`) is only honoured under the `DPoP` scheme with
 /// a fresh, single-use proof for this request, made by that key and carrying the token hash
 /// (`ath`). A stolen bound token presented as a Bearer token gets nothing.
-async fn enforce_dpop_binding(
-    state: &OidcState,
-    realm_id: &str,
-    claims: &Value,
-    headers: &HeaderMap,
-    (method, htu): (&str, &str),
-    raw_token: &str,
-    dpop_scheme: bool,
-) -> Result<()> {
-    let Some(bound) = claims.pointer("/cnf/jkt").and_then(Value::as_str) else {
-        // RFC 9449 section 7.1: the DPoP scheme carries a DPoP-bound token only.
-        if dpop_scheme {
-            return Err(KaisatsuError::Unauthorized(
-                "the DPoP scheme needs a DPoP-bound token".into(),
-            ));
-        }
-        return Ok(());
-    };
-    if !dpop_scheme {
-        return Err(KaisatsuError::Unauthorized(
-            "a DPoP-bound token needs the DPoP scheme".into(),
-        ));
-    }
-    let proof_hdr = headers
-        .get("dpop")
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| KaisatsuError::Unauthorized("DPoP proof missing".into()))?;
-    let proof = verify_dpop_proof(proof_hdr.trim(), method, htu, Some(raw_token), None)
-        .map_err(|_| KaisatsuError::Unauthorized("invalid DPoP proof".into()))?;
-    if proof.jkt != bound {
-        return Err(KaisatsuError::Unauthorized(
-            "DPoP proof key does not match the token".into(),
-        ));
-    }
-    state
-        .store
-        .mark_token_revoked(RevokedTokenRecord {
-            jti_hash: sha256_hex(&format!("dpop:{}", proof.jti)),
-            realm_id: realm_id.to_owned(),
-            expires_at: Utc::now() + Duration::minutes(10),
-        })
-        .await
-        .map_err(|_| KaisatsuError::Unauthorized("replayed DPoP proof".into()))
-}
-
 /// UserInfo endpoint (`GET/POST /realms/{realm}/protocol/openid-connect/userinfo`, W1).
 async fn userinfo_endpoint(
     State(state): State<OidcState>,
@@ -2517,24 +2624,37 @@ async fn userinfo_endpoint(
     OriginalUri(orig_uri): OriginalUri,
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
-) -> Result<Json<Map<String, Value>>> {
+) -> Response {
+    match userinfo_inner(state, realm_name, method, orig_uri, headers, mount_ext).await {
+        Ok((info, fresh_nonce)) => {
+            let mut resp = Json(info).into_response();
+            if let Some(nonce) = fresh_nonce
+                && let Ok(val) = header::HeaderValue::from_str(&nonce)
+            {
+                resp.headers_mut()
+                    .insert(header::HeaderName::from_static("dpop-nonce"), val);
+            }
+            resp
+        }
+        Err(e) => crate::dpop_guard::into_dpop_aware_response(e),
+    }
+}
+
+async fn userinfo_inner(
+    state: OidcState,
+    realm_name: String,
+    method: axum::http::Method,
+    orig_uri: http::Uri,
+    headers: HeaderMap,
+    mount_ext: Option<Extension<Mount>>,
+) -> Result<(Map<String, Value>, Option<String>)> {
     let realm = state
         .store
         .get_realm(&realm_name)
         .await?
         .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
-    let authz = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_default();
-    let (dpop_scheme, raw_token) = match authz.strip_prefix("DPoP ") {
-        Some(t) => (true, t),
-        None => (false, authz.strip_prefix("Bearer ").unwrap_or_default()),
-    };
-    let raw_token = Some(raw_token.trim())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| KaisatsuError::Unauthorized("missing bearer token".into()))?;
+    let (dpop_scheme, raw_token) = crate::dpop_guard::parse_authz_header(&headers)?;
 
     let keys = state.store.list_signing_keys(&realm.id).await?;
     let issuer = mount.realm_issuer(&realm.realm);
@@ -2542,19 +2662,14 @@ async fn userinfo_endpoint(
     if claims.get("typ").and_then(Value::as_str) != Some("Bearer") {
         return Err(KaisatsuError::Unauthorized("not an access token".into()));
     }
-    let htu = format!(
-        "{}://{}{}{}",
-        mount.scheme,
-        mount.host,
-        mount.path_prefix,
-        orig_uri.path()
-    );
-    enforce_dpop_binding(
+    let htu = crate::dpop_guard::external_htu(&mount, orig_uri.path());
+    let fresh_nonce = crate::dpop_guard::verify_resource_dpop(
         &state,
         &realm.id,
         &claims,
         &headers,
-        (method.as_str(), &htu),
+        method.as_str(),
+        &htu,
         raw_token,
         dpop_scheme,
     )
@@ -2587,12 +2702,28 @@ async fn userinfo_endpoint(
         .and_then(Value::as_str)
         .unwrap_or("openid");
 
-    let user = state
-        .store
-        .get_user_by_id(&realm.id, None, sub)
-        .await?
-        .filter(|u| u.enabled)
-        .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+    let user = match state.store.get_user_by_id(&realm.id, None, sub).await? {
+        Some(u) if u.enabled => u,
+        _ => {
+            // K4: When the access token carries a pairwise `sub`, resolve the user from the SSO
+            // session (`sid`) and verify that the pairwise `sub` for `azp` matches.
+            let sid = claims
+                .get("sid")
+                .and_then(Value::as_str)
+                .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+            let sso = state
+                .store
+                .get_sso_session(&realm.id, sid)
+                .await?
+                .ok_or_else(|| KaisatsuError::Unauthorized("session not active".into()))?;
+            state
+                .store
+                .get_user_by_id(&realm.id, None, &sso.user_id)
+                .await?
+                .filter(|u| u.enabled)
+                .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?
+        }
+    };
     let client = state
         .store
         .get_client_by_client_id(&realm.id, azp)
@@ -2625,7 +2756,7 @@ async fn userinfo_endpoint(
         active_org: user.org_id.as_deref(),
     };
     let info = evaluate_mappers(&ctx, TokenKind::UserInfo)?;
-    Ok(Json(info))
+    Ok((info, fresh_nonce))
 }
 
 /// Sends back-channel logout tokens (`typ == "Logout"`, `events: {"http://schemas.openid.net/event/backchannel-logout": {}}`,
@@ -2655,10 +2786,18 @@ pub async fn dispatch_backchannel_logout(
         else {
             continue;
         };
+        let (active_scopes, _) =
+            resolve_scopes_for_client(&state.store, realm, &client, None).await?;
+        let logout_sub = kaisatsu_core::claims::compute_subject_for_client(
+            &client,
+            &active_scopes,
+            &session.user_id,
+        )
+        .unwrap_or_else(|_| session.user_id.clone());
         let key = select_signing_key(&keys, realm, &client, true)?;
         let logout_claims = json!({
             "iss": issuer,
-            "sub": session.user_id,
+            "sub": logout_sub,
             "aud": client.client_id,
             "iat": now,
             "exp": now + 120,
@@ -2678,15 +2817,261 @@ pub async fn dispatch_backchannel_logout(
     Ok(())
 }
 
-/// RP-Initiated Logout (`GET/POST /realms/{realm}/protocol/openid-connect/logout`, W1):
-/// Validates `id_token_hint` and `post_logout_redirect_uri`, ends the SSO session, dispatches
-/// back-channel logout, and clears the SSO cookie.
-async fn logout_endpoint(
+fn logout_confirm_labels(locale: &str) -> (&'static str, &'static str, &'static str) {
+    match locale {
+        "sk" => (
+            "Odhlásiť sa",
+            "Chcete sa odhlásiť? Odhlásite sa zo všetkých aplikácií tejto organizácie.",
+            "Odhlásiť sa",
+        ),
+        "cs" => (
+            "Odhlásit se",
+            "Chcete se odhlásit? Odhlásíte se ze všech aplikací této organizace.",
+            "Odhlásit se",
+        ),
+        "de" => (
+            "Abmelden",
+            "Möchten Sie sich abmelden? Sie werden von allen Anwendungen dieser Organisation abgemeldet.",
+            "Abmelden",
+        ),
+        "hu" => (
+            "Kijelentkezés",
+            "Szeretne kijelentkezni? A szervezet minden alkalmazásából kijelentkezik.",
+            "Kijelentkezés",
+        ),
+        _ => (
+            "Sign out",
+            "Do you want to sign out? You are signed out of every app of this organization.",
+            "Sign out",
+        ),
+    }
+}
+
+fn negotiate_logout_locale(
+    ui_locales: Option<&str>,
+    headers: &HeaderMap,
+    realm_default: &str,
+) -> &'static str {
+    let pick = |cand: &str| -> Option<&'static str> {
+        let primary = cand
+            .split(['-', '_', ';', ','])
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        ["en", "sk", "cs", "de", "hu"]
+            .into_iter()
+            .find(|&l| l == primary)
+    };
+    if let Some(ui) = ui_locales {
+        for part in ui.split_whitespace() {
+            if let Some(found) = pick(part) {
+                return found;
+            }
+        }
+    }
+    if let Some(al) = headers
+        .get(header::ACCEPT_LANGUAGE)
+        .and_then(|v| v.to_str().ok())
+    {
+        for part in al.split(',') {
+            if let Some(found) = pick(part) {
+                return found;
+            }
+        }
+    }
+    pick(realm_default).unwrap_or("en")
+}
+
+/// Mints a single-use, session-bound CSRF token for the logout confirmation form (OIDC
+/// RP-Initiated Logout 1.0 §2 & §6, K5).
+fn mint_logout_csrf_token(
+    kek: &Kek,
+    realm_id: &str,
+    session_id: &str,
+    client_id: Option<&str>,
+    post_logout_redirect_uri: Option<&str>,
+    state_param: Option<&str>,
+) -> Result<String> {
+    let nonce = random_handle_256();
+    let aad = format!(
+        "kaisatsu:logout-csrf:{realm_id}:{session_id}:{}:{}:{}",
+        client_id.unwrap_or_default(),
+        post_logout_redirect_uri.unwrap_or_default(),
+        state_param.unwrap_or_default()
+    );
+    let ct = kek.encrypt(aad.as_bytes(), nonce.as_bytes())?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(ct))
+}
+
+async fn verify_and_consume_logout_csrf_token(
+    state: &OidcState,
+    realm_id: &str,
+    session_id: &str,
+    client_id: Option<&str>,
+    post_logout_redirect_uri: Option<&str>,
+    state_param: Option<&str>,
+    token: &str,
+) -> Result<()> {
+    let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(token.trim())
+        .map_err(|_| KaisatsuError::Forbidden("invalid logout confirmation token".into()))?;
+    let aad = format!(
+        "kaisatsu:logout-csrf:{realm_id}:{session_id}:{}:{}:{}",
+        client_id.unwrap_or_default(),
+        post_logout_redirect_uri.unwrap_or_default(),
+        state_param.unwrap_or_default()
+    );
+    let nonce_bytes = state
+        .kek
+        .decrypt(aad.as_bytes(), &raw)
+        .map_err(|_| KaisatsuError::Forbidden("invalid logout confirmation token".into()))?;
+    let nonce = String::from_utf8(nonce_bytes)
+        .map_err(|_| KaisatsuError::Forbidden("invalid logout confirmation token".into()))?;
+    state
+        .store
+        .mark_token_revoked(RevokedTokenRecord {
+            jti_hash: sha256_hex(&format!("logout-csrf:{session_id}:{nonce}")),
+            realm_id: realm_id.to_owned(),
+            expires_at: Utc::now() + Duration::minutes(30),
+        })
+        .await
+        .map_err(|_| KaisatsuError::Forbidden("logout confirmation token already used".into()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_logout_confirm_page(
+    mount: &Mount,
+    realm: &RealmConfig,
+    branding: &BrandingBlock,
+    locale: &str,
+    csrf_token: &str,
+    client_id: Option<&str>,
+    post_logout_redirect_uri: Option<&str>,
+    state_param: Option<&str>,
+) -> Response {
+    let (title, header_text, button_label) = logout_confirm_labels(locale);
+    let nonce = random_handle_256()[..16].to_owned();
+    let action = format!(
+        "{}/realms/{}/protocol/openid-connect/logout",
+        mount.path_prefix, realm.realm
+    );
+    let css = branding.css_variables();
+    let org_display = if realm.display_name.is_empty() {
+        realm.realm.as_str()
+    } else {
+        realm.display_name.as_str()
+    };
+    let mut hidden = format!(
+        r#"<input type="hidden" name="logout_csrf_token" value="{}"/>"#,
+        html_escape(csrf_token)
+    );
+    if let Some(cid) = client_id {
+        hidden.push_str(&format!(
+            r#"<input type="hidden" name="client_id" value="{}"/>"#,
+            html_escape(cid)
+        ));
+    }
+    if let Some(uri) = post_logout_redirect_uri {
+        hidden.push_str(&format!(
+            r#"<input type="hidden" name="post_logout_redirect_uri" value="{}"/>"#,
+            html_escape(uri)
+        ));
+    }
+    if let Some(st) = state_param {
+        hidden.push_str(&format!(
+            r#"<input type="hidden" name="state" value="{}"/>"#,
+            html_escape(st)
+        ));
+    }
+    let html = format!(
+        "<!DOCTYPE html><html lang=\"{lang}\" dir=\"ltr\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <title>{title} · {org}</title>\
+         <style nonce=\"{nonce}\">{css}\
+         body {{ margin:0; background:var(--jc-background); color:var(--jc-text); font-family:var(--jc-font-body); }}\
+         .pf-v5-c-login {{ min-height:100vh; display:flex; align-items:center; justify-content:center; padding:1rem; }}\
+         .pf-v5-c-login__container {{ width:100%; max-width:25rem; }}\
+         .pf-v5-c-login__main {{ background:var(--jc-background); border:1px solid #cbd5e1; border-top:4px solid var(--jc-primary); border-radius:0.375rem; padding:1.5rem; }}\
+         .pf-v5-c-button {{ display:inline-block; width:100%; padding:0.625rem 1rem; font-size:1rem; font-weight:600; border:none; border-radius:0.25rem; background:var(--jc-primary); color:var(--jc-primary-fg); cursor:pointer; }}\
+         </style></head>\
+         <body id=\"keycloak-bg\" data-page-id=\"login-logout-confirm\">\
+         <div class=\"pf-v5-c-login\"><div class=\"pf-v5-c-login__container\">\
+         <main class=\"pf-v5-c-login__main\">\
+         <h1 id=\"kc-page-title\">{title}</h1>\
+         <p id=\"instruction1\">{header}</p>\
+         <form id=\"kc-logout-confirm-form\" action=\"{action}\" method=\"post\">\
+         {hidden}\
+         <button class=\"pf-v5-c-button\" id=\"kc-logout\" name=\"confirmLogout\" type=\"submit\">{btn}</button>\
+         </form></main></div></div></body></html>",
+        lang = html_escape(locale),
+        title = html_escape(title),
+        org = html_escape(org_display),
+        nonce = nonce,
+        css = css,
+        header = html_escape(header_text),
+        action = html_escape(&action),
+        hidden = hidden,
+        btn = html_escape(button_label),
+    );
+    let csp = format!(
+        "default-src 'self'; script-src 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"
+    );
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8".to_owned()),
+            (header::CONTENT_SECURITY_POLICY, csp),
+            (header::X_FRAME_OPTIONS, "DENY".to_owned()),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_owned()),
+            (
+                header::CACHE_CONTROL,
+                "no-store, no-cache, must-revalidate".to_owned(),
+            ),
+        ],
+        html,
+    )
+        .into_response()
+}
+
+async fn logout_get_endpoint(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
-    Query(query): Query<BTreeMap<String, String>>,
+    Query(params): Query<BTreeMap<String, String>>,
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
+) -> Result<Response> {
+    handle_logout_request(state, realm_name, params, headers, mount_ext, false).await
+}
+
+async fn logout_post_endpoint(
+    State(state): State<OidcState>,
+    Path(realm_name): Path<String>,
+    Query(mut query): Query<BTreeMap<String, String>>,
+    headers: HeaderMap,
+    mount_ext: Option<Extension<Mount>>,
+    Form(form): Form<BTreeMap<String, String>>,
+) -> Result<Response> {
+    for (k, v) in form {
+        query.insert(k, v);
+    }
+    handle_logout_request(state, realm_name, query, headers, mount_ext, true).await
+}
+
+/// RP-Initiated Logout (`GET/POST /realms/{realm}/protocol/openid-connect/logout`, OIDC
+/// RP-Initiated Logout 1.0 §2, §3, §4, §6, W1, K5):
+/// - With a valid `id_token_hint`: ends the session immediately, dispatches back-channel logout,
+///   and redirects to `post_logout_redirect_uri` (when registered) or shows the signed-out page.
+/// - Without `id_token_hint`: renders a localized logout confirmation page with CSP nonce and a
+///   single-use, session-bound CSRF token (`logout_csrf_token`); only a POST carrying that token
+///   ends the session.
+async fn handle_logout_request(
+    state: OidcState,
+    realm_name: String,
+    params: BTreeMap<String, String>,
+    headers: HeaderMap,
+    mount_ext: Option<Extension<Mount>>,
+    is_post: bool,
 ) -> Result<Response> {
     let realm = state
         .store
@@ -2695,19 +3080,32 @@ async fn logout_endpoint(
         .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
 
-    let id_token_hint = query.get("id_token_hint");
-    let post_logout = query.get("post_logout_redirect_uri");
-    let client_id_param = query.get("client_id");
+    let id_token_hint = params.get("id_token_hint").filter(|s| !s.is_empty());
+    let post_logout = params
+        .get("post_logout_redirect_uri")
+        .filter(|s| !s.is_empty());
+    let client_id_param = params.get("client_id").filter(|s| !s.is_empty());
+    let state_param = params.get("state").filter(|s| !s.is_empty());
 
     let mut session_to_end: Option<SsoSession> = None;
     let mut hint_client_id: Option<String> = None;
+    let mut has_valid_hint = false;
 
+    // OIDC RP-Initiated Logout §2: validate id_token_hint when present, and if both client_id
+    // and id_token_hint are present, verify that client_id matches the one used when issuing it.
     if let Some(hint) = id_token_hint {
         let keys = state.store.list_signing_keys(&realm.id).await?;
         let issuer = mount.realm_issuer(&realm.realm);
         let (_, claims): (_, Value) = verify_jwt(hint, &keys, Some(&issuer), None)
             .map_err(|_| KaisatsuError::BadRequest("invalid id_token_hint".into()))?;
         hint_client_id = claims.get("azp").and_then(Value::as_str).map(str::to_owned);
+        if let (Some(cid), Some(azp)) = (client_id_param, hint_client_id.as_ref())
+            && cid != azp
+        {
+            return Err(KaisatsuError::BadRequest(
+                "client_id does not match id_token_hint".into(),
+            ));
+        }
         if let Some(sid) = claims.get("sid").and_then(Value::as_str) {
             session_to_end = state.store.get_sso_session(&realm.id, sid).await?;
         } else if let Some(sub) = claims.get("sub").and_then(Value::as_str) {
@@ -2718,6 +3116,7 @@ async fn logout_endpoint(
                 .into_iter()
                 .next();
         }
+        has_valid_hint = true;
     }
 
     if session_to_end.is_none()
@@ -2729,7 +3128,8 @@ async fn logout_endpoint(
             .await?;
     }
 
-    // Validate `post_logout_redirect_uri` against the client's registered URIs (W1, W12)
+    // OIDC RP-Initiated Logout §3: Validate `post_logout_redirect_uri` against the client's
+    // registered URIs before acting or rendering confirmation (W1, W12).
     if let Some(target_uri) = post_logout {
         let cid = client_id_param.or(hint_client_id.as_ref()).ok_or_else(|| {
             KaisatsuError::BadRequest(
@@ -2744,6 +3144,64 @@ async fn logout_endpoint(
         if !validate_post_logout_redirect_uri(&client, target_uri) {
             return Err(KaisatsuError::BadRequest(
                 "Invalid post_logout_redirect_uri".into(),
+            ));
+        }
+    }
+
+    // K5 (OIDC RP-Initiated Logout §2 & §6): Without a valid `id_token_hint`, ask the user for
+    // explicit confirmation via a POST form carrying a single-use, session-bound CSRF token.
+    if !has_valid_hint {
+        let sid_binding = session_to_end
+            .as_ref()
+            .map(|s| s.id.as_str())
+            .unwrap_or("anonymous");
+        if is_post && let Some(csrf) = params.get("logout_csrf_token") {
+            verify_and_consume_logout_csrf_token(
+                &state,
+                &realm.id,
+                sid_binding,
+                client_id_param.map(String::as_str),
+                post_logout.map(String::as_str),
+                state_param.map(String::as_str),
+                csrf,
+            )
+            .await?;
+        } else if is_post {
+            return Err(KaisatsuError::Forbidden(
+                "missing logout confirmation token".into(),
+            ));
+        } else {
+            let csrf = mint_logout_csrf_token(
+                &state.kek,
+                &realm.id,
+                sid_binding,
+                client_id_param.map(String::as_str),
+                post_logout.map(String::as_str),
+                state_param.map(String::as_str),
+            )?;
+            let locale = negotiate_logout_locale(
+                params.get("ui_locales").map(String::as_str),
+                &headers,
+                &realm.default_locale,
+            );
+            let branding = state
+                .store
+                .get_branding(
+                    &realm.id,
+                    session_to_end.as_ref().and_then(|s| s.org_id.as_deref()),
+                )
+                .await?
+                .unwrap_or_default()
+                .sanitised();
+            return Ok(render_logout_confirm_page(
+                &mount,
+                &realm,
+                &branding,
+                locale,
+                &csrf,
+                client_id_param.map(String::as_str),
+                post_logout.map(String::as_str),
+                state_param.map(String::as_str),
             ));
         }
     }
@@ -2764,7 +3222,7 @@ async fn logout_endpoint(
     if let Some(target_uri) = post_logout {
         let mut url = url::Url::parse(target_uri)
             .map_err(|_| KaisatsuError::BadRequest("invalid post_logout_redirect_uri".into()))?;
-        if let Some(st) = query.get("state") {
+        if let Some(st) = state_param {
             url.query_pairs_mut().append_pair("state", st);
         }
         return Ok((

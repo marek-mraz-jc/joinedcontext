@@ -86,6 +86,21 @@ impl Kek {
         Self { bytes }
     }
 
+    /// Derives a deterministic 32-byte subkey for `purpose` using HMAC-SHA256 over the KEK,
+    /// without ever exposing the raw KEK bytes.
+    #[must_use]
+    pub fn derive_subkey(&self, purpose: &str) -> [u8; 32] {
+        use hmac::{Hmac, KeyInit, Mac};
+        use sha2::Sha256;
+        let mut mac =
+            Hmac::<Sha256>::new_from_slice(&self.bytes).expect("32-byte key is valid for HMAC");
+        mac.update(purpose.as_bytes());
+        let bytes = mac.finalize().into_bytes();
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&bytes);
+        out
+    }
+
     /// Encrypts `plaintext` with AES-256-GCM using `aad` (e.g. `realm_id:kid`), returning `nonce || ciphertext || tag`.
     pub fn encrypt(&self, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
         let unbound = UnboundKey::new(&AES_256_GCM, &self.bytes)

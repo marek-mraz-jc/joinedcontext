@@ -526,3 +526,136 @@ async fn application_and_group_subresources_are_checked_by_the_authorizer() {
         .await;
     assert_eq!(st, StatusCode::OK);
 }
+
+/// K3: Proved red against pre-K3 where `view-clients` was permitted to create, update, and delete
+/// client roles and client scopes on compat routes.
+#[tokio::test]
+async fn k3_view_clients_cannot_write_roles_or_client_scopes_on_compat_routes() {
+    let f = Fixture::new().await;
+    f.store
+        .upsert_client_scope(ClientScopeRepresentation {
+            id: "sc-existing".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            name: "existing-scope".into(),
+            protocol: "openid-connect".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    let view_clients_tok = f
+        .token(
+            "dev",
+            "portal-svc",
+            json!({
+                "jc_org": ["helsinki"],
+                "resource_access": { "realm-management": { "roles": ["view-clients"] } }
+            }),
+        )
+        .await;
+    let manage_clients_tok = f
+        .token(
+            "dev",
+            "client-mgr",
+            json!({
+                "jc_org": ["helsinki"],
+                "resource_access": { "realm-management": { "roles": ["manage-clients"] } }
+            }),
+        )
+        .await;
+
+    // 1. view-clients may GET roles and client-scopes, but POST/PUT/DELETE are denied (404).
+    assert_eq!(
+        f.send(
+            Method::GET,
+            "/admin/realms/dev/clients/uuid-hel-app/roles",
+            &view_clients_tok,
+            None
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        f.send(
+            Method::POST,
+            "/admin/realms/dev/clients/uuid-hel-app/roles",
+            &view_clients_tok,
+            Some(json!({ "name": "forged-role" }))
+        )
+        .await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        f.send(
+            Method::GET,
+            "/admin/realms/dev/client-scopes",
+            &view_clients_tok,
+            None
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        f.send(
+            Method::POST,
+            "/admin/realms/dev/client-scopes",
+            &view_clients_tok,
+            Some(json!({ "name": "forged-scope", "protocol": "openid-connect" }))
+        )
+        .await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        f.send(
+            Method::PUT,
+            "/admin/realms/dev/client-scopes/sc-existing",
+            &view_clients_tok,
+            Some(json!({ "name": "tampered-scope", "protocol": "openid-connect" }))
+        )
+        .await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        f.send(
+            Method::DELETE,
+            "/admin/realms/dev/client-scopes/sc-existing",
+            &view_clients_tok,
+            None
+        )
+        .await,
+        StatusCode::NOT_FOUND
+    );
+
+    // 2. manage-clients can create/delete roles and create/update/delete client-scopes in its org.
+    assert_eq!(
+        f.send(
+            Method::POST,
+            "/admin/realms/dev/clients/uuid-hel-app/roles",
+            &manage_clients_tok,
+            Some(json!({ "name": "valid-role" }))
+        )
+        .await,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        f.send(
+            Method::DELETE,
+            "/admin/realms/dev/clients/uuid-hel-app/roles/valid-role",
+            &manage_clients_tok,
+            None
+        )
+        .await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        f.send(
+            Method::PUT,
+            "/admin/realms/dev/client-scopes/sc-existing",
+            &manage_clients_tok,
+            Some(json!({ "name": "existing-scope", "description": "updated", "protocol": "openid-connect" }))
+        )
+        .await,
+        StatusCode::NO_CONTENT
+    );
+}

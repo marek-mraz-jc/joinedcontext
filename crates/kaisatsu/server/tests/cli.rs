@@ -601,3 +601,116 @@ async fn migrate_apply_and_serve_on_postgres_with_password_files() {
     su.close().await;
     env.drop_db().await;
 }
+
+/// K17: Tests `--import-dir` watch polling (`poll_import_dir_once`):
+/// - initial digest unchanged -> no re-apply,
+/// - modified realm file -> re-applies through `create_plan` + `apply_plan` (`NoDelete` mode,
+///   never pruning Portal-managed objects),
+/// - broken JSON file -> logs/returns error and keeps the last good realm state,
+/// - symlink escaping `import_dir` -> refused.
+#[tokio::test]
+async fn k17_import_dir_watch_applies_changes_keeps_last_good_state_on_error_and_refuses_symlinks() {
+    use kaisatsu_core::{ClientRepresentation, Store};
+    use kaisatsu_server::{compute_import_dir_digest, poll_import_dir_once};
+    use kaisatsu_store_memory::MemoryStore;
+    use std::sync::Arc;
+
+    let dir_guard = TempDir::new();
+    let dir = dir_guard.0.clone();
+    let outside_guard = TempDir::new();
+    let outside_dir = outside_guard.0.clone();
+    let realm_path = dir.join("01-watch.json");
+    std::fs::write(
+        &realm_path,
+        r#"{"id":"watch","realm":"watch","displayName":"Watch v1","enabled":true}"#,
+    )
+    .unwrap();
+
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let mut last_digest = String::new();
+
+    // 1. First poll applies v1 and records digest.
+    let changed = poll_import_dir_once(&store, &dir, &mut last_digest)
+        .await
+        .unwrap();
+    assert!(changed);
+    assert_eq!(last_digest, compute_import_dir_digest(&dir).unwrap());
+    assert_eq!(
+        store.get_realm("watch").await.unwrap().unwrap().display_name,
+        "Watch v1"
+    );
+
+    // Add a Portal-managed client (`managed-by: joinedcontext`) and an apply-managed client
+    // directly in the store to prove watch never implies `--prune`.
+    store
+        .upsert_client(ClientRepresentation {
+            id: "c-portal".into(),
+            realm_id: "watch".into(),
+            client_id: "portal-created".into(),
+            public_client: true,
+            managed_by: Some("joinedcontext".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    // 2. Second poll with no file change does nothing.
+    let changed2 = poll_import_dir_once(&store, &dir, &mut last_digest)
+        .await
+        .unwrap();
+    assert!(!changed2);
+
+    // 3. Modify the file to v2 -> poll applies v2 and preserves existing clients (no prune).
+    std::fs::write(
+        &realm_path,
+        r#"{"id":"watch","realm":"watch","displayName":"Watch v2","enabled":true}"#,
+    )
+    .unwrap();
+    let changed3 = poll_import_dir_once(&store, &dir, &mut last_digest)
+        .await
+        .unwrap();
+    assert!(changed3);
+    assert_eq!(
+        store.get_realm("watch").await.unwrap().unwrap().display_name,
+        "Watch v2"
+    );
+    assert!(
+        store
+            .get_client_by_client_id("watch", "portal-created")
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    // 4. Write a broken file -> poll returns error and keeps "Watch v2" as the last good state.
+    let good_digest = last_digest.clone();
+    std::fs::write(&realm_path, "{ broken json ").unwrap();
+    assert!(poll_import_dir_once(&store, &dir, &mut last_digest).await.is_err());
+    assert_eq!(last_digest, good_digest);
+    assert_eq!(
+        store.get_realm("watch").await.unwrap().unwrap().display_name,
+        "Watch v2"
+    );
+
+    // Restore valid v2 file, then test symlink escaping `dir`.
+    std::fs::write(
+        &realm_path,
+        r#"{"id":"watch","realm":"watch","displayName":"Watch v2","enabled":true}"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        let secret_target = outside_dir.join("outside.json");
+        std::fs::write(&secret_target, r#"{"realm":"escaped"}"#).unwrap();
+        let link_path = dir.join("99-escape.json");
+        std::os::unix::fs::symlink(&secret_target, &link_path).unwrap();
+        let err = poll_import_dir_once(&store, &dir, &mut last_digest)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("escapes import directory"),
+            "{err}"
+        );
+    }
+
+}

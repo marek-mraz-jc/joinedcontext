@@ -41,6 +41,9 @@ struct State {
     brandings: Vec<BrandingBlock>,
     events: Vec<AuditEvent>,
     admin_events: Vec<AdminEvent>,
+    webauthn_credentials: Vec<WebAuthnCredentialRecord>,
+    email_outbox: Vec<EmailOutboxRecord>,
+    idp_links: Vec<IdentityProviderLinkRecord>,
 }
 
 #[derive(Clone)]
@@ -306,6 +309,24 @@ impl MemoryStore {
                 .iter()
                 .filter(|b| b.realm_id == realm_id)
                 .map(odata_defs::branding_to_row)
+                .collect(),
+            "WebAuthnCredentials" => st
+                .webauthn_credentials
+                .iter()
+                .filter(|w| w.realm_id == realm_id)
+                .map(odata_defs::webauthn_credential_to_row)
+                .collect(),
+            "EmailOutbox" => st
+                .email_outbox
+                .iter()
+                .filter(|e| e.realm_id == realm_id)
+                .map(odata_defs::email_outbox_to_row)
+                .collect(),
+            "IdentityProviderLinks" => st
+                .idp_links
+                .iter()
+                .filter(|l| l.realm_id == realm_id)
+                .map(odata_defs::idp_link_to_row)
                 .collect(),
             _ => Vec::new(),
         }
@@ -580,6 +601,10 @@ impl Store for MemoryStore {
                 .retain(|gm| !(gm.realm_id == realm_id && gm.user_id == user_id));
             st.sso_sessions
                 .retain(|s| !(s.realm_id == realm_id && s.user_id == user_id));
+            st.webauthn_credentials
+                .retain(|w| !(w.realm_id == realm_id && w.user_id == user_id));
+            st.idp_links
+                .retain(|l| !(l.realm_id == realm_id && l.user_id == user_id));
             Ok(true)
         })
     }
@@ -2206,6 +2231,305 @@ impl Store for MemoryStore {
                 .filter(|ae| {
                     ae.realm_id == realm_id && Self::org_allowed(allowed_orgs, ae.org_id.as_deref())
                 })
+                .cloned()
+                .collect())
+        })
+    }
+
+    fn insert_webauthn_credential<'a>(
+        &'a self,
+        mut cred: WebAuthnCredentialRecord,
+    ) -> StoreFuture<'a, WebAuthnCredentialRecord> {
+        Box::pin(async move {
+            if cred.id.is_empty() {
+                cred.id = uuid::Uuid::now_v7().to_string();
+            }
+            let mut st = self.inner.write();
+            if st.webauthn_credentials.iter().any(|w| {
+                w.realm_id == cred.realm_id && w.credential_id == cred.credential_id
+            }) {
+                return Err(KaisatsuError::Conflict(
+                    "WebAuthn credential_id is already registered in this realm".into(),
+                ));
+            }
+            st.webauthn_credentials.push(cred.clone());
+            Ok(cred)
+        })
+    }
+
+    fn update_webauthn_credential<'a>(
+        &'a self,
+        cred: WebAuthnCredentialRecord,
+    ) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            let mut st = self.inner.write();
+            let item = st
+                .webauthn_credentials
+                .iter_mut()
+                .find(|w| w.realm_id == cred.realm_id && w.id == cred.id)
+                .ok_or_else(|| KaisatsuError::NotFound("WebAuthn credential not found".into()))?;
+            *item = cred;
+            Ok(())
+        })
+    }
+
+    fn get_webauthn_by_credential_id<'a>(
+        &'a self,
+        realm_id: &'a str,
+        credential_id: &'a str,
+    ) -> StoreFuture<'a, Option<WebAuthnCredentialRecord>> {
+        Box::pin(async move {
+            let st = self.inner.read();
+            Ok(st
+                .webauthn_credentials
+                .iter()
+                .find(|w| w.realm_id == realm_id && w.credential_id == credential_id)
+                .cloned())
+        })
+    }
+
+    fn list_webauthn_credentials<'a>(
+        &'a self,
+        realm_id: &'a str,
+        user_id: &'a str,
+    ) -> StoreFuture<'a, Vec<WebAuthnCredentialRecord>> {
+        Box::pin(async move {
+            let st = self.inner.read();
+            Ok(st
+                .webauthn_credentials
+                .iter()
+                .filter(|w| w.realm_id == realm_id && w.user_id == user_id)
+                .cloned()
+                .collect())
+        })
+    }
+
+    fn delete_webauthn_credential<'a>(
+        &'a self,
+        realm_id: &'a str,
+        allowed_orgs: Option<&'a [String]>,
+        id: &'a str,
+    ) -> StoreFuture<'a, bool> {
+        Box::pin(async move {
+            let mut st = self.inner.write();
+            let Some(pos) = st
+                .webauthn_credentials
+                .iter()
+                .position(|w| w.realm_id == realm_id && w.id == id)
+            else {
+                return Ok(false);
+            };
+            if !Self::org_allowed(allowed_orgs, st.webauthn_credentials[pos].org_id.as_deref()) {
+                return Ok(false);
+            }
+            st.webauthn_credentials.remove(pos);
+            Ok(true)
+        })
+    }
+
+    fn update_user_with_outbox<'a>(
+        &'a self,
+        mut user: UserRepresentation,
+        mut outbox: EmailOutboxRecord,
+    ) -> StoreFuture<'a, UserRepresentation> {
+        Box::pin(async move {
+            user.username = user.username.to_ascii_lowercase();
+            if let Some(em) = &mut user.email {
+                *em = em.to_ascii_lowercase();
+            }
+            if outbox.id.is_empty() {
+                outbox.id = uuid::Uuid::now_v7().to_string();
+            }
+            let mut st = self.inner.write();
+            let pos = st
+                .users
+                .iter()
+                .position(|u| u.realm_id == user.realm_id && u.id == user.id)
+                .ok_or_else(|| KaisatsuError::NotFound("user not found".into()))?;
+            let dup = st.users.iter().enumerate().any(|(idx, u)| {
+                idx != pos
+                    && u.realm_id == user.realm_id
+                    && (u.username.eq_ignore_ascii_case(&user.username)
+                        || (user.email.is_some()
+                            && u.email
+                                .as_deref()
+                                .is_some_and(|e| Some(e) == user.email.as_deref())))
+            });
+            if dup {
+                return Err(KaisatsuError::Conflict(
+                    "another user already holds that username or email".into(),
+                ));
+            }
+            st.users[pos] = user.clone();
+            st.email_outbox.push(outbox);
+            Ok(user)
+        })
+    }
+
+    fn enqueue_outbox<'a>(&'a self, mut outbox: EmailOutboxRecord) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            if outbox.id.is_empty() {
+                outbox.id = uuid::Uuid::now_v7().to_string();
+            }
+            let mut st = self.inner.write();
+            st.email_outbox.push(outbox);
+            Ok(())
+        })
+    }
+
+    fn claim_outbox_batch<'a>(
+        &'a self,
+        realm_id: &'a str,
+        limit: usize,
+    ) -> StoreFuture<'a, Vec<EmailOutboxRecord>> {
+        Box::pin(async move {
+            let cap = limit.clamp(1, 50);
+            let now = Utc::now();
+            let mut st = self.inner.write();
+            let mut claimed = Vec::new();
+            for row in st.email_outbox.iter_mut() {
+                if claimed.len() >= cap {
+                    break;
+                }
+                if row.realm_id == realm_id
+                    && row.status == "pending"
+                    && row.next_attempt_at <= now
+                {
+                    row.status = "sending".into();
+                    row.attempts = row.attempts.saturating_add(1);
+                    claimed.push(row.clone());
+                }
+            }
+            Ok(claimed)
+        })
+    }
+
+    fn complete_outbox_row<'a>(
+        &'a self,
+        realm_id: &'a str,
+        id: &'a str,
+        sent: bool,
+        error: Option<String>,
+        next_attempt_at: Option<chrono::DateTime<chrono::Utc>>,
+        max_attempts: u32,
+    ) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            let mut st = self.inner.write();
+            if let Some(row) = st
+                .email_outbox
+                .iter_mut()
+                .find(|r| r.realm_id == realm_id && r.id == id)
+            {
+                if sent {
+                    row.status = "sent".into();
+                    row.sent_at = Some(Utc::now());
+                    row.last_error = None;
+                } else {
+                    row.last_error = error;
+                    if row.attempts >= max_attempts {
+                        row.status = "failed".into();
+                    } else {
+                        row.status = "pending".into();
+                        row.next_attempt_at =
+                            next_attempt_at.unwrap_or_else(|| Utc::now() + Duration::seconds(5));
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
+
+    fn retry_outbox_row<'a>(
+        &'a self,
+        realm_id: &'a str,
+        allowed_orgs: Option<&'a [String]>,
+        id: &'a str,
+    ) -> StoreFuture<'a, Option<EmailOutboxRecord>> {
+        Box::pin(async move {
+            let mut st = self.inner.write();
+            let Some(row) = st
+                .email_outbox
+                .iter_mut()
+                .find(|r| r.realm_id == realm_id && r.id == id)
+            else {
+                return Ok(None);
+            };
+            if !Self::org_allowed(allowed_orgs, row.org_id.as_deref()) {
+                return Ok(None);
+            }
+            row.status = "pending".into();
+            row.attempts = 0;
+            row.last_error = None;
+            row.next_attempt_at = Utc::now();
+            Ok(Some(row.clone()))
+        })
+    }
+
+    fn list_outbox_rows<'a>(
+        &'a self,
+        realm_id: &'a str,
+        allowed_orgs: Option<&'a [String]>,
+    ) -> StoreFuture<'a, Vec<EmailOutboxRecord>> {
+        Box::pin(async move {
+            let st = self.inner.read();
+            Ok(st
+                .email_outbox
+                .iter()
+                .filter(|r| {
+                    r.realm_id == realm_id && Self::org_allowed(allowed_orgs, r.org_id.as_deref())
+                })
+                .cloned()
+                .collect())
+        })
+    }
+
+    fn upsert_idp_link<'a>(&'a self, mut link: IdentityProviderLinkRecord) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            if link.id.is_empty() {
+                link.id = uuid::Uuid::now_v7().to_string();
+            }
+            let mut st = self.inner.write();
+            st.idp_links.retain(|l| {
+                !(l.realm_id == link.realm_id
+                    && l.idp_alias == link.idp_alias
+                    && l.external_user_id == link.external_user_id)
+            });
+            st.idp_links.push(link);
+            Ok(())
+        })
+    }
+
+    fn get_idp_link_by_external<'a>(
+        &'a self,
+        realm_id: &'a str,
+        idp_alias: &'a str,
+        external_user_id: &'a str,
+    ) -> StoreFuture<'a, Option<IdentityProviderLinkRecord>> {
+        Box::pin(async move {
+            let st = self.inner.read();
+            Ok(st
+                .idp_links
+                .iter()
+                .find(|l| {
+                    l.realm_id == realm_id
+                        && l.idp_alias == idp_alias
+                        && l.external_user_id == external_user_id
+                })
+                .cloned())
+        })
+    }
+
+    fn list_idp_links_for_user<'a>(
+        &'a self,
+        realm_id: &'a str,
+        user_id: &'a str,
+    ) -> StoreFuture<'a, Vec<IdentityProviderLinkRecord>> {
+        Box::pin(async move {
+            let st = self.inner.read();
+            Ok(st
+                .idp_links
+                .iter()
+                .filter(|l| l.realm_id == realm_id && l.user_id == user_id)
                 .cloned()
                 .collect())
         })

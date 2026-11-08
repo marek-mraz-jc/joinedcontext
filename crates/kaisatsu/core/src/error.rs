@@ -250,6 +250,25 @@ impl IntoResponse for KaisatsuError {
                 )
                     .into_response()
             }
+            Self::Unauthorized(msg) if msg.starts_with("use_dpop_nonce:") => {
+                let nonce = msg.strip_prefix("use_dpop_nonce:").unwrap_or_default();
+                let problem = self.to_problem();
+                let json = serde_json::to_string(&problem).unwrap_or_default();
+                (
+                    StatusCode::UNAUTHORIZED,
+                    [
+                        (header::CONTENT_TYPE, "application/problem+json"),
+                        (header::CACHE_CONTROL, "no-store"),
+                        (
+                            header::WWW_AUTHENTICATE,
+                            r#"DPoP error="use_dpop_nonce", error_description="Resource server requires nonce in DPoP proof", algs="ES256 RS256 EdDSA""#,
+                        ),
+                        (header::HeaderName::from_static("dpop-nonce"), nonce),
+                    ],
+                    json,
+                )
+                    .into_response()
+            }
             _ => {
                 let problem = self.to_problem();
                 let code = StatusCode::from_u16(problem.status)

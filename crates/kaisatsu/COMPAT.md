@@ -15,7 +15,7 @@ query parameters, and test coverage in `crates/kaisatsu/admin/tests/compat_tests
 | 7 | `GET` | `/admin/realms/{realm}/users/{id}` | — | `200`, `404` | `POR src/people.rs:298`, `src/reconciler/groups.rs:475`, `src/reconciler/app_clients.rs:572` | `row_05_to_17_users_lifecycle_and_subresources` |
 | 8 | `PUT` | `/admin/realms/{realm}/users/{id}` | — | `204`, `404`, `409` | `POR src/people.rs:351` | `row_05_to_17_users_lifecycle_and_subresources` |
 | 9 | `DELETE` | `/admin/realms/{realm}/users/{id}` | — | `204`, `404` | `POR src/people.rs:515` | `row_05_to_17_users_lifecycle_and_subresources` |
-| 10 | `PUT` | `/admin/realms/{realm}/users/{id}/execute-actions-email` | `lifespan`, `client_id`, `redirect_uri` | `204` | `POR src/people.rs:373` | `row_05_to_17_users_lifecycle_and_subresources` |
+| 10 | `PUT` | `/admin/realms/{realm}/users/{id}/execute-actions-email` | `lifespan`, `client_id`, `redirect_uri` (validated against `client_id`'s registered `redirectUris`; atomically updates `requiredActions` and queues an `EmailOutboxRecord`, K9/K10) | `204`, `400`, `404`, `501` | `POR src/people.rs:373` | `row_05_to_17_users_lifecycle_and_subresources`, `k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_and_passkeys` |
 | 11 | `PUT` | `/admin/realms/{realm}/users/{id}/reset-password` | — | `204` | `POR src/people.rs:395` | `row_05_to_17_users_lifecycle_and_subresources` |
 | 12 | `POST` | `/admin/realms/{realm}/users/{id}/logout` | — | `204` | `POR src/people.rs:407` | `row_05_to_17_users_lifecycle_and_subresources` |
 | 13 | `GET` | `/admin/realms/{realm}/users/{id}/credentials` | — | `200` | `POR src/people.rs:415` | `row_05_to_17_users_lifecycle_and_subresources` |

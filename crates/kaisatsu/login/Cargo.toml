@@ -9,6 +9,7 @@ kaisatsu-core = { path = "../core" }
 kaisatsu-crypto = { path = "../crypto" }
 kaisatsu-oidc = { path = "../oidc" }
 jc-router = { path = "../../shared/jc-router" }
+futures-core = "0.3"
 askama = "0.12"
 axum = { version = "0.8", features = ["form", "json"] }
 base64 = "0.22"

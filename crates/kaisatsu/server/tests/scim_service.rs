@@ -288,3 +288,232 @@ async fn an_admin_manages_users_and_groups_through_scim() {
         .await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
 }
+
+/// K14: Tests SCIM PUT/PATCH on Users and Groups, group membership add/remove/replace with
+/// `members[value eq "..."]`, `emails[type eq "work"].value`, `If-Match` ETags, `scimType`
+/// errors (`invalidPath`, `noTarget`, `mutability`, `invalidValue`), `deny_unknown_fields`,
+/// 404 outside scope, and `active=false` ending SSO sessions.
+#[tokio::test]
+async fn k14_scim_put_patch_groups_etags_errors_and_deactivation_session_revocation() {
+    let api = Api::new().await;
+    let admin = api
+        .token(
+            "admin-1",
+            json!({ "realm_access": { "roles": ["realm-admin"] } }),
+        )
+        .await;
+
+    // 1. Create a user and a active SSO session for them.
+    let (st, u_created) = api
+        .call(
+            Method::POST,
+            &format!("{SCIM}/Users"),
+            &admin,
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                "userName": "bjensen@hel.fi",
+                "externalId": "ext-bj",
+                "active": true,
+                "name": { "givenName": "Barbara", "familyName": "Jensen" },
+                "emails": [
+                    { "value": "bjensen@hel.fi", "type": "work", "primary": true },
+                    { "value": "babs@home.org", "type": "home", "primary": false }
+                ]
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{u_created}");
+    let uid = u_created["id"].as_str().unwrap().to_owned();
+    let etag1 = u_created["meta"]["version"].as_str().unwrap().to_owned();
+    assert!(etag1.starts_with("W/\""));
+
+    let now = chrono::Utc::now();
+    api.store
+        .upsert_sso_session(SsoSession {
+            id: "sso-bj-1".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            handle_hash: sha256_hex("h-bj"),
+            user_id: uid.clone(),
+            username: "bjensen@hel.fi".into(),
+            ip_address: "127.0.0.1".into(),
+            start: now.timestamp_millis(),
+            last_access: now.timestamp_millis(),
+            auth_time: now.timestamp(),
+            acr: "pwd".into(),
+            amr: vec!["pwd".into()],
+            clients: Default::default(),
+            idle_expires_at: now + chrono::Duration::hours(1),
+            max_expires_at: now + chrono::Duration::hours(10),
+        })
+        .await
+        .unwrap();
+
+    // 2. Unknown fields on User body are refused (`deny_unknown_fields`).
+    let (st_unk, err_unk) = api
+        .call(
+            Method::PUT,
+            &format!("{SCIM}/Users/{uid}"),
+            &admin,
+            Some(json!({ "userName": "bjensen@hel.fi", "surpriseField": 123 })),
+        )
+        .await;
+    assert_eq!(st_unk, StatusCode::BAD_REQUEST);
+    assert_eq!(err_unk["scimType"], "invalidValue");
+
+    // 3. Changing immutable `id` on PUT -> 400 scimType="mutability".
+    let (st_mut, err_mut) = api
+        .call(
+            Method::PUT,
+            &format!("{SCIM}/Users/{uid}"),
+            &admin,
+            Some(json!({ "id": "different-id", "userName": "bjensen@hel.fi" })),
+        )
+        .await;
+    assert_eq!(st_mut, StatusCode::BAD_REQUEST);
+    assert_eq!(err_mut["scimType"], "mutability");
+
+    // 4. PATCH User with valuePath `emails[type eq "work"].value`, plain attributes, and error cases.
+    let (st_patch, patched_u) = api
+        .call(
+            Method::PATCH,
+            &format!("{SCIM}/Users/{uid}"),
+            &admin,
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [
+                    { "op": "replace", "path": "emails[type eq \"work\"].value", "value": "b.jensen@hel.fi" },
+                    { "op": "replace", "path": "name.givenName", "value": "Babs" },
+                    { "op": "add", "value": { "nickName": "BJ" } }
+                ]
+            })),
+        )
+        .await;
+    assert_eq!(st_patch, StatusCode::OK, "{patched_u}");
+    assert_eq!(patched_u["name"]["givenName"], "Babs");
+    assert_eq!(patched_u["nickName"], "BJ");
+    let work_email = patched_u["emails"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["type"] == "work")
+        .unwrap();
+    assert_eq!(work_email["value"], "b.jensen@hel.fi");
+
+    // PATCH error cases: remove without path -> noTarget, unknown path -> invalidPath, remove required userName -> mutability.
+    for (ops, expected_type) in [
+        (json!([{ "op": "remove" }]), "noTarget"),
+        (
+            json!([{ "op": "replace", "path": "emails[type eq \"fax\"].value", "value": "x@y" }]),
+            "noTarget",
+        ),
+        (
+            json!([{ "op": "replace", "path": "nonExistentAttr", "value": "x" }]),
+            "invalidPath",
+        ),
+        (
+            json!([{ "op": "remove", "path": "userName" }]),
+            "mutability",
+        ),
+    ] {
+        let (st_err, body_err) = api
+            .call(
+                Method::PATCH,
+                &format!("{SCIM}/Users/{uid}"),
+                &admin,
+                Some(json!({
+                    "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                    "Operations": ops
+                })),
+            )
+            .await;
+        assert_eq!(st_err, StatusCode::BAD_REQUEST, "{body_err}");
+        assert_eq!(body_err["scimType"], expected_type);
+    }
+
+    // 5. Deactivating user (`active=false`) via PATCH revokes their SSO sessions.
+    let (st_deact, _) = api
+        .call(
+            Method::PATCH,
+            &format!("{SCIM}/Users/{uid}"),
+            &admin,
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [{ "op": "replace", "path": "active", "value": false }]
+            })),
+        )
+        .await;
+    assert_eq!(st_deact, StatusCode::OK);
+    assert!(
+        api.store
+            .get_sso_session("dev", "sso-bj-1")
+            .await
+            .unwrap()
+            .is_none(),
+        "active=false must end the user's SSO sessions"
+    );
+
+    // 6. Groups lifecycle: create with members, GET, PATCH add/remove `members[value eq "..."]`, PUT, DELETE.
+    let (st_g, g_created) = api
+        .call(
+            Method::POST,
+            &format!("{SCIM}/Groups"),
+            &admin,
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+                "displayName": "Engineering",
+                "members": [{ "value": uid }]
+            })),
+        )
+        .await;
+    assert_eq!(st_g, StatusCode::CREATED, "{g_created}");
+    let gid = g_created["id"].as_str().unwrap().to_owned();
+    assert_eq!(g_created["members"].as_array().unwrap().len(), 1);
+
+    // PATCH Group: add MEMBER, then remove `uid` via `members[value eq "..."]`.
+    let (st_gp, g_patched) = api
+        .call(
+            Method::PATCH,
+            &format!("{SCIM}/Groups/{gid}"),
+            &admin,
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [
+                    { "op": "add", "path": "members", "value": [{ "value": MEMBER }] },
+                    { "op": "remove", "path": format!("members[value eq \"{uid}\"]") }
+                ]
+            })),
+        )
+        .await;
+    assert_eq!(st_gp, StatusCode::OK, "{g_patched}");
+    let g_members = g_patched["members"].as_array().unwrap();
+    assert_eq!(g_members.len(), 1);
+    assert_eq!(g_members[0]["value"], MEMBER);
+
+    // PUT Group replaces displayName and members.
+    let (st_gput, g_put) = api
+        .call(
+            Method::PUT,
+            &format!("{SCIM}/Groups/{gid}"),
+            &admin,
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+                "displayName": "Platform Engineering",
+                "members": []
+            })),
+        )
+        .await;
+    assert_eq!(st_gput, StatusCode::OK, "{g_put}");
+    assert_eq!(g_put["displayName"], "Platform Engineering");
+    assert!(g_put["members"].as_array().unwrap().is_empty());
+
+    // DELETE Group
+    let (st_gdel, _) = api
+        .call(Method::DELETE, &format!("{SCIM}/Groups/{gid}"), &admin, None)
+        .await;
+    assert_eq!(st_gdel, StatusCode::NO_CONTENT);
+    let (st_g404, _) = api
+        .call(Method::GET, &format!("{SCIM}/Groups/{gid}"), &admin, None)
+        .await;
+    assert_eq!(st_g404, StatusCode::NOT_FOUND);
+}

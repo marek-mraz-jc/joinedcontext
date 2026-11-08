@@ -522,6 +522,66 @@ pub fn kaisatsu_odata_service() -> Service {
                 ],
                 rules: set_rules("write:Organization"),
             },
+            EntityDef {
+                set: "WebAuthnCredentials".into(),
+                type_name: "WebAuthnCredential".into(),
+                description: "Registered WebAuthn passkeys and security keys (metadata only).".into(),
+                key: "id".into(),
+                fields: vec![
+                    req_field("id", FieldKind::String, "Credential record ID."),
+                    req_field("realm_id", FieldKind::String, "Realm ID."),
+                    opt_field("org_id", FieldKind::String, "Organization ID."),
+                    req_field("user_id", FieldKind::String, "Owner user ID."),
+                    req_field("credentialId", FieldKind::String, "Base64url credential ID."),
+                    req_field("coseAlg", FieldKind::Integer, "COSE algorithm identifier."),
+                    req_field("signCount", FieldKind::Integer, "Signature counter."),
+                    req_field("uvInitialized", FieldKind::Boolean, "User verification initialized."),
+                    req_field("backupEligible", FieldKind::Boolean, "Backup eligibility (BE)."),
+                    req_field("backupState", FieldKind::Boolean, "Backup state (BS)."),
+                    req_field("attestationType", FieldKind::String, "Attestation type."),
+                    req_field("rpId", FieldKind::String, "Relying Party ID."),
+                    opt_field("userLabel", FieldKind::String, "User label."),
+                    req_field("created_at", FieldKind::DateTime, "Created timestamp."),
+                ],
+                rules: set_rules("write:Person"),
+            },
+            EntityDef {
+                set: "EmailOutbox".into(),
+                type_name: "EmailOutboxItem".into(),
+                description: "Transactional e-mail outbox rows (without secret payloads).".into(),
+                key: "id".into(),
+                fields: vec![
+                    req_field("id", FieldKind::String, "Outbox item ID."),
+                    req_field("realm_id", FieldKind::String, "Realm ID."),
+                    opt_field("org_id", FieldKind::String, "Organization ID."),
+                    req_field("user_id", FieldKind::String, "Target user ID."),
+                    req_field("toAddress", FieldKind::String, "Recipient e-mail address."),
+                    req_field("locale", FieldKind::String, "Message locale."),
+                    req_field("templateKind", FieldKind::String, "Template kind."),
+                    req_field("status", FieldKind::String, "Delivery status."),
+                    req_field("attempts", FieldKind::Integer, "Delivery attempt count."),
+                    opt_field("lastError", FieldKind::String, "Last delivery error."),
+                    req_field("created_at", FieldKind::DateTime, "Created timestamp."),
+                ],
+                rules: set_rules("write:Person"),
+            },
+            EntityDef {
+                set: "IdentityProviderLinks".into(),
+                type_name: "IdentityProviderLink".into(),
+                description: "Upstream identity provider links for people.".into(),
+                key: "id".into(),
+                fields: vec![
+                    req_field("id", FieldKind::String, "Link ID."),
+                    req_field("realm_id", FieldKind::String, "Realm ID."),
+                    opt_field("org_id", FieldKind::String, "Organization ID."),
+                    req_field("user_id", FieldKind::String, "Local user ID."),
+                    req_field("idpAlias", FieldKind::String, "Identity provider alias."),
+                    req_field("externalUserId", FieldKind::String, "Upstream subject ID."),
+                    opt_field("externalUsername", FieldKind::String, "Upstream username."),
+                    req_field("created_at", FieldKind::DateTime, "Created timestamp."),
+                ],
+                rules: set_rules("write:Person"),
+            },
         ],
     }
 }
@@ -539,7 +599,13 @@ pub fn scope_for_context(ctx: &RequestCtx, authorizer: &dyn Authorizer, set_name
             realm_id: ctx.realm_id.clone(),
             org_id: sample_org.clone().unwrap_or_default(),
         },
-        "People" | "Memberships" | "Credentials" | "Consents" => ObjectTarget::Person {
+        "People"
+        | "Memberships"
+        | "Credentials"
+        | "Consents"
+        | "WebAuthnCredentials"
+        | "EmailOutbox"
+        | "IdentityProviderLinks" => ObjectTarget::Person {
             realm_id: ctx.realm_id.clone(),
             org_id: sample_org.clone(),
             person_id: "*".into(),
@@ -619,6 +685,9 @@ pub fn scope_for_context(ctx: &RequestCtx, authorizer: &dyn Authorizer, set_name
         "Events",
         "AdminEvents",
         "BrandingBlocks",
+        "WebAuthnCredentials",
+        "EmailOutbox",
+        "IdentityProviderLinks",
     ];
     if org_scoped_sets.contains(&set_name)
         && let Some(allowed) = ctx.allowed_orgs()
@@ -919,5 +988,53 @@ pub fn branding_to_row(b: &BrandingBlock) -> Value {
         "shortName": b.short_name,
         "organisation": b.organisation,
         "primaryForeground": b.primary_foreground,
+    })
+}
+
+pub fn webauthn_credential_to_row(w: &WebAuthnCredentialRecord) -> Value {
+    json!({
+        "id": w.id,
+        "realm_id": w.realm_id,
+        "org_id": w.org_id,
+        "user_id": w.user_id,
+        "credentialId": w.credential_id,
+        "coseAlg": w.cose_alg,
+        "signCount": w.sign_count,
+        "uvInitialized": w.uv_initialized,
+        "backupEligible": w.backup_eligible,
+        "backupState": w.backup_state,
+        "attestationType": w.attestation_type,
+        "rpId": w.rp_id,
+        "userLabel": w.user_label,
+        "created_at": w.created_at.to_rfc3339(),
+    })
+}
+
+pub fn email_outbox_to_row(e: &EmailOutboxRecord) -> Value {
+    json!({
+        "id": e.id,
+        "realm_id": e.realm_id,
+        "org_id": e.org_id,
+        "user_id": e.user_id,
+        "toAddress": e.to_address,
+        "locale": e.locale,
+        "templateKind": e.template_kind,
+        "status": e.status,
+        "attempts": e.attempts,
+        "lastError": e.last_error,
+        "created_at": e.created_at.to_rfc3339(),
+    })
+}
+
+pub fn idp_link_to_row(l: &IdentityProviderLinkRecord) -> Value {
+    json!({
+        "id": l.id,
+        "realm_id": l.realm_id,
+        "org_id": l.org_id,
+        "user_id": l.user_id,
+        "idpAlias": l.idp_alias,
+        "externalUserId": l.external_user_id,
+        "externalUsername": l.external_username,
+        "created_at": l.created_at.to_rfc3339(),
     })
 }

@@ -10,11 +10,13 @@
 //!   GHSA-2pm5-6m23-h692 regression protection).
 
 pub mod compat;
+pub mod domain;
 pub mod odata;
 pub mod operations;
 pub mod scim;
 
 pub use compat::{AdminState, admin_router, extract_admin_ctx};
+pub use domain::{DnsResolver, HickoryDnsResolver};
 pub use odata::odata_router;
 pub use operations::execute;
 pub use scim::{ScimExpr, parse_scim_filter, scim_router};

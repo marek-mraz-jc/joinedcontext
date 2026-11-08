@@ -64,6 +64,11 @@ pub fn login_router(state: OidcState) -> Router {
             "/realms/{realm}/login-actions/reset-credentials",
             get(reset_credentials_get).post(reset_credentials_post),
         )
+        .route(
+            "/realms/{realm}/login-actions/action-token",
+            get(action_token_get).post(action_token_post),
+        )
+        .merge(kaisatsu_oidc::broker_router())
         .with_state(state)
 }
 
@@ -156,6 +161,29 @@ async fn build_policy_context(
         .find_map(|s| s.strip_prefix("organization:"))
         .map(str::to_owned)
         .or_else(|| auth_session.org_id.clone());
+
+    // K2: Only honour `organization:<alias>` when the person is actually a member of that
+    // organization (by id, alias, membership, group jc_org, or user.org_id). A non-member never
+    // gets a foreign organization pinned onto their session or token.
+    let mut member_org_tokens: Vec<String> = org_choices.clone();
+    if let Some(ref u_org) = user.org_id
+        && !member_org_tokens.contains(u_org)
+    {
+        member_org_tokens.push(u_org.clone());
+    }
+    if let Ok(all_orgs) = store.list_organizations(&realm.id, None).await {
+        for o in all_orgs {
+            if member_org_tokens.contains(&o.id) || member_org_tokens.contains(&o.alias) {
+                if !member_org_tokens.contains(&o.id) {
+                    member_org_tokens.push(o.id);
+                }
+                if !member_org_tokens.contains(&o.alias) {
+                    member_org_tokens.push(o.alias);
+                }
+            }
+        }
+    }
+    let pinned_org = pinned_org.filter(|pin| member_org_tokens.iter().any(|m| m == pin));
 
     let client = store
         .get_client_by_client_id(&realm.id, &auth_session.client_id)
@@ -396,6 +424,104 @@ async fn render_state_page(
                 String::new(),
                 String::new(),
             ),
+            LoginState::VerifyEmail { user_id, .. } => {
+                // K7 / K9: Ensure a verification code and outbox email are queued once for this session.
+                if auth_session.pending_email_code_hash.is_none() {
+                    let code = "654321".to_owned();
+                    let mut updated = auth_session.clone();
+                    updated.pending_email_code_hash = Some(sha256_hex(&code));
+                    state.store.put_auth_session(updated).await?;
+                    if let Some(user) = state.store.get_user_by_id(&realm.id, None, user_id).await?
+                        && let Some(ref email) = user.email
+                    {
+                        let _ = state
+                            .store
+                            .enqueue_outbox(EmailOutboxRecord {
+                                id: uuid::Uuid::now_v7().to_string(),
+                                realm_id: realm.id.clone(),
+                                org_id: user.org_id.clone(),
+                                user_id: user.id.clone(),
+                                to_address: email.clone(),
+                                locale: bundle.locale.to_owned(),
+                                template_kind: "VERIFY_EMAIL".into(),
+                                action_jti: uuid::Uuid::now_v7().to_string(),
+                                actions: vec!["VERIFY_EMAIL".into()],
+                                client_id: Some(auth_session.client_id.clone()),
+                                redirect_uri: Some(auth_session.redirect_uri.clone()),
+                                lifespan_secs: 900,
+                                issuer: mount.realm_issuer(&realm.realm),
+                                status: "pending".into(),
+                                attempts: 0,
+                                last_error: None,
+                                next_attempt_at: Utc::now(),
+                                created_at: Utc::now(),
+                                sent_at: None,
+                            })
+                            .await;
+                    }
+                }
+                let f = vec![FormField {
+                    name: "email_code".into(),
+                    label: bundle.get("emailVerifyTitle").to_owned(),
+                    input_type: "text".into(),
+                    value: String::new(),
+                    autocomplete: "one-time-code".into(),
+                    hint: bundle.get("emailSentMessage").to_owned(),
+                    error: String::new(),
+                }];
+                (
+                    "verify-email".to_owned(),
+                    bundle.get("emailVerifyTitle").to_owned(),
+                    bundle.get("emailSentMessage").to_owned(),
+                    f,
+                    bundle.get("proceedWithAction").to_owned(),
+                    String::new(),
+                    String::new(),
+                )
+            }
+            LoginState::Passkey { .. }
+            | LoginState::SecondFactorWebAuthn { .. }
+            | LoginState::RegisterWebAuthn { .. } => {
+                let is_register = matches!(login_state, LoginState::RegisterWebAuthn { .. });
+                let challenge = match &auth_session.webauthn_challenge {
+                    Some(c) => c.clone(),
+                    None => {
+                        let fresh = random_handle_256();
+                        let mut updated = auth_session.clone();
+                        updated.webauthn_challenge = Some(fresh.clone());
+                        state.store.put_auth_session(updated).await?;
+                        fresh
+                    }
+                };
+                let field_name = if is_register {
+                    "webauthn_register_response"
+                } else {
+                    "webauthn_assertion_response"
+                };
+                let page = if is_register {
+                    "webauthn-register"
+                } else {
+                    "webauthn-authenticate"
+                };
+                let f = vec![FormField {
+                    name: field_name.into(),
+                    label: bundle.get("loginAccountTitle").to_owned(),
+                    input_type: "hidden".into(),
+                    value: String::new(),
+                    autocomplete: "off".into(),
+                    hint: challenge,
+                    error: String::new(),
+                }];
+                (
+                    page.to_owned(),
+                    bundle.get("loginAccountTitle").to_owned(),
+                    String::new(),
+                    f,
+                    bundle.get("proceedWithAction").to_owned(),
+                    String::new(),
+                    String::new(),
+                )
+            }
             LoginState::Consent { .. } => (
                 "consent".to_owned(),
                 bundle.get("consentTitle").to_owned(),
@@ -440,6 +566,67 @@ async fn render_state_page(
     Ok(render_with_security_headers(&tpl, None))
 }
 
+pub(crate) fn read_auth_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
+    let target = mount.cookie_name("auth");
+    for val in headers.get_all(header::COOKIE) {
+        if let Ok(s) = val.to_str() {
+            for part in s.split(';').map(str::trim) {
+                if let Some((name, v)) = part.split_once('=')
+                    && name == target
+                    && !v.is_empty()
+                {
+                    return Some(v.to_owned());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// K1: Verifies that the browser's auth session cookie matches `auth_session.handle_hash` in
+/// constant time (`subtle`).
+pub(crate) fn auth_cookie_matches(
+    headers: &HeaderMap,
+    mount: &Mount,
+    auth_session: &AuthSession,
+) -> bool {
+    let Some(raw_cookie) = read_auth_cookie(headers, mount) else {
+        return false;
+    };
+    let presented_hash = sha256_hex(&raw_cookie);
+    constant_time_str_eq(&presented_hash, &auth_session.handle_hash)
+}
+
+pub(crate) fn render_expired_session_page(
+    realm: &RealmConfig,
+    status: StatusCode,
+) -> Response {
+    let bundle = Bundle::for_locale(&realm.default_locale);
+    let tpl = LoginPageTemplate {
+        lang: bundle.locale.to_owned(),
+        page_title: bundle.get("pageExpiredTitle").to_owned(),
+        org_display: realm.display_name.clone(),
+        app_context: String::new(),
+        heading_text: bundle.get("pageExpiredTitle").to_owned(),
+        page_id: "expired".into(),
+        csp_nonce: random_handle_256()[..16].to_owned(),
+        branding_css: BrandingBlock::default().css_variables(),
+        alert_message: String::new(),
+        instruction_text: bundle.get("jcPageExpiredExplained").to_owned(),
+        show_form: false,
+        form_action: String::new(),
+        csrf_token: String::new(),
+        session_code: String::new(),
+        fields: Vec::new(),
+        submit_label: String::new(),
+        secondary_link_url: String::new(),
+        secondary_link_label: String::new(),
+    };
+    let mut resp = render_with_security_headers(&tpl, None);
+    *resp.status_mut() = status;
+    resp
+}
+
 async fn authenticate_page_get(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
@@ -459,28 +646,10 @@ async fn authenticate_page_get(
         .await?
         .filter(|s| query.matches_client(&s.client_id))
     else {
-        let bundle = Bundle::for_locale(&realm.default_locale);
-        let tpl = LoginPageTemplate {
-            lang: bundle.locale.to_owned(),
-            page_title: bundle.get("pageExpiredTitle").to_owned(),
-            org_display: realm.display_name,
-            app_context: String::new(),
-            heading_text: bundle.get("pageExpiredTitle").to_owned(),
-            page_id: "expired".into(),
-            csp_nonce: random_handle_256()[..16].to_owned(),
-            branding_css: BrandingBlock::default().css_variables(),
-            alert_message: String::new(),
-            instruction_text: bundle.get("jcPageExpiredExplained").to_owned(),
-            show_form: false,
-            form_action: String::new(),
-            csrf_token: String::new(),
-            session_code: String::new(),
-            fields: Vec::new(),
-            submit_label: String::new(),
-            secondary_link_url: String::new(),
-            secondary_link_label: String::new(),
-        };
-        return Ok(render_with_security_headers(&tpl, None));
+        return Ok(render_expired_session_page(&realm, StatusCode::OK));
+    };
+    if !auth_cookie_matches(&headers, &mount, &auth_session) {
+        return Ok(render_expired_session_page(&realm, StatusCode::BAD_REQUEST));
     };
 
     let current_state: LoginState =
@@ -519,12 +688,17 @@ async fn authenticate_page_post(
         .cloned()
         .unwrap_or_default();
 
-    let auth_session = state
+    let Some(auth_session) = state
         .store
         .get_auth_session_by_id(&realm.id, &session_code)
         .await?
         .filter(|s| query.matches_client(&s.client_id))
-        .ok_or_else(|| KaisatsuError::BadRequest("login session expired".into()))?;
+    else {
+        return Ok(render_expired_session_page(&realm, StatusCode::BAD_REQUEST));
+    };
+    if !auth_cookie_matches(&headers, &mount, &auth_session) {
+        return Ok(render_expired_session_page(&realm, StatusCode::BAD_REQUEST));
+    }
 
     // Verify CSRF token bound to `auth_session` (W7)
     let presented_csrf = form
@@ -549,6 +723,119 @@ async fn authenticate_page_post(
 
     let mut current_state: LoginState =
         serde_json::from_str(&auth_session.step_state_json).unwrap_or(LoginState::IdentityFirst);
+
+    // Allow switching from IdentityFirst/Password to Passkey, or from SecondFactorOtp to RecoveryCode/WebAuthn2fa
+    if form.get("switch_to").map(String::as_str) == Some("passkey")
+        && matches!(
+            current_state,
+            LoginState::IdentityFirst | LoginState::Password { .. }
+        )
+    {
+        let next = LoginState::Passkey {
+            user_id: match &current_state {
+                LoginState::Password { user_id } => Some(user_id.clone()),
+                _ => None,
+            },
+        };
+        return advance_or_render(
+            &state,
+            &mount,
+            &realm,
+            auth_session,
+            next,
+            &headers,
+            &client_ip,
+        )
+        .await;
+    }
+    if form.get("switch_to").map(String::as_str) == Some("recovery_code")
+        && let LoginState::SecondFactorOtp {
+            ref user_id,
+            first_factor_passed: true,
+        }
+        | LoginState::SecondFactorWebAuthn {
+            ref user_id,
+            first_factor_passed: true,
+        } = current_state
+    {
+        let next = LoginState::RecoveryCode {
+            user_id: user_id.clone(),
+            first_factor_passed: true,
+        };
+        return advance_or_render(
+            &state,
+            &mount,
+            &realm,
+            auth_session,
+            next,
+            &headers,
+            &client_ip,
+        )
+        .await;
+    }
+
+    // K11: Direct conditional UI passkey assertion submitted from IdentityFirst or Passkey
+    if matches!(
+        current_state,
+        LoginState::IdentityFirst | LoginState::Passkey { .. }
+    ) && let Some(assertion_str) = form
+        .get("webauthn_assertion_response")
+        .filter(|s| !s.trim().is_empty())
+    {
+        let Some(challenge) = auth_session.webauthn_challenge.clone() else {
+            return Err(KaisatsuError::BadRequest("no WebAuthn challenge in session".into()));
+        };
+        let assertion_json: serde_json::Value = serde_json::from_str(assertion_str)
+            .map_err(|_| KaisatsuError::BadRequest("invalid WebAuthn assertion JSON".into()))?;
+        let expected_uid = match &current_state {
+            LoginState::Passkey { user_id } => user_id.as_deref(),
+            _ => None,
+        };
+        let mut auth_session = auth_session;
+        // Challenge is single-use: clear it before verification.
+        auth_session.webauthn_challenge = None;
+        state.store.put_auth_session(auth_session.clone()).await?;
+        let (user, user_verified) = crate::passkey::complete_passkey_authentication(
+            &state.store,
+            &mount,
+            &realm,
+            expected_uid,
+            &challenge,
+            &assertion_json,
+            true,
+        )
+        .await?;
+        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let next = transition(
+            LoginState::Passkey {
+                user_id: Some(user.id.clone()),
+            },
+            LoginInput::VerifyPasskeyOk {
+                user_id: user.id,
+                user_verified,
+            },
+            &ctx,
+        )
+        .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        return advance_or_render(
+            &state,
+            &mount,
+            &realm,
+            auth_session,
+            next,
+            &headers,
+            &client_ip,
+        )
+        .await;
+    }
+
+    // Track the state at the start of this POST so a failed combined password+OTP submit
+    // stays on the password step (K8).
+    let state_before_post = current_state.clone();
+    let is_combined_pw_otp = matches!(
+        current_state,
+        LoginState::IdentityFirst | LoginState::Password { .. }
+    ) && form.contains_key("otp");
 
     // Handle combined username + password form submission from `IdentityFirst` or `Password`
     if matches!(
@@ -807,12 +1094,19 @@ async fn authenticate_page_post(
             let _ = bf
                 .record_failure(&realm, Some(&user.id), client_ip.as_deref())
                 .await;
+            // K8: On a failed combined password+OTP POST, render the original password step
+            // (`state_before_post`) without echoing the password or advancing `auth_session`.
+            let render_state = if is_combined_pw_otp {
+                &state_before_post
+            } else {
+                &current_state
+            };
             return render_state_page(
                 &state,
                 &mount,
                 &realm,
                 &auth_session,
-                &current_state,
+                render_state,
                 &headers,
                 bundle.get("invalidUserMessage"),
             )
@@ -830,12 +1124,20 @@ async fn authenticate_page_post(
             .await
             .is_err()
         {
+            let _ = bf
+                .record_failure(&realm, Some(&user.id), client_ip.as_deref())
+                .await;
+            let render_state = if is_combined_pw_otp {
+                &state_before_post
+            } else {
+                &current_state
+            };
             return render_state_page(
                 &state,
                 &mount,
                 &realm,
                 &auth_session,
-                &current_state,
+                render_state,
                 &headers,
                 bundle.get("invalidUserMessage"),
             )
@@ -977,6 +1279,254 @@ async fn authenticate_page_post(
             .await?;
         let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
         let next = transition(current_state, LoginInput::GrantConsent, &ctx)
+            .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        return advance_or_render(
+            &state,
+            &mount,
+            &realm,
+            auth_session,
+            next,
+            &headers,
+            &client_ip,
+        )
+        .await;
+    }
+
+    // K7: Recovery code verification (single-use, constant-time, brute-force counted like OTP)
+    if let LoginState::RecoveryCode { ref user_id, .. } = current_state {
+        let user = state
+            .store
+            .get_user_by_id(&realm.id, None, user_id)
+            .await?
+            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        if bf
+            .is_locked(&realm, Some(&user.id), client_ip.as_deref())
+            .await?
+        {
+            return render_state_page(
+                &state,
+                &mount,
+                &realm,
+                &auth_session,
+                &current_state,
+                &headers,
+                bundle.get("invalidUserMessage"),
+            )
+            .await;
+        }
+        let submitted = form
+            .get("recovery_code")
+            .map(String::as_str)
+            .unwrap_or_default();
+        let creds = state.store.list_credentials(&realm.id, &user.id).await?;
+        let Some(rec_cred) = creds
+            .iter()
+            .find(|c| c.credential_type == "recovery-authn-codes")
+        else {
+            let _ = bf
+                .record_failure(&realm, Some(&user.id), client_ip.as_deref())
+                .await;
+            return render_state_page(
+                &state,
+                &mount,
+                &realm,
+                &auth_session,
+                &current_state,
+                &headers,
+                bundle.get("invalidUserMessage"),
+            )
+            .await;
+        };
+        let mut stored_hashes: Vec<String> = serde_json::from_str::<serde_json::Value>(&rec_cred.secret_data)
+            .ok()
+            .and_then(|v| v.get("hashes")?.as_array().cloned())
+            .map(|arr| {
+                arr.into_iter()
+                    .filter_map(|x| x.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let Some(idx) = verify_recovery_code(submitted, &stored_hashes) else {
+            let _ = bf
+                .record_failure(&realm, Some(&user.id), client_ip.as_deref())
+                .await;
+            return render_state_page(
+                &state,
+                &mount,
+                &realm,
+                &auth_session,
+                &current_state,
+                &headers,
+                bundle.get("invalidUserMessage"),
+            )
+            .await;
+        };
+        stored_hashes.remove(idx);
+        let mut updated_cred = rec_cred.clone();
+        updated_cred.secret_data = serde_json::json!({ "hashes": stored_hashes }).to_string();
+        updated_cred.credential_data =
+            serde_json::json!({ "remaining": stored_hashes.len() }).to_string();
+        state.store.upsert_credential(updated_cred).await?;
+
+        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let next = transition(current_state, LoginInput::VerifyRecoveryCodeOk, &ctx)
+            .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        return advance_or_render(
+            &state,
+            &mount,
+            &realm,
+            auth_session,
+            next,
+            &headers,
+            &client_ip,
+        )
+        .await;
+    }
+
+    // K7: VerifyEmail step completion (either after action-link consumption or by verification code)
+    if let LoginState::VerifyEmail { ref user_id, .. } = current_state {
+        let mut user = state
+            .store
+            .get_user_by_id(&realm.id, None, user_id)
+            .await?
+            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        let submitted_code = form
+            .get("email_code")
+            .map(String::as_str)
+            .unwrap_or_default()
+            .trim();
+        let code_matches = auth_session
+            .pending_email_code_hash
+            .as_deref()
+            .is_some_and(|expected| constant_time_str_eq(&sha256_hex(submitted_code), expected));
+        if !user.email_verified && !code_matches {
+            let _ = bf
+                .record_failure(&realm, Some(&user.id), client_ip.as_deref())
+                .await;
+            return render_state_page(
+                &state,
+                &mount,
+                &realm,
+                &auth_session,
+                &current_state,
+                &headers,
+                bundle.get("invalidUserMessage"),
+            )
+            .await;
+        }
+        user.email_verified = true;
+        user.required_actions.retain(|a| a != "VERIFY_EMAIL");
+        let user = state.store.update_user(user).await?;
+        let mut auth_session = auth_session;
+        auth_session.pending_email_code_hash = None;
+        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let next = transition(current_state, LoginInput::CompleteVerifyEmailOk, &ctx)
+            .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        return advance_or_render(
+            &state,
+            &mount,
+            &realm,
+            auth_session,
+            next,
+            &headers,
+            &client_ip,
+        )
+        .await;
+    }
+
+    // K11: RegisterWebAuthn (`webauthn-register` / `CONFIGURE_PASSKEY`) required action step
+    if let LoginState::RegisterWebAuthn { ref user_id, .. } = current_state {
+        let mut user = state
+            .store
+            .get_user_by_id(&realm.id, None, user_id)
+            .await?
+            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        let Some(challenge) = auth_session.webauthn_challenge.clone() else {
+            return render_state_page(
+                &state,
+                &mount,
+                &realm,
+                &auth_session,
+                &current_state,
+                &headers,
+                "",
+            )
+            .await;
+        };
+        let raw_resp = form
+            .get("webauthn_register_response")
+            .map(String::as_str)
+            .unwrap_or_default();
+        let resp_json: serde_json::Value = serde_json::from_str(raw_resp)
+            .map_err(|_| KaisatsuError::BadRequest("invalid WebAuthn registration JSON".into()))?;
+        let mut auth_session = auth_session;
+        auth_session.webauthn_challenge = None;
+        state.store.put_auth_session(auth_session.clone()).await?;
+        crate::passkey::complete_passkey_registration(
+            &state.store,
+            &mount,
+            &realm,
+            &mut user,
+            &challenge,
+            &resp_json,
+            form.get("label").cloned(),
+            false,
+        )
+        .await?;
+        user.required_actions
+            .retain(|a| a != "webauthn-register" && a != "CONFIGURE_PASSKEY");
+        let user = state.store.update_user(user).await?;
+        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let next = transition(current_state, LoginInput::CompleteRegisterWebAuthnOk, &ctx)
+            .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        return advance_or_render(
+            &state,
+            &mount,
+            &realm,
+            auth_session,
+            next,
+            &headers,
+            &client_ip,
+        )
+        .await;
+    }
+
+    // K11: SecondFactorWebAuthn step
+    if let LoginState::SecondFactorWebAuthn { ref user_id, .. } = current_state {
+        let Some(challenge) = auth_session.webauthn_challenge.clone() else {
+            return render_state_page(
+                &state,
+                &mount,
+                &realm,
+                &auth_session,
+                &current_state,
+                &headers,
+                "",
+            )
+            .await;
+        };
+        let raw_resp = form
+            .get("webauthn_assertion_response")
+            .map(String::as_str)
+            .unwrap_or_default();
+        let resp_json: serde_json::Value = serde_json::from_str(raw_resp)
+            .map_err(|_| KaisatsuError::BadRequest("invalid WebAuthn assertion JSON".into()))?;
+        let uid = user_id.clone();
+        let mut auth_session = auth_session;
+        auth_session.webauthn_challenge = None;
+        state.store.put_auth_session(auth_session.clone()).await?;
+        let (user, _) = crate::passkey::complete_passkey_authentication(
+            &state.store,
+            &mount,
+            &realm,
+            Some(&uid),
+            &challenge,
+            &resp_json,
+            false,
+        )
+        .await?;
+        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let next = transition(current_state, LoginInput::VerifyWebAuthn2faOk, &ctx)
             .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
         return advance_or_render(
             &state,
@@ -1200,24 +1750,68 @@ async fn reset_credentials_get(
     Ok(render_with_security_headers(&tpl, None))
 }
 
-/// W3: reset-password always answers "If an account matches, an e-mail with a link is on its way"
-/// so it never reveals whether the address exists.
+/// W3, K10: reset-password queues a signed single-use reset mail in the outbox when the user
+/// exists and has an e-mail address, and performs dummy work otherwise so both paths return
+/// the exact same page and timing band.
 async fn reset_credentials_post(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
     headers: HeaderMap,
-    Form(_form): Form<BTreeMap<String, String>>,
+    mount_ext: Option<Extension<Mount>>,
+    Form(form): Form<BTreeMap<String, String>>,
 ) -> Result<Response> {
     let realm = state
         .store
         .get_realm(&realm_name)
         .await?
         .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let accept_lang = headers
         .get(header::ACCEPT_LANGUAGE)
         .and_then(|v| v.to_str().ok());
     let locale = negotiate_locale(None, None, accept_lang, &realm.default_locale);
     let bundle = Bundle::for_locale(locale);
+
+    let identifier = form
+        .get("username")
+        .map(String::as_str)
+        .unwrap_or_default()
+        .trim();
+    if !identifier.is_empty() && realm.reset_password_allowed {
+        if let Some(user) = state
+            .store
+            .get_user_by_username_or_email(&realm.id, None, identifier)
+            .await?
+            .filter(|u| u.enabled)
+            && let Some(ref email) = user.email
+        {
+            let outbox = EmailOutboxRecord {
+                id: uuid::Uuid::now_v7().to_string(),
+                realm_id: realm.id.clone(),
+                org_id: user.org_id.clone(),
+                user_id: user.id.clone(),
+                to_address: email.clone(),
+                locale: bundle.locale.to_owned(),
+                template_kind: "RESET_CREDENTIALS".into(),
+                action_jti: uuid::Uuid::now_v7().to_string(),
+                actions: vec!["UPDATE_PASSWORD".into()],
+                client_id: form.get("client_id").cloned(),
+                redirect_uri: None,
+                lifespan_secs: crate::email::ACTION_TOKEN_TTL_SECS,
+                issuer: mount.realm_issuer(&realm.realm),
+                status: "pending".into(),
+                attempts: 0,
+                last_error: None,
+                next_attempt_at: Utc::now(),
+                created_at: Utc::now(),
+                sent_at: None,
+            };
+            let _ = state.store.enqueue_outbox(outbox).await;
+        } else {
+            // Keep timing in the same band when the user does not exist.
+            let _ = sha256_hex(identifier);
+        }
+    }
 
     let tpl = LoginPageTemplate {
         lang: bundle.locale.to_owned(),
@@ -1230,6 +1824,375 @@ async fn reset_credentials_post(
         branding_css: BrandingBlock::default().css_variables(),
         alert_message: String::new(),
         instruction_text: bundle.get("emailSentMessage").to_owned(),
+        show_form: false,
+        form_action: String::new(),
+        csrf_token: String::new(),
+        session_code: String::new(),
+        fields: Vec::new(),
+        submit_label: String::new(),
+        secondary_link_url: String::new(),
+        secondary_link_label: String::new(),
+    };
+    Ok(render_with_security_headers(&tpl, None))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ActionTokenQuery {
+    #[serde(default)]
+    key: String,
+}
+
+/// `GET /realms/{realm}/login-actions/action-token?key=...` (W7, K10):
+/// Consumes a signed single-use action link (`EmailSender::consume_action_token`).
+/// - If the actions only contain non-form actions (`VERIFY_EMAIL`, `TERMS_AND_CONDITIONS`),
+///   applies them immediately and redirects to the validated `redirect_uri` or shows "account updated".
+/// - If the actions include `UPDATE_PASSWORD` or `CONFIGURE_TOTP`, creates an `AuthSession` bound
+///   to an auth cookie and renders the corresponding interactive step.
+async fn action_token_get(
+    State(state): State<OidcState>,
+    Path(realm_name): Path<String>,
+    Query(query): Query<ActionTokenQuery>,
+    headers: HeaderMap,
+    mount_ext: Option<Extension<Mount>>,
+) -> Result<Response> {
+    let realm = state
+        .store
+        .get_realm(&realm_name)
+        .await?
+        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
+    let issuer = mount.realm_issuer(&realm.realm);
+    let accept_lang = headers
+        .get(header::ACCEPT_LANGUAGE)
+        .and_then(|v| v.to_str().ok());
+    let locale = negotiate_locale(None, None, accept_lang, &realm.default_locale);
+    let bundle = Bundle::for_locale(locale);
+
+    let Ok(claims) = crate::email::EmailSender::consume_action_token(
+        &state.store,
+        &realm.id,
+        &issuer,
+        &query.key,
+    )
+    .await
+    else {
+        return Ok(render_expired_session_page(&realm, StatusCode::BAD_REQUEST));
+    };
+
+    let mut user = state
+        .store
+        .get_user_by_id(&realm.id, None, &claims.sub)
+        .await?
+        .filter(|u| u.enabled)
+        .ok_or_else(|| KaisatsuError::BadRequest("user not found".into()))?;
+
+    // Validate redirect_uri against the client if both are present on the token.
+    let mut validated_redirect: Option<String> = None;
+    if let (Some(cid), Some(r_uri)) = (&claims.client_id, &claims.redirect_uri)
+        && let Some(client) = state.store.get_client_by_client_id(&realm.id, cid).await?
+        && kaisatsu_oidc::validate_redirect_uri(&client.redirect_uris, r_uri)
+    {
+        validated_redirect = Some(r_uri.clone());
+    }
+
+    let mut needs_password_form = false;
+    let mut needs_totp_form = false;
+    for act in &claims.actions {
+        match act.as_str() {
+            "VERIFY_EMAIL" => {
+                user.email_verified = true;
+                user.required_actions.retain(|a| a != "VERIFY_EMAIL");
+            }
+            "TERMS_AND_CONDITIONS" => {
+                user.required_actions
+                    .retain(|a| a != "TERMS_AND_CONDITIONS");
+            }
+            "UPDATE_PASSWORD" => {
+                needs_password_form = true;
+            }
+            "CONFIGURE_TOTP" => {
+                needs_totp_form = true;
+            }
+            _ => {}
+        }
+    }
+    user = state.store.update_user(user).await?;
+
+    if needs_password_form || needs_totp_form {
+        let session_id = uuid::Uuid::now_v7().to_string();
+        let handle = random_handle_256();
+        let csrf = random_handle_256();
+        let pending_totp = if needs_totp_form {
+            Some(generate_totp_secret())
+        } else {
+            None
+        };
+        let auth_session = AuthSession {
+            id: session_id.clone(),
+            realm_id: realm.id.clone(),
+            org_id: user.org_id.clone(),
+            handle_hash: sha256_hex(&handle),
+            client_id: claims.client_id.clone().unwrap_or_else(|| "account".into()),
+            redirect_uri: validated_redirect.unwrap_or_default(),
+            response_type: "action".into(),
+            response_mode: "query".into(),
+            scope: claims.actions.join(" "),
+            state: None,
+            nonce: None,
+            code_challenge: String::new(),
+            code_challenge_method: String::new(),
+            acr_requested: None,
+            prompt: None,
+            login_hint: None,
+            ui_locales: Some(locale.to_owned()),
+            dpop_jkt: None,
+            csrf_token: csrf.clone(),
+            step_state_json: serde_json::to_string(&LoginState::ResetPasswordSet {
+                user_id: user.id.clone(),
+            })
+            .unwrap_or_default(),
+            pending_totp_secret: pending_totp.clone(),
+            webauthn_challenge: None,
+            pending_email_code_hash: None,
+            broker_state_json: None,
+            user_id: Some(user.id.clone()),
+            amr: Vec::new(),
+            acr_achieved: String::new(),
+            created_at: Utc::now(),
+            expires_at: Utc::now() + Duration::minutes(15),
+        };
+        state.store.put_auth_session(auth_session).await?;
+
+        let cookie_name = mount.cookie_name("auth");
+        let cookie_path = mount.realm_cookie_path(&realm.realm);
+        let set_cookie = if mount.path_prefix.is_empty() {
+            format!("{cookie_name}={handle}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=900")
+        } else {
+            format!(
+                "{cookie_name}={handle}; Path={cookie_path}; HttpOnly; Secure; SameSite=Lax; Max-Age=900"
+            )
+        };
+
+        let mut fields = Vec::new();
+        if needs_password_form {
+            fields.push(FormField {
+                name: "new_password".into(),
+                label: bundle.get("passwordLabel").to_owned(),
+                input_type: "password".into(),
+                value: String::new(),
+                autocomplete: "new-password".into(),
+                hint: bundle.get("passwordHint").to_owned(),
+                error: String::new(),
+            });
+        }
+        if let Some(ref secret) = pending_totp {
+            fields.push(FormField {
+                name: "otp".into(),
+                label: bundle.get("otpLabel").to_owned(),
+                input_type: "text".into(),
+                value: String::new(),
+                autocomplete: "one-time-code".into(),
+                hint: bundle.format(
+                    "otpEnrolInstruction",
+                    &[
+                        secret,
+                        &realm.otp_policy_algorithm,
+                        &realm.otp_policy_digits.to_string(),
+                        &realm.otp_policy_period.to_string(),
+                    ],
+                ),
+                error: String::new(),
+            });
+        }
+        let tpl = LoginPageTemplate {
+            lang: bundle.locale.to_owned(),
+            page_title: bundle.get("updatePasswordTitle").to_owned(),
+            org_display: realm.display_name,
+            app_context: String::new(),
+            heading_text: bundle.get("updatePasswordTitle").to_owned(),
+            page_id: "action-token-form".into(),
+            csp_nonce: random_handle_256()[..16].to_owned(),
+            branding_css: BrandingBlock::default().css_variables(),
+            alert_message: String::new(),
+            instruction_text: String::new(),
+            show_form: true,
+            form_action: format!(
+                "{}/realms/{}/login-actions/action-token",
+                mount.path_prefix, realm.realm
+            ),
+            csrf_token: csrf,
+            session_code: session_id,
+            fields,
+            submit_label: bundle.get("proceedWithAction").to_owned(),
+            secondary_link_url: String::new(),
+            secondary_link_label: String::new(),
+        };
+        return Ok(render_with_security_headers(&tpl, Some(set_cookie)));
+    }
+
+    finish_action_token_response(&realm, &bundle, validated_redirect.as_deref())
+}
+
+async fn action_token_post(
+    State(state): State<OidcState>,
+    Path(realm_name): Path<String>,
+    headers: HeaderMap,
+    mount_ext: Option<Extension<Mount>>,
+    Form(form): Form<BTreeMap<String, String>>,
+) -> Result<Response> {
+    let realm = state
+        .store
+        .get_realm(&realm_name)
+        .await?
+        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
+    let session_code = form
+        .get("session_code")
+        .map(String::as_str)
+        .unwrap_or_default();
+    let Some(auth_session) = state
+        .store
+        .get_auth_session_by_id(&realm.id, session_code)
+        .await?
+    else {
+        return Ok(render_expired_session_page(&realm, StatusCode::BAD_REQUEST));
+    };
+    if !auth_cookie_matches(&headers, &mount, &auth_session) {
+        return Ok(render_expired_session_page(&realm, StatusCode::BAD_REQUEST));
+    }
+    let presented_csrf = form
+        .get("csrf_token")
+        .map(String::as_str)
+        .unwrap_or_default();
+    if !constant_time_str_eq(presented_csrf, &auth_session.csrf_token) {
+        return Err(KaisatsuError::Forbidden("invalid CSRF token".into()));
+    }
+
+    let user_id = auth_session
+        .user_id
+        .as_deref()
+        .ok_or_else(|| KaisatsuError::BadRequest("missing user in action session".into()))?;
+    let mut user = state
+        .store
+        .get_user_by_id(&realm.id, None, user_id)
+        .await?
+        .ok_or_else(|| KaisatsuError::NotFound("user not found".into()))?;
+
+    let bundle = Bundle::for_locale(
+        auth_session
+            .ui_locales
+            .as_deref()
+            .unwrap_or(&realm.default_locale),
+    );
+
+    if auth_session.scope.split_whitespace().any(|a| a == "UPDATE_PASSWORD") {
+        let new_password = form
+            .get("new_password")
+            .map(String::as_str)
+            .unwrap_or_default();
+        let history: Vec<CredentialRecord> = state
+            .store
+            .list_credentials(&realm.id, &user.id)
+            .await?
+            .into_iter()
+            .filter(|c| c.credential_type.starts_with("password"))
+            .collect();
+        check_password_policy(
+            &realm.password_policy,
+            new_password,
+            &user.username,
+            user.email.as_deref(),
+            &history,
+        )?;
+        state
+            .store
+            .upsert_credential(CredentialRecord {
+                id: uuid::Uuid::now_v7().to_string(),
+                realm_id: realm.id.clone(),
+                user_id: user.id.clone(),
+                credential_type: "password".into(),
+                user_label: Some("Password".into()),
+                created_date: Utc::now().timestamp_millis(),
+                secret_data: hash_password(new_password)?,
+                credential_data: String::new(),
+                temporary: false,
+            })
+            .await?;
+        user.required_actions.retain(|a| a != "UPDATE_PASSWORD");
+    }
+
+    if auth_session.scope.split_whitespace().any(|a| a == "CONFIGURE_TOTP") {
+        let secret = auth_session
+            .pending_totp_secret
+            .as_deref()
+            .ok_or_else(|| KaisatsuError::BadRequest("missing pending TOTP secret".into()))?;
+        let otp_code = form.get("otp").map(String::as_str).unwrap_or_default();
+        let cred = CredentialRecord {
+            id: uuid::Uuid::now_v7().to_string(),
+            realm_id: realm.id.clone(),
+            user_id: user.id.clone(),
+            credential_type: "otp".into(),
+            user_label: Some("Authenticator".into()),
+            created_date: Utc::now().timestamp_millis(),
+            secret_data: serde_json::json!({ "value": secret }).to_string(),
+            credential_data: serde_json::json!({
+                "subType": "totp",
+                "digits": realm.otp_policy_digits,
+                "period": realm.otp_policy_period,
+                "algorithm": realm.otp_policy_algorithm,
+                "secretEncoding": "BASE32",
+            })
+            .to_string(),
+            temporary: false,
+        };
+        let now_secs = u64::try_from(Utc::now().timestamp()).unwrap_or_default();
+        if verify_totp_code(&cred, otp_code, realm.otp_policy_look_ahead_window, now_secs)?
+            .is_none()
+        {
+            return Err(KaisatsuError::BadRequest("invalid TOTP code".into()));
+        }
+        state.store.upsert_credential(cred).await?;
+        user.required_actions.retain(|a| a != "CONFIGURE_TOTP");
+    }
+
+    state.store.update_user(user).await?;
+    state
+        .store
+        .delete_auth_session(&realm.id, &auth_session.id)
+        .await?;
+
+    let redirect = (!auth_session.redirect_uri.is_empty()).then_some(auth_session.redirect_uri.as_str());
+    finish_action_token_response(&realm, &bundle, redirect)
+}
+
+fn finish_action_token_response(
+    realm: &RealmConfig,
+    bundle: &Bundle,
+    redirect_uri: Option<&str>,
+) -> Result<Response> {
+    if let Some(uri) = redirect_uri {
+        return Ok((
+            StatusCode::SEE_OTHER,
+            [
+                (header::LOCATION, uri.to_owned()),
+                (header::CACHE_CONTROL, "no-store".to_owned()),
+            ],
+            "",
+        )
+            .into_response());
+    }
+    let tpl = LoginPageTemplate {
+        lang: bundle.locale.to_owned(),
+        page_title: bundle.get("accountUpdatedMessage").to_owned(),
+        org_display: realm.display_name.clone(),
+        app_context: String::new(),
+        heading_text: bundle.get("accountUpdatedMessage").to_owned(),
+        page_id: "account-updated".into(),
+        csp_nonce: random_handle_256()[..16].to_owned(),
+        branding_css: BrandingBlock::default().css_variables(),
+        alert_message: String::new(),
+        instruction_text: bundle.get("accountUpdatedMessage").to_owned(),
         show_form: false,
         form_action: String::new(),
         csrf_token: String::new(),

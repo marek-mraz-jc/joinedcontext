@@ -222,7 +222,7 @@ fn advance_post_factors(
                     second_factor_passed,
                 });
             }
-            "webauthn-register" => {
+            "webauthn-register" | "CONFIGURE_PASSKEY" => {
                 return Ok(LoginState::RegisterWebAuthn {
                     user_id,
                     first_factor_passed,
@@ -398,7 +398,7 @@ pub fn transition(
             let mut next_ctx = ctx.clone();
             next_ctx
                 .pending_actions
-                .retain(|a| a != "webauthn-register");
+                .retain(|a| a != "webauthn-register" && a != "CONFIGURE_PASSKEY");
             advance_post_factors(user_id, true, second_factor_passed, &next_ctx, None)
         }
         (

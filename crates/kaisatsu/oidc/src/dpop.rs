@@ -29,6 +29,61 @@ pub struct DpopProof {
     pub nonce: Option<String>,
 }
 
+/// Server-managed DPoP nonce window: 60 seconds per slot, accepting the current and previous slot.
+pub const DPOP_NONCE_SLOT_SECS: i64 = 60;
+
+/// Mints a stateless HMAC-SHA256 DPoP nonce for `(realm_id, purpose)` at `now_unix` (RFC 9449 §8 & §9, K6).
+#[must_use]
+pub fn issue_dpop_nonce(kek: &kaisatsu_crypto::Kek, realm_id: &str, purpose: &str, now_unix: i64) -> String {
+    let slot = now_unix / DPOP_NONCE_SLOT_SECS;
+    compute_dpop_nonce_for_slot(kek, realm_id, purpose, slot)
+}
+
+fn compute_dpop_nonce_for_slot(
+    kek: &kaisatsu_crypto::Kek,
+    realm_id: &str,
+    purpose: &str,
+    slot: i64,
+) -> String {
+    use sha2::Digest;
+    let subkey = kek.derive_subkey("kaisatsu:dpop-nonce:v1");
+    let mut hasher = Sha256::new();
+    hasher.update(subkey);
+    hasher.update(b":");
+    hasher.update(purpose.as_bytes());
+    hasher.update(b":");
+    hasher.update(realm_id.as_bytes());
+    hasher.update(b":");
+    hasher.update(slot.to_be_bytes());
+    let tag = URL_SAFE_NO_PAD.encode(hasher.finalize());
+    format!("{slot}.{tag}")
+}
+
+/// Verifies a client-supplied DPoP `nonce` against the current and previous time slot in constant time.
+#[must_use]
+pub fn verify_dpop_nonce(
+    kek: &kaisatsu_crypto::Kek,
+    realm_id: &str,
+    purpose: &str,
+    presented: &str,
+    now_unix: i64,
+) -> bool {
+    let cur_slot = now_unix / DPOP_NONCE_SLOT_SECS;
+    let cur = compute_dpop_nonce_for_slot(kek, realm_id, purpose, cur_slot);
+    let prev = compute_dpop_nonce_for_slot(kek, realm_id, purpose, cur_slot - 1);
+    kaisatsu_crypto::constant_time_str_eq(presented, &cur)
+        || kaisatsu_crypto::constant_time_str_eq(presented, &prev)
+}
+
+/// Whether the realm requires server-issued DPoP nonces (`attributes["dpop.require.nonce"] == "true"`).
+#[must_use]
+pub fn realm_requires_dpop_nonce(realm: &kaisatsu_core::RealmConfig) -> bool {
+    realm
+        .attributes
+        .get("dpop.require.nonce")
+        .is_some_and(|v| v == "true")
+}
+
 /// Computes the RFC 7638 JWK SHA-256 thumbprint (`jkt`) of a public JWK.
 pub fn compute_jwk_thumbprint(jwk: &Value) -> Result<String> {
     let kty = jwk

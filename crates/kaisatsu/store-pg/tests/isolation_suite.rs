@@ -5,7 +5,7 @@
 
 use kaisatsu_core::*;
 use kaisatsu_store_memory::MemoryStore;
-use kaisatsu_store_pg::MIGRATION_0001_SQL;
+use kaisatsu_store_pg::{MIGRATION_0001_SQL, MIGRATION_0002_SQL};
 
 mod common;
 use odata_table::QueryOptions;
@@ -40,6 +40,8 @@ async fn run_shared_isolation_suite(store: Arc<dyn Store>) {
                     name: domain.into(),
                     verified: true,
                     verification_token: None,
+                    challenge_hash: None,
+                    challenge_expires_at: None,
                 }],
                 attributes: HashMap::new(),
                 managed_by: None,
@@ -247,6 +249,20 @@ fn migration_ddl_enforces_rls_and_leakproof_indexes_on_every_table() {
                 "ALTER TABLE kaisatsu.{t} FORCE ROW LEVEL SECURITY;"
             )),
             "table {t} missing FORCE ROW LEVEL SECURITY"
+        );
+    }
+    for t in ["webauthn_credential", "idp_links"] {
+        assert!(
+            MIGRATION_0002_SQL.contains(&format!(
+                "ALTER TABLE kaisatsu.{t} ENABLE ROW LEVEL SECURITY;"
+            )),
+            "0002 table {t} missing ENABLE ROW LEVEL SECURITY"
+        );
+        assert!(
+            MIGRATION_0002_SQL.contains(&format!(
+                "ALTER TABLE kaisatsu.{t} FORCE ROW LEVEL SECURITY;"
+            )),
+            "0002 table {t} missing FORCE ROW LEVEL SECURITY"
         );
     }
     // Verify required W2 leakproof indexes

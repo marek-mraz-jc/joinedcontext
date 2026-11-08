@@ -453,9 +453,22 @@ async fn start_login(app: &axum::Router, extra: &str) -> (String, String, String
         .to_str()
         .unwrap()
         .to_owned();
+    let cookie = resp.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
     let page = app
         .clone()
-        .oneshot(Request::builder().uri(&login).body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri(&login)
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     let html = String::from_utf8(
@@ -469,24 +482,25 @@ async fn start_login(app: &axum::Router, extra: &str) -> (String, String, String
     .unwrap();
     let csrf = extract_hidden_input(&html, "csrf_token");
     let code = extract_hidden_input(&html, "session_code");
-    (login, csrf, code)
+    ( format!("{login}##{cookie}"), csrf, code)
 }
 
 #[tokio::test]
 async fn wrong_otp_cannot_be_retried_without_limit_in_one_login() {
     let (state, _store, _) = setup_dev_realm_state().await;
     let app = router(state, mount());
-    let (login, csrf, code) = start_login(&app, "").await;
+    let (login_and_ck, csrf, code) = start_login(&app, "").await;
+    let (login, ck) = login_and_ck.split_once("##").unwrap();
     let (st, _, html) = post_form(
         &app,
-        &login,
+        login,
         &[
             ("csrf_token", &csrf),
             ("session_code", &code),
             ("username", "demo.steward@hel.fi"),
             ("password", "StewardPass123!Valid"),
         ],
-        None,
+        Some(ck),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
@@ -494,13 +508,13 @@ async fn wrong_otp_cannot_be_retried_without_limit_in_one_login() {
     for _ in 0..10 {
         let (st, _, _) = post_form(
             &app,
-            &login,
+            login,
             &[
                 ("csrf_token", &csrf),
                 ("session_code", &code),
                 ("otp", "000000"),
             ],
-            None,
+            Some(ck),
         )
         .await;
         assert_eq!(st, StatusCode::OK);
@@ -509,13 +523,13 @@ async fn wrong_otp_cannot_be_retried_without_limit_in_one_login() {
     let right = generate_totp_code("steward-totp-seed-123456", 6, 30, "HmacSHA256", now).unwrap();
     let (st, _, _) = post_form(
         &app,
-        &login,
+        login,
         &[
             ("csrf_token", &csrf),
             ("session_code", &code),
             ("otp", &right),
         ],
-        None,
+        Some(ck),
     )
     .await;
     assert_eq!(
@@ -529,17 +543,18 @@ async fn wrong_otp_cannot_be_retried_without_limit_in_one_login() {
 async fn browser_totp_enrolment_uses_a_fresh_secret_shown_on_the_page() {
     let (state, store, _) = setup_dev_realm_state().await;
     let app = router(state, mount());
-    let (login, csrf, code) = start_login(&app, "&acr_values=mfa").await;
+    let (login_and_ck, csrf, code) = start_login(&app, "&acr_values=mfa").await;
+    let (login, ck) = login_and_ck.split_once("##").unwrap();
     let (st, _, html) = post_form(
         &app,
-        &login,
+        login,
         &[
             ("csrf_token", &csrf),
             ("session_code", &code),
             ("username", "demo.analyst@hel.fi"),
             ("password", "AnalystPass123!Valid"),
         ],
-        None,
+        Some(ck),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
@@ -579,26 +594,26 @@ async fn browser_totp_enrolment_uses_a_fresh_secret_shown_on_the_page() {
     if constant != shown {
         let (st, _, _) = post_form(
             &app,
-            &login,
+            login,
             &[
                 ("csrf_token", &csrf),
                 ("session_code", &code),
                 ("otp", &constant),
             ],
-            None,
+            Some(ck),
         )
         .await;
         assert_eq!(st, StatusCode::OK, "the constant secret must not enrol");
     }
     let (st, hdrs, _) = post_form(
         &app,
-        &login,
+        login,
         &[
             ("csrf_token", &csrf),
             ("session_code", &code),
             ("otp", &shown),
         ],
-        None,
+        Some(ck),
     )
     .await;
     assert_eq!(st, StatusCode::SEE_OTHER);
@@ -715,4 +730,79 @@ async fn userinfo_refuses_tokens_of_an_ended_session_or_revoked() {
         ask(realm_token(&store, &keys, &revoked)).await,
         StatusCode::UNAUTHORIZED
     );
+}
+
+/// K2: Proved red against the code before K2, where `organization:<alias>` in `scope` was
+/// accepted without checking the person's memberships and injected into `jc_org` via
+/// `active_org`.
+#[tokio::test]
+async fn k2_organization_scope_checks_membership_and_never_emits_foreign_org_claim() {
+    let (state, store, _) = setup_dev_realm_state().await;
+    for org in ["helsinki", "other"] {
+        store
+            .upsert_organization(Organization {
+                id: org.into(),
+                realm_id: "dev".into(),
+                name: org.into(),
+                alias: org.into(),
+                enabled: true,
+                description: String::new(),
+                domains: Vec::new(),
+                attributes: Default::default(),
+                managed_by: None,
+            })
+            .await
+            .unwrap();
+    }
+    let app = router(state, mount());
+
+    // 1. Non-member (`demo.orgmember@hel.fi` belongs to `helsinki`, not `other`) requests
+    // `scope=openid organization:other`: token must carry no `organization` or `jc_org` for `other`.
+    let (st, _, body) = post_form(
+        &app,
+        TOKEN,
+        &[
+            ("grant_type", "password"),
+            ("client_id", "apisix-gateway"),
+            ("client_secret", concat!("apisix-", "secret-123")),
+            ("username", "demo.orgmember@hel.fi"),
+            ("password", "MemberPass123!Valid"),
+            ("scope", "openid organization:other"),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let non_member_claims = decode_jwt_payload(json_body(&body)["access_token"].as_str().unwrap());
+    assert!(
+        non_member_claims.get("organization").is_none(),
+        "non-member must not receive organization claim: {non_member_claims}"
+    );
+    assert!(
+        non_member_claims
+            .get("jc_org")
+            .and_then(Value::as_array)
+            .is_none_or(|a| !a.iter().any(|v| v.as_str() == Some("other"))),
+        "non-member must not receive jc_org=other: {non_member_claims}"
+    );
+
+    // 2. Member (`demo.orgmember@hel.fi` asks `organization:helsinki`) gets `organization` and `jc_org`.
+    let (st, _, body) = post_form(
+        &app,
+        TOKEN,
+        &[
+            ("grant_type", "password"),
+            ("client_id", "apisix-gateway"),
+            ("client_secret", concat!("apisix-", "secret-123")),
+            ("username", "demo.orgmember@hel.fi"),
+            ("password", "MemberPass123!Valid"),
+            ("scope", "openid organization:helsinki"),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let member_claims = decode_jwt_payload(json_body(&body)["access_token"].as_str().unwrap());
+    assert_eq!(member_claims["organization"], json!({ "helsinki": {} }));
+    assert_eq!(member_claims["jc_org"], json!(["helsinki"]));
 }

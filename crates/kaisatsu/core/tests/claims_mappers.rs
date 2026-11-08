@@ -380,7 +380,13 @@ fn every_mapper_kind_writes_its_claim() {
         ),
         mapper("oidc-full-name-mapper", &[]),
         mapper("oidc-sub-mapper", &[]),
-        mapper("oidc-sha256-pairwise-sub-mapper", &[]),
+        mapper(
+            "oidc-sha256-pairwise-sub-mapper",
+            &[
+                ("sectorIdentifierUri", "https://portal.example/callbacks"),
+                ("pairwiseSubAlgorithmSalt", "salt-value-1"),
+            ],
+        ),
         mapper("oidc-AllowedWebOrigins-mapper", &[]),
         mapper("allowed-web-origins", &[]),
         mapper(
@@ -440,7 +446,20 @@ fn every_mapper_kind_writes_its_claim() {
     assert_eq!(at["h"]["badjson"], "{");
     assert_eq!(at["h"]["str"], json!({"deeper": "replaces a string"}));
     assert!(at["h"].get("novalue").is_none());
-    assert_eq!(at["sub"], "u-1");
+    let expected_pairwise = kaisatsu_core::claims::compute_pairwise_sub(
+        &mapper(
+            "oidc-sha256-pairwise-sub-mapper",
+            &[
+                ("sectorIdentifierUri", "https://portal.example/callbacks"),
+                ("pairwiseSubAlgorithmSalt", "salt-value-1"),
+            ],
+        ),
+        &f.client,
+        "u-1",
+    )
+    .unwrap();
+    assert_eq!(at["sub"], expected_pairwise);
+    assert_ne!(at["sub"], "u-1");
     assert_eq!(at["allowed-origins"], json!(["https://portal.example"]));
     assert!(at.get("not").is_none());
 
@@ -533,6 +552,82 @@ fn unknown_mapper_kinds_are_refused() {
     let mut f = Fixture::new(vec![]);
     f.scopes[0].protocol_mappers = vec![mapper("nope", &[])];
     assert!(evaluate_mappers(&f.ctx(), TokenKind::IdToken).is_err());
+}
+
+/// K4: Proved red against pre-K4 where `oidc-sha256-pairwise-sub-mapper` returned the plain
+/// `ctx.user.id` regardless of sector or salt.
+#[test]
+fn k4_pairwise_subject_mapper_differs_across_sectors_and_salts_and_hides_user_id() {
+    let mut f1 = Fixture::new(vec![mapper(
+        "oidc-sha256-pairwise-sub-mapper",
+        &[
+            ("sectorIdentifierUri", "https://sector-a.example.org/cb"),
+            ("pairwiseSubAlgorithmSalt", "secret-salt-alpha"),
+            ("id.token.claim", "true"),
+            ("userinfo.token.claim", "true"),
+        ],
+    )]);
+    let at_a1 = f1.eval(TokenKind::AccessToken);
+    let id_a1 = f1.eval(TokenKind::IdToken);
+    let ui_a1 = f1.eval(TokenKind::UserInfo);
+    let intro_a1 = f1.eval(TokenKind::Introspection);
+    let sub_a = at_a1["sub"].as_str().unwrap().to_owned();
+
+    // Never raw user id, and stable across AccessToken, IdToken, UserInfo, Introspection, and logout helper.
+    assert_ne!(sub_a, "u-1");
+    assert!(!sub_a.contains("u-1"));
+    assert_eq!(id_a1["sub"], sub_a);
+    assert_eq!(ui_a1["sub"], sub_a);
+    assert_eq!(intro_a1["sub"], sub_a);
+    assert_eq!(
+        kaisatsu_core::claims::compute_subject_for_client(&f1.client, &f1.scopes, "u-1").unwrap(),
+        sub_a
+    );
+
+    // Second sector gets a different `sub`.
+    let f2 = Fixture::new(vec![mapper(
+        "oidc-sha256-pairwise-sub-mapper",
+        &[
+            ("sectorIdentifierUri", "https://sector-b.example.org/cb"),
+            ("pairwiseSubAlgorithmSalt", "secret-salt-alpha"),
+        ],
+    )]);
+    let sub_b = f2.eval(TokenKind::AccessToken)["sub"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(sub_a, sub_b);
+
+    // Changing the salt changes `sub` for the same sector.
+    let f3 = Fixture::new(vec![mapper(
+        "oidc-sha256-pairwise-sub-mapper",
+        &[
+            ("sectorIdentifierUri", "https://sector-a.example.org/cb"),
+            ("pairwiseSubAlgorithmSalt", "secret-salt-beta"),
+        ],
+    )]);
+    let sub_a_salt2 = f3.eval(TokenKind::AccessToken)["sub"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(sub_a, sub_a_salt2);
+
+    // Fallback to single redirect_uri host when sectorIdentifierUri is omitted.
+    f1.client.protocol_mappers = vec![mapper(
+        "oidc-sha256-pairwise-sub-mapper",
+        &[("pairwiseSubAlgorithmSalt", "secret-salt-alpha")],
+    )];
+    f1.client.redirect_uris = vec![
+        "https://sector-a.example.org/cb1".into(),
+        "https://sector-a.example.org/cb2".into(),
+    ];
+    assert_eq!(f1.eval(TokenKind::AccessToken)["sub"], sub_a);
+
+    // Multiple redirect_uri hosts without sectorIdentifierUri is refused.
+    f1.client
+        .redirect_uris
+        .push("https://other-host.example.org/cb".into());
+    assert!(evaluate_mappers(&f1.ctx(), TokenKind::AccessToken).is_err());
 }
 
 #[test]

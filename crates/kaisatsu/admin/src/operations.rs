@@ -298,13 +298,63 @@ pub async fn execute(
                     "SMTP is not configured on this realm".into(),
                 ));
             }
+            let client_id = str_param(params, "client_id")
+                .or_else(|| str_param(params, "clientId"))
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned);
+            let redirect_uri = str_param(params, "redirect_uri")
+                .or_else(|| str_param(params, "redirectUri"))
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned);
+            if let Some(ref r_uri) = redirect_uri {
+                let cid = client_id.as_deref().ok_or_else(|| {
+                    KaisatsuError::BadRequest(
+                        "redirect_uri on execute-actions-email requires client_id".into(),
+                    )
+                })?;
+                let client = store
+                    .get_client_by_client_id(realm, cid)
+                    .await?
+                    .ok_or_else(|| KaisatsuError::BadRequest("unknown client_id".into()))?;
+                if !kaisatsu_oidc::validate_redirect_uri(&client.redirect_uris, r_uri) {
+                    return Err(KaisatsuError::BadRequest("invalid redirect_uri".into()));
+                }
+            }
+            let lifespan_secs = params
+                .get("lifespan")
+                .and_then(Value::as_i64)
+                .unwrap_or(900)
+                .clamp(60, 43_200);
             for a in &actions {
                 if !user.required_actions.contains(a) {
                     user.required_actions.push(a.clone());
                 }
             }
             let uid = user.id.clone();
-            store.update_user(user).await?;
+            let to_address = user.email.clone().unwrap_or_else(|| user.username.clone());
+            let outbox = EmailOutboxRecord {
+                id: uuid::Uuid::now_v7().to_string(),
+                realm_id: realm.to_owned(),
+                org_id: user.org_id.clone(),
+                user_id: uid.clone(),
+                to_address,
+                locale: realm_cfg.default_locale.clone(),
+                template_kind: "EXECUTE_ACTIONS".into(),
+                action_jti: uuid::Uuid::now_v7().to_string(),
+                actions: actions.clone(),
+                client_id,
+                redirect_uri,
+                lifespan_secs,
+                issuer: mount.realm_issuer(&realm_cfg.realm),
+                status: "pending".into(),
+                attempts: 0,
+                last_error: None,
+                next_attempt_at: Utc::now(),
+                created_at: Utc::now(),
+                sent_at: None,
+            };
+            // K9, K10: Write the updated user and the outbox row in the same transaction.
+            store.update_user_with_outbox(user, outbox).await?;
             record_admin_write(
                 state,
                 ctx,
@@ -558,26 +608,230 @@ pub async fn execute(
             store.upsert_credential(cred.clone()).await?;
             Ok(Some(json!({ "credentialId": cred.id })))
         }
-        "passkey_register" => Err(KaisatsuError::NotSupported(
-            "passkey registration (WebAuthn) is not implemented yet".into(),
-        )),
-        "domain_verify" => {
-            // The decision is still made, so the answer for a hidden domain stays 404.
-            let id = required_key(key)?;
-            let mut opts = QueryOptions::default();
-            let service = kaisatsu_core::odata_defs::kaisatsu_odata_service();
-            if let Some(info) = service.info(Arc::new(service.model()), "OrganizationDomains") {
-                opts = odata_table::key_options(&info, &Value::String(id.into()), None)?;
+        "passkey_register" => {
+            let mut user = visible_person(state, ctx, required_key(key)?).await?;
+            if ctx.principal.subject.as_deref() != Some(user.id.as_str())
+                && !ctx.principal.is_realm_admin()
+            {
+                return Err(KaisatsuError::NotFound("user not found".into()));
             }
-            let ans = store
-                .query_entity_set(ctx, authz, "OrganizationDomains", &opts, 1)
+            check_decision(authz.check(ctx, Action::SelfService, &person_target(ctx, &user)))?;
+            let realm_cfg = store.get_realm(realm).await?.unwrap_or_default();
+            let Some(cred_json) = params.get("credential").filter(|v| v.is_object()) else {
+                // Step 1: issue a single-use challenge and creation options.
+                let challenge = kaisatsu_crypto::random_handle_256();
+                let rp_id = if !realm_cfg.web_authn_policy_passwordless_rp_id.trim().is_empty() {
+                    realm_cfg
+                        .web_authn_policy_passwordless_rp_id
+                        .trim()
+                        .to_ascii_lowercase()
+                } else {
+                    mount
+                        .host
+                        .split_once(':')
+                        .map_or(mount.host.as_str(), |(h, _)| h)
+                        .to_ascii_lowercase()
+                };
+                return Ok(Some(json!({
+                    "challenge": challenge,
+                    "rp": { "id": rp_id, "name": realm_cfg.display_name },
+                    "pubKeyCredParams": [
+                        { "type": "public-key", "alg": kaisatsu_crypto::COSE_ALG_ES256 },
+                        { "type": "public-key", "alg": kaisatsu_crypto::COSE_ALG_EDDSA },
+                        { "type": "public-key", "alg": kaisatsu_crypto::COSE_ALG_RS256 }
+                    ]
+                })));
+            };
+            let challenge = str_param(params, "challenge").unwrap_or_default();
+            if challenge.len() < 16 {
+                return Err(KaisatsuError::BadRequest(
+                    "challenge is required for passkey registration".into(),
+                ));
+            }
+            // Enforce single-use challenge via `revoked_token`.
+            store
+                .mark_token_revoked(RevokedTokenRecord {
+                    jti_hash: kaisatsu_crypto::sha256_hex(&format!(
+                        "webauthn-chal:{}:{}",
+                        user.id, challenge
+                    )),
+                    realm_id: realm.to_owned(),
+                    expires_at: Utc::now() + chrono::Duration::minutes(15),
+                })
+                .await
+                .map_err(|_| KaisatsuError::BadRequest("WebAuthn challenge already used".into()))?;
+
+            let parsed: kaisatsu_crypto::RegistrationClientResponse =
+                serde_json::from_value(cred_json.clone()).map_err(|e| {
+                    KaisatsuError::BadRequest(format!("invalid WebAuthn credential: {e}"))
+                })?;
+            let rp_id = if !realm_cfg.web_authn_policy_passwordless_rp_id.trim().is_empty() {
+                realm_cfg
+                    .web_authn_policy_passwordless_rp_id
+                    .trim()
+                    .to_ascii_lowercase()
+            } else {
+                mount
+                    .host
+                    .split_once(':')
+                    .map_or(mount.host.as_str(), |(h, _)| h)
+                    .to_ascii_lowercase()
+            };
+            let origins = vec![
+                format!("{}://{}", mount.scheme, mount.host),
+                format!("https://{rp_id}"),
+            ];
+            let verified = kaisatsu_crypto::verify_registration_response(
+                &parsed,
+                challenge,
+                &rp_id,
+                &origins,
+                false,
+                &[
+                    kaisatsu_crypto::COSE_ALG_ES256,
+                    kaisatsu_crypto::COSE_ALG_EDDSA,
+                    kaisatsu_crypto::COSE_ALG_RS256,
+                ],
+            )?;
+            if store
+                .get_webauthn_by_credential_id(realm, &verified.credential_id_b64)
+                .await?
+                .is_some()
+            {
+                return Err(KaisatsuError::Conflict(
+                    "WebAuthn credentialId is already registered in this realm".into(),
+                ));
+            }
+            let user_handle = match user
+                .attributes
+                .get("webauthn.user.handle")
+                .and_then(|v| v.first())
+                .cloned()
+            {
+                Some(h) if !h.is_empty() => h,
+                _ => {
+                    let h = kaisatsu_crypto::random_handle_256();
+                    user.attributes
+                        .insert("webauthn.user.handle".into(), vec![h.clone()]);
+                    store.update_user(user.clone()).await?;
+                    h
+                }
+            };
+            let rec = WebAuthnCredentialRecord {
+                id: uuid::Uuid::now_v7().to_string(),
+                realm_id: realm.to_owned(),
+                org_id: user.org_id.clone(),
+                user_id: user.id.clone(),
+                user_handle,
+                credential_id: verified.credential_id_b64,
+                public_key_cose_json: serde_json::to_string(&verified.public_key)
+                    .unwrap_or_default(),
+                cose_alg: verified.public_key.alg(),
+                sign_count: verified.sign_count,
+                uv_initialized: verified.uv_initialized,
+                backup_eligible: verified.backup_eligible,
+                backup_state: verified.backup_state,
+                transports: verified.transports,
+                attestation_type: verified.attestation_type,
+                rp_id,
+                user_label: str_param(params, "label")
+                    .map(str::to_owned)
+                    .or_else(|| Some("Passkey".into())),
+                created_at: Utc::now(),
+                last_used_at: None,
+            };
+            let inserted = store.insert_webauthn_credential(rec).await?;
+            Ok(Some(kaisatsu_core::odata_defs::webauthn_credential_to_row(
+                &inserted,
+            )))
+        }
+        "passkey_delete" => {
+            let cred_id = required_key(key)?;
+            let allowed = ctx.allowed_orgs();
+            let deleted = store
+                .delete_webauthn_credential(realm, allowed.as_deref(), cred_id)
                 .await?;
-            if ans.rows.is_empty() {
-                return Err(KaisatsuError::NotFound("domain not found".into()));
+            if !deleted {
+                return Err(KaisatsuError::NotFound("passkey not found".into()));
             }
-            Err(KaisatsuError::NotSupported(
-                "DNS TXT domain verification is not implemented yet".into(),
-            ))
+            Ok(None)
+        }
+        "outbox_retry" => {
+            let id = required_key(key)?;
+            check_decision(authz.check(
+                ctx,
+                Action::Update,
+                &ObjectTarget::Person {
+                    realm_id: realm.to_owned(),
+                    org_id: ctx.active_org_id.clone(),
+                    person_id: "*".into(),
+                },
+            ))?;
+            let allowed = ctx.allowed_orgs();
+            let row = store
+                .retry_outbox_row(realm, allowed.as_deref(), id)
+                .await?
+                .ok_or_else(|| KaisatsuError::NotFound("outbox item not found".into()))?;
+            Ok(Some(kaisatsu_core::odata_defs::email_outbox_to_row(&row)))
+        }
+        "domain_request_verification" => {
+            let id = required_key(key)?;
+            let allowed = ctx.allowed_orgs();
+            let (org, _) =
+                crate::domain::find_visible_domain(store, realm, allowed.as_deref(), id).await?;
+            check_decision(authz.check(
+                ctx,
+                Action::Update,
+                &ObjectTarget::Organization {
+                    realm_id: realm.to_owned(),
+                    org_id: org.id,
+                },
+            ))?;
+            let res =
+                crate::domain::request_domain_verification(store, realm, allowed.as_deref(), id)
+                    .await?;
+            record_admin_write(
+                state,
+                ctx,
+                "ACTION",
+                "ORGANIZATION_DOMAIN",
+                &format!("domains/{id}/request-verification"),
+                None,
+            )
+            .await?;
+            Ok(Some(res))
+        }
+        "domain_verify" => {
+            let id = required_key(key)?;
+            let allowed = ctx.allowed_orgs();
+            let (org, _) =
+                crate::domain::find_visible_domain(store, realm, allowed.as_deref(), id).await?;
+            check_decision(authz.check(
+                ctx,
+                Action::Update,
+                &ObjectTarget::Organization {
+                    realm_id: realm.to_owned(),
+                    org_id: org.id,
+                },
+            ))?;
+            let res = crate::domain::verify_organization_domain(
+                store,
+                state.dns_resolver.as_ref(),
+                realm,
+                allowed.as_deref(),
+                id,
+            )
+            .await?;
+            record_admin_write(
+                state,
+                ctx,
+                "ACTION",
+                "ORGANIZATION_DOMAIN",
+                &format!("domains/{id}/verify"),
+                Some(res.clone()),
+            )
+            .await?;
+            Ok(Some(res))
         }
         "allowed" => allowed(state, ctx, params).await.map(Some),
         other => Err(KaisatsuError::NotSupported(format!(

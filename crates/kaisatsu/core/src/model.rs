@@ -193,6 +193,15 @@ impl RealmConfig {
             .and_then(|s| serde_json::from_str::<BTreeMap<String, i32>>(s).ok())
             .unwrap_or_else(|| BTreeMap::from([("pwd".into(), 1), ("mfa".into(), 2)]))
     }
+
+    /// True when the realm requires server-issued DPoP nonces on DPoP proofs (RFC 9449 §§8–9).
+    #[must_use]
+    pub fn dpop_nonce_required(&self) -> bool {
+        self.attributes
+            .get("dpop.require.nonce")
+            .or_else(|| self.attributes.get("dpop.nonce.enabled"))
+            .is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1")
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -269,6 +278,10 @@ pub struct OrganizationDomain {
     pub verified: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub challenge_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub challenge_expires_at: Option<DateTime<Utc>>,
 }
 
 /// Membership of a person in an organization (W3).
@@ -841,6 +854,15 @@ pub struct AuthSession {
     /// BASE32 TOTP secret generated for an enrolment page and shown once; cleared on enrolment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_totp_secret: Option<String>,
+    /// Base64url 32-byte WebAuthn challenge for an in-flight registration or authentication ceremony.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webauthn_challenge: Option<String>,
+    /// 6-digit email verification code hashed with SHA-256 for an in-flight VERIFY_EMAIL step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_email_code_hash: Option<String>,
+    /// Broker flow state (`idp_alias`, `state`, `nonce`, `pkce_verifier`, pending link claims).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broker_state_json: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     #[serde(default)]
@@ -1055,6 +1077,85 @@ pub struct AdminEvent {
     pub actor_client_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub representation: Option<Value>,
+}
+
+/// Stored WebAuthn / Passkey credential record (W7, K11).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WebAuthnCredentialRecord {
+    pub id: String,
+    pub realm_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub org_id: Option<String>,
+    pub user_id: String,
+    pub user_handle: String,
+    pub credential_id: String,
+    /// COSE_Key public key parameters as JSON (never private material).
+    #[serde(skip_serializing)]
+    pub public_key_cose_json: String,
+    pub cose_alg: i64,
+    pub sign_count: u32,
+    pub uv_initialized: bool,
+    pub backup_eligible: bool,
+    pub backup_state: bool,
+    #[serde(default)]
+    pub transports: Vec<String>,
+    pub attestation_type: String,
+    pub rp_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_label: Option<String>,
+    pub created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<DateTime<Utc>>,
+}
+
+/// Transactional e-mail outbox row (W7, K9). Holds no plaintext secrets or signed tokens:
+/// `action_jti` and the action metadata allow the dispatcher to mint the signed link at send time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EmailOutboxRecord {
+    pub id: String,
+    pub realm_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub org_id: Option<String>,
+    pub user_id: String,
+    pub to_address: String,
+    pub locale: String,
+    pub template_kind: String,
+    pub action_jti: String,
+    #[serde(default)]
+    pub actions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redirect_uri: Option<String>,
+    pub lifespan_secs: i64,
+    pub issuer: String,
+    /// `"pending"`, `"sending"`, `"sent"`, or `"failed"`.
+    pub status: String,
+    pub attempts: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    pub next_attempt_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sent_at: Option<DateTime<Utc>>,
+}
+
+/// Federated identity provider link for a person (`kaisatsu.idp_links`, W11, K12).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IdentityProviderLinkRecord {
+    pub id: String,
+    pub realm_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub org_id: Option<String>,
+    pub user_id: String,
+    pub idp_alias: String,
+    pub external_user_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_username: Option<String>,
+    pub created_at: DateTime<Utc>,
 }
 
 #[cfg(test)]

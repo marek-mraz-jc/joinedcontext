@@ -21,6 +21,7 @@ kaisatsu = [
   "dep:kaisatsu-crypto",
   "dep:kaisatsu-oidc",
   "dep:kaisatsu-store-memory",
+  "dep:kaisatsu-store-pg",
   "dep:kaisatsu-import",
 ]
 dataroom = [
@@ -61,6 +62,7 @@ kaisatsu-core = { path = "../../crates/kaisatsu/core", optional = true }
 kaisatsu-crypto = { path = "../../crates/kaisatsu/crypto", optional = true }
 kaisatsu-oidc = { path = "../../crates/kaisatsu/oidc", optional = true }
 kaisatsu-store-memory = { path = "../../crates/kaisatsu/store-memory", optional = true }
+kaisatsu-store-pg = { path = "../../crates/kaisatsu/store-pg", optional = true }
 kaisatsu-import = { path = "../../crates/kaisatsu/import", optional = true }
 
 dataroom-server = { path = "../../crates/dataroom/server", optional = true }

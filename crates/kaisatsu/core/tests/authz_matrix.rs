@@ -249,8 +249,52 @@ fn realm_management_roles() {
             (true, false),
         ],
     );
-    // view-clients (portal-api, T-2725) writes only applications managed by joinedcontext.
+    // K3: view-clients reads roles and client scopes, but never writes them (proved red against
+    // pre-K3 where view-clients was in `can_write` for Role and ClientScope).
     let portal = mgmt(&["view-clients"]);
+    let role_target = ObjectTarget::Role {
+        realm_id: "dev".into(),
+        org_id: None,
+        role_id: "r1".into(),
+    };
+    let scope_target = ObjectTarget::ClientScope {
+        realm_id: "dev".into(),
+        org_id: None,
+        scope_id: "s1".into(),
+    };
+    for obj in [&role_target, &scope_target] {
+        assert!(check(&portal, None, Action::Read, obj).allowed);
+        for write_act in [Action::Create, Action::Update, Action::Delete] {
+            let dec = check(&portal, None, write_act, obj);
+            assert!(
+                !dec.allowed && !dec.visible,
+                "view-clients must not {} {obj:?}",
+                write_act.as_str()
+            );
+        }
+    }
+    // manage-clients in an org writes roles and client scopes.
+    for obj in [
+        ObjectTarget::Role {
+            realm_id: "dev".into(),
+            org_id: Some("hel".into()),
+            role_id: "r1".into(),
+        },
+        ObjectTarget::ClientScope {
+            realm_id: "dev".into(),
+            org_id: Some("hel".into()),
+            scope_id: "s1".into(),
+        },
+    ] {
+        for write_act in [Action::Create, Action::Update, Action::Delete] {
+            assert!(
+                check(&clients_mgr, Some("hel"), write_act, &obj).allowed,
+                "manage-clients must {} {obj:?}",
+                write_act.as_str()
+            );
+        }
+    }
+    // view-clients (portal-api, T-2725) writes only applications managed by joinedcontext.
     let app = |managed: Option<&str>| ObjectTarget::Application {
         realm_id: "dev".into(),
         org_id: None,

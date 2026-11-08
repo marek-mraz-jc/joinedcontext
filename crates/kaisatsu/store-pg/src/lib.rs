@@ -13,6 +13,9 @@
 //! - Expired-row sweeper using `FOR UPDATE SKIP LOCKED` batches.
 //! - `NOTIFY kaisatsu_changed` on configuration writes for sibling processes.
 
+pub mod odata_pg;
+pub use odata_pg::PgScopedTable;
+
 use chrono::Utc;
 use kaisatsu_core::store::StoreFuture;
 use kaisatsu_core::*;
@@ -31,6 +34,8 @@ use std::time::Duration;
 
 /// Embedded migration SQL for schema `kaisatsu` (run only by `kaisatsu migrate` as `kaisatsu_migrate`, W2).
 pub const MIGRATION_0001_SQL: &str = include_str!("../migrations/0001_init.sql");
+/// Embedded migration 0002 SQL (`webauthn_credential`, `idp_links`, `email_outbox` & domain columns).
+pub const MIGRATION_0002_SQL: &str = include_str!("../migrations/0002_k_items.sql");
 
 /// Table holding the applied migration versions (outside schema `kaisatsu`, so the request role
 /// has no grant on it and the RLS boot check does not see it).
@@ -254,13 +259,22 @@ impl PgStore {
     pub async fn run_migrations(migrate_pool: &PgPool) -> Result<()> {
         use sqlx::SqlSafeStr;
         use sqlx::migrate::{Migration, MigrationType, Migrator};
-        let mut migrator = Migrator::with_migrations(vec![Migration::new(
-            1,
-            "init".into(),
-            MigrationType::Simple,
-            MIGRATION_0001_SQL.into_sql_str(),
-            false,
-        )]);
+        let mut migrator = Migrator::with_migrations(vec![
+            Migration::new(
+                1,
+                "init".into(),
+                MigrationType::Simple,
+                MIGRATION_0001_SQL.into_sql_str(),
+                false,
+            ),
+            Migration::new(
+                2,
+                "k_items".into(),
+                MigrationType::Simple,
+                MIGRATION_0002_SQL.into_sql_str(),
+                false,
+            ),
+        ]);
         migrator.create_schema("kaisatsu_migrations");
         migrator.dangerous_set_table_name(MIGRATIONS_TABLE);
         migrator
@@ -835,8 +849,14 @@ impl Store for PgStore {
                     "{set_name} not accessible"
                 )));
             }
-            let rows = self.entity_rows(&ctx.realm_id, set_name).await?;
-            let table = MemoryTable::new(info, rows)?;
+            let table = PgScopedTable::new(
+                self,
+                info,
+                ctx.realm_id.clone(),
+                ctx.allowed_orgs(),
+            );
+            let _ = MemoryTable::new;
+            let _ = Self::entity_rows;
             Ok(query(&table, options, &scope, max_page).await?)
         })
     }
@@ -1165,6 +1185,8 @@ impl Store for PgStore {
                 "DELETE FROM kaisatsu.credentials WHERE realm_id = $1 AND user_id = $2",
                 "DELETE FROM kaisatsu.group_members WHERE realm_id = $1 AND user_id = $2",
                 "DELETE FROM kaisatsu.sso_session WHERE realm_id = $1 AND user_id = $2",
+                "DELETE FROM kaisatsu.webauthn_credential WHERE realm_id = $1 AND user_id = $2",
+                "DELETE FROM kaisatsu.idp_links WHERE realm_id = $1 AND user_id = $2",
             ] {
                 sqlx::query(sql)
                     .bind(realm_id)
@@ -3319,6 +3341,434 @@ impl Store for PgStore {
         })
     }
 
+    fn insert_webauthn_credential<'a>(
+        &'a self,
+        mut cred: WebAuthnCredentialRecord,
+    ) -> StoreFuture<'a, WebAuthnCredentialRecord> {
+        Box::pin(async move {
+            if cred.id.is_empty() {
+                cred.id = new_id();
+            }
+            let mut tx = self.begin(&cred.realm_id, None).await?;
+            // Include public_key_cose_json inside the stored JSON doc in Postgres.
+            let mut doc = to_doc(&cred)?;
+            if let Some(obj) = doc.as_object_mut() {
+                obj.insert(
+                    "publicKeyCoseJson".into(),
+                    Value::String(cred.public_key_cose_json.clone()),
+                );
+            }
+            sqlx::query(
+                "INSERT INTO kaisatsu.webauthn_credential
+                     (realm_id, id, org_id, user_id, user_handle, credential_id, sign_count, doc, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            )
+            .bind(&cred.realm_id)
+            .bind(&cred.id)
+            .bind(&cred.org_id)
+            .bind(&cred.user_id)
+            .bind(&cred.user_handle)
+            .bind(&cred.credential_id)
+            .bind(i64::from(cred.sign_count))
+            .bind(doc)
+            .bind(cred.created_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            Ok(cred)
+        })
+    }
+
+    fn update_webauthn_credential<'a>(
+        &'a self,
+        cred: WebAuthnCredentialRecord,
+    ) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.begin(&cred.realm_id, None).await?;
+            let mut doc = to_doc(&cred)?;
+            if let Some(obj) = doc.as_object_mut() {
+                obj.insert(
+                    "publicKeyCoseJson".into(),
+                    Value::String(cred.public_key_cose_json.clone()),
+                );
+            }
+            let res = sqlx::query(
+                "UPDATE kaisatsu.webauthn_credential
+                 SET sign_count = $3, doc = $4
+                 WHERE realm_id = $1 AND id = $2",
+            )
+            .bind(&cred.realm_id)
+            .bind(&cred.id)
+            .bind(i64::from(cred.sign_count))
+            .bind(doc)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            if res.rows_affected() == 0 {
+                return Err(KaisatsuError::NotFound(
+                    "WebAuthn credential not found".into(),
+                ));
+            }
+            tx.commit().await.map_err(storage)?;
+            Ok(())
+        })
+    }
+
+    fn get_webauthn_by_credential_id<'a>(
+        &'a self,
+        realm_id: &'a str,
+        credential_id: &'a str,
+    ) -> StoreFuture<'a, Option<WebAuthnCredentialRecord>> {
+        Box::pin(async move {
+            let mut tx = self.begin(realm_id, None).await?;
+            let doc: Option<Value> = sqlx::query_scalar(
+                "SELECT doc FROM kaisatsu.webauthn_credential
+                 WHERE realm_id = $1 AND credential_id = $2",
+            )
+            .bind(realm_id)
+            .bind(credential_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            doc.map(webauthn_from_doc).transpose()
+        })
+    }
+
+    fn list_webauthn_credentials<'a>(
+        &'a self,
+        realm_id: &'a str,
+        user_id: &'a str,
+    ) -> StoreFuture<'a, Vec<WebAuthnCredentialRecord>> {
+        Box::pin(async move {
+            let mut tx = self.begin(realm_id, None).await?;
+            let docs: Vec<Value> = sqlx::query_scalar(
+                "SELECT doc FROM kaisatsu.webauthn_credential
+                 WHERE realm_id = $1 AND user_id = $2 ORDER BY seq",
+            )
+            .bind(realm_id)
+            .bind(user_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            docs.into_iter().map(webauthn_from_doc).collect()
+        })
+    }
+
+    fn delete_webauthn_credential<'a>(
+        &'a self,
+        realm_id: &'a str,
+        allowed_orgs: Option<&'a [String]>,
+        id: &'a str,
+    ) -> StoreFuture<'a, bool> {
+        Box::pin(async move {
+            let mut tx = self.begin(realm_id, allowed_orgs).await?;
+            let res = sqlx::query(
+                "DELETE FROM kaisatsu.webauthn_credential WHERE realm_id = $1 AND id = $2",
+            )
+            .bind(realm_id)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            Ok(res.rows_affected() > 0)
+        })
+    }
+
+    fn update_user_with_outbox<'a>(
+        &'a self,
+        mut user: UserRepresentation,
+        mut outbox: EmailOutboxRecord,
+    ) -> StoreFuture<'a, UserRepresentation> {
+        Box::pin(async move {
+            user.username = user.username.to_ascii_lowercase();
+            if let Some(em) = &mut user.email {
+                *em = em.to_ascii_lowercase();
+            }
+            if outbox.id.is_empty() {
+                outbox.id = new_id();
+            }
+            let mut tx = self.begin(&user.realm_id, None).await?;
+            if load_user(&mut tx, &user.realm_id, &user.id)
+                .await?
+                .is_none()
+            {
+                return Err(KaisatsuError::NotFound("user not found".into()));
+            }
+            if user_key_taken(&mut tx, &user, Some(&user.id)).await? {
+                return Err(KaisatsuError::Conflict(
+                    "another user already holds that username or email".into(),
+                ));
+            }
+            sqlx::query(
+                "UPDATE kaisatsu.people SET org_id = $3, username_lower = $4, email_lower = $5,
+                     transient = $6, doc = $7
+                 WHERE realm_id = $1 AND id = $2",
+            )
+            .bind(&user.realm_id)
+            .bind(&user.id)
+            .bind(&user.org_id)
+            .bind(&user.username)
+            .bind(&user.email)
+            .bind(user.transient)
+            .bind(to_doc(&user)?)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            insert_outbox(&mut tx, &outbox).await?;
+            tx.commit().await.map_err(storage)?;
+            Ok(user)
+        })
+    }
+
+    fn enqueue_outbox<'a>(&'a self, mut outbox: EmailOutboxRecord) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            if outbox.id.is_empty() {
+                outbox.id = new_id();
+            }
+            let mut tx = self.begin(&outbox.realm_id, None).await?;
+            insert_outbox(&mut tx, &outbox).await?;
+            tx.commit().await.map_err(storage)?;
+            Ok(())
+        })
+    }
+
+    fn claim_outbox_batch<'a>(
+        &'a self,
+        realm_id: &'a str,
+        limit: usize,
+    ) -> StoreFuture<'a, Vec<EmailOutboxRecord>> {
+        Box::pin(async move {
+            let cap = i64::try_from(limit.clamp(1, 50)).unwrap_or(50);
+            let mut tx = self.begin(realm_id, None).await?;
+            let docs: Vec<Value> = sqlx::query_scalar(
+                "UPDATE kaisatsu.email_outbox
+                 SET status = 'sending',
+                     attempts = attempts + 1,
+                     doc = jsonb_set(
+                         jsonb_set(doc, '{status}', '\"sending\"'::jsonb),
+                         '{attempts}',
+                         to_jsonb(attempts + 1)
+                     )
+                 WHERE (realm_id, id) IN (
+                     SELECT realm_id, id FROM kaisatsu.email_outbox
+                     WHERE realm_id = $1 AND status = 'pending' AND next_attempt_at <= now()
+                     ORDER BY seq
+                     LIMIT $2
+                     FOR UPDATE SKIP LOCKED
+                 )
+                 RETURNING doc",
+            )
+            .bind(realm_id)
+            .bind(cap)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            from_docs(docs)
+        })
+    }
+
+    fn complete_outbox_row<'a>(
+        &'a self,
+        realm_id: &'a str,
+        id: &'a str,
+        sent: bool,
+        error: Option<String>,
+        next_attempt_at: Option<chrono::DateTime<chrono::Utc>>,
+        max_attempts: u32,
+    ) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            let mut tx = self.begin(realm_id, None).await?;
+            let doc: Option<Value> = sqlx::query_scalar(
+                "SELECT doc FROM kaisatsu.email_outbox WHERE realm_id = $1 AND id = $2 FOR UPDATE",
+            )
+            .bind(realm_id)
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(storage)?;
+            if let Some(doc) = doc {
+                let mut rec: EmailOutboxRecord = from_doc(doc)?;
+                if sent {
+                    rec.status = "sent".into();
+                    rec.sent_at = Some(Utc::now());
+                    rec.last_error = None;
+                } else {
+                    rec.last_error = error.clone();
+                    if rec.attempts >= max_attempts {
+                        rec.status = "failed".into();
+                    } else {
+                        rec.status = "pending".into();
+                        rec.next_attempt_at = next_attempt_at
+                            .unwrap_or_else(|| Utc::now() + chrono::Duration::seconds(5));
+                    }
+                }
+                sqlx::query(
+                    "UPDATE kaisatsu.email_outbox
+                     SET status = $3, last_error = $4, next_attempt_at = $5, doc = $6
+                     WHERE realm_id = $1 AND id = $2",
+                )
+                .bind(realm_id)
+                .bind(id)
+                .bind(&rec.status)
+                .bind(&rec.last_error)
+                .bind(rec.next_attempt_at)
+                .bind(to_doc(&rec)?)
+                .execute(&mut *tx)
+                .await
+                .map_err(storage)?;
+            }
+            tx.commit().await.map_err(storage)?;
+            Ok(())
+        })
+    }
+
+    fn retry_outbox_row<'a>(
+        &'a self,
+        realm_id: &'a str,
+        allowed_orgs: Option<&'a [String]>,
+        id: &'a str,
+    ) -> StoreFuture<'a, Option<EmailOutboxRecord>> {
+        Box::pin(async move {
+            let mut tx = self.begin(realm_id, allowed_orgs).await?;
+            let doc: Option<Value> = sqlx::query_scalar(
+                "SELECT doc FROM kaisatsu.email_outbox WHERE realm_id = $1 AND id = $2 FOR UPDATE",
+            )
+            .bind(realm_id)
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(storage)?;
+            let Some(doc) = doc else {
+                return Ok(None);
+            };
+            let mut rec: EmailOutboxRecord = from_doc(doc)?;
+            rec.status = "pending".into();
+            rec.attempts = 0;
+            rec.last_error = None;
+            rec.next_attempt_at = Utc::now();
+            sqlx::query(
+                "UPDATE kaisatsu.email_outbox
+                 SET status = 'pending', attempts = 0, last_error = NULL,
+                     next_attempt_at = $3, doc = $4
+                 WHERE realm_id = $1 AND id = $2",
+            )
+            .bind(realm_id)
+            .bind(id)
+            .bind(rec.next_attempt_at)
+            .bind(to_doc(&rec)?)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            Ok(Some(rec))
+        })
+    }
+
+    fn list_outbox_rows<'a>(
+        &'a self,
+        realm_id: &'a str,
+        allowed_orgs: Option<&'a [String]>,
+    ) -> StoreFuture<'a, Vec<EmailOutboxRecord>> {
+        Box::pin(async move {
+            let mut tx = self.begin(realm_id, allowed_orgs).await?;
+            let docs: Vec<Value> = sqlx::query_scalar(
+                "SELECT doc FROM kaisatsu.email_outbox WHERE realm_id = $1 ORDER BY seq",
+            )
+            .bind(realm_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            from_docs(docs)
+        })
+    }
+
+    fn upsert_idp_link<'a>(&'a self, mut link: IdentityProviderLinkRecord) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            if link.id.is_empty() {
+                link.id = new_id();
+            }
+            let mut tx = self.begin(&link.realm_id, None).await?;
+            sqlx::query(
+                "DELETE FROM kaisatsu.idp_links
+                 WHERE realm_id = $1 AND idp_alias = $2 AND external_user_id = $3",
+            )
+            .bind(&link.realm_id)
+            .bind(&link.idp_alias)
+            .bind(&link.external_user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            sqlx::query(
+                "INSERT INTO kaisatsu.idp_links
+                     (realm_id, id, org_id, user_id, idp_alias, external_user_id, doc, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            )
+            .bind(&link.realm_id)
+            .bind(&link.id)
+            .bind(&link.org_id)
+            .bind(&link.user_id)
+            .bind(&link.idp_alias)
+            .bind(&link.external_user_id)
+            .bind(to_doc(&link)?)
+            .bind(link.created_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            Ok(())
+        })
+    }
+
+    fn get_idp_link_by_external<'a>(
+        &'a self,
+        realm_id: &'a str,
+        idp_alias: &'a str,
+        external_user_id: &'a str,
+    ) -> StoreFuture<'a, Option<IdentityProviderLinkRecord>> {
+        Box::pin(async move {
+            let mut tx = self.begin(realm_id, None).await?;
+            let doc: Option<Value> = sqlx::query_scalar(
+                "SELECT doc FROM kaisatsu.idp_links
+                 WHERE realm_id = $1 AND idp_alias = $2 AND external_user_id = $3",
+            )
+            .bind(realm_id)
+            .bind(idp_alias)
+            .bind(external_user_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            opt_from_doc(doc)
+        })
+    }
+
+    fn list_idp_links_for_user<'a>(
+        &'a self,
+        realm_id: &'a str,
+        user_id: &'a str,
+    ) -> StoreFuture<'a, Vec<IdentityProviderLinkRecord>> {
+        Box::pin(async move {
+            let mut tx = self.begin(realm_id, None).await?;
+            let docs: Vec<Value> = sqlx::query_scalar(
+                "SELECT doc FROM kaisatsu.idp_links
+                 WHERE realm_id = $1 AND user_id = $2 ORDER BY seq",
+            )
+            .bind(realm_id)
+            .bind(user_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            from_docs(docs)
+        })
+    }
+
     fn sweep_expired<'a>(&'a self) -> StoreFuture<'a, u64> {
         Box::pin(async move {
             let mut total = 0u64;
@@ -3333,6 +3783,41 @@ impl Store for PgStore {
             Ok(total)
         })
     }
+}
+
+fn webauthn_from_doc(mut doc: Value) -> Result<WebAuthnCredentialRecord> {
+    let cose = doc
+        .as_object_mut()
+        .and_then(|o| o.remove("publicKeyCoseJson"))
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_default();
+    if let Some(obj) = doc.as_object_mut() {
+        obj.insert("publicKeyCoseJson".into(), Value::String(cose.clone()));
+    }
+    let mut rec: WebAuthnCredentialRecord = from_doc(doc)?;
+    rec.public_key_cose_json = cose;
+    Ok(rec)
+}
+
+async fn insert_outbox(conn: &mut PgConnection, outbox: &EmailOutboxRecord) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO kaisatsu.email_outbox
+             (realm_id, id, org_id, status, attempts, last_error, next_attempt_at, doc, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+    )
+    .bind(&outbox.realm_id)
+    .bind(&outbox.id)
+    .bind(&outbox.org_id)
+    .bind(&outbox.status)
+    .bind(i32::try_from(outbox.attempts).unwrap_or(0))
+    .bind(&outbox.last_error)
+    .bind(outbox.next_attempt_at)
+    .bind(to_doc(outbox)?)
+    .bind(outbox.created_at)
+    .execute(&mut *conn)
+    .await
+    .map_err(storage)?;
+    Ok(())
 }
 
 async fn insert_credential(conn: &mut PgConnection, cred: &CredentialRecord) -> Result<()> {

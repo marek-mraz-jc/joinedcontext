@@ -6,8 +6,10 @@ use crate::model::{
     ClientRepresentation, ClientScopeRepresentation, GroupRepresentation,
     ProtocolMapperRepresentation, RealmConfig, RoleRepresentation, UserRepresentation,
 };
+use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
 /// Which token or response the mapper pipeline is building.
@@ -400,11 +402,25 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                         }
                     }
                 }
-                if attr_name == "jc_org"
-                    && let Some(pinned_org) = ctx.active_org
-                    && !vals.iter().any(|v| v == pinned_org)
-                {
-                    vals.push(pinned_org.to_owned());
+                // K2: When `organization:<alias>` scope was requested, only the verified
+                // `ctx.active_org` is emitted; if the person is not a member of the requested
+                // organization (`ctx.active_org.is_none()`), no foreign `jc_org` or `organization`
+                // claim is emitted.
+                let has_org_scope = ctx
+                    .granted_scope_string
+                    .split_whitespace()
+                    .any(|s| s.starts_with("organization:"));
+                if attr_name == "jc_org" {
+                    if has_org_scope {
+                        vals.clear();
+                        if let Some(pinned_org) = ctx.active_org {
+                            vals.push(pinned_org.to_owned());
+                        }
+                    } else if let Some(pinned_org) = ctx.active_org
+                        && !vals.iter().any(|v| v == pinned_org)
+                    {
+                        vals.push(pinned_org.to_owned());
+                    }
                 }
                 if !vals.is_empty() {
                     let val = if multivalued {
@@ -504,8 +520,12 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                     claims.insert("name".into(), Value::String(full));
                 }
             }
-            "oidc-sub-mapper" | "oidc-sha256-pairwise-sub-mapper" => {
+            "oidc-sub-mapper" => {
                 claims.insert("sub".into(), Value::String(ctx.user.id.clone()));
+            }
+            "oidc-sha256-pairwise-sub-mapper" => {
+                let pairwise = compute_pairwise_sub(mapper, ctx.client, &ctx.user.id)?;
+                claims.insert("sub".into(), Value::String(pairwise));
             }
             "allowed-web-origins" | "oidc-AllowedWebOrigins-mapper" => {
                 if !ctx.client.web_origins.is_empty() {
@@ -544,7 +564,96 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
         claims.insert("act".into(), v);
     }
 
+    // K2: If `organization:<alias>` scope is granted and verified against the person's
+    // memberships (`ctx.active_org`), emit `organization` claim for Keycloak 26 compatibility.
+    if ctx
+        .granted_scope_string
+        .split_whitespace()
+        .any(|s| s.starts_with("organization:"))
+        && let Some(verified_org) = ctx.active_org
+        && kind != TokenKind::UserInfo
+    {
+        claims.insert("organization".into(), json!({ verified_org: {} }));
+    }
+
     Ok(claims)
+}
+
+/// Computes an OIDC Core §8.1 pairwise subject identifier:
+/// `base64url(sha256(sector_identifier || '\0' || local_sub || '\0' || salt))`.
+/// Sector host comes from `sectorIdentifierUri` in the mapper config, or else from the client's
+/// registered redirect URIs (which must all share a single host when `sectorIdentifierUri` is omitted).
+pub fn compute_pairwise_sub(
+    mapper: &ProtocolMapperRepresentation,
+    client: &ClientRepresentation,
+    local_sub: &str,
+) -> Result<String> {
+    let sector = if let Some(uri) = mapper
+        .config
+        .get("sectorIdentifierUri")
+        .filter(|s| !s.trim().is_empty())
+    {
+        let parsed = url::Url::parse(uri.trim()).map_err(|_| {
+            KaisatsuError::BadRequest("invalid sectorIdentifierUri in pairwise mapper".into())
+        })?;
+        parsed
+            .host_str()
+            .ok_or_else(|| {
+                KaisatsuError::BadRequest("sectorIdentifierUri has no host".into())
+            })?
+            .to_ascii_lowercase()
+    } else {
+        let mut hosts = BTreeSet::new();
+        for r in &client.redirect_uris {
+            let trimmed = r.trim().trim_end_matches("/*");
+            if let Ok(u) = url::Url::parse(trimmed)
+                && let Some(h) = u.host_str()
+            {
+                hosts.insert(h.to_ascii_lowercase());
+            }
+        }
+        if hosts.len() != 1 {
+            return Err(KaisatsuError::BadRequest(
+                "pairwise mapper requires sectorIdentifierUri when client has zero or multiple redirect URI hosts".into(),
+            ));
+        }
+        hosts.into_iter().next().unwrap_or_default()
+    };
+
+    let salt = mapper
+        .config
+        .get("pairwiseSubAlgorithmSalt")
+        .or_else(|| mapper.config.get("salt"))
+        .map(String::as_str)
+        .unwrap_or_default();
+
+    let mut hasher = Sha256::new();
+    hasher.update(sector.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(local_sub.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(salt.as_bytes());
+    Ok(URL_SAFE_NO_PAD.encode(hasher.finalize()))
+}
+
+/// Computes the subject identifier (`sub`) a client sees for `user_id`, evaluating any
+/// `oidc-sha256-pairwise-sub-mapper` configured on the client or its active scopes so ID tokens,
+/// access tokens, userinfo, introspection, and back-channel logout all agree (OIDC Core §8.1, K4).
+pub fn compute_subject_for_client(
+    client: &ClientRepresentation,
+    active_scopes: &[ClientScopeRepresentation],
+    local_sub: &str,
+) -> Result<String> {
+    for mapper in active_scopes
+        .iter()
+        .flat_map(|s| s.protocol_mappers.iter())
+        .chain(client.protocol_mappers.iter())
+    {
+        if mapper.protocol_mapper == "oidc-sha256-pairwise-sub-mapper" {
+            return compute_pairwise_sub(mapper, client, local_sub);
+        }
+    }
+    Ok(local_sub.to_owned())
 }
 
 #[cfg(test)]

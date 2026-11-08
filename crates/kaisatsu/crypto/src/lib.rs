@@ -11,6 +11,7 @@ pub mod jose;
 pub mod keys;
 pub mod password;
 pub mod totp;
+pub mod webauthn;
 
 pub use jose::{DecodedHeader, JwtHeader, sign_jwt, verify_jwt, verify_jwt_with_jwk};
 pub use keys::{Kek, KeyManager, PublicJwk, PublicJwkSet};
@@ -21,6 +22,14 @@ pub use password::{
 pub use totp::{
     generate_recovery_codes, generate_totp_code, generate_totp_code_for_credential,
     generate_totp_secret, verify_recovery_code, verify_totp_code,
+};
+pub use webauthn::{
+    AUTH_DATA_FLAG_AT, AUTH_DATA_FLAG_BE, AUTH_DATA_FLAG_BS, AUTH_DATA_FLAG_ED,
+    AUTH_DATA_FLAG_UP, AUTH_DATA_FLAG_UV, AuthenticationClientResponse,
+    AuthenticatorAssertionResponsePayload, AuthenticatorAttestationResponsePayload,
+    COSE_ALG_EDDSA, COSE_ALG_ES256, COSE_ALG_RS256, CborValue, CosePublicKey, ParsedAuthData,
+    RegistrationClientResponse, VerifiedAssertion, VerifiedRegistration, decode_cbor,
+    decode_cbor_prefix, verify_authentication_response, verify_registration_response,
 };
 
 use rand::Rng as _;

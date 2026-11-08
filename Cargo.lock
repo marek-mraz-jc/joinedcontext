@@ -3914,6 +3914,7 @@ dependencies = [
  "kaisatsu-oidc",
  "kaisatsu-server",
  "kaisatsu-store-memory",
+ "kaisatsu-store-pg",
  "metrics",
  "metrics-exporter-prometheus 0.18.3",
  "reqwest 0.12.28",
@@ -4335,6 +4336,8 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
+ "futures-core",
+ "hickory-resolver",
  "http",
  "http-body-util",
  "jc-router",
@@ -4346,6 +4349,7 @@ dependencies = [
  "odata-csdl",
  "odata-table",
  "odata-url",
+ "parking_lot",
  "serde",
  "serde_json",
  "tokio",
@@ -4360,6 +4364,7 @@ name = "kaisatsu-core"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "chrono",
  "futures-core",
  "http",
@@ -4370,6 +4375,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "subtle",
  "thiserror 2.0.21",
  "tokio",
@@ -4430,6 +4436,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "chrono",
+ "futures-core",
  "http",
  "http-body-util",
  "jc-router",

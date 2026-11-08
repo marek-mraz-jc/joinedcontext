@@ -50,6 +50,9 @@ enum Commands {
         kek_file: PathBuf,
         #[arg(long)]
         import_dir: Option<PathBuf>,
+        /// Poll interval in seconds for watching `--import-dir` and re-applying on change (K17).
+        #[arg(long)]
+        import_watch: Option<u64>,
         #[arg(long, default_value = "https")]
         scheme: String,
         #[arg(long, default_value = "idm.localhost")]
@@ -350,6 +353,7 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
             listen,
             kek_file,
             import_dir,
+            import_watch,
             scheme,
             host,
             path_prefix,
@@ -378,6 +382,28 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
                     apply_realm_files(&store, &realm_files, &ApplyOptions::default())
                         .await
                         .map_err(fail(EXIT_INVALID_INPUT))?;
+                }
+                if let Some(watch_secs) = import_watch.filter(|&s| s > 0) {
+                    let mut last_digest =
+                        kaisatsu_server::compute_import_dir_digest(&dir).unwrap_or_default();
+                    let watch_store = store.clone();
+                    let watch_dir = dir.clone();
+                    tokio::spawn(async move {
+                        let mut tick =
+                            tokio::time::interval(std::time::Duration::from_secs(watch_secs));
+                        loop {
+                            tick.tick().await;
+                            if let Err(e) = kaisatsu_server::poll_import_dir_once(
+                                &watch_store,
+                                &watch_dir,
+                                &mut last_digest,
+                            )
+                            .await
+                            {
+                                tracing::warn!(error = %e, "kaisatsu --import-dir watch apply failed; keeping last good state");
+                            }
+                        }
+                    });
                 }
             }
             if let Some(pg) = pg {

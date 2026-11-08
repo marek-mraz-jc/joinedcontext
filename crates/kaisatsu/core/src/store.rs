@@ -396,6 +396,80 @@ pub trait Store: Send + Sync {
         allowed_orgs: Option<&'a [String]>,
     ) -> StoreFuture<'a, Vec<AdminEvent>>;
 
+    // WebAuthn Credentials (K11)
+    fn insert_webauthn_credential<'a>(
+        &'a self,
+        cred: WebAuthnCredentialRecord,
+    ) -> StoreFuture<'a, WebAuthnCredentialRecord>;
+    fn update_webauthn_credential<'a>(
+        &'a self,
+        cred: WebAuthnCredentialRecord,
+    ) -> StoreFuture<'a, ()>;
+    fn get_webauthn_by_credential_id<'a>(
+        &'a self,
+        realm_id: &'a str,
+        credential_id: &'a str,
+    ) -> StoreFuture<'a, Option<WebAuthnCredentialRecord>>;
+    fn list_webauthn_credentials<'a>(
+        &'a self,
+        realm_id: &'a str,
+        user_id: &'a str,
+    ) -> StoreFuture<'a, Vec<WebAuthnCredentialRecord>>;
+    fn delete_webauthn_credential<'a>(
+        &'a self,
+        realm_id: &'a str,
+        allowed_orgs: Option<&'a [String]>,
+        id: &'a str,
+    ) -> StoreFuture<'a, bool>;
+
+    // Transactional E-mail Outbox (K9, K10)
+    /// Atomically updates `user` and inserts `outbox` in the same database transaction.
+    fn update_user_with_outbox<'a>(
+        &'a self,
+        user: UserRepresentation,
+        outbox: EmailOutboxRecord,
+    ) -> StoreFuture<'a, UserRepresentation>;
+    fn enqueue_outbox<'a>(&'a self, outbox: EmailOutboxRecord) -> StoreFuture<'a, ()>;
+    fn claim_outbox_batch<'a>(
+        &'a self,
+        realm_id: &'a str,
+        limit: usize,
+    ) -> StoreFuture<'a, Vec<EmailOutboxRecord>>;
+    fn complete_outbox_row<'a>(
+        &'a self,
+        realm_id: &'a str,
+        id: &'a str,
+        sent: bool,
+        error: Option<String>,
+        next_attempt_at: Option<chrono::DateTime<chrono::Utc>>,
+        max_attempts: u32,
+    ) -> StoreFuture<'a, ()>;
+    fn retry_outbox_row<'a>(
+        &'a self,
+        realm_id: &'a str,
+        allowed_orgs: Option<&'a [String]>,
+        id: &'a str,
+    ) -> StoreFuture<'a, Option<EmailOutboxRecord>>;
+    fn list_outbox_rows<'a>(
+        &'a self,
+        realm_id: &'a str,
+        allowed_orgs: Option<&'a [String]>,
+    ) -> StoreFuture<'a, Vec<EmailOutboxRecord>>;
+
+    // Upstream Identity Provider Links (K12)
+    fn upsert_idp_link<'a>(&'a self, link: IdentityProviderLinkRecord) -> StoreFuture<'a, ()>;
+    fn get_idp_link_by_external<'a>(
+        &'a self,
+        realm_id: &'a str,
+        idp_alias: &'a str,
+        external_user_id: &'a str,
+    ) -> StoreFuture<'a, Option<IdentityProviderLinkRecord>>;
+    fn list_idp_links_for_user<'a>(
+        &'a self,
+        realm_id: &'a str,
+        user_id: &'a str,
+    ) -> StoreFuture<'a, Vec<IdentityProviderLinkRecord>>;
+
     // Sweeper
     fn sweep_expired<'a>(&'a self) -> StoreFuture<'a, u64>;
 }

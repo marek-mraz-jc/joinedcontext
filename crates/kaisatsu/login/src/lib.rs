@@ -14,6 +14,8 @@ pub mod email;
 pub mod handlers;
 pub mod i18n;
 pub mod machine;
+pub mod outbox;
+pub mod passkey;
 
 pub use email::{EmailSender, SignedActionToken};
 pub use handlers::login_router;
@@ -23,4 +25,9 @@ pub use kaisatsu_oidc::brute_force;
 pub use kaisatsu_oidc::brute_force::BruteForceProtector;
 pub use machine::{
     FactorRequirement, LoginInput, LoginPolicyContext, LoginState, TransitionError, transition,
+};
+pub use outbox::{MailSender, OutboxDispatcher, RecordedMail, RecordingSender};
+pub use passkey::{
+    allowed_origins_for_realm, build_creation_options, complete_passkey_authentication,
+    complete_passkey_registration, effective_rp_id, ensure_user_handle,
 };

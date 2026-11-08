@@ -426,11 +426,14 @@ impl Authorizer for LocalAuthorizer {
                 }
             }
             ObjectTarget::Role { .. } | ObjectTarget::ClientScope { .. } => {
+                // K3: `view-clients` (and `query-groups`) grants read only on roles and client
+                // scopes; writes require `manage-clients`, `org-admin`, `application-manager`, or `realm-admin`.
                 let can_write = ctx.principal.has_realm_mgmt_role("manage-clients")
-                    || ctx.principal.has_realm_mgmt_role("view-clients")
                     || ctx.principal.has_org_role(org_id, "org-admin")
                     || ctx.principal.has_org_role(org_id, "application-manager");
-                let can_read = can_write || ctx.principal.has_realm_mgmt_role("query-groups");
+                let can_read = can_write
+                    || ctx.principal.has_realm_mgmt_role("view-clients")
+                    || ctx.principal.has_realm_mgmt_role("query-groups");
                 if (action == Action::Read && can_read) || (action.is_write() && can_write) {
                     Decision::allow("granted on role/scope")
                 } else {

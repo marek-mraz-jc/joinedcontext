@@ -26,6 +26,7 @@ pub struct AdminState {
     pub oidc: OidcState,
     pub authorizer: Arc<dyn Authorizer>,
     pub registry: Arc<OperationRegistry>,
+    pub dns_resolver: Arc<dyn crate::domain::DnsResolver>,
 }
 
 impl AdminState {
@@ -35,7 +36,17 @@ impl AdminState {
             oidc,
             authorizer,
             registry: Arc::new(OperationRegistry::new()),
+            dns_resolver: Arc::new(crate::domain::HickoryDnsResolver::new()),
         }
+    }
+
+    #[must_use]
+    pub fn with_dns_resolver(
+        mut self,
+        dns_resolver: Arc<dyn crate::domain::DnsResolver>,
+    ) -> Self {
+        self.dns_resolver = dns_resolver;
+        self
     }
 }
 
@@ -215,21 +226,57 @@ pub fn admin_router(state: AdminState) -> Router {
         .with_state(state)
 }
 
-/// Extracts and verifies the admin bearer token (either from the target realm or `master`) and
-/// constructs the [`RequestCtx`] (W1, W6).
+#[derive(Clone, Debug)]
+pub struct ReqInfo {
+    pub method: String,
+    pub path: String,
+}
+
+async fn attach_req_info(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let info = ReqInfo {
+        method: req.method().as_str().to_owned(),
+        path: req.uri().path().to_owned(),
+    };
+    let mut headers = req.headers().clone();
+    if let Ok(m) = header::HeaderValue::from_str(&info.method) {
+        headers.insert(header::HeaderName::from_static("x-kaisatsu-req-method"), m);
+    }
+    if let Ok(p) = header::HeaderValue::from_str(&info.path) {
+        headers.insert(header::HeaderName::from_static("x-kaisatsu-req-path"), p);
+    }
+    let (mut parts, body) = req.into_parts();
+    parts.headers = headers;
+    parts.extensions.insert(info);
+    let mut resp = next.run(axum::extract::Request::from_parts(parts, body)).await;
+    if let Some(nonce) = resp
+        .extensions()
+        .get::<String>()
+        .cloned()
+        && let Ok(val) = header::HeaderValue::from_str(&nonce)
+    {
+        resp.headers_mut()
+            .insert(header::HeaderName::from_static("dpop-nonce"), val);
+    }
+    resp
+}
+
+pub fn with_dpop_req_info(router: Router) -> Router {
+    router.layer(axum::middleware::from_fn(attach_req_info))
+}
+
+/// Extracts and verifies the admin token (`Bearer` or `DPoP`, either from the target realm or
+/// `master`), enforces DPoP proof binding + server nonces when `cnf.jkt` or `DPoP` scheme is
+/// present (RFC 9449, K6), and constructs the [`RequestCtx`] (W1, W6).
 pub async fn extract_admin_ctx(
     state: &AdminState,
     mount: &Mount,
     realm_id: &str,
     headers: &HeaderMap,
 ) -> Result<RequestCtx> {
-    let raw_token = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| KaisatsuError::Unauthorized("missing admin bearer token".into()))?;
+    let (dpop_scheme, raw_token) = kaisatsu_oidc::parse_authz_header(headers)?;
 
     let mut verified: Option<(Value, &str)> = None;
     for candidate_realm in [realm_id, "master"] {
@@ -246,6 +293,30 @@ pub async fn extract_admin_ctx(
 
     let (claims, token_realm) =
         verified.ok_or_else(|| KaisatsuError::Unauthorized("invalid admin bearer token".into()))?;
+
+    // K6: Enforce DPoP binding across Admin Compat, Native Admin, OData, MCP, and SCIM.
+    if dpop_scheme || claims.pointer("/cnf/jkt").is_some() {
+        let method = headers
+            .get("x-kaisatsu-req-method")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("GET");
+        let path = headers
+            .get("x-kaisatsu-req-path")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let htu = kaisatsu_oidc::external_htu(mount, path);
+        let _ = kaisatsu_oidc::verify_resource_dpop(
+            &state.oidc,
+            token_realm,
+            &claims,
+            headers,
+            method,
+            &htu,
+            raw_token,
+            dpop_scheme,
+        )
+        .await?;
+    }
     if let Some(jti) = claims.get("jti").and_then(Value::as_str)
         && state
             .oidc
@@ -952,11 +1023,12 @@ async fn compat_delete_user(
 async fn compat_execute_actions_email(
     State(state): State<AdminState>,
     Path((realm, id)): Path<(String, String)>,
-    Query(_q): Query<BTreeMap<String, String>>,
+    Query(q): Query<BTreeMap<String, String>>,
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
     Json(actions): Json<Vec<String>>,
 ) -> Result<StatusCode> {
+    let lifespan = q.get("lifespan").and_then(|s| s.parse::<i64>().ok());
     run_registry_op(
         &state,
         mount_ext,
@@ -964,7 +1036,12 @@ async fn compat_execute_actions_email(
         &headers,
         "send_required_actions",
         Some(&id),
-        &json!({ "actions": actions }),
+        &json!({
+            "actions": actions,
+            "client_id": q.get("client_id"),
+            "redirect_uri": q.get("redirect_uri"),
+            "lifespan": lifespan,
+        }),
     )
     .await
     .map(|_| StatusCode::NO_CONTENT)
@@ -2160,14 +2237,15 @@ async fn compat_create_client_role(
         .get_client_by_uuid(&realm, allowed.as_deref(), &uuid)
         .await?
         .ok_or_else(|| KaisatsuError::NotFound("client not found".into()))?;
+    // K3: Creating or deleting a client role requires write permission on `ObjectTarget::Role`
+    // (or `manage-clients` / `realm-admin`), so `view-clients` cannot create or delete roles.
     check_decision(state.authorizer.check(
         &ctx,
-        Action::Update,
-        &ObjectTarget::Application {
+        Action::Create,
+        &ObjectTarget::Role {
             realm_id: realm.clone(),
             org_id: client.org_id.clone(),
-            client_id: client.client_id,
-            managed_by: client.managed_by,
+            role_id: role.name.clone(),
         },
     ))?;
     role.realm_id = realm.clone();
@@ -2204,12 +2282,11 @@ async fn compat_delete_client_role(
         .ok_or_else(|| KaisatsuError::NotFound("client not found".into()))?;
     check_decision(state.authorizer.check(
         &ctx,
-        Action::Update,
-        &ObjectTarget::Application {
+        Action::Delete,
+        &ObjectTarget::Role {
             realm_id: realm.clone(),
             org_id: client.org_id,
-            client_id: client.client_id,
-            managed_by: client.managed_by,
+            role_id: role_name.clone(),
         },
     ))?;
     state

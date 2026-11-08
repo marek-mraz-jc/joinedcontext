@@ -69,6 +69,11 @@ impl From<odata_table::TableError> for ODataError {
 
 impl IntoResponse for ODataError {
     fn into_response(self) -> Response {
+        if let KaisatsuError::Unauthorized(ref msg) = self.0
+            && msg.starts_with("use_dpop_nonce:")
+        {
+            return self.0.into_response();
+        }
         let problem = self.0.to_problem();
         let status =
             StatusCode::from_u16(problem.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
@@ -641,6 +646,8 @@ async fn odata_set_count(
         .into_response())
 }
 
+/// K15: Streams pages of 250 rows (up to `MAX_FALLBACK_SCAN_ROWS` = 5000) through
+/// `query_entity_set` (`PgScopedTable` on PostgreSQL) instead of capping at a single 1000-row fetch.
 async fn odata_set_export(
     State(state): State<AdminState>,
     Path((realm, set_name)): Path<(String, String)>,
@@ -650,14 +657,28 @@ async fn odata_set_export(
 ) -> OResult<Json<Vec<Value>>> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
-    let (_, _, options) = parse_odata_options(&set_name, uri.query())?;
-    let ans = state
-        .oidc
-        .store
-        .query_entity_set(&ctx, state.authorizer.as_ref(), &set_name, &options, 1000)
-        .await?;
+    let (_, _, mut options) = parse_odata_options(&set_name, uri.query())?;
+    let mut all_rows = Vec::new();
+    loop {
+        let ans = state
+            .oidc
+            .store
+            .query_entity_set(&ctx, state.authorizer.as_ref(), &set_name, &options, 250)
+            .await?;
+        all_rows.extend(ans.rows);
+        if all_rows.len() > 5_000 {
+            return Err(KaisatsuError::BadRequest(
+                "the export is over 5000 rows: narrow it with $filter".into(),
+            )
+            .into());
+        }
+        match ans.next {
+            Some(token) => options.skiptoken = Some(token.to_string()),
+            None => break,
+        }
+    }
     let _ = export::<odata_table::MemoryTable>;
-    Ok(Json(ans.rows))
+    Ok(Json(all_rows))
 }
 
 async fn odata_set_allowed(

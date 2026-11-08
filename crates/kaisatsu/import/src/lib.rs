@@ -404,6 +404,9 @@ fn check_no_secret_substitution_in_plain_fields(val: &Value, path: &str) -> Resu
                 && !path.ends_with(".password")
                 && !path.ends_with(".value")
                 && !path.ends_with(".secretData")
+                && !path.ends_with(".pairwiseSubAlgorithmSalt")
+                && !path.ends_with(".salt")
+                && !path.ends_with(".clientSecret")
             {
                 return Err(KaisatsuError::BadRequest(format!(
                     "{path}: secret substitution is only allowed in fields marked secret"
@@ -1438,6 +1441,21 @@ pub async fn export_realm(
                 "$(CLIENT_SECRET_{})",
                 c.client_id.to_ascii_uppercase().replace('-', "_")
             ));
+        }
+        for m in &mut c.protocol_mappers {
+            if m.protocol_mapper == "oidc-sha256-pairwise-sub-mapper" {
+                for key in ["pairwiseSubAlgorithmSalt", "salt"] {
+                    if m.config.contains_key(key) {
+                        m.config.insert(
+                            key.into(),
+                            format!(
+                                "$(PAIRWISE_SALT_{})",
+                                c.client_id.to_ascii_uppercase().replace('-', "_")
+                            ),
+                        );
+                    }
+                }
+            }
         }
     }
     let roles = store.list_roles(realm_id, None).await?;
