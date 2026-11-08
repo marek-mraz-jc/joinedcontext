@@ -18,8 +18,16 @@ branch `jc-one-binary-2` (b978ad1bf). Paths are relative to `crates/portal/src/`
   rejected replay, source deletes and pipeline tests.
 - Bodies: JSON only (`reqwest .json(..)`, `Content-Type: application/json`). Stream id: `{project}.{name}`
   (`stream_id`, `reconciler/streams.rs:142`).
-- **Auth to the runner: none.** No call sets `Authorization`. ekiben in `jc` refuses every request without the admin
-  token (`require_auth: true`, `JCBIN_EKIBEN_TOKEN_FILE`): the Portal's runner client must send it (gap, Portal side).
+- **Auth to the runner: none.** No call sets `Authorization`. ekiben in `jc` refuses every request without a token
+  (`require_auth: true`). ekiben now admits two: the static admin token (`JCBIN_EKIBEN_TOKEN_FILE`) and, when the host
+  sets `ServerAuthConfig::oidc`, a kaisatsu JWT for audience `ekiben` whose `azp` is an admitted client
+  (`OidcAuth`, `crates/ekiben-server/src/oidc.rs`). The Portal must still send one of them on every runner call (gap,
+  Portal side), and `jc` must set `oidc` (gap, `bins/jc/src/modules/ekiben.rs`).
+- **Writes to the in-process broker.** Streams refuse loopback targets. A host lets them reach exactly its own listener
+  under named mounts with `ResourceManager::with_host_target(HostTarget { addr, path_prefixes })`: plain HTTP to that
+  literal address, whole path segments, no redirect followed; every other loopback or private address and every other
+  mount stays refused (`a_stream_reaches_the_hosts_broker_mount_and_no_other_loopback_target`). `jc` must pass its
+  listener and the broker mount (gap, `bins/jc/src/modules/ekiben.rs`).
 
 ## 2. StreamDeployer (reconciler)
 
