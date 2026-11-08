@@ -1155,8 +1155,14 @@ def cmd_smoke(a):
         su = pd["summary"]
         check(f"Portal opens {su['projectDashboards']} project dashboards",
               su["openInPortal"] == su["projectDashboards"],
-              f"{su['openInPortal']} open; panels {su['panels']}, with data {su['panelsWithData']}",
-              "GET /api/v1/projects/{p}/grafana/dashboards/{uid}")
+              f"{su['openInPortal']} open; {su['panels']} panels", "GET /api/v1/projects/{p}/grafana/dashboards/{uid}")
+        # kept apart: a panel refused by daiya's guard on jc's own listener is expected until
+        # jc-portal-integrate lets file-provisioned datasources reach it by exact address
+        checks.append({"check": "panels: expected, outbound to own listener", "result": "expected",
+                       "detail": f"{su['panels_expected']} of {su['panels']}"})
+        check("panels: no real red", su["panels_red"] == 0,
+              f"{su['panels_red']} red, {su['panels_data']} with data",
+              "GET /api/v1/projects/{p}/grafana/dashboards/{uid}/panels/{id}")
     # 8. every public Endpoint answers a query
     eps = []
     root = export / "gitea" / "files"
@@ -1188,11 +1194,30 @@ def cmd_smoke(a):
     Path(a.report).write_text(json.dumps({"base": a.base, "at": iso(utcnow()), "checks": checks}, indent=1))
     for c in checks:
         print(f"{c['result']:4}  {c['check']}  {c['detail'][:160]}")
-    return 0 if all(c["result"] == "pass" for c in checks) else 1
+    return 0 if all(c["result"] in ("pass", "expected") for c in checks) else 1
 
 
 
 # ---- dashboards in the Portal ---------------------------------------------------------------------
+
+# daiya's outbound guard (crates/daiya/query/src/guard.rs) refusing a datasource on jc's own
+# listener: http is refused before the host, a loopback address after it.
+OWN_LISTENER_REFUSALS = ("disallowed URL scheme 'http'", "blocked loopback address")
+OWN_LISTENER_CODES = ("cr.ssrf_blocked", "Outbound Request Blocked")
+
+
+def panel_class(status: int, answer, datasource_url: str, base: str) -> str:
+    """`data`, `expected` (daiya's guard refusing a file-provisioned datasource that points at this
+    rehearsal's own listener: jc-portal-integrate owns the fix, the policy stays as it is) or
+    `red` (anything else)."""
+    if status == 200 and isinstance(answer, dict) and answer.get("frames") is not None \
+            and not answer.get("error"):
+        return "data"
+    text = json.dumps(answer) if not isinstance(answer, str) else answer
+    own = datasource_url.startswith(base.rstrip("/") + "/api/endpoint/")
+    guard = any(r in text for r in OWN_LISTENER_REFUSALS) and any(c in text for c in OWN_LISTENER_CODES)
+    return "expected" if own and guard else "red"
+
 
 def portal_dashboards(h: Http, dashboards: Path) -> dict:
     """Per project with a dashboard file: whether the Portal lists it, opens it, and what each
@@ -1210,6 +1235,15 @@ def portal_dashboards(h: Http, dashboards: Path) -> dict:
         st, dash = h.json("GET", f"{base}/{urllib.parse.quote(uid)}")
         row["open"] = st
         panels = []
+        # each panel's datasource as the import left it (file panels carry the uid; the Portal's
+        # answer leaves the targets out)
+        urls = {json.loads(d.read_text()).get("uid"): rehearsal_endpoint_url(json.loads(d.read_text()).get("url", ""), h.base)
+                for d in dashboards.glob(f"{project}.datasource.*.json")}
+        file_panels = {}
+        for p in json.loads(f.read_text())["dashboard"].get("panels", []):
+            for q in [p, *p.get("panels", [])]:
+                if "id" in q:
+                    file_panels[q["id"]] = ((q.get("datasource") or {}).get("uid") if isinstance(q.get("datasource"), dict) else q.get("datasource"))
         if st == 200 and isinstance(dash, dict):
             body = dash.get("dashboard", dash)
             flat = []
@@ -1222,15 +1256,17 @@ def portal_dashboards(h: Http, dashboards: Path) -> dict:
                 state = (ans.get("state") or ans.get("status") or ans.get("error") or
                          ("frames" if ans.get("frames") is not None else "")) if isinstance(ans, dict) else ""
                 detail = (ans.get("message") or ans.get("detail") or "") if isinstance(ans, dict) else str(ans)[:120]
+                ds = file_panels.get(p["id"]) or ""
                 panels.append({"id": p["id"], "title": p.get("title"), "status": pst, "state": str(state)[:60],
+                               "datasource": ds, "class": panel_class(pst, ans, urls.get(ds, ""), h.base),
                                "detail": str(detail)[:160]})
         row["panels"] = panels
         out["projects"][project] = row
     opened = sum(1 for r in out["projects"].values() if r["open"] == 200)
     out["summary"] = {"projectDashboards": len(out["projects"]), "openInPortal": opened,
                       "panels": sum(len(r["panels"]) for r in out["projects"].values()),
-                      "panelsWithData": sum(1 for r in out["projects"].values() for p in r["panels"]
-                                            if p["status"] == 200 and p["state"] in ("frames", "ok", "data"))}
+                      **{f"panels_{k}": sum(1 for r in out["projects"].values() for p in r["panels"] if p["class"] == k)
+                         for k in ("data", "expected", "red")}}
     return out
 
 

@@ -403,3 +403,17 @@ def test_each_project_dashboard_goes_into_its_own_organization(tmp_path):
     assert put[0][3]["url"] == f"{base}/api/endpoint/abc"
     model = [s for s in seen if (s[3] or {}).get("dashboard", {}).get("uid") == "portal"]
     assert model and model[0][2] is None
+
+
+def test_only_the_guard_refusing_the_own_listener_counts_as_expected():
+    base = "http://localhost:42101"
+    own = base + "/api/endpoint/abc"
+    refused = {"error": {"code": "cr.ssrf_blocked", "message": "disallowed URL scheme 'http' (https required)"}}
+    assert rh.panel_class(502, refused, own, base) == "expected"
+    loop = {"title": "Outbound Request Blocked", "detail": "blocked loopback address 127.0.0.1"}
+    assert rh.panel_class(502, loop, own, base) == "expected"
+    # the same refusal for a datasource elsewhere, another error, or a refusal text alone: red
+    assert rh.panel_class(502, refused, "http://prometheus:9090", base) == "red"
+    assert rh.panel_class(500, {"error": "the panel's datasource did not answer"}, own, base) == "red"
+    assert rh.panel_class(502, "disallowed URL scheme 'http'", own, base) == "red"
+    assert rh.panel_class(200, {"frames": []}, own, base) == "data"
