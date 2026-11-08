@@ -2608,4 +2608,113 @@ mod tests {
             DcatProfileKind::Eu301
         );
     }
+
+    #[test]
+    fn harvested_graphs_fill_slugs_languages_and_dates() {
+        let org = OrgId::from_uuid(Uuid::from_u128(1));
+        let cid = CatalogueId::from_uuid(Uuid::from_u128(10));
+        let ttl = r#"
+            @prefix dcat: <http://www.w3.org/ns/dcat#> .
+            @prefix dct: <http://purl.org/dc/terms/> .
+            [] a dcat:Dataset ; dct:title "Bez jazyka" ; dcat:keyword "slovo" ;
+               dct:issued "2026-03-04" ; dct:modified "2026-03-04T05:06:07" .
+            <https://e.org/ds/Air_Quality/> a dcat:Dataset ; dct:title "Two"@en ;
+               dct:issued "not a date" .
+        "#;
+        let mut ds = parse_datasets_from_rdf(
+            ttl,
+            RdfFormat::Turtle,
+            org,
+            cid,
+            "city",
+            "sk",
+            &RdfLimits::default(),
+        )
+        .expect("harvested turtle");
+        ds.sort_by(|a, b| a.uri.cmp(&b.uri));
+        let blank = &ds[0];
+        assert!(
+            blank.name.starts_with("dataset-"),
+            "a blank node gets a generated slug: {}",
+            blank.name
+        );
+        assert_eq!(
+            blank.title.get("sk").map(String::as_str),
+            Some("Bez jazyka")
+        );
+        assert_eq!(blank.keywords.get("sk"), Some(&vec!["slovo".to_owned()]));
+        assert_eq!(blank.issued.to_rfc3339(), "2026-03-04T00:00:00+00:00");
+        assert_eq!(blank.modified.to_rfc3339(), "2026-03-04T05:06:07+00:00");
+        assert_eq!(ds[1].name, "air-quality", "the IRI tail becomes the slug");
+        assert_ne!(ds[1].issued.to_rfc3339(), "not a date");
+    }
+
+    #[test]
+    fn publisher_licence_and_service_fallbacks() {
+        let org = OrgId::from_uuid(Uuid::from_u128(1));
+        let cid = CatalogueId::from_uuid(Uuid::from_u128(10));
+        let mut cat = sample_catalogue(org, cid);
+        let mut ds = full_dataset();
+        ds.licence_id = Some("https://licence.example/custom".into());
+        ds.distributions[0].licence = None;
+        ds.distributions[1].access_services[0].uri = None;
+        let publisher: Publisher = serde_json::from_value(serde_json::json!({
+            "orgId": Uuid::nil(), "catalogueId": Uuid::nil(), "id": "p", "name": "city",
+            "title": {"cs": "Město"}, "description": {}, "uri": "https://e.org/publisher/city",
+            "state": "active", "editorGrants": [],
+            "created": "2026-11-01T10:00:00Z", "modified": "2026-11-01T10:00:00Z"
+        }))
+        .unwrap();
+        let g = dataset_to_graph(&ds, &cat, Some(&publisher), DcatProfileKind::Eu301);
+        let ds_subj = SubjectNode::Named("https://data.example.org/ds/full".into());
+        assert_eq!(
+            g.first_object(&ds_subj, &format!("{}publisher", ns::DCT)),
+            Some(Term::Iri("https://e.org/publisher/city".into())),
+            "the catalogue's publisher record wins over the dataset's own"
+        );
+        let dist = SubjectNode::Named("https://data.example.org/dist/1".into());
+        assert_eq!(
+            g.first_object(&dist, &format!("{}license", ns::DCT)),
+            Some(Term::Iri("https://licence.example/custom".into())),
+            "an unknown licence URL is written as it is"
+        );
+        let svc = format!("{}/service/svc", ds.canonical_uri(&cat.base_url()));
+        assert!(
+            !g.objects_of(&SubjectNode::Named(svc), ns::RDF_TYPE)
+                .is_empty(),
+            "a service without IRI gets one"
+        );
+        let text = serialize_dataset(
+            &ds,
+            &cat,
+            Some(&publisher),
+            RdfFormat::JsonLd,
+            DcatProfileKind::Cz,
+        );
+        assert!(text.contains("https://e.org/publisher/city"));
+
+        // A catalogue without publisher IRI or homepage takes the first publisher, then a default.
+        cat.publisher_uri = None;
+        cat.homepage = None;
+        let pubs = BTreeMap::from([("city".to_owned(), publisher)]);
+        let cat_subj = SubjectNode::Named("https://opendata.example.org/catalog".into());
+        let g = catalogue_to_graph(&cat, &[], &pubs, DcatProfileKind::Eu301, None);
+        assert_eq!(
+            g.first_object(&cat_subj, &format!("{}publisher", ns::DCT)),
+            Some(Term::Iri("https://e.org/publisher/city".into()))
+        );
+        assert_eq!(
+            g.first_object(&cat_subj, &format!("{}homepage", ns::FOAF)),
+            Some(Term::Iri("https://opendata.example.org".into()))
+        );
+        let g = catalogue_to_graph(&cat, &[], &BTreeMap::new(), DcatProfileKind::Eu301, None);
+        assert_eq!(
+            g.first_object(&cat_subj, &format!("{}publisher", ns::DCT)),
+            Some(Term::Iri(
+                "https://opendata.example.org/publisher/default".into()
+            ))
+        );
+        let sk = crate::jsonld::serialize_sk_catalogue_jsonld(&cat, &[], &pubs);
+        assert!(sk.contains("https://e.org/publisher/city"));
+    }
 }

@@ -534,7 +534,7 @@ pub fn serialize_graph_jsonld(graph: &RdfGraph) -> String {
         "@graph": nodes,
         "@included": nodes
     });
-    serde_json::to_string_pretty(&doc).unwrap_or_else(|_| "{}".into())
+    format!("{:#}", doc)
 }
 
 /// Serializes a [`Catalogue`] and its dataset IRIs in the Czech OFN LKOD JSON-LD format
@@ -588,7 +588,7 @@ pub fn serialize_cz_catalogue_jsonld(
     doc.insert("přístupový_bod".into(), json!(cat_iri));
     doc.insert("datová_sada".into(), json!(ds_iris));
 
-    serde_json::to_string_pretty(&Value::Object(doc)).unwrap_or_else(|_| "{}".into())
+    format!("{:#}", Value::Object(doc))
 }
 
 /// Serializes a [`Catalogue`] and its dataset IRIs in the Slovak DCAT-AP-SK 2.0 JSON-LD format
@@ -636,7 +636,7 @@ pub fn serialize_sk_catalogue_jsonld(
     doc.insert("poskytovateľ".into(), json!(publisher_iri));
     doc.insert("dataset".into(), json!(ds_iris));
 
-    serde_json::to_string_pretty(&Value::Object(doc)).unwrap_or_else(|_| "{}".into())
+    format!("{:#}", Value::Object(doc))
 }
 
 /// Serializes a [`Dataset`] in the Slovak DCAT-AP-SK 2.0 JSON-LD format
@@ -760,7 +760,7 @@ pub fn serialize_sk_dataset_jsonld(
     }
     doc.insert("distribúcia".into(), Value::Array(dists));
 
-    serde_json::to_string_pretty(&Value::Object(doc)).unwrap_or_else(|_| "{}".into())
+    format!("{:#}", Value::Object(doc))
 }
 
 /// Serializes a [`Dataset`] in the Czech DCAT-AP-CZ JSON-LD format.
@@ -881,7 +881,7 @@ pub fn serialize_cz_dataset_jsonld(
         })
         .collect();
     doc.insert("distribuce".into(), Value::Array(dists));
-    serde_json::to_string_pretty(&Value::Object(doc)).unwrap_or_else(|_| "{}".into())
+    format!("{:#}", Value::Object(doc))
 }
 
 #[cfg(test)]
