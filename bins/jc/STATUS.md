@@ -189,10 +189,10 @@ turns it all off.
 | Portal setting | sibling | filled keys | status |
 |---|---|---|---|
 | OIDC, Keycloak admin | kaisatsu | `JC_OIDC_ISSUER` (public `{base}/id/realms/jc`), `JC_OIDC_CLIENT_ID/SECRET`, `JC_COOKIE_KEY`, `JC_KEYCLOAK_ADMIN_CLIENT_ID/SECRET`, `JC_KEYCLOAK_ADMIN_URL` (jc's listener when it differs from the public origin) | works: sign-in, people, groups, approval |
-| `JC_SHAKO_*` | shako | `URL`, `PUBLIC_URL`, `OWNER=jc`, `REPO=config`, `TOKEN`, `APPS_OWNER=jc-apps`, `APPS_TOKEN`, `WEBHOOK_SECRET` | works: proposal commits, approval merges, sync reads them back |
+| `JC_SHAKO_*` | shako | `URL`, `PUBLIC_URL`, `OWNER`, `REPO` (`setup::forge_repo`: the environment's, else `jc`/`config`; the gateway checks out the same), `TOKEN`, `TOKEN`, `APPS_OWNER=jc-apps`, `APPS_TOKEN`, `WEBHOOK_SECRET` | works: proposal commits, approval merges, sync reads them back |
 | pipeline runner | ekiben | `JC_PIPELINE_RUNNER_URL` | wired, refused: no runner credential (gap d) |
 | CKAN | dataroom | `JC_CKAN_URL`, `JC_CKAN_API_URL`, only when the public URL is https (EP-67) | wired for https installs; the http e2e leaves it unset (gap e) |
-| Grafana | daiya | `JC_GRAFANA_URL`, `_PUBLIC_URL`, `_USER=portal`, `_PASSWORD` | works as server admin; nothing creates the org per project (gap f) |
+| Grafana | daiya | `JC_GRAFANA_URL`, `_PUBLIC_URL`, `_USER=portal`, `_PASSWORD` | works as server admin; the Portal makes each opened project's org and folder (`grafana::spawn_provisioning`, jc-charts) |
 | broker | antares | `JC_PORTAL_BROKER_URL`, `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` | works: views, rule documents and space views written and loaded (stage 8) |
 | gateway | gateway | `JC_PORTAL_GATEWAY_URL`, `JC_PORTAL_GATEWAY_CLIENT_ID=context-gateway` | works: the internal listener admits the gateway's revocation poll (stage 8) |
 
@@ -245,7 +245,7 @@ set (run both ways). `JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false` is a test-on
 | c. Group proposed (dry run, propose), approved by a second admin with confirm, commit read back with `git clone`, group read back from kaisatsu | pass |
 | d. Pipeline on ekiben writes Entities to Antares | gap: runner refuses the Portal |
 | e. public Endpoint in the dataroom catalogue | partial: the Portal's W2 + W5 calls with its token, dataset read back anonymously; the Portal's own sync needs https |
-| f. dashboard in daiya | partial: provision.sh's org, folder and dashboard made as the Portal's server admin, read back with G1 and G5; jc does not run those steps per project |
+| f. dashboard in daiya | pass: an opened project's org and folder are made by the Portal (step g, jc-charts), dashboards read back through the Portal |
 
 ### Compat gaps (refused calls)
 
@@ -255,8 +255,7 @@ set (run both ways). `JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false` is a test-on
 - e, Portal: the CKAN URL must be https (EP-67); a CkanInstance token comes only from a `CKAN_*` env var named by
   `apiTokenRef` (no file). dataroom's `help`/`uri` links follow the configured public URL (http on an http
   install) since jc-rest item 4.
-- f, jc: nothing runs provision.sh's per-project steps (`POST /dashboards/api/orgs`, `POST /api/folders`), so the
-  Portal's `GET /dashboards/api/orgs/name/{project}` answers 404 `Organization not found` until they run.
+- f, closed: the Portal's `grafana::spawn_provisioning` (jc-charts) runs provision.sh's per-project steps.
 - shako: hooks take Gitea's body but shako refuses loopback targets, so the Portal polls (`JC_PORTAL_SYNC_INTERVAL`);
   the webhook secret store has no API (owner: jc-rest item 3, waits for jc-shako-odata). The mergeRequest link
   `/git/user/oauth2/keycloak?redirect_to=...` is served by shako-web (sign-in, then the redirect).
@@ -269,17 +268,17 @@ set (run both ways). `JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false` is a test-on
 - Portal, fixed here: `POST /api/v1/projects` wrote the creator RoleBinding with the opener's e-mail, which
   jc-core refuses (PF-126); the reconciler dropped it (`api/projects.rs`, test in `project_open_layout_tests.rs`,
   red with the old line).
-- Portal + shako: after `POST /api/v1/projects` (202) and its approval by a second administrator (202), the
-  project's repository `jc/{project}` is absent (`GET /git/api/v1/repos/jc/{project}` -> 404) and
-  `GET /api/v1/projects` lists no project. The UI shots therefore show the `org` namespace (owner:
-  jc-shako-portal / jc-mcp-admin).
+- Portal + shako, closed (99a59bf): an opened project lives in `config/projects/{project}/project.yaml` of the
+  organization repository, and the Portal's `Mirror::namespaces()` now counts its `Project` manifest, so
+  `GET /api/v1/projects` lists it (e2e step c2). The organization's agent pages still withhold a project the
+  caller does not read (`authz_matrix_tests::the_other_member_sees_no_agent_and_no_run_of_a_project_it_does_not_read`).
 
 ### Merged module branches
 
 jc-shako-portal (473e07e), jc-catalog-dash-portal (144a1fb), jc-mcp-admin (e7e7bd1), merged without conflict; jc
 uses `dataroom_api::portal_publisher` and `DaiyaState::with_server_admin` from them.
 
-### Not verified
+### Not verified (stage 7)
 
 - Host mode with the Portal on its own host.
 - Postgres for modules other than kaisatsu: done in Stage 8.
@@ -391,7 +390,8 @@ project `e2e` (layout 1: project, space `things`, a `public` and a `project-list
 - Layout 2 organizations: `jcctl checkouts` runs after the org checkout but is unexercised (shako's project
   repository creation, jc-portal-integrate report).
 - Host mode e2e: only the one_binary probe (`api.city.test/api/endpoints`).
-## Stage 8: every module on Postgres (jc-pg)
+
+## Stage 8b: every module on Postgres (jc-pg)
 
 Each module takes an optional `[<module>.database]` section (`src/pg.rs`). Without it the module keeps its memory
 store (the default); with it the module never falls back to memory: a failed connection, a failed migration or a
@@ -458,6 +458,42 @@ ekiben without its boot check).
   generated per start unless configured.
 - ekiben run-once streams, org quotas and resources are not persisted.
 - shako's op log grows without compaction; replay sets `updated_at` to the replay time.
+
+## Stage 9: merge round on jc-portal-1 (jc-portal-integrate, 2026-11-08)
+
+Merged into `jc-portal-1`, each followed by the jc gates (fmt, clippy, lib/bins, one_binary, outbound_guard,
+gateway_endpoints, portal_siblings on memory and Postgres 17, restart_pg on PostGIS 17) and the Portal gates
+(fmt, clippy, `--lib`, authz_matrix, route_coverage, openapi, `pnpm build`, `pnpm lint`):
+
+| branch | merge | conflicts and fixes |
+|---|---|---|
+| jc-gateway 25bfe59 | 2d9a2259 | the Portal's internal listener address goes to the gateway module (`portal_internal`); e2e: a disabled person's token is refused by the closed Endpoint within 25 s (4.9 s measured) |
+| jc-pg 5ffda4b5 | 0659273c | 11 files: jc-pg's pg wiring kept, BrokerConfig keeps the gateway defaults; restart_pg writes with the Antares admin token under `ANTARES_POLICY=allow-all` (storage only) |
+| jc-rest 3170a0df | e9a50006 | the Portal and the gateway built in one background task after jc serves; host-aware test cookie jar |
+| jc-charts dab4a277 | d2837531 | `server.rs`: jc-charts' `spawn_provisioning` replaces this branch's duplicate `spawn_organizations` |
+| jc-shako-odata 603229b4 | 5ed3bf22 | none; jc fills `JC_SHAKO_*` (was `JC_GITEA_*`), hooks name `/api/v1/webhooks/shako` |
+| jc-shako-ui edcb53ba | 8243e19e | `ops/mod.rs` both registries, four locales both blocks, MCP byte ratchet 73,062; `ops/repositories.rs` moved from the deleted `GiteaClient` to `ShakoClient` |
+
+Fixes in this round, each with a red proof under `/workspace/evidence/jc-portal-integrate/red/`:
+
+- The gateway checked out `jc/config` whatever `JC_SHAKO_OWNER`/`JC_SHAKO_REPO` named (jc-smoke-mcp: 0 Endpoints
+  on `joinedcontext/configuration`). `setup::forge_repo` is the one reading for the gateway and provisioning;
+  `gateway_endpoints` runs on `e2e-city/configuration` (`gateway-forge-repo.txt`).
+- daiya in jc refused every datasource on jc's gateway (default outbound policy). `[daiya] provisioning_dir` loads
+  Grafana provisioning files at start; only the datasources those files wrote reach jc's listener, by its exact
+  IP literal and port, while the stored record matches the files. API-made or changed datasources, another port
+  and a host name stay refused (`crates/daiya/server/tests/own_listener.rs`, `daiya-own-listener.txt`).
+  Provisioning writes organization 1 only, so per-project organizations cannot be file-provisioned yet.
+- Antares `q_admin_sweep` and `dev/new-surface.py` named `antares-broker/src/main.rs`, whose mounts 6387a8da moved
+  to `lib.rs` (`antares-broker-lib-paths.txt`).
+
+Open: the dataroom catalogue is empty in jc (jc-smoke-endpoints gap 2: `package_show` 404 for every published
+dataset), step e above. Not measured this round. Two causes are known from the code: on an http install jc fills
+no `JC_PORTAL_CKAN_URL` unless `JC_PORTAL_CKAN_ALLOW_HTTP=true`, so the Portal's catalogue wave publishes nothing
+(`the CKAN wave finished reports=0` in the e2e log); and a migrated `CkanInstance` names dev's CKAN URL and an
+`apiTokenRef` that must resolve to dataroom's Portal token (`portal_publisher`) through jc's SOPS key or a
+`CKAN_*` variable. Next step: one smoke run with `JC_PORTAL_CKAN_ALLOW_HTTP=true` and the CkanInstance pointed at
+jc's dataroom, reading the wave's report.
 
 ## Release binary
 

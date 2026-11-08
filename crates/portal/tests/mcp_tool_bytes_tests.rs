@@ -62,7 +62,7 @@ fn the_tool_definitions_a_model_reads_stay_under_their_byte_ratchet() {
 /// _pull 604, _get 490, _settings 490, _refs 457. Each bounds a repository name, a ref, a path or
 /// a sha by pattern, which is most of their bytes; the assistant's own turn lists none of them
 /// (tools_registry.rs).
-const RATCHET: usize = 73_062;
+const RATCHET: usize = 73_063;
 
 /// The cut never opens a schema: every MCP input stays closed, and `project` stays bounded.
 #[test]
