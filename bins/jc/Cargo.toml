@@ -15,7 +15,7 @@ name = "jc"
 path = "src/main.rs"
 
 [features]
-default = ["kaisatsu", "dataroom", "daiya", "ekiben", "antares", "gateway", "portal", "shako", "jemalloc"]
+default = ["kaisatsu", "dataroom", "daiya", "ekiben", "antares", "gateway", "portal", "shako", "model-tools", "jemalloc"]
 shako = [
   "dep:shako-server",
   "dep:shako-core",
@@ -50,6 +50,8 @@ ekiben = ["dep:ekiben-server", "dep:ekiben-core", "dep:futures"]
 antares = ["dep:antares-broker"]
 gateway = ["dep:context-gateway", "dep:jc-core", "dep:jc-manifest", "dep:jcctl"]
 portal = ["dep:joinedcontext-portal"]
+# POST /generate for the reconciler: broker schema and @context of a LinkML model.
+model-tools = ["dep:linkml-model", "dep:serde_norway"]
 jemalloc = ["dep:tikv-jemallocator"]
 
 [dependencies]
@@ -72,7 +74,7 @@ getrandom = "0.3"
 hex = "0.4"
 base64 = "0.22"
 age = { version = "0.12", default-features = false }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 tower = { version = "0.5", features = ["util"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs", "json", "migrate"] }
@@ -109,6 +111,9 @@ jc-manifest = { path = "../../vendor/joinedcontext-platform/crates/jc-manifest",
 jcctl = { path = "../../vendor/joinedcontext-platform/crates/jcctl", optional = true, default-features = false }
 
 joinedcontext-portal = { path = "../../crates/portal", optional = true }
+
+linkml-model = { path = "../../crates/antares/crates/linkml-model", optional = true }
+serde_norway = { version = "0.9", optional = true }
 
 shako-server = { path = "../../crates/shako/server", optional = true }
 shako-core = { path = "../../crates/shako/core", optional = true }

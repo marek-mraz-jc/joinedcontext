@@ -104,6 +104,8 @@ fn probe(module: Module) -> (&'static str, &'static str) {
         Module::Shako => ("/api/healthz", "\"status\":\"ok\""),
         // The gateway answers at whole paths (its root paths in slug mode, its host in host mode).
         Module::Gateway => ("/api/endpoints", "endpoints"),
+        // Model Tools has no public mount; the loops below check it answers nothing there.
+        Module::ModelTools => ("/healthz", "\"status\":\"ok\""),
     }
 }
 
@@ -145,7 +147,7 @@ async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
         .expect("start");
     running.portal_ready().await;
     let addr = running.addr;
-    for &module in &cfg.roles {
+    for &module in cfg.roles.iter().filter(|m| **m != Module::ModelTools) {
         let (path, needle) = probe(module);
         let url = if module.root_paths().is_empty() {
             format!("/{}{path}", module.slug())
@@ -178,6 +180,19 @@ async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
     )
     .await;
     assert!(body.contains("http://city.test/id/realms/jc"), "{body}");
+
+    // Model Tools listens on loopback only: its routes are nowhere on the public listener.
+    assert!(cfg.roles.contains(&Module::ModelTools));
+    for path in ["/generate", "/model-tools/generate", "/model-tools/healthz"] {
+        let resp = reqwest::Client::new()
+            .post(format!("http://{addr}{path}"))
+            .header("host", "city.test")
+            .body(r#"{"source":"id: https://x.example/m\nname: m\n"}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{path}");
+    }
 
     for unknown in [
         "/",
@@ -254,7 +269,7 @@ async fn host_mode_reaches_every_module_and_404s_unknown_hosts() {
         .expect("start");
     running.portal_ready().await;
     let addr = running.addr;
-    for &module in &cfg.roles {
+    for &module in cfg.roles.iter().filter(|m| **m != Module::ModelTools) {
         let (path, needle) = probe(module);
         let host = format!("{}.city.test", module.host_label());
         let (status, body) = get(addr, &host, path).await;
@@ -274,6 +289,7 @@ async fn host_mode_reaches_every_module_and_404s_unknown_hosts() {
 
     for host in [
         "nope.city.test",
+        "model-tools.city.test",
         "city.test",
         "id.other.test",
         "id.city.test.evil",

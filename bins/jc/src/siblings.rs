@@ -66,6 +66,19 @@ impl Siblings {
         }
     }
 
+    /// Adds a module that serves a loopback listener of its own and no public mount: both its
+    /// addresses are that listener.
+    pub fn insert_loopback(&mut self, module: Module, addr: SocketAddr) {
+        let url = format!("http://{}", reach(addr));
+        self.modules.insert(
+            module,
+            Sibling {
+                public: url.clone(),
+                internal: url,
+            },
+        );
+    }
+
     #[must_use]
     pub fn get(&self, module: Module) -> Option<&Sibling> {
         self.modules.get(&module)
@@ -101,6 +114,7 @@ fn origin(url: &str) -> String {
 /// | `JC_PORTAL_GRAFANA_URL`, `_PUBLIC_URL`, `_USER`, `_PASSWORD` | daiya |
 /// | `JC_PORTAL_BROKER_URL`, `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` | antares |
 /// | `JC_PORTAL_GATEWAY_URL`, `JC_PORTAL_GATEWAY_CLIENT_ID` | gateway |
+/// | `JC_PORTAL_MODEL_TOOLS_URL` | model-tools (its loopback listener) |
 #[must_use]
 pub fn portal_vars(
     siblings: &Siblings,
@@ -250,6 +264,12 @@ pub fn portal_vars(
             ],
         );
     }
+    if let Some(tools) = siblings.get(Module::ModelTools) {
+        group(
+            "JC_PORTAL_MODEL_TOOLS_URL",
+            vec![("JC_PORTAL_MODEL_TOOLS_URL", Some(tools.internal.clone()))],
+        );
+    }
     // The Portal's own secret backend (SOPS + age, its identity a setup file) unless the
     // environment names a backend.
     if unset("JC_PORTAL_SOPS_AGE_KEY_FILE")
@@ -394,6 +414,20 @@ mod tests {
         assert_eq!(v["JC_KEYCLOAK_ADMIN_URL"], "http://127.0.0.1:8443");
         assert_eq!(v["JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID"], "portal-reconciler");
         assert_eq!(v["JC_OIDC_CLIENT_ID"], "portal-api");
+    }
+
+    #[test]
+    fn model_tools_row_comes_from_its_loopback_listener_and_an_explicit_url_wins() {
+        let (mut siblings, setup, _d) = fixture("https");
+        let key = "JC_PORTAL_MODEL_TOOLS_URL";
+        assert!(!portal_vars(&siblings, &setup, none).contains_key(key));
+        siblings.insert_loopback(Module::ModelTools, "0.0.0.0:40123".parse().unwrap());
+        let filled = portal_vars(&siblings, &setup, none);
+        assert_eq!(filled[key], "http://127.0.0.1:40123");
+        let explicit = portal_vars(&siblings, &setup, |k| {
+            (k == key).then(|| "http://model-tools.example:8080".to_owned())
+        });
+        assert!(!explicit.contains_key(key));
     }
 
     #[test]

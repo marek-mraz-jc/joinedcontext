@@ -633,3 +633,122 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     }
     println!("refused {:?} after the revocation", revoked.elapsed());
 }
+
+const MODELLED: &str = "modelled";
+const MODELLED_SLUG: &str = "e2emodelledendpointaaaaaaa";
+
+/// A space with a data model and its public Endpoint serving OGC API Features and OData.
+fn modelled_manifests() -> Vec<(String, String)> {
+    let space = |rel: &str| format!("projects/{PROJECT}/spaces/{MODELLED}/{rel}");
+    let linkml = "\
+id: https://jc.invalid/models/things
+name: things
+default_prefix: things
+default_range: string
+prefixes:
+  things: https://jc.invalid/models/things/
+  linkml: https://w3id.org/linkml/
+imports:
+  - linkml:types
+  - ngsi-ld-core
+classes:
+  Thing:
+    is_a: Entity
+    slots: [name, location]
+slots:
+  name:
+    range: string
+    annotations:
+      ngsi_ld_kind: Property
+";
+    vec![
+        (
+            format!("projects/{PROJECT}/project.yaml"),
+            format!(
+                "{HEADER}\nkind: Project\nmetadata:\n  name: {PROJECT}\n  namespace: org\nspec:\n  \
+                 organizationRef: jc\n"
+            ),
+        ),
+        (
+            space("space.yaml"),
+            format!(
+                "{HEADER}\nkind: ContextSpace\nmetadata:\n  name: {MODELLED}\n  namespace: {PROJECT}\n\
+                 spec:\n  isSandbox: false\n  urnSegment: {MODELLED}\n  \
+                 dataModelRef: {{ kind: DataModel, name: things }}\n"
+            ),
+        ),
+        (
+            space("datamodels/things.yaml"),
+            format!(
+                "{HEADER}\nkind: DataModel\nmetadata:\n  name: things\n  namespace: {PROJECT}\n\
+                 spec:\n  contextSpaceRef: {MODELLED}\n  linkml: ./things.linkml.yaml\n  \
+                 version: 1.0.0\n  lifecycle: draft\n  classes: [Thing]\n"
+            ),
+        ),
+        (space("datamodels/things.linkml.yaml"), linkml.to_owned()),
+        (
+            space("endpoints/modelled.yaml"),
+            format!(
+                "{HEADER}\nkind: Endpoint\nmetadata:\n  name: modelled\n  namespace: {PROJECT}\n\
+                 spec:\n  contextSpaceRef: {MODELLED}\n  slug: {MODELLED_SLUG}\n  audience: public\n  \
+                 enabledRepresentations: [ngsi-ld, ogc-features, odata]\n"
+            ),
+        ),
+        (
+            space("policies/public-read.yaml"),
+            format!(
+                "{HEADER}\nkind: Policy\nmetadata:\n  name: public-read\n  namespace: {PROJECT}\n\
+                 spec:\n  contextSpaceRef: {MODELLED}\n  assigner: did:web:jc.invalid\n  \
+                 assignee: {{ kind: role, id: public }}\n  operations: [retrieveOps]\n  \
+                 information:\n    - entities:\n        - type: Thing\n      \
+                 propertyNames: [name, location]\n"
+            ),
+        ),
+    ]
+}
+
+/// jc's Model Tools compiles the space's model, the reconciler writes the Tenant's schema to
+/// Antares, and the Endpoint then answers OGC API Features and OData through the public mount
+/// (without a schema both answer 404 "no such resource").
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_modelled_endpoint_answers_ogc_and_odata_inside_jc() {
+    let jc = start().await;
+    for (path, content) in modelled_manifests() {
+        put_file(&jc, &path, &content).await;
+    }
+    let get = reqwest::Method::GET;
+    let base = format!("/api/endpoint/{MODELLED_SLUG}");
+    let collections = eventually("the OGC collections answer", &jc, 120, || async {
+        let (status, body) = call(
+            &jc,
+            get.clone(),
+            &format!("{base}/ogc/features/collections"),
+            None,
+            None,
+        )
+        .await;
+        (status == StatusCode::OK)
+            .then(|| body.clone())
+            .ok_or(format!("{status} {body}"))
+    })
+    .await;
+    let collections: Value = serde_json::from_str(&collections).unwrap();
+    let ids: Vec<&str> = collections["collections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["id"].as_str())
+        .collect();
+    assert!(ids.contains(&"Thing"), "{collections}");
+    let (status, metadata) = call(
+        &jc,
+        get.clone(),
+        &format!("{base}/odata/v4/$metadata"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{metadata}");
+    assert!(metadata.contains("EntitySet"), "{metadata}");
+    assert!(metadata.contains("Thing"), "{metadata}");
+}
