@@ -6,7 +6,8 @@
 // - the table view's Refit button and its record dialog's Copy and Print (datatablesview.js);
 // - the table view form's _id box, which stays ticked;
 // - a list page's sort control, which sends its form when changed (CKAN's select-switch module), so
-//   its "Go" button (.js-hide) hides once this script runs.
+//   its "Go" button (.js-hide) hides once this script runs;
+// - a list page's phone filter modal (CKAN's filters-modal), opened and closed by its two buttons.
 (function () {
   "use strict";
   document.documentElement.classList.add("js");
@@ -26,6 +27,10 @@
   document.addEventListener("click", function (event) {
     var target = event.target instanceof Element ? event.target : null;
     if (!target) {
+      return;
+    }
+    if (target.closest(".show-filters, .hide-filters")) {
+      document.body.classList.toggle("filters-modal", !!target.closest(".show-filters"));
       return;
     }
     var button = target.closest("[data-jc-check]");

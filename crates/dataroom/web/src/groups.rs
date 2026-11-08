@@ -121,7 +121,7 @@ pub fn render_group_list_page(
     let found_heading = if topics.is_empty() {
         jc_t("no_topics_found", &chrome.lang)
     } else {
-        jc_t("topics_found", &chrome.lang).replace("{n}", &topics.len().to_string())
+        jc_rows(topics.len(), "topics_found", &chrome.lang)
     };
     GroupListPageTemplate {
         search_placeholder: jc_t("search_topics", &chrome.lang),

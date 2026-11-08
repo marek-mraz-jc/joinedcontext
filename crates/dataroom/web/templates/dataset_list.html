@@ -103,6 +103,7 @@
               </section>
               {% endfor %}
             </div>
+            <button type="button" class="hide-filters" aria-label="{{ labels.close }}"><i class="fa fa-times" aria-hidden="true"></i></button>
           </div>
         </aside>
         <div class="primary col-md-9 col-xs-12" role="main">
@@ -137,7 +138,7 @@
                   {% endfor %}
                 </p>
                 {% endif %}
-                <a class="show-filters btn btn-default">{{ labels.filter_results }}</a>
+                <button type="button" class="show-filters btn btn-default">{{ labels.filter_results }}</button>
               </form>
               <div class="sdk-datagrid" data-grid-config="{{ dataset_grid_config }}">
               {% if !datasets.is_empty() %}
@@ -173,6 +174,11 @@
               </ul>
             </div>
             {% endif %}
+          </section>
+          <section class="module">
+            <div class="module-content">
+              <small>{{ labels.api_access }} <a href="{{ chrome.mount_prefix }}/api/3/action/package_search">API</a> ({{ labels.api_docs }} <a href="https://docs.ckan.org/en/2.11/api/">{{ labels.api_docs_link }}</a>).</small>
+            </div>
           </section>
         </div>
       </div>

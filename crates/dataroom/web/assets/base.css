@@ -5,9 +5,9 @@
 *, *::before, *::after { box-sizing: border-box; }
 body { margin: 0; }
 img, svg { vertical-align: middle; }
-.container { width: 100%; max-width: 1200px; margin-inline: auto; padding-inline: 15px; }
-.row { display: flex; flex-wrap: wrap; margin-inline: -12px; }
-.row > * { flex-shrink: 0; width: 100%; max-width: 100%; padding-inline: 12px; }
+.container { width: 100%; max-width: 1200px; margin-inline: auto; padding-inline: .75rem; }
+.row { --bs-gutter-x: 1.5rem; display: flex; flex-wrap: wrap; margin-inline: calc(var(--bs-gutter-x) * -.5); }
+.row > * { flex-shrink: 0; width: 100%; max-width: 100%; padding-inline: calc(var(--bs-gutter-x) * .5); }
 .gy-4 { row-gap: 1.5rem; }
 .col-12, .col-xs-12 { flex: 0 0 auto; width: 100%; }
 @media (min-width: 768px) {
@@ -59,7 +59,17 @@ img, svg { vertical-align: middle; }
 .page-item.active .page-link { background: var(--jc-primary, #0d6efd); border-color: var(--jc-primary, #0d6efd); color: #fff; }
 .control-order-by { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .control-order-by .form-control, .control-order-by .form-select { width: auto; }
-@media (min-width: 768px) { .show-filters { display: none; } }
+/* CKAN's phone filter modal: below 768px the facets wait behind "Výsledky filtrovania" and open
+   over the page (public__jc-forms.js toggles body.filters-modal); without script they stay inline. */
+.show-filters.btn, .hide-filters { display: none; }
+@media (max-width: 767.98px) {
+  .js body.filters-modal { overflow: hidden; }
+  .js .secondary .filters { display: none; position: fixed; overflow: auto; inset: 0; z-index: 1000; padding: 10px; background: rgba(0, 0, 0, .5); }
+  .js body.filters-modal .secondary .filters { display: block; }
+  .js .secondary .filters > div { background: #fff; border-radius: 4px; overflow: hidden; }
+  .js body.filters-modal .secondary .filters .hide-filters { display: inline-block; position: absolute; top: 14px; right: 17px; padding: 0 .25rem; border: 0; background: transparent; opacity: .6; }
+  .js .show-filters.btn { display: inline-block; margin-top: .75rem; }
+}
 /* Facets, the publisher box, filter pills and icons as CKAN's main.css and Font Awesome drew them
    (jc-dataroom-pages, parity gaps G4-G6): without `display: block` a facet list is a flex row and
    its items sit two to a line; without the `.nums` row the publisher's counts stack. */

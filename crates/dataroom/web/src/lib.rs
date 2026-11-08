@@ -119,6 +119,12 @@ pub struct UiLabels {
     pub sort_modified: String,
     pub go: String,
     pub filter_results: String,
+    /// The close button of the phone filter modal.
+    pub close: String,
+    /// The API footnote under a dataset list (CKAN's `api_info`).
+    pub api_access: String,
+    pub api_docs: String,
+    pub api_docs_link: String,
     pub show_more: String,
     pub about: String,
     pub about_site: String,
@@ -265,6 +271,10 @@ impl UiLabels {
             sort_modified: t("sort_modified"),
             go: t("go"),
             filter_results: t("filter_results"),
+            close: t("map_close"),
+            api_access: t("api_access"),
+            api_docs: t("api_docs"),
+            api_docs_link: t("api_docs_link"),
             show_more: t("show_more"),
             about: t("about"),
             about_site: t("about_site"),

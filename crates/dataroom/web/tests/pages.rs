@@ -1373,7 +1373,7 @@ fn the_topics_page_lists_every_eu_theme_with_its_dataset_count() {
         14,
         "13 EU themes + LOCAL"
     );
-    assert!(html.contains("14 témy nájdené"));
+    assert!(html.contains("14 tém nájdených"));
     let card = |label: &str| {
         let i = html
             .find(&format!("<h2 class=\"media-heading\">{label}</h2>"))
@@ -1456,6 +1456,10 @@ fn a_filtered_list_shows_its_filters_as_pills_and_keeps_them_in_every_link() {
         "href=\"/sk/dataset/?organization=city&amp;q=voda&amp;res_format=CSV&amp;page=2\""
     ));
     assert!(html.contains("<input type=\"hidden\" name=\"res_format\" value=\"CSV\" />"));
+    // On a phone the facets open as CKAN's modal from two real buttons; the API footnote follows.
+    assert!(html.contains("<button type=\"button\" class=\"show-filters btn btn-default\">"));
+    assert!(html.contains("<button type=\"button\" class=\"hide-filters\" aria-label=\"Zavrieť\">"));
+    assert!(html.contains("<a href=\"/api/3/action/package_search\">API</a>"));
 }
 
 #[test]
