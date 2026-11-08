@@ -1,9 +1,10 @@
 name: ship
 # Builds the jc image (bins/jc/Dockerfile: every module, default features, the Portal UI
-# embedded) after a green ci on main, smoke-tests it, pushes ghcr.io/<repo>/jc by digest and
-# signs it with cosign; `scan` then attests a CycloneDX SBOM and gates HIGH/CRITICAL fixable
-# vulnerabilities with trivy, as the platform's image.yml + image-scan.yml do. Deployments pin the
-# digest (deployment components/jc/images.yaml), never a tag. A dispatch builds any ref.
+# embedded) after a green ci on main, smoke-tests it, pushes ghcr.io/<owner>/jc by digest and
+# signs it with cosign, as the platform's image.yml does. image-scan.yml runs after it: the SBOM
+# and the trivy gate, attested. Deployments pin the digest (deployment components/jc/images.yaml),
+# never a tag; deployment scripts/verify-pinned-images.py accepts this workflow's signature on main
+# only. A dispatch builds any ref (its signature is then refused there).
 on:
   workflow_run: { workflows: [ci], types: [completed], branches: [main] }
   push:
@@ -63,34 +64,3 @@ jobs:
       - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
       - run: cosign sign --yes "$IMAGE@${{ steps.push.outputs.digest }}"
       - run: echo "jc digest ${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
-  scan:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions: { contents: read, packages: write, id-token: write }
-    timeout-minutes: 20
-    steps:
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
-      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
-      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ env.IMAGE }}@${{ needs.build.outputs.digest }}
-          format: cyclonedx
-          output: ${{ runner.temp }}/sbom.cdx.json
-          cache-dir: ${{ runner.temp }}/trivy
-      - run: cosign attest --yes --type cyclonedx --predicate "$RUNNER_TEMP/sbom.cdx.json" "$IMAGE@${{ needs.build.outputs.digest }}"
-      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ env.IMAGE }}@${{ needs.build.outputs.digest }}
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
-          cache-dir: ${{ runner.temp }}/trivy
-      # Reached only when the gate passed: the record a release gate asks for.
-      - run: |
-          set -eu
-          jq -n --arg sha "$GITHUB_SHA" --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            --arg at "$(date -u +%FT%TZ)" \
-            '{scanner: "trivy", severity: ["HIGH", "CRITICAL"], ignoreUnfixed: true, result: "pass", commit: $sha, run: $run, scannedAt: $at}' \
-            > "$RUNNER_TEMP/scan.json"
-          cosign attest --yes --type https://joinedcontext.com/attestations/vuln-scan/v1 --predicate "$RUNNER_TEMP/scan.json" "$IMAGE@${{ needs.build.outputs.digest }}"
