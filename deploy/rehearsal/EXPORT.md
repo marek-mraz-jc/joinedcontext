@@ -1,5 +1,10 @@
 # Rehearsal export bundle
 
+**Stopped (owner, 2026-11-08): no data is copied from dev or prod.** No bundle is requested from the
+deployers and none exists. The rehearsal runs on config and files from the deployment repo plus
+synthetic test data (`rehearsal.py synth`), which uses this layout. The rest of this page describes
+the format only.
+
 The deployer (dev) and the prod-deployer (prod) write one bundle per environment, read only, to
 `/workspace/evidence/jc-rehearsal/export/{dev,prod}/`. `rehearsal.py import` reads it into a local
 `jc`; nothing in the bundle is written back anywhere.

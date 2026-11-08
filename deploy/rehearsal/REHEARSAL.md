@@ -1,14 +1,14 @@
 # Rehearsal environment
 
-A rehearsal is the new version (`jc --role all` plus PostgreSQL in docker) loaded with one
-environment's configuration and files: dev, or prod (smartcity). It writes nowhere outside itself.
-Nothing is migrated on dev or prod; the rehearsal reads files only.
+A rehearsal is the new version (`jc --role all` plus PostgreSQL in docker) brought up on one
+environment's config and files from the deployment repo (dev, or prod = smartcity) with synthetic
+test data. It writes nowhere outside itself and copies no data from dev or prod.
 
 ## 1. Inputs
 
-- The deployer's export bundle, read only, at `/workspace/evidence/jc-rehearsal/export/{dev,prod}/`
-  (format: EXPORT.md). No people, nothing older than 7 days, no secret values.
-- Until the bundle exists: a synthetic bundle of the same shape made from the deployment repo's
+- No data from dev or prod (owner, 2026-11-08: the data migration is stopped). No Antares entities,
+  no temporal instances and no export bundle from either environment.
+- The only input: a synthetic bundle of the same shape made from the deployment repo's
   config as code (realm, seeds, CkanInstances, Grafana provisioning):
 
 ```sh
@@ -18,11 +18,11 @@ python3 -I rehearsal.py synth  --render <render>/dev --env dev --out $REHEARSAL_
 
 `--env smartcity` gives prod's config.
 
-## 2. Rebuild from a fresh export
+## 2. Rebuild
 
 ```sh
 export REHEARSAL_HOME=~/rehearsal JC_BIN=<target>/debug/jc
-REHEARSAL_EXPORT=/workspace/evidence/jc-rehearsal/export/dev ./up.sh dev 42101 55441
+./up.sh dev 42101 55441
 python3 -I rehearsal.py import --export <export> --base http://localhost:42101 \
   --state $REHEARSAL_HOME/dev/state --report $REHEARSAL_HOME/dev/import-report.json --daiya-bin <target>/debug/daiya
 python3 -I rehearsal.py smoke  --base http://localhost:42101 --state $REHEARSAL_HOME/dev/state \
