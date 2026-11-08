@@ -261,7 +261,16 @@ where
     };
     let resp = match answer {
         Ok(r) => r,
-        Err(e @ KaisatsuError::Unauthorized(_)) => kaisatsu_oidc::into_dpop_aware_response(e),
+        Err(e @ KaisatsuError::Unauthorized(_)) => {
+            let mut r = kaisatsu_oidc::into_dpop_aware_response(e);
+            if !r.headers().contains_key(header::WWW_AUTHENTICATE) {
+                r.headers_mut().insert(
+                    header::WWW_AUTHENTICATE,
+                    HeaderValue::from_static(r#"Bearer error="invalid_token""#),
+                );
+            }
+            r
+        }
         Err(e) => e.into_response(),
     };
     with_cors(resp, origin)

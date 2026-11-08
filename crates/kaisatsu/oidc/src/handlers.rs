@@ -629,9 +629,11 @@ async fn authorize_get(
         p.split_whitespace()
             .any(|t| matches!(t, "login" | "select_account"))
     }) || max_age.is_some_and(|ma| {
-        existing_sso
-            .as_ref()
-            .is_none_or(|sso| now_unix - sso.auth_time > ma)
+        // OIDC Core 3.1.2.1: `max_age=0` is `prompt=login`.
+        ma <= 0
+            || existing_sso
+                .as_ref()
+                .is_none_or(|sso| now_unix - sso.auth_time > ma)
     });
 
     let needs_step_up = acr_requested.as_deref() == Some("mfa")
