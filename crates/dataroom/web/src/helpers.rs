@@ -2443,6 +2443,11 @@ pub fn jc_sitemap_xml(cat: &Catalogue, datasets: &[Dataset], publishers: &[Publi
             d.state == RecordState::Active
                 && d.visibility == Visibility::Public
                 && !cat.hidden_datasets.contains_key(&d.name)
+                // A withdrawn publisher's datasets are hidden like on package_show.
+                && publishers
+                    .iter()
+                    .find(|p| p.name == d.publisher_id || p.id == d.publisher_id)
+                    .is_none_or(|p| p.state == RecordState::Active)
         })
         .collect();
     pub_ds.sort_by(|a, b| a.name.cmp(&b.name));

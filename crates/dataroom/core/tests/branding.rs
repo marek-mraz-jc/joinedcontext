@@ -175,3 +175,25 @@ fn localized_text_prefers_the_language_then_the_catalogue_default() {
     assert!(is_host_name("data.mesto.sk"));
     assert!(!is_host_name("localhost") && !is_host_name("-a.sk") && !is_host_name("A.sk"));
 }
+
+#[test]
+fn footer_lines_and_taglines_drop_empty_entries() {
+    let b = BrandingBlock::from_json_lossy(&json!({
+        "footerLines": ["  Mesto Banská Bystrica ", "   ", 5, "Námestie SNP 1"],
+        "siteTagline": {"sk": "Dáta mesta", "en": ""}
+    }));
+    assert_eq!(
+        b.footer_lines,
+        vec!["Mesto Banská Bystrica", "Námestie SNP 1"]
+    );
+    assert_eq!(b.site_tagline.len(), 1);
+    assert_eq!(b.site_tagline_in("en").as_deref(), Some("Dáta mesta"));
+    let plain = BrandingBlock::from_json_lossy(
+        &json!({"site_tagline": "Otvorené dáta", "footer_lines": "not a list"}),
+    );
+    assert_eq!(
+        plain.site_tagline_in("cs").as_deref(),
+        Some("Otvorené dáta")
+    );
+    assert_eq!(plain.footer_lines, BrandingBlock::default().footer_lines);
+}

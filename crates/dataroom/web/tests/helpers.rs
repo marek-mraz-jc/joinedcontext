@@ -1375,6 +1375,9 @@ fn jc_sitemap_xml_lists_public_records_escaped_and_sorted() {
         dataset("internal", json!({ "visibility": "internal" })),
         dataset("gone", json!({ "state": "withdrawn" })),
         dataset("hidden", json!({})),
+        dataset("orphaned", json!({ "publisherId": "old" })),
+        dataset("by-id", json!({ "publisherId": "pub-old" })),
+        dataset("unlisted-publisher", json!({ "publisherId": "elsewhere" })),
     ];
     let pubs = [
         publisher("city", json!({})),
@@ -1390,7 +1393,16 @@ fn jc_sitemap_xml_lists_public_records_escaped_and_sorted() {
     assert!(a < z, "sorted by name");
     assert!(xml.contains("<lastmod>2026-11-05</lastmod>"));
     assert!(xml.contains("/organization/city</loc>"));
-    for absent in ["internal", "gone", "hidden", "/organization/old"] {
+    // A dataset whose publisher record is absent stays listed, as package_show shows it.
+    assert!(xml.contains("/dataset/unlisted-publisher</loc>"));
+    for absent in [
+        "internal",
+        "gone",
+        "hidden",
+        "/organization/old",
+        "orphaned",
+        "by-id",
+    ] {
         assert!(!xml.contains(absent), "{absent}");
     }
     let empty = jc_sitemap_xml(&c, &[], &[]);
