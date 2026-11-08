@@ -749,7 +749,10 @@ mod tests {
         std::fs::create_dir_all(root.join("schemas")).unwrap();
         std::fs::write(root.join("schemas/a.json"), "{}").unwrap();
         std::fs::write(std::env::temp_dir().join("json-schema-outside.json"), "{}").unwrap();
-        assert_eq!(read_schema_path("file://schemas/a.json", Some(&root)).unwrap(), "{}");
+        assert_eq!(
+            read_schema_path("file://schemas/a.json", Some(&root)).unwrap(),
+            "{}"
+        );
         for escape in [
             "../json-schema-outside.json",
             "schemas/../../json-schema-outside.json",
@@ -757,7 +760,10 @@ mod tests {
             "/etc/passwd",
         ] {
             let err = read_schema_path(escape, Some(&root)).expect_err(escape);
-            assert!(err.to_string().contains("inside the file root"), "{escape}: {err}");
+            assert!(
+                err.to_string().contains("inside the file root"),
+                "{escape}: {err}"
+            );
         }
         std::fs::remove_dir_all(&root).unwrap();
     }

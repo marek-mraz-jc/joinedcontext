@@ -927,6 +927,41 @@ async fn input_with_processors_splits_drops_and_acks_once() {
 }
 
 #[tokio::test]
+async fn an_output_batching_policy_cuts_by_count_and_runs_its_processors() {
+    let reg = registry();
+    let collected = Arc::new(Collect::default());
+    let c2 = collected.clone();
+    reg.register_output("shared", move |_, _| Ok(c2.clone() as Arc<dyn Output>));
+    let (_tx, s) = stream_ctx(reg.clone());
+    // The Portal's outcome post: `http_client.batching` with `count`, `period` and processors.
+    let out = reg
+        .build_output(
+            &conf(
+                json!({"shared": {"batching": {"count": 2, "period": "500ms",
+                "processors": [{"split_each": {}}, {"upper": {}}]}}}),
+            ),
+            &s,
+        )
+        .unwrap();
+    out.write_batch(&s, parts(&["a", "b", "c"])).await.unwrap();
+    let got: Vec<Vec<String>> = collected
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|b| texts(b))
+        .collect();
+    // Bento's policy Flush joins the processors' batches into one (`policy.go`).
+    assert_eq!(
+        got,
+        vec![
+            vec!["A".to_string(), "B".to_string()],
+            vec!["C".to_string()]
+        ]
+    );
+}
+
+#[tokio::test]
 async fn output_with_processors_writes_each_processed_batch() {
     let reg = registry();
     let collected = Arc::new(Collect::default());

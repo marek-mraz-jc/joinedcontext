@@ -325,6 +325,64 @@ impl Input for InputWithProcessors {
     }
 }
 
+/// An output's `batching` policy (`internal/component/output/batched_send.go` with
+/// `internal/batch/policy`): each written batch goes through Bento's batcher (`count`,
+/// `byte_size`, `check`, then the policy's `processors`) and every batch it flushes is written,
+/// the rest at the end. ponytail: the runner writes one transaction at a time and awaits it, so a
+/// batch never gathers messages of two transactions and `period` never fires; Bento's output
+/// may merge transactions written within `period`. The ack still follows the write.
+pub struct BatchedOutput {
+    inner: Arc<dyn Output>,
+    batcher: tokio::sync::Mutex<Batcher>,
+}
+
+impl BatchedOutput {
+    pub fn new(inner: Arc<dyn Output>, batcher: Batcher) -> Self {
+        Self {
+            inner,
+            batcher: tokio::sync::Mutex::new(batcher),
+        }
+    }
+}
+
+#[async_trait]
+impl Output for BatchedOutput {
+    fn output_type(&self) -> &'static str {
+        self.inner.output_type()
+    }
+
+    fn label(&self) -> &str {
+        self.inner.label()
+    }
+
+    async fn connect(&self, ctx: &StreamContext) -> Result<(), CoreError> {
+        self.inner.connect(ctx).await
+    }
+
+    async fn write_batch(&self, ctx: &StreamContext, batch: Batch) -> Result<(), CoreError> {
+        let mut batcher = self.batcher.lock().await;
+        for part in batch {
+            if batcher.add(part) {
+                if let Some(b) = batcher.flush().await? {
+                    self.inner.write_batch(ctx, b).await?;
+                }
+            }
+        }
+        if let Some(b) = batcher.flush().await? {
+            self.inner.write_batch(ctx, b).await?;
+        }
+        Ok(())
+    }
+
+    fn is_connected(&self) -> bool {
+        self.inner.is_connected()
+    }
+
+    async fn close(&self) -> Result<(), CoreError> {
+        self.inner.close().await
+    }
+}
+
 /// Wraps an `Output` with output-level `processors` (`internal/component/output/wrap_with_pipeline.go`).
 pub struct OutputWithProcessors {
     inner: Arc<dyn Output>,
