@@ -103,6 +103,10 @@ fn authorize_package(
     image_or_pkg: &str,
     action: Action,
 ) -> ShakoResult<()> {
+    // `owner` names a directory under the blob store: refuse anything but a plain name (T1);
+    // a percent-encoded `../` arrives decoded in the path parameter.
+    validate_repo_or_owner_name(owner, "owner")
+        .map_err(|_| ShakoError::NotFound("package not found".into()))?;
     let target_org = state.resolve_org_for_owner(owner, &ctx.subject);
     let mut check_ctx = ctx.clone();
     check_ctx.org_id = target_org;

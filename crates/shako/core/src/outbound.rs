@@ -40,10 +40,10 @@ pub struct OutboundPolicy {
 impl Default for OutboundPolicy {
     fn default() -> Self {
         Self {
-            in_cluster_hosts: vec![
-                ".svc.cluster.local".into(),
-                "kubernetes.default.svc".into(),
-            ],
+            // Empty by default: an in-cluster host skips the private-range check, so each one is
+            // named explicitly by the operator (never a `.svc.cluster.local` wildcard, never the
+            // Kubernetes API) (T3).
+            in_cluster_hosts: Vec::new(),
             allowed_hosts: Some(vec!["github.com".into(), "api.github.com".into()]),
             allow_loopback_for_tests: false,
             mock_responses: Arc::new(RwLock::new(HashMap::new())),
@@ -359,6 +359,35 @@ mod tests {
                 "expected '{bad_url}' to be refused by SSRF guard"
             );
         }
+
+        // No implicit in-cluster trust: the Kubernetes API and arbitrary cluster services are
+        // refused unless the operator names the host.
+        let default_guard = OutboundGuard::default();
+        for bad_url in [
+            "https://kubernetes.default.svc/api/v1/secrets",
+            "http://kubernetes.default.svc/api/v1/secrets",
+            "http://keycloak.auth.svc.cluster.local/admin",
+            "https://apisix-admin.ingress.svc.cluster.local/apisix/admin/routes",
+        ] {
+            assert!(
+                default_guard.validate_url(bad_url, None).is_err(),
+                "expected '{bad_url}' to be refused without an explicit in-cluster host"
+            );
+        }
+        let portal_only = OutboundGuard::new(OutboundPolicy {
+            in_cluster_hosts: vec!["portal.jc.svc.cluster.local".into()],
+            ..OutboundPolicy::default()
+        });
+        assert!(
+            portal_only
+                .validate_url("http://portal.jc.svc.cluster.local/api/v1/webhooks/gitea", None)
+                .is_ok()
+        );
+        assert!(
+            portal_only
+                .validate_url("http://keycloak.auth.svc.cluster.local/admin", None)
+                .is_err()
+        );
 
         // Redirects (302) and oversized responses (> 1 MiB) are refused
         guard.insert_mock("https://github.com/redirect", 302, Vec::new());

@@ -1269,3 +1269,30 @@ async fn deny_by_default_on_discovery_version_and_actions() {
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body, json!({ "status": "ok" }));
 }
+
+/// Threat T1 on the package store: a percent-encoded `../` owner reaches the handler decoded and
+/// must answer 404 without writing outside the repository root.
+#[tokio::test]
+async fn generic_package_owner_traversal_is_refused() {
+    let world = setup_world();
+    let root = world.state.repo_root().to_path_buf();
+    for owner in ["..%2F..%2Fescape", "..", "joinedcontext%2F..%2F..%2Fescape"] {
+        let resp = world
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/api/packages/{owner}/generic/pkg/1.0.0/f.bin"))
+                    .header("authorization", "token portal-token")
+                    .body(Body::from("payload"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "owner {owner}");
+    }
+    let parent = root.parent().unwrap();
+    assert!(!parent.join("escape").exists());
+    assert!(!root.join("escape").exists());
+}
