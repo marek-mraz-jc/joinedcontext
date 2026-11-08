@@ -47,7 +47,7 @@ pub fn resample_frames(
             "resample window interval must be positive".into(),
         ));
     }
-    let span = to_ms - from_ms;
+    let span = to_ms.saturating_sub(from_ms);
     let new_series_len = (span as f64 / interval_ms as f64) as isize;
     if new_series_len <= 0 {
         return Err(CrError::ExpressionError(

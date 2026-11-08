@@ -76,6 +76,7 @@ pub async fn build(
     };
     let state = DataroomState::new(store, Arc::new(authorizer), org_id, catalogue_id)
         .with_tokens(tokens)
+        .with_public_base(mount.public_base())
         .with_mount_prefix(mount.path_prefix);
     Ok(dataroom_api::router(state))
 }

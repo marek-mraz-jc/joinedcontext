@@ -1668,6 +1668,7 @@ mod tests {
                     allowed_outbound_hosts: Vec::new(),
                     applicable_legislation: Vec::new(),
                     modified: Utc::now(),
+                    public_base: None,
                 })
                 .await
                 .expect("upsert catalogue");

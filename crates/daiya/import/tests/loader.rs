@@ -12,6 +12,7 @@ use daiya_import::loader::MAX_PROVISIONED_FILES;
 use daiya_import::{ProvisioningTarget, load_provisioning_dir, safe_uid_from_name};
 use daiya_model::{CrError, DaiyaStore, InputLimits, InstallationId, InstanceId, OrgId};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 const ORG: OrgId = OrgId::from_u128(42);
@@ -72,7 +73,15 @@ async fn load(
     store: &dyn DaiyaStore,
     root: &Path,
 ) -> Result<daiya_import::ProvisioningLoadReport, CrError> {
-    load_provisioning_dir(store, target(), root, &InputLimits::default()).await
+    load_with(store, root, &BTreeMap::new()).await
+}
+
+async fn load_with(
+    store: &dyn DaiyaStore,
+    root: &Path,
+    vars: &BTreeMap<String, String>,
+) -> Result<daiya_import::ProvisioningLoadReport, CrError> {
+    load_provisioning_dir(store, target(), root, &InputLimits::default(), vars).await
 }
 
 const PROM: &str = "apiVersion: 1\ndatasources:\n  - name: Prometheus\n    uid: prom\n    type: prometheus\n    url: http://prom:9090\n    isDefault: true\n";
@@ -566,4 +575,65 @@ async fn a_failing_store_fails_the_run_at_each_write() {
         assert_eq!(err.status_code(), 500, "{method}: {err}");
         store.heal();
     }
+}
+
+/// Grafana's `disableDeletion: false` (the default) deletes what a provider's files no longer
+/// hold; `true` keeps it. A provider's deletion never reaches another provider's dashboards.
+#[tokio::test]
+async fn a_dashboard_whose_file_is_gone_leaves_unless_deletion_is_disabled() {
+    let root = Root::new();
+    let store = FailingStore::new();
+    root.write(
+        "dashboards/p.yaml",
+        "providers:\n  - name: prune\n    options:\n      path: a\n  - name: keep\n    disableDeletion: true\n    options:\n      path: b\n",
+    );
+    root.dashboard("a/one.json", "one");
+    root.dashboard("a/two.json", "two");
+    root.dashboard("b/three.json", "three");
+    let report = load(&store, &root.0).await.unwrap();
+    assert_eq!((report.dashboards, report.dashboards_deleted), (3, 0));
+
+    std::fs::remove_file(root.0.join("a/two.json")).unwrap();
+    std::fs::remove_file(root.0.join("b/three.json")).unwrap();
+    let report = load(&store, &root.0).await.unwrap();
+    assert_eq!(report.dashboards_deleted, 1);
+    assert!(store.get_dashboard(ORG, "one").await.unwrap().is_some());
+    assert!(store.get_dashboard(ORG, "two").await.unwrap().is_none());
+    assert!(store.get_dashboard(ORG, "three").await.unwrap().is_some());
+}
+
+/// `$NAME` and `${NAME}` come from the variables handed in, `$$` is a literal `$`, and an unset
+/// name fails the run before anything is written.
+#[tokio::test]
+async fn provisioning_files_expand_only_the_variables_handed_in() {
+    let root = Root::new();
+    let store = FailingStore::new();
+    root.write(
+        "datasources/a.yaml",
+        "apiVersion: 1\ndatasources:\n  - name: ${DS_NAME}\n    uid: prom\n    type: prometheus\n    url: http://$PROM_HOST:9090/a$$b\n",
+    );
+    let vars: BTreeMap<String, String> = [("DS_NAME", "Metrics"), ("PROM_HOST", "prom.svc")]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect();
+    load_with(&store, &root.0, &vars).await.unwrap();
+    let ds = store
+        .get_datasource_by_name(ORG, "Metrics")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ds.url, "http://prom.svc:9090/a$b");
+
+    let store = FailingStore::new();
+    let mut partial = vars.clone();
+    partial.remove("PROM_HOST");
+    let err = load_with(&store, &root.0, &partial).await.unwrap_err();
+    assert!(err.to_string().contains("'PROM_HOST' is not set"), "{err}");
+    assert!(
+        store
+            .get_datasource_by_name(ORG, "Metrics")
+            .await
+            .unwrap()
+            .is_none()
+    );
 }

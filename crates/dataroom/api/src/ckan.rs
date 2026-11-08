@@ -119,7 +119,13 @@ async fn dispatch_ckan_action(
 ) -> Response {
     let (ctx, cat) = match state.resolve_context(&headers).await {
         Ok(v) => v,
-        Err(e) => return ckan_err("https://dataroom.local", &action, e),
+        Err(e) => {
+            let base = state
+                .public_base
+                .as_deref()
+                .unwrap_or("https://dataroom.local");
+            return ckan_err(base, &action, e);
+        }
     };
     let base = cat.base_url();
     let is_anon_get = is_get && ctx.subject.is_anonymous();
