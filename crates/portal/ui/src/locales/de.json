@@ -3361,7 +3361,7 @@
       "inSpace": "· im Raum {space}",
       "on": "auf {endpoint}, angefragt von {who}",
       "decisionReason": "Begründung für den Anfragenden",
-      "decisionReasonHelp": "Die anfragende Person liest sie, zum Beispiel: Für das Pilotprojekt bis Juni gewährt; für Schreibzugriff bitte erneut anfragen.",
+      "decisionReasonHelp": "Nötig zum Ablehnen oder Widerrufen; die anfragende Person liest sie, zum Beispiel: Für das Pilotprojekt bis Juni gewährt; für Schreibzugriff bitte erneut anfragen.",
       "approve": "Genehmigen",
       "approveOf": "Zugriff für {account} genehmigen",
       "decline": "Ablehnen",

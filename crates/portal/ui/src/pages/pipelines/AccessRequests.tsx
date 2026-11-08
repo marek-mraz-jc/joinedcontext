@@ -157,7 +157,7 @@ function problem(err: unknown, fallback: string): string {
 
 export function StateBadge({ state }: { state: AccessRequestView["state"] }): JSX.Element {
   const { t } = useTranslation();
-  const tone = state === "approved" ? "success" : state === "pending" ? "warning" : "neutral";
+  const tone = state === "approved" ? "success" : state === "pending" ? "info" : "neutral";
   return <Badge tone={tone}>{t(`pipelines.access.state.${state}`)}</Badge>;
 }
 
@@ -527,7 +527,11 @@ export function AccessRequestInbox({ project, space }: { project: string; space?
   if (list.isError) {
     // On an Endpoint's page the section is one of many and stays quiet; the Inbox says why.
     return whole ? (
-      <Alert tone="danger" role="alert" data-testid="access-inbox-failed">
+      <Alert
+        tone={list.error instanceof ApiError && (list.error.status === 403 || list.error.status === 404) ? "info" : "danger"}
+        role="alert"
+        data-testid="access-inbox-failed"
+      >
         {t("pipelines.access.inboxFailed", { reason: problem(list.error, t("app.error.generic")) })}
       </Alert>
     ) : null;
@@ -569,7 +573,7 @@ export function AccessRequestInbox({ project, space }: { project: string; space?
               <Grant request={request} />
               <p className="text-caption text-fg">{request.reason}</p>
               {decidable ? (
-                <div className="flex flex-wrap items-end gap-2">
+                <div className="flex max-w-prose flex-col gap-2">
                   <Field id={reasonId} label={t("pipelines.access.decisionReason")} help={t("pipelines.access.decisionReasonHelp")}>
                     <Input
                       id={reasonId}
@@ -578,40 +582,39 @@ export function AccessRequestInbox({ project, space }: { project: string; space?
                       onChange={(e) => setReasons({ ...reasons, [request.id]: e.target.value })}
                     />
                   </Field>
-                  {request.state === "pending" ? (
-                    <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {request.state === "pending" ? (
+                      <>
+                        <Button
+                          disabled={act.isPending}
+                          disabledReason={t("app.busyReason")}
+                          aria-label={t("pipelines.access.approveOf", { account: request.account })}
+                          onClick={() => act.mutate({ id: request.id, verb: "approve" })}
+                        >
+                          {t("pipelines.access.approve")}
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          disabled={act.isPending || !(reasons[request.id] ?? "").trim()}
+                          disabledReason={t("pipelines.access.reasonFirst")}
+                          aria-label={t("pipelines.access.declineOf", { account: request.account })}
+                          onClick={() => act.mutate({ id: request.id, verb: "decline" })}
+                        >
+                          {t("pipelines.access.decline")}
+                        </Button>
+                      </>
+                    ) : (
                       <Button
-                        size="sm"
-                        disabled={act.isPending}
-                        disabledReason={t("app.busyReason")}
-                        aria-label={t("pipelines.access.approveOf", { account: request.account })}
-                        onClick={() => act.mutate({ id: request.id, verb: "approve" })}
-                      >
-                        {t("pipelines.access.approve")}
-                      </Button>
-                      <Button
-                        size="sm"
                         variant="secondary"
                         disabled={act.isPending || !(reasons[request.id] ?? "").trim()}
                         disabledReason={t("pipelines.access.reasonFirst")}
-                        aria-label={t("pipelines.access.declineOf", { account: request.account })}
-                        onClick={() => act.mutate({ id: request.id, verb: "decline" })}
+                        aria-label={t("pipelines.access.revokeOf", { account: request.account })}
+                        onClick={() => act.mutate({ id: request.id, verb: "revoke" })}
                       >
-                        {t("pipelines.access.decline")}
+                        {t("pipelines.access.revoke")}
                       </Button>
-                    </>
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={act.isPending || !(reasons[request.id] ?? "").trim()}
-                      disabledReason={t("pipelines.access.reasonFirst")}
-                      aria-label={t("pipelines.access.revokeOf", { account: request.account })}
-                      onClick={() => act.mutate({ id: request.id, verb: "revoke" })}
-                    >
-                      {t("pipelines.access.revoke")}
-                    </Button>
-                  )}
+                    )}
+                  </div>
                 </div>
               ) : null}
             </li>

@@ -3361,7 +3361,7 @@
       "inSpace": "· in space {space}",
       "on": "on {endpoint}, asked by {who}",
       "decisionReason": "Reason for the requester",
-      "decisionReasonHelp": "The requester reads it, for example: Granted for the pilot until June; ask again for write access.",
+      "decisionReasonHelp": "Needed to decline or revoke; the requester reads it, for example: Granted for the pilot until June; ask again for write access.",
       "approve": "Approve",
       "approveOf": "Approve access for {account}",
       "decline": "Decline",

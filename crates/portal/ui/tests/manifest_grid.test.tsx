@@ -180,7 +180,7 @@ describe("valueCounts", () => {
 
 describe("ManifestGrid", () => {
   it("keeps the page's header above a refused list, so a project out of reach still names its page", async () => {
-    const refused = { isPending: false, isError: true, error: new ApiError(404, "project helsinki not found", { title: "Not Found", status: 404, detail: "project helsinki not found" }), refetch: () => undefined };
+    const refused = { isPending: false, isError: true, error: new ApiError(404, "project helsinki not found", { type: "about:blank", title: "Not Found", status: 404, detail: "project helsinki not found" }), refetch: () => undefined };
     renderPage(
       <ManifestGrid<Manifest>
         caption="Endpoints"

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Badge, Button } from "../ui";
+import { Alert, Badge, Button } from "../ui";
 import type { BadgeTone } from "../ui";
 import { ago } from "../ago";
 import type { Verdict } from "../../api/drafts";
@@ -94,20 +94,24 @@ export function DiscardDraft({ onDiscard }: { onDiscard: () => Promise<void> }):
     );
   }
   return (
-    <span role="group" aria-label={t("drafts.discard.ask")} className="inline-flex flex-wrap items-center gap-2">
-      <span className="text-caption text-fg">{t("drafts.discard.confirm")}</span>
-      <Button variant="danger" size="sm" loading={pending} onClick={() => void discard()}>
-        {t("drafts.discard.yes")}
-      </Button>
-      <Button variant="ghost" size="sm" disabled={pending} disabledReason={t("app.busyReason")} onClick={() => setAsking(false)}>
-        {t("drafts.discard.keep")}
-      </Button>
+    // A line of its own at the footer's end, so the question is never read as the answer to the
+    // Cancel beside it, and its refusal is never mistaken for the check's.
+    <div role="group" aria-label={t("drafts.discard.ask")} className="order-last flex basis-full flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-body text-fg">{t("drafts.discard.confirm")}</span>
+        <Button variant="danger" size="sm" loading={pending} onClick={() => void discard()}>
+          {t("drafts.discard.yes")}
+        </Button>
+        <Button variant="secondary" size="sm" disabled={pending} disabledReason={t("app.busyReason")} onClick={() => setAsking(false)}>
+          {t("drafts.discard.keep")}
+        </Button>
+      </div>
       {refused ? (
-        <span role="alert" className="text-caption text-danger">
+        <Alert tone="danger" role="alert">
           {t("drafts.discard.refused", { reason: refused })}
-        </span>
+        </Alert>
       ) : null}
-    </span>
+    </div>
   );
 }
 

@@ -3361,7 +3361,7 @@
       "inSpace": "· v prostoru {space}",
       "on": "na {endpoint}, žádá {who}",
       "decisionReason": "Důvod pro žadatele",
-      "decisionReasonHelp": "Žadatel si jej přečte, například: Povoleno pro pilot do června; o zápis požádejte znovu.",
+      "decisionReasonHelp": "Potřebný k zamítnutí nebo odvolání; žadatel si jej přečte, například: Povoleno pro pilot do června; o zápis požádejte znovu.",
       "approve": "Schválit",
       "approveOf": "Schválit přístup pro {account}",
       "decline": "Zamítnout",

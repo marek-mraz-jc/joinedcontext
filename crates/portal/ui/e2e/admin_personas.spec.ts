@@ -145,8 +145,17 @@ async function stubPortal(page: Page, persona: Persona, world: World = {}): Prom
     const project = path.match(/^\/api\/v1\/projects\/([^/]+)/)?.[1];
     if (!project) return json(LIST([]));
     const effective = permissions(persona, project);
-    if (!effective) return refuse(404, `project ${project} not found`);
+    if (!effective) return refuse(404, `project '${project}' not found`);
     if (isCheck(method, request.url())) return json(greenVerdict(request.postData()));
+    const decision = /\/access-requests\/([^/]+)\/(approve|decline|revoke)$/.exec(path);
+    if (decision && method === "POST" && Array.isArray(world.accessRequests)) {
+      writes.push(`POST ${path}`);
+      const state = { approve: "approved", decline: "declined", revoke: "revoked" }[decision[2] as "approve" | "decline" | "revoke"];
+      world.accessRequests = world.accessRequests.map((one) =>
+        (one as { id: string }).id === decision[1] ? { ...(one as object), state, decidedBy: "petr" } : one,
+      );
+      return json(CHANGE(project), 202);
+    }
     const draft = /^\/api\/v1\/projects\/([^/]+)\/drafts\/([^/]+)\/([^/]+)$/.exec(path);
     if (draft) {
       // The form saves its draft before it proposes (T-0769); the draft is not the change.
@@ -154,7 +163,7 @@ async function stubPortal(page: Page, persona: Persona, world: World = {}): Prom
       if (method === "DELETE") {
         writes.push(`DELETE ${path}`);
         // A draft the server will not drop: its refusal is said beside the button.
-        if (draft[3] === "locked") return refuse(403, "The draft locked is held by another person's open change.");
+        if (draft[3] === "locked") return refuse(403, "The draft “locked” belongs to Eva Nováková's open change chg-0a1b2c3d.");
         return json({ dropped: true });
       }
       if (method !== "PUT") return route.fulfill({ status: 204 });
@@ -302,8 +311,10 @@ for (const width of [1440, 400]) {
       await expect(page.getByText("This page is for organization administrators.")).toBeVisible();
       await shot(page, `organization-refused-installation-${width}`);
       await page.goto("/projects/helsinki/spaces?lang=en");
-      await expect(page.getByRole("alert")).toContainText("project helsinki not found");
+      await expect(page.getByRole("alert")).toContainText("project 'helsinki' not found");
       await expect(page.getByRole("heading", { level: 1, name: "Context Spaces" })).toBeVisible();
+      // No create control is offered in a project out of reach; the API's 404 stays the guard.
+      await expect(page.getByRole("button", { name: "New Context Space" })).toHaveAttribute("aria-disabled", "true");
       await shot(page, `organization-refused-other-project-${width}`);
       expect(writes.filter((w) => w.includes("/projects/helsinki/"))).toEqual([]);
     });
@@ -316,8 +327,10 @@ for (const width of [1440, 400]) {
       await expect(page.getByText("This page is for organization administrators.")).toBeVisible();
       await shot(page, `project-refused-organization-${width}`);
       await page.goto("/projects/ovzdusie/spaces?lang=en");
-      await expect(page.getByRole("alert")).toContainText("project ovzdusie not found");
+      await expect(page.getByRole("alert")).toContainText("project 'ovzdusie' not found");
       await expect(page.getByRole("heading", { level: 1, name: "Context Spaces" })).toBeVisible();
+      // No create control is offered in a project out of reach; the API's 404 stays the guard.
+      await expect(page.getByRole("button", { name: "New Context Space" })).toHaveAttribute("aria-disabled", "true");
       await shot(page, `project-refused-other-project-${width}`);
       expect(writes.filter((w) => w.includes("/projects/org/") || w.includes("/projects/ovzdusie/"))).toEqual([]);
     });
@@ -333,6 +346,9 @@ for (const width of [1440, 400]) {
       await row.getByRole("button", { name: "Approve access for city-kpis/pl-air-index" }).click();
       await expect.poll(() => writes).toContain("POST /api/v1/projects/helsinki/access-requests/ar-0a1b2c3d4e5f/approve");
       await expect(section.getByText("chg-0a1b2c3d")).toBeVisible();
+      // The list reads the request again: approved, so it offers Revoke and no second Approve.
+      await expect(row.getByText("Approved", { exact: true })).toBeVisible();
+      await expect(row.getByRole("button", { name: /^Approve access/ })).toHaveCount(0);
       await shot(page, `inbox-access-approved-${width}`);
     });
 
@@ -364,7 +380,7 @@ for (const width of [1440, 400]) {
         if (name === "traffic") await shot(page, `draft-discard-confirm-${width}`);
         await ask.getByRole("button", { name: "Discard", exact: true }).click();
         if (name === "locked") {
-          await expect(ask.getByRole("alert")).toHaveText("The draft was not discarded: The draft locked is held by another person's open change.");
+          await expect(ask.getByRole("alert")).toContainText("The draft was not discarded: The draft “locked” belongs to Eva Nováková's open change chg-0a1b2c3d.");
           await shot(page, `draft-discard-refused-${width}`);
         }
       }

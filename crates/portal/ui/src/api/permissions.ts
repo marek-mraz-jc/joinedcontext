@@ -141,15 +141,18 @@ export function usePermissions(project: string) {
     // that window would otherwise keep every control disabled until a reload (T-0630).
     refetchInterval: (query) => emptyGrantsRetry(query.state.data, query.state.dataUpdateCount),
   });
+  // The 404 of a project no binding of the caller covers (PF-59): a known answer, reading nothing.
+  const denied = query.error instanceof ApiError && query.error.status === 404;
   return {
     data: query.data,
     isLoading: query.isPending,
     // The first read is on its way: no document yet and none failed (T-5833). A disabled query
     // (no project) is never checking.
     checking: query.isLoading,
-    // The 404 of a project no binding of the caller covers (PF-59): a known answer, reading nothing.
-    denied: query.error instanceof ApiError && query.error.status === 404,
-    can: (kind: string, verb: Verb) => allows(query.data, kind, verb),
+    denied,
+    // A project out of reach allows nothing: without its document `allows` would offer every
+    // control, and the API's 404 would be the first the person hears of it (jc-admin-ui).
+    can: (kind: string, verb: Verb) => !denied && allows(query.data, kind, verb),
   };
 }
 
