@@ -131,7 +131,10 @@ jobs:
         env: { POSTGRES_USER: antares, POSTGRES_PASSWORD: antares, POSTGRES_DB: antares }
         # Below 32768, out of the ephemeral range outbound sockets take (Antares workspace.yml).
         ports: ["15432:5432"]
+        # 1 GB /dev/shm: nextest runs the pg tests side by side and a parallel VACUUM or index build
+        # outgrows docker's 64 MB ("could not resize shared memory segment", pg_explain).
         options: >-
+          --shm-size=1g
           --health-cmd "pg_isready -U antares" --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       ANTARES_TEST_DATABASE_URL: postgresql://antares:antares@localhost:15432/antares
@@ -197,7 +200,11 @@ jobs:
       - run: psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE portal"
       - uses: ./.github/actions/rust
         with: { workspace: crates/portal, key: portal-test }
-      - run: cargo test --workspace --locked --no-fail-fast
+      # Memory and disk once a minute: a runner that runs out of either ends the step with 143 and
+      # no error line.
+      - run: |
+          (while sleep 60; do echo "$(date -u +%T) $(free -m | awk '/Mem/ {print "mem used " $3 "/" $2 " MB"}') $(df -h / | awk 'NR == 2 {print "disk free " $4}')"; done) &
+          cargo test --workspace --locked --no-fail-fast
   # The bundles the jc image embeds: a UI that does not build ships the placeholder page.
   ui:
     needs: changes

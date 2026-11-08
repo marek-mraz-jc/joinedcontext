@@ -45,7 +45,7 @@ jobs:
       # stays byte-identical across commits that leave the UI alone: the Portal reports its commit
       # from JC_COMMIT, which the image sets (crates/portal/src/api/health.rs).
       - id: ui
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             crates/portal/ui/dist
@@ -69,6 +69,14 @@ jobs:
             test -s "sdk/dist/$f"
           done
           printf '{"commit":"","openapi":"%s"}\n' "$(sha256sum ui/openapi.json | cut -d' ' -f1)" > ui/dist/version.json
+      # Saved at once, not at the job's end, so a later red step still leaves the bundle cached.
+      - if: steps.ui.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            crates/portal/ui/dist
+            crates/portal/sdk/dist
+          key: ${{ steps.ui.outputs.cache-primary-key }}
       # The Dockerfile's toolchain (rust:1.97), so both ways of building the image use one compiler.
       - uses: ./.github/actions/rust
         with: { key: release, toolchain: "1.97.0" }
