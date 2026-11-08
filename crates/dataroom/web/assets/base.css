@@ -67,7 +67,7 @@ img, svg { vertical-align: middle; }
   .js .secondary .filters { display: none; position: fixed; overflow: auto; inset: 0; z-index: 1000; padding: 10px; background: rgba(0, 0, 0, .5); }
   .js body.filters-modal .secondary .filters { display: block; }
   .js .secondary .filters > div { background: #fff; border-radius: 4px; overflow: hidden; }
-  .js body.filters-modal .secondary .filters .hide-filters { display: inline-block; position: absolute; top: 14px; right: 17px; padding: 0 .25rem; border: 0; background: transparent; opacity: .6; }
+  .js body.filters-modal .secondary .filters .hide-filters { display: inline-flex; align-items: center; justify-content: center; position: fixed; top: 14px; right: 14px; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: var(--jc-primary, #0d6efd); color: #fff; z-index: 1001; }
   .js .show-filters.btn { display: inline-block; margin-top: .75rem; }
 }
 /* Facets, the publisher box, filter pills and icons as CKAN's main.css and Font Awesome drew them
