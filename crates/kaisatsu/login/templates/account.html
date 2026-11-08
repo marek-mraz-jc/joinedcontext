@@ -50,6 +50,7 @@ h1 { font-family: var(--jc-font-heading, inherit); font-size: 1.75rem; font-weig
 h2 { font-size: 1.25rem; font-weight: 500; margin: 2rem 0 0.25rem; }
 h3 { font-size: 1rem; font-weight: 600; margin: 0; }
 .section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.5rem 1rem; margin-top: 1.5rem; }
+.section-head + .sessions { margin-top: 1rem; }
 .muted { color: #3c3f42; margin: 0.25rem 0 0.75rem; }
 .alert { border: 1px solid; border-left-width: 4px; padding: 0.75rem 1rem; margin: 0 0 1.25rem; }
 .alert.ok { border-color: #3e8635; background: #f3faf2; color: #1e4f18; }
@@ -71,6 +72,7 @@ input[aria-invalid=true] { border-color: #c9190b; border-bottom-width: 2px; }
 }
 .btn.primary { background: var(--jc-primary, #0066cc); border-color: var(--jc-primary, #0066cc); color: var(--jc-primary-fg, #fff); }
 .btn.danger { background: #c9190b; border-color: #c9190b; color: #fff; }
+.btn.danger-outline { border-color: #c9190b; color: #a30000; }
 .btn.link { border-color: transparent; padding-left: 0; padding-right: 0; }
 .btn[disabled] { opacity: 0.6; cursor: default; }
 .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1.5rem; }
@@ -86,9 +88,9 @@ input[aria-invalid=true] { border-color: #c9190b; border-bottom-width: 2px; }
 .session { border: 1px solid #d2d2d2; padding: 1rem 1.25rem; }
 .session-top { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; align-items: center; }
 .badge { display: inline-block; font-size: 0.8125rem; background: #3e8635; color: #fff; border-radius: 1rem; padding: 0 0.625rem; margin-left: 0.5rem; vertical-align: middle; }
-dl.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.75rem 1.5rem; margin: 0.75rem 0 0; }
+dl.facts { display: flex; flex-wrap: wrap; gap: 0.75rem 2rem; margin: 0.75rem 0 0; }
 dl.facts dt { font-size: 0.875rem; color: #3c3f42; }
-dl.facts dd { margin: 0; overflow-wrap: anywhere; }
+dl.facts dd { margin: 0; white-space: nowrap; }
 .loading { color: #3c3f42; padding: 2rem 0; }
 a:focus-visible, button:focus-visible, input:focus-visible { outline: 3px solid #0066cc; outline-offset: 2px; }
 @media (max-width: 52rem) {
@@ -274,7 +276,7 @@ function flashBox(flash) {
 }
 function when(ms) {
     if (!ms) { return ""; }
-    return new Intl.DateTimeFormat(cfg.locale, { dateStyle: "long", timeStyle: "short" }).format(new Date(ms));
+    return new Intl.DateTimeFormat(cfg.locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(ms));
 }
 function errorKey(r) {
     return r.json().then(function (j) { return j && j.errorMessage ? j : { errorMessage: "accountError" }; }, function () { return { errorMessage: "accountError" }; });
@@ -339,7 +341,7 @@ function credentialRow(c, removable, onRemoved, status) {
         if (c.type === "password") {
             actions.appendChild(el("button", { type: "button", "class": "btn", text: t("accountUpdate"), on: { click: function () { signIn({ kc_action: "UPDATE_PASSWORD" }); } } }));
         } else if (removable) {
-            actions.appendChild(el("button", { type: "button", "class": "btn", text: t("accountRemove"), "aria-label": t("accountRemove") + ": " + label, on: { click: confirmStep } }));
+            actions.appendChild(el("button", { type: "button", "class": "btn danger-outline", text: t("accountRemove"), "aria-label": t("accountRemove") + ": " + label, on: { click: confirmStep } }));
         }
     }
     function confirmStep() {

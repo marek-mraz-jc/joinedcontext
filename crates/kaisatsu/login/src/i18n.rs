@@ -154,6 +154,15 @@ accountOtherBrowser=Unknown browser
 accountOtherSystem=unknown system
 accountIpAddress=IP address
 accountSignedOutDevice={0} ({1}) is signed out.
+otpStepScan=Scan the QR code with the app. If you cannot scan it, type the key instead.
+otpStepCode=Type the one-time code the app shows into the field below, then select Submit.
+otpKeyLabel=Key
+otpKeyDetails=Time-based, {0}, {1} digits, every {2} s
+doCopy=Copy
+copiedMessage=Copied
+doShowPassword=Show password
+doShow=Show
+doHide=Hide
 "#;
 
 const SK_PROPERTIES: &str = r#"
@@ -298,6 +307,15 @@ accountOtherBrowser=Neznámy prehliadač
 accountOtherSystem=neznámom
 accountIpAddress=IP adresa
 accountSignedOutDevice={0} ({1}) je odhlásené.
+otpStepScan=Naskenujte QR kód aplikáciou. Ak ho nemôžete naskenovať, zadajte namiesto neho kľúč.
+otpStepCode=Do poľa nižšie zadajte jednorazový kód, ktorý aplikácia zobrazuje, a vyberte Odoslať.
+otpKeyLabel=Kľúč
+otpKeyDetails=Časový, {0}, {1} číslic, každých {2} s
+doCopy=Kopírovať
+copiedMessage=Skopírované
+doShowPassword=Zobraziť heslo
+doShow=Zobraziť
+doHide=Skryť
 "#;
 
 const CS_PROPERTIES: &str = r#"
@@ -442,6 +460,15 @@ accountOtherBrowser=Neznámý prohlížeč
 accountOtherSystem=neznámém
 accountIpAddress=IP adresa
 accountSignedOutDevice={0} ({1}) je odhlášeno.
+otpStepScan=Naskenujte QR kód aplikací. Pokud ho nemůžete naskenovat, zadejte místo něj klíč.
+otpStepCode=Do pole níže zadejte jednorázový kód, který aplikace zobrazuje, a vyberte Odeslat.
+otpKeyLabel=Klíč
+otpKeyDetails=Časový, {0}, {1} číslic, každých {2} s
+doCopy=Kopírovat
+copiedMessage=Zkopírováno
+doShowPassword=Zobrazit heslo
+doShow=Zobrazit
+doHide=Skrýt
 "#;
 
 const DE_PROPERTIES: &str = r#"
@@ -586,6 +613,15 @@ accountOtherBrowser=Unbekannter Browser
 accountOtherSystem=unbekanntem System
 accountIpAddress=IP-Adresse
 accountSignedOutDevice={0} ({1}) ist abgemeldet.
+otpStepScan=Scannen Sie den QR-Code mit der App. Wenn das nicht geht, geben Sie stattdessen den Schlüssel ein.
+otpStepCode=Geben Sie den Einmalcode, den die App anzeigt, in das Feld unten ein und wählen Sie Absenden.
+otpKeyLabel=Schlüssel
+otpKeyDetails=Zeitbasiert, {0}, {1} Ziffern, alle {2} s
+doCopy=Kopieren
+copiedMessage=Kopiert
+doShowPassword=Passwort anzeigen
+doShow=Anzeigen
+doHide=Verbergen
 "#;
 
 const HU_PROPERTIES: &str = r#"
@@ -730,6 +766,15 @@ accountOtherBrowser=Ismeretlen böngésző
 accountOtherSystem=ismeretlen rendszer
 accountIpAddress=IP-cím
 accountSignedOutDevice={0} ({1}) kijelentkeztetve.
+otpStepScan=Olvassa be a QR-kódot az alkalmazással. Ha nem sikerül, írja be helyette a kulcsot.
+otpStepCode=Írja be az alábbi mezőbe az alkalmazás által mutatott egyszer használatos kódot, majd válassza a Küldés gombot.
+otpKeyLabel=Kulcs
+otpKeyDetails=Időalapú, {0}, {1} számjegy, {2} másodpercenként
+doCopy=Másolás
+copiedMessage=Másolva
+doShowPassword=Jelszó megjelenítése
+doShow=Mutat
+doHide=Elrejt
 "#;
 
 fn parse_properties(raw: &'static str) -> BTreeMap<&'static str, &'static str> {

@@ -1134,6 +1134,10 @@ async fn configure_totp_adds_a_named_authenticator_and_reports_success() {
     assert_eq!(page_id(&page.html), "config-totp", "{}", page.html);
     assert!(page.html.contains("name=\"userLabel\""));
     assert!(page.html.contains("id=\"kc-totp-qr\"") && page.html.contains("<svg"));
+    // The key stands in its own block, apart from the step that asks for the code.
+    assert!(page.html.contains("id=\"kc-totp-secret-key\""));
+    assert!(page.html.contains("id=\"kc-totp-steps\""));
+    assert!(!page.html.contains("id=\"instruction1\""));
     let secret = store
         .get_auth_session_by_id("dev", &page.session)
         .await

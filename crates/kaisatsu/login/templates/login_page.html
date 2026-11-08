@@ -115,6 +115,16 @@
         .kc-qr figcaption { font-size: 0.875rem; }
         .instruction { overflow-wrap: anywhere; }
         .kc-instruction-secret { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+        .kc-input[aria-invalid="true"] { border: 2px solid #991b1b; }
+        .kc-steps { margin: 0 0 1.25rem; padding-left: 1.25rem; }
+        .kc-steps > li { margin-bottom: 0.75rem; }
+        .kc-steps .kc-qr { margin: 0.75rem 0; }
+        .kc-key { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+        .kc-key-label { font-weight: 600; }
+        .kc-key code { font-family: ui-monospace, monospace; font-size: 1rem; background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 0.25rem; padding: 0.25rem 0.5rem; letter-spacing: 0.05em; }
+        .kc-small-btn { font: inherit; font-size: 0.875rem; padding: 0.25rem 0.75rem; border: 1px solid var(--jc-primary); border-radius: 0.25rem; background: transparent; color: var(--jc-primary); cursor: pointer; }
+        .kc-pw { display: flex; gap: 0.5rem; align-items: stretch; }
+        .kc-pw .kc-input { flex: 1; min-width: 0; }
         #secondaryLink { display: inline-block; margin-top: 0.25rem; }
         a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible {
             outline: 3px solid var(--jc-primary);
@@ -145,8 +155,22 @@
                     <span class="kc-feedback-text">{{ alert_message }}</span>
                 </div>
                 {% endif %}
-                {% if !qr_svg.is_empty() %}
-                <figure class="kc-qr" id="kc-totp-qr">{{ qr_svg|safe }}<figcaption id="kc-qr-hint">{{ qr_hint }}</figcaption></figure>
+                {% if !extras.otp_key.is_empty() %}
+                <ol class="kc-steps" id="kc-totp-steps">
+                    <li>{{ extras.otp_step1 }}</li>
+                    <li>{{ extras.otp_step2 }}
+                        {% if !qr_svg.is_empty() %}
+                        <figure class="kc-qr" id="kc-totp-qr">{{ qr_svg|safe }}<figcaption id="kc-qr-hint">{{ qr_hint }}</figcaption></figure>
+                        {% endif %}
+                        <div class="kc-key">
+                            <span class="kc-key-label" id="kc-key-label">{{ extras.key_label }}</span>
+                            <code id="kc-totp-secret-key" aria-labelledby="kc-key-label">{{ extras.otp_key }}</code>
+                            <button type="button" class="kc-small-btn" id="kc-copy" data-copied="{{ extras.copied_label }}" hidden>{{ extras.copy_label }}</button>
+                        </div>
+                        <div class="kc-field-hint" id="kc-totp-details">{{ extras.otp_details }}</div>
+                    </li>
+                    <li>{{ extras.otp_step3 }}</li>
+                </ol>
                 {% endif %}
                 {% if !instruction_text.is_empty() %}
                 <p class="instruction" id="instruction1">{{ instruction_text }}</p>
@@ -175,10 +199,10 @@
                             aria-describedby="hint-{{ field.name }}{% if !field.error.is_empty() %} input-error-{{ field.name }}{% endif %}"
                             {% if !field.error.is_empty() %}aria-invalid="true"{% endif %}
                         />
-                        <div class="kc-field-hint" id="hint-{{ field.name }}">{{ field.hint }}</div>
                         {% if !field.error.is_empty() %}
                         <div class="kc-field-error" id="input-error-{{ field.name }}" aria-live="polite">{{ field.error }}</div>
                         {% endif %}
+                        <div class="kc-field-hint" id="hint-{{ field.name }}">{{ field.hint }}</div>
                     </div>
                     {% endif %}
                     {% endfor %}
@@ -194,5 +218,42 @@
         </main>
     </div>
 </div>
+{% if !extras.show_label.is_empty() %}
+<script nonce="{{ csp_nonce }}" id="kc-page-script" data-show="{{ extras.show_label }}" data-hide="{{ extras.hide_label }}" data-label="{{ extras.toggle_label }}">
+(function () {
+    var me = document.getElementById("kc-page-script");
+    document.querySelectorAll("input.kc-input[type=password]").forEach(function (input) {
+        var wrap = document.createElement("div");
+        wrap.className = "kc-pw";
+        input.parentNode.insertBefore(wrap, input);
+        wrap.appendChild(input);
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "kc-small-btn";
+        b.textContent = me.dataset.show;
+        b.setAttribute("aria-controls", input.id);
+        b.setAttribute("aria-label", me.dataset.label);
+        b.setAttribute("aria-pressed", "false");
+        b.addEventListener("click", function () {
+            var show = input.type === "password";
+            input.type = show ? "text" : "password";
+            b.textContent = show ? me.dataset.hide : me.dataset.show;
+            b.setAttribute("aria-pressed", String(show));
+        });
+        wrap.appendChild(b);
+    });
+    var copy = document.getElementById("kc-copy");
+    var key = document.getElementById("kc-totp-secret-key");
+    if (copy && key && navigator.clipboard) {
+        copy.hidden = false;
+        copy.addEventListener("click", function () {
+            navigator.clipboard.writeText(key.textContent.replace(/\s+/g, "")).then(function () {
+                copy.textContent = copy.dataset.copied;
+            });
+        });
+    }
+})();
+</script>
+{% endif %}
 </body>
 </html>

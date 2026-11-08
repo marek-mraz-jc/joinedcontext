@@ -56,6 +56,24 @@ struct LoginPageTemplate {
     /// markup, never user input), else empty.
     qr_svg: String,
     qr_hint: String,
+    extras: PageExtras,
+}
+
+/// Page parts beyond the form: the authenticator set-up steps and the labels of the small
+/// script that adds show/hide to password fields and a copy button to the key.
+#[derive(Default)]
+struct PageExtras {
+    otp_key: String,
+    otp_details: String,
+    otp_step1: String,
+    otp_step2: String,
+    otp_step3: String,
+    key_label: String,
+    copy_label: String,
+    copied_label: String,
+    show_label: String,
+    hide_label: String,
+    toggle_label: String,
 }
 
 pub fn login_router(state: OidcState) -> Router {
@@ -353,21 +371,7 @@ async fn render_state_page(
                         }
                     };
                     enrol_secret = Some(secret.clone());
-                    let grouped = secret
-                        .as_bytes()
-                        .chunks(4)
-                        .map(|c| String::from_utf8_lossy(c))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    bundle.format(
-                        "otpEnrolInstruction",
-                        &[
-                            &grouped,
-                            &realm.otp_policy_algorithm,
-                            &realm.otp_policy_digits.to_string(),
-                            &realm.otp_policy_period.to_string(),
-                        ],
-                    )
+                    String::new()
                 } else {
                     String::new()
                 };
@@ -447,7 +451,7 @@ async fn render_state_page(
                         hint: bundle.get("passwordConfirmHint").to_owned(),
                         error: String::new(),
                     },
-                    logout_sessions_field(&bundle, true),
+                    logout_sessions_field(&bundle, false),
                 ];
                 let (cancel_url, cancel_label) = cancel_link(auth_session, &bundle, true);
                 (
@@ -667,11 +671,8 @@ async fn render_state_page(
         secondary_link_url: sec_url,
         secondary_link_label: sec_label,
         qr_svg,
-        qr_hint: format!(
-            "{} {}",
-            bundle.get("otpScanHint"),
-            bundle.get("otpAppsHint")
-        ),
+        qr_hint: bundle.get("otpScanHint").to_owned(),
+        extras: page_extras(&bundle, realm, enrol_secret.as_deref()),
     };
 
     Ok(render_with_security_headers(&tpl, None))
@@ -725,6 +726,40 @@ fn totp_qr_svg(
 
 /// The label a person gives a new authenticator: trimmed, at most 64 characters, control
 /// characters dropped; "Authenticator" when left empty.
+/// The set-up steps (when `secret` is the key being enrolled) and the script labels.
+fn page_extras(bundle: &Bundle, realm: &RealmConfig, secret: Option<&str>) -> PageExtras {
+    let mut x = PageExtras {
+        show_label: bundle.get("doShow").to_owned(),
+        hide_label: bundle.get("doHide").to_owned(),
+        toggle_label: bundle.get("doShowPassword").to_owned(),
+        ..Default::default()
+    };
+    if let Some(secret) = secret {
+        x.otp_key = secret
+            .as_bytes()
+            .chunks(4)
+            .map(String::from_utf8_lossy)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let alg = realm.otp_policy_algorithm.trim_start_matches("Hmac");
+        x.otp_details = bundle.format(
+            "otpKeyDetails",
+            &[
+                &format!("HMAC-{alg}"),
+                &realm.otp_policy_digits.to_string(),
+                &realm.otp_policy_period.to_string(),
+            ],
+        );
+        x.otp_step1 = bundle.get("otpAppsHint").to_owned();
+        x.otp_step2 = bundle.get("otpStepScan").to_owned();
+        x.otp_step3 = bundle.get("otpStepCode").to_owned();
+        x.key_label = bundle.get("otpKeyLabel").to_owned();
+        x.copy_label = bundle.get("doCopy").to_owned();
+        x.copied_label = bundle.get("copiedMessage").to_owned();
+    }
+    x
+}
+
 /// The User-Agent a new SSO session keeps: control characters dropped, at most 256 characters.
 fn user_agent_of(headers: &HeaderMap) -> String {
     headers
@@ -877,6 +912,7 @@ pub(crate) fn render_expired_session_page(realm: &RealmConfig, status: StatusCod
         secondary_link_label: String::new(),
         qr_svg: String::new(),
         qr_hint: String::new(),
+        extras: PageExtras::default(),
     };
     let mut resp = render_with_security_headers(&tpl, None);
     *resp.status_mut() = status;
@@ -2065,6 +2101,7 @@ async fn reset_credentials_get(
         secondary_link_label: String::new(),
         qr_svg: String::new(),
         qr_hint: String::new(),
+        extras: PageExtras::default(),
     };
     Ok(render_with_security_headers(&tpl, None))
 }
@@ -2153,6 +2190,7 @@ async fn reset_credentials_post(
         secondary_link_label: String::new(),
         qr_svg: String::new(),
         qr_hint: String::new(),
+        extras: PageExtras::default(),
     };
     Ok(render_with_security_headers(&tpl, None))
 }
@@ -2352,6 +2390,7 @@ async fn action_token_get(
             secondary_link_label: String::new(),
             qr_svg: String::new(),
             qr_hint: String::new(),
+            extras: PageExtras::default(),
         };
         return Ok(render_with_security_headers(&tpl, Some(set_cookie)));
     }
@@ -2550,6 +2589,7 @@ fn finish_action_token_response(
         secondary_link_label: String::new(),
         qr_svg: String::new(),
         qr_hint: String::new(),
+        extras: PageExtras::default(),
     };
     Ok(render_with_security_headers(&tpl, None))
 }
