@@ -192,6 +192,6 @@ impl OidcAuth {
             return false;
         };
         let client = data.claims.azp.or(data.claims.client_id);
-        client.is_some_and(|c| self.clients.iter().any(|allowed| *allowed == c))
+        client.is_some_and(|c| self.clients.contains(&c))
     }
 }
