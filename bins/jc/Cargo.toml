@@ -99,6 +99,7 @@ shako-core = { path = "../../crates/shako/core", optional = true }
 shako-store-memory = { path = "../../crates/shako/store-memory", optional = true }
 
 [dev-dependencies]
+jc-core = { path = "../../vendor/joinedcontext-platform/crates/jc-core", features = ["outbound"] }
 http-body-util = "0.1"
 tempfile = "3"
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs"] }

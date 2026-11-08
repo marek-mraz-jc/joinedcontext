@@ -5075,6 +5075,7 @@ dependencies = [
  "hex",
  "http-body-util",
  "ipnet",
+ "jc-core",
  "jc-router",
  "joinedcontext-portal",
  "kaisatsu-core",
