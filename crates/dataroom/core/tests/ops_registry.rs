@@ -1229,3 +1229,32 @@ async fn allowed_answers_like_the_call() {
         "allowed must match the call: {asked}"
     );
 }
+
+#[tokio::test]
+async fn writes_into_a_catalogue_that_does_not_exist_are_not_found() {
+    let w = world().await;
+    // Same tenant and grants, but a store that holds no catalogue for it.
+    let empty = World {
+        store: Arc::new(MemoryStore::new()),
+        authz: w.authz.clone(),
+        org: w.org,
+        cat: w.cat,
+    };
+    let admin = empty.admin();
+    for (op, input) in [
+        (
+            "dataset.propose",
+            json!({"name": "novy", "title": "Nový", "notes": "Popis", "owner_org": "mesto"}),
+        ),
+        (
+            "branding.propose",
+            json!({"branding": {"primary": "#112233"}}),
+        ),
+    ] {
+        match empty.run(&admin, op, input).await {
+            Err(DataroomError::NotFound(m)) => assert_eq!(m, "catalogue not found", "{op}"),
+            other => panic!("{op}: {other:?}"),
+        }
+    }
+    assert!(empty.activity_ops().await.is_empty());
+}
