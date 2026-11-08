@@ -73,7 +73,8 @@ printf 'postgres://kaisatsu_app@127.0.0.1:%s/kaisatsu\n' "$pg_port" > "$home/sec
 
 # The realm config of the export (no users), applied at start next to jc's own Portal realm.
 if [ -d "$export_dir/keycloak" ]; then
-  python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/import/realms"
+  python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/import/realms" \
+    --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu"
   # Each secret the realm config names gets a fresh value of the rehearsal (never the old one).
   while read -r name; do
     [ -n "$name" ] && export "$name=$(cat "$(secret "realm-$name")")"

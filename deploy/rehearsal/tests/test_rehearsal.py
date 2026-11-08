@@ -70,6 +70,65 @@ def test_people_and_their_credentials_never_reach_the_import():
     assert tester["credentials"][0]["value"] == "$(env:REHEARSAL_TESTER_PASSWORD)"
 
 
+def test_only_mappers_kaisatsu_does_not_know_are_left_out_and_named():
+    realm = {"clientScopes": [{"name": "address", "protocolMappers": [
+        {"name": "address", "protocolMapper": "oidc-address-mapper"},
+        {"name": "aud", "protocolMapper": "oidc-audience-mapper"}]}]}
+
+    def check(r):
+        for i, sc in enumerate(r["clientScopes"]):
+            for mi, m in enumerate(sc["protocolMappers"]):
+                if m["protocolMapper"] != "oidc-audience-mapper":
+                    return (f"$.clientScopes[{i}].protocolMappers[{mi}].protocolMapper: "
+                            f"unknown mapper kind '{m['protocolMapper']}'")
+        return ""
+    clean, dropped = rh.drop_refused_mappers(realm, check)
+    assert [m["name"] for m in clean["clientScopes"][0]["protocolMappers"]] == ["aud"]
+    assert dropped == [{"in": "clientScopes/address", "mapper": "address", "kind": "oidc-address-mapper"}]
+    with pytest.raises(SystemExit):
+        rh.drop_refused_mappers({"x": 1}, lambda r: "$.clients[0].secret: a literal secret")
+
+
+def test_an_unmapped_flow_is_left_out_only_when_nothing_uses_it():
+    def check(r):
+        for i, f in enumerate(r["authenticationFlows"]):
+            if f["alias"] not in ("custom browser",):
+                return f"$.authenticationFlows[{i}].alias: unmappable authentication flow '{f['alias']}'"
+        return ""
+    realm = {"browserFlow": "custom browser", "authenticationFlows": [
+        {"alias": "custom browser", "authenticationExecutions": []},
+        {"alias": "saml ecp", "authenticationExecutions": []}]}
+    clean, dropped = rh.drop_refused_mappers(realm, check)
+    assert [f["alias"] for f in clean["authenticationFlows"]] == ["custom browser"]
+    assert dropped[0]["flow"] == "saml ecp"
+    bound = {"browserFlow": "Organization", "authenticationFlows": [{"alias": "Organization"}]}
+    with pytest.raises(SystemExit):
+        rh.drop_refused_mappers(bound, check)
+    def unknown_step(r):
+        for i, f in enumerate(r["authenticationFlows"]):
+            for ei, e in enumerate(f.get("authenticationExecutions") or []):
+                if e["authenticator"] in ("client-x509",):
+                    return (f"$.authenticationFlows[{i}].authenticationExecutions[{ei}].authenticator: "
+                            f"unknown authenticator '{e['authenticator']}'")
+        return ""
+    clients = {"clientAuthenticationFlow": "clients", "clients": [{"clientAuthenticatorType": "client-secret"}],
+               "authenticationFlows": [{"alias": "clients", "authenticationExecutions": [
+                   {"authenticator": "client-secret", "requirement": "ALTERNATIVE"},
+                   {"authenticator": "client-x509", "requirement": "ALTERNATIVE"}]}]}
+    clean, dropped = rh.drop_refused_mappers(clients, unknown_step)
+    assert [e["authenticator"] for e in clean["authenticationFlows"][0]["authenticationExecutions"]] == ["client-secret"]
+    assert dropped[0]["authenticator"] == "client-x509"
+    clients["clients"].append({"clientAuthenticatorType": "client-x509"})
+    clients["authenticationFlows"][0]["authenticationExecutions"].append(
+        {"authenticator": "client-x509", "requirement": "ALTERNATIVE"})
+    with pytest.raises(SystemExit):
+        rh.drop_refused_mappers(clients, unknown_step)
+    client = {"browserFlow": "custom browser", "clients": [{"authenticationFlowBindingOverrides": {"browser": "x"}}],
+              "authenticationFlows": [{"alias": "x"}]}
+    with pytest.raises(SystemExit):
+        rh.drop_refused_mappers(client, check)
+
+
 def test_seed_files_are_cut_into_repositories_as_layout_2():
     seed = {
         "organizations__hel.yaml": "kind: Organization\n",
@@ -102,6 +161,15 @@ def test_a_catalogue_instance_publishes_only_into_the_rehearsal():
     assert b"  url: http://localhost:42101/opendata\n" in fenced
     endpoint = b"kind: Endpoint\nspec:\n  catalog:\n    publisher:\n      url: https://dev.joinedcontext.com/\n"
     assert rh.fence_writes(endpoint, "http://localhost:1") == endpoint
+
+
+def test_entity_batches_keep_their_tenant_and_stay_under_the_caps():
+    lines = ([{"tenant": "a", "entity": {"id": f"urn:ngsi-ld:X:{i}"}} for i in range(1203)]
+             + [{"tenant": "b", "entity": {"id": "urn:ngsi-ld:X:b"}}]
+             + [{"tenant": "a", "entity": {"id": "urn:ngsi-ld:X:a2"}}])
+    batches = list(rh._tenant_batches(iter(lines)))
+    assert all(len(b) <= rh.MAX_BATCH_ENTITIES for _, b in batches)
+    assert [(t, len(b)) for t, b in batches] == [("a", 500), ("a", 500), ("a", 203), ("b", 1), ("a", 1)]
 
 
 def test_the_import_never_sends_an_instance_older_than_the_window(tmp_path):

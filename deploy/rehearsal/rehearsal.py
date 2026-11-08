@@ -22,16 +22,19 @@ import datetime as dt
 import hashlib
 import html
 import ipaddress
+import itertools
 import json
 import os
 import re
 import secrets
 import subprocess
+import threading
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 # Owner 2026-11-08: only the last day of Antares history is copied, and the rehearsal keeps only
@@ -44,6 +47,9 @@ SKIPPED_REALMS = {"master"}
 # What a realm export may hold that the rehearsal never takes: people and their secrets.
 PEOPLE_KEYS = ("users", "federatedUsers")
 MAX_BATCH_BYTES = 900_000  # below Antares' 4 MiB body cap and shako's request limit
+MAX_BATCH_ENTITIES = 500
+IMPORT_WORKERS = 4  # parallel batch writes into the local broker
+MAX_REPORTED = 200  # refused calls kept in the report; the rest are only counted
 
 
 def utcnow() -> dt.datetime:
@@ -342,6 +348,77 @@ def add_tester(realm: dict) -> dict:
     return out
 
 
+UNKNOWN_MAPPER = re.compile(
+    r"\$\.(clientScopes|clients)\[(\d+)\]\.protocolMappers\[(\d+)\]\.protocolMapper: unknown mapper kind '([^']+)'")
+
+
+UNMAPPABLE_FLOW = re.compile(r"\$\.authenticationFlows\[(\d+)\]\.alias: unmappable authentication flow '([^']*)'")
+UNKNOWN_AUTHENTICATOR = re.compile(
+    r"\$\.authenticationFlows\[(\d+)\]\.authenticationExecutions\[\d+\]\.authenticator: unknown authenticator '([^']*)'")
+FLOW_BINDINGS = ("browserFlow", "directGrantFlow", "registrationFlow", "resetCredentialsFlow",
+                 "clientAuthenticationFlow", "dockerAuthenticationFlow", "firstBrokerLoginFlow")
+
+
+def _flow_in_use(realm: dict, alias: str) -> bool:
+    """Bound to the realm or a client. A subflow reference does not count: kaisatsu maps each
+    flow it knows by its alias, whole, to its own state machine and reads no subflow."""
+    if any(realm.get(b) == alias for b in FLOW_BINDINGS):
+        return True
+    return any(alias in (c.get("authenticationFlowBindingOverrides") or {}).values() for c in realm.get("clients", []))
+
+
+def drop_refused_mappers(realm: dict, check) -> tuple[dict, list]:
+    """Asks kaisatsu (`check(realm) -> error text or ""`) what it refuses and leaves out only what
+    a live Keycloak export carries beside the realm's own config: protocol mappers of a kind
+    kaisatsu does not know (Keycloak's built-in scopes), and built-in flows it cannot map, or that hold an
+    authenticator it does not know, that no realm or client binding names. Each is named in the returned list. Any other refusal,
+    or a refused flow in use, stops: it is a gap, not something to drop."""
+    dropped = []
+    for _ in range(500):
+        err = check(realm)
+        if not err:
+            return realm, dropped
+        if m := UNKNOWN_MAPPER.search(err):
+            where, i, mi, kind = m.group(1), int(m.group(2)), int(m.group(3)), m.group(4)
+            owner = realm[where][i]
+            mapper = owner["protocolMappers"].pop(mi)
+            dropped.append({"in": f"{where}/{owner.get('name') or owner.get('clientId')}",
+                            "mapper": mapper.get("name"), "kind": kind})
+            continue
+        if (m := UNMAPPABLE_FLOW.search(err)) and not _flow_in_use(realm, m.group(2)):
+            realm["authenticationFlows"].pop(int(m.group(1)))
+            dropped.append({"in": "authenticationFlows", "flow": m.group(2), "kind": "unmapped unused flow"})
+            continue
+        if m := UNKNOWN_AUTHENTICATOR.search(err):
+            flow = realm["authenticationFlows"][int(m.group(1))]
+            alias, auth = flow.get("alias", ""), m.group(2)
+            if not _flow_in_use(realm, alias):
+                realm["authenticationFlows"].pop(int(m.group(1)))
+                dropped.append({"in": "authenticationFlows", "flow": alias,
+                                "kind": f"unused flow with unknown authenticator {auth}"})
+                continue
+            # A bound flow keeps every step a client could need: only an alternative (or a
+            # disabled step) of an authenticator no client asks for goes.
+            execs = flow.get("authenticationExecutions") or []
+            step = next((e for e in execs if e.get("authenticator") == auth), None)
+            used = any(c.get("clientAuthenticatorType") == auth for c in realm.get("clients", []))
+            if step and step.get("requirement") in ("ALTERNATIVE", "DISABLED") and not used:
+                execs.remove(step)
+                dropped.append({"in": f"authenticationFlows/{alias}", "authenticator": auth,
+                                "kind": f"{step.get('requirement').lower()} step no client uses"})
+                continue
+        raise SystemExit(f"kaisatsu refuses the realm: {err.strip()[:500]}")
+    raise SystemExit("kaisatsu still refuses the realm after 500 items left out")
+
+
+def kaisatsu_check(kaisatsu_bin: str, tmp: Path):
+    def check(realm: dict) -> str:
+        tmp.write_text(json.dumps(realm))
+        r = subprocess.run([kaisatsu_bin, "check", "-f", str(tmp)], capture_output=True, text=True)
+        return "" if r.returncode == 0 else (r.stderr or r.stdout)
+    return check
+
+
 def cmd_realms(a):
     src, dst = Path(a.export) / "keycloak", Path(a.out)
     dst.mkdir(parents=True, exist_ok=True)
@@ -352,6 +429,14 @@ def cmd_realms(a):
         if name in SKIPPED_REALMS:
             continue
         clean = add_tester(strip_people(realm))
+        if a.kaisatsu_bin:
+            tmp = dst.parent / f".check-{name}.json"
+            clean, dropped = drop_refused_mappers(clean, kaisatsu_check(a.kaisatsu_bin, tmp))
+            tmp.unlink(missing_ok=True)
+            (dst.parent / f"realm-{name}-left-out.json").write_text(json.dumps(dropped, indent=1))
+            if dropped:
+                print(f"realm {name}: {len(dropped)} mappers of kinds kaisatsu does not know left out: "
+                      f"{sorted({d['kind'] for d in dropped})}")
         (dst / f"{name}.json").write_text(json.dumps(clean, indent=1))
         taken.append(name)
         # The secret variables the realm names ($(env:NAME)): up.sh makes a value for each.
@@ -483,16 +568,20 @@ def _key(t):
 
 
 def _jsonl(path: Path):
+    """The lines of a JSONL file, one at a time: a bundle's entities run to gigabytes."""
     if not path.exists():
-        return []
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        return
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                yield json.loads(line)
 
 
-def _chunks(items, limit=MAX_BATCH_BYTES):
+def _chunks(items, limit=MAX_BATCH_BYTES, count=MAX_BATCH_ENTITIES):
     batch, size = [], 0
     for it in items:
         n = len(json.dumps(it))
-        if batch and size + n > limit:
+        if batch and (size + n > limit or len(batch) >= count):
             yield batch
             batch, size = [], 0
         batch.append(it)
@@ -501,39 +590,83 @@ def _chunks(items, limit=MAX_BATCH_BYTES):
         yield batch
 
 
+def _tenant_batches(lines):
+    """(tenant, batch) from a stream of {tenant, entity} lines; the file need not be sorted."""
+    def runs():
+        tenant, run = None, []
+        for e in lines:
+            if e["tenant"] != tenant and run:
+                yield tenant, run
+                run = []
+            tenant = e["tenant"]
+            run.append(e["entity"])
+            if len(run) >= MAX_BATCH_ENTITIES * 4:
+                yield tenant, run
+                run = []
+        if run:
+            yield tenant, run
+    for tenant, run in runs():
+        for batch in _chunks(run):
+            yield tenant, batch
+
+
 def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict):
     base = "/broker/ngsi-ld/v1"
-    out = {"entities": 0, "refusedCalls": [], "temporal": 0, "temporalRefused": []}
-    by_tenant: dict[str, list] = {}
-    for e in _jsonl(export / "antares" / "entities.jsonl"):
-        by_tenant.setdefault(e["tenant"], []).append(e["entity"])
-    for tenant, ents in sorted(by_tenant.items()):
-        for batch in _chunks(ents):
-            st, body = h.json("POST", f"{base}/entityOperations/upsert?options=update", body=batch,
-                              headers={"NGSILD-Tenant": tenant})
-            if st in (200, 201, 204):
-                out["entities"] += len(batch)
-            elif st == 207 and isinstance(body, dict):
-                out["entities"] += len(body.get("success", []))
-                out["refusedCalls"].append({"call": f"POST {base}/entityOperations/upsert", "tenant": tenant,
-                                            "status": st, "errors": body.get("errors", [])[:5]})
-            else:
-                out["refusedCalls"].append({"call": f"POST {base}/entityOperations/upsert", "tenant": tenant,
-                                            "status": st, "detail": body})
-    kept, refused = split_by_cutoff(_jsonl(export / "antares" / "temporal.jsonl"), cutoff)
-    out["temporalRefused"] = refused
-    grouped: dict[tuple, dict] = {}
-    for t in kept:
-        k = (t["tenant"], t["id"])
-        ent = grouped.setdefault(k, {"id": t["id"], "type": t["type"]})
-        ent.setdefault(t["attr"], []).append(t["instance"])
-    for (tenant, eid), ent in sorted(grouped.items()):
+    out = {"entities": 0, "entityCalls": 0, "refusedCalls": [], "refusedCallCount": 0,
+           "temporal": 0, "temporalRefused": [], "temporalRefusedCount": 0}
+    lock = threading.Lock()
+
+    def refused(row):
+        with lock:
+            out["refusedCallCount"] += 1
+            if len(out["refusedCalls"]) < MAX_REPORTED:
+                out["refusedCalls"].append(row)
+
+    def upsert(job):
+        tenant, batch = job
+        st, body = h.json("POST", f"{base}/entityOperations/upsert?options=update", body=batch,
+                          headers={"NGSILD-Tenant": tenant})
+        ok = len(batch) if st in (200, 201, 204) else \
+            len(body.get("success", [])) if st == 207 and isinstance(body, dict) else 0
+        with lock:
+            out["entities"] += ok
+            out["entityCalls"] += 1
+            if out["entityCalls"] % 200 == 0:
+                print(f"antares: {out['entities']} entities after {out['entityCalls']} calls", file=sys.stderr, flush=True)
+        if ok < len(batch):
+            refused({"call": f"POST {base}/entityOperations/upsert", "tenant": tenant, "status": st,
+                     "detail": (body.get("errors", [])[:5] if st == 207 and isinstance(body, dict) else body)})
+
+    def temporal(job):
+        (tenant, eid), ent = job
         st, body = h.json("POST", f"{base}/temporal/entities", body=ent, headers={"NGSILD-Tenant": tenant})
         if st in (200, 201, 204):
-            out["temporal"] += sum(len(v) for k, v in ent.items() if k not in ("id", "type"))
+            with lock:
+                out["temporal"] += sum(len(v) for k, v in ent.items() if k not in ("id", "type"))
         else:
-            out["refusedCalls"].append({"call": f"POST {base}/temporal/entities", "tenant": tenant,
-                                        "id": eid, "status": st, "detail": body})
+            refused({"call": f"POST {base}/temporal/entities", "tenant": tenant, "id": eid,
+                     "status": st, "detail": body})
+
+    with ThreadPoolExecutor(IMPORT_WORKERS) as pool:
+        # bounded: at most a few batches in flight, never the whole file in memory
+        pending = set()
+        for job in _tenant_batches(_jsonl(export / "antares" / "entities.jsonl")):
+            pending.add(pool.submit(upsert, job))
+            if len(pending) >= IMPORT_WORKERS * 2:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for f in done:
+                    f.result()
+        for f in pending:
+            f.result()
+        kept, refused_old = split_by_cutoff(_jsonl(export / "antares" / "temporal.jsonl"), cutoff)
+        out["temporalRefusedCount"] = len(refused_old)
+        out["temporalRefused"] = refused_old[:MAX_REPORTED]
+        grouped: dict[tuple, dict] = {}
+        for t in kept:
+            ent = grouped.setdefault((t["tenant"], t["id"]), {"id": t["id"], "type": t["type"]})
+            ent.setdefault(t["attr"], []).append(t["instance"])
+        for f in [pool.submit(temporal, job) for job in sorted(grouped.items())]:
+            f.result()
     report["antares"] = out
 
 
@@ -898,7 +1031,7 @@ def cmd_smoke(a):
           f"{len(bad)} failed: {'; '.join(bad[:5])}", "GET /api/endpoint/{slug}/ngsi-ld/v1/types")
     # 9. the 24 h rule holds in the broker: no instance older than the window
     old = []
-    for t in _jsonl(export / "antares" / "temporal.jsonl")[:50]:
+    for t in itertools.islice(_jsonl(export / "antares" / "temporal.jsonl"), 50):
         st, body = h.json("GET", f"/broker/ngsi-ld/v1/temporal/entities/{urllib.parse.quote(t['id'], safe='')}"
                                  f"?attrs={t['attr']}&timerel=before&timeAt={iso(cutoff_for(utcnow()) - SWEEP)}",
                           headers={"NGSILD-Tenant": t["tenant"]})
@@ -920,6 +1053,7 @@ def main(argv=None):
     s = sub.add_parser("synth"); s.add_argument("--render", required=True)
     s.add_argument("--env", required=True); s.add_argument("--out", required=True)
     s = sub.add_parser("realms"); s.add_argument("--export", required=True); s.add_argument("--out", required=True)
+    s.add_argument("--kaisatsu-bin", help="leave out the mappers this kaisatsu refuses (named in the report)")
     s = sub.add_parser("import"); s.add_argument("--export", required=True); s.add_argument("--base", required=True)
     s.add_argument("--state", required=True); s.add_argument("--report", required=True)
     s.add_argument("--now"); s.add_argument("--only"); s.add_argument("--daiya-bin")
