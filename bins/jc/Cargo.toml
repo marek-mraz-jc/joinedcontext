@@ -15,7 +15,7 @@ name = "jc"
 path = "src/main.rs"
 
 [features]
-default = ["kaisatsu", "dataroom", "daiya", "ekiben", "antares", "portal", "shako", "jemalloc"]
+default = ["kaisatsu", "dataroom", "daiya", "ekiben", "antares", "gateway", "portal", "shako", "jemalloc"]
 shako = [
   "dep:shako-server",
   "dep:shako-core",
@@ -45,7 +45,10 @@ daiya = [
   "dep:daiya-store-pg",
 ]
 ekiben = ["dep:ekiben-server", "dep:ekiben-core"]
+# The platform's broker build (Antares image-jc FEATURES without parquet and tabular): Endpoint
+# views, the joinedcontext engine and every surface dev's broker serves.
 antares = ["dep:antares-broker"]
+gateway = ["dep:context-gateway", "dep:jc-core", "dep:jc-manifest", "dep:jcctl"]
 portal = ["dep:joinedcontext-portal"]
 jemalloc = ["dep:tikv-jemallocator"]
 
@@ -95,7 +98,12 @@ daiya-store-pg = { path = "../../crates/daiya/store-pg", optional = true }
 ekiben-server = { path = "../../crates/ekiben/crates/ekiben-server", optional = true }
 ekiben-core = { path = "../../crates/ekiben/crates/ekiben-core", optional = true }
 
-antares-broker = { path = "../../crates/antares/crates/antares-broker", optional = true }
+antares-broker = { path = "../../crates/antares/crates/antares-broker", optional = true, features = ["full", "jc-policy", "linkml", "ical", "feed"] }
+
+context-gateway = { path = "../../vendor/joinedcontext-platform/crates/context-gateway", optional = true }
+jc-core = { path = "../../vendor/joinedcontext-platform/crates/jc-core", optional = true }
+jc-manifest = { path = "../../vendor/joinedcontext-platform/crates/jc-manifest", optional = true }
+jcctl = { path = "../../vendor/joinedcontext-platform/crates/jcctl", optional = true, default-features = false }
 
 joinedcontext-portal = { path = "../../crates/portal", optional = true }
 

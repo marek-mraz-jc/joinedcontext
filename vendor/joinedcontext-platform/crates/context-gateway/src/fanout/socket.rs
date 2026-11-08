@@ -293,6 +293,7 @@ async fn connect(gateway: &Gateway, slug: &str, headers: &HeaderMap) -> Result<U
     for (name, value) in headers {
         request.headers_mut().append(name.clone(), value.clone());
     }
+    gateway.broker.stamp(request.headers_mut());
     let config = WebSocketConfig::default()
         .max_message_size(Some(FROM_BROKER))
         .max_frame_size(Some(FROM_BROKER));

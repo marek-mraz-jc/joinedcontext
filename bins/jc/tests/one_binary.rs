@@ -97,9 +97,13 @@ fn probe(module: Module) -> (&'static str, &'static str) {
         Module::Dataroom => ("/api/3/action/status_show", "\"success\""),
         Module::Daiya => ("/api/health", "\"database\""),
         Module::Ekiben => ("/ping", "pong"),
-        Module::Antares => ("/ngsi-ld/v1/info/sourceIdentity", "antares"),
+        // The broker's data routes answer only the gateway's subjects or its admin token, as on
+        // dev (the joinedcontext engine); health stays open.
+        Module::Antares => ("/q/health", "\"UP\""),
         Module::Portal => ("/api/v1/health", "\"status\":\"ok\""),
         Module::Shako => ("/api/healthz", "\"status\":\"ok\""),
+        // The gateway answers at whole paths (its root paths in slug mode, its host in host mode).
+        Module::Gateway => ("/api/endpoints", "endpoints"),
     }
 }
 
@@ -142,7 +146,11 @@ async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
     let addr = running.addr;
     for &module in &cfg.roles {
         let (path, needle) = probe(module);
-        let url = format!("/{}{path}", module.slug());
+        let url = if module.root_paths().is_empty() {
+            format!("/{}{path}", module.slug())
+        } else {
+            path.to_owned()
+        };
         let (status, body) = get(addr, "city.test", &url).await;
         assert_eq!(status, StatusCode::OK, "{module} {url}: {body}");
         assert!(body.contains(needle), "{module} {url}: {body}");

@@ -111,7 +111,7 @@ async fn seed(
 
 /// The Organization's DNS domain: the Portal's host when it has two labels, else `jc.invalid`
 /// (a name like `localhost` is no organization domain).
-fn domain(portal_base: Option<&str>) -> String {
+pub(crate) fn domain(portal_base: Option<&str>) -> String {
     let host = portal_base
         .and_then(|base| base.split("://").nth(1))
         .and_then(|rest| rest.split(['/', ':']).next())
