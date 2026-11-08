@@ -75,7 +75,16 @@ the masked answer for MCP, and one activity row per MCP `tools/call` (`mcp::reco
 | `jc_access_request_decide` | `*`, propose in the project; the route checks approve on the space | yellow (asks) | `access_requests::approve_request`, `access_requests::revoke_request` |
 | `jc_serviceaccount_access` | `ServiceAccount`, read in the project | green | `agent_access::account_access` |
 
-## 4. Gaps left
+## 4. Fixed on the way
+
+- A proposer's check was recorded only when `check(kind, propose, None)` held
+  (`ops/proposals.rs` `record_verdict`). A grant narrowed to one space or to an Organization's own
+  settings admits nothing without a target, so an organization administrator's dry run of their
+  own `Organization` was dropped and the proposal answered `409 verdict_required` forever. The
+  check now reads the manifest, as the proposal does. Red proof:
+  `an_organization_administrator_runs_its_own_organization_and_no_other` fails with the old line.
+
+## 5. Gaps left
 
 - Opening a project directly inside a non-installation Organization (O): `POST
   /api/v1/projects` always writes `organizationRef: <installation>` (`api/projects.rs`

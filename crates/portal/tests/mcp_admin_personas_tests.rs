@@ -497,12 +497,10 @@ async fn step(
             check,
         )
         .await;
-        assert_eq!(
-            checked.status,
-            StatusCode::OK,
-            "the check: {}",
-            checked.text()
-        );
+        // A refusal at the check is the door's answer: nothing is proposed after it.
+        if checked.status != StatusCode::OK {
+            return (checked.status, checked.body);
+        }
     }
     let answer = call_in(
         name,
@@ -778,4 +776,162 @@ async fn a_project_administrator_builds_its_project_and_touches_nothing_else() {
         status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND,
         "another project: {status} {body}"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Access requests against a real PostgreSQL (JC_PORTAL_TEST_DATABASE_URL), as the Portal keeps
+// them. Without it the test says so and returns.
+// ---------------------------------------------------------------------------------------------
+
+/// A fresh Keycloak-shaped user id, so a request left by an earlier run is no second one.
+fn uuid() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or_default();
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!(
+        "{:08x}-0000-4000-8000-{:012x}",
+        nanos & 0xffff_ffff,
+        (nanos >> 32 << 8 | n) & 0xffff_ffff_ffff
+    )
+}
+
+async fn pool() -> Option<sqlx::PgPool> {
+    let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty())
+    else {
+        eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+        return None;
+    };
+    Some(
+        joinedcontext_portal::db::connect(&url)
+            .await
+            .expect("the test database answers and migrates"),
+    )
+}
+
+/// A pending read request of the Keycloak user `person` on `esp-air`'s Endpoint, filed by
+/// `requested_by`; one pending request per person and Endpoint.
+async fn filed(pool: &sqlx::PgPool, requested_by: &str, person: &str) -> String {
+    use joinedcontext_portal::access_requests::{
+        insert, new_id, AccessRequest, Operations, Requester, TypeGrant,
+    };
+    let id = new_id();
+    let request = AccessRequest {
+        id: id.clone(),
+        project: ESP_PROJECT.into(),
+        requester: Requester::Person(person.into()),
+        endpoint_project: ESP_PROJECT.into(),
+        endpoint: "air-public".into(),
+        space: "air".into(),
+        operations: Operations::Read,
+        types: vec![TypeGrant {
+            entity_type: "AirQualityObserved".into(),
+            attrs: vec![],
+        }],
+        until: None,
+        reason: "weekly air report for the district office".into(),
+        state: "pending".into(),
+        requested_by: requested_by.into(),
+        requested_at: time::OffsetDateTime::now_utc(),
+        decided_by: None,
+        decided_at: None,
+        decision_reason: None,
+        change: None,
+    };
+    assert!(insert(pool, &request).await.expect("stored"), "a fresh id");
+    id
+}
+
+#[tokio::test]
+async fn a_project_administrator_decides_an_access_request_and_no_other_organization_sees_it() {
+    let Some(pool) = pool().await else { return };
+    let state = scenario_world().await.with_db(pool.clone());
+    state
+        .mirror
+        .upsert(envelope("ContextSpace", "air", ESP_PROJECT, json!({})));
+    state.mirror.upsert(envelope(
+        "Endpoint",
+        "air-public",
+        ESP_PROJECT,
+        json!({ "contextSpaceRef": "air", "slug": "zt4qm7ge2xdv6ksb3ncf5arw2y", "audience": "project-list" }),
+    ));
+    let id = filed(&pool, "someone-else", &uuid()).await;
+    let mine = filed(&pool, "proj", &uuid()).await;
+
+    let (status, list) = step(
+        &project_admin(),
+        &state,
+        ESP_PROJECT,
+        administration::REQUESTS,
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    assert!(list.to_string().contains(&id), "{list}");
+
+    // Another Organization's project administrator: the project is not there for them.
+    let (status, body) = step(
+        &other_project_admin(),
+        &state,
+        ESP_PROJECT,
+        administration::REQUESTS,
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(!body.to_string().contains(&id), "{body}");
+    let (status, body) = step(
+        &other_project_admin(),
+        &state,
+        ESP_PROJECT,
+        administration::DECIDE,
+        json!({ "id": id, "decision": "approve" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    // Named from their own project, the request is not there either.
+    let (status, body) = step(
+        &other_project_admin(),
+        &state,
+        HEL_PROJECT,
+        administration::DECIDE,
+        json!({ "id": id, "decision": "approve" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+    // Who filed a request never decides it (PL-91).
+    let (status, body) = step(
+        &project_admin(),
+        &state,
+        ESP_PROJECT,
+        administration::DECIDE,
+        json!({ "id": mine, "decision": "approve" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+    let (status, body) = step(
+        &project_admin(),
+        &state,
+        ESP_PROJECT,
+        administration::DECIDE,
+        json!({ "id": id, "decision": "approve" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["change"]["kind"], "Change", "{body}");
+    let (status, body) = step(
+        &organization_admin(),
+        &state,
+        ESP_PROJECT,
+        administration::DECIDE,
+        json!({ "id": id, "decision": "approve" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "decided once: {body}");
 }

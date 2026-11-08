@@ -16339,6 +16339,353 @@
         }
       }
     },
+    "/api/v1/projects/{project}/ops/jc_access_request_decide": {
+      "post": {
+        "description": "Proposes the grant of a pending access request, or taking an approved one back; a person approves the Change. Declining is a person's, in the Portal",
+        "operationId": "jc_access_request_decide",
+        "parameters": [
+          {
+            "description": "Project slug",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "decision": "approve",
+                "id": "example"
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "decision": {
+                    "description": "approve: propose the grant; revoke: propose taking an approved grant back",
+                    "enum": [
+                      "approve",
+                      "revoke"
+                    ],
+                    "type": "string"
+                  },
+                  "id": {
+                    "description": "The access request's id",
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "reason": {
+                    "description": "revoke: why, read by the requester",
+                    "maxLength": 500,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "decision"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "change": {
+                      "properties": {
+                        "apiVersion": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "enum": [
+                            "Change"
+                          ],
+                          "type": "string"
+                        },
+                        "metadata": {
+                          "properties": {
+                            "name": {
+                              "description": "`chg-` and eight hex characters; what `jc_change_approve` takes as `id`",
+                              "type": "string"
+                            },
+                            "namespace": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "namespace"
+                          ],
+                          "type": "object"
+                        },
+                        "status": {
+                          "properties": {
+                            "lane": {
+                              "enum": [
+                                "green",
+                                "yellow",
+                                "red"
+                              ],
+                              "type": "string"
+                            },
+                            "mergeRequest": {
+                              "type": "string"
+                            },
+                            "phase": {
+                              "enum": [
+                                "PendingApproval",
+                                "Deploying",
+                                "Merged",
+                                "Applied",
+                                "Rejected"
+                              ],
+                              "type": "string"
+                            },
+                            "plan": {
+                              "properties": {
+                                "create": {
+                                  "type": "integer"
+                                },
+                                "delete": {
+                                  "type": "integer"
+                                },
+                                "update": {
+                                  "type": "integer"
+                                }
+                              },
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "lane",
+                            "phase",
+                            "plan"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "apiVersion",
+                        "kind",
+                        "metadata",
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    "changeId": {
+                      "description": "The change's name; `jc_change_approve` takes it as `id`",
+                      "type": "string"
+                    },
+                    "lane": {
+                      "enum": [
+                        "green",
+                        "yellow",
+                        "red"
+                      ],
+                      "type": "string"
+                    },
+                    "url": {
+                      "description": "The merge request to review, when the forge has one",
+                      "type": "string"
+                    },
+                    "warning": {
+                      "description": "Present when the draft was proposed without a fresh green verdict",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "changeId",
+                    "lane",
+                    "change"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The operation's answer"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The change the operation opened, waiting for a person's approval"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden: the caller lacks what x-jc-requires names"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The project or an object the input names is not there"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The input does not match the schema; the problem names the path"
+          }
+        },
+        "summary": "Decide An Access Request",
+        "tags": [
+          "ops"
+        ],
+        "x-jc-requires": {
+          "checkedBy": "project",
+          "kind": "*",
+          "verb": "propose"
+        }
+      }
+    },
+    "/api/v1/projects/{project}/ops/jc_access_request_list": {
+      "post": {
+        "description": "The access requests to the project's Endpoints that you may decide, newest first",
+        "operationId": "jc_access_request_list",
+        "parameters": [
+          {
+            "description": "Project slug",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {},
+              "schema": {
+                "additionalProperties": false,
+                "properties": {},
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The operation's answer"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The change the operation opened, waiting for a person's approval"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden: the caller lacks what x-jc-requires names"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The project or an object the input names is not there"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The input does not match the schema; the problem names the path"
+          }
+        },
+        "summary": "List Access Requests",
+        "tags": [
+          "ops"
+        ],
+        "x-jc-requires": {
+          "checkedBy": "project",
+          "kind": "ContextSpace",
+          "verb": "read"
+        }
+      }
+    },
     "/api/v1/projects/{project}/ops/jc_access_simulate": {
       "post": {
         "description": "What the gateway decides for a person, group, role, ServiceAccount or the public doing one action on an Endpoint, and the Policy that decides; organization administrators",
@@ -23450,6 +23797,139 @@
         }
       }
     },
+    "/api/v1/projects/{project}/ops/jc_organization_read": {
+      "post": {
+        "description": "One reading of the Administration pages: projects, setup, validation health, project checks, limits, brokers, agents or agent activity",
+        "operationId": "jc_organization_read",
+        "parameters": [
+          {
+            "description": "Project slug",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "aspect": "projects"
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "aspect": {
+                    "description": "projects: the projects you may read; setup: first-start checklist; health: validation results; healthChecks: every project's checks; limits: quotas and use; brokers: brokers and sizes; agents: agent profiles and runs; agentActivity: what agent runs did",
+                    "enum": [
+                      "projects",
+                      "setup",
+                      "health",
+                      "healthChecks",
+                      "limits",
+                      "brokers",
+                      "agents",
+                      "agentActivity"
+                    ],
+                    "type": "string"
+                  },
+                  "cursor": {
+                    "description": "agentActivity: nextCursor of the previous page",
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "limit": {
+                    "description": "agentActivity: page size, default 20",
+                    "maximum": 50,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "aspect"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "The reading, as the Administration page shows it",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The operation's answer"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The change the operation opened, waiting for a person's approval"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden: the caller lacks what x-jc-requires names"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The project or an object the input names is not there"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The input does not match the schema; the problem names the path"
+          }
+        },
+        "summary": "Read The Organization",
+        "tags": [
+          "ops"
+        ],
+        "x-jc-requires": {
+          "checkedBy": "project",
+          "kind": "*",
+          "verb": "read"
+        }
+      }
+    },
     "/api/v1/projects/{project}/ops/jc_permissions_me": {
       "post": {
         "description": "Your effective rules in the project: which verbs on which kinds, from which bindings",
@@ -28991,6 +29471,119 @@
         "x-jc-requires": {
           "checkedBy": "project",
           "kind": "*",
+          "verb": "read"
+        }
+      }
+    },
+    "/api/v1/projects/{project}/ops/jc_serviceaccount_access": {
+      "post": {
+        "description": "What a ServiceAccount may read and write, through which Policy and binding",
+        "operationId": "jc_serviceaccount_access",
+        "parameters": [
+          {
+            "description": "Project slug",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "name": "example"
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "description": "ServiceAccount name, e.g. cam-west",
+                    "maxLength": 253,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "The reading, as the Administration page shows it",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The operation's answer"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The change the operation opened, waiting for a person's approval"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden: the caller lacks what x-jc-requires names"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The project or an object the input names is not there"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The input does not match the schema; the problem names the path"
+          }
+        },
+        "summary": "Read A Service Account's Access",
+        "tags": [
+          "ops"
+        ],
+        "x-jc-requires": {
+          "checkedBy": "project",
+          "kind": "ServiceAccount",
           "verb": "read"
         }
       }
