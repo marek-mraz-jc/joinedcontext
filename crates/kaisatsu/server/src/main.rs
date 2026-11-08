@@ -427,10 +427,35 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
                 jc.into_axum_router()
                     .into_make_service_with_connect_info::<std::net::SocketAddr>(),
             )
+            .with_graceful_shutdown(shutdown_signal())
             .await
             .map_err(fail(EXIT_INVALID_INPUT))?;
+            eprintln!("kaisatsu: stopped");
             Ok(EXIT_NO_CHANGE)
         }
+    }
+}
+
+/// Resolves on SIGTERM (Kubernetes stopping the pod) or Ctrl-C: open requests finish, new
+/// connections are refused, and the process exits 0.
+async fn shutdown_signal() {
+    let interrupt = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        () = interrupt => {}
+        () = terminate => {}
     }
 }
 

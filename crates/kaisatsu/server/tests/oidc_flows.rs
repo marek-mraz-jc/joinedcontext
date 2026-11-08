@@ -903,3 +903,12 @@ async fn every_entity_set_reads_the_rows_a_login_leaves() {
         }
     }
 }
+
+#[tokio::test]
+async fn an_empty_in_memory_state_knows_no_realm() {
+    let state = kaisatsu_server::KaisatsuState::in_memory_for_tests();
+    assert!(state.store().list_realms().await.unwrap().is_empty());
+    let app = router(state, mount());
+    let (st, _, _) = get(&app, "/realms/dev", None, None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}

@@ -568,8 +568,16 @@ async fn migrate_apply_and_serve_on_postgres_with_password_files() {
         None,
     );
     assert_eq!(st, 200, "{body}");
-    child.kill().expect("stop serve");
-    let _ = child.wait();
+    // SIGTERM stops the server cleanly: exit 0 after "stopped".
+    let term = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .expect("send SIGTERM");
+    assert!(term.success());
+    let status = child.wait().expect("serve exits");
+    assert_eq!(status.code(), Some(0), "a clean stop on SIGTERM");
+    let rest: Vec<String> = lines.map_while(std::result::Result::ok).collect();
+    assert!(rest.iter().any(|l| l == "kaisatsu: stopped"), "{rest:?}");
 
     // The client secret is stored encrypted, never in clear text.
     let su = PgPoolOptions::new()
