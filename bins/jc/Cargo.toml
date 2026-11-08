@@ -37,6 +37,7 @@ dataroom = [
 ]
 daiya = [
   "dep:daiya-server",
+  "dep:daiya-api",
   "dep:daiya-model",
   "dep:daiya-store-memory",
 ]
@@ -61,6 +62,12 @@ toml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 tikv-jemallocator = { version = "0.7", optional = true }
+getrandom = "0.3"
+hex = "0.4"
+base64 = "0.22"
+serde_json = "1"
+tower = { version = "0.5", features = ["util"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 kaisatsu-server = { path = "../../crates/kaisatsu/server", optional = true }
 kaisatsu-core = { path = "../../crates/kaisatsu/core", optional = true }
@@ -76,6 +83,7 @@ dataroom-core = { path = "../../crates/dataroom/core", optional = true }
 dataroom-store-memory = { path = "../../crates/dataroom/store-memory", optional = true }
 
 daiya-server = { path = "../../crates/daiya/server", optional = true }
+daiya-api = { path = "../../crates/daiya/api", optional = true }
 daiya-model = { path = "../../crates/daiya/model", optional = true }
 daiya-store-memory = { path = "../../crates/daiya/store-memory", optional = true }
 
@@ -92,8 +100,5 @@ shako-store-memory = { path = "../../crates/shako/store-memory", optional = true
 
 [dev-dependencies]
 http-body-util = "0.1"
-tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-serde_json = "1"
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs"] }

@@ -13,6 +13,11 @@ fn jc() -> Command {
             cmd.env_remove(key);
         }
     }
+    // Generated secrets go to a private directory of this test process, never the checkout.
+    cmd.env(
+        "JCBIN_STATE_DIR",
+        std::env::temp_dir().join(format!("jc-binary-test-{}", std::process::id())),
+    );
     cmd
 }
 
@@ -23,9 +28,13 @@ fn a_refused_configuration_exits_2_and_says_why() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("unknown module 'keycloak'"), "{stderr}");
 
-    let out = jc().env("JCBIN_ROLE", "kaisatsu").output().expect("run jc");
+    let out = jc()
+        .env("JCBIN_ROLE", "kaisatsu")
+        .env("JCBIN_SCHEME", "ftp")
+        .output()
+        .expect("run jc");
     assert_eq!(out.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("key-encryption key"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("scheme must be http or https"));
 }
 
 #[test]

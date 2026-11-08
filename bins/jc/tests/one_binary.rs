@@ -81,6 +81,10 @@ fn config(fx: &Fixture, mode: MountMode, mounts: BTreeMap<Module, MountOverride>
     )
     .expect("config");
     cfg.mode = mode;
+    // Generated secrets in the fixture's directory; the Portal on its own environment (the
+    // sibling wiring needs a resolvable public host, tests/portal_siblings.rs covers it).
+    cfg.state_dir = fx._dir.path().join("state");
+    cfg.portal_siblings = false;
     cfg.mounts = mounts;
     cfg
 }
@@ -421,22 +425,21 @@ async fn an_invalid_prefix_or_a_bad_module_setting_refuses_to_start() {
         "{err}"
     );
 
+    // No file named: first-start setup generates one (0600, in the state dir) and jc starts.
     let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
     cfg.kaisatsu.kek_file = None;
-    let err = jc::start(&cfg, CancellationToken::new())
+    let running = jc::start(&cfg, CancellationToken::new())
         .await
-        .err()
-        .expect("refused");
-    assert!(
-        matches!(
-            err,
-            StartError::Module {
-                module: Module::Kaisatsu,
-                ..
-            }
-        ),
-        "{err}"
-    );
+        .expect("starts with a generated secret");
+    running.stop().await.expect("stop");
+    let generated = cfg.state_dir.join("kaisatsu-kek");
+    assert!(generated.is_file(), "{}", generated.display());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&generated).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
 
     let bad_realms = fx.realms.join("bad");
     std::fs::create_dir(&bad_realms).unwrap();
@@ -500,22 +503,21 @@ async fn a_bad_antares_environment_refuses_to_start() {
         "{err}"
     );
 
+    // No file named: first-start setup generates one (0600, in the state dir) and jc starts.
     let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
     cfg.antares.admin_token_file = None;
-    let err = jc::start(&cfg, CancellationToken::new())
+    let running = jc::start(&cfg, CancellationToken::new())
         .await
-        .err()
-        .expect("refused");
-    assert!(
-        matches!(
-            err,
-            StartError::Module {
-                module: Module::Antares,
-                ..
-            }
-        ),
-        "{err}"
-    );
+        .expect("starts with a generated secret");
+    running.stop().await.expect("stop");
+    let generated = cfg.state_dir.join("antares-admin-token");
+    assert!(generated.is_file(), "{}", generated.display());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&generated).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
 }
 
 #[tokio::test]
