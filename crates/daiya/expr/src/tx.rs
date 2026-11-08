@@ -83,6 +83,22 @@ pub fn apply_transformations(
     }
 }
 
+/// Grafana's display name of a field reducer (`fieldReducer.ts`), which names the columns
+/// `reduce` and `calculateField` add; an id it does not know keeps its id.
+fn reducer_display_name(id: &str) -> &str {
+    match id {
+        "sum" => "Total",
+        "mean" => "Mean",
+        "min" => "Min",
+        "max" => "Max",
+        "count" => "Count",
+        "last" => "Last",
+        "lastNotNull" => "Last *",
+        "median" => "Median",
+        other => other,
+    }
+}
+
 /// 1. `organize`: excludeByName, includeByName, indexByName, renameByName (`organize.ts`).
 #[must_use]
 pub fn tx_organize(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
@@ -341,7 +357,11 @@ pub fn tx_reduce(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
     let mut out_fields = vec![FieldColumn::strings("Field", field_names)];
     for (r_name, _) in &reducers {
         if let Some(vals) = calc_cols.remove(r_name) {
-            out_fields.push(FieldColumn::numbers(r_name.clone(), BTreeMap::new(), vals));
+            out_fields.push(FieldColumn::numbers(
+                reducer_display_name(r_name),
+                BTreeMap::new(),
+                vals,
+            ));
         }
     }
 
@@ -517,18 +537,19 @@ pub fn tx_calculate_field(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
                             "+" => a + b,
                             "-" => a - b,
                             "*" => a * b,
-                            "/" => {
-                                if b == 0.0 {
-                                    f64::NAN
-                                } else {
-                                    a / b
-                                }
-                            }
+                            "/" => a / b,
+                            "%" => a % b,
+                            "^" => a.powf(b),
                             _ => a + b,
                         };
                         v.push(Some(res));
                     }
-                    ("math".to_owned(), v)
+                    let name = format!(
+                        "{} {op} {}",
+                        operand_label(bin.get("left")),
+                        operand_label(bin.get("right"))
+                    );
+                    (name, v)
                 }
                 "cumulativeFunctions" => {
                     let cum = options.get("cumulative").unwrap_or(&Value::Null);
@@ -549,7 +570,11 @@ pub fn tx_calculate_field(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
                             v.push(Some(total));
                         }
                     }
-                    (format!("cumulative {reducer}"), v)
+                    let name = match target {
+                        Some(t) => format!("cumulative {reducer}({t})"),
+                        None => format!("cumulative {reducer}"),
+                    };
+                    (name, v)
                 }
                 _ => {
                     // reduceRow
@@ -569,7 +594,7 @@ pub fn tx_calculate_field(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
                             .collect();
                         v.push(reduce_slice(r_id, &row_vals));
                     }
-                    (r_str.to_owned(), v)
+                    (reducer_display_name(r_str).to_owned(), v)
                 }
             };
 
@@ -590,6 +615,25 @@ pub fn tx_calculate_field(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
             frame
         })
         .collect()
+}
+
+/// How Grafana names a binary operand in the default field name: the field, else the fixed value.
+fn operand_label(spec: Option<&Value>) -> String {
+    let Some(spec) = spec else {
+        return String::new();
+    };
+    if let Some(s) = spec.as_str() {
+        return s.to_owned();
+    }
+    match spec
+        .get("matcher")
+        .and_then(|m| m.get("options"))
+        .or_else(|| spec.get("fixed"))
+    {
+        Some(Value::String(s)) => s.clone(),
+        Some(v @ Value::Number(_)) => v.to_string(),
+        _ => String::new(),
+    }
 }
 
 fn resolve_binary_operand(frame: &Frame, spec: Option<&Value>, row_cnt: usize) -> Vec<Option<f64>> {
@@ -816,17 +860,16 @@ pub fn sort_frame_by_col(frame: &mut Frame, col_idx: usize, desc: bool) {
 /// 8. `renameByRegex`: renames fields matching `regex` using `renamePattern` (`renameByRegex.ts`).
 #[must_use]
 pub fn tx_rename_by_regex(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
-    let pattern = options
-        .get("regex")
-        .and_then(Value::as_str)
-        .unwrap_or("(.*)");
-    let replacement = options
-        .get("renamePattern")
-        .and_then(Value::as_str)
-        .unwrap_or("$1");
-    let Ok(re) = Regex::new(pattern) else {
+    let (Some(pattern), Some(js_replacement)) = (
+        options.get("regex").and_then(Value::as_str),
+        options.get("renamePattern").and_then(Value::as_str),
+    ) else {
         return frames;
     };
+    let Some((re, global)) = js_regex(pattern) else {
+        return frames;
+    };
+    let replacement = js_replacement_to_rust(js_replacement, re.captures_len());
 
     frames
         .into_iter()
@@ -834,7 +877,12 @@ pub fn tx_rename_by_regex(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
             for f in &mut frame.fields {
                 let current = f.effective_name().to_owned();
                 if re.is_match(&current) {
-                    let renamed = re.replace_all(&current, replacement).into_owned();
+                    let renamed = if global {
+                        re.replace_all(&current, replacement.as_str())
+                    } else {
+                        re.replace(&current, replacement.as_str())
+                    }
+                    .into_owned();
                     f.display_name = Some(renamed.clone());
                     f.name = renamed;
                 }
@@ -842,6 +890,85 @@ pub fn tx_rename_by_regex(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
             frame
         })
         .collect()
+}
+
+/// Grafana's `stringToJsRegex`: `/body/flags` keeps its flags (`g` = replace every match),
+/// any other text matches the whole name (`^text$`). `None` when it does not compile.
+fn js_regex(pattern: &str) -> Option<(Regex, bool)> {
+    let Some(rest) = pattern.strip_prefix('/') else {
+        return Regex::new(&format!("^(?:{pattern})$"))
+            .ok()
+            .map(|re| (re, false));
+    };
+    let (body, flags) = rest.rsplit_once('/')?;
+    let mut inline = String::new();
+    let mut global = false;
+    for flag in flags.chars() {
+        match flag {
+            'g' => global = true,
+            'i' | 'm' | 's' => inline.push(flag),
+            'y' => {}
+            _ => return None,
+        }
+    }
+    let source = if inline.is_empty() {
+        body.to_owned()
+    } else {
+        format!("(?{inline}){body}")
+    };
+    Regex::new(&source).ok().map(|re| (re, global))
+}
+
+/// Rewrites a JS `String.replace` pattern (`$1`, `$12`, `$&`, `$$`) into the regex crate's
+/// syntax, where `$1_x` would read a group named `1_x`. `groups` counts group 0.
+fn js_replacement_to_rust(js: &str, groups: usize) -> String {
+    let chars: Vec<char> = js.chars().collect();
+    let mut out = String::with_capacity(js.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        match (c, next) {
+            ('$', Some('$')) => {
+                out.push_str("$$");
+                i += 2;
+            }
+            ('$', Some('&')) => {
+                out.push_str("${0}");
+                i += 2;
+            }
+            ('$', Some(d)) if d.is_ascii_digit() => {
+                let one = d.to_digit(10).unwrap_or(0) as usize;
+                let two = chars
+                    .get(i + 2)
+                    .and_then(|e| e.to_digit(10))
+                    .map(|e| one * 10 + e as usize);
+                match two {
+                    Some(n) if n >= 1 && n < groups => {
+                        out.push_str(&format!("${{{n}}}"));
+                        i += 3;
+                    }
+                    _ if one >= 1 && one < groups => {
+                        out.push_str(&format!("${{{one}}}"));
+                        i += 2;
+                    }
+                    _ => {
+                        out.push_str("$$");
+                        i += 1;
+                    }
+                }
+            }
+            ('$', _) => {
+                out.push_str("$$");
+                i += 1;
+            }
+            _ => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    out
 }
 
 /// 9. `joinByField` (and alias `seriesToColumns`): joins multiple frames by a key or time field (`joinByField.ts`).
@@ -904,7 +1031,20 @@ pub fn tx_join_by_field(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
             .filter(|k| frame_maps.iter().all(|m| m.contains_key(k)))
             .collect()
     } else {
-        all_keys_order
+        // Grafana's outer join (`joinDataFrames.ts` `join`) answers numeric keys ascending.
+        let mut keys = all_keys_order;
+        if matches!(join_type, FieldType::Time | FieldType::Number) {
+            keys.sort_by(|a, b| {
+                let num = |k: &String| key_raw_val.get(k).and_then(Value::as_f64);
+                match (num(a), num(b)) {
+                    (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(Ordering::Equal),
+                    (None, Some(_)) => Ordering::Less,
+                    (Some(_), None) => Ordering::Greater,
+                    (None, None) => Ordering::Equal,
+                }
+            });
+        }
+        keys
     };
 
     let mut out_fields = vec![FieldColumn {
