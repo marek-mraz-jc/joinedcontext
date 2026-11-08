@@ -15,6 +15,9 @@ use shako_store_memory::MemoryStore;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+const INSTANCE: shako_core::InstanceId = shako_core::InstanceId::from_u128(1);
+const ORG: OrgId = OrgId::from_u128(1);
+
 fn err(e: impl std::fmt::Display) -> StartError {
     StartError::module(Module::Shako, e)
 }
@@ -53,6 +56,8 @@ async fn store(cfg: &ShakoSection) -> Result<Arc<dyn shako_core::Store>, StartEr
     let pg = shako_store_pg::PgStore::connect_with(opts, db.max_connections.unwrap_or(5))
         .await
         .map_err(err)?;
+    // Forced RLS shows rows of one tenant per transaction: load jc's one tenant into the store.
+    pg.hydrate_tenant(INSTANCE, ORG).await.map_err(err)?;
     Ok(Arc::new(pg))
 }
 
@@ -61,7 +66,7 @@ pub async fn build_state(
     setup: &crate::setup::Setup,
 ) -> Result<ShakoState, StartError> {
     let root = repo_root(cfg.repo_root.as_deref())?;
-    let org_id = OrgId::from_u128(1);
+    let org_id = ORG;
     let store = store(cfg).await?;
     let authz = Arc::new(LocalAuthorizer::new(vec![RoleBinding {
         org_id,
@@ -96,7 +101,7 @@ pub async fn build_state(
 
     let verifier = TokenVerifier::new(key).with_static_tokens(static_tokens);
     Ok(ShakoState::new(
-        shako_core::InstanceId::from_u128(1),
+        INSTANCE,
         org_id,
         root,
         store,
@@ -110,4 +115,72 @@ pub fn build(state: ShakoState, mount: Mount) -> (Router, Router) {
     let main_router = router(state.clone(), mount.clone());
     let v2_router = registry_router(state, mount);
     (main_router, v2_router)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shako_core::{InstanceRecord, RepoId, RepoRecord};
+
+    /// An instance and a repository written before a restart read back after it; a role that
+    /// bypasses RLS is refused at start.
+    #[tokio::test]
+    async fn shako_on_postgres_keeps_state_over_a_restart_and_refuses_a_bypassing_role() {
+        let Some(db) = crate::pg::testdb::create("shako").await else {
+            return;
+        };
+        let cfg = ShakoSection {
+            database: Some(db.database.clone()),
+            ..ShakoSection::default()
+        };
+        let first = store(&cfg).await.unwrap();
+        first
+            .upsert_instance(InstanceRecord::default_for(INSTANCE, ORG, "git.jc.example"))
+            .await
+            .unwrap();
+        let now = chrono::Utc::now();
+        first
+            .create_repo(RepoRecord {
+                id: RepoId::new(),
+                instance_id: INSTANCE,
+                org_id: ORG,
+                project_id: "org".into(),
+                owner: "jc".into(),
+                name: "config".into(),
+                description: String::new(),
+                default_branch: "main".into(),
+                private: true,
+                archived: false,
+                size_bytes: 0,
+                next_pr_number: 1,
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .unwrap();
+        drop(first);
+        let again = store(&cfg).await.unwrap();
+        let read = again
+            .get_repo_by_name(INSTANCE, ORG, "jc", "config")
+            .await
+            .unwrap();
+        assert_eq!(
+            read.map(|r| r.name),
+            Some("config".to_owned()),
+            "state survives a restart"
+        );
+        let bypassing = ShakoSection {
+            database: Some(db.admin.clone()),
+            ..ShakoSection::default()
+        };
+        let refused = store(&bypassing)
+            .await
+            .err()
+            .expect("a superuser app role is refused");
+        assert!(
+            refused.to_string().to_lowercase().contains("rls"),
+            "{refused}"
+        );
+        drop(db.dir);
+    }
 }
