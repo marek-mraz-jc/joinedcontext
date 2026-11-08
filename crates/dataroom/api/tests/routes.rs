@@ -2790,6 +2790,46 @@ async fn pages_lists_publishers_static_pages_and_routing() {
     );
 }
 
+/// Every theme script a page names (`<script src="{mount}/jc-*.js">`) is served under the mount
+/// as JavaScript; the home page names jc-dock, jc-copy and jc-forms, which 404ed before.
+#[tokio::test]
+async fn the_scripts_a_page_names_are_served_under_the_mount() {
+    let w = world_with(|s| mount("/opendata", s)).await;
+    let page = get(&w.app, "/opendata/", None).await;
+    assert_eq!(page.status, StatusCode::OK);
+    let named: Vec<&str> = page
+        .body
+        .split("src=\"/opendata/")
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next())
+        .filter(|src| src.ends_with(".js"))
+        .collect();
+    for script in ["jc-dock.js", "jc-copy.js", "jc-forms.js"] {
+        assert!(
+            named.contains(&script),
+            "the page names {script}: {named:?}"
+        );
+    }
+    for script in named {
+        let a = get(&w.app, &format!("/opendata/{script}"), None).await;
+        assert_eq!(
+            (a.status, a.header("content-type")),
+            (StatusCode::OK, "text/javascript; charset=utf-8"),
+            "{script}"
+        );
+        assert!(!a.body.is_empty(), "{script}");
+    }
+    assert_eq!(
+        get(&w.app, "/opendata/jc-unknown.js", None)
+            .await
+            .header("content-type"),
+        get(&w.app, "/opendata/no-such-page", None)
+            .await
+            .header("content-type"),
+        "a script not in the list is no script"
+    );
+}
+
 #[tokio::test]
 async fn language_redirect_stays_local() {
     let w = world_with(|s| mount("/catalogue", s)).await;

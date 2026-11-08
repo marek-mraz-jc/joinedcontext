@@ -3193,7 +3193,8 @@ fn secrets_copy(root: &Path) -> Result<Scratch, String> {
 /// reads ([`super::ckan::withdrawn`]), kept without the rest of the mirror.
 fn publications_of(mirror: &Mirror) -> Mirror {
     let publications = Mirror::new();
-    for envelope in mirror.matching(|env| matches!(env.kind.as_str(), "Endpoint" | "CkanInstance"))
+    for envelope in
+        mirror.matching(|env| matches!(env.kind.as_str(), "Endpoint" | "CkanInstance" | "App"))
     {
         publications.upsert(envelope);
     }
@@ -3469,6 +3470,7 @@ mod tests {
         let report = |endpoint: &str, publication| Report {
             project: "helsinki".into(),
             endpoint: endpoint.into(),
+            dataset: String::new(),
             publication,
         };
         let events = published_events(&[

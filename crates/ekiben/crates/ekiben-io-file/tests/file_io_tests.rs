@@ -148,3 +148,42 @@ fallback:
     assert_eq!(dlq_json["id"], "bad1");
     assert_eq!(dlq_json["dlq_reason"], "validation failed");
 }
+
+#[tokio::test]
+async fn a_composite_output_closes_its_children_and_a_batched_child_flushes() {
+    let (reg, sctx) = make_stream_ctx(None);
+    let ok_cache = Arc::new(ekiben_processors::resources::MemoryCache::new(None, None));
+    sctx.resources
+        .insert_cache(sctx.org_id(), "ok", ok_cache.clone());
+    // The shape of the Portal's outcome post: a batched output in a fallback in a broker.
+    let val: serde_json::Value = serde_norway::from_str(
+        r#"
+broker:
+  pattern: fan_out_sequential_fail_fast
+  outputs:
+    - switch:
+        cases:
+          - check: errored()
+            output: {reject: '${! error() }'}
+          - output: {drop: {}}
+    - fallback:
+        - cache:
+            target: ok
+            key: '${! json("id") }'
+            batching: {count: 100, period: 1h}
+        - drop: {}
+"#,
+    )
+    .unwrap();
+    let conf = ComponentConfig::from_json_value(&val, "drop", None).unwrap();
+    let out = reg.build_output(&conf, &sctx).unwrap();
+    out.write_batch(&sctx, vec![Part::from_str(r#"{"id":"r1"}"#)])
+        .await
+        .unwrap();
+    assert!(ok_cache.get("r1").await.is_err(), "waits for its batch");
+    out.close().await.unwrap();
+    assert!(
+        ok_cache.get("r1").await.is_ok(),
+        "closing the broker flushed it"
+    );
+}

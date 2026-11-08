@@ -138,7 +138,7 @@ async fn call(base: &str, module: Module, auth: Option<&str>) -> StatusCode {
             .post(format!("{base}/api/3/action/organization_create"))
             .json(&json!({"name": format!("split-{}", free_port()), "title": "Split"})),
         Module::Antares => client.get(format!("{base}/q/tenants")),
-        Module::Kaisatsu | Module::Portal => unreachable!(),
+        Module::Kaisatsu | Module::Portal | Module::Gateway => unreachable!(),
     };
     let req = match auth {
         Some(value) => req.header("authorization", value),

@@ -12,18 +12,20 @@ pub enum Module {
     Daiya,
     Ekiben,
     Antares,
+    Gateway,
     Portal,
     Shako,
 }
 
 impl Module {
     /// Every module in mount order.
-    pub const ALL: [Module; 7] = [
+    pub const ALL: [Module; 8] = [
         Module::Kaisatsu,
         Module::Dataroom,
         Module::Daiya,
         Module::Ekiben,
         Module::Antares,
+        Module::Gateway,
         Module::Portal,
         Module::Shako,
     ];
@@ -37,12 +39,15 @@ impl Module {
             Module::Daiya => "daiya",
             Module::Ekiben => "ekiben",
             Module::Antares => "antares",
+            Module::Gateway => "gateway",
             Module::Portal => "portal",
             Module::Shako => "shako",
         }
     }
 
-    /// Default path slug in one-domain mode (`https://city.example/<slug>/...`).
+    /// Default path slug in one-domain mode (`https://city.example/<slug>/...`). The gateway has
+    /// none: in slug mode it answers at dev's own paths ([`Module::root_paths`]), and `api`
+    /// is its host label.
     #[must_use]
     pub fn slug(self) -> &'static str {
         match self {
@@ -51,8 +56,31 @@ impl Module {
             Module::Daiya => "dashboards",
             Module::Ekiben => "streams",
             Module::Antares => "broker",
+            Module::Gateway => "api",
             Module::Portal => "portal",
             Module::Shako => "git",
+        }
+    }
+
+    /// The paths a module answers at whole on any host in slug mode, instead of under its slug:
+    /// the gateway's, where dev's edge routes them (`/api/endpoint`, `/api/mcp`, `/cs`, ...).
+    #[must_use]
+    pub fn root_paths(self) -> &'static [&'static str] {
+        match self {
+            Module::Gateway => &[
+                "/api/endpoint",
+                "/api/endpoints",
+                "/api/mcp",
+                "/cs",
+                "/catalog",
+                "/catalog.jsonld",
+                "/catalog.ttl",
+                "/oauth",
+                "/.well-known/oauth-authorization-server",
+                "/.well-known/oauth-protected-resource/api/mcp",
+                "/.well-known/oauth-protected-resource/api/endpoint",
+            ],
+            _ => &[],
         }
     }
 
@@ -71,6 +99,7 @@ impl Module {
             Module::Daiya => cfg!(feature = "daiya"),
             Module::Ekiben => cfg!(feature = "ekiben"),
             Module::Antares => cfg!(feature = "antares"),
+            Module::Gateway => cfg!(feature = "gateway"),
             Module::Portal => cfg!(feature = "portal"),
             Module::Shako => cfg!(feature = "shako"),
         }
@@ -86,7 +115,9 @@ impl fmt::Display for Module {
 /// Error of [`Module::from_str`] and [`parse_roles`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RoleError {
-    #[error("unknown module '{0}' (known: kaisatsu, dataroom, daiya, ekiben, antares, portal)")]
+    #[error(
+        "unknown module '{0}' (known: kaisatsu, dataroom, daiya, ekiben, antares, gateway, portal, shako)"
+    )]
     Unknown(String),
     #[error("module '{0}' is not compiled into this jc binary (Cargo feature '{0}')")]
     NotCompiled(String),

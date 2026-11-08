@@ -103,6 +103,7 @@ fn target(name: &str, audience: &str, publication: Value) -> Target {
         },
         slug: "scsd2eehkx42n53z2zyd6vshfh7s7irf".to_owned(),
         publication: serde_json::from_value(publication).expect("a publication"),
+        slice: None,
         instance_name: "hel-fi".to_owned(),
         instance: serde_json::from_value(instance()).expect("an instance"),
         language: None,
@@ -245,20 +246,23 @@ fn a_withdrawn_publication_and_a_deleted_endpoint_both_lose_their_dataset() {
         "endpoint-deleted",
         endpoint("endpoint-deleted", "public", Some(dataset_only())),
     ));
+    // A closed Endpoint without a block is never a dataset (EP-174).
     previous.upsert(envelope(
         "Endpoint",
         "never-published",
-        endpoint("never-published", "public", None),
+        endpoint("never-published", "organization", None),
     ));
 
-    // What this run publishes: the first endpoint only. The second dropped its block, the third
-    // is gone from the repository, the fourth never published.
-    let published: BTreeSet<(String, String)> =
-        [(PROJECT.to_owned(), "still-published".to_owned())]
-            .into_iter()
-            .collect();
+    // What this run publishes: the first endpoint's dataset only. The second dropped its block,
+    // the third is gone from the repository, the fourth never published.
+    let published: BTreeSet<(String, String)> = [(
+        "https://data.example.fi".to_owned(),
+        "still-published".to_owned(),
+    )]
+    .into_iter()
+    .collect();
 
-    let gone = withdrawn(&previous, &published);
+    let gone = withdrawn(&previous, &published, None);
     let names: BTreeSet<String> = gone.iter().map(|t| t.id.name.clone()).collect();
     assert_eq!(
         names,
@@ -285,7 +289,7 @@ fn an_endpoint_whose_catalogue_is_also_gone_is_left_alone() {
         "orphaned",
         endpoint("orphaned", "public", Some(dataset_only())),
     ));
-    assert!(withdrawn(&previous, &BTreeSet::new()).is_empty());
+    assert!(withdrawn(&previous, &BTreeSet::new(), None).is_empty());
 }
 
 #[test]
@@ -343,6 +347,7 @@ async fn without_a_way_to_read_the_token_the_run_says_so_and_publishes_nothing()
         project,
         endpoint,
         publication,
+        ..
     } = &reports[0];
     assert_eq!(project, PROJECT);
     assert_eq!(endpoint, "helsinki-bikes");
@@ -587,6 +592,7 @@ fn the_log_says_an_outcome_once_per_change_and_every_write() {
     let report = |publication: Publication| Report {
         project: PROJECT.to_owned(),
         endpoint: "helsinki-transport".to_owned(),
+        dataset: "helsinki-transport".to_owned(),
         publication,
     };
     let published = |outcome| {
@@ -1103,10 +1109,17 @@ fn two_endpoints_of_two_projects_publishing_one_dataset_name_to_one_catalogue_ar
     let refused = claimed_twice(&[zilina, praha, elsewhere]);
 
     assert_eq!(refused.len(), 2, "{refused:?}");
-    let reason = &refused[&("zilina".to_owned(), "catalog".to_owned())];
+    let key = |project: &str| {
+        (
+            project.to_owned(),
+            "catalog".to_owned(),
+            "catalog".to_owned(),
+        )
+    };
+    let reason = &refused[&key("zilina")];
     assert!(reason.contains("Endpoint praha/catalog"), "{reason}");
     assert!(reason.contains("`zilina-catalog`"), "{reason}");
-    let reason = &refused[&("praha".to_owned(), "catalog".to_owned())];
+    let reason = &refused[&key("praha")];
     assert!(reason.contains("Endpoint zilina/catalog"), "{reason}");
     assert!(reason.contains("spec.publish.ckan.name"), "{reason}");
 }
@@ -1199,4 +1212,170 @@ async fn a_pass_refuses_a_colliding_pair_before_any_catalogue_call_and_withdraws
     assert!(lines[0].1.contains("Endpoint b/catalog"), "{lines:?}");
     assert!(lines[1].1.contains("Endpoint a/catalog"), "{lines:?}");
     assert!(reports.iter().all(|r| r.project != "c"), "{reports:?}");
+}
+
+/// One Endpoint listing two datasets in `spec.catalog.datasets` (EP-175).
+fn listing(names: &[&str]) -> Value {
+    let mut spec = endpoint("air", "public", None);
+    spec["catalog"] = json!({
+        "datasets": names
+            .iter()
+            .map(|name| json!({
+                "name": name,
+                "title": { "en": format!("Dataset {name}") },
+                "description": { "en": "A slice of the air" },
+                "types": ["AirQualityObserved"],
+            }))
+            .collect::<Vec<_>>(),
+    });
+    spec
+}
+
+/// EP-178: removing one entry of an Endpoint's list withdraws exactly that dataset: never its
+/// sibling, never another Endpoint's, and a public Endpoint without a block is a dataset by its
+/// own name, withdrawn when it stops being public (EP-174).
+#[test]
+fn removing_one_entry_withdraws_only_that_dataset() {
+    let previous = Mirror::new();
+    previous.upsert(envelope("CkanInstance", "hel-fi", instance()));
+    previous.upsert(envelope(
+        "Endpoint",
+        "air",
+        listing(&["hel-air-pm", "hel-air-no2"]),
+    ));
+    previous.upsert(envelope(
+        "Endpoint",
+        "bikes",
+        endpoint("bikes", "public", None),
+    ));
+    previous.upsert(envelope(
+        "Endpoint",
+        "closed-bikes",
+        endpoint("closed-bikes", "public", None),
+    ));
+
+    // This run: `air` keeps `hel-air-pm` alone, `bikes` is still public, `closed-bikes` closed.
+    let catalogue = "https://data.example.fi".to_owned();
+    let kept: BTreeSet<(String, String)> = ["hel-air-pm", "bikes"]
+        .into_iter()
+        .map(|name| (catalogue.clone(), name.to_owned()))
+        .collect();
+    let gone = withdrawn(&previous, &kept, None);
+    let names: BTreeSet<(String, String)> = gone
+        .iter()
+        .map(|t| (t.id.name.clone(), t.dataset_name().to_owned()))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            ("air".to_owned(), "hel-air-no2".to_owned()),
+            ("closed-bikes".to_owned(), "closed-bikes".to_owned()),
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+    );
+    for target in &gone {
+        assert_eq!(target.instance_name, "hel-fi");
+    }
+}
+
+/// EP-174: a closed Endpoint without a block was never a dataset, so it is never withdrawn,
+/// and an App's own door (`app-{name}` beside App `{name}`) is not one either.
+#[test]
+fn a_closed_endpoint_and_an_apps_door_are_never_datasets_to_withdraw() {
+    let previous = Mirror::new();
+    previous.upsert(envelope("CkanInstance", "hel-fi", instance()));
+    previous.upsert(envelope(
+        "Endpoint",
+        "internal",
+        endpoint("internal", "organization", None),
+    ));
+    previous.upsert(envelope("App", "bikes", json!({})));
+    previous.upsert(envelope(
+        "Endpoint",
+        "app-bikes",
+        endpoint("app-bikes", "public", None),
+    ));
+    assert!(withdrawn(&previous, &BTreeSet::new(), None).is_empty());
+}
+
+/// EP-177: two entries of two Endpoints with one name on one catalogue are refused; the other
+/// dataset of the same Endpoint is still published.
+#[test]
+fn a_colliding_entry_is_refused_and_its_sibling_is_not() {
+    let entry = |name: &str| -> jc_core::kinds::catalog_datasets::CatalogDataset {
+        serde_json::from_value(json!({
+            "name": name,
+            "title": { "en": name },
+            "description": { "en": name },
+            "types": ["AirQualityObserved"],
+        }))
+        .expect("an entry")
+    };
+    let mut pm = target_in(PROJECT, "air", "https://data.example.fi");
+    pm.slice = Some(entry("hel-air-pm"));
+    let mut no2 = target_in(PROJECT, "air", "https://data.example.fi");
+    no2.slice = Some(entry("hel-air-no2"));
+    let other = target_in(PROJECT, "hel-air-pm", "https://data.example.fi");
+    let refused = claimed_twice(&[pm, no2, other]);
+    assert_eq!(refused.len(), 2, "{refused:?}");
+    let reason = &refused[&(
+        PROJECT.to_owned(),
+        "air".to_owned(),
+        "hel-air-pm".to_owned(),
+    )];
+    assert!(reason.contains("Endpoint helsinki/hel-air-pm"), "{reason}");
+    assert!(reason.contains("spec.catalog.datasets entry"), "{reason}");
+    assert!(!refused.contains_key(&(
+        PROJECT.to_owned(),
+        "air".to_owned(),
+        "hel-air-no2".to_owned()
+    )));
+}
+
+/// EP-174, EP-178: an Endpoint the planner cannot place this pass (a second CkanInstance made
+/// its catalogue ambiguous) is said to be unpublished and keeps the dataset it had: neither a
+/// withdrawal nor a sweep deletes it while its author fixes the block.
+#[tokio::test]
+async fn an_endpoint_the_pass_cannot_place_keeps_its_dataset() {
+    let previous = Mirror::new();
+    previous.upsert(envelope("CkanInstance", "hel-fi", instance()));
+    previous.upsert(envelope(
+        "Endpoint",
+        "bikes",
+        endpoint("bikes", "public", None),
+    ));
+
+    let repository = std::env::temp_dir().join(format!("jc-ckan-held-{}", std::process::id()));
+    std::fs::create_dir_all(&repository).expect("a scratch directory");
+    let mut second = instance();
+    second["url"] = json!("https://open.example.fi");
+    std::fs::write(
+        repository.join("helsinki.yaml"),
+        [
+            manifest_in(PROJECT, "CkanInstance", "hel-fi", instance()),
+            manifest_in(PROJECT, "CkanInstance", "open-fi", second),
+            manifest_in(
+                PROJECT,
+                "Endpoint",
+                "bikes",
+                endpoint("bikes", "public", None),
+            ),
+        ]
+        .join("---\n"),
+    )
+    .expect("the project");
+    let repo = jcctl::loader::Repository::load(&repository).expect("the repository loads");
+    let reports = CkanSync::new(HOST)
+        .converge(&repo, &previous, &repository)
+        .await;
+    std::fs::remove_dir_all(&repository).expect("cleaned up");
+
+    assert!(
+        reports.iter().any(|r| r.endpoint == "bikes"
+            && matches!(&r.publication, Publication::Failed(reason) if reason.contains("open-fi"))),
+        "{reports:?}"
+    );
+    // Without the guard the pass withdraws `bikes` from hel-fi: a report of that dataset.
+    assert!(!reports.iter().any(|r| r.dataset == "bikes"), "{reports:?}");
 }

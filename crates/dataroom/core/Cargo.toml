@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "EUPL-1.2"
 description = "Core domain types, Store and Authorizer traits, OData entity definitions and operation registry for dataroom"
+publish = false
 
 [dependencies]
 base64 = { version = "0.22.1" }

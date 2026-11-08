@@ -1,0 +1,32 @@
+# cargo deny policy of the root workspace (everything bins/jc links). The nested workspaces
+# (crates/antares, crates/ekiben, crates/portal) keep their own deny.toml beside their lockfile.
+# No advisory is ignored here: a vulnerable or unmaintained crate turns the supply-chain job red
+# until it is upgraded or replaced (bins/jc/STATUS.md lists the open ones).
+[graph]
+all-features = false
+
+[advisories]
+yanked = "deny"
+
+[licenses]
+# The union of the nested workspaces' allow-lists; each entry carries its reason there
+# (crates/portal/deny.toml, crates/antares/deny.toml).
+allow = [
+  "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "ISC",
+  "Unicode-3.0", "Zlib", "MPL-2.0", "EUPL-1.2", "CC0-1.0", "MIT-0", "0BSD", "OpenSSL",
+  "CDLA-Permissive-2.0",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# The monorepo's own crates depend on each other by path without a version; nothing here is
+# published, so a path dependency is the only kind a wildcard is allowed for.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# daiya-model's OData crates come from the broker's repository at a pinned rev
+# (crates/daiya/model/Cargo.toml).
+allow-git = ["https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker"]

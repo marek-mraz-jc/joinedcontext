@@ -329,3 +329,80 @@ async fn a_profile_the_organization_serves_is_rendered_and_any_other_is_not_foun
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// EP-175, EP-176: an Endpoint listing two datasets is in the feed as those two records, each
+/// answered at its own address; a name the Endpoint does not list is 404, and a closed
+/// Endpoint's datasets stay out of the feed and away from the anonymous caller.
+#[tokio::test]
+async fn an_endpoint_listing_datasets_is_one_record_per_dataset() {
+    let realm = common::Realm::new();
+    let block: jc_core::kinds::Catalog = serde_norway::from_str(
+        "datasets:\n\
+         - { name: bb-ovzdusie-pm, title: { sk: Prachové častice }, description: { sk: PM10 a PM2.5 }, types: [AirQualityObserved] }\n\
+         - { name: bb-ovzdusie-zle, title: { sk: Zlé ovzdušie }, description: { sk: Nad limitom }, types: [AirQualityObserved], q: 'pm10>50' }\n",
+    )
+    .expect("the catalogue block parses");
+    block.validate().expect("the catalogue block validates");
+    let mut open = endpoint(OPEN, "ovzdusie", Audience::Public);
+    open.catalog = Some(Arc::new(block.clone()));
+    let mut closed = endpoint(CLOSED, "interne", Audience::Organization);
+    closed.catalog = Some(Arc::new(block));
+    let served = || {
+        vec![
+            open.clone(),
+            endpoint(ALSO_OPEN, "doprava", Audience::Public),
+            closed.clone(),
+        ]
+    };
+
+    let (status, _, _, body) = get(app_of(&realm, served()), "/catalog.jsonld", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let feed: Value = serde_json::from_str(&body).expect("JSON-LD");
+    let mut datasets: Vec<&str> = feed["dcat:dataset"]
+        .as_array()
+        .expect("datasets")
+        .iter()
+        .filter_map(|d| d["@id"].as_str())
+        .collect();
+    datasets.sort_unstable();
+    assert_eq!(
+        datasets,
+        vec![
+            format!("{HOST}/api/endpoint/{OPEN}/datasets/bb-ovzdusie-pm"),
+            format!("{HOST}/api/endpoint/{OPEN}/datasets/bb-ovzdusie-zle"),
+            format!("{HOST}/api/endpoint/{ALSO_OPEN}"),
+        ]
+    );
+    assert!(!body.contains(CLOSED), "the feed names the closed Endpoint");
+
+    let (status, media, _, record) = get(
+        app_of(&realm, served()),
+        &format!("/api/endpoint/{OPEN}/datasets/bb-ovzdusie-zle"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{record}");
+    assert_eq!(media, "application/ld+json");
+    let record: Value = serde_json::from_str(&record).expect("JSON-LD");
+    assert_eq!(record["dct:identifier"], "bb-ovzdusie-zle");
+    assert!(record.to_string().contains("q=pm10%3E50"), "{record}");
+
+    for missing in [
+        format!("/api/endpoint/{OPEN}/datasets/bb-ovzdusie-ine"),
+        format!("/api/endpoint/{ALSO_OPEN}/datasets/bb-ovzdusie-pm"),
+    ] {
+        let (status, _, _, body) = get(app_of(&realm, served()), &missing, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{missing}: {body}");
+    }
+    let (status, _, _, body) = get(
+        app_of(&realm, served()),
+        &format!("/api/endpoint/{CLOSED}/datasets/bb-ovzdusie-pm"),
+        None,
+    )
+    .await;
+    assert!(
+        matches!(status, StatusCode::UNAUTHORIZED | StatusCode::NOT_FOUND),
+        "{status}: {body}"
+    );
+    assert!(!body.contains("Prachové"), "{body}");
+}

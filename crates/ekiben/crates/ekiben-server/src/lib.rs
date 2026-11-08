@@ -8,6 +8,7 @@ pub mod config_dir;
 pub mod cron;
 pub mod manager;
 pub mod metrics_config;
+pub mod oidc;
 pub mod org_vars;
 pub mod runner;
 pub mod scheduler;
@@ -16,8 +17,9 @@ pub mod unit_test;
 
 pub use api::{build_router, Caller, ServerAuthConfig, ServerState};
 pub use cron::CronSchedule;
-pub use manager::{StreamEntryStatus, StreamManager};
+pub use manager::{StreamEntryStatus, StreamManager, StreamPersistence};
 pub use metrics_config::load_metrics_config;
+pub use oidc::OidcAuth;
 pub use org_vars::OrgVarsDir;
 pub use runner::{run_stream_once, RunningStreamHandle};
 pub use scheduler::{ScheduledStreamEntry, Scheduler};

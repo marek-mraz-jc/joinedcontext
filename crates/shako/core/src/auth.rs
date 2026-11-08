@@ -612,7 +612,7 @@ impl ShakoSigningKey {
     /// Returns the public JWK JSON value for JWKS verification.
     #[must_use]
     pub fn public_jwk(&self) -> Value {
-        let point = self.verifying_key.to_encoded_point(false);
+        let point = self.verifying_key.to_sec1_point(false);
         let x = URL_SAFE_NO_PAD.encode(point.x().map_or(&[][..], |b| b.as_slice()));
         let y = URL_SAFE_NO_PAD.encode(point.y().map_or(&[][..], |b| b.as_slice()));
         json!({
@@ -1007,6 +1007,18 @@ mod tests {
             .expect("refetched kid");
         assert_eq!(verified2.username, "alice");
         assert_eq!(fetch_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// A key already on disk keeps its kid and public JWK across p256 releases. The expected
+    /// values come from openssl for the secret scalar 0x1111...11, not from this code.
+    #[test]
+    fn a_stored_key_keeps_its_kid_and_jwk() {
+        let key = ShakoSigningKey::from_secret_bytes(&[0x11; 32]).expect("key");
+        let kid = &key.kid;
+        assert_eq!(kid, "shako-es256-76805a63a6980c18");
+        let jwk = key.public_jwk();
+        assert_eq!(jwk["x"], "AhfmF_C2RDkoJ4-WmZ5pojpPLBUr321s32bluAKC1O0");
+        assert_eq!(jwk["y"], "GUp968uXcS0t2jyoWqh2Wlb0X8dYWZZS8ol8ZTBuV5Q");
     }
 
     #[test]

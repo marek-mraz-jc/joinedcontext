@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "EUPL-1.2"
 description = "The dataroom binary and CLI commands (serve, migrate, harvest, feed-check, import-ckan)"
+publish = false
 
 [[bin]]
 name = "dataroom"

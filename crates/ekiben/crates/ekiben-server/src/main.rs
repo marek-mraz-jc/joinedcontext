@@ -86,7 +86,7 @@ enum Commands {
         /// A file with the `metrics:` section (Bento's prometheus exporter fields and mapping)
         #[arg(long)]
         metrics: Option<PathBuf>,
-        /// Resource config files, as Bento's `-r`: their `metrics:` section is read
+        /// Resource config files, as Bento's `-r`: their `metrics:` section and their resources (caches, rate limits, processors, inputs, outputs) for every stream
         #[arg(short = 'r', long = "resources")]
         resources: Vec<PathBuf>,
         /// Optional static stream config files to load at startup
@@ -268,6 +268,16 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
                 tokio::spawn(vars.watch(resources.clone()));
             }
 
+            // Bento's `-r`: each file's caches, rate limits and processors are shared by every
+            // stream of the default organization (the one an admin token posts into).
+            for path in &resource_files {
+                let raw = std::fs::read_to_string(path)
+                    .map_err(|e| format!("failed to read '{}': {e}", path.display()))?;
+                manager
+                    .register_resources(&OrgId::default(), &raw)
+                    .map_err(|e| format!("{}: {e}", path.display()))?;
+            }
+
             if let Some(addr) = ingest_addr {
                 let listener = TcpListener::bind(&addr)
                     .await
@@ -321,6 +331,7 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
                 org_token_file,
                 // A standalone server keeps /ready open for its orchestrator's probe.
                 guard_probes: false,
+                oidc: None,
             };
             let state = ServerState::new(manager, auth);
             let app = build_router(state);

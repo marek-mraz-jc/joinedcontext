@@ -81,7 +81,8 @@ Gates: ekiben workspace `cargo test -p ekiben-server -p ekiben-core -p ekiben-bl
   environment, `/q` admin token file mandatory (`JCBIN_ANTARES_ADMIN_TOKEN_FILE`; the standalone broker serves `/q`
   without a credential when it is unset), no listener of its own (`ANTARES_HTTP_PORT`/`ANTARES_METRICS_PORT` ignored,
   so no clash with the Portal's 9090), mounted with `Router::fallback_service(served.app)` (axum 0.8 refuses
-  `nest_service("/")`; the jc-router already strips the slug). Default features only (`mqtt`), not `full`.
+  `nest_service("/")`; the jc-router already strips the slug). Since stage 8 built as dev builds it (`full`,
+  `jc-policy`, `linkml`, `ical`, `feed`; not `parquet`, `tabular`).
 - One Antares per process: its statics (memory budget, WebSocket hub, caches, 153 statics per the feasibility
   report) are process-wide. The jc tests serialize every start with one lock for this reason.
 - Differences when hosted, not verified against the ETSI suite: responses go through axum's server (lower-case
@@ -192,7 +193,8 @@ turns it all off.
 | pipeline runner | ekiben | `JC_PIPELINE_RUNNER_URL` | wired, refused: no runner credential (gap d) |
 | CKAN | dataroom | `JC_CKAN_URL`, `JC_CKAN_API_URL`, only when the public URL is https (EP-67) | wired for https installs; the http e2e leaves it unset (gap e) |
 | Grafana | daiya | `JC_GRAFANA_URL`, `_PUBLIC_URL`, `_USER=portal`, `_PASSWORD` | works as server admin; nothing creates the org per project (gap f) |
-| broker | antares | `JC_BROKER_URL`, `JC_BROKER_ADMIN_TOKEN_FILE` | wired; the gateway between Portal and broker is no jc module (gap d) |
+| broker | antares | `JC_PORTAL_BROKER_URL`, `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` | works: views, rule documents and space views written and loaded (stage 8) |
+| gateway | gateway | `JC_PORTAL_GATEWAY_URL`, `JC_PORTAL_GATEWAY_CLIENT_ID=context-gateway` | works: the internal listener admits the gateway's revocation poll (stage 8) |
 
 The Portal's forge client reads its `JC_GITEA_*` through `Config::forge_var` (environment first, then the values jc
 filled), so the process environment is never written.
@@ -249,8 +251,7 @@ set (run both ways). `JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false` is a test-on
 
 - d, ekiben: `GET/PUT/POST/DELETE /streams/streams[/{id}]` without Authorization -> 401. The Portal has no runner
   credential setting (owner: jc-ekiben-portal).
-- d, Antares: jc builds Antares without the `views` and `jc-policy` features, so `/broker/q/views` is not served.
-  The Portal's Endpoint writes go through context-gateway, which is not a jc module.
+- d, Antares: closed in stage 8 (views and `jc-policy` built, context-gateway a jc module).
 - e, Portal: the CKAN URL must be https (EP-67); a CkanInstance token comes only from a `CKAN_*` env var named by
   `apiTokenRef` (no file). dataroom answers `help`/`uri` links with https on an http install.
 - f, jc: nothing runs provision.sh's per-project steps (`POST /dashboards/api/orgs`, `POST /api/folders`), so the
@@ -280,8 +281,182 @@ uses `dataroom_api::portal_publisher` and `DaiyaState::with_server_admin` from t
 ### Not verified
 
 - Host mode with the Portal on its own host.
-- Postgres for modules other than kaisatsu.
+- Postgres for modules other than kaisatsu: done in Stage 8.
 - Disk: the sandbox had ~14 GB free; builds ran with debuginfo off.
+
+## Stage 8: context-gateway inside jc (jc-gateway)
+
+Branch `jc-gateway` from `jc-portal-1`. Endpoints answer inside `jc` as on dev: `/api/endpoint/{slug}/...`,
+`/api/endpoints`, `/api/mcp[/...]`, `/cs/...`, `/catalog*`, `/oauth/*` and the gateway's two `oauth-*` discovery
+documents. The Portal keeps `/`, `/api/v1/*` and `/.well-known/oauth-protected-resource[/api/v1/mcp]`.
+
+- Library: `context-gateway` gained `serve::{broker_of, build}` (main's wiring, errors returned instead of
+  `exit(1)`), `Config::from_vars(lookup)` (`from_env` is `from_vars(std::env::var)`), `Broker::with_hop_header` /
+  `stamp` (HTTP and WebSocket), and a metrics recorder that yields to an installed one. The standalone binary's
+  behaviour is unchanged.
+- Module `src/modules/gateway.rs` (feature `gateway`, default on). In slug mode the gateway is mounted at each path of
+  `Module::root_paths` (jc-router matches whole segments, so `/catalog` is not `/catalogue`) and `whole_path` puts the
+  stripped prefix back; in host mode it owns `api.{base_host}`. Settings: environment first (`JC_GATEWAY_*`, the
+  shared `JC_OIDC_*` read as `JC_GATEWAY_OIDC_*`), then `vars()` from the siblings, a group filled only when its first
+  key is unset and its secret is held; `portal_siblings = false` leaves the realm and the forge unfilled.
+
+| gateway setting | from |
+|---|---|
+| `JC_GATEWAY_BROKER_URL` + hop header | Antares' loopback hop (below) |
+| `JC_OIDC_ISSUER` (public), `JC_OIDC_JWKS_URL` (listener), `JC_OIDC_CLIENT_ID=context-gateway`, secret | kaisatsu; realm file `30-jc-gateway.json`: client_credentials only, `fullScopeAllowed` false, audience `portal-internal` |
+| `JC_GATEWAY_REVOCATIONS_URL`, `_CONNECTORS_URL`, `_USAGE_URL` | the Portal's internal listener at the address it took (a free loopback port unless `JC_INTERNAL_BIND` names one): jc builds the Portal first and hands the address on; the realm group needs it too |
+| `JC_GATEWAY_REPO_DIR`, `_PROJECTS_DIR`, `_ASSEMBLY_DIR` | shako `jc/config`, checked out under `{state}/gateway` with jc-manifest `GitCheckouts` every 10 s (`repo/current` swapped by one rename; layout 2 projects through `jcctl checkouts`) |
+| `JC_GATEWAY_ORG_DOMAIN`, `_PUBLIC_URL`, `_PREVIEWS_DIR` | the mounts and the state dir |
+
+- The gateway's own token comes from the issuer's public token endpoint, as the Portal's sign-in does: kaisatsu
+  names the issuer by the Host a request reached it on, and the Portal's internal listener checks it (a token from
+  the listener address was refused 401).
+- Antares: `BrokerConfig::defaults` holds keys the host supplies when the environment leaves them unset (unknown or
+  non-`ANTARES_` keys refused): `ANTARES_API_SURFACES` (dev's list without parquet/tabular), `ANTARES_POLICY=
+  joinedcontext`, `ANTARES_POLICY_SUBJECT_HEADERS` (a `OnceLock` default behind the env `LazyLock`, no `set_var`),
+  `ANTARES_PROVENANCE_FROM` and `ANTARES_POLICY_SUBJECT_FROM` = `context-gateway.jc`.
+- Trust: on dev Linkerd sets `l5d-client-id`. Here the public `/broker` mount drops every `l5d-*` header and the hop
+  header; the gateway reaches the broker through a second listener on `127.0.0.1:0` (`modules::Hop`) that answers 403
+  without the per-installation secret `gateway-hop-token` (constant-time compare) and then sets `l5d-client-id` itself.
+  The secret is a 0600 file, `Sensitive` in the gateway's headers, redacted in `Hop`'s Debug.
+- Under the `joinedcontext` engine the broker answers data routes only to a believed subject: the admin token reads
+  no Entity (`GET /broker/ngsi-ld/v1/entities/{id}` with it: 403 "a request without a subject reaches the Context
+  Source operations only"), anonymous `/broker/ngsi-ld/v1/info/sourceIdentity` is 401, as on dev; `/q/health` stays
+  open (the one_binary probe moved there).
+
+### End-to-end (`tests/gateway_endpoints.rs`, child binary, `--role all`)
+
+A realm file in kaisatsu's import directory adds a person in `e2e-readers` and `e2e-writers`, a client whose tokens
+name the closed Endpoint and one naming another slug (password grant, secrets through `$(env:...)`). The test writes
+project `e2e` (layout 1: project, space `things`, a `public` and a `project-list` Endpoint, Policies `public-read`
+(role public), `readers`, `writers`) to shako's `jc/config` through the contents API, then:
+
+| step | result |
+|---|---|
+| public Endpoint `GET .../ngsi-ld/v1/types` and `entities?type=Thing` anonymous | 200 |
+| closed Endpoint anonymous | 401 |
+| closed Endpoint with the person's token | 200, the Entity |
+| `POST .../entities` of a granted type by a writer | 201, tenant `things` in `/broker/q/tenants` |
+| `POST` of a type the Policy does not grant | 403 |
+| the person's token for another Endpoint | 401 |
+| `/broker/ngsi-ld/v1/entities` with `l5d-client-id: context-gateway.jc`, `x-jc-client`, `x-jc-subject`, `x-jc-groups` | no Entity |
+| `POST /api/mcp` `tools/list`, `tools/call query_entities` anonymous | 200, the Entity |
+| the gateway's revocation poll | admitted (no 401 in 25 s) |
+| the person disabled in the Portal, the same token on the closed Endpoint | 401 within one poll (4.9 s) |
+
+### Guards and their red proofs (stage 8)
+
+| guard | test | red (reverted once) |
+|---|---|---|
+| public mount drops `l5d-*` and the hop header | `modules::antares::tests` (2) | both failed |
+| hop answers 403 without its secret | `only_the_hop_with_its_secret_names_the_gateway_to_the_broker` | failed at antares.rs:269 |
+| public mount layer in place | `gateway_endpoints` | "the broker believed a claimed identity: 200 OK [Thing:one]" |
+| anonymous only on a public Endpoint | `gateway_endpoints` | closed Endpoint answered 200 anonymous |
+| a token for another Endpoint | `gateway_endpoints` | answered 200 |
+| hop header replaces a client's | `proxy::tests::the_hop_header_replaces_a_clients_and_never_prints` | failed at proxy.rs:464 |
+| outbound guard refuses jc's listener | `tests/outbound_guard.rs` | unchanged, green |
+
+### Gates (stage 8)
+
+- `jc` (after merging jc-portal-1 `c0a410a7`): fmt, clippy `--all-targets -D warnings --locked`, tests: lib 48, binary 4, one_binary 12, outbound_guard 1,
+  gateway_endpoints 1, portal_siblings 1 (kaisatsu on Postgres 17 and on memory): green.
+- context-gateway: the vendored copy cannot build its own tests (no `tools/model-tools`, dev-dependencies outside
+  the root lock), so its gates ran in a clone of joinedcontext-platform at `e59ceb9f` with the same patch (files
+  compared byte for byte): fmt, clippy `--all-targets -D warnings --locked`, `cargo test --locked`: 1839 passed,
+  0 failed, 4 ignored.
+- Antares workspace (`antares-broker`, `antares-api`): fmt, clippy `--all-targets --all-features -D warnings`
+  (the preflight lints), `cargo doc --document-private-items -D warnings`, tests: 1555 passed in 53 binaries, 0
+  failed (Postgres tests skip without `ANTARES_TEST_DATABASE_URL`; no store code changed).
+
+### Gaps left (stage 8)
+
+- Portal UI reads of a closed Endpoint: the UI calls `GET /api/endpoint/{slug}/ngsi-ld/v1/...` with its session
+  cookie only; the gateway reads `Authorization` alone (`auth/subject.rs` `admit_on`), so in jc that call is
+  anonymous: 401 on a closed Endpoint. On dev APISIX's openid-connect plugin turns the session into a bearer.
+- No Portal-made token names an Endpoint: the Portal logs `hub scopes wait for the realm scope=endpoint:{slug}
+  ... when the realm's admin-permissions CronJob links it to the hub`; no jc step links them, and kaisatsu has no
+  per-Endpoint audience mapper. A person's Portal token on a closed Endpoint is 401; the e2e uses an imported client
+  with an audience mapper.
+- The gateway's own token comes from the public issuer URL: a jc whose public origin the process cannot reach
+  (no hairpin through the TLS proxy) gets no token, and the Portal's internal listener refuses its polls (401).
+- `JC_INTERNAL_BIND` unset (jc-portal-1 `c0a410a7`: the Portal binds a free loopback port and `portal::build`
+  drops the address `server::spawn_internal_listener` returns): the gateway gets no realm, because a gateway with
+  a realm must poll the revocations (`JC_GATEWAY_REVOCATIONS_URL`), so every token on an Endpoint is 401 and a
+  warning names the setting; public Endpoints answer. Fix for the owner of `modules/portal.rs`: hand that address
+  to `jc` (built before the gateway), or keep a fixed default.
+- Not filled from siblings: `JC_GATEWAY_PREVIEWS_URL` (workspace previews), `_ACTIVITY_URL`, `_ASSISTANT_URL`,
+  `_DOMAIN_VERIFICATIONS_URL`, `_INTERNAL_BIND` (no `/internal/mqtt/auth`; jc runs no MQTT broker).
+- OGC `f=parquet|csv|zip`: features `parquet` and `tabular` are not built.
+- Layout 2 organizations: `jcctl checkouts` runs after the org checkout but is unexercised (shako's project
+  repository creation, jc-portal-integrate report).
+- Host mode e2e: only the one_binary probe (`api.city.test/api/endpoints`).
+## Stage 8: every module on Postgres (jc-pg)
+
+Each module takes an optional `[<module>.database]` section (`src/pg.rs`). Without it the module keeps its memory
+store (the default); with it the module never falls back to memory: a failed connection, a failed migration or a
+failed boot RLS check stops `jc` with exit 1.
+
+```toml
+[shako.database]                 # also kaisatsu, daiya, dataroom, ekiben, antares
+url = "postgres://shako_app@db:5432/jc"            # request role; a password in the URL is refused
+password_file = "/run/secrets/shako-app-password"
+max_connections = 5              # optional, default 5
+migrate_url = "postgres://shako_migrate@db:5432/jc"  # optional: migrate at start as this owning role
+migrate_password_file = "/run/secrets/shako-migrate-password"
+```
+
+- Migrations run as `migrate_url`'s role under the module's advisory lock (sqlx `Migrator` for shako, ekiben,
+  kaisatsu; daiya's and dataroom's own `pg_advisory_lock`), then grant the request role. Without `migrate_url` the schema must be
+  migrated already; the boot check refuses a missing table. Antares migrates itself as its request role (its
+  design) and refuses a `migrate_url`.
+- Boot checks run inside jc as standalone: the request role must be neither SUPERUSER nor BYPASSRLS, own no table
+  of the module's schema, and every table there has forced RLS and a policy. Antares runs with `require_rls`
+  forced whenever it has a database.
+- shako keeps every record (repos, PRs, issues, counters...) through an op log `shako.store_log` (forced RLS)
+  replayed into its mirror at start; its repositories live under `<state_dir>/shako`, no longer a temp dir.
+- ekiben saves continuous stream definitions as posted (before `${VAR}` interpolation, so no filled secret is
+  stored) in schema `ekiben` through `ekiben_server::StreamPersistence`, and starts them again at boot. A refused
+  save refuses the create; a refused delete keeps the stream.
+- Antares on `[antares.database]` switches `ANTARES_STORE=memory` to postgres and refuses `ANTARES_BUS=local`
+  unless `ANTARES_ALLOW_SHARED_LOCAL=1` (one jc process).
+- kaisatsu keeps its legacy flat keys (`database_url_file`); a section together with them is refused.
+
+### Postgres connection budget (pool max per module)
+
+| Module | Connections jc opens | Notes |
+|---|---|---|
+| kaisatsu | `max_connections` (default 5, clamped 1..=50) + 1 | the +1 is the LISTEN connection of its change listener |
+| shako | `max_connections` (default 5, clamped 1..=20) | outbox listener not spawned in jc |
+| daiya | `max_connections` (default 5) | |
+| dataroom | `max_connections` (default 5) | |
+| ekiben | `max_connections` (default 5) | |
+| antares | `max_connections` if set, else `ANTARES_PG_POOL` (default 20) | `ANTARES_PG_WRITE_RESERVE` is carved out of the pool, not added |
+| at start | +1 per module with `migrate_url` | closed after the migration |
+
+With every default: 5+1 + 5 + 5 + 5 + 5 + 20 = 46 connections per jc process, plus up to 5 transient migration
+connections at start. The e2e measures it per role from `pg_stat_activity` at `max_connections = 3`.
+
+### Operator preparation (not done by jc)
+
+- One login role per module for requests (`NOSUPERUSER NOBYPASSRLS`) and, for migrations, an owning role with
+  `CREATE` on the database. daiya's and Antares' migrating roles create tables in `public`: on Postgres 15+ grant
+  them `CREATE ON SCHEMA public`.
+- Antares needs the extensions `postgis`, `btree_gin` and `unaccent`, created by a superuser.
+
+### End-to-end (`tests/restart_pg.rs`, `JC_PG_TEST_DATABASE_URL` = a superuser URL; prints SKIP without it)
+
+On postgis/postgis:17-3.5: `jc --role all` writes a shako repo + commit, a daiya dashboard, a dataroom dataset, an
+ekiben stream, a kaisatsu user and an Antares entity through the public mounts, stops, starts again and reads all
+six back. Red proof: each module switched to memory in turn fails the read-back. Also: a wrong password stops jc
+(exit 1), and a SUPERUSER request role is refused by every module (red proofs: Antares without `require_rls`,
+ekiben without its boot check).
+
+### Gaps
+
+- shako webhook secrets stay in a memory secret store and are lost on restart (re-enter them); the signing key is
+  generated per start unless configured.
+- ekiben run-once streams, org quotas and resources are not persisted.
+- shako's op log grows without compaction; replay sets `updated_at` to the replay time.
 
 ## Secrets (jc-secrets, owner design of 2026-11-08)
 
@@ -313,6 +488,13 @@ The start report logs one line per secret with its name and source (`env`, `file
 A realm file of `--kaisatsu-import-dir` no longer reads `jc`'s environment through `$(env:NAME)` (it read the whole
 process environment before): its secrets are `$(file:...)` under `--kaisatsu-import-secrets-dir`. The standalone
 kaisatsu CLI keeps reading the environment (`ApplyOptions::with_process_env`).
+
+Database passwords (jc-pg's `[<module>.database] password_file` and `migrate_password_file`) are
+read through the same reader (`jc_secret::read_file`) at connect, held as `jc_secret::Secret`, and
+listed in the start report as `<module>-db-password` / `<module>-db-migrate-password`, source `file`.
+Antares gets its URL with the password as a `Secret` (`DatabaseSection::app_url_with_password`).
+The Portal's age identity is the operator's `--portal-age-key-file` (checked at start) when given,
+else the one setup generates (`portal-age-key`, an age identity in a 0600 file).
 
 ### Enforced by clippy
 
@@ -381,7 +563,6 @@ image, `--role`), with `[door]` and `[remote]` between them.
   them onto `jc`'s reader needs each module's config to take values, starting with `crates/portal/src/config.rs`.
 - `Command::new` remains in jcctl CLI commands (`changelog.rs:103`, `migrate.rs:63`, `git_bundle.rs:56`,
   `apply.rs:188`) and Antares' `build.rs`; the Portal reaches none of them.
-- Database passwords: jc-pg's `password_file` is not merged yet; its value goes into `jc_secret::Secret` once it is.
 - The Antares admin token remains a file beside the Portal (above).
 - The CKAN `apiTokenRef.envVar` path still reads `CKAN_*` from the process environment inside jcctl (one deployment
   value for all projects, as on dev).
@@ -392,19 +573,40 @@ image, `--role`), with `[door]` and `[remote]` between them.
 `cargo build --release -p jc` (default release profile, no LTO, all default features incl. the Portal's embedded UI):
 196,455,176 bytes, 151,883,704 bytes stripped. Built in 9 min.
 
-## Dependency checks (once, root lockfile = everything `jc` links)
+## Dependency checks (root lockfile = everything `jc` links; 2026-11-08, jc-ship)
 
-- `cargo audit`: 4 vulnerabilities, none introduced by `jc` code, none ignored:
-  - `quick-xml 0.37.5`: RUSTSEC-2026-0194 and -0195. It comes through `oxrdfxml 0.1.7` from `dataroom-rdf`, which was
-    already in the base. The fix needs quick-xml 0.41, i.e. a newer oxrdfxml.
-  - `crypto-bigint 0.5.5` (RUSTSEC-2026-0387, through `age` -> `jcctl`/Portal): the fix is 0.7.6, a different
-    major version used by elliptic-curve 0.13.
-  - `rsa 0.9.10` (RUSTSEC-2023-0071, through `openidconnect` -> Portal): no fixed version exists.
-  - Warnings for unmaintained crates: `atomic-polyfill`, `basic-toml`, `paste`.
-- `cargo deny check`: the root has no `deny.toml`; with `crates/portal/deny.toml` the result is licenses ok,
-  advisories FAILED (the vulnerabilities above plus `paste`), bans FAILED (wildcard path dependencies in every
-  monorepo crate, e.g. `daiya-api`, `jc`), sources FAILED (`odata-*` from an Antares git rev in
-  `crates/daiya/model/Cargo.toml:11`, already in the base). No root policy was added to make it pass.
+Root `deny.toml` and `cargo audit` carry no ignore. Fixed on branch `jc-ship`:
+
+- Wildcard path dependencies: every root workspace crate has `publish = false`.
+- `quick-xml 0.37.5` (RUSTSEC-2026-0194, -0195, CVSS 7.5): `vendor/oxrdfxml` is oxrdfxml 0.1.7 ported to
+  quick-xml 0.42 (`vendor/SOURCES.md`).
+- `basic-toml` through askama: askama without its `config` feature.
+- `paste` (RUSTSEC-2024-0436): `vendor/tikv-jemalloc-ctl`, upstream commit 66b124bdf4 without paste.
+- `crypto-bigint 0.5.5` through shako-core: p256 0.14 (crypto-bigint 0.7.10).
+
+Still red, with no fixed release to take:
+
+- RUSTSEC-2026-0387 `crypto-bigint 0.5.5` <- `elliptic-curve 0.13.8` <- `p256 0.13.2` (and `hpke 0.12.0`,
+  `ecdsa`, `primeorder`) <- `age-core 0.12.0` / `age 0.12.1` <- `jcctl` (vendor/joinedcontext-platform) and
+  `joinedcontext-portal` <- `jc`. age 0.12.1 (2026-07-14) is the newest release and requires hpke 0.12 with p256;
+  rage main is on p256 0.14 / hpke 0.14, unreleased; age 0.11.5 fails deny on proc-macro-error2. jcctl
+  (`src/secrets/sops.rs`) and the Portal (`src/secret_files.rs`) use only `age::x25519::Identity`,
+  `age::armor::ArmoredReader` and `age::Decryptor`; an x25519 identity unwraps only X25519 stanzas, so no p256
+  code runs when they decrypt. Take the next age release.
+- RUSTSEC-2026-0374 `basic-toml 0.1.10` (unmaintained) <- `i18n-config 0.4.8` <- `i18n-embed-fl 0.10.1`
+  (proc-macro, unconditional dependency of age) <- `age 0.12.1` <- the same chain. Build time only.
+- RUSTSEC-2023-0071 `rsa 0.9.10` (Marvin, no fixed release) <- `openidconnect 4.1.0` <- `joinedcontext-portal`
+  <- `jc`. The timing leak is in RSA private-key operations. openidconnect calls rsa for signature
+  verification with the issuer's public key (`core/crypto.rs` `verify_rsa_signature`, `BigUint` n and e) and,
+  in `CoreRsaPrivateSigningKey` (`core/jwk/mod.rs:541`), for signing with a private key. It has no RSA
+  decryption: an encrypted ID token is refused as `Unsupported` (`verification/mod.rs:303`). The Portal never
+  constructs `CoreRsaPrivateSigningKey`; the only `RsaPrivateKey` in our sources is the test key of
+  `crates/portal/src/auth/bearer.rs:1106` inside `#[cfg(test)]`. The vulnerable path is unreachable; the
+  advisory stays red until openidconnect moves to rsa 0.10 or drops it. kaisatsu keeps openidconnect out for
+  this reason (`crates/kaisatsu/server/Cargo.toml:51`).
+- `cargo audit` also warns on `atomic-polyfill` (unmaintained, RUSTSEC-2023-0089) from a `heapless 0.7.17` lock
+  entry that no target of the graph builds (`cargo tree -i heapless@0.7.17 --target all` prints nothing); a
+  warning, not a failure.
 
 ## Security review of the diff
 
@@ -439,8 +641,7 @@ Read once over `daiya-argon-1..HEAD`, excluding the squashed imports and `vendor
 
 ## Not verified
 
-- Postgres paths of every module: no Postgres here (dind is broken). `jc` wires memory stores only; the Portal
-  connects to whatever `JC_*` names, untested.
+- The Portal's own Postgres (`JC_*`): untested inside jc. The other modules run on Postgres since Stage 8.
 - A realm between modules (the Portal or Antares verifying kaisatsu tokens), and the Portal UI under `/portal/`.
 - Antares under the ETSI suite while hosted (axum writer, no own connection cap or drain); `nest_service` is replaced
   by `fallback_service` (axum 0.8 refuses `nest_service("/")`).
@@ -463,7 +664,7 @@ Read once over `daiya-argon-1..HEAD`, excluding the squashed imports and `vendor
   (`crates/ekiben/crates/ekiben-server/src/main.rs:204`).
 - `zip` requirement relaxed to `^9.2` for the cooldown (`crates/ekiben/Cargo.toml:64`); back to `^9.3` from
   2026-11-09.
-- The vulnerable dependencies and `cargo deny` findings above.
+- The three advisories still open in the dependency checks above.
 - gitleaks over the branch reports 73 findings, all in upstream test fixtures and docs of the imported trees and
   `vendor/` (JWT/PEM test vectors, sample keys), none in `bins/jc`. These repositories have their own allow-lists
   upstream.

@@ -11,6 +11,7 @@ pub mod config;
 pub mod door;
 pub mod module;
 mod modules;
+pub mod pg;
 mod provision;
 pub mod runtime;
 pub mod setup;

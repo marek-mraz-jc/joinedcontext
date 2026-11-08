@@ -46,12 +46,15 @@ pub(crate) fn config(
     Ok(config)
 }
 
+/// Builds the Portal and starts its internal listener; answers the router and the address the
+/// listener took (a free loopback port unless `JC_INTERNAL_BIND` says otherwise), which the
+/// gateway reads revocations, connectors and usage from.
 pub async fn build(
     ctx: BuildCtx<'_>,
     wire_siblings: bool,
     mount: Mount,
     shutdown: &CancellationToken,
-) -> Result<Router, StartError> {
+) -> Result<(Router, Option<std::net::SocketAddr>), StartError> {
     let env = crate::config::portal_env;
     let siblings = if wire_siblings {
         crate::siblings::portal_vars(ctx.siblings, ctx.setup, env)
@@ -66,10 +69,10 @@ pub async fn build(
     let state = AppState::from_config(config).await.map_err(err)?;
     server::spawn_background(&state);
     let token = shutdown.clone();
-    server::spawn_internal_listener(&state, async move { token.cancelled().await })
+    let internal = server::spawn_internal_listener(&state, async move { token.cancelled().await })
         .await
         .map_err(|e| err(format!("internal listener: {e}")))?;
-    Ok(server::app(state))
+    Ok((server::app(state), internal))
 }
 
 #[cfg(test)]

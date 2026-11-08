@@ -372,10 +372,25 @@ impl Registry {
         if !conf.label.is_empty() {
             sctx.label = conf.label.clone();
         }
-        let inner = {
+        let mut inner = {
             let _frame = push_frame(path, &conf.component_type);
             ctor(conf, &sctx)?
         };
+        if let Some(policy) = conf.config.get("batching") {
+            let policy = crate::config::BatchPolicyConfig::from_json_value(policy)?;
+            if !policy.is_noop() {
+                let pctx = sctx.to_proc_context(
+                    conf.component_type.clone(),
+                    conf.label.clone(),
+                    format!(
+                        "{}.batching.processors",
+                        path.strip_prefix("root.").unwrap_or(path)
+                    ),
+                );
+                let batcher = crate::pipeline::Batcher::new(&policy, pctx)?;
+                inner = Arc::new(crate::pipeline::BatchedOutput::new(inner, batcher));
+            }
+        }
         let ns = ctx.metrics.component(&conf.label, path);
         let inner: Arc<dyn Output> = Arc::new(crate::observed::ObservedOutput::new(inner, ns));
         if conf.processors.is_empty() {

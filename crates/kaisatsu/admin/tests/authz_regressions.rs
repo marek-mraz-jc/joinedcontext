@@ -710,6 +710,25 @@ async fn org_admin_post_creates_no_role_mappings() {
     let t = f
         .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
         .await;
+    // A realm-wide group in the body is refused (as Keycloak refuses a group the caller may not
+    // manage members of), and nobody is created.
+    let st = f
+        .send(
+            Method::POST,
+            "/admin/realms/dev/users",
+            &t,
+            Some(json!({ "username": "made-admin", "enabled": true,
+                         "groups": ["/platform-admins"] })),
+        )
+        .await;
+    assert!(st.is_client_error(), "{st}");
+    assert!(
+        f.store
+            .get_user_by_username_or_email("dev", None, "made-admin")
+            .await
+            .unwrap()
+            .is_none()
+    );
     let st = f
         .send(
             Method::POST,
@@ -717,7 +736,6 @@ async fn org_admin_post_creates_no_role_mappings() {
             &t,
             Some(
                 json!({ "id": "esp-person", "username": "made-admin", "enabled": true,
-                         "groups": ["/platform-admins"],
                          "realmRoles": ["realm-admin"],
                          "clientRoles": { "realm-management": ["realm-admin"] },
                          "serviceAccountClientId": "realm-management" }),

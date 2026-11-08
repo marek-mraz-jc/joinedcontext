@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "EUPL-1.2"
 description = "Full-text search (sk, cs, en, fi, ca), unaccent prefix matching, closed fq grammar and facet counting for dataroom"
+publish = false
 
 [dependencies]
 chrono = { version = "0.4.38", features = ["serde"] }

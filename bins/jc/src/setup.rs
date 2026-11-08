@@ -20,6 +20,8 @@ pub const PORTAL_REALM: &str = "jc";
 pub const PORTAL_CLIENT: &str = "portal-api";
 /// The Portal's people-administration client (service account only).
 pub const PORTAL_ADMIN_CLIENT: &str = "portal-reconciler";
+/// The Context Gateway's client (client_credentials), the Portal's `JC_PORTAL_GATEWAY_CLIENT_ID`.
+pub const GATEWAY_CLIENT: &str = "context-gateway";
 /// The first person, a member of the Portal's bootstrap group.
 pub const FIRST_ADMIN: &str = "admin";
 /// The Portal's default bootstrap group (`JC_PORTAL_BOOTSTRAP_ADMINS`).
@@ -48,10 +50,18 @@ pub enum Secret {
     AntaresAdminToken,
     DashboardsPassword,
     CatalogueToken,
+    /// The age identity of the Portal's SOPS backend (`AGE-SECRET-KEY-1...`): it decrypts the
+    /// repository's `projects/{p}/secrets/*.enc.yaml`, which is how a `secretRef` or a
+    /// CkanInstance `apiTokenRef` resolves.
+    PortalAgeKey,
+    /// The gateway's `context-gateway` client in kaisatsu.
+    GatewayClientSecret,
+    /// What the gateway's hop to Antares presents (`modules::antares::Hop`).
+    GatewayHopToken,
 }
 
 impl Secret {
-    pub const ALL: [Secret; 11] = [
+    pub const ALL: [Secret; 14] = [
         Secret::KaisatsuKek,
         Secret::PortalClientSecret,
         Secret::PortalAdminClientSecret,
@@ -63,6 +73,9 @@ impl Secret {
         Secret::AntaresAdminToken,
         Secret::DashboardsPassword,
         Secret::CatalogueToken,
+        Secret::PortalAgeKey,
+        Secret::GatewayClientSecret,
+        Secret::GatewayHopToken,
     ];
 
     /// The credential the Portal calls `module` with, for the modules a role split may place in
@@ -75,7 +88,7 @@ impl Secret {
             Module::Antares => Some(Secret::AntaresAdminToken),
             Module::Daiya => Some(Secret::DashboardsPassword),
             Module::Dataroom => Some(Secret::CatalogueToken),
-            Module::Kaisatsu | Module::Portal => None,
+            Module::Kaisatsu | Module::Portal | Module::Gateway => None,
         }
     }
 
@@ -94,13 +107,27 @@ impl Secret {
             Secret::AntaresAdminToken => "antares-admin-token",
             Secret::DashboardsPassword => "dashboards-password",
             Secret::CatalogueToken => "catalogue-token",
+            Secret::PortalAgeKey => "portal-age-key",
+            Secret::GatewayClientSecret => "gateway-client-secret",
+            Secret::GatewayHopToken => "gateway-hop-token",
         }
     }
 
-    fn random_bytes(self) -> usize {
+    /// A fresh value: an age identity for the SOPS key, else random bytes as hex (64 for the
+    /// cookie key, 32 for the rest).
+    fn fresh(self) -> Result<jc_secret::Secret, StartError> {
         match self {
-            Secret::PortalCookieKey => 64,
-            _ => 32,
+            Secret::PortalAgeKey => {
+                use age::secrecy::ExposeSecret as _;
+                Ok(jc_secret::Secret::new(
+                    age::x25519::Identity::generate()
+                        .to_string()
+                        .expose_secret()
+                        .to_owned(),
+                ))
+            }
+            Secret::PortalCookieKey => jc_secret::Secret::generate(64).map_err(err),
+            _ => jc_secret::Secret::generate(32).map_err(err),
         }
     }
 
@@ -120,6 +147,9 @@ impl Secret {
             Secret::AntaresAdminToken => &[Module::Antares],
             Secret::DashboardsPassword => &[Module::Daiya, Module::Portal],
             Secret::CatalogueToken => &[Module::Dataroom, Module::Portal],
+            Secret::PortalAgeKey => &[Module::Portal],
+            Secret::GatewayClientSecret => &[Module::Kaisatsu, Module::Gateway, Module::Portal],
+            Secret::GatewayHopToken => &[Module::Antares, Module::Gateway],
         }
     }
 
@@ -198,9 +228,9 @@ pub fn private_dir(dir: &Path) -> Result<(), StartError> {
 
 /// Reads the secret in `path`, or writes a fresh one there first (0600, created exclusively, so
 /// two starts never write two values).
-fn read_or_create(path: &Path, bytes: usize) -> Result<jc_secret::Secret, StartError> {
+fn read_or_create(path: &Path, secret: Secret) -> Result<jc_secret::Secret, StartError> {
     if !path.exists() {
-        let value = jc_secret::Secret::generate(bytes).map_err(err)?;
+        let value = secret.fresh()?;
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -284,13 +314,13 @@ impl Setup {
                     }
                 }
                 None if on_disk => Held {
-                    value: read_or_create(&path, secret.random_bytes())?,
+                    value: read_or_create(&path, secret)?,
                     path: Some(path),
                     source: jc_secret::Source::Generated,
                 },
                 None => Held {
                     path: None,
-                    value: jc_secret::Secret::generate(secret.random_bytes()).map_err(err)?,
+                    value: secret.fresh()?,
                     source: jc_secret::Source::Generated,
                 },
             };
@@ -337,6 +367,7 @@ pub fn realm_env(setup: &Setup) -> BTreeMap<String, String> {
             Secret::PortalAdminClientSecret,
         ),
         ("JC_SETUP_FIRST_ADMIN_PASSWORD", Secret::FirstAdminPassword),
+        ("CLIENT_SECRET_CONTEXT_GATEWAY", Secret::GatewayClientSecret),
     ]
     .into_iter()
     .filter_map(|(name, secret)| Some((name.to_owned(), setup.value(secret)?.to_owned())))
@@ -381,6 +412,46 @@ pub fn portal_realm_files(portal_base: &str) -> Result<Vec<(String, Value)>, ser
     ])
 }
 
+/// The gateway's client (`context-gateway`): client_credentials only, its tokens for the Portal's
+/// internal listener (audience `portal-internal`, where it reads revocations, connectors and
+/// usage), no realm role and no person's scope.
+#[must_use]
+pub fn gateway_realm_file() -> (String, Value) {
+    let client = json!({
+        "realm": PORTAL_REALM,
+        "clients": [{
+            "clientId": GATEWAY_CLIENT,
+            "name": "Context Gateway",
+            "enabled": true,
+            "protocol": "openid-connect",
+            "publicClient": false,
+            "clientAuthenticatorType": "client-secret",
+            "secret": "$(CLIENT_SECRET_CONTEXT_GATEWAY)",
+            "standardFlowEnabled": false,
+            "implicitFlowEnabled": false,
+            "directAccessGrantsEnabled": false,
+            "serviceAccountsEnabled": true,
+            "fullScopeAllowed": false,
+            "redirectUris": [],
+            "webOrigins": [],
+            "defaultClientScopes": ["basic"],
+            "optionalClientScopes": [],
+            "protocolMappers": [{
+                "name": "portal-internal-audience",
+                "protocol": "openid-connect",
+                "protocolMapper": "oidc-audience-mapper",
+                "consentRequired": false,
+                "config": {
+                    "included.custom.audience": "portal-internal",
+                    "access.token.claim": "true",
+                    "id.token.claim": "false"
+                }
+            }]
+        }]
+    });
+    ("30-jc-gateway.json".to_owned(), client)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,8 +475,15 @@ mod tests {
         assert_eq!(mode(&dir), 0o700);
         for secret in Secret::ALL {
             let held = first.get(secret).unwrap();
-            assert_eq!(held.value.expose().len(), secret.random_bytes() * 2);
             assert_eq!(held.source, jc_secret::Source::Generated);
+            if secret == Secret::PortalAgeKey {
+                assert!(
+                    held.value.expose().starts_with("AGE-SECRET-KEY-1"),
+                    "an age identity"
+                );
+            } else {
+                assert!(held.value.expose().len() >= 64, "{}", secret.file_name());
+            }
             if secret.kept_on_disk(&Module::ALL) {
                 #[cfg(unix)]
                 assert_eq!(
@@ -569,5 +647,36 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    /// A secret sealed for the Portal's setup identity resolves through the Portal's SOPS
+    /// resolver, which is how a CkanInstance `apiTokenRef` or a pipeline `secretRef` reads.
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn a_secret_sealed_for_the_setup_identity_resolves() {
+        use joinedcontext_portal::pipeline_secrets::{Backend, Resolver};
+        use joinedcontext_portal::secret_files;
+        let tmp = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(&tmp.path().join("state"), &[Module::Portal], &none()).unwrap();
+        let key = setup.path(Secret::PortalAgeKey).unwrap().to_path_buf();
+        let recipient = secret_files::own_recipient(&key).unwrap();
+        let keys = BTreeMap::from([(
+            "token".to_owned(),
+            zeroize::Zeroizing::new("ckan-token-value".to_owned()),
+        )]);
+        let text =
+            secret_files::encrypt("ckan", &keys, &[recipient], "2026-11-08T00:00:00Z").unwrap();
+        let tree = tmp.path().join("repo");
+        let file = tree.join(secret_files::path_of("org", "ckan"));
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, text).unwrap();
+        let reference = jc_core::envelope::SecretRef {
+            name: "ckan".to_owned(),
+            key: Some("token".to_owned()),
+            env_var: None,
+        };
+        let resolver = Resolver::new(Backend::Sops { age_key_file: key });
+        let value = resolver.one(&tree, "org", &reference).await.unwrap();
+        assert_eq!(value, "ckan-token-value");
     }
 }

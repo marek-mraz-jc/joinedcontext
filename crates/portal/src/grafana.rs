@@ -25,6 +25,9 @@ const PLUGIN: &str = "ngsild-grafana-datasource";
 /// How often the rows are compared with what Grafana holds.
 const SWEEP: Duration = Duration::from_secs(300);
 
+/// How often the leader looks for a project with no Grafana organization yet.
+const ORGANIZATIONS: Duration = Duration::from_secs(30);
+
 /// A datasource uid Grafana accepts at most.
 const MAX_UID: usize = 40;
 
@@ -286,6 +289,45 @@ impl<'a> Client<'a> {
             .as_i64()
             .map(Some)
             .ok_or_else(|| unreachable(what, "an organization without an id"))
+    }
+
+    /// The organization of `project`, made with its `project-{project}` folder when Grafana holds
+    /// none: the per-project steps of the deployment's `provision.sh`. An organization or folder
+    /// that exists already is fine (409, 412).
+    pub async fn ensure_organization(&self, project: &str) -> Result<i64, ApiError> {
+        let what = "making the project's organization";
+        let answer = self
+            .request(reqwest::Method::POST, "/orgs", None)
+            .json(&json!({ "name": project }))
+            .send()
+            .await
+            .map_err(|err| unreachable(what, err))?;
+        let org = if answer.status() == reqwest::StatusCode::CONFLICT {
+            self.organization(project)
+                .await?
+                .ok_or_else(|| unreachable(what, "an organization in conflict but not found"))?
+        } else {
+            let answer = answer
+                .error_for_status()
+                .map_err(|err| unreachable(what, err))?;
+            let made: Value = json_of(answer, what).await?;
+            made["orgId"]
+                .as_i64()
+                .or_else(|| made["id"].as_i64())
+                .ok_or_else(|| unreachable(what, "an organization without an id"))?
+        };
+        let answer = self
+            .request(reqwest::Method::POST, "/folders", Some(org))
+            .json(&json!({ "uid": format!("project-{project}"), "title": project }))
+            .send()
+            .await
+            .map_err(|err| unreachable("making the project's folder", err))?;
+        match answer.status() {
+            reqwest::StatusCode::CONFLICT | reqwest::StatusCode::PRECONDITION_FAILED => {}
+            status if status.is_success() => {}
+            status => return Err(unreachable("making the project's folder", status)),
+        }
+        Ok(org)
     }
 
     /// The Endpoints the organization has a datasource for.
@@ -573,6 +615,46 @@ pub async fn sweep(state: &AppState, pool: &PgPool, client: &Client<'_>) {
     }
 }
 
+/// Makes the Grafana organization of every project the mirror holds that `made` does not list
+/// yet, and lists it there. A Grafana that is away stops the pass; the next one tries again.
+pub async fn ensure_organizations(
+    state: &AppState,
+    client: &Client<'_>,
+    made: &mut std::collections::BTreeSet<String>,
+) {
+    for project in state.mirror.namespaces() {
+        if made.contains(&project) {
+            continue;
+        }
+        match client.ensure_organization(&project).await {
+            Ok(org) => {
+                tracing::info!(%project, org, "the project has its Grafana organization");
+                made.insert(project);
+            }
+            Err(_) => return,
+        }
+    }
+}
+
+/// Every project's Grafana organization, made on the leader every [`ORGANIZATIONS`] when Grafana
+/// is configured, so a project opened in the Portal gets its dashboards' home.
+pub(crate) fn spawn_organizations(state: AppState) {
+    let Some(config) = state.config.grafana.clone() else {
+        return;
+    };
+    tokio::spawn(async move {
+        let mut made = std::collections::BTreeSet::new();
+        let mut interval = tokio::time::interval(ORGANIZATIONS);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            if state.leads() {
+                ensure_organizations(&state, &Client::new(&config), &mut made).await;
+            }
+        }
+    });
+}
+
 /// What a restart of Grafana took, put back on the leader every [`SWEEP`].
 pub(crate) fn spawn_periodic(state: AppState) {
     let (Some(config), Some(pool)) = (state.config.grafana.clone(), state.db.clone()) else {
@@ -691,6 +773,99 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
             .mount(server)
             .await;
+    }
+
+    fn project_state() -> AppState {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "ContextSpace".into(),
+            metadata: crate::resource::ObjectMeta::new("air", "doprava"),
+            spec: json!({}),
+            status: None,
+        });
+        state
+    }
+
+    fn posted(requests: &[wiremock::Request]) -> Vec<String> {
+        requests
+            .iter()
+            .filter(|request| request.method.as_str() == "POST")
+            .map(|request| request.url.path().to_owned())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn an_opened_project_gets_its_organization_and_folder_once() {
+        let server = wiremock::MockServer::start().await;
+        answer_with(
+            &server,
+            "POST",
+            "/api/orgs",
+            json!({ "orgId": 9, "message": "created" }),
+        )
+        .await;
+        answer_with(
+            &server,
+            "POST",
+            "/api/folders",
+            json!({ "uid": "project-doprava" }),
+        )
+        .await;
+        let config = config(&server);
+        let state = project_state();
+        let mut made = std::collections::BTreeSet::new();
+        ensure_organizations(&state, &Client::new(&config), &mut made).await;
+        ensure_organizations(&state, &Client::new(&config), &mut made).await;
+        assert!(made.contains("doprava"), "{made:?}");
+        let requests = server.received_requests().await.expect("recorded");
+        assert_eq!(posted(&requests), ["/api/orgs", "/api/folders"]);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&requests[0].body).unwrap(),
+            json!({ "name": "doprava" })
+        );
+        assert_eq!(requests[1].headers["X-Grafana-Org-Id"], "9");
+    }
+
+    #[tokio::test]
+    async fn an_organization_that_exists_is_found_by_name() {
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/orgs"))
+            .respond_with(ResponseTemplate::new(409))
+            .mount(&server)
+            .await;
+        answer_with(&server, "GET", "/api/orgs/name/doprava", json!({ "id": 4 })).await;
+        Mock::given(method("POST"))
+            .and(path("/api/folders"))
+            .respond_with(ResponseTemplate::new(412))
+            .mount(&server)
+            .await;
+        let config = config(&server);
+        let org = Client::new(&config).ensure_organization("doprava").await;
+        assert_eq!(org.expect("the organization"), 4);
+    }
+
+    #[tokio::test]
+    async fn a_grafana_that_is_away_leaves_the_project_for_the_next_pass() {
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/orgs"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        let config = config(&server);
+        let mut made = std::collections::BTreeSet::new();
+        ensure_organizations(&project_state(), &Client::new(&config), &mut made).await;
+        assert!(made.is_empty());
+    }
+
+    #[test]
+    fn without_grafana_no_organization_loop_starts() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        assert!(state.config.grafana.is_none());
+        // Returns before it spawns: outside a runtime, a spawn would panic.
+        spawn_organizations(state);
     }
 
     #[tokio::test]

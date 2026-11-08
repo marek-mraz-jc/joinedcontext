@@ -62,6 +62,22 @@ pub struct MountPlan {
     pub module: Module,
     pub spec: MountSpec,
     pub mount: Mount,
+    /// More router-table entries of the same router: the other root paths of a module that
+    /// answers at whole paths (`Module::root_paths`), whose router then sees the path unstripped.
+    pub also: Vec<MountSpec>,
+}
+
+impl MountPlan {
+    /// Every router-table entry of this module.
+    pub fn specs(&self) -> impl Iterator<Item = &MountSpec> {
+        std::iter::once(&self.spec).chain(&self.also)
+    }
+
+    /// Whether the module answers at whole root paths rather than under a prefix of its own.
+    #[must_use]
+    pub fn at_root(&self) -> bool {
+        !self.also.is_empty()
+    }
 }
 
 /// Places every configured module: an explicit `[mounts.<module>]` entry wins, otherwise the mode
@@ -70,6 +86,25 @@ pub struct MountPlan {
 pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
     let mut plans = Vec::with_capacity(cfg.roles.len());
     for &module in &cfg.roles {
+        let roots = module.root_paths();
+        if cfg.mode == MountMode::Slug && !roots.is_empty() && !cfg.mounts.contains_key(&module) {
+            let mount = Mount::new(module.name(), cfg.scheme.clone(), cfg.base_host.clone(), "")?;
+            let mut specs = roots.iter().map(|prefix| MountSpec {
+                module: module.name().to_owned(),
+                host: None,
+                path_prefix: Some((*prefix).to_owned()),
+            });
+            let spec = specs
+                .next()
+                .ok_or(RouterError::InvalidPrefix(String::new()))?;
+            plans.push(MountPlan {
+                module,
+                spec,
+                mount,
+                also: specs.collect(),
+            });
+            continue;
+        }
         let (host, prefix) = match cfg.mounts.get(&module) {
             Some(o) => (
                 o.host.clone().map(|h| h.trim().to_ascii_lowercase()),
@@ -98,12 +133,13 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
             module,
             spec,
             mount,
+            also: Vec::new(),
         });
     }
     // Dry run of the router table: overlap is refused before any module state exists.
     let mut dry = JcRouterBuilder::new(cfg.scheme.clone(), cfg.base_host.clone());
-    for plan in &plans {
-        dry = dry.mount(plan.spec.clone(), Router::new());
+    for spec in plans.iter().flat_map(MountPlan::specs) {
+        dry = dry.mount(spec.clone(), Router::new());
     }
     dry.build()?;
     Ok(plans)
@@ -145,6 +181,15 @@ impl LateRouter {
 pub struct Built {
     pub router: Router,
     portal: Option<(LateRouter, Mount)>,
+    gateway: Option<LateGateway>,
+}
+
+/// The gateway's late slot: built after the forge holds the organization repository it reads,
+/// over Antares' hop when Antares runs beside it.
+struct LateGateway {
+    slot: LateRouter,
+    mount: Mount,
+    hop: Option<modules::Hop>,
 }
 
 /// Builds every module's router (the Portal's as a late slot) and the one `jc-router` in front
@@ -162,6 +207,8 @@ pub async fn build_router(
         builder = builder.trust_proxy(*net);
     }
     let mut portal = None;
+    let mut gateway = None;
+    let mut hop = None;
     for plan in plans {
         tracing::info!(
             module = plan.module.name(),
@@ -171,7 +218,7 @@ pub async fn build_router(
         );
         #[cfg(feature = "shako")]
         if plan.module == Module::Shako {
-            let state = modules::shako::build_state(&cfg.shako, ctx.setup, ctx.secrets)?;
+            let state = modules::shako::build_state(&cfg.shako, ctx.setup, ctx.secrets).await?;
             let (main_router, v2_router) = modules::shako::build(state, plan.mount.clone());
             let (main_router, v2_router) = match ctx.door {
                 Some(door) => (
@@ -196,15 +243,55 @@ pub async fn build_router(
             portal = Some((late, plan.mount));
             continue;
         }
+        #[cfg(feature = "antares")]
+        if plan.module == Module::Antares {
+            let hop_secret = cfg
+                .roles
+                .contains(&Module::Gateway)
+                .then(|| ctx.setup.value(crate::setup::Secret::GatewayHopToken))
+                .flatten();
+            let built =
+                modules::antares::build(&cfg.antares, ctx.setup, hop_secret, shutdown).await?;
+            let router = match ctx.door {
+                Some(door) => door.guard(Module::Antares, built.router, ctx.setup),
+                None => built.router,
+            };
+            builder = builder.mount(plan.spec, router);
+            hop = built.hop;
+            continue;
+        }
+        if plan.module == Module::Gateway {
+            let late = LateRouter::default();
+            for spec in plan.specs() {
+                let router = late.router();
+                #[cfg(feature = "gateway")]
+                let router = if plan.at_root() {
+                    modules::gateway::at_root(router)
+                } else {
+                    router
+                };
+                builder = builder.mount(spec.clone(), router);
+            }
+            gateway = Some(LateGateway {
+                slot: late,
+                mount: plan.mount,
+                hop: None,
+            });
+            continue;
+        }
         let mut router = modules::build(plan.module, cfg, ctx, plan.mount, shutdown, tasks).await?;
         if let Some(door) = ctx.door {
             router = door.guard(plan.module, router, ctx.setup);
         }
         builder = builder.mount(plan.spec, router);
     }
+    if let Some(late) = gateway.as_mut() {
+        late.hop = hop;
+    }
     Ok(Built {
         router: builder.build()?.into_axum_router(),
         portal,
+        gateway,
     })
 }
 
@@ -306,11 +393,17 @@ fn check_age_key(_: &std::path::Path) -> Result<(), String> {
 /// `generated`), never its value. With the production profile a secret given as an environment
 /// value is a warning: it shows in `docker inspect` and the pod spec.
 pub fn report_secrets(
-    profile: crate::config::Profile,
+    cfg: &Config,
     secrets: &crate::config::Secrets,
     setup: &Setup,
 ) -> Vec<(&'static str, jc_secret::Source)> {
-    let lines: Vec<_> = secrets.report().into_iter().chain(setup.report()).collect();
+    let profile = cfg.profile;
+    let lines: Vec<_> = secrets
+        .report()
+        .into_iter()
+        .chain(setup.report())
+        .chain(cfg.database_report())
+        .collect();
     for (name, source) in &lines {
         if *source == jc_secret::Source::Env && profile == crate::config::Profile::Production {
             tracing::warn!(
@@ -445,7 +538,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         &split_credentials(cfg),
     )?;
     setup.age_key_file = portal_age_key(cfg, &secrets)?;
-    report_secrets(cfg.profile, &secrets, &setup);
+    report_secrets(cfg, &secrets, &setup);
     // Bound before the modules are built: the Portal's sibling addresses name this listener.
     let listener = bind(cfg.listen).await?;
     let addr = listener.local_addr().map_err(StartError::Serve)?;
@@ -483,23 +576,39 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         tasks,
         servers,
     };
+    if cfg.portal_siblings
+        && (built.portal.is_some() || built.gateway.is_some())
+        && let Err(e) = crate::provision::forge(&siblings, &setup).await
+    {
+        let _ = running.stop().await;
+        return Err(e);
+    }
+    // The Portal before the gateway: the gateway reads revocations from the address the
+    // Portal's internal listener took.
+    let mut portal_internal = None;
     if let Some((late, mount)) = built.portal {
-        let portal = async {
-            if cfg.portal_siblings {
-                crate::provision::forge(&siblings, &setup).await?;
+        match build_portal(ctx, cfg.portal_siblings, mount, &running.shutdown).await {
+            Ok((router, internal)) => {
+                late.set(router);
+                portal_internal = internal;
             }
-            modules::build(
-                Module::Portal,
-                cfg,
-                ctx,
-                mount,
-                &running.shutdown,
-                &running.tasks,
-            )
-            .await
-        };
-        match portal.await {
-            Ok(router) => late.set(router),
+            Err(e) => {
+                let _ = running.stop().await;
+                return Err(e);
+            }
+        }
+    }
+    if let Some(late) = built.gateway {
+        match build_gateway(
+            ctx,
+            cfg.portal_siblings,
+            late.mount,
+            late.hop,
+            portal_internal,
+        )
+        .await
+        {
+            Ok(router) => late.slot.set(router),
             Err(e) => {
                 let _ = running.stop().await;
                 return Err(e);
@@ -508,6 +617,50 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     }
     tracing::info!(%addr, admin = ?admin_addr, "jc listening");
     Ok(running)
+}
+
+/// Builds the Portal; answers its router and the address of its internal listener.
+async fn build_portal(
+    ctx: modules::BuildCtx<'_>,
+    wire: bool,
+    mount: Mount,
+    shutdown: &CancellationToken,
+) -> Result<(Router, Option<std::net::SocketAddr>), StartError> {
+    #[cfg(feature = "portal")]
+    {
+        modules::portal::build(ctx, wire, mount, shutdown).await
+    }
+    #[cfg(not(feature = "portal"))]
+    {
+        let _ = (ctx, wire, mount, shutdown);
+        Err(StartError::module(
+            Module::Portal,
+            "not compiled into this jc binary",
+        ))
+    }
+}
+
+/// Builds the gateway, over Antares' hop when Antares runs beside it, reading the Portal's
+/// internal listener at `portal` when the Portal runs beside it.
+async fn build_gateway(
+    ctx: modules::BuildCtx<'_>,
+    wire: bool,
+    mount: Mount,
+    hop: Option<modules::Hop>,
+    portal: Option<std::net::SocketAddr>,
+) -> Result<Router, StartError> {
+    #[cfg(feature = "gateway")]
+    {
+        modules::gateway::build(ctx, wire, mount, hop, portal).await
+    }
+    #[cfg(not(feature = "gateway"))]
+    {
+        let _ = (ctx, wire, mount, hop, portal);
+        Err(StartError::module(
+            Module::Gateway,
+            "not compiled into this jc binary",
+        ))
+    }
 }
 
 /// Runs `jc` until `stop` resolves (the binary passes SIGTERM/Ctrl-C), then shuts down cleanly.

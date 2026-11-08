@@ -11,6 +11,9 @@
 //!   Kubernetes Secret the Portal writes for a runner in a cluster;
 //! - private and loopback HTTP targets stay refused (ekiben's default quotas), so a stream cannot
 //!   call the other modules' listeners from inside the process.
+//!
+//! With `[ekiben.database]` every continuous stream posted through the API is kept in Postgres
+//! (`ekiben_pg`) and started again at the next start; without it streams live in memory.
 
 use crate::app::StartError;
 use crate::config::EkibenSection;
@@ -48,7 +51,7 @@ fn file_root(configured: Option<&Path>) -> Result<PathBuf, StartError> {
     Ok(dir)
 }
 
-pub fn build(
+pub async fn build(
     cfg: &EkibenSection,
     setup: &crate::setup::Setup,
     vars: &BTreeMap<String, jc_secret::Secret>,
@@ -69,12 +72,29 @@ pub fn build(
     if portal_beside {
         hand_to_portal(runner);
     }
-    let manager = StreamManager::new(
+    let mut manager = StreamManager::new(
         build_full_registry(),
         resources,
         Some(root),
         EnvAccess::None,
     );
+    if let Some(db) = &cfg.database {
+        if let Some(opts) = db.migrate_options().map_err(err)? {
+            let pool = crate::pg::connect(opts, 1).await.map_err(err)?;
+            super::ekiben_pg::migrate(&pool, &db.app_role().map_err(err)?)
+                .await
+                .map_err(err)?;
+            pool.close().await;
+        }
+        let pool = crate::pg::connect(db.app_options().map_err(err)?, db.max_connections())
+            .await
+            .map_err(err)?;
+        let streams =
+            std::sync::Arc::new(super::ekiben_pg::PgStreams::open(pool).await.map_err(err)?);
+        manager = manager.with_persistence(streams.clone());
+        let started = streams.restore(&manager).await.map_err(err)?;
+        tracing::info!(started, "ekiben: saved streams started");
+    }
     let state = ServerState::new(
         manager,
         ServerAuthConfig {

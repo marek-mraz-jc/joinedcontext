@@ -3,6 +3,7 @@ name = "kaisatsu-login"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 kaisatsu-core = { path = "../core" }
@@ -10,7 +11,8 @@ kaisatsu-crypto = { path = "../crypto" }
 kaisatsu-oidc = { path = "../oidc" }
 jc-router = { path = "../../shared/jc-router" }
 futures-core = "0.3"
-askama = "0.12"
+# Without `config`: askama.toml support pulls basic-toml (RUSTSEC-2026-0374, unmaintained).
+askama = { version = "0.12.1", default-features = false, features = ["humansize", "num-traits", "urlencode"] }
 axum = { version = "0.8", features = ["form", "json"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }

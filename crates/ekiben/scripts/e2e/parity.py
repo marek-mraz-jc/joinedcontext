@@ -32,6 +32,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 BENTO_TIMEOUT = 180
 MIN_TIMEOUT = 30
 SLOWER = 5
+# Where the Portal's render posts samples, refusals and outcomes (tools/portal-dump).
+PORTAL_INTERNAL = "http://portal-internal.test"
 TIME = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
                   r"|(?<![\d.])1[78]\d{8}(?:\d{3})?(?![\d])")
 
@@ -81,7 +83,9 @@ def prepare(case, stub, run, real_pacing=False):
     def walk(node):
         if isinstance(node, dict):
             for k, v in node.items():
-                if k == "url" and isinstance(v, str) and re.match(r"https?://", v):
+                if k == "url" and isinstance(v, str) and v.startswith(PORTAL_INTERNAL):
+                    node[k] = f"{stub}/{run}{v[len(PORTAL_INTERNAL):]}"
+                elif k == "url" and isinstance(v, str) and re.match(r"https?://", v):
                     scheme, rest = v.split("://", 1)
                     node[k] = f"{stub}/{run}/up/{scheme}/{rest}"
                 elif k == "sleep" and isinstance(v, dict) and not real_pacing:
@@ -93,11 +97,14 @@ def prepare(case, stub, run, real_pacing=False):
                 walk(v)
 
     walk(stream)
-    cases = stream["output"]["switch"]["cases"]
-    cases[-1] = {"output": {
-        "stdout": {"codec": "lines"},
-        "processors": [{"mapping": 'root = {"content": content().string(), "meta": @}'}],
-    }}
+    # tools/portal-render ends in a switch whose last case is the run's end; the Portal's own
+    # render (tools/portal-dump) ends in its outcome broker, which posts to the stub's internal/.
+    cases = stream["output"].get("switch", {}).get("cases")
+    if cases:
+        cases[-1] = {"output": {
+            "stdout": {"codec": "lines"},
+            "processors": [{"mapping": 'root = {"content": content().string(), "meta": @}'}],
+        }}
     stream.update(case["resources"])
     return stream
 
@@ -109,10 +116,16 @@ def env_for(case, stub, run):
     env.update({
         "JC_GATEWAY_URL": f"{stub}/{run}/gw",
         "JC_TOKEN_URL": f"{stub}/{run}/token",
+        # The Portal's pipeline identity (PL-19) and a manifest URL's host.
+        "JC_PIPELINE_TOKEN_URL": f"{stub}/{run}/token",
+        "JC_GATEWAY_HOST": stub.split("://", 1)[1],
+        "JC_MQTT_NAMESPACE": "parity",
         # The runner's own environment (pipeline-runner values): the installation domain.
         "JC_ORG_DOMAIN": "example.org",
         secret: "stub-secret",
     })
+    # `ekiben run` (and jc's runner) reads `${NAME}` from EKIBEN_VAR_NAME only; Bento reads NAME.
+    env.update({f"EKIBEN_VAR_{k}": v for k, v in list(env.items()) if k.startswith("JC_")})
     return env
 
 
@@ -294,6 +307,8 @@ def execute(case, args, stub, runners):
         with open(os.path.join(work, f"{label}.stderr"), "w") as f:
             f.write(result["stderr"])
         seen[label] = observed(result, log)
+        # A source's error text quotes its stub URL, which names the run: compare without it.
+        seen[label]["requests"] = [r.replace(run, "RUN") for r in seen[label]["requests"]]
         took[label] = round(result["window"][1] - result["window"][0], 1)
         seen[label]["seconds"] = took[label]
         with open(os.path.join(work, f"{label}.observed.json"), "w") as f:
@@ -352,6 +367,8 @@ def load_rendered(path, resources_yaml, only, real_rate_limits):
     with open(path) as f:
         for line in f:
             row = json.loads(line)
+            if "stream" not in row and "skip" not in row:
+                continue  # tools/portal-dump's call and outcome lines
             if only and f"{row['project']}/{row['name']}" not in only:
                 continue
             if "stream" in row:

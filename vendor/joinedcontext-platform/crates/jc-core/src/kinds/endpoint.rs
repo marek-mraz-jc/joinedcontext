@@ -977,6 +977,21 @@ impl EndpointSpec {
                     reason: "a door the feeds leave out is no catalogue dataset: drop spec.publish.ckan, or drop harvest: false (EP-139)",
                 });
             }
+            // EP-177: `publish.ckan.name` names the one dataset a list replaces.
+            if !catalog.datasets.is_empty()
+                && self
+                    .publish
+                    .as_ref()
+                    .and_then(|p| p.ckan.as_ref())
+                    .is_some_and(|ckan| ckan.name.is_some())
+            {
+                return Err(Error::Name {
+                    field: "spec.publish.ckan.name",
+                    value: String::new(),
+                    reason: "spec.catalog.datasets names each dataset: drop publish.ckan.name, \
+                             which names the one dataset the list replaces (ADR-N-068)",
+                });
+            }
             crate::kinds::visualization::validate_list(
                 &catalog.visualizations,
                 &self.served_representations(),

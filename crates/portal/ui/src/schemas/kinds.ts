@@ -132,6 +132,7 @@ export function endpointSchema(
   perMinute?: number,
   catalogues: string[] = [],
   pipelines: string[] = [],
+  types: string[] = [],
 ): JsonSchema {
   // A limit set outside the form (YAML, the API, the assistant) is valid on the wire, so it
   // stays a choice of its own instead of an invalid field nobody can propose past.
@@ -275,13 +276,17 @@ export function endpointSchema(
       },
       // What a DCAT-AP catalogue needs beyond the distributions (EP-78): folded, and written only
       // when a person filled something in, so an endpoint nobody catalogued carries no empty block.
-      catalog: catalogSchema(t, pipelines),
+      catalog: catalogSchema(t, pipelines, types),
     },
   };
 }
 
 /** The `catalog` property of the endpoint form (EP-78). */
-function catalogSchema(t: (key: string) => string, pipelines: string[] = []): JsonSchema {
+function catalogSchema(
+  t: (key: string) => string,
+  pipelines: string[] = [],
+  types: string[] = [],
+): JsonSchema {
   const text = (key: string) => ({ type: "string", title: t(`endpoints.field.catalog.${key}`) }) as const;
   return {
     type: "object",
@@ -351,9 +356,51 @@ function catalogSchema(t: (key: string) => string, pipelines: string[] = []): Js
         title: t("endpoints.field.catalog.legislation"),
         items: { type: "string", pattern: IRI_PATTERN },
       },
+      // Unchecked writes `harvest: false`: no dataset at all, the Endpoint's record stays (EP-139, EP-174).
+      harvest: { type: "boolean", title: t("endpoints.field.catalog.harvest"), default: true },
+      // Several datasets of one Endpoint, each a narrowed slice (ADR-N-068, EP-175): the types
+      // are the ones the space's model holds, free type names while the model is unknown.
+      datasets: {
+        type: "array",
+        title: t("endpoints.field.catalog.datasets"),
+        maxItems: 50,
+        items: {
+          type: "object",
+          required: ["name", "title", "description", "types"],
+          properties: {
+            name: { ...text("datasetName"), pattern: CKAN_DATASET, maxLength: 100 },
+            title: text("datasetTitle"),
+            description: text("datasetDescription"),
+            types: {
+              type: "array",
+              title: t("endpoints.field.catalog.datasetTypes"),
+              minItems: 1,
+              maxItems: 20,
+              uniqueItems: true,
+              items:
+                types.length > 0
+                  ? { type: "string", enum: types }
+                  : { type: "string", pattern: TYPE_NAME, maxLength: 100 },
+            },
+            q: { ...text("datasetQuery"), maxLength: 2000 },
+            keywords: {
+              type: "array",
+              title: t("endpoints.field.catalog.datasetKeywords"),
+              items: { type: "string", maxLength: 100 },
+            },
+            license: { ...text("datasetLicense"), ...words(t, "choice.licence", CATALOG_LICENCES) },
+          },
+        },
+      },
     },
   };
 }
+
+/** A CKAN dataset name as jc-core accepts it: 2 to 100 of a-z, 0-9, `-`, `_`, no edge `-` or `_`. */
+export const CKAN_DATASET = "^[a-z0-9][a-z0-9_-]{0,98}[a-z0-9]$";
+
+/** An NGSI-LD type name as jc-core accepts one in a dataset: a letter, then letters, digits, `_`. */
+export const TYPE_NAME = "^[A-Za-z][A-Za-z0-9_]*$";
 
 /** A CKAN organization slug: lowercase letters, digits and hyphens, as CKAN itself accepts. */
 export const CKAN_ORGANIZATION = "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$";

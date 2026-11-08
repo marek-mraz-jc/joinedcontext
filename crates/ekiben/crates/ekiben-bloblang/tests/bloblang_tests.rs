@@ -793,3 +793,25 @@ fn unescape_html_reads_every_reference_go_reads() {
         r#""a ° b \u0026 c \u0026x ¬it; ∉ € � \u0026#xZ; A \u0026; \u0026zz; Æ \u003c\u003e \u003c⃒ � \u0026""#
     );
 }
+
+#[test]
+fn a_failure_inside_an_if_block_names_the_outermost_statement_line() {
+    // Bento 1.22 (`bento blobl`): "failed assignment (line 3): one", "(line 6): two".
+    let mapping = "root = this\nlet x = 1\nif this.a == 1 {\n  root = throw(\"one\")\n}\nif this.a == 2 {\n  let y = 2\n  if true {\n\n    root = throw(\"two\")\n  }\n}\nif this.a == 3 { root.b = throw(\"three\") } else {\n  root = throw(\"else\")\n}";
+    assert_eq!(
+        run_map(mapping, r#"{"a":1}"#),
+        Err("failed assignment (line 3): one".to_string())
+    );
+    assert_eq!(
+        run_map(mapping, r#"{"a":2}"#),
+        Err("failed assignment (line 6): two".to_string())
+    );
+    assert_eq!(
+        run_map(mapping, r#"{"a":3}"#),
+        Err("failed assignment (line 13): three".to_string())
+    );
+    assert_eq!(
+        run_map(mapping, r#"{"a":4}"#),
+        Err("failed assignment (line 13): else".to_string())
+    );
+}

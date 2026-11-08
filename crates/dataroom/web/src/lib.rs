@@ -41,6 +41,29 @@ pub const JC_THEME_CSS: &str = concat!(
 /// Built-in enum labels JSON from `ours/ckan-theme/public__jc-enums.json`.
 pub const JC_ENUMS_JSON: &str = include_str!("../assets/public__jc-enums.json");
 
+/// The theme's scripts every page names by `{mount}/{name}` (`ours/ckan-theme/public__*.js`),
+/// each loaded with the page's CSP nonce; none runs inline.
+pub const JC_SCRIPTS: &[(&str, &str)] = &[
+    (
+        "jc-assistant.js",
+        include_str!("../assets/public__jc-assistant.js"),
+    ),
+    ("jc-copy.js", include_str!("../assets/public__jc-copy.js")),
+    ("jc-dock.js", include_str!("../assets/public__jc-dock.js")),
+    ("jc-forms.js", include_str!("../assets/public__jc-forms.js")),
+    ("jc-frame.js", include_str!("../assets/public__jc-frame.js")),
+    ("jc-map.js", include_str!("../assets/public__jc-map.js")),
+    (
+        "jc-preview.js",
+        include_str!("../assets/public__jc-preview.js"),
+    ),
+    ("jc-viz.js", include_str!("../assets/public__jc-viz.js")),
+    (
+        "pmtiles-4.5.0.js",
+        include_str!("../assets/public__pmtiles-4.5.0.js"),
+    ),
+];
+
 /// Default joinedcontext lockup SVG (`/jc-logo.svg`, paths only, no script, no external href).
 pub const JC_LOGO_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="171" height="36" viewBox="0 0 171 36" fill="none"><rect width="36" height="36" rx="8" fill="#0000bf"/><text x="18" y="24" text-anchor="middle" fill="#ffffff" font-family="system-ui, sans-serif" font-size="18" font-weight="700">jc</text><text x="46" y="24" fill="currentColor" font-family="system-ui, sans-serif" font-size="18" font-weight="700">joinedcontext</text></svg>"##;
 

@@ -7,12 +7,12 @@ use dataroom_core::{DataroomError, Result};
 use oxrdfxml::RdfXmlParser;
 use std::collections::BTreeMap;
 
-/// Most attributes one RDF/XML tag may carry. quick-xml 0.37 (under oxrdfxml, no fixed release
-/// yet) checks duplicate attribute names in quadratic time (RUSTSEC-2026-0194).
+/// Most attributes one RDF/XML tag may carry. Kept after the quick-xml 0.42 port of
+/// `vendor/oxrdfxml` fixed the quadratic duplicate check (RUSTSEC-2026-0194): a DCAT tag needs few.
 pub const MAX_XML_ATTRIBUTES_PER_TAG: usize = 128;
 
-/// Most namespace declarations one RDF/XML document may carry: quick-xml 0.37 allocates for
-/// each without a bound (RUSTSEC-2026-0195).
+/// Most namespace declarations one RDF/XML document may carry, a bound of its own beside
+/// quick-xml's (RUSTSEC-2026-0195, fixed in the quick-xml 0.42 the vendored oxrdfxml uses).
 pub const MAX_XML_NAMESPACE_DECLARATIONS: usize = 1024;
 
 fn limit(kind: &str, message: String) -> DataroomError {
@@ -515,6 +515,31 @@ mod tests {
                 "{tail}"
             );
         }
+    }
+
+    /// The quick-xml 0.42 port of `vendor/oxrdfxml` reads text, entity references and CDATA as
+    /// separate events: one property's text comes back whole, references resolved.
+    #[test]
+    fn text_entities_and_cdata_make_one_literal() {
+        let doc = format!(
+            "<rdf:RDF xmlns:rdf=\"{RDF_NS}\" xmlns:dct=\"http://purl.org/dc/terms/\">\
+             <rdf:Description rdf:about=\"https://e.org/ds?a=1&amp;b=2\">\
+             <dct:title xml:lang=\"sk\">Ovzdu&#353;ie &amp; <![CDATA[<voda>]]> &#x1F4A7;</dct:title>\
+             </rdf:Description></rdf:RDF>"
+        );
+        let graph = parse_rdfxml(&doc, &RdfLimits::default()).unwrap();
+        let [triple] = graph.triples.iter().collect::<Vec<_>>()[..] else {
+            panic!("one triple expected: {:?}", graph.triples);
+        };
+        assert_eq!(
+            triple.subject,
+            SubjectNode::Named("https://e.org/ds?a=1&b=2".into())
+        );
+        let Term::Literal(literal) = &triple.object else {
+            panic!("a literal expected: {:?}", triple.object);
+        };
+        assert_eq!(literal.value, "Ovzdušie & <voda> 💧");
+        assert_eq!(literal.language.as_deref(), Some("sk"));
     }
 
     #[test]

@@ -7,7 +7,7 @@
 use crate::common;
 
 use jcctl::commands::publish_ckan::{
-    publish_one, targets, token, withdraw_one, Error, Line, TokenSource,
+    publish_one, targets, targets_with, token, withdraw_one, Error, Line, TokenSource,
 };
 use jcctl::loader::Repository;
 use jcctl::publish::ckan::{self, CkanApi, InMemoryCkan, Outcome, Settings, Views};
@@ -93,8 +93,9 @@ fn settings() -> Settings {
 
 // --- the walk --------------------------------------------------------------------------------
 
-/// EP-62: every Endpoint of the project that declares a publication is a target, with its
-/// instance resolved from the same project; the one without a publication is not.
+/// EP-62, EP-174: every Endpoint of the project that declares a publication is a target, with
+/// its instance resolved from the same project, and so is the public one without a block, as a
+/// dataset by its own name on the project's only instance.
 #[test]
 fn the_walk_finds_every_published_endpoint_of_the_project_with_its_instance() {
     let dir = repo("walk");
@@ -102,7 +103,9 @@ fn the_walk_finds_every_published_endpoint_of_the_project_with_its_instance() {
 
     let found = targets(&repo, "ovzdusie").expect("the walk");
     let names: Vec<&str> = found.iter().map(|t| t.id.name.as_str()).collect();
-    assert_eq!(names, vec!["air-public", "air-rows"]);
+    assert_eq!(names, vec!["air-public", "air-rows", "public-air"]);
+    assert_eq!(found[2].dataset_name(), "public-air");
+    assert_eq!(found[2].publication.instance_ref.name(), "open-data");
     assert!(found.iter().all(|t| t.instance_name == "open-data"));
     assert!(found
         .iter()
@@ -1071,4 +1074,213 @@ fn an_env_var_outside_the_ckan_prefix_is_refused() {
     if let Some(home) = std::env::var_os("HOME") {
         assert!(!text.contains(&*home.to_string_lossy()), "{text}");
     }
+}
+
+/// EP-174: a closed Endpoint without a block is never a dataset; `harvest: false` keeps a public
+/// one out; an Endpoint of a project with two instances and no `instanceRef` is a line saying
+/// which to name, never a guess.
+#[test]
+fn only_a_public_harvested_endpoint_is_a_dataset_by_default() {
+    let dir = repo("default-only-public");
+    common::write(
+        &dir,
+        "projects/ovzdusie/spaces/ovzdusie/endpoints/internal.yaml",
+        &endpoint("internal", "m3xarq5vzt2khw7pbnd4sjc6fy", "[ngsi-ld]", "")
+            .replace("audience: public", "audience: organization"),
+    );
+    common::write(
+        &dir,
+        "projects/ovzdusie/spaces/ovzdusie/endpoints/door.yaml",
+        &endpoint(
+            "door",
+            "pzd2wc5kzn6mth4rqvb7xj3sfy",
+            "[ngsi-ld]",
+            "  catalog: { harvest: false }\n",
+        ),
+    );
+    let loaded = Repository::load(&dir).expect("the repository loads");
+    let (found, unplanned) = targets_with(&loaded, "ovzdusie", None).expect("the walk");
+    let names: Vec<&str> = found.iter().map(|t| t.id.name.as_str()).collect();
+    assert_eq!(names, vec!["air-public", "air-rows", "public-air"]);
+    assert!(unplanned.is_empty(), "{unplanned:?}");
+
+    common::write(
+        &dir,
+        "projects/ovzdusie/ckan/second.yaml",
+        &INSTANCE.replace("name: open-data", "name: second"),
+    );
+    let loaded = Repository::load(&dir).expect("the repository loads");
+    let (found, unplanned) = targets_with(&loaded, "ovzdusie", None).expect("the walk");
+    let names: Vec<&str> = found.iter().map(|t| t.id.name.as_str()).collect();
+    assert_eq!(names, vec!["air-public", "air-rows"]);
+    assert_eq!(unplanned.len(), 1, "{unplanned:?}");
+    assert_eq!(unplanned[0].endpoint, "public-air");
+    assert!(
+        unplanned[0]
+            .reason
+            .contains("spec.publish.ckan.instanceRef"),
+        "{}",
+        unplanned[0].reason
+    );
+}
+
+/// EP-174: a project without an instance publishes its public Endpoints into the installation's
+/// catalogue when the Portal has one, and nowhere, silently, when it has none.
+#[test]
+fn a_project_without_an_instance_uses_the_installations_catalogue() {
+    let dir = common::demo_repo("installation-catalogue");
+    let loaded = Repository::load(&dir).expect("the repository loads");
+    let (found, unplanned) = targets_with(&loaded, "ovzdusie", None).expect("the walk");
+    assert!(found.is_empty() && unplanned.is_empty());
+
+    let installation: jc_core::kinds::CkanInstanceSpec = serde_json::from_value(json!({
+        "url": "https://data.example.org",
+        "organizationDefault": "installation",
+        "apiTokenRef": { "name": "ckan", "key": "token" },
+    }))
+    .expect("an instance");
+    let (found, _) = targets_with(&loaded, "ovzdusie", Some(&installation)).expect("the walk");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].dataset_name(), "public-air");
+    assert_eq!(found[0].instance.base_url(), "https://data.example.org");
+}
+
+const SLICES: &str = r#"  catalog:
+    datasets:
+      - name: bb-pm
+        title: { sk: Prachové častice }
+        description: { sk: PM10 a PM2.5 }
+        types: [AirQualityObserved]
+      - name: bb-zle-ovzdusie
+        title: { sk: Zlé ovzdušie }
+        description: { sk: Nad limitom }
+        types: [AirQualityObserved]
+        q: pm10>50
+"#;
+
+/// EP-175, EP-176: an Endpoint listing two datasets is two targets, each published at its own
+/// record with its resources narrowed to its slice; a second run writes nothing.
+#[test]
+fn an_endpoint_listing_datasets_publishes_one_narrowed_dataset_each() {
+    let dir = common::demo_repo("slices");
+    common::write(&dir, "projects/ovzdusie/ckan/open-data.yaml", INSTANCE);
+    common::write(
+        &dir,
+        common::ENDPOINT_PATH,
+        &endpoint(
+            "public-air",
+            "zt4qm7ge2xdv6ksb3ncf5arw2y",
+            "[ngsi-ld, csv, ogc-features, mcp]",
+            SLICES,
+        ),
+    );
+    let loaded = Repository::load(&dir).expect("the repository loads");
+    let found = targets(&loaded, "ovzdusie").expect("the walk");
+    let names: Vec<&str> = found.iter().map(|t| t.dataset_name()).collect();
+    assert_eq!(names, vec!["bb-pm", "bb-zle-ovzdusie"]);
+    let settings = settings();
+    assert_eq!(
+        found[1].record_url(&settings),
+        "https://data.example.org/api/endpoint/zt4qm7ge2xdv6ksb3ncf5arw2y/datasets/bb-zle-ovzdusie"
+    );
+
+    let mut api = InMemoryCkan::new().with_organization("mesto-banska-bystrica");
+    for target in &found {
+        let line = publish_one(&mut api, target, &record("air"), None, &settings)
+            .expect("the run publishes");
+        assert_eq!(line.outcome, Outcome::Created);
+    }
+    let zle = api.package("bb-zle-ovzdusie").expect("the second dataset");
+    assert_eq!(
+        zle["url"],
+        json!("https://data.example.org/api/endpoint/zt4qm7ge2xdv6ksb3ncf5arw2y/datasets/bb-zle-ovzdusie")
+    );
+    let urls: Vec<&str> = zle["resources"]
+        .as_array()
+        .expect("resources")
+        .iter()
+        .filter_map(|r| r["url"].as_str())
+        .collect();
+    assert!(
+        urls.iter()
+            .any(|u| u.ends_with("/ngsi-ld/v1/entities?type=AirQualityObserved&q=pm10%3E50")),
+        "{urls:?}"
+    );
+    assert!(
+        urls.iter()
+            .any(|u| u.ends_with("/file.csv?type=AirQualityObserved&q=pm10%3E50")),
+        "{urls:?}"
+    );
+    // A `q` has no OGC collection, and MCP answers the whole Endpoint, not this dataset.
+    assert!(
+        urls.iter()
+            .all(|u| !u.contains("/ogc/") && !u.ends_with("/mcp")),
+        "{urls:?}"
+    );
+    let pm = api.package("bb-pm").expect("the first dataset");
+    assert!(
+        pm["resources"]
+            .as_array()
+            .expect("resources")
+            .iter()
+            .any(|r| {
+                r["url"].as_str().is_some_and(|u| {
+                    u.ends_with("/ogc/features/collections/AirQualityObserved/items")
+                })
+            }),
+        "{pm}"
+    );
+
+    let writes = api.actions().len();
+    for target in &found {
+        let line =
+            publish_one(&mut api, target, &record("air"), None, &settings).expect("the second run");
+        assert_eq!(line.outcome, Outcome::Unchanged, "{}", line.dataset);
+    }
+    assert_eq!(api.actions().len(), writes, "{:?}", api.actions());
+
+    // Withdrawing one entry removes that dataset alone (EP-178).
+    withdraw_one(&mut api, &found[1]).expect("the withdrawal");
+    assert!(api.package("bb-zle-ovzdusie").is_none());
+    assert!(api.package("bb-pm").is_some());
+}
+
+/// EP-177: a public slice names only a type the Endpoint's Policies grant the public by name;
+/// any other is a line, never a dataset that would read past the grant.
+#[test]
+fn a_public_slice_of_an_ungranted_type_is_not_published() {
+    let dir = common::demo_repo("slices-ungranted");
+    common::write(&dir, "projects/ovzdusie/ckan/open-data.yaml", INSTANCE);
+    common::write(
+        &dir,
+        common::ENDPOINT_PATH,
+        &endpoint(
+            "public-air",
+            "zt4qm7ge2xdv6ksb3ncf5arw2y",
+            "[ngsi-ld]",
+            &SLICES.replace(
+                "types: [AirQualityObserved]\n        q:",
+                "types: [WeatherObserved]\n        q:",
+            ),
+        ),
+    );
+    common::write(
+        &dir,
+        "projects/ovzdusie/spaces/ovzdusie/policies/public.yaml",
+        &policy(
+            "public",
+            "[queryEntity]",
+            "  information:\n    - entities: [{ type: AirQualityObserved }]\n",
+        ),
+    );
+    let loaded = Repository::load(&dir).expect("the repository loads");
+    let (found, unplanned) = targets_with(&loaded, "ovzdusie", None).expect("the walk");
+    let names: Vec<&str> = found.iter().map(|t| t.dataset_name()).collect();
+    assert_eq!(names, vec!["bb-pm"]);
+    assert_eq!(unplanned.len(), 1, "{unplanned:?}");
+    assert!(
+        unplanned[0].reason.contains("WeatherObserved"),
+        "{}",
+        unplanned[0].reason
+    );
 }

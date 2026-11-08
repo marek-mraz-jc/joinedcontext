@@ -119,19 +119,27 @@ impl Mirror {
 
     /// Every project the repository holds, sorted: the distinct `metadata.namespace` of the
     /// mirrored manifests, since a project is exactly a `projects/<slug>/` directory with
-    /// something in it (PF-05). Cluster-scoped resources carry no namespace and are skipped;
+    /// something in it (PF-05), and every `Project` manifest, which lies under `org`. Cluster-scoped resources carry no namespace and are skipped;
     /// so is the organization scope: the reconciler files every manifest outside `projects/`
     /// (`blueprints/`, the Organization at the root) under the namespace `org`
     /// (`reconciler::daemon::namespace_of`, `api::blueprints::ORG_NAMESPACE`).
     pub fn namespaces(&self) -> Vec<String> {
         let lock = self.resources.read().unwrap_or_else(|p| p.into_inner());
-        let mut names: Vec<String> = lock
+        let org = crate::api::blueprints::ORG_NAMESPACE;
+        let names: std::collections::BTreeSet<String> = lock
             .keys()
-            .map(|key| key.namespace.clone())
-            .filter(|ns| !ns.is_empty() && ns != crate::api::blueprints::ORG_NAMESPACE)
+            .filter_map(|key| {
+                if key.namespace == org {
+                    // A project opened a moment ago holds only its own `Project` manifest,
+                    // which lies under `org` (PF-66).
+                    (key.kind == "Project").then(|| key.name.clone())
+                } else {
+                    Some(key.namespace.clone())
+                }
+            })
+            .filter(|ns| !ns.is_empty() && ns != org)
             .collect();
-        names.dedup();
-        names
+        names.into_iter().collect()
     }
 
     pub fn replace_all(&self, other: &Mirror) {
@@ -493,5 +501,15 @@ mod tests {
         mirror.upsert(sample("org", "Organization", "hel-fi", &[]));
         assert_eq!(mirror.namespaces(), vec!["banskabystrica", "helsinki"]);
         assert!(Mirror::new().namespaces().is_empty());
+    }
+
+    #[test]
+    fn a_project_with_only_its_own_manifest_is_a_namespace() {
+        let mirror = Mirror::new();
+        mirror.upsert(sample("helsinki", "ContextSpace", "helsinki", &[]));
+        mirror.upsert(sample("org", "Project", "helsinki", &[]));
+        mirror.upsert(sample("org", "Project", "e2e-city", &[]));
+        mirror.upsert(sample("org", "RoleBinding", "e2e-city-creator", &[]));
+        assert_eq!(mirror.namespaces(), vec!["e2e-city", "helsinki"]);
     }
 }

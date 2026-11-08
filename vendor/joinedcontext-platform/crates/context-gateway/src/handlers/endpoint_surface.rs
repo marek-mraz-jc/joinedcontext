@@ -44,6 +44,19 @@ pub fn dataset(endpoint: &Endpoint, space: Option<&Space>, index: &Value, base: 
     with_subject(endpoint, space, |s| jc_dcat::dataset(s, index, base))
 }
 
+/// The record of one dataset of the Endpoint's `spec.catalog.datasets` (EP-176).
+pub fn dataset_slice(
+    endpoint: &Endpoint,
+    space: Option<&Space>,
+    slice: &jc_core::kinds::catalog_datasets::CatalogDataset,
+    index: &Value,
+    base: &str,
+) -> Value {
+    with_subject(endpoint, space, |s| {
+        jc_dcat::dataset_slice(s, slice, index, base)
+    })
+}
+
 /// The record as a page (EP-27).
 pub fn dataset_html(
     endpoint: &Endpoint,

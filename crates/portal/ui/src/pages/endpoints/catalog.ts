@@ -86,7 +86,51 @@ export interface CatalogManifest {
   source?: Array<{ url?: string; title?: Texts; description?: Texts }>;
   pipelineRef?: { kind?: string; name?: string };
   applicableLegislation?: string[];
+  harvest?: boolean;
+  datasets?: CatalogDatasetManifest[];
+  /** Members the form does not show (`visualizations`), carried through an edit untouched. */
+  [kept: string]: unknown;
 }
+
+/** One entry of `spec.catalog.datasets`: a named, narrowed dataset of the Endpoint (EP-175). */
+export interface CatalogDatasetManifest {
+  name: string;
+  title: Texts;
+  description: Texts;
+  types: string[];
+  q?: string;
+  keywords?: Record<string, string[]>;
+  license?: string;
+}
+
+/** The same entry as the form holds it: one string per text, keywords in the shown language. */
+export interface CatalogDatasetForm {
+  name?: string;
+  title?: string;
+  description?: string;
+  types?: string[];
+  q?: string;
+  keywords?: string[];
+  license?: string;
+}
+
+/** The members of `spec.catalog` the form shows and writes; any other member is kept as stored. */
+const FORM_MEMBERS = [
+  "publisher",
+  "contactPoint",
+  "license",
+  "attribution",
+  "themes",
+  "keywords",
+  "spatial",
+  "temporal",
+  "frequency",
+  "source",
+  "pipelineRef",
+  "applicableLegislation",
+  "harvest",
+  "datasets",
+];
 
 /** The same block as the form holds it: one string per text, the reference by its name. */
 export interface CatalogForm {
@@ -102,6 +146,8 @@ export interface CatalogForm {
   source?: Array<{ url?: string; title?: string; description?: string }>;
   pipelineRef?: string;
   applicableLegislation?: string[];
+  harvest?: boolean;
+  datasets?: CatalogDatasetForm[];
 }
 
 /**
@@ -185,7 +231,69 @@ export function catalogForm(catalog: CatalogManifest | undefined): CatalogForm |
       : {}),
     ...(catalog.pipelineRef?.name ? { pipelineRef: catalog.pipelineRef.name } : {}),
     ...(catalog.applicableLegislation ? { applicableLegislation: [...catalog.applicableLegislation] } : {}),
+    ...(catalog.harvest === false ? { harvest: false } : {}),
+    ...(catalog.datasets
+      ? {
+          datasets: catalog.datasets.map((dataset) => ({
+            name: dataset.name,
+            title: shown(dataset.title, language),
+            description: shown(dataset.description, language),
+            types: [...(dataset.types ?? [])],
+            ...(dataset.q ? { q: dataset.q } : {}),
+            ...(dataset.keywords && Object.keys(dataset.keywords).length > 0
+              ? { keywords: [...(dataset.keywords[shownLanguage(dataset.keywords, language)] ?? [])] }
+              : {}),
+            ...(dataset.license ? { license: dataset.license } : {}),
+          })),
+        }
+      : {}),
   };
+}
+
+/** Keywords of the shown language written back over that entry, every other language kept. */
+function keywordsOf(
+  stored: Record<string, string[]> | undefined,
+  form: string[] | undefined,
+  language: string,
+): Record<string, string[]> | undefined {
+  const keywords: Record<string, string[]> = { ...(stored ?? {}) };
+  const key = entryOf(stored, language);
+  const words = filled(form);
+  if (words.length > 0) {
+    keywords[key] = words;
+  } else {
+    delete keywords[key];
+  }
+  return Object.keys(keywords).length > 0 ? keywords : undefined;
+}
+
+/**
+ * The datasets the form holds, each text written over the entry it showed in the stored dataset
+ * of the same name. An entry with no name is one the person has not filled in yet: left out, as
+ * the manifest refuses it.
+ */
+function datasetsOf(
+  form: CatalogDatasetForm[] | undefined,
+  stored: CatalogDatasetManifest[] | undefined,
+  language: string,
+): CatalogDatasetManifest[] {
+  return (form ?? [])
+    .filter((dataset) => dataset.name?.trim())
+    .map((dataset) => {
+      const name = (dataset.name ?? "").trim();
+      const before = stored?.find((item) => item.name === name);
+      const q = dataset.q?.trim();
+      const keywords = keywordsOf(before?.keywords, dataset.keywords, language);
+      return {
+        name,
+        title: written(before?.title, dataset.title, language) ?? {},
+        description: written(before?.description, dataset.description, language) ?? {},
+        types: [...new Set(filled(dataset.types))],
+        ...(q ? { q } : {}),
+        ...(keywords ? { keywords } : {}),
+        ...(dataset.license ? { license: dataset.license } : {}),
+      };
+    });
 }
 
 /**
@@ -197,10 +305,13 @@ export function catalogOf(
   stored: CatalogManifest | undefined,
   language: string,
 ): CatalogManifest | undefined {
+  // What the form does not show is the stored value, so an edit never drops it.
+  const out: CatalogManifest = Object.fromEntries(
+    Object.entries(stored ?? {}).filter(([member]) => !FORM_MEMBERS.includes(member)),
+  );
   if (!form) {
-    return undefined;
+    return Object.keys(out).length > 0 ? out : undefined;
   }
-  const out: CatalogManifest = {};
   const publisherName = written(stored?.publisher?.name, form.publisher?.name, language);
   const publisherUri = form.publisher?.uri?.trim();
   if (publisherName || publisherUri) {
@@ -225,15 +336,8 @@ export function catalogOf(
   if (themes.length > 0) {
     out.themes = [...new Set(themes)];
   }
-  const keywords: Record<string, string[]> = { ...(stored?.keywords ?? {}) };
-  const keywordLanguage = entryOf(stored?.keywords, language);
-  const words = filled(form.keywords);
-  if (words.length > 0) {
-    keywords[keywordLanguage] = words;
-  } else {
-    delete keywords[keywordLanguage];
-  }
-  if (Object.keys(keywords).length > 0) {
+  const keywords = keywordsOf(stored?.keywords, form.keywords, language);
+  if (keywords) {
     out.keywords = keywords;
   }
   const spatial = filled(form.spatial);
@@ -269,6 +373,13 @@ export function catalogOf(
   const laws = filled(form.applicableLegislation);
   if (laws.length > 0) {
     out.applicableLegislation = laws;
+  }
+  if (form.harvest === false) {
+    out.harvest = false;
+  }
+  const datasets = datasetsOf(form.datasets, stored?.datasets, language);
+  if (datasets.length > 0) {
+    out.datasets = datasets;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

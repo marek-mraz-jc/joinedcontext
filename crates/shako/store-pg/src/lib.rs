@@ -8,6 +8,7 @@
 //! - Per-transaction `SET LOCAL` via `set_config('shako.instance', $1, true)` and
 //!   `set_config('shako.org', $2, true)` and `LISTEN/NOTIFY shako_outbox`.
 
+use serde::{Deserialize, Serialize};
 use shako_core::{
     BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId, OutboxEvent,
     PackageFileRecord, PackageRecord, PackageVersionRecord, ProtectionRuleRecord,
@@ -25,8 +26,9 @@ use std::time::Duration;
 use zeroize::Zeroizing;
 
 pub const MIGRATION_0001_SQL: &str = include_str!("../migrations/0001_init.sql");
+pub const MIGRATION_0002_SQL: &str = include_str!("../migrations/0002_store_log.sql");
 
-/// All 15 required tables in schema `shako` that MUST have `relrowsecurity` and `relforcerowsecurity` (S2).
+/// All 16 required tables in schema `shako` that MUST have `relrowsecurity` and `relforcerowsecurity` (S2).
 pub const REQUIRED_RLS_TABLES: &[&str] = &[
     "instance",
     "repo",
@@ -43,6 +45,7 @@ pub const REQUIRED_RLS_TABLES: &[&str] = &[
     "blob",
     "quota_usage",
     "outbox",
+    "store_log",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,6 +154,7 @@ pub struct PgStore {
     pool: PgPool,
     mirror: Arc<MemoryStore>,
     outbox_notifications: Arc<AtomicU64>,
+    write_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl PgStore {
@@ -176,6 +180,7 @@ impl PgStore {
             pool,
             mirror: Arc::new(MemoryStore::new()),
             outbox_notifications: Arc::new(AtomicU64::new(0)),
+            write_lock: Arc::default(),
         };
         store.verify_rls_enforced().await?;
         Ok(store)
@@ -188,6 +193,7 @@ impl PgStore {
             pool,
             mirror: Arc::new(MemoryStore::new()),
             outbox_notifications: Arc::new(AtomicU64::new(0)),
+            write_lock: Arc::default(),
         }
     }
 
@@ -196,13 +202,124 @@ impl PgStore {
         &self.pool
     }
 
-    /// Runs `0001_init.sql` migrations as `shako_migrate`.
+    /// Runs the migrations as `shako_migrate` (schema owner). sqlx's migrator holds an advisory
+    /// lock while it runs, so replicas booting together migrate once; applied versions are kept
+    /// in `shako_migrations._sqlx_migrations`, so a second run changes nothing.
     pub async fn run_migrations(migrate_pool: &PgPool) -> ShakoResult<()> {
-        sqlx::raw_sql(MIGRATION_0001_SQL)
-            .execute(migrate_pool)
+        use sqlx::SqlSafeStr;
+        use sqlx::migrate::{Migration, MigrationType, Migrator};
+        let migration = |version, name: &str, sql: &'static str| {
+            Migration::new(
+                version,
+                name.to_owned().into(),
+                MigrationType::Simple,
+                sql.into_sql_str(),
+                false,
+            )
+        };
+        let mut migrator = Migrator::with_migrations(vec![
+            migration(1, "init", MIGRATION_0001_SQL),
+            migration(2, "store_log", MIGRATION_0002_SQL),
+        ]);
+        migrator.create_schema("shako_migrations");
+        migrator.dangerous_set_table_name("shako_migrations._sqlx_migrations");
+        migrator
+            .run(migrate_pool)
             .await
             .map_err(|e| ShakoError::Storage(format!("migration failed: {e}")))?;
         Ok(())
+    }
+
+    /// Loads one tenant's persisted instance and repositories into the read mirror, so a restart
+    /// keeps them, and sets its quota usage from the stored repositories. Reads run inside the
+    /// tenant's RLS context: forced RLS lets the request role see no tenant it was not given, so
+    /// the caller names each tenant it serves. Returns the number of repositories loaded.
+    ///
+    /// Only the instance and repository rows are written to PostgreSQL today; protection rules,
+    /// pull requests, webhooks, packages and the dispatch marks live in memory only.
+    pub async fn hydrate_tenant(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+    ) -> ShakoResult<usize> {
+        let storage = |e: sqlx::Error| ShakoError::Storage(format!("hydrate failed: {e}"));
+        let mut tx = self.begin_tenant_tx(instance_id, org_id).await?;
+        let instance = sqlx::query(
+            "SELECT host, path_prefix, max_repos, max_storage_bytes, max_push_bytes, secret_scan_enabled, created_at, updated_at
+             FROM shako.instance WHERE instance_id = $1 AND org_id = $2",
+        )
+        .bind(instance_id.as_uuid())
+        .bind(org_id.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(storage)?;
+        let repos = sqlx::query(
+            "SELECT id, project_id, owner, name, description, default_branch, private, archived, size_bytes, next_pr_number, created_at, updated_at
+             FROM shako.repo WHERE instance_id = $1 AND org_id = $2 ORDER BY created_at, id",
+        )
+        .bind(instance_id.as_uuid())
+        .bind(org_id.as_uuid())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(storage)?;
+        tx.commit().await.map_err(storage)?;
+
+        let unsigned = |v: i64| u64::try_from(v).unwrap_or(0);
+        if let Some(r) = instance {
+            self.mirror
+                .upsert_instance(InstanceRecord {
+                    instance_id,
+                    org_id,
+                    host: r.get("host"),
+                    path_prefix: r.get("path_prefix"),
+                    max_repos: unsigned(r.get("max_repos")),
+                    max_storage_bytes: unsigned(r.get("max_storage_bytes")),
+                    max_push_bytes: unsigned(r.get("max_push_bytes")),
+                    secret_scan_enabled: r.get("secret_scan_enabled"),
+                    created_at: r.get("created_at"),
+                    updated_at: r.get("updated_at"),
+                })
+                .await?;
+        }
+        let mut git_bytes: i64 = 0;
+        for r in &repos {
+            let repo = RepoRecord {
+                id: RepoId::from(r.get::<uuid::Uuid, _>("id")),
+                instance_id,
+                org_id,
+                project_id: r.get("project_id"),
+                owner: r.get("owner"),
+                name: r.get("name"),
+                description: r.get("description"),
+                default_branch: r.get("default_branch"),
+                private: r.get("private"),
+                archived: r.get("archived"),
+                size_bytes: unsigned(r.get("size_bytes")),
+                next_pr_number: unsigned(r.get("next_pr_number")),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+            };
+            git_bytes = git_bytes.saturating_add(r.get::<i64, _>("size_bytes"));
+            match self.mirror.create_repo(repo.clone()).await {
+                Ok(_) => {}
+                Err(ShakoError::Conflict(_)) => {
+                    self.mirror.update_repo(repo).await?;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        let held = self.mirror.get_quota_usage(instance_id, org_id).await?;
+        let count = i64::try_from(repos.len()).unwrap_or(i64::MAX);
+        self.mirror
+            .adjust_quota_usage(
+                instance_id,
+                org_id,
+                count.saturating_sub(i64::try_from(held.repo_count).unwrap_or(i64::MAX)),
+                git_bytes.saturating_sub(i64::try_from(held.git_bytes).unwrap_or(i64::MAX)),
+                0,
+            )
+            .await?;
+        Ok(repos.len())
     }
 
     /// Begins a transaction with `SET LOCAL` tenant context (`shako.instance` and `shako.org`).
@@ -327,6 +444,7 @@ impl Store for PgStore {
 
     fn upsert_instance(&self, instance: InstanceRecord) -> StoreFuture<'_, InstanceRecord> {
         Box::pin(async move {
+            let _write = self.write_lock.lock().await;
             let mut tx = self
                 .begin_tenant_tx(instance.instance_id, instance.org_id)
                 .await?;
@@ -353,6 +471,13 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(|e| ShakoError::Storage(e.to_string()))?;
+            append_op(
+                &mut tx,
+                instance.instance_id,
+                instance.org_id,
+                &Op::UpsertInstance(instance.clone()),
+            )
+            .await?;
             tx.commit()
                 .await
                 .map_err(|e| ShakoError::Storage(e.to_string()))?;
@@ -384,17 +509,20 @@ impl Store for PgStore {
         git_bytes_delta: i64,
         package_bytes_delta: i64,
     ) -> StoreFuture<'_, QuotaUsageRecord> {
-        self.mirror.adjust_quota_usage(
+        self.logged(
             instance_id,
             org_id,
-            repo_delta,
-            git_bytes_delta,
-            package_bytes_delta,
+            Op::AdjustQuotaUsage {
+                repo_delta,
+                git_bytes_delta,
+                package_bytes_delta,
+            },
         )
     }
 
     fn create_repo(&self, repo: RepoRecord) -> StoreFuture<'_, RepoRecord> {
         Box::pin(async move {
+            let _write = self.write_lock.lock().await;
             let mut tx = self.begin_tenant_tx(repo.instance_id, repo.org_id).await?;
             let res = sqlx::query(
                 "INSERT INTO shako.repo (id, instance_id, org_id, project_id, owner, name, description, default_branch, private, archived, size_bytes, next_pr_number)
@@ -420,6 +548,13 @@ impl Store for PgStore {
                 }
                 return Err(ShakoError::Storage(e.to_string()));
             }
+            append_op(
+                &mut tx,
+                repo.instance_id,
+                repo.org_id,
+                &Op::CreateRepo(repo.clone()),
+            )
+            .await?;
             tx.commit()
                 .await
                 .map_err(|e| ShakoError::Storage(e.to_string()))?;
@@ -429,6 +564,7 @@ impl Store for PgStore {
 
     fn update_repo(&self, repo: RepoRecord) -> StoreFuture<'_, RepoRecord> {
         Box::pin(async move {
+            let _write = self.write_lock.lock().await;
             let mut tx = self.begin_tenant_tx(repo.instance_id, repo.org_id).await?;
             sqlx::query(
                 "UPDATE shako.repo SET owner = $1, name = $2, description = $3, default_branch = $4, private = $5, archived = $6, size_bytes = $7, updated_at = now()
@@ -447,6 +583,13 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(|e| ShakoError::Storage(e.to_string()))?;
+            append_op(
+                &mut tx,
+                repo.instance_id,
+                repo.org_id,
+                &Op::UpdateRepo(repo.clone()),
+            )
+            .await?;
             tx.commit()
                 .await
                 .map_err(|e| ShakoError::Storage(e.to_string()))?;
@@ -489,6 +632,7 @@ impl Store for PgStore {
         repo_id: RepoId,
     ) -> StoreFuture<'_, bool> {
         Box::pin(async move {
+            let _write = self.write_lock.lock().await;
             let mut tx = self.begin_tenant_tx(instance_id, org_id).await?;
             sqlx::query(
                 "DELETE FROM shako.repo WHERE instance_id = $1 AND org_id = $2 AND id = $3",
@@ -499,6 +643,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(|e| ShakoError::Storage(e.to_string()))?;
+            append_op(&mut tx, instance_id, org_id, &Op::DeleteRepo { repo_id }).await?;
             tx.commit()
                 .await
                 .map_err(|e| ShakoError::Storage(e.to_string()))?;
@@ -512,14 +657,14 @@ impl Store for PgStore {
         org_id: OrgId,
         repo_id: RepoId,
     ) -> StoreFuture<'_, u64> {
-        self.mirror.allocate_pr_number(instance_id, org_id, repo_id)
+        self.logged(instance_id, org_id, Op::AllocatePrNumber { repo_id })
     }
 
     fn upsert_protection_rule(
         &self,
         rec: ProtectionRuleRecord,
     ) -> StoreFuture<'_, ProtectionRuleRecord> {
-        self.mirror.upsert_protection_rule(rec)
+        self.logged(rec.instance_id, rec.org_id, Op::UpsertProtectionRule(rec))
     }
 
     fn get_protection_rule(
@@ -550,15 +695,21 @@ impl Store for PgStore {
         repo_id: RepoId,
         rule_name: &str,
     ) -> StoreFuture<'_, bool> {
-        self.mirror
-            .delete_protection_rule(instance_id, org_id, repo_id, rule_name)
+        self.logged(
+            instance_id,
+            org_id,
+            Op::DeleteProtectionRule {
+                repo_id,
+                rule_name: rule_name.to_owned(),
+            },
+        )
     }
 
     fn upsert_tag_protection(
         &self,
         rec: TagProtectionRecord,
     ) -> StoreFuture<'_, TagProtectionRecord> {
-        self.mirror.upsert_tag_protection(rec)
+        self.logged(rec.instance_id, rec.org_id, Op::UpsertTagProtection(rec))
     }
 
     fn list_tag_protections(
@@ -572,11 +723,11 @@ impl Store for PgStore {
     }
 
     fn create_pull_request(&self, pr: PullRequestRecord) -> StoreFuture<'_, PullRequestRecord> {
-        self.mirror.create_pull_request(pr)
+        self.logged(pr.instance_id, pr.org_id, Op::CreatePullRequest(pr))
     }
 
     fn update_pull_request(&self, pr: PullRequestRecord) -> StoreFuture<'_, PullRequestRecord> {
-        self.mirror.update_pull_request(pr)
+        self.logged(pr.instance_id, pr.org_id, Op::UpdatePullRequest(pr))
     }
 
     fn get_pull_request(
@@ -602,7 +753,7 @@ impl Store for PgStore {
     }
 
     fn create_review(&self, review: ReviewRecord) -> StoreFuture<'_, ReviewRecord> {
-        self.mirror.create_review(review)
+        self.logged(review.instance_id, review.org_id, Op::CreateReview(review))
     }
 
     fn list_reviews(
@@ -620,7 +771,11 @@ impl Store for PgStore {
         &self,
         status: CommitStatusRecord,
     ) -> StoreFuture<'_, CommitStatusRecord> {
-        self.mirror.upsert_commit_status(status)
+        self.logged(
+            status.instance_id,
+            status.org_id,
+            Op::UpsertCommitStatus(status),
+        )
     }
 
     fn list_commit_statuses(
@@ -635,7 +790,7 @@ impl Store for PgStore {
     }
 
     fn create_webhook(&self, hook: WebhookRecord) -> StoreFuture<'_, WebhookRecord> {
-        self.mirror.create_webhook(hook)
+        self.logged(hook.instance_id, hook.org_id, Op::CreateWebhook(hook))
     }
 
     fn get_webhook(
@@ -657,7 +812,11 @@ impl Store for PgStore {
     }
 
     fn record_delivery(&self, delivery: DeliveryRecord) -> StoreFuture<'_, DeliveryRecord> {
-        self.mirror.record_delivery(delivery)
+        self.logged(
+            delivery.instance_id,
+            delivery.org_id,
+            Op::RecordDelivery(delivery),
+        )
     }
 
     fn list_deliveries(
@@ -670,7 +829,11 @@ impl Store for PgStore {
     }
 
     fn upsert_push_mirror(&self, mirror: PushMirrorRecord) -> StoreFuture<'_, PushMirrorRecord> {
-        self.mirror.upsert_push_mirror(mirror)
+        self.logged(
+            mirror.instance_id,
+            mirror.org_id,
+            Op::UpsertPushMirror(mirror),
+        )
     }
 
     fn list_push_mirrors(
@@ -689,12 +852,18 @@ impl Store for PgStore {
         repo_id: RepoId,
         remote_name: &str,
     ) -> StoreFuture<'_, bool> {
-        self.mirror
-            .delete_push_mirror(instance_id, org_id, repo_id, remote_name)
+        self.logged(
+            instance_id,
+            org_id,
+            Op::DeletePushMirror {
+                repo_id,
+                remote_name: remote_name.to_owned(),
+            },
+        )
     }
 
     fn upsert_package(&self, pkg: PackageRecord) -> StoreFuture<'_, PackageRecord> {
-        self.mirror.upsert_package(pkg)
+        self.logged(pkg.instance_id, pkg.org_id, Op::UpsertPackage(pkg))
     }
 
     fn list_packages(
@@ -709,7 +878,7 @@ impl Store for PgStore {
         &self,
         ver: PackageVersionRecord,
     ) -> StoreFuture<'_, PackageVersionRecord> {
-        self.mirror.upsert_package_version(ver)
+        self.logged(ver.instance_id, ver.org_id, Op::UpsertPackageVersion(ver))
     }
 
     fn get_package_version(
@@ -744,7 +913,7 @@ impl Store for PgStore {
     }
 
     fn insert_package_file(&self, file: PackageFileRecord) -> StoreFuture<'_, PackageFileRecord> {
-        self.mirror.insert_package_file(file)
+        self.logged(file.instance_id, file.org_id, Op::InsertPackageFile(file))
     }
 
     fn get_package_file(
@@ -769,7 +938,7 @@ impl Store for PgStore {
     }
 
     fn upsert_blob(&self, blob: BlobRecord) -> StoreFuture<'_, BlobRecord> {
-        self.mirror.upsert_blob(blob)
+        self.logged(blob.instance_id, blob.org_id, Op::UpsertBlob(blob))
     }
 
     fn get_blob(
@@ -786,30 +955,41 @@ impl Store for PgStore {
 
     fn append_outbox(&self, event: OutboxEvent) -> StoreFuture<'_, OutboxEvent> {
         Box::pin(async move {
-            let mut tx = self
-                .begin_tenant_tx(event.instance_id, event.org_id)
-                .await?;
-            sqlx::query(
-                "INSERT INTO shako.outbox (id, instance_id, org_id, repo_id, event_kind, idempotency_key, payload, dispatched)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                 ON CONFLICT (instance_id, idempotency_key) DO NOTHING",
-            )
-            .bind(event.id)
-            .bind(event.instance_id.as_uuid())
-            .bind(event.org_id.as_uuid())
-            .bind(event.repo_id.map(|r| r.as_uuid()))
-            .bind(&event.event_kind)
-            .bind(&event.idempotency_key)
-            .bind(&event.payload)
-            .bind(event.dispatched)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| ShakoError::Storage(e.to_string()))?;
-            tx.commit()
+            let stored = {
+                let _write = self.write_lock.lock().await;
+                let mut tx = self
+                    .begin_tenant_tx(event.instance_id, event.org_id)
+                    .await?;
+                sqlx::query(
+                    "INSERT INTO shako.outbox (id, instance_id, org_id, repo_id, event_kind, idempotency_key, payload, dispatched)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                     ON CONFLICT (instance_id, idempotency_key) DO NOTHING",
+                )
+                .bind(event.id)
+                .bind(event.instance_id.as_uuid())
+                .bind(event.org_id.as_uuid())
+                .bind(event.repo_id.map(|r| r.as_uuid()))
+                .bind(&event.event_kind)
+                .bind(&event.idempotency_key)
+                .bind(&event.payload)
+                .bind(event.dispatched)
+                .execute(&mut *tx)
                 .await
                 .map_err(|e| ShakoError::Storage(e.to_string()))?;
-            let _ = self.notify_outbox(event.instance_id).await;
-            self.mirror.append_outbox(event).await
+                append_op(
+                    &mut tx,
+                    event.instance_id,
+                    event.org_id,
+                    &Op::AppendOutbox(event.clone()),
+                )
+                .await?;
+                tx.commit()
+                    .await
+                    .map_err(|e| ShakoError::Storage(e.to_string()))?;
+                self.mirror.append_outbox(event).await?
+            };
+            let _ = self.notify_outbox(stored.instance_id).await;
+            Ok(stored)
         })
     }
 
@@ -827,8 +1007,7 @@ impl Store for PgStore {
         org_id: OrgId,
         event_id: uuid::Uuid,
     ) -> StoreFuture<'_, bool> {
-        self.mirror
-            .mark_outbox_dispatched(instance_id, org_id, event_id)
+        self.logged(instance_id, org_id, Op::MarkOutboxDispatched { event_id })
     }
 
     fn list_outbox_events(
@@ -837,5 +1016,257 @@ impl Store for PgStore {
         org_id: OrgId,
     ) -> StoreFuture<'_, Vec<OutboxEvent>> {
         self.mirror.list_outbox_events(instance_id, org_id)
+    }
+}
+
+/// One mutation of the store, as written to `shako.store_log`. The request path reads from the
+/// in-memory mirror; [`PgStore::hydrate`] replays a tenant's log into it at start, so every
+/// record kind survives a restart, not only the ones with a typed table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "op", content = "args", rename_all = "snake_case")]
+pub enum Op {
+    UpsertInstance(InstanceRecord),
+    AdjustQuotaUsage {
+        repo_delta: i64,
+        git_bytes_delta: i64,
+        package_bytes_delta: i64,
+    },
+    CreateRepo(RepoRecord),
+    UpdateRepo(RepoRecord),
+    DeleteRepo {
+        repo_id: RepoId,
+    },
+    AllocatePrNumber {
+        repo_id: RepoId,
+    },
+    UpsertProtectionRule(ProtectionRuleRecord),
+    DeleteProtectionRule {
+        repo_id: RepoId,
+        rule_name: String,
+    },
+    UpsertTagProtection(TagProtectionRecord),
+    CreatePullRequest(PullRequestRecord),
+    UpdatePullRequest(PullRequestRecord),
+    CreateReview(ReviewRecord),
+    UpsertCommitStatus(CommitStatusRecord),
+    CreateWebhook(WebhookRecord),
+    RecordDelivery(DeliveryRecord),
+    UpsertPushMirror(PushMirrorRecord),
+    DeletePushMirror {
+        repo_id: RepoId,
+        remote_name: String,
+    },
+    UpsertPackage(PackageRecord),
+    UpsertPackageVersion(PackageVersionRecord),
+    InsertPackageFile(PackageFileRecord),
+    UpsertBlob(BlobRecord),
+    AppendOutbox(OutboxEvent),
+    MarkOutboxDispatched {
+        event_id: uuid::Uuid,
+    },
+}
+
+/// What an operation answers, so one apply path serves the request and the replay.
+pub trait FromApplied: Sized {
+    fn from_applied(value: Applied) -> ShakoResult<Self>;
+}
+
+/// The answer of [`Op::apply`].
+#[derive(Debug)]
+pub enum Applied {
+    Instance(InstanceRecord),
+    Quota(QuotaUsageRecord),
+    Repo(RepoRecord),
+    Bool(bool),
+    Number(u64),
+    ProtectionRule(ProtectionRuleRecord),
+    TagProtection(TagProtectionRecord),
+    PullRequest(PullRequestRecord),
+    Review(ReviewRecord),
+    CommitStatus(CommitStatusRecord),
+    Webhook(WebhookRecord),
+    Delivery(DeliveryRecord),
+    PushMirror(PushMirrorRecord),
+    Package(PackageRecord),
+    PackageVersion(PackageVersionRecord),
+    PackageFile(PackageFileRecord),
+    Blob(BlobRecord),
+    Outbox(OutboxEvent),
+}
+
+macro_rules! from_applied {
+    ($($ty:ty => $variant:ident),* $(,)?) => {$(
+        impl FromApplied for $ty {
+            fn from_applied(value: Applied) -> ShakoResult<Self> {
+                match value {
+                    Applied::$variant(v) => Ok(v),
+                    other => Err(ShakoError::Storage(format!("unexpected store answer {other:?}"))),
+                }
+            }
+        }
+    )*};
+}
+
+from_applied!(
+    InstanceRecord => Instance,
+    QuotaUsageRecord => Quota,
+    RepoRecord => Repo,
+    bool => Bool,
+    u64 => Number,
+    ProtectionRuleRecord => ProtectionRule,
+    TagProtectionRecord => TagProtection,
+    PullRequestRecord => PullRequest,
+    ReviewRecord => Review,
+    CommitStatusRecord => CommitStatus,
+    WebhookRecord => Webhook,
+    DeliveryRecord => Delivery,
+    PushMirrorRecord => PushMirror,
+    PackageRecord => Package,
+    PackageVersionRecord => PackageVersion,
+    PackageFileRecord => PackageFile,
+    BlobRecord => Blob,
+    OutboxEvent => Outbox,
+);
+
+impl Op {
+    /// Applies the operation to `store` for tenant `(instance_id, org_id)`.
+    pub async fn apply(
+        self,
+        store: &MemoryStore,
+        instance_id: InstanceId,
+        org_id: OrgId,
+    ) -> ShakoResult<Applied> {
+        Ok(match self {
+            Self::UpsertInstance(r) => Applied::Instance(store.upsert_instance(r).await?),
+            Self::AdjustQuotaUsage {
+                repo_delta,
+                git_bytes_delta,
+                package_bytes_delta,
+            } => Applied::Quota(
+                store
+                    .adjust_quota_usage(
+                        instance_id,
+                        org_id,
+                        repo_delta,
+                        git_bytes_delta,
+                        package_bytes_delta,
+                    )
+                    .await?,
+            ),
+            Self::CreateRepo(r) => Applied::Repo(store.create_repo(r).await?),
+            Self::UpdateRepo(r) => Applied::Repo(store.update_repo(r).await?),
+            Self::DeleteRepo { repo_id } => {
+                Applied::Bool(store.delete_repo(instance_id, org_id, repo_id).await?)
+            }
+            Self::AllocatePrNumber { repo_id } => Applied::Number(
+                store
+                    .allocate_pr_number(instance_id, org_id, repo_id)
+                    .await?,
+            ),
+            Self::UpsertProtectionRule(r) => {
+                Applied::ProtectionRule(store.upsert_protection_rule(r).await?)
+            }
+            Self::DeleteProtectionRule { repo_id, rule_name } => Applied::Bool(
+                store
+                    .delete_protection_rule(instance_id, org_id, repo_id, &rule_name)
+                    .await?,
+            ),
+            Self::UpsertTagProtection(r) => {
+                Applied::TagProtection(store.upsert_tag_protection(r).await?)
+            }
+            Self::CreatePullRequest(r) => Applied::PullRequest(store.create_pull_request(r).await?),
+            Self::UpdatePullRequest(r) => Applied::PullRequest(store.update_pull_request(r).await?),
+            Self::CreateReview(r) => Applied::Review(store.create_review(r).await?),
+            Self::UpsertCommitStatus(r) => {
+                Applied::CommitStatus(store.upsert_commit_status(r).await?)
+            }
+            Self::CreateWebhook(r) => Applied::Webhook(store.create_webhook(r).await?),
+            Self::RecordDelivery(r) => Applied::Delivery(store.record_delivery(r).await?),
+            Self::UpsertPushMirror(r) => Applied::PushMirror(store.upsert_push_mirror(r).await?),
+            Self::DeletePushMirror {
+                repo_id,
+                remote_name,
+            } => Applied::Bool(
+                store
+                    .delete_push_mirror(instance_id, org_id, repo_id, &remote_name)
+                    .await?,
+            ),
+            Self::UpsertPackage(r) => Applied::Package(store.upsert_package(r).await?),
+            Self::UpsertPackageVersion(r) => {
+                Applied::PackageVersion(store.upsert_package_version(r).await?)
+            }
+            Self::InsertPackageFile(r) => Applied::PackageFile(store.insert_package_file(r).await?),
+            Self::UpsertBlob(r) => Applied::Blob(store.upsert_blob(r).await?),
+            Self::AppendOutbox(r) => Applied::Outbox(store.append_outbox(r).await?),
+            Self::MarkOutboxDispatched { event_id } => Applied::Bool(
+                store
+                    .mark_outbox_dispatched(instance_id, org_id, event_id)
+                    .await?,
+            ),
+        })
+    }
+}
+
+/// Appends `op` to `shako.store_log` inside a tenant transaction.
+async fn append_op(
+    tx: &mut Transaction<'_, Postgres>,
+    instance_id: InstanceId,
+    org_id: OrgId,
+    op: &Op,
+) -> ShakoResult<()> {
+    let doc = serde_json::to_value(op).map_err(|e| ShakoError::Storage(e.to_string()))?;
+    sqlx::query("INSERT INTO shako.store_log (instance_id, org_id, op) VALUES ($1, $2, $3)")
+        .bind(instance_id.as_uuid())
+        .bind(org_id.as_uuid())
+        .bind(doc)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| ShakoError::Storage(format!("store log write failed: {e}")))?;
+    Ok(())
+}
+
+impl PgStore {
+    /// Writes `op` to the log, then applies it to the mirror. Writes are serialized, so the log
+    /// order is the order the mirror saw (a replay rebuilds the same state).
+    fn logged<T: FromApplied + Send + 'static>(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        op: Op,
+    ) -> StoreFuture<'_, T> {
+        Box::pin(async move {
+            let _write = self.write_lock.lock().await;
+            let mut tx = self.begin_tenant_tx(instance_id, org_id).await?;
+            append_op(&mut tx, instance_id, org_id, &op).await?;
+            tx.commit()
+                .await
+                .map_err(|e| ShakoError::Storage(e.to_string()))?;
+            T::from_applied(op.apply(&self.mirror, instance_id, org_id).await?)
+        })
+    }
+
+    /// Loads tenant `(instance_id, org_id)` from `shako.store_log` into the mirror, in log order.
+    /// Call once before serving. An operation the mirror refused when it was first made is
+    /// refused again and skipped, as it was then. Returns the number of operations read.
+    pub async fn hydrate(&self, instance_id: InstanceId, org_id: OrgId) -> ShakoResult<usize> {
+        let _write = self.write_lock.lock().await;
+        let mut tx = self.begin_tenant_tx(instance_id, org_id).await?;
+        let rows: Vec<serde_json::Value> =
+            sqlx::query_scalar("SELECT op FROM shako.store_log ORDER BY seq")
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(|e| ShakoError::Storage(format!("store log read failed: {e}")))?;
+        tx.commit()
+            .await
+            .map_err(|e| ShakoError::Storage(e.to_string()))?;
+        let count = rows.len();
+        for doc in rows {
+            let op: Op = serde_json::from_value(doc)
+                .map_err(|e| ShakoError::Storage(format!("store log entry unreadable: {e}")))?;
+            if let Err(e) = op.apply(&self.mirror, instance_id, org_id).await {
+                tracing::debug!(error = %e, "shako store log: an operation refused again on replay");
+            }
+        }
+        Ok(count)
     }
 }

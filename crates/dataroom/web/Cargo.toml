@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = "2021"
 license = "EUPL-1.2"
 description = "Server-rendered HTML pages (askama), i18n (sk, cs, en), CSP nonces and SDK DataGrid configurations for dataroom"
+publish = false
 
 [dependencies]
 base64 = "0.22.1"
-askama = "0.12.1"
+# Without `config`: askama.toml support pulls basic-toml (RUSTSEC-2026-0374, unmaintained).
+askama = { version = "0.12.1", default-features = false, features = ["humansize", "num-traits", "urlencode"] }
 chrono = { version = "0.4.38", features = ["serde"] }
 dataroom-core = { path = "../core" }
 dataroom-search = { path = "../search" }
