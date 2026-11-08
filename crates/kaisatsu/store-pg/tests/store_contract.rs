@@ -1073,6 +1073,8 @@ async fn sessions_and_tokens(store: &dyn Store) {
         webauthn_challenge: None,
         pending_email_code_hash: None,
         broker_state_json: None,
+        kc_action: None,
+        kc_action_done: false,
         user_id: None,
         amr: Vec::new(),
         acr_achieved: "0".into(),

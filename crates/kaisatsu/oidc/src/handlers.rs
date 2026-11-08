@@ -547,6 +547,10 @@ fn read_sso_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
     None
 }
 
+/// Keycloak's maximum authentication age for `UPDATE_PASSWORD` and `CONFIGURE_TOTP` (5 min):
+/// a session signed in longer ago signs in again before the action.
+const KC_ACTION_MAX_AUTH_AGE: i64 = 300;
+
 /// `GET /realms/{realm}/protocol/openid-connect/auth` (W1, W7).
 async fn authorize_get(
     State(state): State<OidcState>,
@@ -594,6 +598,21 @@ async fn authorize_get(
     let prompt = params.get("prompt").cloned();
     let acr_requested = extract_requested_acr(&params);
     let max_age: Option<i64> = params.get("max_age").and_then(|s| s.parse().ok());
+    // Application-initiated action (Keycloak `kc_action`): only the actions the login pages run.
+    let kc_action = match params.get("kc_action").map(String::as_str) {
+        None | Some("") => None,
+        Some(a @ ("UPDATE_PASSWORD" | "CONFIGURE_TOTP")) => Some(a.to_owned()),
+        Some(_) => {
+            return Err(KaisatsuError::invalid_request(
+                "kc_action names no action this server runs",
+            ));
+        }
+    };
+    if kc_action.is_some() && prompt.as_deref() == Some("none") {
+        return Err(KaisatsuError::invalid_request(
+            "kc_action needs an interactive login (prompt=none)",
+        ));
+    }
 
     // Check existing SSO session cookie unless `prompt=login` or `prompt=select_account`
     let existing_sso = if let Some(raw_handle) = read_sso_cookie(&headers, &mount) {
@@ -683,7 +702,7 @@ async fn authorize_get(
     // If an active SSO session already satisfies the request and requires no consent, issue code immediately (W8 SSO)
     if let Some(mut sso) = existing_sso
         .clone()
-        .filter(|_| !force_reauth && !needs_step_up)
+        .filter(|_| !force_reauth && !needs_step_up && kc_action.is_none())
     {
         let has_consent = if client.consent_required || prompt.as_deref() == Some("consent") {
             if prompt.as_deref() == Some("consent") {
@@ -757,9 +776,47 @@ async fn authorize_get(
     let handle = random_handle_256();
     let csrf_token = random_handle_256();
 
+    let recent_sso = existing_sso.clone().filter(|sso| {
+        !force_reauth && !needs_step_up && now_unix - sso.auth_time <= KC_ACTION_MAX_AUTH_AGE
+    });
+    let mut login_hint = params.get("login_hint").cloned();
     let (initial_step_json, pre_user_id, pre_amr, pre_acr) = match existing_sso
+        .clone()
         .filter(|_| !force_reauth && needs_step_up)
     {
+        // An application-initiated action within the maximum authentication age goes straight
+        // to the action; an older (or no) session signs in again first (re-authentication).
+        None if kc_action.is_some() => match recent_sso {
+            Some(sso) => {
+                let step = if kc_action.as_deref() == Some("CONFIGURE_TOTP") {
+                    json!({ "step": "EnrolTotp", "user_id": sso.user_id, "first_factor_passed": true })
+                } else {
+                    json!({
+                        "step": "UpdatePassword",
+                        "user_id": sso.user_id,
+                        "first_factor_passed": true,
+                        "second_factor_passed": sso.acr == "mfa",
+                    })
+                };
+                (
+                    step.to_string(),
+                    Some(sso.user_id),
+                    sso.amr,
+                    sso.acr,
+                )
+            }
+            None => {
+                if login_hint.is_none() {
+                    login_hint = existing_sso.as_ref().map(|s| s.username.clone());
+                }
+                (
+                    json!({ "step": "IdentityFirst" }).to_string(),
+                    None,
+                    Vec::new(),
+                    String::new(),
+                )
+            }
+        },
         Some(sso) => (
             serde_json::to_string(&json!({ "step": "SecondFactorOtp", "user_id": sso.user_id }))
                 .unwrap_or_default(),
@@ -794,7 +851,7 @@ async fn authorize_get(
             .unwrap_or_else(|| "S256".into()),
         acr_requested,
         prompt,
-        login_hint: params.get("login_hint").cloned(),
+        login_hint,
         ui_locales: params
             .get("ui_locales")
             .or_else(|| params.get("kc_locale"))
@@ -806,6 +863,8 @@ async fn authorize_get(
         webauthn_challenge: None,
         pending_email_code_hash: None,
         broker_state_json: None,
+        kc_action,
+        kc_action_done: false,
         user_id: pre_user_id,
         amr: pre_amr,
         acr_achieved: pre_acr,

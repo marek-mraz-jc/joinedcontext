@@ -72,6 +72,17 @@ consentTitle=Grant access
 consentInstruction=This application asks to use your account with the requested scopes.
 termsTitle=Terms and conditions
 termsInstruction=Accept the terms of service to continue signing in.
+otpDeviceLabel=Device name
+otpDeviceHint=Optional, for example Work phone. It names this authenticator on your account page.
+doSubmit=Submit
+doCancel=Cancel
+passwordNewLabel=New password
+passwordConfirmLabel=Confirm password
+passwordConfirmHint=Type the new password once more
+notMatchPasswordMessage=The two passwords do not match. Type the same password in both fields.
+logoutOtherSessions=Sign out from other devices
+logoutOtherSessionsHint=Every other browser and app signed in to your account has to sign in again.
+reauthenticate=Sign in again to continue. This keeps your account safe before a security change.
 "#;
 
 const SK_PROPERTIES: &str = r#"
@@ -134,6 +145,17 @@ consentTitle=Udeliť prístup
 consentInstruction=Táto aplikácia žiada o použitie vášho účtu s požadovanými oprávneniami.
 termsTitle=Podmienky používania
 termsInstruction=Pre pokračovanie v prihlásení prijmite podmienky používania.
+otpDeviceLabel=Názov zariadenia
+otpDeviceHint=Nepovinné, napríklad Pracovný telefón. Týmto názvom sa overovacia aplikácia zobrazí na stránke vášho účtu.
+doSubmit=Odoslať
+doCancel=Zrušiť
+passwordNewLabel=Nové heslo
+passwordConfirmLabel=Potvrdenie hesla
+passwordConfirmHint=Zadajte nové heslo ešte raz
+notMatchPasswordMessage=Heslá sa nezhodujú. Do oboch polí zadajte rovnaké heslo.
+logoutOtherSessions=Odhlásiť z ostatných zariadení
+logoutOtherSessionsHint=Každý iný prehliadač a aplikácia prihlásená k vášmu účtu sa bude musieť prihlásiť znova.
+reauthenticate=Na pokračovanie sa prihláste znova. Pred zmenou zabezpečenia tak chránime váš účet.
 "#;
 
 const CS_PROPERTIES: &str = r#"
@@ -196,6 +218,17 @@ consentTitle=Udělit přístup
 consentInstruction=Tato aplikace žádá o použití vašeho účtu s požadovanými oprávněními.
 termsTitle=Podmínky použití
 termsInstruction=Pro pokračování v přihlášení přijměte podmínky použití.
+otpDeviceLabel=Název zařízení
+otpDeviceHint=Nepovinné, například Pracovní telefon. Tímto názvem se ověřovací aplikace zobrazí na stránce vašeho účtu.
+doSubmit=Odeslat
+doCancel=Zrušit
+passwordNewLabel=Nové heslo
+passwordConfirmLabel=Potvrzení hesla
+passwordConfirmHint=Zadejte nové heslo ještě jednou
+notMatchPasswordMessage=Hesla se neshodují. Do obou polí zadejte stejné heslo.
+logoutOtherSessions=Odhlásit z ostatních zařízení
+logoutOtherSessionsHint=Každý jiný prohlížeč a aplikace přihlášená k vašemu účtu se bude muset přihlásit znovu.
+reauthenticate=Pro pokračování se přihlaste znovu. Před změnou zabezpečení tak chráníme váš účet.
 "#;
 
 const DE_PROPERTIES: &str = r#"
@@ -258,6 +291,17 @@ consentTitle=Zugriff gewähren
 consentInstruction=Diese Anwendung bittet um Zugriff auf Ihr Konto mit den angeforderten Berechtigungen.
 termsTitle=Nutzungsbedingungen
 termsInstruction=Akzeptieren Sie die Nutzungsbedingungen, um fortzufahren.
+otpDeviceLabel=Gerätename
+otpDeviceHint=Optional, zum Beispiel Diensthandy. Unter diesem Namen erscheint der Authenticator auf Ihrer Kontoseite.
+doSubmit=Absenden
+doCancel=Abbrechen
+passwordNewLabel=Neues Passwort
+passwordConfirmLabel=Passwort bestätigen
+passwordConfirmHint=Geben Sie das neue Passwort noch einmal ein
+notMatchPasswordMessage=Die Passwörter stimmen nicht überein. Geben Sie in beide Felder dasselbe Passwort ein.
+logoutOtherSessions=Von anderen Geräten abmelden
+logoutOtherSessionsHint=Jeder andere Browser und jede App, die mit Ihrem Konto angemeldet ist, muss sich neu anmelden.
+reauthenticate=Melden Sie sich erneut an, um fortzufahren. So schützen wir Ihr Konto vor einer Sicherheitsänderung.
 "#;
 
 const HU_PROPERTIES: &str = r#"
@@ -320,6 +364,17 @@ consentTitle=Hozzáférés engedélyezése
 consentInstruction=Ez az alkalmazás engedélyt kér a fiókja használatához a kért jogosultságokkal.
 termsTitle=Felhasználási feltételek
 termsInstruction=A folytatáshoz fogadja el a felhasználási feltételeket.
+otpDeviceLabel=Eszköz neve
+otpDeviceHint=Nem kötelező, például Munkahelyi telefon. Ezen a néven jelenik meg a hitelesítő a fiókoldalán.
+doSubmit=Küldés
+doCancel=Mégse
+passwordNewLabel=Új jelszó
+passwordConfirmLabel=Jelszó megerősítése
+passwordConfirmHint=Írja be még egyszer az új jelszót
+notMatchPasswordMessage=A két jelszó nem egyezik. Mindkét mezőbe ugyanazt a jelszót írja.
+logoutOtherSessions=Kijelentkezés a többi eszközről
+logoutOtherSessionsHint=Minden más böngészőnek és alkalmazásnak, amely be van jelentkezve a fiókjába, újra be kell jelentkeznie.
+reauthenticate=A folytatáshoz jelentkezzen be újra. Így védjük a fiókját egy biztonsági módosítás előtt.
 "#;
 
 fn parse_properties(raw: &'static str) -> BTreeMap<&'static str, &'static str> {

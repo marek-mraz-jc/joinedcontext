@@ -102,6 +102,16 @@
             cursor: pointer;
             text-decoration: none;
         }
+        .kc-check {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            column-gap: 0.5rem;
+            align-items: start;
+        }
+        .kc-check input { width: 1.25rem; height: 1.25rem; margin: 0.125rem 0 0; }
+        .kc-check .kc-field-hint { grid-column: 2; margin-top: 0; }
+        .kc-instruction-secret { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+        #secondaryLink { display: inline-block; margin-top: 0.25rem; }
         a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible {
             outline: 3px solid var(--jc-primary);
             outline-offset: 2px;
@@ -139,6 +149,13 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
                     <input type="hidden" name="session_code" value="{{ session_code }}"/>
                     {% for field in fields %}
+                    {% if field.input_type == "checkbox" %}
+                    <div class="kc-form-group kc-check">
+                        <input id="{{ field.name }}" name="{{ field.name }}" type="checkbox" value="on" aria-describedby="hint-{{ field.name }}" {% if field.value == "checked" %}checked{% endif %}/>
+                        <label for="{{ field.name }}">{{ field.label }}</label>
+                        <div class="kc-field-hint" id="hint-{{ field.name }}">{{ field.hint }}</div>
+                    </div>
+                    {% else %}
                     <div class="kc-form-group">
                         <label for="{{ field.name }}" class="kc-form-label">{{ field.label }}</label>
                         <input
@@ -156,6 +173,7 @@
                         <div class="kc-field-error" id="input-error-{{ field.name }}" aria-live="polite">{{ field.error }}</div>
                         {% endif %}
                     </div>
+                    {% endif %}
                     {% endfor %}
                     <div id="kc-form-buttons" class="kc-form-group">
                         <button class="pf-v5-c-button" id="kc-login" name="login" type="submit">{{ submit_label }}</button>

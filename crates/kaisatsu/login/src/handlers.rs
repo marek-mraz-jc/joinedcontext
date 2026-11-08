@@ -209,6 +209,10 @@ async fn build_policy_context(
         org_choices,
         pinned_org,
         consent_required: client.consent_required && !has_consent,
+        app_action: auth_session
+            .kc_action
+            .clone()
+            .filter(|_| !auth_session.kc_action_done),
     })
 }
 
@@ -292,10 +296,15 @@ async fn render_state_page(
                         error: String::new(),
                     },
                 ];
+                let reauth = auth_session.kc_action.is_some() && !auth_session.kc_action_done;
                 (
                     "login".to_owned(),
                     h,
-                    String::new(),
+                    if reauth {
+                        bundle.get("reauthenticate").to_owned()
+                    } else {
+                        String::new()
+                    },
                     f,
                     bundle.get("doLogIn").to_owned(),
                     if realm.reset_password_allowed {
@@ -336,7 +345,7 @@ async fn render_state_page(
                 } else {
                     String::new()
                 };
-                let f = vec![FormField {
+                let mut f = vec![FormField {
                     name: "otp".into(),
                     label: bundle.get("otpLabel").to_owned(),
                     input_type: "text".into(),
@@ -345,14 +354,31 @@ async fn render_state_page(
                     hint: bundle.get("otpHint").to_owned(),
                     error: String::new(),
                 }];
+                if is_enrol {
+                    f.push(FormField {
+                        name: "userLabel".into(),
+                        label: bundle.get("otpDeviceLabel").to_owned(),
+                        input_type: "text".into(),
+                        value: String::new(),
+                        autocomplete: "off".into(),
+                        hint: bundle.get("otpDeviceHint").to_owned(),
+                        error: String::new(),
+                    });
+                    f.push(logout_sessions_field(&bundle, false));
+                }
+                let (cancel_url, cancel_label) = cancel_link(auth_session, &bundle, is_enrol);
                 (
-                    "login-otp".to_owned(),
+                    if is_enrol { "config-totp" } else { "login-otp" }.to_owned(),
                     title,
                     instruction,
                     f,
-                    bundle.get("doLogIn").to_owned(),
-                    String::new(),
-                    String::new(),
+                    if is_enrol {
+                        bundle.get("doSubmit").to_owned()
+                    } else {
+                        bundle.get("doLogIn").to_owned()
+                    },
+                    cancel_url,
+                    cancel_label,
                 )
             }
             LoginState::RecoveryCode { .. } => {
@@ -376,23 +402,36 @@ async fn render_state_page(
                 )
             }
             LoginState::UpdatePassword { .. } => {
-                let f = vec![FormField {
-                    name: "new_password".into(),
-                    label: bundle.get("passwordLabel").to_owned(),
-                    input_type: "password".into(),
-                    value: String::new(),
-                    autocomplete: "new-password".into(),
-                    hint: bundle.get("passwordHint").to_owned(),
-                    error: String::new(),
-                }];
+                let f = vec![
+                    FormField {
+                        name: "new_password".into(),
+                        label: bundle.get("passwordNewLabel").to_owned(),
+                        input_type: "password".into(),
+                        value: String::new(),
+                        autocomplete: "new-password".into(),
+                        hint: bundle.get("passwordHint").to_owned(),
+                        error: String::new(),
+                    },
+                    FormField {
+                        name: "password_confirm".into(),
+                        label: bundle.get("passwordConfirmLabel").to_owned(),
+                        input_type: "password".into(),
+                        value: String::new(),
+                        autocomplete: "new-password".into(),
+                        hint: bundle.get("passwordConfirmHint").to_owned(),
+                        error: String::new(),
+                    },
+                    logout_sessions_field(&bundle, true),
+                ];
+                let (cancel_url, cancel_label) = cancel_link(auth_session, &bundle, true);
                 (
                     "update-password".to_owned(),
                     bundle.get("updatePasswordTitle").to_owned(),
                     String::new(),
                     f,
-                    bundle.get("proceedWithAction").to_owned(),
-                    String::new(),
-                    String::new(),
+                    bundle.get("doSubmit").to_owned(),
+                    cancel_url,
+                    cancel_label,
                 )
             }
             LoginState::OrganizationChoice { candidates, .. } => {
@@ -567,6 +606,86 @@ async fn render_state_page(
     };
 
     Ok(render_with_security_headers(&tpl, None))
+}
+
+/// The label a person gives a new authenticator: trimmed, at most 64 characters, control
+/// characters dropped; "Authenticator" when left empty.
+fn device_label(raw: Option<&String>) -> String {
+    let label: String = raw
+        .map(|s| s.trim())
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(64)
+        .collect();
+    if label.is_empty() {
+        "Authenticator".into()
+    } else {
+        label
+    }
+}
+
+/// The "sign out other devices" box of the password and authenticator pages (Keycloak's
+/// `logout-sessions`); `checked` presets it, as Keycloak does on the password page.
+fn logout_sessions_field(bundle: &Bundle, checked: bool) -> FormField {
+    FormField {
+        name: "logout-sessions".into(),
+        label: bundle.get("logoutOtherSessions").to_owned(),
+        input_type: "checkbox".into(),
+        value: if checked { "checked" } else { "" }.into(),
+        autocomplete: "off".into(),
+        hint: bundle.get("logoutOtherSessionsHint").to_owned(),
+        error: String::new(),
+    }
+}
+
+/// The cancel link of an application-initiated action page: back to the client's registered
+/// `redirect_uri` with `kc_action_status=cancelled`, nothing changed. Empty outside an action.
+fn cancel_link(auth_session: &AuthSession, bundle: &Bundle, on_action_page: bool) -> (String, String) {
+    if !on_action_page || auth_session.kc_action.is_none() || auth_session.kc_action_done {
+        return (String::new(), String::new());
+    }
+    let Ok(mut url) = url::Url::parse(&auth_session.redirect_uri) else {
+        return (String::new(), String::new());
+    };
+    url.query_pairs_mut()
+        .append_pair("kc_action_status", "cancelled");
+    if let Some(st) = &auth_session.state {
+        url.query_pairs_mut().append_pair("state", st);
+    }
+    (url.to_string(), bundle.get("doCancel").to_owned())
+}
+
+/// Ends every SSO session of the person except the one this browser holds (the "sign out other
+/// devices" box): their refresh tokens die with them and each client hears a back-channel logout.
+async fn sign_out_other_sessions(
+    state: &OidcState,
+    mount: &Mount,
+    realm: &RealmConfig,
+    user_id: &str,
+    headers: &HeaderMap,
+) -> Result<()> {
+    let current = read_cookie(headers, &mount.cookie_name("sso")).map(|raw| sha256_hex(&raw));
+    for sso in state.store.list_user_sso_sessions(&realm.id, user_id).await? {
+        if current.as_deref() == Some(sso.handle_hash.as_str()) {
+            continue;
+        }
+        if let Some(ended) = state.store.delete_sso_session(&realm.id, &sso.id).await? {
+            let _ = kaisatsu_oidc::dispatch_backchannel_logout(state, mount, realm, &ended).await;
+        }
+    }
+    Ok(())
+}
+
+fn read_cookie(headers: &HeaderMap, target: &str) -> Option<String> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|s| s.split(';').map(str::trim))
+        .filter_map(|part| part.split_once('='))
+        .find(|(name, v)| *name == target && !v.is_empty())
+        .map(|(_, v)| v.to_owned())
 }
 
 pub(crate) fn read_auth_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
@@ -1026,7 +1145,7 @@ async fn authenticate_page_post(
                 realm_id: realm.id.clone(),
                 user_id: user.id.clone(),
                 credential_type: "otp".into(),
-                user_label: Some("Authenticator".into()),
+                user_label: Some(device_label(form.get("userLabel"))),
                 created_date: Utc::now().timestamp_millis(),
                 secret_data: serde_json::json!({ "value": new_secret }).to_string(),
                 credential_data: serde_json::json!({
@@ -1063,8 +1182,14 @@ async fn authenticate_page_post(
                 .await;
             }
             state.store.upsert_credential(cred).await?;
+            if form.contains_key("logout-sessions") {
+                sign_out_other_sessions(&state, &mount, &realm, &user.id, &headers).await?;
+            }
             let mut auth_session = auth_session;
             auth_session.pending_totp_secret = None;
+            if auth_session.kc_action.as_deref() == Some("CONFIGURE_TOTP") {
+                auth_session.kc_action_done = true;
+            }
             let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
             let next = transition(current_state, LoginInput::CompleteEnrolTotpOk, &ctx)
                 .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
@@ -1180,6 +1305,21 @@ async fn authenticate_page_post(
             .into_iter()
             .filter(|c| c.credential_type.starts_with("password"))
             .collect();
+        if form
+            .get("password_confirm")
+            .is_some_and(|confirm| confirm != new_password)
+        {
+            return render_state_page(
+                &state,
+                &mount,
+                &realm,
+                &auth_session,
+                &current_state,
+                &headers,
+                bundle.get("notMatchPasswordMessage"),
+            )
+            .await;
+        }
         if let Err(e) = check_password_policy(
             &realm.password_policy,
             new_password,
@@ -1215,6 +1355,13 @@ async fn authenticate_page_post(
         if user.required_actions.iter().any(|a| a == "UPDATE_PASSWORD") {
             user.required_actions.retain(|a| a != "UPDATE_PASSWORD");
             user = state.store.update_user(user).await?;
+        }
+        if form.contains_key("logout-sessions") {
+            sign_out_other_sessions(&state, &mount, &realm, &user.id, &headers).await?;
+        }
+        let mut auth_session = auth_session;
+        if auth_session.kc_action.as_deref() == Some("UPDATE_PASSWORD") {
+            auth_session.kc_action_done = true;
         }
         let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
         let next = transition(current_state, LoginInput::CompleteUpdatePasswordOk, &ctx)
@@ -1711,6 +1858,9 @@ async fn advance_or_render(
         if let Some(st) = &auth_session.state {
             pairs.push(("state", st.as_str()));
         }
+        if auth_session.kc_action.is_some() && auth_session.kc_action_done {
+            pairs.push(("kc_action_status", "success"));
+        }
         let mut resp = kaisatsu_oidc::redirect_with_params(
             &auth_session.redirect_uri,
             &auth_session.response_mode,
@@ -1985,6 +2135,8 @@ async fn action_token_get(
             webauthn_challenge: None,
             pending_email_code_hash: None,
             broker_state_json: None,
+            kc_action: None,
+            kc_action_done: false,
             user_id: Some(user.id.clone()),
             amr: Vec::new(),
             acr_achieved: String::new(),

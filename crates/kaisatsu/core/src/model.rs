@@ -869,6 +869,14 @@ pub struct AuthSession {
     /// Broker flow state (`idp_alias`, `state`, `nonce`, `pkce_verifier`, pending link claims).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub broker_state_json: Option<String>,
+    /// Application-initiated action (`kc_action`: `UPDATE_PASSWORD`, `CONFIGURE_TOTP`) the
+    /// client asked for; the login runs it once after the factors and reports it back as
+    /// `kc_action_status`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kc_action: Option<String>,
+    /// True once the `kc_action` step completed in this session.
+    #[serde(default)]
+    pub kc_action_done: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     #[serde(default)]
