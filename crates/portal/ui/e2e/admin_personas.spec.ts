@@ -130,7 +130,13 @@ async function stubPortal(page: Page, persona: Persona, world: World = {}): Prom
     const method = request.method();
     const json = (body: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
     const refuse = (status: number, detail: string) =>
-      route.fulfill({ status, contentType: "application/problem+json", body: JSON.stringify({ title: status === 404 ? "Not Found" : "Forbidden", status, detail }) });
+      route.fulfill({ status, contentType: "application/problem+json", body: JSON.stringify({
+          // The Portal's own problem types (src/error.rs), so the page shows the hint it would live.
+          type: `https://joinedcontext.com/errors/${status === 404 ? "resource-not-found" : "forbidden"}`,
+          title: status === 404 ? "Resource Not Found" : "Forbidden",
+          status,
+          detail,
+        }) });
 
     if (path.endsWith("/auth/me")) return json(IDENTITIES[persona]);
     if (path === "/api/v1/projects" && method === "GET") {
@@ -345,7 +351,7 @@ for (const width of [1440, 400]) {
       await shot(page, `inbox-access-filled-${width}`);
       await row.getByRole("button", { name: "Approve access for city-kpis/pl-air-index" }).click();
       await expect.poll(() => writes).toContain("POST /api/v1/projects/helsinki/access-requests/ar-0a1b2c3d4e5f/approve");
-      await expect(section.getByText("chg-0a1b2c3d")).toBeVisible();
+      await expect(section.getByText("chg-0a1b2c3d", { exact: true })).toBeVisible();
       // The list reads the request again: approved, so it offers Revoke and no second Approve.
       await expect(row.getByText("Approved", { exact: true })).toBeVisible();
       await expect(row.getByRole("button", { name: /^Approve access/ })).toHaveCount(0);

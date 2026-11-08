@@ -450,7 +450,7 @@ export function ResourceFormDialogBody<T>({
               }}
               afterFields={afterFields}
               actions={
-                <ResourceFormFooter {...footer}>
+                <ResourceFormFooter {...footer} className="justify-end">
                   {arrangement.advancedFields ? (
                     <>
                       <Checkbox

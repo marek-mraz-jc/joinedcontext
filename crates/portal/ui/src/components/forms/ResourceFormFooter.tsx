@@ -96,8 +96,8 @@ export function DiscardDraft({ onDiscard }: { onDiscard: () => Promise<void> }):
   return (
     // A line of its own at the footer's end, so the question is never read as the answer to the
     // Cancel beside it, and its refusal is never mistaken for the check's.
-    <div role="group" aria-label={t("drafts.discard.ask")} className="order-last flex basis-full flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-2">
+    <div role="group" aria-label={t("drafts.discard.ask")} className="order-last flex basis-full flex-col items-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <span className="text-body text-fg">{t("drafts.discard.confirm")}</span>
         <Button
           variant="danger"
@@ -183,7 +183,8 @@ export function ResourceFormFooter({
               id="propose-reason"
               data-testid="propose-reason"
               role="status"
-              className={`text-caption ${lax ? "text-warning" : "text-danger"}`}
+              // Before any check nothing is wrong yet: the reason is a next step, not an error.
+              className={`text-caption ${lax ? "text-warning" : verdict.state === "none" && !verdict.refused ? "text-fg-muted" : "text-danger"}`}
             >
               {lax ? t("drafts.laxWarning") : proposeReason}
             </span>
