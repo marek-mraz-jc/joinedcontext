@@ -11,36 +11,31 @@
 //! - Bound and unbound actions/functions (`CreateRepository`, `Merge`, `CommitFiles`, `Protect`,
 //!   `Tree`, `File`, `History`, `Compare`, `Mergeable`, `Allowed`, etc.).
 
-use crate::outbox::{build_pr_webhook_payload, emit_and_dispatch_event};
+use crate::service;
 use crate::state::{
     ShakoState, authenticate_request, odata_error_response, resolve_and_authorize_repo,
 };
-use axum::extract::{Extension, Path, RawQuery, State};
+use axum::extract::{DefaultBodyLimit, Extension, Path, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use chrono::Utc;
 use jc_router::Mount;
 use odata_table::{
     MemoryTable, Operation as TableOp, Table, TableError, allowed as table_allowed,
     export as table_export, key_options, query as table_query,
 };
-use serde::Deserialize;
 use serde_json::{Value, json};
 use shako_core::{
-    Action, BranchProtectionRule, MergePolicyInput, ObjectTarget, ProtectionRuleRecord, RefPolicy,
-    RefUpdate, RepoId, RepoRecord, RequestCtx, ReviewRecord, ReviewVerdict, ShakoError,
-    ShakoResult, check_repo_count_quota, repo_disk_path, scope_for_context, validate_branch_name,
-    validate_repo_or_owner_name, validate_tree_path,
+    Action, BranchProtectionRule, ObjectTarget, PullRequestRecord, PushMirrorRecord, RepoId,
+    RepoRecord, RequestCtx, ReviewRecord, ReviewVerdict, ShakoError, ShakoResult, WebhookFormat,
+    WebhookId, repo_disk_path, scope_for_context, validate_tree_path,
 };
 use shako_git::{
-    CommitAuthor, FileChangeOp, MergeOptions, MergeStyle, check_mergeability, commit_file_changes,
-    compute_repo_size_bytes, create_branch, delete_branch, diff_refs_files, execute_pr_merge,
-    init_bare_repo, list_branches, list_commits, list_tags, list_tree_entries, read_file_at_ref,
-    update_pr_branch,
+    CommitAuthor, MergeStyle, check_mergeability, diff_refs_files, list_branches, list_commits,
+    list_tags, list_tree_entries, read_commit_info, read_file_at_ref,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -67,31 +62,70 @@ fn split_paren_segment(seg: &str) -> (&str, Option<&str>) {
     (seg, None)
 }
 
-fn unquote_odata_key(raw: &str) -> String {
+/// An OData literal as its value: `'a''b'` is `a'b`; anything unquoted stays as written.
+fn odata_literal(raw: &str) -> String {
     let t = raw.trim();
-    if let Some((_, v)) = t.split_once('=') {
-        return v.trim().trim_matches(['\'', '"']).to_owned();
+    if t.len() >= 2 && t.starts_with('\'') && t.ends_with('\'') {
+        t[1..t.len() - 1].replace("''", "'")
+    } else {
+        t.trim_matches('"').to_owned()
     }
-    t.trim_matches(['\'', '"']).to_owned()
 }
 
-fn parse_func_args(parens: Option<&str>, raw_query: Option<&str>) -> BTreeMap<String, String> {
-    let mut map = BTreeMap::new();
-    if let Some(inner) = parens {
-        for part in inner.split(',') {
-            if let Some((k, v)) = part.split_once('=') {
-                map.insert(
-                    k.trim().to_owned(),
-                    v.trim().trim_matches(['\'', '"']).to_owned(),
-                );
+/// Splits `a='x,y',b=2` at the commas outside quoted literals.
+fn split_args(inner: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut quoted = false;
+    let mut start = 0;
+    for (i, c) in inner.char_indices() {
+        match c {
+            '\'' => quoted = !quoted,
+            ',' if !quoted => {
+                out.push(&inner[start..i]);
+                start = i + 1;
             }
+            _ => {}
         }
     }
+    out.push(&inner[start..]);
+    out
+}
+
+fn unquote_odata_key(raw: &str) -> String {
+    let t = raw.trim();
+    match t.split_once('=') {
+        Some((k, v)) if !k.contains('\'') => odata_literal(v),
+        _ => odata_literal(t),
+    }
+}
+
+/// The arguments of a key or function call: `(Path=@p,Ref='main')` with the query string's
+/// parameter aliases (`@p='a/b.yaml'`) resolved, plus plain query parameters.
+fn parse_func_args(parens: Option<&str>, raw_query: Option<&str>) -> BTreeMap<String, String> {
+    let mut query = BTreeMap::new();
     if let Some(q) = raw_query
         && let Ok(pairs) = serde_urlencoded::from_str::<Vec<(String, String)>>(q)
     {
         for (k, v) in pairs {
-            map.insert(k, v);
+            query.insert(k, v);
+        }
+    }
+    let mut map: BTreeMap<String, String> = query
+        .iter()
+        .filter(|(k, _)| !k.starts_with('@') && !k.starts_with('$'))
+        .map(|(k, v)| (k.clone(), odata_literal(v)))
+        .collect();
+    if let Some(inner) = parens {
+        for part in split_args(inner) {
+            if let Some((k, v)) = part.split_once('=') {
+                let v = v.trim();
+                let value = if v.starts_with('@') {
+                    query.get(v).map(|a| odata_literal(a)).unwrap_or_default()
+                } else {
+                    odata_literal(v)
+                };
+                map.insert(k.trim().to_owned(), value);
+            }
         }
     }
     map
@@ -213,28 +247,7 @@ async fn build_entity_table(
                 Vec::new()
             }
         }
-        "Repositories" => {
-            let base = mount.public_base();
-            visible_repos
-                .iter()
-                .map(|r| {
-                    json!({
-                        "Id": r.id.to_string(),
-                        "Owner": r.owner,
-                        "Name": r.name,
-                        "Project": r.project_id,
-                        "Description": r.description,
-                        "DefaultBranch": r.default_branch,
-                        "Private": r.private,
-                        "Archived": r.archived,
-                        "SizeBytes": r.size_bytes,
-                        "CloneUrl": format!("{base}/{}/{}.git", r.owner, r.name),
-                        "CreatedAt": r.created_at.to_rfc3339(),
-                        "UpdatedAt": r.updated_at.to_rfc3339(),
-                    })
-                })
-                .collect()
-        }
+        "Repositories" => visible_repos.iter().map(|r| repo_row(mount, r)).collect(),
         "Branches" => {
             let Some((repo_id, _)) = extract_repo_id_from_key_or_query(key_parens, raw_query)
             else {
@@ -332,35 +345,14 @@ async fn build_entity_table(
                 .collect()
         }
         "PullRequests" => {
-            let visible_ids: std::collections::BTreeSet<RepoId> =
-                visible_repos.iter().map(|r| r.id).collect();
+            let by_id: BTreeMap<RepoId, &RepoRecord> =
+                visible_repos.iter().map(|r| (r.id, r)).collect();
             state
                 .store()
                 .list_pull_requests(ctx.instance_id, ctx.org_id, None, None)
                 .await?
                 .into_iter()
-                .filter(|pr| visible_ids.contains(&pr.repo_id))
-                .map(|pr| {
-                    json!({
-                        "Id": format!("{}:{}", pr.repo_id, pr.number),
-                        "RepoId": pr.repo_id.to_string(),
-                        "Number": pr.number,
-                        "State": pr.state,
-                        "Title": pr.title,
-                        "Body": pr.body,
-                        "Head": pr.head_ref,
-                        "Base": pr.base_ref,
-                        "HeadSha": pr.head_sha,
-                        "BaseSha": pr.base_sha,
-                        "MergeBase": pr.merge_base,
-                        "Mergeable": pr.mergeable,
-                        "Merged": pr.merged,
-                        "MergeCommitSha": pr.merge_commit_sha,
-                        "Author": pr.author_login,
-                        "CreatedAt": pr.created_at.to_rfc3339(),
-                        "ClosedAt": pr.closed_at.map(|d| d.to_rfc3339()),
-                    })
-                })
+                .filter_map(|pr| by_id.get(&pr.repo_id).map(|r| pr_row(mount, r, &pr)))
                 .collect()
         }
         "Reviews" => {
@@ -370,20 +362,9 @@ async fn build_entity_table(
                 .store()
                 .list_reviews(ctx.instance_id, ctx.org_id, None, None)
                 .await?
-                .into_iter()
+                .iter()
                 .filter(|r| visible_ids.contains(&r.repo_id))
-                .map(|r| {
-                    json!({
-                        "Id": r.id.to_string(),
-                        "RepoId": r.repo_id.to_string(),
-                        "Number": r.pr_number,
-                        "Verdict": r.verdict.as_str(),
-                        "Body": r.body,
-                        "Author": r.author_login,
-                        "CommitId": r.commit_id,
-                        "CreatedAt": r.created_at.to_rfc3339(),
-                    })
-                })
+                .map(review_row)
                 .collect()
         }
         "ProtectionRules" => {
@@ -451,18 +432,9 @@ async fn build_entity_table(
                 .store()
                 .list_push_mirrors(ctx.instance_id, ctx.org_id, None)
                 .await?
-                .into_iter()
+                .iter()
                 .filter(|m| visible_ids.contains(&m.repo_id))
-                .map(|m| {
-                    json!({
-                        "Id": format!("{}:{}", m.repo_id, m.remote_name),
-                        "RepoId": m.repo_id.to_string(),
-                        "Name": m.remote_name,
-                        "RemoteAddress": m.remote_address,
-                        "LastSync": m.last_sync.map(|d| d.to_rfc3339()),
-                        "LastError": m.last_error,
-                    })
-                })
+                .map(mirror_row)
                 .collect()
         }
         "Teams" => {
@@ -637,20 +609,7 @@ async fn apply_pr_expansions(
                 .store()
                 .list_reviews(ctx.instance_id, ctx.org_id, Some(repo_id), Some(num))
                 .await?;
-            let rev_json: Vec<Value> = revs
-                .into_iter()
-                .map(|r| {
-                    json!({
-                        "Id": r.id.to_string(),
-                        "RepoId": r.repo_id.to_string(),
-                        "Number": r.pr_number,
-                        "Verdict": r.verdict.as_str(),
-                        "Body": r.body,
-                        "Author": r.author_login,
-                        "CommitId": r.commit_id,
-                    })
-                })
-                .collect();
+            let rev_json: Vec<Value> = revs.iter().map(review_row).collect();
             if let Some(obj) = row.as_object_mut() {
                 obj.insert("Reviews".into(), Value::Array(rev_json));
             }
@@ -677,10 +636,7 @@ async fn apply_pr_expansions(
             .and_then(Result::ok)
             .unwrap_or_default();
             if let Some(obj) = row.as_object_mut() {
-                obj.insert(
-                    "Files".into(),
-                    serde_json::to_value(files).unwrap_or(Value::Array(Vec::new())),
-                );
+                obj.insert("Files".into(), files_rows(files));
             }
         }
     }
@@ -688,60 +644,189 @@ async fn apply_pr_expansions(
 }
 
 // =========================================================================
-// HTTP Handlers for `/odata` and `/odata/*`
+// Rows shared by entity sets, navigation and action answers
 // =========================================================================
 
-async fn odata_service_doc(State(state): State<ShakoState>, headers: HeaderMap) -> Response {
-    if let Err(e) = authenticate_request(&state, &headers, None, "shako") {
-        return odata_error_response(&e);
-    }
-    let sets: Vec<Value> = state
-        .registry
-        .service
-        .sets
-        .iter()
-        .map(|s| {
-            json!({
-                "name": s.set,
-                "kind": "EntitySet",
-                "url": s.set,
-            })
-        })
-        .collect();
-    (
-        StatusCode::OK,
-        [
-            (
-                header::CONTENT_TYPE,
-                "application/json; odata.metadata=minimal",
-            ),
-            (header::HeaderName::from_static("odata-version"), "4.01"),
-            (header::CACHE_CONTROL, "private, no-store"),
-        ],
-        Json(json!({
-            "@odata.context": "$metadata",
-            "value": sets,
-        })),
-    )
-        .into_response()
+/// A repository as the `Repositories` entity set shows it.
+fn repo_row(mount: &Mount, r: &RepoRecord) -> Value {
+    json!({
+        "Id": r.id.to_string(),
+        "Owner": r.owner,
+        "Name": r.name,
+        "Project": r.project_id,
+        "Description": r.description,
+        "DefaultBranch": r.default_branch,
+        "Private": r.private,
+        "Archived": r.archived,
+        "SizeBytes": r.size_bytes,
+        "CloneUrl": format!("{}/{}/{}.git", mount.public_base(), r.owner, r.name),
+        "CreatedAt": r.created_at.to_rfc3339(),
+        "UpdatedAt": r.updated_at.to_rfc3339(),
+    })
 }
 
-async fn odata_metadata(State(state): State<ShakoState>, headers: HeaderMap) -> Response {
-    if let Err(e) = authenticate_request(&state, &headers, None, "shako") {
-        return odata_error_response(&e);
+/// A pull request as the `PullRequests` entity set shows it.
+fn pr_row(mount: &Mount, repo: &RepoRecord, pr: &PullRequestRecord) -> Value {
+    json!({
+        "Id": format!("{}:{}", pr.repo_id, pr.number),
+        "RepoId": pr.repo_id.to_string(),
+        "Number": pr.number,
+        "HtmlUrl": format!("{}/{}/{}/pulls/{}", mount.public_base(), repo.owner, repo.name, pr.number),
+        "State": pr.state,
+        "Title": pr.title,
+        "Body": pr.body,
+        "Head": pr.head_ref,
+        "Base": pr.base_ref,
+        "HeadSha": pr.head_sha,
+        "BaseSha": pr.base_sha,
+        "MergeBase": pr.merge_base,
+        "Mergeable": pr.mergeable,
+        "Merged": pr.merged,
+        "MergeCommitSha": pr.merge_commit_sha,
+        "Author": pr.author_login,
+        "AuthorName": pr.author_name,
+        "AuthorEmail": pr.author_email,
+        "CreatedAt": pr.created_at.to_rfc3339(),
+        "UpdatedAt": pr.updated_at.to_rfc3339(),
+        "ClosedAt": pr.closed_at.map(|d| d.to_rfc3339()),
+    })
+}
+
+fn review_row(r: &ReviewRecord) -> Value {
+    json!({
+        "Id": r.id.to_string(),
+        "RepoId": r.repo_id.to_string(),
+        "Number": r.pr_number,
+        "Verdict": r.verdict.as_str(),
+        "Body": r.body,
+        "Author": r.author_login,
+        "CommitId": r.commit_id,
+        "CreatedAt": r.created_at.to_rfc3339(),
+    })
+}
+
+fn mirror_row(m: &PushMirrorRecord) -> Value {
+    json!({
+        "Id": format!("{}:{}", m.repo_id, m.remote_name),
+        "RepoId": m.repo_id.to_string(),
+        "Name": m.remote_name,
+        "RemoteAddress": m.remote_address,
+        "LastSync": m.last_sync.map(|d| d.to_rfc3339()),
+        "LastError": m.last_error,
+    })
+}
+
+fn files_rows(files: Vec<shako_git::DiffFileEntry>) -> Value {
+    Value::Array(
+        files
+            .into_iter()
+            .map(|f| json!({ "Filename": f.filename, "Status": f.status }))
+            .collect(),
+    )
+}
+
+// =========================================================================
+// HTTP handlers for `/odata/{...}`
+// =========================================================================
+
+fn ok_or_no_content(val: Value) -> Response {
+    if val.is_null() {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        (StatusCode::OK, Json(val)).into_response()
     }
-    match state.registry.csdl_xml() {
-        Ok(xml) => (
-            StatusCode::OK,
-            [
-                (header::CONTENT_TYPE, "application/xml; charset=utf-8"),
-                (header::HeaderName::from_static("odata-version"), "4.01"),
-            ],
-            xml,
-        )
-            .into_response(),
-        Err(e) => odata_error_response(&ShakoError::Internal(e)),
+}
+
+/// The key of a `Repositories(...)` segment as [`find_visible_repo_by_key`] takes it: the
+/// alternate key `Owner='o',Name='r'` becomes `o/r`, a UUID key stays itself.
+fn repo_key(parens: &str) -> String {
+    let args = parse_func_args(Some(parens), None);
+    match (args.get("Owner"), args.get("Name")) {
+        (Some(owner), Some(name)) => format!("{owner}/{name}"),
+        _ => args
+            .get("Id")
+            .cloned()
+            .unwrap_or_else(|| unquote_odata_key(parens)),
     }
+}
+
+/// A query string with `RepoId eq '{id}'` and-ed into its `$filter`: a collection navigated from
+/// one repository shows only that repository's rows.
+fn query_within_repo(repo_id: RepoId, raw_q: Option<&str>) -> String {
+    let scope = format!("RepoId%20eq%20'{repo_id}'");
+    let mut seen = false;
+    let mut parts: Vec<String> = raw_q
+        .filter(|q| !q.is_empty())
+        .map(|q| q.split('&').map(str::to_owned).collect())
+        .unwrap_or_default();
+    for part in &mut parts {
+        if let Some(user) = part.strip_prefix("$filter=") {
+            *part = format!("$filter={scope}%20and%20({user})");
+            seen = true;
+        }
+    }
+    if !seen {
+        parts.push(format!("$filter={scope}"));
+    }
+    parts.join("&")
+}
+
+/// Runs a collection read of `set_name` with OData query options (`$filter`, `$orderby`, `$top`,
+/// `$skip`, `$count`, `$expand` on pull requests) inside the caller's scope (S9).
+async fn collection_answer(
+    state: &ShakoState,
+    ctx: &RequestCtx,
+    mount: &Mount,
+    set_name: &str,
+    raw_q: Option<&str>,
+) -> ShakoResult<Value> {
+    let table = build_entity_table(state, ctx, mount, set_name, None, raw_q).await?;
+    let scope = scope_for_context(ctx, state.authorizer.as_ref());
+    let (opts, expand_props) =
+        parse_odata_options_with_expand(&table.info().model, set_name, raw_q)?;
+    let mut ans = table_query(&table, &opts, &scope, MAX_ODATA_PAGE)
+        .await
+        .map_err(map_table_error)?;
+    if set_name == "PullRequests" {
+        apply_pr_expansions(state, ctx, &mut ans.rows, &expand_props).await?;
+    }
+    let mut payload = json!({
+        "@odata.context": format!("$metadata#{set_name}"),
+        "value": ans.rows,
+    });
+    if let Some(c) = ans.count {
+        payload["@odata.count"] = Value::from(c);
+    }
+    if let Some(next) = ans.next {
+        payload["@odata.nextLink"] = Value::String(format!("{set_name}?$skiptoken={next}"));
+    }
+    Ok(payload)
+}
+
+/// One entity of `set_name` by its key, inside the caller's scope.
+async fn entity_answer(
+    state: &ShakoState,
+    ctx: &RequestCtx,
+    mount: &Mount,
+    set_name: &str,
+    key: &str,
+    raw_q: Option<&str>,
+) -> ShakoResult<Value> {
+    let key_parens = format!("'{key}'");
+    let table = build_entity_table(state, ctx, mount, set_name, Some(&key_parens), raw_q).await?;
+    let scope = scope_for_context(ctx, state.authorizer.as_ref());
+    let (_, expand_props) = parse_odata_options_with_expand(&table.info().model, set_name, raw_q)?;
+    let opts =
+        key_options(table.info(), &Value::String(key.to_owned()), None).map_err(map_table_error)?;
+    let mut ans = table_query(&table, &opts, &scope, 1)
+        .await
+        .map_err(map_table_error)?;
+    if set_name == "PullRequests" {
+        apply_pr_expansions(state, ctx, &mut ans.rows, &expand_props).await?;
+    }
+    ans.rows
+        .pop()
+        .ok_or_else(|| ShakoError::NotFound(format!("{set_name} entity not found")))
 }
 
 async fn odata_single_get(
@@ -774,79 +859,193 @@ async fn odata_single_get(
         return (StatusCode::OK, Json(dec)).into_response();
     }
 
-    let table = match build_entity_table(&state, &ctx, &mount, short_name, parens, raw_q.as_deref())
-        .await
-    {
-        Ok(t) => t,
+    let res = match parens {
+        Some(p) if short_name == "Repositories" => {
+            match find_visible_repo_by_key(&state, &ctx, &repo_key(p)).await {
+                Ok((repo, _)) => {
+                    entity_answer(
+                        &state,
+                        &ctx,
+                        &mount,
+                        "Repositories",
+                        &repo.id.to_string(),
+                        raw_q.as_deref(),
+                    )
+                    .await
+                }
+                Err(e) => Err(e),
+            }
+        }
+        Some(p) => {
+            entity_answer(
+                &state,
+                &ctx,
+                &mount,
+                short_name,
+                &unquote_odata_key(p),
+                raw_q.as_deref(),
+            )
+            .await
+        }
+        None => collection_answer(&state, &ctx, &mount, short_name, raw_q.as_deref()).await,
+    };
+    match res {
+        Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+        Err(e) => odata_error_response(&e),
+    }
+}
+
+/// `DELETE Repositories(...)` deletes the repository (Admin); nothing else is deletable here.
+async fn odata_single_delete(
+    State(state): State<ShakoState>,
+    headers: HeaderMap,
+    Path(segment): Path<String>,
+) -> Response {
+    let ctx = match authenticate_request(&state, &headers, None, "shako") {
+        Ok(c) => c,
         Err(e) => return odata_error_response(&e),
     };
-    let scope = scope_for_context(&ctx, state.authorizer.as_ref());
-
-    if let Some(key_raw) = parens {
-        let key_val = Value::String(unquote_odata_key(key_raw));
-        let (_, expand_props) = match parse_odata_options_with_expand(
-            &table.info().model,
-            short_name,
-            raw_q.as_deref(),
-        ) {
-            Ok(o) => o,
-            Err(e) => return odata_error_response(&e),
-        };
-        let opts = match key_options(table.info(), &key_val, None) {
-            Ok(o) => o,
-            Err(e) => return odata_error_response(&map_table_error(e)),
-        };
-        match table_query(&table, &opts, &scope, 1).await {
-            Ok(mut ans) => {
-                if short_name == "PullRequests"
-                    && let Err(e) =
-                        apply_pr_expansions(&state, &ctx, &mut ans.rows, &expand_props).await
-                {
-                    return odata_error_response(&e);
+    let (name, parens) = split_paren_segment(&segment);
+    let res = match parens {
+        Some(p) if name == "Repositories" => {
+            match find_visible_repo_by_key(&state, &ctx, &repo_key(p)).await {
+                Ok((repo, _)) => {
+                    service::delete_repository(&state, &ctx, &repo.owner, &repo.name).await
                 }
-                if let Some(row) = ans.rows.pop() {
-                    (StatusCode::OK, Json(row)).into_response()
-                } else {
-                    odata_error_response(&ShakoError::NotFound(format!(
-                        "{short_name} entity not found"
-                    )))
-                }
+                Err(e) => Err(e),
             }
-            Err(e) => odata_error_response(&map_table_error(e)),
         }
-    } else {
-        let (opts, expand_props) = match parse_odata_options_with_expand(
-            &table.info().model,
-            short_name,
-            raw_q.as_deref(),
-        ) {
-            Ok(o) => o,
-            Err(e) => return odata_error_response(&e),
-        };
-        match table_query(&table, &opts, &scope, MAX_ODATA_PAGE).await {
-            Ok(mut ans) => {
-                if short_name == "PullRequests"
-                    && let Err(e) =
-                        apply_pr_expansions(&state, &ctx, &mut ans.rows, &expand_props).await
-                {
-                    return odata_error_response(&e);
-                }
-                let mut payload = json!({
-                    "@odata.context": format!("$metadata#{short_name}"),
-                    "value": ans.rows,
-                });
-                if let Some(c) = ans.count {
-                    payload["@odata.count"] = Value::from(c);
-                }
-                if let Some(next) = ans.next {
-                    payload["@odata.nextLink"] =
-                        Value::String(format!("{short_name}?$skiptoken={next}"));
-                }
-                (StatusCode::OK, Json(payload)).into_response()
-            }
-            Err(e) => odata_error_response(&map_table_error(e)),
-        }
+        _ => Err(ShakoError::MethodNotAllowed(format!(
+            "DELETE is not served on '{segment}'"
+        ))),
+    };
+    match res {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => odata_error_response(&e),
     }
+}
+
+/// A read under one repository: `R/Branches('x')`, `R/Tags`, `R/Commits('sha')`,
+/// `R/PullRequests`, `R/PullRequests(n)`, `R/PushMirrors`, or a bound function
+/// (`R/Shako.Tree(...)`, `File`, `History`, `Compare`, `CommitStatus`, `ArchiveLink`,
+/// `BundleLink`).
+async fn repo_navigation_get(
+    state: &ShakoState,
+    ctx: &RequestCtx,
+    mount: &Mount,
+    repo_key_str: &str,
+    seg: &str,
+    raw_q: Option<&str>,
+) -> ShakoResult<Value> {
+    let (nav, nav_parens) = split_paren_segment(seg);
+    let op_short = nav.strip_prefix("Shako.").unwrap_or(nav);
+    let args = parse_func_args(nav_parens, raw_q);
+    match op_short {
+        "Tree" => return exec_bound_repo_tree(state, ctx, repo_key_str, &args).await,
+        "File" => return exec_bound_repo_file(state, ctx, repo_key_str, &args).await,
+        "History" => return exec_bound_repo_history(state, ctx, repo_key_str, &args).await,
+        "Compare" => return exec_bound_repo_compare(state, ctx, repo_key_str, &args).await,
+        "CommitStatus" => return exec_bound_repo_status(state, ctx, repo_key_str, &args).await,
+        "ArchiveLink" | "BundleLink" => {
+            let (r, _) = find_visible_repo_by_key(state, ctx, repo_key_str).await?;
+            let git_ref = arg(&args, "Ref").unwrap_or_else(|| r.default_branch.clone());
+            let ext = if op_short == "BundleLink" {
+                "bundle".to_owned()
+            } else {
+                arg(&args, "Format").unwrap_or_else(|| "zip".into())
+            };
+            return Ok(json!({
+                "value": format!("{}/api/v1/repos/{}/{}/archive/{git_ref}.{ext}", mount.public_base(), r.owner, r.name)
+            }));
+        }
+        _ => {}
+    }
+
+    let (repo, disk_path) = find_visible_repo_by_key(state, ctx, repo_key_str).await?;
+    match (op_short, nav_parens) {
+        ("Branches", Some(k)) => {
+            let branch = unquote_odata_key(k);
+            let (sha, protected) =
+                service::branch_head(state, ctx, &repo.owner, &repo.name, &branch).await?;
+            Ok(json!({
+                "Id": format!("{}:{branch}", repo.id),
+                "RepoId": repo.id.to_string(),
+                "Name": branch,
+                "HeadSha": sha,
+                "Protected": protected,
+            }))
+        }
+        ("Commits", Some(k)) => {
+            let sha = unquote_odata_key(k);
+            let c = tokio::task::spawn_blocking(move || read_commit_info(&disk_path, &sha))
+                .await
+                .map_err(|e| ShakoError::Internal(e.to_string()))??;
+            Ok(json!({
+                "Id": format!("{}:{}", repo.id, c.sha),
+                "RepoId": repo.id.to_string(),
+                "Sha": c.sha,
+                "Message": c.message,
+                "Author": c.author_name,
+                "Email": c.author_email,
+                "Date": c.author_date,
+                "Parents": c.parent_shas,
+            }))
+        }
+        ("PullRequests", Some(k)) => {
+            let number = parse_pr_number(k)?;
+            let (repo, pr) =
+                service::get_pull_request(state, ctx, &repo.owner, &repo.name, number).await?;
+            Ok(pr_row(mount, &repo, &pr))
+        }
+        ("PushMirrors", None) => {
+            // Mirrors are Admin reads: the service checks the verb, the table filters the rows.
+            service::list_push_mirrors(state, ctx, &repo.owner, &repo.name).await?;
+            collection_answer(
+                state,
+                ctx,
+                mount,
+                "PushMirrors",
+                Some(&query_within_repo(repo.id, raw_q)),
+            )
+            .await
+        }
+        (
+            "Branches" | "Tags" | "Commits" | "PullRequests" | "Reviews" | "ProtectionRules"
+            | "Webhooks" | "Teams",
+            None,
+        ) => {
+            collection_answer(
+                state,
+                ctx,
+                mount,
+                op_short,
+                Some(&query_within_repo(repo.id, raw_q)),
+            )
+            .await
+        }
+        _ => Err(ShakoError::NotFound(format!(
+            "unknown navigation '{seg}' under a repository"
+        ))),
+    }
+}
+
+fn parse_pr_number(parens: &str) -> ShakoResult<u64> {
+    unquote_odata_key(parens)
+        .parse()
+        .map_err(|_| ShakoError::BadRequest("a pull request key is its number".into()))
+}
+
+fn arg(args: &BTreeMap<String, String>, name: &str) -> Option<String> {
+    args.get(name)
+        .or_else(|| args.get(&lower_first(name)))
+        .cloned()
+}
+
+fn lower_first(name: &str) -> String {
+    let mut c = name.chars();
+    c.next()
+        .map(|f| f.to_lowercase().collect::<String>() + c.as_str())
+        .unwrap_or_default()
 }
 
 async fn odata_two_segment_get(
@@ -865,96 +1064,60 @@ async fn odata_two_segment_get(
     let (sub_op, sub_parens) = split_paren_segment(&seg2);
     let op_short = sub_op.strip_prefix("Shako.").unwrap_or(sub_op);
 
-    // Bound functions on `Repositories('{id}')/...` or `PullRequests('{repo_id}:{num}')/...`
     if let Some(k_raw) = key_parens {
-        let key_str = unquote_odata_key(k_raw);
-        let args = parse_func_args(sub_parens, raw_q.as_deref());
         match (set_name, op_short) {
-            ("Repositories", "Tree") => {
-                return match exec_bound_repo_tree(&state, &ctx, &key_str, &args).await {
+            ("Repositories", _) => {
+                return match repo_navigation_get(
+                    &state,
+                    &ctx,
+                    &mount,
+                    &repo_key(k_raw),
+                    &seg2,
+                    raw_q.as_deref(),
+                )
+                .await
+                {
                     Ok(v) => (StatusCode::OK, Json(v)).into_response(),
                     Err(e) => odata_error_response(&e),
                 };
             }
-            ("Repositories", "File") => {
-                return match exec_bound_repo_file(&state, &ctx, &key_str, &args).await {
-                    Ok(v) => (StatusCode::OK, Json(v)).into_response(),
-                    Err(e) => odata_error_response(&e),
+            ("PackageFiles", "$value") => {
+                let args = parse_func_args(Some(k_raw), raw_q.as_deref());
+                let (Some(owner), Some(pkg), Some(ver), Some(file)) = (
+                    arg(&args, "Owner"),
+                    arg(&args, "Name"),
+                    arg(&args, "Version"),
+                    arg(&args, "File"),
+                ) else {
+                    return odata_error_response(&ShakoError::BadRequest(
+                        "PackageFiles takes the key Owner, Name, Version and File".into(),
+                    ));
                 };
-            }
-            ("Repositories", "History") => {
-                return match exec_bound_repo_history(&state, &ctx, &key_str, &args).await {
-                    Ok(v) => (StatusCode::OK, Json(v)).into_response(),
-                    Err(e) => odata_error_response(&e),
-                };
-            }
-            ("Repositories", "Compare") => {
-                return match exec_bound_repo_compare(&state, &ctx, &key_str, &args).await {
-                    Ok(v) => (StatusCode::OK, Json(v)).into_response(),
-                    Err(e) => odata_error_response(&e),
-                };
-            }
-            ("Repositories", "ArchiveLink") => {
-                let git_ref = args
-                    .get("Ref")
-                    .or_else(|| args.get("ref"))
-                    .map_or("main", String::as_str);
-                let fmt = args
-                    .get("Format")
-                    .or_else(|| args.get("format"))
-                    .map_or("zip", String::as_str);
-                return match find_visible_repo_by_key(&state, &ctx, &key_str).await {
-                    Ok((r, _)) => (
+                return match service::read_generic_file(&state, &ctx, &owner, &pkg, &ver, &file)
+                    .await
+                {
+                    Ok(bytes) => (
                         StatusCode::OK,
-                        Json(json!({
-                            "value": format!("{}/api/v1/repos/{}/{}/archive/{git_ref}.{fmt}", mount.public_base(), r.owner, r.name)
-                        })),
-                    )
-                        .into_response(),
-                    Err(e) => odata_error_response(&e),
-                };
-            }
-            ("Repositories", "BundleLink") => {
-                let git_ref = args
-                    .get("Ref")
-                    .or_else(|| args.get("ref"))
-                    .map_or("main", String::as_str);
-                return match find_visible_repo_by_key(&state, &ctx, &key_str).await {
-                    Ok((r, _)) => (
-                        StatusCode::OK,
-                        Json(json!({
-                            "value": format!("{}/api/v1/repos/{}/{}/archive/{git_ref}.bundle", mount.public_base(), r.owner, r.name)
-                        })),
+                        [(header::CONTENT_TYPE, "application/octet-stream")],
+                        bytes,
                     )
                         .into_response(),
                     Err(e) => odata_error_response(&e),
                 };
             }
             ("PullRequests", "Mergeable") => {
+                let key_str = unquote_odata_key(k_raw);
                 return match exec_bound_pr_mergeable(&state, &ctx, &key_str).await {
                     Ok(v) => (StatusCode::OK, Json(v)).into_response(),
                     Err(e) => odata_error_response(&e),
                 };
             }
-            ("PullRequests", "Reviews") | ("PullRequests", "Files") => {
-                let mut rows = vec![];
-                if let Some((rid_s, num_s)) = key_str.split_once(':') {
-                    rows.push(json!({
-                        "RepoId": rid_s,
-                        "Number": num_s.parse::<u64>().unwrap_or(0),
-                    }));
-                }
-                if let Err(e) =
-                    apply_pr_expansions(&state, &ctx, &mut rows, &[op_short.to_owned()]).await
-                {
-                    return odata_error_response(&e);
-                }
-                let val = rows
-                    .first()
-                    .and_then(|r| r.get(op_short))
-                    .cloned()
-                    .unwrap_or(Value::Array(Vec::new()));
-                return (StatusCode::OK, Json(json!({ "value": val }))).into_response();
+            ("PullRequests", "Reviews" | "Files") => {
+                let key_str = unquote_odata_key(k_raw);
+                return match pr_part(&state, &ctx, &key_str, op_short).await {
+                    Ok(v) => (StatusCode::OK, Json(json!({ "value": v }))).into_response(),
+                    Err(e) => odata_error_response(&e),
+                };
             }
             _ => {}
         }
@@ -1031,6 +1194,57 @@ async fn odata_two_segment_get(
     }
 }
 
+/// The files or the reviews of the pull request `{repo}:{number}`, through the same read check
+/// as the pull request itself: a hidden repository's pull request is `NotFound`.
+async fn pr_part(
+    state: &ShakoState,
+    ctx: &RequestCtx,
+    pr_key: &str,
+    part: &str,
+) -> ShakoResult<Value> {
+    let (repo_part, number) = resolve_pr_target(pr_key, &Value::Null)?;
+    let (repo, _) = find_visible_repo_by_key(state, ctx, &repo_part).await?;
+    if part == "Files" {
+        let files =
+            service::pull_request_files(state, ctx, &repo.owner, &repo.name, number).await?;
+        Ok(files_rows(files))
+    } else {
+        let reviews = service::list_reviews(state, ctx, &repo.owner, &repo.name, number).await?;
+        Ok(Value::Array(reviews.iter().map(review_row).collect()))
+    }
+}
+
+/// `GET R/PullRequests(n)/Files` and `.../Reviews`.
+async fn odata_deep_get(
+    State(state): State<ShakoState>,
+    headers: HeaderMap,
+    Path((seg1, seg2, rest)): Path<(String, String, String)>,
+) -> Response {
+    let ctx = match authenticate_request(&state, &headers, None, "shako") {
+        Ok(c) => c,
+        Err(e) => return odata_error_response(&e),
+    };
+    let (set_name, key_parens) = split_paren_segment(&seg1);
+    let (nav, nav_parens) = split_paren_segment(&seg2);
+    let res = match (set_name, key_parens, nav, nav_parens, rest.as_str()) {
+        ("Repositories", Some(k), "PullRequests", Some(n), part @ ("Files" | "Reviews")) => {
+            match parse_pr_number(n) {
+                Ok(number) => {
+                    pr_part(&state, &ctx, &format!("{}:{number}", repo_key(k)), part).await
+                }
+                Err(e) => Err(e),
+            }
+        }
+        _ => Err(ShakoError::NotFound(format!(
+            "unknown OData path '/odata/{seg1}/{seg2}/{rest}'"
+        ))),
+    };
+    match res {
+        Ok(v) => (StatusCode::OK, Json(json!({ "value": v }))).into_response(),
+        Err(e) => odata_error_response(&e),
+    }
+}
+
 async fn odata_single_post(
     State(state): State<ShakoState>,
     headers: HeaderMap,
@@ -1048,9 +1262,21 @@ async fn odata_single_post(
     let payload = body.map_or(Value::Object(Default::default()), |Json(v)| v);
 
     match exec_odata_operation(&state, &ctx, &mount, op_short, None, payload).await {
-        Ok(val) => (StatusCode::OK, Json(val)).into_response(),
+        Ok(val) => ok_or_no_content(val),
         Err(e) => odata_error_response(&e),
     }
+}
+
+/// The bound key an action under `seg1` runs on: `o/r` (or a UUID) for a repository,
+/// `{repo}:{number}` for a pull request.
+fn bound_key_of(seg1: &str) -> Option<String> {
+    let (set_name, key_parens) = split_paren_segment(seg1);
+    let k = key_parens?;
+    Some(if set_name == "Repositories" {
+        repo_key(k)
+    } else {
+        unquote_odata_key(k)
+    })
 }
 
 async fn odata_two_segment_post(
@@ -1065,8 +1291,7 @@ async fn odata_two_segment_post(
         Err(e) => return odata_error_response(&e),
     };
     let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
-    let (_set_name, key_parens) = split_paren_segment(&seg1);
-    let bound_key = key_parens.map(unquote_odata_key);
+    let bound_key = bound_key_of(&seg1);
     let op_short = seg2.strip_prefix("Shako.").unwrap_or(&seg2);
     let payload = body.map_or(Value::Object(Default::default()), |Json(v)| v);
 
@@ -1080,8 +1305,100 @@ async fn odata_two_segment_post(
     )
     .await
     {
-        Ok(val) => (StatusCode::OK, Json(val)).into_response(),
+        Ok(val) => ok_or_no_content(val),
         Err(e) => odata_error_response(&e),
+    }
+}
+
+/// `POST R/PullRequests(n)/Shako.{Review,Close,UpdateBranch,Merge}`.
+async fn odata_deep_post(
+    State(state): State<ShakoState>,
+    headers: HeaderMap,
+    mount_ext: Option<Extension<Mount>>,
+    Path((seg1, seg2, rest)): Path<(String, String, String)>,
+    body: Option<Json<Value>>,
+) -> Response {
+    let ctx = match authenticate_request(&state, &headers, None, "shako") {
+        Ok(c) => c,
+        Err(e) => return odata_error_response(&e),
+    };
+    let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
+    let (set_name, key_parens) = split_paren_segment(&seg1);
+    let (nav, nav_parens) = split_paren_segment(&seg2);
+    let (Some(k), Some(n), "Repositories", "PullRequests") =
+        (key_parens, nav_parens, set_name, nav)
+    else {
+        return odata_error_response(&ShakoError::NotFound(format!(
+            "unknown OData path '/odata/{seg1}/{seg2}/{rest}'"
+        )));
+    };
+    let number = match parse_pr_number(n) {
+        Ok(n) => n,
+        Err(e) => return odata_error_response(&e),
+    };
+    let bound = format!("{}:{number}", repo_key(k));
+    let op_short = rest.strip_prefix("Shako.").unwrap_or(&rest);
+    let payload = body.map_or(Value::Object(Default::default()), |Json(v)| v);
+    match exec_odata_operation(&state, &ctx, &mount, op_short, Some(&bound), payload).await {
+        Ok(val) => ok_or_no_content(val),
+        Err(e) => odata_error_response(&e),
+    }
+}
+
+// =========================================================================
+// HTTP Handlers for `/odata` and `/odata/*`
+// =========================================================================
+
+async fn odata_service_doc(State(state): State<ShakoState>, headers: HeaderMap) -> Response {
+    if let Err(e) = authenticate_request(&state, &headers, None, "shako") {
+        return odata_error_response(&e);
+    }
+    let sets: Vec<Value> = state
+        .registry
+        .service
+        .sets
+        .iter()
+        .map(|s| {
+            json!({
+                "name": s.set,
+                "kind": "EntitySet",
+                "url": s.set,
+            })
+        })
+        .collect();
+    (
+        StatusCode::OK,
+        [
+            (
+                header::CONTENT_TYPE,
+                "application/json; odata.metadata=minimal",
+            ),
+            (header::HeaderName::from_static("odata-version"), "4.01"),
+            (header::CACHE_CONTROL, "private, no-store"),
+        ],
+        Json(json!({
+            "@odata.context": "$metadata",
+            "value": sets,
+        })),
+    )
+        .into_response()
+}
+
+async fn odata_metadata(State(state): State<ShakoState>, headers: HeaderMap) -> Response {
+    if let Err(e) = authenticate_request(&state, &headers, None, "shako") {
+        return odata_error_response(&e);
+    }
+    match state.registry.csdl_xml() {
+        Ok(xml) => (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "application/xml; charset=utf-8"),
+                (header::HeaderName::from_static("odata-version"), "4.01"),
+            ],
+            xml,
+        )
+            .into_response(),
+        Err(e) => odata_error_response(&ShakoError::Internal(e)),
     }
 }
 
@@ -1172,20 +1489,28 @@ async fn exec_bound_repo_tree(
     args: &BTreeMap<String, String>,
 ) -> ShakoResult<Value> {
     let (repo, disk_path) = find_visible_repo_by_key(state, ctx, repo_key).await?;
-    let git_ref = args
-        .get("Ref")
-        .or_else(|| args.get("ref"))
-        .cloned()
-        .unwrap_or(repo.default_branch);
-    let recursive = args
-        .get("Recursive")
-        .or_else(|| args.get("recursive"))
-        .is_some_and(|v| v == "true" || v == "1");
+    let git_ref = arg(args, "Ref").unwrap_or(repo.default_branch);
+    let recursive = arg(args, "Recursive").is_some_and(|v| v == "true" || v == "1");
+    let skip: usize = arg(args, "Skip").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let top: usize = arg(args, "Top")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1000)
+        .clamp(1, 1000);
     let (sha, entries) =
         tokio::task::spawn_blocking(move || list_tree_entries(&disk_path, &git_ref, recursive))
             .await
             .map_err(|e| ShakoError::Internal(e.to_string()))??;
-    Ok(json!({ "sha": sha, "tree": entries }))
+    let total = entries.len();
+    let page: Vec<Value> = entries
+        .into_iter()
+        .skip(skip)
+        .take(top)
+        .map(|e| {
+            json!({ "Path": e.path, "Type": e.entry_type, "Mode": e.mode, "Size": e.size, "Sha": e.sha })
+        })
+        .collect();
+    let truncated = skip.saturating_add(page.len()) < total;
+    Ok(json!({ "Sha": sha, "Tree": page, "Truncated": truncated, "TotalCount": total }))
 }
 
 async fn exec_bound_repo_file(
@@ -1195,27 +1520,17 @@ async fn exec_bound_repo_file(
     args: &BTreeMap<String, String>,
 ) -> ShakoResult<Value> {
     let (repo, disk_path) = find_visible_repo_by_key(state, ctx, repo_key).await?;
-    let git_ref = args
-        .get("Ref")
-        .or_else(|| args.get("ref"))
-        .cloned()
-        .unwrap_or(repo.default_branch);
-    let path = args
-        .get("Path")
-        .or_else(|| args.get("path"))
-        .cloned()
+    let git_ref = arg(args, "Ref").unwrap_or(repo.default_branch);
+    let path = arg(args, "Path")
         .ok_or_else(|| ShakoError::BadRequest("File function requires Path".into()))?;
+    let path = validate_tree_path(&path)?;
     let found = tokio::task::spawn_blocking(move || read_file_at_ref(&disk_path, &git_ref, &path))
         .await
         .map_err(|e| ShakoError::Internal(e.to_string()))??;
     let Some((sha, bytes)) = found else {
         return Err(ShakoError::NotFound("file not found".into()));
     };
-    Ok(json!({
-        "sha": sha,
-        "content": String::from_utf8_lossy(&bytes),
-        "contentBase64": STANDARD.encode(&bytes),
-    }))
+    Ok(json!({ "Sha": sha, "Size": bytes.len(), "Content": STANDARD.encode(&bytes) }))
 }
 
 async fn exec_bound_repo_history(
@@ -1225,18 +1540,55 @@ async fn exec_bound_repo_history(
     args: &BTreeMap<String, String>,
 ) -> ShakoResult<Value> {
     let (repo, disk_path) = find_visible_repo_by_key(state, ctx, repo_key).await?;
-    let git_ref = args
-        .get("Ref")
-        .or_else(|| args.get("ref"))
-        .cloned()
-        .unwrap_or(repo.default_branch);
-    let path = args.get("Path").or_else(|| args.get("path")).cloned();
+    let git_ref = arg(args, "Ref").unwrap_or(repo.default_branch);
+    let path = arg(args, "Path").filter(|p| !p.is_empty());
+    let top: usize = arg(args, "Top")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50)
+        .clamp(1, 1000);
     let commits = tokio::task::spawn_blocking(move || {
-        list_commits(&disk_path, &git_ref, path.as_deref(), 50, 10_000)
+        list_commits(&disk_path, &git_ref, path.as_deref(), top, 10_000)
     })
     .await
     .map_err(|e| ShakoError::Internal(e.to_string()))??;
-    Ok(json!({ "value": commits }))
+    let rows: Vec<Value> = commits
+        .into_iter()
+        .map(|c| {
+            json!({
+                "Sha": c.sha,
+                "Message": c.message,
+                "Author": c.author_name,
+                "Email": c.author_email,
+                "Date": c.author_date,
+            })
+        })
+        .collect();
+    Ok(json!({ "value": rows }))
+}
+
+async fn exec_bound_repo_status(
+    state: &ShakoState,
+    ctx: &RequestCtx,
+    repo_key: &str,
+    args: &BTreeMap<String, String>,
+) -> ShakoResult<Value> {
+    let (repo, _) = find_visible_repo_by_key(state, ctx, repo_key).await?;
+    let sha = arg(args, "Sha")
+        .ok_or_else(|| ShakoError::BadRequest("CommitStatus requires Sha".into()))?;
+    let (combined, statuses) =
+        service::commit_status(state, ctx, &repo.owner, &repo.name, &sha).await?;
+    let rows: Vec<Value> = statuses
+        .iter()
+        .map(|s| {
+            json!({
+                "Context": s.context,
+                "State": s.state,
+                "Description": s.description,
+                "TargetUrl": s.target_url,
+            })
+        })
+        .collect();
+    Ok(json!({ "Sha": sha, "State": combined, "TotalCount": rows.len(), "Statuses": rows }))
 }
 
 async fn exec_bound_repo_compare(
@@ -1246,16 +1598,10 @@ async fn exec_bound_repo_compare(
     args: &BTreeMap<String, String>,
 ) -> ShakoResult<Value> {
     let (_repo, disk_path) = find_visible_repo_by_key(state, ctx, repo_key).await?;
-    let base = args
-        .get("Base")
-        .or_else(|| args.get("base"))
-        .cloned()
-        .ok_or_else(|| ShakoError::BadRequest("Compare requires Base".into()))?;
-    let head = args
-        .get("Head")
-        .or_else(|| args.get("head"))
-        .cloned()
-        .ok_or_else(|| ShakoError::BadRequest("Compare requires Head".into()))?;
+    let base =
+        arg(args, "Base").ok_or_else(|| ShakoError::BadRequest("Compare requires Base".into()))?;
+    let head =
+        arg(args, "Head").ok_or_else(|| ShakoError::BadRequest("Compare requires Head".into()))?;
     let (m, files) = tokio::task::spawn_blocking(move || {
         let m = check_mergeability(&disk_path, &base, &head)?;
         let files = diff_refs_files(&disk_path, &base, &head)?;
@@ -1271,13 +1617,8 @@ async fn exec_bound_pr_mergeable(
     ctx: &RequestCtx,
     pr_key: &str,
 ) -> ShakoResult<Value> {
-    let (repo_part, num_part) = pr_key.rsplit_once(':').ok_or_else(|| {
-        ShakoError::BadRequest("PullRequest key must be {RepoId}:{Number}".into())
-    })?;
-    let number: u64 = num_part
-        .parse()
-        .map_err(|_| ShakoError::BadRequest("invalid PR number".into()))?;
-    let (repo, disk_path) = find_visible_repo_by_key(state, ctx, repo_part).await?;
+    let (repo_part, number) = resolve_pr_target(pr_key, &Value::Null)?;
+    let (repo, disk_path) = find_visible_repo_by_key(state, ctx, &repo_part).await?;
     let pr = state
         .store()
         .get_pull_request(repo.instance_id, repo.org_id, repo.id, number)
@@ -1291,7 +1632,54 @@ async fn exec_bound_pr_mergeable(
     Ok(serde_json::to_value(m).unwrap_or(Value::Null))
 }
 
-/// Executes any OData action or function by name (also called by `shako-mcp` and CLI, S8, S9, S19).
+/// A parameter of an action body by its declared PascalCase name, or by the camelCase name MCP
+/// and CLI callers send.
+fn field<'a>(body: &'a Value, name: &str) -> Option<&'a Value> {
+    body.get(name)
+        .or_else(|| body.get(lower_first(name).as_str()))
+        .filter(|v| !v.is_null())
+}
+
+fn text(body: &Value, name: &str) -> Option<String> {
+    field(body, name).and_then(Value::as_str).map(str::to_owned)
+}
+
+fn flag(body: &Value, name: &str) -> Option<bool> {
+    field(body, name).and_then(Value::as_bool)
+}
+
+fn required(body: &Value, name: &str) -> ShakoResult<String> {
+    text(body, name)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| ShakoError::Unprocessable(format!("{name} required")))
+}
+
+/// `{Name, Email}` of a commit's author or committer.
+fn person(body: &Value, name: &str) -> ShakoResult<Option<CommitAuthor>> {
+    let Some(v) = field(body, name) else {
+        return Ok(None);
+    };
+    match (text(v, "Name"), text(v, "Email")) {
+        (Some(name), Some(email)) => Ok(Some(CommitAuthor { name, email })),
+        _ => Err(ShakoError::Unprocessable(format!(
+            "{name} takes Name and Email"
+        ))),
+    }
+}
+
+/// The owner and name of the repository an operation is bound to (or names in `repo`).
+async fn bound_repo(state: &ShakoState, ctx: &RequestCtx, key: &str) -> ShakoResult<RepoRecord> {
+    if key.is_empty() {
+        return Err(ShakoError::Unprocessable(
+            "the operation is bound to a repository".into(),
+        ));
+    }
+    Ok(find_visible_repo_by_key(state, ctx, key).await?.0)
+}
+
+/// Executes any OData action or function by name (also called by `shako-mcp` and CLI, S8, S9,
+/// S19). Every operation runs through [`service`], the one implementation the Gitea-compatible
+/// REST shares, so each surface checks the same verbs, protection rules and preconditions.
 pub async fn exec_odata_operation(
     state: &ShakoState,
     ctx: &RequestCtx,
@@ -1300,602 +1688,401 @@ pub async fn exec_odata_operation(
     bound_key: Option<&str>,
     body: Value,
 ) -> ShakoResult<Value> {
-    let get_str = |k1: &str, k2: &str| -> Option<String> {
-        body.get(k1)
-            .or_else(|| body.get(k2))
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    };
     let repo_key = bound_key
         .map(str::to_owned)
-        .or_else(|| get_str("RepoId", "repo"))
+        .or_else(|| text(&body, "RepoId"))
+        .or_else(|| text(&body, "repo"))
         .unwrap_or_default();
 
     match op_name {
         "CreateRepository" | "jc_forge_create_repository" | "create-repo" => {
-            #[derive(Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct Req {
-                #[serde(alias = "Owner", default)]
-                owner: Option<String>,
-                #[serde(alias = "Name")]
-                name: String,
-                #[serde(alias = "Description", default)]
-                description: String,
-                #[serde(alias = "AutoInit", default = "default_true_fn")]
-                auto_init: bool,
-                #[serde(alias = "DefaultBranch", default = "default_main_fn")]
-                default_branch: String,
-            }
-            fn default_true_fn() -> bool {
-                true
-            }
-            fn default_main_fn() -> String {
-                "main".into()
-            }
-            let req: Req = serde_json::from_value(body).map_err(|e| {
-                ShakoError::Unprocessable(format!("invalid CreateRepository body: {e}"))
-            })?;
-            let owner = req
-                .owner
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| ctx.subject.username.clone());
-            validate_repo_or_owner_name(&owner, "owner")?;
-            validate_repo_or_owner_name(&req.name, "repository")?;
-            validate_branch_name(&req.default_branch)?;
-
-            state
-                .authorizer
-                .check(
-                    ctx,
-                    Action::Write,
-                    &ObjectTarget::Organization {
-                        instance_id: ctx.instance_id,
-                        org_id: ctx.org_id,
-                        owner: owner.clone(),
-                    },
-                )
-                .into_result("organization not found")?;
-
-            let inst = state.instance_for(ctx.instance_id, ctx.org_id).await;
-            let usage = state
-                .store()
-                .get_quota_usage(ctx.instance_id, ctx.org_id)
-                .await?;
-            check_repo_count_quota(&inst, &usage)?;
-
-            let repo_id = RepoId::new();
-            let root = state.repo_root().to_path_buf();
-            let inst_id = ctx.instance_id;
-            let def_b = req.default_branch.clone();
-            let auto_i = req.auto_init;
-            let desc = req.description.clone();
-            let disk_path = tokio::task::spawn_blocking(move || {
-                init_bare_repo(&root, inst_id, repo_id, &def_b, auto_i, &desc)
-            })
-            .await
-            .map_err(|e| ShakoError::Internal(e.to_string()))??;
-            let sz = compute_repo_size_bytes(&disk_path);
-            let now = Utc::now();
-            let rec = RepoRecord {
-                id: repo_id,
-                instance_id: ctx.instance_id,
-                org_id: ctx.org_id,
-                project_id: req.name.clone(),
-                owner: owner.clone(),
-                name: req.name,
-                description: req.description,
-                default_branch: req.default_branch,
-                private: true,
-                archived: false,
-                size_bytes: sz,
-                next_pr_number: 1,
-                created_at: now,
-                updated_at: now,
+            let new = service::NewRepository {
+                owner: text(&body, "Owner")
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| ctx.subject.username.clone()),
+                name: required(&body, "Name")?,
+                description: text(&body, "Description").unwrap_or_default(),
+                private: flag(&body, "Private").unwrap_or(true),
+                auto_init: flag(&body, "AutoInit").unwrap_or(true),
+                default_branch: text(&body, "DefaultBranch").unwrap_or_else(|| "main".into()),
             };
-            let saved = state.store().create_repo(rec).await?;
-            state.register_owner_org(&owner, ctx.org_id);
-            let _ = state
-                .store()
-                .adjust_quota_usage(ctx.instance_id, ctx.org_id, 1, sz as i64, 0)
-                .await;
-            Ok(json!({
-                "Id": saved.id.to_string(),
-                "Owner": saved.owner,
-                "Name": saved.name,
-                "DefaultBranch": saved.default_branch,
-                "CloneUrl": format!("{}/{}/{}.git", mount.public_base(), saved.owner, saved.name),
-            }))
+            let saved = service::create_repository(state, ctx, new).await?;
+            Ok(repo_row(mount, &saved))
+        }
+        "ImportRepository" | "jc_forge_import_repository" | "import-repo" => {
+            let copy = service::RepositoryCopy {
+                source_owner: required(&body, "SourceOwner")?,
+                source_name: required(&body, "SourceName")?,
+                owner: required(&body, "RepoOwner")?,
+                name: required(&body, "RepoName")?,
+                description: text(&body, "Description"),
+                private: flag(&body, "Private").unwrap_or(true),
+            };
+            let saved = service::import_repository(state, ctx, copy).await?;
+            Ok(repo_row(mount, &saved))
         }
         "Archive" | "jc_forge_archive_repository" | "archive-repo" => {
-            let (repo, _) = find_visible_repo_by_key(state, ctx, &repo_key).await?;
-            let (mut repo, _) =
-                resolve_and_authorize_repo(state, ctx, &repo.owner, &repo.name, Action::Admin)
-                    .await?;
-            repo.archived = true;
-            let saved = state.store().update_repo(repo).await?;
-            Ok(json!({ "Id": saved.id.to_string(), "Archived": saved.archived }))
+            let repo = bound_repo(state, ctx, &repo_key).await?;
+            let patch = service::RepositoryPatch {
+                archived: Some(true),
+                ..Default::default()
+            };
+            let saved =
+                service::patch_repository(state, ctx, &repo.owner, &repo.name, patch).await?;
+            Ok(repo_row(mount, &saved))
         }
         "Delete" | "jc_forge_delete_repository" | "delete-repo" => {
-            let (repo, disk_path) = find_visible_repo_by_key(state, ctx, &repo_key).await?;
-            resolve_and_authorize_repo(state, ctx, &repo.owner, &repo.name, Action::Admin).await?;
-            let _guard = state.repo_locks.lock(repo.id).await;
-            state
-                .store()
-                .delete_repo(repo.instance_id, repo.org_id, repo.id)
-                .await?;
-            let _ = std::fs::remove_dir_all(&disk_path);
-            Ok(json!({ "deleted": true }))
+            let repo = bound_repo(state, ctx, &repo_key).await?;
+            service::delete_repository(state, ctx, &repo.owner, &repo.name).await?;
+            Ok(Value::Null)
         }
         "CreateBranch" | "jc_forge_create_branch" | "create-branch" => {
-            let (repo, disk_path) = find_visible_repo_by_key(state, ctx, &repo_key).await?;
-            resolve_and_authorize_repo(state, ctx, &repo.owner, &repo.name, Action::Propose)
-                .await?;
-            let new_b = get_str("NewBranchName", "newBranchName")
-                .ok_or_else(|| ShakoError::Unprocessable("NewBranchName required".into()))?;
-            let old_b =
-                get_str("OldBranchName", "oldBranchName").unwrap_or(repo.default_branch.clone());
-            let _guard = state.repo_locks.lock(repo.id).await;
-            let nb = new_b.clone();
-            let sha = tokio::task::spawn_blocking(move || create_branch(&disk_path, &nb, &old_b))
-                .await
-                .map_err(|e| ShakoError::Internal(e.to_string()))??;
-            Ok(json!({ "Id": format!("{}:{new_b}", repo.id), "Name": new_b, "HeadSha": sha }))
+            let repo = bound_repo(state, ctx, &repo_key).await?;
+            let new_b = required(&body, "NewBranchName")?;
+            let from = text(&body, "OldBranchName").filter(|s| !s.is_empty());
+            let sha =
+                service::create_branch(state, ctx, &repo.owner, &repo.name, &new_b, from).await?;
+            Ok(json!({
+                "Id": format!("{}:{new_b}", repo.id),
+                "RepoId": repo.id.to_string(),
+                "Name": new_b,
+                "HeadSha": sha,
+            }))
         }
         "DeleteBranch" | "jc_forge_delete_branch" | "delete-branch" => {
-            let (repo, disk_path) = find_visible_repo_by_key(state, ctx, &repo_key).await?;
-            let branch = get_str("Branch", "branch")
-                .ok_or_else(|| ShakoError::Unprocessable("Branch required".into()))?;
-            let policy = state
-                .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
-                .await?;
-            policy.check_ref_update(
-                ctx,
-                state.authorizer.as_ref(),
-                &repo.owner,
-                &repo.name,
-                RefUpdate {
-                    refname: &format!("refs/heads/{branch}"),
-                    is_delete: true,
-                    is_create: false,
-                    is_fast_forward: true,
-                    changed_paths: &[],
-                },
-            )?;
-            let _guard = state.repo_locks.lock(repo.id).await;
-            let deleted = tokio::task::spawn_blocking(move || delete_branch(&disk_path, &branch))
-                .await
-                .map_err(|e| ShakoError::Internal(e.to_string()))??;
-            Ok(json!({ "deleted": deleted }))
+            let repo = bound_repo(state, ctx, &repo_key).await?;
+            let branch = required(&body, "Branch")?;
+            service::delete_branch(state, ctx, &repo.owner, &repo.name, &branch).await?;
+            Ok(Value::Null)
         }
         "CommitFiles" | "jc_forge_commit_files" | "commit-files" => {
-            let (repo, disk_path) = find_visible_repo_by_key(state, ctx, &repo_key).await?;
-            let branch = get_str("Branch", "branch").unwrap_or(repo.default_branch.clone());
-            let message = get_str("Message", "message")
-                .ok_or_else(|| ShakoError::Unprocessable("Message required".into()))?;
-            let files_val = body
-                .get("Files")
-                .or_else(|| body.get("files"))
+            let repo = bound_repo(state, ctx, &repo_key).await?;
+            let files_val = field(&body, "Files")
                 .cloned()
                 .ok_or_else(|| ShakoError::Unprocessable("Files required".into()))?;
             let items: Vec<crate::compat::MultiFileItemReq> = serde_json::from_value(files_val)
                 .map_err(|e| ShakoError::Unprocessable(format!("invalid Files array: {e}")))?;
-
-            let mut ops = Vec::with_capacity(items.len());
-            let mut paths = Vec::with_capacity(items.len());
-            for item in items {
-                let clean = validate_tree_path(&item.path)?;
-                let content = match item.content {
-                    Some(s) => {
-                        if let Ok(dec) = STANDARD.decode(s.as_bytes()) {
-                            Some(dec)
-                        } else {
-                            Some(s.into_bytes())
-                        }
-                    }
-                    None => None,
-                };
-                paths.push(clean.clone());
-                ops.push(FileChangeOp {
-                    operation: item.operation,
-                    path: clean,
-                    content,
-                    sha: item.sha,
-                });
-            }
-            let policy = state
-                .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
-                .await?;
-            policy.check_ref_update(
-                ctx,
-                state.authorizer.as_ref(),
-                &repo.owner,
-                &repo.name,
-                RefUpdate {
-                    refname: &format!("refs/heads/{branch}"),
-                    is_delete: false,
-                    is_create: false,
-                    is_fast_forward: true,
-                    changed_paths: &paths,
-                },
-            )?;
-
-            let _guard = state.repo_locks.lock(repo.id).await;
-            let author = CommitAuthor {
-                name: ctx.subject.full_name.clone(),
-                email: ctx
-                    .subject
-                    .email
-                    .clone()
-                    .unwrap_or_else(|| format!("{}@local", ctx.subject.username)),
+            let commit = service::CommitRequest {
+                branch: text(&body, "Branch"),
+                message: required(&body, "Message")?,
+                author: person(&body, "Author")?,
+                committer: person(&body, "Committer")?,
+                files: items
+                    .into_iter()
+                    .map(|f| service::FileChange {
+                        operation: f.operation,
+                        path: f.path,
+                        content: f.content,
+                        sha: f.sha,
+                    })
+                    .collect(),
             };
-            let sha = tokio::task::spawn_blocking(move || {
-                commit_file_changes(&disk_path, &branch, &message, &author, &author, &ops)
-            })
-            .await
-            .map_err(|e| ShakoError::Internal(e.to_string()))??;
-            Ok(json!({ "sha": sha }))
+            let sha = service::commit_files(state, ctx, &repo.owner, &repo.name, commit).await?;
+            Ok(json!({ "Sha": sha }))
         }
         "OpenPullRequest" | "jc_forge_open_pull_request" | "open-pr" => {
-            let (repo, disk_path) = find_visible_repo_by_key(state, ctx, &repo_key).await?;
-            resolve_and_authorize_repo(state, ctx, &repo.owner, &repo.name, Action::Propose)
-                .await?;
-            let head = get_str("Head", "head")
-                .ok_or_else(|| ShakoError::Unprocessable("Head required".into()))?;
-            let base = get_str("Base", "base").unwrap_or(repo.default_branch.clone());
-            let title = get_str("Title", "title")
-                .ok_or_else(|| ShakoError::Unprocessable("Title required".into()))?;
-            let pr_body = get_str("Body", "body").unwrap_or_default();
-
-            let h_c = head.clone();
-            let b_c = base.clone();
-            let d_c = disk_path.clone();
-            let m = tokio::task::spawn_blocking(move || check_mergeability(&d_c, &b_c, &h_c))
-                .await
-                .map_err(|e| ShakoError::Internal(e.to_string()))??;
-            let num = state
-                .store()
-                .allocate_pr_number(repo.instance_id, repo.org_id, repo.id)
-                .await?;
-            let now = Utc::now();
-            let pr = state
-                .store()
-                .create_pull_request(shako_core::PullRequestRecord {
-                    id: uuid::Uuid::now_v7(),
-                    instance_id: repo.instance_id,
-                    org_id: repo.org_id,
-                    repo_id: repo.id,
-                    number: num,
-                    state: "open".into(),
-                    title,
-                    body: pr_body,
-                    head_ref: head,
-                    head_sha: m.head_sha,
-                    base_ref: base,
-                    base_sha: m.base_sha,
-                    merge_base: m.merge_base,
-                    mergeable: Some(m.mergeable),
-                    merged: false,
-                    merge_commit_sha: String::new(),
-                    author_login: ctx.subject.username.clone(),
-                    author_name: ctx.subject.full_name.clone(),
-                    author_email: ctx.subject.email.clone(),
-                    created_at: now,
-                    updated_at: now,
-                    closed_at: None,
-                })
-                .await?;
-            Ok(json!({
-                "Id": format!("{}:{}", repo.id, pr.number),
-                "RepoId": repo.id.to_string(),
-                "Number": pr.number,
-                "State": pr.state,
-                "HeadSha": pr.head_sha,
-                "Mergeable": pr.mergeable,
-            }))
+            let repo = bound_repo(state, ctx, &repo_key).await?;
+            let (repo, pr) = service::open_pull_request(
+                state,
+                ctx,
+                &repo.owner,
+                &repo.name,
+                service::NewPullRequest {
+                    head: required(&body, "Head")?,
+                    base: text(&body, "Base")
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| repo.default_branch.clone()),
+                    title: required(&body, "Title")?,
+                    body: text(&body, "Body").unwrap_or_default(),
+                },
+            )
+            .await?;
+            Ok(pr_row(mount, &repo, &pr))
         }
         "Review" | "jc_forge_review_pull_request" | "review-pr" => {
-            let (r_key, pr_num) = resolve_pr_target(&repo_key, &body)?;
-            let (repo, _) = find_visible_repo_by_key(state, ctx, &r_key).await?;
-            let ev_str = get_str("Event", "event")
-                .ok_or_else(|| ShakoError::Unprocessable("Event required".into()))?;
-            let verdict = ReviewVerdict::parse(&ev_str)
-                .ok_or_else(|| ShakoError::Unprocessable(format!("invalid verdict '{ev_str}'")))?;
-            let needed = if verdict == ReviewVerdict::Comment {
-                Action::Propose
-            } else {
-                Action::Approve
-            };
-            resolve_and_authorize_repo(state, ctx, &repo.owner, &repo.name, needed).await?;
-            let pr = state
-                .store()
-                .get_pull_request(repo.instance_id, repo.org_id, repo.id, pr_num)
-                .await?
-                .ok_or_else(|| ShakoError::NotFound("pull request not found".into()))?;
-            let rev = state
-                .store()
-                .create_review(ReviewRecord {
-                    id: uuid::Uuid::now_v7(),
-                    instance_id: repo.instance_id,
-                    org_id: repo.org_id,
-                    repo_id: repo.id,
-                    pr_number: pr_num,
+            let (r_key, number) = resolve_pr_target(&repo_key, &body)?;
+            let repo = bound_repo(state, ctx, &r_key).await?;
+            let ev = required(&body, "Event")?;
+            let verdict = ReviewVerdict::parse(&ev)
+                .ok_or_else(|| ShakoError::Unprocessable(format!("invalid verdict '{ev}'")))?;
+            let saved = service::create_review(
+                state,
+                ctx,
+                &repo.owner,
+                &repo.name,
+                number,
+                service::NewReview {
                     verdict,
-                    body: get_str("Body", "body").unwrap_or_default(),
-                    author_login: ctx.subject.username.clone(),
-                    commit_id: pr.head_sha,
-                    dismissed: false,
-                    created_at: Utc::now(),
-                })
-                .await?;
-            Ok(json!({ "Id": rev.id.to_string(), "Verdict": rev.verdict.as_str() }))
+                    body: text(&body, "Body").unwrap_or_default(),
+                    commit_id: text(&body, "CommitId"),
+                },
+            )
+            .await?;
+            Ok(review_row(&saved))
         }
         "Merge" | "jc_forge_merge_pull_request" | "merge-pr" => {
-            let (r_key, pr_num) = resolve_pr_target(&repo_key, &body)?;
-            let (repo, disk_path) = find_visible_repo_by_key(state, ctx, &r_key).await?;
-            resolve_and_authorize_repo(state, ctx, &repo.owner, &repo.name, Action::Write).await?;
-            let style_s = get_str("Style", "style").unwrap_or_else(|| "merge".into());
-            let style = MergeStyle::parse(&style_s)?;
-            let msg = get_str("Message", "message")
-                .unwrap_or_else(|| format!("Merge pull request #{pr_num}"));
-            let head_cid = get_str("HeadCommitId", "headCommitId");
-
-            let _guard = state.repo_locks.lock(repo.id).await;
-            let mut pr = state
-                .store()
-                .get_pull_request(repo.instance_id, repo.org_id, repo.id, pr_num)
-                .await?
-                .ok_or_else(|| ShakoError::NotFound("pull request not found".into()))?;
-            let b_ref = pr.base_ref.clone();
-            let h_ref = pr.head_ref.clone();
-            let d_c = disk_path.clone();
-            let m = tokio::task::spawn_blocking(move || check_mergeability(&d_c, &b_ref, &h_ref))
-                .await
-                .map_err(|e| ShakoError::Internal(e.to_string()))??;
-
-            if let Some(exp) = head_cid.as_deref().filter(|s| !s.is_empty())
-                && exp != m.head_sha
-            {
-                return Err(ShakoError::Conflict(
-                    "head commit has moved since review".into(),
-                ));
-            }
-            let policy = state
-                .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
-                .await?;
-            let reviews = state
-                .store()
-                .list_reviews(repo.instance_id, repo.org_id, Some(repo.id), Some(pr_num))
-                .await?;
-            let statuses = state
-                .store()
-                .list_commit_statuses(repo.instance_id, repo.org_id, repo.id, &m.head_sha)
-                .await?;
-            policy.check_pr_merge(
-                ctx,
-                state.authorizer.as_ref(),
-                &repo.owner,
-                &repo.name,
-                &pr.base_ref,
-                &MergePolicyInput {
-                    pr_author_login: &pr.author_login,
-                    head_sha: &m.head_sha,
-                    is_behind_base: m.is_behind_base,
-                    reviews: &reviews,
-                    statuses: &statuses,
-                },
-            )?;
-
-            let author = CommitAuthor {
-                name: ctx.subject.full_name.clone(),
-                email: ctx
-                    .subject
-                    .email
-                    .clone()
-                    .unwrap_or_else(|| format!("{}@local", ctx.subject.username)),
+            let (r_key, number) = resolve_pr_target(&repo_key, &body)?;
+            let repo = bound_repo(state, ctx, &r_key).await?;
+            let merge = service::MergeRequest {
+                style: MergeStyle::parse(&text(&body, "Style").unwrap_or_else(|| "merge".into()))?,
+                message: text(&body, "Message"),
+                head_commit_id: text(&body, "HeadCommitId"),
+                delete_branch_after_merge: flag(&body, "DeleteBranchAfterMerge").unwrap_or(false),
             };
-            let b_ref2 = pr.base_ref.clone();
-            let h_ref2 = pr.head_ref.clone();
-            let sha = tokio::task::spawn_blocking(move || {
-                execute_pr_merge(
-                    &disk_path,
-                    &b_ref2,
-                    &h_ref2,
-                    &MergeOptions {
-                        expected_head_sha: head_cid.as_deref(),
-                        style,
-                        message: &msg,
-                        author: &author,
-                        committer: &author,
-                    },
-                )
-            })
-            .await
-            .map_err(|e| ShakoError::Internal(e.to_string()))??;
-
-            pr.state = "closed".into();
-            pr.merged = true;
-            pr.merge_commit_sha = sha.clone();
-            pr.closed_at = Some(Utc::now());
-            let saved = state.store().update_pull_request(pr).await?;
-            let payload = build_pr_webhook_payload(&repo, &saved, "closed", &ctx.subject.username);
-            let _ = emit_and_dispatch_event(
-                state,
-                repo.org_id,
-                Some(repo.id),
-                "pull_request",
-                format!("pr_merge:{}:{}", repo.id, saved.number),
-                payload,
-            )
-            .await;
-            Ok(json!({ "sha": sha, "merged": true }))
+            let sha =
+                service::merge_pull_request(state, ctx, &repo.owner, &repo.name, number, merge)
+                    .await?;
+            Ok(json!({ "Sha": sha, "Merged": true }))
         }
         "UpdateBranch" | "jc_forge_update_pull_request_branch" | "update-pr-branch" => {
-            let (r_key, pr_num) = resolve_pr_target(&repo_key, &body)?;
-            let (repo, disk_path) = find_visible_repo_by_key(state, ctx, &r_key).await?;
-            resolve_and_authorize_repo(state, ctx, &repo.owner, &repo.name, Action::Propose)
-                .await?;
-            let _guard = state.repo_locks.lock(repo.id).await;
-            let mut pr = state
-                .store()
-                .get_pull_request(repo.instance_id, repo.org_id, repo.id, pr_num)
-                .await?
-                .ok_or_else(|| ShakoError::NotFound("pull request not found".into()))?;
-            let author = CommitAuthor {
-                name: ctx.subject.full_name.clone(),
-                email: ctx
-                    .subject
-                    .email
-                    .clone()
-                    .unwrap_or_else(|| format!("{}@local", ctx.subject.username)),
-            };
-            let b_ref = pr.base_ref.clone();
-            let h_ref = pr.head_ref.clone();
-            let new_head = tokio::task::spawn_blocking(move || {
-                update_pr_branch(&disk_path, &b_ref, &h_ref, &author)
-            })
-            .await
-            .map_err(|e| ShakoError::Internal(e.to_string()))??;
-            pr.head_sha = new_head.clone();
-            let _ = state.store().update_pull_request(pr).await;
-            Ok(json!({ "headSha": new_head }))
+            let (r_key, number) = resolve_pr_target(&repo_key, &body)?;
+            let repo = bound_repo(state, ctx, &r_key).await?;
+            if let Some(style) = text(&body, "Style").filter(|s| s != "merge") {
+                return Err(ShakoError::Unprocessable(format!(
+                    "update style '{style}' is not supported"
+                )));
+            }
+            let head =
+                service::update_pull_branch(state, ctx, &repo.owner, &repo.name, number).await?;
+            Ok(json!({ "HeadSha": head }))
         }
         "Close" | "jc_forge_close_pull_request" | "close-pr" => {
-            let (r_key, pr_num) = resolve_pr_target(&repo_key, &body)?;
-            let (repo, _) = find_visible_repo_by_key(state, ctx, &r_key).await?;
-            resolve_and_authorize_repo(state, ctx, &repo.owner, &repo.name, Action::Propose)
-                .await?;
-            let mut pr = state
-                .store()
-                .get_pull_request(repo.instance_id, repo.org_id, repo.id, pr_num)
-                .await?
-                .ok_or_else(|| ShakoError::NotFound("pull request not found".into()))?;
-            pr.state = "closed".into();
-            pr.closed_at = Some(Utc::now());
-            let saved = state.store().update_pull_request(pr).await?;
-            Ok(json!({ "Number": saved.number, "State": saved.state }))
+            let (r_key, number) = resolve_pr_target(&repo_key, &body)?;
+            let repo = bound_repo(state, ctx, &r_key).await?;
+            let patch = service::PullRequestPatch {
+                state: Some("closed".into()),
+                ..Default::default()
+            };
+            let (repo, pr) =
+                service::patch_pull_request(state, ctx, &repo.owner, &repo.name, number, patch)
+                    .await?;
+            Ok(pr_row(mount, &repo, &pr))
         }
         "Protect" | "jc_forge_protect_branch" | "protect" => {
-            let (repo, _) = find_visible_repo_by_key(state, ctx, &repo_key).await?;
-            resolve_and_authorize_repo(state, ctx, &repo.owner, &repo.name, Action::Admin).await?;
-            let rule_val = body
-                .get("Rule")
-                .or_else(|| body.get("rule"))
-                .cloned()
-                .unwrap_or(body);
+            let repo = bound_repo(state, ctx, &repo_key).await?;
+            let rule_val = field(&body, "Rule").cloned().unwrap_or(body);
             let rule: BranchProtectionRule = serde_json::from_value(rule_val)
                 .map_err(|e| ShakoError::Unprocessable(format!("invalid Rule: {e}")))?;
-            RefPolicy::validate_rule_for_repo(
-                &rule,
-                state.authorizer.as_ref(),
-                repo.instance_id,
-                repo.org_id,
-                &repo.owner,
-                &repo.name,
-            )?;
-            let now = Utc::now();
-            let saved = state
-                .store()
-                .upsert_protection_rule(ProtectionRuleRecord {
-                    id: uuid::Uuid::now_v7(),
-                    instance_id: repo.instance_id,
-                    org_id: repo.org_id,
-                    repo_id: repo.id,
-                    rule,
-                    created_at: now,
-                    updated_at: now,
-                })
-                .await?;
+            let saved = service::protect_branch(state, ctx, &repo.owner, &repo.name, rule).await?;
             Ok(json!({
                 "Id": format!("{}:{}", repo.id, saved.rule.rule_name),
+                "RepoId": repo.id.to_string(),
                 "Pattern": saved.rule.rule_name,
+                "EnablePush": saved.rule.enable_push,
+                "RequiredApprovals": saved.rule.required_approvals,
             }))
         }
         "Unprotect" | "jc_forge_unprotect_branch" | "unprotect" => {
-            let (repo, _) = find_visible_repo_by_key(state, ctx, &repo_key).await?;
-            resolve_and_authorize_repo(state, ctx, &repo.owner, &repo.name, Action::Admin).await?;
-            let pattern = get_str("Pattern", "pattern")
-                .ok_or_else(|| ShakoError::Unprocessable("Pattern required".into()))?;
-            let deleted = state
+            let repo = bound_repo(state, ctx, &repo_key).await?;
+            let pattern = required(&body, "Pattern")?;
+            service::unprotect_branch(state, ctx, &repo.owner, &repo.name, &pattern).await?;
+            Ok(Value::Null)
+        }
+        "AddPushMirror" | "jc_forge_add_push_mirror" | "add-mirror" => {
+            let repo = bound_repo(state, ctx, &repo_key).await?;
+            let new = service::NewPushMirror {
+                remote_address: required(&body, "RemoteAddress")?,
+                username: text(&body, "RemoteUsername"),
+                password: text(&body, "Credential"),
+                secret_ref: text(&body, "SecretRef").filter(|s| !s.is_empty()),
+                interval: text(&body, "Interval"),
+                sync_on_commit: flag(&body, "SyncOnCommit").unwrap_or(true),
+            };
+            let saved = service::add_push_mirror(state, ctx, &repo.owner, &repo.name, new).await?;
+            Ok(mirror_row(&saved))
+        }
+        "RemovePushMirror" | "jc_forge_remove_push_mirror" | "remove-mirror" => {
+            let repo = bound_repo(state, ctx, &repo_key).await?;
+            let name = required(&body, "Name")?;
+            service::remove_push_mirror(state, ctx, &repo.owner, &repo.name, &name).await?;
+            Ok(Value::Null)
+        }
+        "SyncPushMirrors" | "jc_forge_sync_push_mirrors" | "sync-mirrors" => {
+            let repo = bound_repo(state, ctx, &repo_key).await?;
+            service::sync_push_mirrors(state, ctx, &repo.owner, &repo.name).await?;
+            Ok(Value::Null)
+        }
+        "AddWebhook" | "jc_forge_add_webhook" | "add-webhook" => {
+            let repo = bound_repo(state, ctx, &repo_key).await?;
+            let secret = match (text(&body, "Secret"), text(&body, "SecretRef")) {
+                (Some(s), None) => service::HookSecret::Inline(s),
+                (None, Some(r)) => service::HookSecret::Ref(r),
+                _ => {
+                    return Err(ShakoError::Unprocessable(
+                        "a hook takes Secret or SecretRef".into(),
+                    ));
+                }
+            };
+            let events = match field(&body, "Events") {
+                Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
+                    ShakoError::Unprocessable(format!("Events is a list of names: {e}"))
+                })?,
+                None => Vec::new(),
+            };
+            let new = service::NewWebhook {
+                url: required(&body, "Url")?,
+                secret,
+                previous_secret_ref: text(&body, "PreviousSecretRef"),
+                events,
+                active: flag(&body, "Active").unwrap_or(true),
+                format: WebhookFormat::Shako,
+            };
+            let saved = service::add_webhook(state, ctx, &repo.owner, &repo.name, new).await?;
+            Ok(json!({
+                "Id": saved.id.to_string(),
+                "RepoId": saved.repo_id.to_string(),
+                "Url": saved.url,
+                "Active": saved.active,
+            }))
+        }
+        "RedeliverWebhook" | "jc_forge_redeliver_webhook" | "redeliver-webhook" => {
+            // Bound to `Webhooks('{id}')`; MCP and CLI name the hook and its repository.
+            let hook_id: WebhookId = bound_key
+                .map(str::to_owned)
+                .or_else(|| text(&body, "Id"))
+                .unwrap_or_default()
+                .parse()
+                .map_err(|_| ShakoError::Unprocessable("a webhook id is a UUID".into()))?;
+            let hook = state
                 .store()
-                .delete_protection_rule(repo.instance_id, repo.org_id, repo.id, &pattern)
-                .await?;
-            Ok(json!({ "deleted": deleted }))
+                .get_webhook(ctx.instance_id, ctx.org_id, hook_id)
+                .await?
+                .ok_or_else(|| ShakoError::NotFound("webhook not found".into()))?;
+            let repo = state
+                .store()
+                .get_repo_by_id(ctx.instance_id, ctx.org_id, hook.repo_id)
+                .await?
+                .ok_or_else(|| ShakoError::NotFound("webhook not found".into()))?;
+            let del =
+                service::redeliver_webhook(state, ctx, &repo.owner, &repo.name, hook_id).await?;
+            Ok(json!({
+                "Id": del.id.to_string(),
+                "WebhookId": del.webhook_id.to_string(),
+                "Event": del.event,
+                "Status": del.status,
+                "ResponseCode": del.response_code,
+            }))
         }
-        "Tree" | "jc_forge_tree" | "tree" => {
-            let mut args = BTreeMap::new();
-            if let Some(r) = get_str("Ref", "ref") {
-                args.insert("Ref".into(), r);
-            }
-            if body
-                .get("Recursive")
-                .or_else(|| body.get("recursive"))
-                .and_then(Value::as_bool)
-                == Some(true)
-            {
-                args.insert("Recursive".into(), "true".into());
-            }
-            exec_bound_repo_tree(state, ctx, &repo_key, &args).await
+        "PublishPackage" | "jc_forge_publish_package" | "publish-package" => {
+            let owner = text(&body, "Owner")
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| ctx.subject.username.clone());
+            let content = required(&body, "ContentBase64")?;
+            let stripped: String = content.chars().filter(|c| !c.is_whitespace()).collect();
+            let bytes = STANDARD
+                .decode(stripped.as_bytes())
+                .map_err(|e| ShakoError::Unprocessable(format!("invalid ContentBase64: {e}")))?;
+            let saved = service::publish_generic_file(
+                state,
+                ctx,
+                &owner,
+                &required(&body, "Package")?,
+                &required(&body, "Version")?,
+                &required(&body, "File")?,
+                bytes,
+            )
+            .await?;
+            Ok(json!({
+                "Id": saved.id.to_string(),
+                "VersionId": saved.version_id.to_string(),
+                "Owner": saved.owner,
+                "Name": saved.package_name,
+                "Version": saved.version,
+                "File": saved.filename,
+                "Digest": saved.sha256,
+                "Size": saved.size_bytes,
+            }))
         }
-        "File" | "jc_forge_file" | "file" => {
+        "Tree"
+        | "jc_forge_tree"
+        | "tree"
+        | "File"
+        | "jc_forge_file"
+        | "file"
+        | "History"
+        | "jc_forge_history"
+        | "history"
+        | "Compare"
+        | "jc_forge_compare"
+        | "compare"
+        | "CommitStatus"
+        | "jc_forge_commit_status"
+        | "commit-status" => {
             let mut args = BTreeMap::new();
-            if let Some(r) = get_str("Ref", "ref") {
-                args.insert("Ref".into(), r);
+            if let Some(obj) = body.as_object() {
+                for (k, v) in obj {
+                    let val = match v {
+                        Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    args.insert(k.clone(), val);
+                }
             }
-            if let Some(p) = get_str("Path", "path") {
-                args.insert("Path".into(), p);
+            for name in [
+                "Ref",
+                "Path",
+                "Recursive",
+                "Skip",
+                "Top",
+                "Base",
+                "Head",
+                "Sha",
+            ] {
+                if let Some(v) = args.get(&lower_first(name)).cloned() {
+                    args.entry(name.to_owned()).or_insert(v);
+                }
             }
-            exec_bound_repo_file(state, ctx, &repo_key, &args).await
-        }
-        "History" | "jc_forge_history" | "history" => {
-            let mut args = BTreeMap::new();
-            if let Some(r) = get_str("Ref", "ref") {
-                args.insert("Ref".into(), r);
+            match op_name {
+                "Tree" | "jc_forge_tree" | "tree" => {
+                    exec_bound_repo_tree(state, ctx, &repo_key, &args).await
+                }
+                "File" | "jc_forge_file" | "file" => {
+                    exec_bound_repo_file(state, ctx, &repo_key, &args).await
+                }
+                "History" | "jc_forge_history" | "history" => {
+                    exec_bound_repo_history(state, ctx, &repo_key, &args).await
+                }
+                "CommitStatus" | "jc_forge_commit_status" | "commit-status" => {
+                    exec_bound_repo_status(state, ctx, &repo_key, &args).await
+                }
+                _ => exec_bound_repo_compare(state, ctx, &repo_key, &args).await,
             }
-            if let Some(p) = get_str("Path", "path") {
-                args.insert("Path".into(), p);
-            }
-            exec_bound_repo_history(state, ctx, &repo_key, &args).await
-        }
-        "Compare" | "jc_forge_compare" | "compare" => {
-            let mut args = BTreeMap::new();
-            if let Some(b) = get_str("Base", "base") {
-                args.insert("Base".into(), b);
-            }
-            if let Some(h) = get_str("Head", "head") {
-                args.insert("Head".into(), h);
-            }
-            exec_bound_repo_compare(state, ctx, &repo_key, &args).await
         }
         "Allowed" | "jc_forge_allowed" | "allowed" => {
-            let op = get_str("Operation", "operation").unwrap_or_else(|| "Read".into());
-            let obj = get_str("Object", "object");
+            let op = text(&body, "Operation").unwrap_or_else(|| "Read".into());
+            let obj = text(&body, "Object");
             let dec = evaluate_allowed_query(state, ctx, &op, obj.as_deref()).await;
             Ok(serde_json::to_value(dec).unwrap_or(Value::Null))
         }
         _ => {
-            // Check if it is an entity-set list operation (e.g. `jc_forge_repositories_list`, `jc_forge_quota`)
-            if let Some(op_def) = state.registry.find(op_name)
-                && let Some(set_name) = op_def.entity_set
-            {
-                let filter_q = get_str("filter", "Filter").map(|f| format!("$filter={f}"));
-                let table =
-                    build_entity_table(state, ctx, mount, set_name, None, filter_q.as_deref())
-                        .await?;
-                let scope = scope_for_context(ctx, state.authorizer.as_ref());
-                let (opts, _) = parse_odata_options_with_expand(
-                    &table.info().model,
-                    set_name,
-                    filter_q.as_deref(),
-                )?;
-                let ans = table_query(&table, &opts, &scope, MAX_ODATA_PAGE)
-                    .await
-                    .map_err(map_table_error)?;
-                return Ok(json!({ "value": ans.rows }));
-            }
-            Err(ShakoError::NotFound(format!(
-                "unknown operation '{op_name}'"
-            )))
+            // An entity-set read under its MCP or CLI name (`jc_forge_repositories_list`, `quota`).
+            let Some(op_def) = state.registry.find(op_name) else {
+                return Err(ShakoError::NotFound(format!(
+                    "unknown operation '{op_name}'"
+                )));
+            };
+            let Some(set_name) = op_def
+                .entity_set
+                .filter(|_| op_def.odata.kind == shako_core::ODataKind::EntitySetRead)
+            else {
+                return Err(ShakoError::NotImplemented(format!(
+                    "operation '{}' is not served through this surface",
+                    op_def.name
+                )));
+            };
+            let filter_q = text(&body, "Filter").map(|f| format!("$filter={f}"));
+            let table =
+                build_entity_table(state, ctx, mount, set_name, None, filter_q.as_deref()).await?;
+            let scope = scope_for_context(ctx, state.authorizer.as_ref());
+            let (opts, _) = parse_odata_options_with_expand(
+                &table.info().model,
+                set_name,
+                filter_q.as_deref(),
+            )?;
+            let ans = table_query(&table, &opts, &scope, MAX_ODATA_PAGE)
+                .await
+                .map_err(map_table_error)?;
+            Ok(json!({ "value": ans.rows }))
         }
     }
 }
@@ -1906,13 +2093,15 @@ fn resolve_pr_target(bound_or_repo: &str, body: &Value) -> ShakoResult<(String, 
     {
         return Ok((r.to_owned(), n));
     }
-    let num = body
-        .get("Number")
-        .or_else(|| body.get("number"))
+    let num = field(body, "Number")
         .and_then(Value::as_u64)
         .ok_or_else(|| ShakoError::Unprocessable("PullRequest Number required".into()))?;
     Ok((bound_or_repo.to_owned(), num))
 }
+
+/// The largest OData request body: a `PublishPackage` file travels base64 inside it.
+/// ponytail: a package file above ~48 MiB needs the generic package PUT, which streams.
+const MAX_ODATA_BODY_BYTES: usize = 64 * 1024 * 1024;
 
 /// Builds the OData 4.01 service router at `/odata` and `/odata/*` (Contract S9).
 pub fn odata_router() -> Router<ShakoState> {
@@ -1922,10 +2111,17 @@ pub fn odata_router() -> Router<ShakoState> {
         .route("/odata/$metadata", get(odata_metadata))
         .route(
             "/odata/{seg1}",
-            get(odata_single_get).post(odata_single_post),
+            get(odata_single_get)
+                .post(odata_single_post)
+                .delete(odata_single_delete),
         )
         .route(
             "/odata/{seg1}/{seg2}",
             get(odata_two_segment_get).post(odata_two_segment_post),
         )
+        .route(
+            "/odata/{seg1}/{seg2}/{rest}",
+            get(odata_deep_get).post(odata_deep_post),
+        )
+        .layer(DefaultBodyLimit::max(MAX_ODATA_BODY_BYTES))
 }
