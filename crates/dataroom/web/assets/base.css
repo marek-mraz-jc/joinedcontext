@@ -1,0 +1,50 @@
+/* Base layout the theme was written on top of. On CKAN, Bootstrap 5 and CKAN's main.css gave these
+   classes; the templates keep CKAN's markup, so dataroom serves the subset they use, ahead of the
+   theme (which overrides colours, type and spacing). Without it the masthead and footer lists render
+   as bullet lists and the grid collapses into one column (jc-parity, 2026-11-08). */
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; }
+img, svg { vertical-align: middle; }
+.container { width: 100%; max-width: 1200px; margin-inline: auto; padding-inline: 15px; }
+.row { display: flex; flex-wrap: wrap; margin-inline: -12px; }
+.row > * { flex-shrink: 0; width: 100%; max-width: 100%; padding-inline: 12px; }
+.gy-4 { row-gap: 1.5rem; }
+.col-12, .col-xs-12 { flex: 0 0 auto; width: 100%; }
+@media (min-width: 768px) {
+  .col-md-3 { flex: 0 0 auto; width: 25%; }
+  .col-md-6 { flex: 0 0 auto; width: 50%; }
+  .col-md-9 { flex: 0 0 auto; width: 75%; }
+}
+.list-unstyled, .list-inline { list-style: none; padding-left: 0; }
+.list-inline-item { display: inline-block; }
+.list-inline-item:not(:last-child) { margin-right: .5rem; }
+.d-flex { display: flex; }
+.d-none, .js .js-hide { display: none; }
+.justify-content-center { justify-content: center; }
+.ms-auto { margin-left: auto; }
+.me-2 { margin-right: .5rem; }
+.mb-2 { margin-bottom: .5rem; }
+.img-fluid { max-width: 100%; height: auto; }
+.visually-hidden, .hide-heading, .visually-hidden-focusable:not(:focus):not(:focus-within) {
+  position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important;
+  overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important;
+}
+.account-masthead .account ul { display: flex; justify-content: flex-end; gap: 1rem; margin: 0; padding: .35rem 0; }
+.navbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1.5rem; }
+.navbar-left { margin: 0; }
+.navbar-nav { display: flex; flex-wrap: wrap; gap: .25rem 1rem; list-style: none; margin: 0; padding-left: 0; }
+.navbar-collapse { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; flex-basis: 100%; }
+@media (min-width: 992px) {
+  .navbar-expand-lg { flex-wrap: nowrap; }
+  .navbar-expand-lg .navbar-collapse { flex-basis: auto; flex-grow: 1; }
+  .mb-lg-0 { margin-bottom: 0; }
+}
+.nav { display: flex; flex-wrap: wrap; list-style: none; margin: 0; padding-left: 0; }
+.nav-tabs > li > a, .nav-tabs .nav-link { display: block; padding: .5rem 1rem; text-decoration: none; }
+.breadcrumb { display: flex; flex-wrap: wrap; list-style: none; margin: 0 0 1rem; padding: 0; }
+.breadcrumb > li + li::before { content: "/"; padding: 0 .5rem; opacity: .6; }
+.input-group, .search-input-group { display: flex; align-items: stretch; width: 100%; }
+.input-group > input, .search-input-group > input { flex: 1 1 auto; min-width: 0; }
+.form-group { margin-bottom: 1rem; }
+.pagination { display: flex; flex-wrap: wrap; gap: .25rem; list-style: none; padding-left: 0; }
+.filter-list { list-style: none; padding-left: 0; }

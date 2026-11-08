@@ -32,8 +32,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
-/// Complete stylesheet from `ours/ckan-theme/public__jc-theme.css` plus dark-mode support (`prefers-color-scheme: dark`, B2).
+/// Complete stylesheet: the base layout CKAN's Bootstrap and main.css gave (`assets/base.css`), then
+/// `ours/ckan-theme/public__jc-theme.css`, plus dark-mode support (`prefers-color-scheme: dark`, B2).
 pub const JC_THEME_CSS: &str = concat!(
+    include_str!("../assets/base.css"),
     include_str!("../assets/public__jc-theme.css"),
     "\n@media (prefers-color-scheme: dark) {\n  :root[data-jc-color-scheme=\"auto\"] {\n    --jc-paper: #0f172a;\n    --jc-ink: #f8fafc;\n  }\n}\n"
 );
