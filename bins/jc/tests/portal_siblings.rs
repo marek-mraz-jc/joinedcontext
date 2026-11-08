@@ -771,6 +771,59 @@ async fn the_portal_runs_on_its_sibling_modules() {
         "a webhook to jc's listener is refused: {hook_status} {hook_body}"
     );
 
+    // A stream cannot reach jc's own listener: an http_client output aimed at the catalogue's
+    // write action, with a working token, writes nothing (ekiben refuses loopback targets).
+    let stream = format!(
+        "input:\n  generate:\n    count: 1\n    interval: \"\"\n    mapping: 'root = {{\"name\": \"stream-org\", \"title\": \"S\"}}'\noutput:\n  http_client:\n    url: {}\n    verb: POST\n    headers:\n      Authorization: {}\n",
+        jc.url("/opendata/api/3/action/organization_create"),
+        jc.secret("catalogue-token"),
+    );
+    let created = Client::new()
+        .post(jc.url("/streams/streams/e2e-loopback"))
+        .bearer_auth(jc.secret("ekiben-token"))
+        .header("content-type", "application/yaml")
+        .body(stream)
+        .send()
+        .await
+        .unwrap();
+    let created_status = created.status();
+    let created_body = created.text().await.unwrap_or_default();
+    assert!(
+        created_status.is_success() || created_status.is_client_error(),
+        "{created_status} {created_body}"
+    );
+    println!("stream create: {created_status} {created_body}");
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let shown = Client::new()
+        .get(jc.url("/opendata/api/3/action/organization_show?id=stream-org"))
+        .header("authorization", jc.secret("catalogue-token"))
+        .send()
+        .await
+        .unwrap();
+    let shown_status = shown.status();
+    let shown_body = shown.text().await.unwrap_or_default();
+    assert!(
+        !shown_body.contains("\"success\":true"),
+        "a stream ({created_status}) reached jc's listener: {shown_status} {shown_body}"
+    );
+
+    // f. The Portal finds a project's dashboards organization by name before it writes one
+    // (`GET /api/orgs/name/{project}`): record what daiya answers for the Portal's credential.
+    let org = Client::new()
+        .get(jc.url("/dashboards/api/orgs/name/org"))
+        .basic_auth("portal", Some(jc.secret("dashboards-password")))
+        .send()
+        .await
+        .unwrap();
+    let org_status = org.status();
+    let org_body = org.text().await.unwrap_or_default();
+    println!("daiya org by name: {org_status} {org_body}");
+    if !org_status.is_success() {
+        gaps.push(format!(
+            "f daiya: GET /dashboards/api/orgs/name/{{project}} with the Portal Basic credential -> {org_status} {org_body}"
+        ));
+    }
+
     println!("GAPS:\n{}", gaps.join("\n"));
     std::fs::write(
         std::env::temp_dir().join("jc-portal-e2e-gaps.txt"),
