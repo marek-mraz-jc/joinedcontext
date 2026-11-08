@@ -855,21 +855,48 @@ async fn compat_list_users(
         },
     ))?;
     let allowed = ctx.allowed_orgs();
-    let users = state
-        .oidc
-        .store
-        .list_users(
+    let (first, max) = (q.first.unwrap_or(0), q.max.unwrap_or(100));
+    let page = |first, max| {
+        state.oidc.store.list_users(
             &realm,
             allowed.as_deref(),
             q.search.as_deref(),
             q.email.as_deref(),
             q.username.as_deref(),
             q.exact.unwrap_or(false),
-            q.first.unwrap_or(0),
-            q.max.unwrap_or(100),
+            first,
+            max,
         )
-        .await?;
-    Ok(Json(users))
+    };
+    // Keycloak's `search` leaves service accounts out (UsersResource includeServiceAccounts
+    // false), so the Portal's People page never lists `service-account-*`; `first`/`max` count
+    // people only, so the store is paged until `max` of them are found.
+    if q.search.is_none() || max == 0 {
+        return Ok(Json(page(first, max).await?));
+    }
+    let batch = max.max(100);
+    let (mut users, mut skip, mut offset) = (Vec::new(), first, 0);
+    loop {
+        let read = page(offset, batch).await?;
+        let full = read.len() == batch;
+        offset += batch;
+        for user in read {
+            if user.service_account_client_id.is_some() {
+                continue;
+            }
+            if skip > 0 {
+                skip -= 1;
+                continue;
+            }
+            users.push(user);
+            if users.len() == max {
+                return Ok(Json(users));
+            }
+        }
+        if !full {
+            return Ok(Json(users));
+        }
+    }
 }
 
 async fn compat_create_user(
@@ -894,6 +921,23 @@ async fn compat_create_user(
             person_id: "*".into(),
         },
     ))?;
+    // As Keycloak's POST /users: no role mapping and no service-account link comes from the
+    // body (an organization admin could otherwise create a realm admin); the person holds the
+    // realm's default roles, `offline_access` among them (T-6301).
+    let default_roles = state
+        .oidc
+        .store
+        .get_realm(&realm)
+        .await?
+        .map(|r| r.default_roles)
+        .unwrap_or_default();
+    user.realm_roles = default_roles;
+    user.client_roles.clear();
+    user.groups.clear();
+    user.service_account_client_id = None;
+    if user.id.is_empty() || !ctx.principal.is_realm_admin() {
+        user.id = uuid::Uuid::now_v7().to_string();
+    }
     let created = state.oidc.store.create_user(user).await?;
     let location = format!(
         "{}/admin/realms/{realm}/users/{}",

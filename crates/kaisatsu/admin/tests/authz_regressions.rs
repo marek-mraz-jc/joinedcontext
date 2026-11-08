@@ -7,6 +7,8 @@
 //! - a same-id person of the `master` realm lent its roles to a token of another realm,
 //! - a department realm role called `platform-admin` (or `admin`) made its holder realm admin,
 //! - a revoked admin token kept working.
+//! - (2026-11-08) an organization admin could create a person holding `realm-admin` through
+//!   `realmRoles` / `clientRoles` in the POST body.
 
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
@@ -700,4 +702,40 @@ async fn k3_view_clients_cannot_write_roles_or_client_scopes_on_compat_routes() 
         .await,
         StatusCode::NO_CONTENT
     );
+}
+
+#[tokio::test]
+async fn org_admin_post_creates_no_role_mappings() {
+    let f = Fixture::new().await;
+    let t = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    let st = f
+        .send(
+            Method::POST,
+            "/admin/realms/dev/users",
+            &t,
+            Some(json!({ "id": "esp-person", "username": "made-admin", "enabled": true,
+                         "groups": ["/platform-admins"],
+                         "realmRoles": ["realm-admin"],
+                         "clientRoles": { "realm-management": ["realm-admin"] },
+                         "serviceAccountClientId": "realm-management" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let u = f
+        .store
+        .get_user_by_username_or_email("dev", None, "made-admin")
+        .await
+        .unwrap()
+        .unwrap();
+    // Keycloak's POST /users writes no role mapping from the body; the person gets the realm's
+    // default roles only.
+    assert_eq!(u.realm_roles, ["offline_access", "uma_authorization"]);
+    assert!(u.client_roles.is_empty(), "{:?}", u.client_roles);
+    assert_eq!(u.service_account_client_id, None);
+    assert_eq!(u.org_id.as_deref(), Some("helsinki"));
+    assert!(u.groups.is_empty(), "{:?}", u.groups);
+    assert_ne!(u.id, "esp-person", "an organization admin picks no id");
+    assert_eq!(f.user("esp-person").await.username, "esp-person");
 }

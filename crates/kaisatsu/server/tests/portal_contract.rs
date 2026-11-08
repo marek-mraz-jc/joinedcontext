@@ -926,3 +926,263 @@ fn hub_scope(slug: &str) -> Value {
         },
     })
 }
+
+// ------------------------------------------------------------------------------------------
+// People (people.rs) and the group wave (reconciler/groups.rs), as `portal-reconciler`
+// ------------------------------------------------------------------------------------------
+
+fn strings_of(value: &Value) -> Vec<&str> {
+    value
+        .as_array()
+        .unwrap_or_else(|| panic!("not an array: {value}"))
+        .iter()
+        .map(|v| v.as_str().unwrap_or_else(|| panic!("not a string: {v}")))
+        .collect()
+}
+
+#[tokio::test]
+async fn the_portal_manages_people_as_the_reconciler() {
+    let realm = realm().await;
+    let app = &realm.app;
+    let token = reconciler(app).await;
+    let newcomer = "newcomer@hel.example";
+
+    // people.rs:327 create: 201 with the id as Location's last segment.
+    let body = json!({
+        "username": newcomer, "email": newcomer, "firstName": "Nora", "lastName": "Newcomer",
+        "enabled": true, "emailVerified": false,
+        "requiredActions": ["VERIFY_EMAIL", "UPDATE_PASSWORD"],
+        "attributes": { "locale": ["sk"] },
+    });
+    let made = admin(app, &token, Method::POST, "/users", Some(body.clone())).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
+    let id = made.location().rsplit('/').next().unwrap().to_owned();
+    assert!(!id.is_empty());
+    // people.rs:341 the fallback when no Location came back.
+    let found = admin(app, &token, Method::GET, &format!("/users?email={newcomer}&exact=true"), None).await;
+    assert_eq!(found.status, StatusCode::OK, "{}", found.text);
+    assert_eq!(found.json()[0]["id"], json!(id), "{}", found.text);
+    // The same e-mail again is 409, which people.rs maps to Conflict (PF-04 "exists already").
+    let again = admin(app, &token, Method::POST, "/users", Some(body)).await;
+    assert_eq!(again.status, StatusCode::CONFLICT, "{}", again.text);
+
+    // people.rs:304 get, read as KcUser.
+    let user = admin(app, &token, Method::GET, &format!("/users/{id}"), None).await.json();
+    assert_eq!(user["username"], json!(newcomer));
+    assert_eq!(user["email"], json!(newcomer));
+    assert_eq!(user["firstName"], json!("Nora"));
+    assert_eq!(user["lastName"], json!("Newcomer"));
+    assert_eq!(user["enabled"], json!(true));
+    assert_eq!(user["emailVerified"], json!(false));
+    assert!(user["createdTimestamp"].as_i64().is_some_and(|t| t > 0), "{user}");
+    let mut required = strings_of(&user["requiredActions"]);
+    required.sort_unstable();
+    assert_eq!(required, ["UPDATE_PASSWORD", "VERIFY_EMAIL"]);
+    assert_eq!(user["attributes"]["locale"], json!(["sk"]), "{user}");
+
+    // people.rs:290 list: the search finds the person and never a service account (Keycloak
+    // leaves them out; the People page would list `service-account-portal-api` otherwise).
+    let page = admin(
+        app,
+        &token,
+        Method::GET,
+        "/users?search=&first=0&max=100&briefRepresentation=false",
+        None,
+    )
+    .await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text);
+    let names: Vec<String> = page
+        .json()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|u| u["username"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(names.contains(&newcomer.to_owned()), "{names:?}");
+    assert!(names.iter().all(|n| !n.starts_with("service-account-")), "{names:?}");
+    // `first` and `max` count people: two pages of one hold Ana and the newcomer.
+    let mut paged = Vec::new();
+    for first in 0..3 {
+        let one = admin(app, &token, Method::GET, &format!("/users?search=&first={first}&max=1&briefRepresentation=false"), None).await.json();
+        paged.extend(one.as_array().unwrap().iter().map(|u| u["username"].as_str().unwrap().to_owned()));
+    }
+    paged.sort();
+    assert_eq!(paged, [ANA, newcomer], "people.rs:290 pages");
+    let searched = admin(app, &token, Method::GET, "/users?search=nora&first=0&max=20&briefRepresentation=false", None).await;
+    assert_eq!(strings_of(&json!(searched.json().as_array().unwrap().iter().map(|u| u["id"].clone()).collect::<Vec<_>>())), [id.as_str()]);
+
+    // people.rs:361 update: read, edit, write the whole representation back; what the Portal
+    // does not know survives.
+    let mut raw = user.clone();
+    raw["firstName"] = json!("Norah");
+    raw["attributes"]["department"] = json!(["parks"]);
+    let put = admin(app, &token, Method::PUT, &format!("/users/{id}"), Some(raw)).await;
+    assert_eq!(put.status, StatusCode::NO_CONTENT, "{}", put.text);
+    let user = admin(app, &token, Method::GET, &format!("/users/{id}"), None).await.json();
+    assert_eq!(user["firstName"], json!("Norah"));
+    assert_eq!(user["attributes"]["locale"], json!(["sk"]), "{user}");
+    assert_eq!(user["attributes"]["department"], json!(["parks"]), "{user}");
+
+    // people.rs:383 execute-actions e-mail: sent (2xx) or the realm cannot mail (5xx, the
+    // temporary password fallback). A 4xx is an error the Portal shows.
+    let mail = admin(
+        app,
+        &token,
+        Method::PUT,
+        &format!(
+            "/users/{id}/execute-actions-email?lifespan=259200&client_id=portal-api&redirect_uri={}",
+            url::form_urlencoded::byte_serialize(format!("{PORTAL}/").as_bytes()).collect::<String>()
+        ),
+        Some(json!(["VERIFY_EMAIL", "UPDATE_PASSWORD"])),
+    )
+    .await;
+    assert!(
+        mail.status.is_success() || mail.status.is_server_error(),
+        "people.rs:398 reads {} as an error: {}",
+        mail.status,
+        mail.text
+    );
+
+    // people.rs:408 temporary password.
+    let reset = admin(
+        app,
+        &token,
+        Method::PUT,
+        &format!("/users/{id}/reset-password"),
+        Some(json!({ "type": "password", "value": "Temporary-Pass-123!", "temporary": true })),
+    )
+    .await;
+    assert_eq!(reset.status, StatusCode::NO_CONTENT, "{}", reset.text);
+
+    // people.rs:426 credentials, read as {id, type}.
+    let credentials = admin(app, &token, Method::GET, &format!("/users/{id}/credentials"), None).await;
+    assert_eq!(credentials.status, StatusCode::OK, "{}", credentials.text);
+    let credentials = credentials.json();
+    assert!(
+        credentials.as_array().unwrap().iter().any(|c| c["type"] == "password" && c["id"].is_string()),
+        "{credentials}"
+    );
+
+    // people.rs:445 sessions and :452 consents: arrays.
+    for path in ["sessions", "consents"] {
+        let listed = admin(app, &token, Method::GET, &format!("/users/{id}/{path}"), None).await;
+        assert_eq!(listed.status, StatusCode::OK, "{path}: {}", listed.text);
+        assert!(listed.json().is_array(), "{path}: {}", listed.text);
+    }
+    let ana = realm.store.get_user_by_username_or_email("jc", None, ANA).await.unwrap().unwrap();
+    let sessions = admin(app, &token, Method::GET, &format!("/users/{}/sessions", ana.id), None).await.json();
+    assert!(sessions.as_array().unwrap().is_empty(), "nobody signed in yet: {sessions}");
+
+    // people.rs:507 join_members: an exact search for `members`, the tree under each root, the
+    // group at `/{organization}/members`, then the membership.
+    let tree = admin(
+        app,
+        &token,
+        Method::GET,
+        "/groups?search=members&exact=true&briefRepresentation=true&max=1000",
+        None,
+    )
+    .await;
+    assert_eq!(tree.status, StatusCode::OK, "{}", tree.text);
+    let tree = tree.json();
+    fn find(nodes: &Value, path: &str) -> Option<String> {
+        nodes.as_array()?.iter().find_map(|node| {
+            if node["path"] == path {
+                node["id"].as_str().map(str::to_owned)
+            } else {
+                find(&node["subGroups"], path)
+            }
+        })
+    }
+    let members = find(&tree, "/helsinki/members")
+        .unwrap_or_else(|| panic!("people.rs:147 finds no /helsinki/members in {tree}"));
+    let joined = admin(app, &token, Method::PUT, &format!("/users/{id}/groups/{members}"), None).await;
+    assert_eq!(joined.status, StatusCode::NO_CONTENT, "{}", joined.text);
+
+    // people.rs:483 the groups by path and the realm roles, composites expanded.
+    let groups = admin(app, &token, Method::GET, &format!("/users/{id}/groups"), None).await.json();
+    let paths: Vec<&str> = groups.as_array().unwrap().iter().map(|g| g["path"].as_str().unwrap()).collect();
+    assert_eq!(paths, ["/helsinki/members"], "{groups}");
+    let roles = admin(app, &token, Method::GET, &format!("/users/{id}/role-mappings/realm/composite"), None).await;
+    assert_eq!(roles.status, StatusCode::OK, "{}", roles.text);
+    let roles = roles.json();
+    let names: Vec<&str> = roles.as_array().unwrap().iter().map(|r| r["name"].as_str().unwrap()).collect();
+    // The realm's default role: claude.ai's connector asks offline_access (T-6301).
+    assert!(names.contains(&"offline_access"), "{roles}");
+
+    // people.rs:418 sign out, :434 a second factor's removal (none here), :519 delete.
+    let out = admin(app, &token, Method::POST, &format!("/users/{id}/logout"), None).await;
+    assert_eq!(out.status, StatusCode::NO_CONTENT, "{}", out.text);
+    let gone = admin(app, &token, Method::DELETE, &format!("/users/{id}"), None).await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
+    // people.rs:270 a 404 is NotFound.
+    let missing = admin(app, &token, Method::GET, &format!("/users/{id}"), None).await;
+    assert_eq!(missing.status, StatusCode::NOT_FOUND, "{}", missing.text);
+    assert!(
+        missing.json()["error"].is_string() || missing.json()["errorMessage"].is_string(),
+        "people.rs:273 reads errorMessage or error: {}",
+        missing.text
+    );
+}
+
+#[tokio::test]
+async fn the_group_wave_converges_as_the_reconciler() {
+    let realm = realm().await;
+    let app = &realm.app;
+    let token = reconciler(app).await;
+    let ana = realm.store.get_user_by_username_or_email("jc", None, ANA).await.unwrap().unwrap();
+
+    // groups.rs:331 a managed root group with its Organization claims.
+    let attributes = json!({ MANAGED.0: [MANAGED.1], "jc_org": ["helsinki"], "jc_groups": ["/helsinki/stewards"] });
+    let made = admin(app, &token, Method::POST, "/groups", Some(json!({ "name": "helsinki-stewards", "attributes": attributes }))).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
+    // groups.rs:344 found again by an exact name search, read as KcGroup.
+    let found = admin(app, &token, Method::GET, "/groups?search=helsinki-stewards&exact=true", None).await.json();
+    let group = found
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["name"] == "helsinki-stewards")
+        .unwrap_or_else(|| panic!("groups.rs:350: {found}"))
+        .clone();
+    let id = id_of(&group);
+
+    // groups.rs:207 the whole list with attributes, the managed mark as groups.rs:140 reads it.
+    let all = admin(app, &token, Method::GET, "/groups?briefRepresentation=false&max=1000", None).await.json();
+    let listed = all.as_array().unwrap().iter().find(|g| g["id"] == json!(id)).unwrap_or_else(|| panic!("{all}"));
+    assert_eq!(listed["attributes"], attributes, "{listed}");
+
+    // groups.rs:385 members, :403 join, :486 exists.
+    let path = format!("/groups/{id}/members?max=1000");
+    assert_eq!(admin(app, &token, Method::GET, &path, None).await.json(), json!([]));
+    let exists = admin(app, &token, Method::GET, &format!("/users/{}", ana.id), None).await;
+    assert_eq!(exists.status, StatusCode::OK, "{}", exists.text);
+    let nobody = admin(app, &token, Method::GET, "/users/00000000-0000-0000-0000-000000000000", None).await;
+    assert_eq!(nobody.status, StatusCode::NOT_FOUND, "app_clients.rs:583 reads 404 as absent: {}", nobody.text);
+    let joined = admin(app, &token, Method::PUT, &format!("/users/{}/groups/{id}", ana.id), None).await;
+    assert_eq!(joined.status, StatusCode::NO_CONTENT, "{}", joined.text);
+    let held = admin(app, &token, Method::GET, &path, None).await.json();
+    let ids: Vec<&str> = held.as_array().unwrap().iter().map(|u| u["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, [ana.id.as_str()], "{held}");
+
+    // groups.rs:471 the claims rewritten.
+    let changed = json!({ MANAGED.0: [MANAGED.1], "jc_org": ["helsinki"], "jc_groups": ["/helsinki/editors"] });
+    let put = admin(app, &token, Method::PUT, &format!("/groups/{id}"), Some(json!({ "name": "helsinki-stewards", "attributes": changed }))).await;
+    assert_eq!(put.status, StatusCode::NO_CONTENT, "{}", put.text);
+    let all = admin(app, &token, Method::GET, "/groups?briefRepresentation=false&max=1000", None).await.json();
+    let listed = all.as_array().unwrap().iter().find(|g| g["id"] == json!(id)).unwrap();
+    assert_eq!(listed["attributes"], changed, "{listed}");
+
+    // groups.rs:428 leave, :288 delete.
+    let left = admin(app, &token, Method::DELETE, &format!("/users/{}/groups/{id}", ana.id), None).await;
+    assert_eq!(left.status, StatusCode::NO_CONTENT, "{}", left.text);
+    let gone = admin(app, &token, Method::DELETE, &format!("/groups/{id}"), None).await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
+
+    // Least privilege: the reconciler writes no client and reads no client secret.
+    let clients = admin(app, &token, Method::GET, "/clients?clientId=portal-api", None).await;
+    let listed = if clients.status == StatusCode::OK { clients.json() } else { json!([]) };
+    assert!(listed.as_array().unwrap().is_empty(), "portal-reconciler reads clients: {listed}");
+    let made = admin(app, &token, Method::POST, "/clients", Some(json!({ "clientId": "app-sneaky", "attributes": { MANAGED.0: MANAGED.1 } }))).await;
+    assert!(made.status.is_client_error(), "portal-reconciler creates a client: {}", made.status);
+}
