@@ -245,44 +245,8 @@ pub fn build_ngsild_request(
             .map(|s| s.trim().to_owned()),
     );
 
-    let mut attrs: Vec<String> = model
-        .get("attributes")
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(Value::as_str)
-                .map(|s| s.trim().to_owned())
-                .filter(|s| !s.is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let entity_name = model
-        .get("entityName")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let name_pattern = model
-        .get("namePattern")
-        .and_then(Value::as_str)
-        .unwrap_or("entity_plus_attribute");
+    let attrs = projected_attrs(model);
     if !attrs.is_empty() {
-        if !entity_name.is_empty()
-            && entity_name != "id"
-            && entity_name != "id_short"
-            && name_pattern != "attribute"
-            && !attrs.contains(&entity_name.to_owned())
-        {
-            attrs.push(entity_name.to_owned());
-        }
-        if q_type == "geo" {
-            let geoprop = model
-                .get("geoproperty")
-                .and_then(Value::as_str)
-                .unwrap_or("location");
-            if !attrs.contains(&geoprop.to_owned()) {
-                attrs.push(geoprop.to_owned());
-            }
-        }
         add(&mut params, "attrs", Some(attrs.join(",")));
     }
 
@@ -417,6 +381,51 @@ pub fn build_ngsild_request(
     (path, params)
 }
 
+/// The `attrs` projection of a target: its attribute list plus the entity name attribute and,
+/// for a geo query, the geoproperty; empty when the target names no attributes.
+fn projected_attrs(model: &Value) -> Vec<String> {
+    let mut attrs: Vec<String> = model
+        .get("attributes")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    if attrs.is_empty() {
+        return attrs;
+    }
+    let entity_name = model
+        .get("entityName")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let name_pattern = model
+        .get("namePattern")
+        .and_then(Value::as_str)
+        .unwrap_or("entity_plus_attribute");
+    if !entity_name.is_empty()
+        && entity_name != "id"
+        && entity_name != "id_short"
+        && name_pattern != "attribute"
+        && !attrs.iter().any(|a| a == entity_name)
+    {
+        attrs.push(entity_name.to_owned());
+    }
+    if normalize_query_type(model.get("queryType").and_then(Value::as_str)) == "geo" {
+        let geoprop = model
+            .get("geoproperty")
+            .and_then(Value::as_str)
+            .unwrap_or("location");
+        if !attrs.iter().any(|a| a == geoprop) {
+            attrs.push(geoprop.to_owned());
+        }
+    }
+    attrs
+}
+
 fn short_id(id: &str) -> &str {
     id.rsplit_once([':', '/', '#'])
         .map_or(id, |(_, tail)| if tail.is_empty() { id } else { tail })
@@ -428,6 +437,10 @@ pub fn extract_ngsi_value(attr: &Value, lang: Option<&str>) -> Value {
     let Some(obj) = attr.as_object() else {
         return attr.clone();
     };
+    // A JSON-LD typed literal (`{"@value": "2024-01-01", "@type": "Date"}`), as in temporalValues.
+    if let Some(v) = obj.get("@value") {
+        return v.clone();
+    }
     if let Some(v) = obj.get("value") {
         if let Some(inner) = v.get("@value") {
             return inner.clone();
@@ -494,19 +507,9 @@ fn entity_label_of(entity: &serde_json::Map<String, Value>, model: &Value) -> St
 
 fn entities_to_table_frame(ref_id: &str, entities: &[Value], model: &Value) -> Frame {
     let lang = model.get("lang").and_then(Value::as_str);
-    let requested_attrs: Vec<String> = model
-        .get("attributes")
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default();
-
-    // An explicit attribute list is a projection (NGSI-LD `attrs`): the broker answers only
-    // those attributes, and a broker that answers more must not widen the table.
+    // An explicit attribute list is a projection (NGSI-LD `attrs`, as requested): the broker
+    // answers only those attributes, and a broker that answers more must not widen the table.
+    let requested_attrs = projected_attrs(model);
     let mut attr_order: Vec<String> = requested_attrs.clone();
     for e in entities.iter().filter(|_| requested_attrs.is_empty()) {
         if let Some(obj) = e.as_object() {

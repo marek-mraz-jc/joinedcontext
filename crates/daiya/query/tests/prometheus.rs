@@ -617,6 +617,25 @@ async fn editor_resources_map_to_the_metadata_api() {
         .unwrap();
     assert_eq!(m.target(7), "/api/v1/label/job/values");
 
+    // The paths Grafana's frontend sends, with the API prefix; nothing else passes with it.
+    call("/api/v1/labels", &[]).await.unwrap();
+    assert_eq!(m.target(8), "/api/v1/labels");
+    call("api/v1/label/job/values", &[]).await.unwrap();
+    assert_eq!(m.target(9), "/api/v1/label/job/values");
+    call("api/v1/series", &[("match[]", "up")]).await.unwrap();
+    assert_eq!(m.target(10), "/api/v1/series?match[]=up");
+    for refused in [
+        "api/v1/admin/tsdb/delete_series",
+        "api/v1/query",
+        "api/v2/labels",
+    ] {
+        let err = call(refused, &[]).await.unwrap_err();
+        assert!(
+            err.to_string().contains("unsupported resource path"),
+            "{refused}: {err}"
+        );
+    }
+
     let err = call("variable", &[("query", "query_result(up)")])
         .await
         .unwrap_err();
@@ -626,7 +645,7 @@ async fn editor_resources_map_to_the_metadata_api() {
     );
     let err = call("metrics/../admin", &[]).await.unwrap_err();
     assert!(err.to_string().contains("unsupported resource path"));
-    assert_eq!(m.count(), 8);
+    assert_eq!(m.count(), 11);
 }
 
 #[tokio::test]

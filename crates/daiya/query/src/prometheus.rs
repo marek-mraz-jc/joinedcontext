@@ -609,7 +609,9 @@ impl Datasource for PrometheusDatasource {
     ) -> DsFuture<'a, Result<ResourceResp, DsError>> {
         Box::pin(async move {
             let headers = self.auth_headers(ctx)?;
+            // Grafana's frontend names the API path (`api/v1/labels`); the bare form is ours.
             let path = r.path.trim_matches('/');
+            let path = path.strip_prefix("api/v1/").unwrap_or(path);
             let url = if path == "labels" {
                 format!("{}/api/v1/labels", self.base_url)
             } else if let Some(rest) = path.strip_prefix("label/") {
