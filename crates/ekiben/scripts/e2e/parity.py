@@ -307,6 +307,8 @@ def execute(case, args, stub, runners):
         with open(os.path.join(work, f"{label}.stderr"), "w") as f:
             f.write(result["stderr"])
         seen[label] = observed(result, log)
+        # A source's error text quotes its stub URL, which names the run: compare without it.
+        seen[label]["requests"] = [r.replace(run, "RUN") for r in seen[label]["requests"]]
         took[label] = round(result["window"][1] - result["window"][0], 1)
         seen[label]["seconds"] = took[label]
         with open(os.path.join(work, f"{label}.observed.json"), "w") as f:
