@@ -13,7 +13,7 @@ import type { FieldConfigSource, FieldSettings } from "./fieldConfig";
 import { colorOf, displayValue, settingsFor, stepFor } from "./fieldConfig";
 import { gaugeSpec } from "./specs";
 import { chartTheme, VegaChart } from "./VegaChart";
-import { Fill, Tinted } from "./paint";
+import { Fill, Swatch, Tinted } from "./paint";
 
 interface ReduceOptions {
   calcs?: string[];
@@ -66,6 +66,28 @@ export function shownValues(frames: Frame[], fieldConfig: FieldConfigSource | un
   });
 }
 
+/**
+ * What each colour of a gauge or bar means: a swatch per threshold step and the value it starts
+ * at, in the field's unit (a percentage step in percent of min to max).
+ */
+export function ThresholdKey({ settings, locale }: { settings: FieldSettings; locale: string }): JSX.Element | null {
+  const { t } = useTranslation();
+  const steps = settings.thresholds?.steps ?? [];
+  if (steps.length < 2) return null;
+  const percent = settings.thresholds?.mode === "percentage";
+  const at = (value: number): string => (percent ? `${value}%` : displayValue({ ...settings, mappings: [] }, value, locale).text);
+  return (
+    <ul aria-label={t("dashboardView.thresholds")} className="flex flex-wrap justify-center gap-x-3 gap-y-1 text-caption text-fg-muted">
+      {steps.map((step, index) => (
+        <li key={index} className="flex items-center gap-1.5">
+          <Swatch color={colorOf(step.color)} shape="square" />
+          {step.value === null ? t("dashboardView.below", { value: at(steps[1].value ?? 0) }) : t("dashboardView.from", { value: at(step.value) })}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** A `stat` panel: each value large, in its threshold's colour, a sparkline under it. */
 export function StatPanel({ title, frames, fieldConfig, options, height, locale }: ValuePanelProps): JSX.Element {
   const { t } = useTranslation();
@@ -112,34 +134,42 @@ export function Sparkline({ points, color, label, height }: { points: { t: numbe
   );
 }
 
-/** A `gauge` panel: one arc per value, side by side. */
+/** A `gauge` panel: one arc per value, side by side, its min and max at the arc's ends. */
 export function GaugePanel({ title, frames, fieldConfig, options, height, locale }: ValuePanelProps): JSX.Element {
   const { t } = useTranslation();
   const shown = useMemo(() => shownValues(frames, fieldConfig, options, locale), [frames, fieldConfig, options, locale]);
   const theme = useMemo(() => chartTheme(), []);
-  const each = Math.max(120, height - 28);
+  const named = shown.length > 1 || options?.textMode === "value_and_name";
+  const markers = options?.showThresholdMarkers !== false;
+  const each = Math.max(120, height - (named ? 20 : 0) - (markers ? 24 : 0));
   return (
-    <ul aria-label={title} className="grid h-full grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] gap-2">
-      {shown.map((one) => (
-        <li key={one.reduced.name} className="flex min-w-0 flex-col items-center">
-          <VegaChart
-            spec={gaugeSpec(one.reduced.value, one.text, { min: one.min, max: one.max, thresholds: one.settings.thresholds }, {
-              theme,
-              height: each,
-              showThresholdMarkers: options?.showThresholdMarkers !== false,
-            })}
-            height={each}
-            label={t("dashboardView.gaugeLabel", { name: one.reduced.name, value: one.text })}
-          />
-          {shown.length > 1 || options?.textMode === "value_and_name" ? <p className="truncate text-caption text-fg-muted">{one.reduced.name}</p> : null}
-        </li>
-      ))}
-    </ul>
+    <div className="flex h-full flex-col gap-1">
+      <ul aria-label={title} className="grid min-h-0 flex-1 grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] gap-2">
+        {shown.map((one) => (
+          <li key={one.reduced.name} className="flex min-w-0 flex-col items-center">
+            <VegaChart
+              className="w-full"
+              spec={gaugeSpec(one.reduced.value, one.text, { min: one.min, max: one.max, thresholds: one.settings.thresholds }, {
+                theme,
+                height: each,
+                showThresholdMarkers: markers,
+                minText: displayValue({ ...one.settings, mappings: [] }, one.min, locale).text,
+                maxText: displayValue({ ...one.settings, mappings: [] }, one.max, locale).text,
+              })}
+              height={each}
+              label={t("dashboardView.gaugeLabel", { name: one.reduced.name, value: one.text })}
+            />
+            {named ? <p className="truncate text-caption text-fg-muted">{one.reduced.name}</p> : null}
+          </li>
+        ))}
+      </ul>
+      {markers && shown[0] ? <ThresholdKey settings={shown[0].settings} locale={locale} /> : null}
+    </div>
   );
 }
 
 /** A `bargauge` panel: one bar per value, its length the value's share of min to max. */
-export function BarGaugePanel({ title, frames, fieldConfig, options, locale }: ValuePanelProps): JSX.Element {
+export function BarGaugePanel({ title, frames, fieldConfig, options, height, locale }: ValuePanelProps): JSX.Element {
   const shown = useMemo(() => shownValues(frames, fieldConfig, options, locale), [frames, fieldConfig, options, locale]);
   const vertical = options?.orientation === "vertical";
   if (vertical) {
@@ -157,17 +187,23 @@ export function BarGaugePanel({ title, frames, fieldConfig, options, locale }: V
       </ul>
     );
   }
+  // The bars share the panel's height, as Grafana's do: thicker when there are few of them.
+  const room = height / Math.max(1, shown.length);
+  const thickness = room >= 64 ? "h-8" : room >= 40 ? "h-5" : "h-3";
   return (
-    <ul aria-label={title} className="flex flex-col gap-2">
-      {shown.map((one) => (
-        <li key={one.reduced.name} className="grid grid-cols-[minmax(0,10rem)_1fr_auto] items-center gap-2 max-sm:grid-cols-[1fr_auto]">
-          <span className="truncate text-caption text-fg-muted max-sm:col-span-2">{one.reduced.name}</span>
-          <span className="h-3 overflow-hidden rounded-sm bg-surface-muted" role="meter" aria-label={one.reduced.name} aria-valuemin={one.min} aria-valuemax={one.max} aria-valuenow={one.reduced.value ?? undefined} aria-valuetext={one.text}>
-            <Fill share={one.share} color={one.color} />
-          </span>
-          <span className="text-caption font-medium tabular-nums">{one.text}</span>
-        </li>
-      ))}
-    </ul>
+    <div className="flex h-full flex-col gap-2">
+      <ul aria-label={title} className="flex min-h-0 flex-1 flex-col justify-around gap-2">
+        {shown.map((one) => (
+          <li key={one.reduced.name} className="grid grid-cols-[minmax(0,10rem)_1fr_auto] items-center gap-2 max-sm:grid-cols-[1fr_auto]">
+            <span className="truncate text-caption text-fg-muted max-sm:col-span-2">{one.reduced.name}</span>
+            <span className={clsx(thickness, "overflow-hidden rounded-sm bg-surface-muted")} role="meter" aria-label={one.reduced.name} aria-valuemin={one.min} aria-valuemax={one.max} aria-valuenow={one.reduced.value ?? undefined} aria-valuetext={one.text}>
+              <Fill share={one.share} color={one.color} />
+            </span>
+            <span className="text-caption font-medium tabular-nums">{one.text}</span>
+          </li>
+        ))}
+      </ul>
+      {shown[0] ? <ThresholdKey settings={shown[0].settings} locale={locale} /> : null}
+    </div>
   );
 }

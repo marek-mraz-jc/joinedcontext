@@ -154,7 +154,7 @@ const SHOWCASE = {
     { id: 3, type: "bargauge", title: "Resident memory by pod", gridPos: { x: 12, y: 0, w: 12, h: 6 }, fieldConfig: { defaults: { unit: "bytes", min: 0, max: 1e9, thresholds: { mode: "absolute", steps: [{ color: "green", value: null }, { color: "orange", value: 6e8 }, { color: "red", value: 8e8 }] } }, overrides: [] }, options: { reduceOptions: { calcs: ["lastNotNull"] } } },
     { id: 4, type: "barchart", title: "Requests by route", gridPos: { x: 0, y: 6, w: 12, h: 8 }, fieldConfig: { defaults: { unit: "short" }, overrides: [] }, options: {} },
     { id: 5, type: "piechart", title: "Share of requests", gridPos: { x: 12, y: 6, w: 12, h: 8 }, fieldConfig: { defaults: {}, overrides: [] }, options: { reduceOptions: { values: true } } },
-    { id: 6, type: "heatmap", title: "Request duration buckets", gridPos: { x: 0, y: 14, w: 12, h: 8 }, fieldConfig: { defaults: {}, overrides: [] }, options: {} },
+    { id: 6, type: "heatmap", title: "Request duration buckets", gridPos: { x: 0, y: 14, w: 12, h: 8 }, fieldConfig: { defaults: {}, overrides: [] }, options: { yAxis: { unit: "s" } } },
     { id: 7, type: "state-timeline", title: "Pipeline runs", gridPos: { x: 12, y: 14, w: 12, h: 8 }, fieldConfig: { defaults: { mappings: [{ type: "value", options: { ok: { text: "OK", color: "green" }, failing: { text: "Failing", color: "red" }, running: { text: "Running", color: "blue" } } }] }, overrides: [] }, options: {} },
     { id: 8, type: "histogram", title: "PM2.5 readings", gridPos: { x: 0, y: 22, w: 24, h: 7 }, fieldConfig: { defaults: {}, overrides: [] }, options: { bucketCount: 12 } },
   ],
@@ -215,9 +215,11 @@ async function stubApi(page: Page, world: World): Promise<void> {
       const [uid, id] = [decodeURIComponent(panel[1]), Number(panel[2])];
       if (world.state === "empty") return json({ frames: [{ name: "", refId: "A", fields: [{ name: "Time", type: "time", values: [] }, { name: "Value", type: "number", values: [] }] }] });
       if (world.state === "error") {
-        return id === 4 && uid === "project-helsinki"
-          ? json({ frames: [], accessDenied: "You cannot read the source of this panel: helsinki-bikes-ops" })
-          : json({ frames: [], error: "the datasource did not answer: connection refused (prometheus:9090)" });
+        // helsinki: one source refuses the person, one fails, the others answer; every other
+        // dashboard: every source fails, which the page sums up above the panels.
+        if (uid === "project-helsinki" && id === 4) return json({ frames: [], accessDenied: "You cannot read the source of this panel: helsinki-bikes-ops" });
+        if (uid === "project-helsinki" && id !== 1) return json({ frames: filled(uid, id) });
+        return json({ frames: [], error: "the datasource did not answer: connection refused (prometheus:9090)" });
       }
       return json({ frames: filled(uid, id) });
     }
@@ -330,7 +332,8 @@ for (const width of [1440, 400]) {
         } else if (state === "empty") {
           await expect(page.getByText("No data").first()).toBeVisible();
         } else {
-          await expect(page.getByRole("alert").first()).toContainText("data source did not answer");
+          await expect(page.getByRole("alert").first()).toContainText("8 panels could not be read");
+          await expect(card(page, "gauge").getByText("Not read: see the notice above the panels.")).toBeVisible();
         }
         await pageShot(page, `types-${state}`, width);
         for (const type of ["stat", "gauge", "bargauge", "barchart", "piechart", "heatmap", "state-timeline", "histogram"]) {
@@ -345,11 +348,16 @@ for (const width of [1440, 400]) {
         await stubApi(page, { state, asked: [] });
         await page.goto("/projects/helsinki/grafana/dashboards/project-helsinki");
         await settle(page);
-        if (state === "empty") await expect(page.getByText("No readings in this range").first()).toBeVisible();
-        else await expect(page.getByText("You cannot read this panel's data")).toBeVisible();
+        if (state === "empty") {
+          await expect(page.getByText("No readings in this range").first()).toBeVisible();
+          await expect(card(page, "timeseries").getByText("Nothing for last 7 days.", { exact: false })).toBeVisible();
+        } else {
+          await expect(page.getByText("You cannot read this panel's data")).toBeVisible();
+          await expect(card(page, "timeseries").getByRole("alert")).toContainText("The data source did not answer");
+        }
         await pageShot(page, `helsinki-${state}`, width);
         await panelShot(card(page, "timeseries"), `timeseries-${state}`, width);
-        await panelShot(card(page, "table"), `table-${state}`, width);
+        await panelShot(state === "empty" ? card(page, "table") : page.locator('section[data-panel-type="table"]').last(), `table-${state}`, width);
         await page.unrouteAll({ behavior: "ignoreErrors" });
       }
     });

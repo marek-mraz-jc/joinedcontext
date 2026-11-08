@@ -8,7 +8,7 @@ import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
 import { Button, Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "../ui";
 import type { Frame, Series } from "./frames";
-import { reduce } from "./frames";
+import { reduce, seriesOf } from "./frames";
 import type { FieldConfigSource } from "./fieldConfig";
 import { displayValue, settingsFor } from "./fieldConfig";
 import { formatWith, timeSeriesSpec } from "./specs";
@@ -126,6 +126,9 @@ export function Legend({ series, colors, fieldConfig, legend, locale, hidden, on
   );
 }
 
+/** A legend asked on the right needs more series than this to stay there; fewer go below the chart. */
+const FEW = 6;
+
 export interface TimeSeriesPanelProps {
   title: string;
   frames: Frame[];
@@ -140,9 +143,14 @@ export interface TimeSeriesPanelProps {
 export function TimeSeriesPanel({ title, frames, fieldConfig, options, from, to, height, locale }: TimeSeriesPanelProps): JSX.Element {
   const { t } = useTranslation();
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
-  const legend = (options?.legend ?? {}) as LegendOptions;
-  const right = legend.placement === "right";
-  const chartHeight = Math.max(120, right ? height : height - (legend.displayMode === "table" ? 96 : 36));
+  const asked = (options?.legend ?? {}) as LegendOptions;
+  const count = useMemo(() => seriesOf(frames).length, [frames]);
+  // A right-hand legend of a few rows leaves the panel's lower half blank beside it: below the
+  // chart it gives the chart the whole width instead.
+  const right = asked.placement === "right" && count > FEW;
+  const legend = right ? asked : { ...asked, placement: "bottom" };
+  const rows = legend.showLegend === false || legend.displayMode === "hidden" ? 0 : legend.displayMode === "table" ? 30 + 26 * Math.min(count, 6) : 36;
+  const chartHeight = Math.max(120, right ? height : height - rows);
   const built = useMemo(
     () => timeSeriesSpec(frames, { fieldConfig, options, from, to, locale, theme: chartTheme(), height: chartHeight, hidden }),
     [frames, fieldConfig, options, from, to, locale, chartHeight, hidden],

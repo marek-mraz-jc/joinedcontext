@@ -925,7 +925,11 @@ async fn the_portal_runs_on_its_sibling_modules() {
     let clone = tempfile::tempdir().unwrap();
     let repo = clone.path().join("config");
     let out = git_clone(&jc, &repo);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let org_yaml = std::fs::read_to_string(repo.join("org.yaml")).unwrap();
     let org_name = org_yaml
         .lines()
@@ -943,18 +947,46 @@ async fn the_portal_runs_on_its_sibling_modules() {
     let token = jc.secret("shako-token");
     for args in [
         vec!["add", "projects/e2edash/project.yaml"],
-        vec!["-c", "user.name=e2e", "-c", "user.email=e2e@jc.invalid", "commit", "--quiet", "-m", "Open project e2edash"],
+        vec![
+            "-c",
+            "user.name=e2e",
+            "-c",
+            "user.email=e2e@jc.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "Open project e2edash",
+        ],
     ] {
-        let out = Command::new("git").args(&args).current_dir(&repo).output().unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        let out = Command::new("git")
+            .args(&args)
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
     let pushed = Command::new("git")
-        .args(["-c", &format!("http.extraHeader=Authorization: token {token}"), "push", "--quiet", "origin", "HEAD:main"])
+        .args([
+            "-c",
+            &format!("http.extraHeader=Authorization: token {token}"),
+            "push",
+            "--quiet",
+            "origin",
+            "HEAD:main",
+        ])
         .current_dir(&repo)
         .env("GIT_TERMINAL_PROMPT", "0")
         .output()
         .unwrap();
-    assert!(pushed.status.success(), "push: {}", String::from_utf8_lossy(&pushed.stderr));
+    assert!(
+        pushed.status.success(),
+        "push: {}",
+        String::from_utf8_lossy(&pushed.stderr)
+    );
     let project_org = eventually("daiya's organization e2edash", 120, || {
         let jc = &jc;
         async move {
@@ -979,12 +1011,19 @@ async fn the_portal_runs_on_its_sibling_modules() {
     // h. Item 15: the deployment's context-broker and helsinki dashboards, imported the way
     // provision.sh imports them, drawn through the Portal's dashboard routes: the queries stay
     // in jc, each panel answers frames or the reason it has none.
-    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/portal/ui/tests/fixtures/dashboards");
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../crates/portal/ui/tests/fixtures/dashboards");
     for (file, org, project, folder_uid) in [
         ("context-broker.json", 1, "org", None),
-        ("helsinki.json", project_org, "e2edash", Some("project-e2edash")),
+        (
+            "helsinki.json",
+            project_org,
+            "e2edash",
+            Some("project-e2edash"),
+        ),
     ] {
-        let board: Value = serde_json::from_str(&std::fs::read_to_string(fixtures.join(file)).unwrap()).unwrap();
+        let board: Value =
+            serde_json::from_str(&std::fs::read_to_string(fixtures.join(file)).unwrap()).unwrap();
         let uid = board["uid"].as_str().unwrap().to_owned();
         let panels = board["panels"].as_array().unwrap().len();
         let mut body = json!({"dashboard": board, "overwrite": true, "message": "e2e import"});
@@ -997,28 +1036,65 @@ async fn the_portal_runs_on_its_sibling_modules() {
             .send()
             .await
             .unwrap();
-        assert!(saved.status().is_success(), "import {file}: {}", saved.status());
+        assert!(
+            saved.status().is_success(),
+            "import {file}: {}",
+            saved.status()
+        );
         let base = format!("/api/v1/projects/{project}/grafana/dashboards");
         let listed = browser.send(Method::GET, &jc.url(&base), None, false).await;
-        assert_eq!(listed.status, StatusCode::OK, "{file} list: {}", listed.text);
+        assert_eq!(
+            listed.status,
+            StatusCode::OK,
+            "{file} list: {}",
+            listed.text
+        );
         assert!(listed.text.contains(&uid), "{file} listed: {}", listed.text);
-        let view = browser.send(Method::GET, &jc.url(&format!("{base}/{uid}")), None, false).await;
+        let view = browser
+            .send(Method::GET, &jc.url(&format!("{base}/{uid}")), None, false)
+            .await;
         assert_eq!(view.status, StatusCode::OK, "{file} view: {}", view.text);
         let view = view.json();
-        assert_eq!(view["panels"].as_array().map(Vec::len), Some(panels), "{file}");
-        assert!(!view.to_string().contains("\"targets\""), "{file}: the queries left the server");
+        assert_eq!(
+            view["panels"].as_array().map(Vec::len),
+            Some(panels),
+            "{file}"
+        );
+        assert!(
+            !view.to_string().contains("\"targets\""),
+            "{file}: the queries left the server"
+        );
         for panel in view["panels"].as_array().unwrap() {
             let id = panel["id"].as_i64().unwrap();
             let read = browser
-                .send(Method::GET, &jc.url(&format!("{base}/{uid}/panels/{id}?from=now-6h&to=now")), None, false)
+                .send(
+                    Method::GET,
+                    &jc.url(&format!("{base}/{uid}/panels/{id}?from=now-6h&to=now")),
+                    None,
+                    false,
+                )
                 .await;
-            assert_eq!(read.status, StatusCode::OK, "{file} panel {id}: {}", read.text);
+            assert_eq!(
+                read.status,
+                StatusCode::OK,
+                "{file} panel {id}: {}",
+                read.text
+            );
             let data = read.json();
             assert!(
-                data["frames"].is_array() && (data.get("error").is_some() || data.get("accessDenied").is_some() || !data["frames"].as_array().unwrap().is_empty()),
+                data["frames"].is_array()
+                    && (data.get("error").is_some()
+                        || data.get("accessDenied").is_some()
+                        || !data["frames"].as_array().unwrap().is_empty()),
                 "{file} panel {id}: {data}"
             );
-            println!("{file} panel {id}: {}", data.get("error").or(data.get("accessDenied")).map(Value::to_string).unwrap_or_else(|| "frames".into()));
+            println!(
+                "{file} panel {id}: {}",
+                data.get("error")
+                    .or(data.get("accessDenied"))
+                    .map(Value::to_string)
+                    .unwrap_or_else(|| "frames".into())
+            );
         }
     }
     let outsider = Client::new()
@@ -1027,7 +1103,10 @@ async fn the_portal_runs_on_its_sibling_modules() {
         .await
         .unwrap();
     assert!(
-        matches!(outsider.status(), StatusCode::UNAUTHORIZED | StatusCode::FOUND | StatusCode::SEE_OTHER),
+        matches!(
+            outsider.status(),
+            StatusCode::UNAUTHORIZED | StatusCode::FOUND | StatusCode::SEE_OTHER
+        ),
         "a request without a session reads no panel: {}",
         outsider.status()
     );

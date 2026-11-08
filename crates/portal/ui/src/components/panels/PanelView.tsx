@@ -6,7 +6,9 @@
  */
 import type { JSX, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Card, EmptyState, Icon, InlineError, Skeleton } from "../ui";
+import { clsx } from "clsx";
+import { Button, Card, Icon, Skeleton } from "../ui";
+import type { IconName } from "../ui";
 import type { Frame } from "./frames";
 import { hasData } from "./frames";
 import type { FieldConfigSource } from "./fieldConfig";
@@ -52,6 +54,12 @@ export interface PanelViewProps {
   /** The height the panel's body gets, from its `gridPos.h`. */
   height: number;
   headingLevel?: "h2" | "h3";
+  /** The range and variables asked, in words, for an empty panel to name. */
+  asked?: string;
+  /** Ask a longer range: an empty panel's next step. */
+  onWiden?: () => void;
+  /** The page already says several panels failed: a failed panel shows its title line only. */
+  quiet?: boolean;
 }
 
 function Body({ panel, data, from, to, locale, height }: Required<Pick<PanelViewProps, "panel" | "from" | "to" | "locale" | "height">> & { data: PanelData }): ReactNode {
@@ -92,7 +100,34 @@ function Reason({ text }: { text: string }): JSX.Element {
   );
 }
 
-export function PanelView({ panel, data, loading, failure, onRetry, from, to, locale, height, headingLevel = "h2" }: PanelViewProps): JSX.Element {
+/**
+ * A panel's state in place of its chart, centred in the panel: an icon badge, a title, what to do
+ * next and the action. A failure is an alert in the danger tone; the others are a status.
+ */
+export function PanelState({ danger, icon, title, description, children }: { danger?: boolean; icon: IconName; title: string; description?: string; children?: ReactNode }): JSX.Element {
+  return (
+    <div
+      role={danger ? "alert" : "status"}
+      data-empty-state={danger ? undefined : ""}
+      className="flex h-full min-h-24 flex-col items-center justify-center gap-1.5 px-2 py-3 text-center"
+    >
+      <span className={clsx("inline-flex size-9 items-center justify-center rounded-full", danger ? "bg-danger-soft text-danger" : "bg-primary-soft text-primary-soft-fg")}>
+        <Icon name={icon} className="size-4" />
+      </span>
+      <p className="text-body font-semibold text-fg">{title}</p>
+      {description ? <p className="max-w-md text-caption text-fg-muted">{description}</p> : null}
+      {children ? <div className="mt-1 flex flex-col items-center gap-2">{children}</div> : null}
+    </div>
+  );
+}
+
+/** A sentence ends in a stop before the next one is appended. */
+function sentence(text: string): string {
+  const trimmed = text.trim();
+  return /[.!?…]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+export function PanelView({ panel, data, loading, failure, onRetry, from, to, locale, height, headingLevel = "h2", asked, onWiden, quiet }: PanelViewProps): JSX.Element {
   const { t } = useTranslation();
   const Heading = headingLevel;
   const title = panel.title || t("dashboardView.untitled");
@@ -101,17 +136,25 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
   if (panel.type === "text") {
     const content = typeof panel.options?.content === "string" ? panel.options.content : "";
     body = <p className="whitespace-pre-line text-body text-fg">{content.replace(/[#*_`>]/g, "").trim()}</p>;
-  } else if (failure) {
-    body = (
-      <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-        <InlineError>{t("dashboardView.failed")}</InlineError>
-        <Reason text={failure} />
+  } else if (failure || data?.error) {
+    const reason = failure ?? data?.error ?? "";
+    body = quiet ? (
+      <div className="flex h-full min-h-12 items-center justify-center">
+        <p role="alert" className="flex items-center gap-1.5 text-caption text-danger">
+          <Icon name="error" className="size-3.5 shrink-0" />
+          {t("dashboardView.notRead")}
+        </p>
+      </div>
+    ) : (
+      <PanelState danger icon="error" title={t(failure ? "dashboardView.failedTitle" : "dashboardView.sourceFailedTitle")} description={t(failure ? "dashboardView.failed" : "dashboardView.sourceFailed")}>
         {onRetry ? (
           <Button size="sm" variant="secondary" onClick={onRetry}>
+            <Icon name="refresh" className="size-4" />
             {t("dashboardView.retry")}
           </Button>
         ) : null}
-      </div>
+        <Reason text={reason} />
+      </PanelState>
     );
   } else if (loading || !data) {
     body = (
@@ -120,21 +163,17 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
       </div>
     );
   } else if (data.accessDenied) {
-    body = <EmptyState bare icon="lock" title={t("dashboardView.deniedTitle")} description={`${data.accessDenied} ${t("dashboardView.askOwner")}`} />;
-  } else if (data.error) {
+    body = <PanelState icon="lock" title={t("dashboardView.deniedTitle")} description={`${sentence(data.accessDenied)} ${t("dashboardView.askOwner")}`} />;
+  } else if (!hasData(data.frames)) {
     body = (
-      <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-        <InlineError>{t("dashboardView.sourceFailed")}</InlineError>
-        <Reason text={data.error} />
-        {onRetry ? (
-          <Button size="sm" variant="secondary" onClick={onRetry}>
-            {t("dashboardView.retry")}
+      <PanelState icon="dashboards" title={noValue ?? t("dashboardView.emptyTitle")} description={asked ? t("dashboardView.emptyIn", { asked }) : t("dashboardView.empty")}>
+        {onWiden ? (
+          <Button size="sm" variant="secondary" onClick={onWiden}>
+            {t("dashboardView.widen")}
           </Button>
         ) : null}
-      </div>
+      </PanelState>
     );
-  } else if (!hasData(data.frames)) {
-    body = <EmptyState bare icon="dashboards" title={noValue ?? t("dashboardView.emptyTitle")} description={t("dashboardView.empty")} />;
   } else {
     body = <Body panel={panel} data={data} from={from} to={to} locale={locale} height={height} />;
   }

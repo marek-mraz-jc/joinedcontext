@@ -67,19 +67,24 @@ export function TableCellValue({ settings, value, locale }: { settings: FieldSet
   const color = shown.color ?? (step ? colorOf(step.color) : undefined);
   if (color && (cellType === "color-background" || cellType === "color-background-solid")) {
     return (
-      <Tinted color={color} background className="inline-block rounded-sm px-1.5">
+      <Tinted color={color} background className="inline-block max-w-full truncate rounded-sm px-1.5 align-middle">
         {shown.text}
       </Tinted>
     );
   }
   if (color && (cellType === "color-text" || shown.color)) {
     return (
-      <Tinted color={color} className="font-medium">
+      <Tinted color={color} className="block truncate font-medium">
         {shown.text}
       </Tinted>
     );
   }
-  return <span>{shown.text}</span>;
+  // A long name stays in its own column: cut with an ellipsis, whole in the title.
+  return (
+    <span className="block truncate" title={shown.text}>
+      {shown.text}
+    </span>
+  );
 }
 
 export interface TablePanelProps {

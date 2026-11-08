@@ -331,7 +331,7 @@ export interface TimeOptions extends CategoryOptions {
  * A `heatmap` panel: Prometheus buckets (fields labelled `le`) or each numeric field as a row,
  * each reading a cell from its time to the next, coloured by its value.
  */
-export function heatmapSpec(frames: Frame[], opts: TimeOptions): { spec: Spec; buckets: string[] } {
+export function heatmapSpec(frames: Frame[], opts: TimeOptions & { titles?: { bucket?: string; value?: string } }): { spec: Spec; buckets: string[] } {
   const series = seriesOf(frames);
   const bucketOf = (one: Series): string => one.field.labels?.le ?? one.name;
   // Prometheus writes the last bucket as `+Inf`, which Number() reads as NaN.
@@ -342,6 +342,9 @@ export function heatmapSpec(frames: Frame[], opts: TimeOptions): { spec: Spec; b
   const scheme = ((opts.options?.color as { scheme?: string } | undefined)?.scheme ?? "Oranges").toLowerCase();
   const settings = series[0] ? settingsFor(opts.fieldConfig, series[0].field) : settingsFor(opts.fieldConfig, { name: "", type: "number", values: [] });
   const formatKey = formatterKey(settings.unit, settings.decimals, opts.locale);
+  // Grafana keeps the bucket axis' unit in `options.yAxis.unit` (`s` for request durations).
+  const yUnit = (opts.options?.yAxis as { unit?: string } | undefined)?.unit;
+  const yTitle = opts.titles?.bucket ? (yUnit ? `${opts.titles.bucket} (${yUnit})` : opts.titles.bucket) : null;
   return {
     spec: {
       $schema: "https://vega.github.io/schema/vega-lite/v6.json",
@@ -353,8 +356,8 @@ export function heatmapSpec(frames: Frame[], opts: TimeOptions): { spec: Spec; b
       encoding: {
         x: { field: "t", type: "temporal", scale: { domain: [dateTimeOf(opts.from), dateTimeOf(opts.to)] }, axis: timeAxis(opts.from, opts.to) },
         x2: { field: "t2" },
-        y: { field: "b", type: "ordinal", sort: buckets.slice().reverse(), axis: { title: null, labelExpr: "datum.value == '+Inf' ? '+∞' : datum.value" } },
-        color: { field: "v", type: "quantitative", scale: { scheme }, legend: { disable: false, title: null, orient: "right", labelExpr: `jcFormat(datum.value, ${quoted(formatKey)})` } },
+        y: { field: "b", type: "ordinal", sort: buckets.slice().reverse(), axis: { title: yTitle, titleColor: opts.theme.muted, titleFontWeight: 400, labelExpr: "datum.value == '+Inf' ? '∞' : datum.value" } },
+        color: { field: "v", type: "quantitative", scale: { scheme }, legend: { disable: false, title: opts.titles?.value ?? null, orient: "right", labelExpr: `jcFormat(datum.value, ${quoted(formatKey)})` } },
         tooltip: [
           { field: "t", type: "temporal", title: "time" },
           { field: "b", title: "bucket" },
@@ -453,7 +456,7 @@ export function gaugeSpec(
   value: number | null,
   text: string,
   settings: { min?: number; max?: number; thresholds?: Thresholds },
-  opts: { theme: ChartTheme; height: number; showThresholdMarkers?: boolean },
+  opts: { theme: ChartTheme; height: number; showThresholdMarkers?: boolean; minText?: string; maxText?: string },
 ): Spec {
   const min = settings.min ?? 0;
   const max = settings.max ?? (settings.thresholds?.mode === "percentage" ? 100 : Math.max(100, value ?? 0));
@@ -461,41 +464,54 @@ export function gaugeSpec(
   const sweep = (4 * Math.PI) / 3;
   const angle = (v: number): number => start + sweep * Math.min(1, Math.max(0, (v - min) / (max - min || 1)));
   const step = stepFor(settings.thresholds, value, min, max);
-  const radius = Math.max(30, Math.floor(opts.height / 2) - 6);
   const steps = settings.thresholds?.steps ?? [];
   const bands = steps.map((one, index) => {
     const lower = one.value === null ? min : settings.thresholds?.mode === "percentage" ? min + ((max - min) * one.value) / 100 : one.value;
     const next = steps[index + 1];
     const upper = next ? (settings.thresholds?.mode === "percentage" ? min + ((max - min) * (next.value ?? 0)) / 100 : (next.value ?? max)) : max;
-    return { a: angle(lower), b: angle(upper), color: colorOf(one.color), r: radius, r2: radius - 4 };
+    return { a: angle(lower), b: angle(upper), color: colorOf(one.color) };
   });
-  const arcs = [
-    { a: start, b: start + sweep, color: opts.theme.grid, r: radius - 7, r2: radius * 0.62 },
-    ...(value !== null ? [{ a: start, b: angle(value), color: colorOf(step?.color ?? "green"), r: radius - 7, r2: radius * 0.62 }] : []),
-    ...(opts.showThresholdMarkers === false ? [] : bands),
+  const track = [
+    { a: start, b: start + sweep, color: opts.theme.grid },
+    ...(value !== null ? [{ a: start, b: angle(value), color: colorOf(step?.color ?? "green") }] : []),
   ];
+  // R, the outer radius, fills the panel: the arc's ends sit half a radius under its centre and
+  // the min and max labels a line under them; across, the arc spans 1.73 R.
+  const arc = (r: string, r2: string, values: { a: number; b: number; color: string }[]) => ({
+    data: { values },
+    mark: { type: "arc", cornerRadius: 1, x: { expr: "width / 2" }, y: { expr: "R + 2" }, radius: { expr: r }, radius2: { expr: r2 } },
+    encoding: {
+      theta: { field: "a", type: "quantitative", scale: null },
+      theta2: { field: "b" },
+      color: { field: "color", type: "nominal", scale: null, legend: null },
+    },
+  });
+  const label = (text: string | undefined, side: -1 | 1) =>
+    text
+      ? [
+          {
+            data: { values: [{ text }] },
+            mark: { type: "text", fontSize: 11, color: opts.theme.muted, align: "center", baseline: "top", x: { expr: `width / 2 ${side < 0 ? "-" : "+"} 0.866 * (R - 4)` }, y: { expr: "1.5 * R + 6" } },
+            encoding: { text: { field: "text" } },
+          },
+        ]
+      : [];
   return {
     $schema: "https://vega.github.io/schema/vega-lite/v6.json",
     width: "container",
     height: opts.height,
     autosize: { type: "fit", contains: "padding" },
+    params: [{ name: "R", expr: "max(30, min((height - 22) / 1.5, width / 1.9))" }],
     layer: [
-      {
-        data: { values: arcs },
-        mark: { type: "arc", cornerRadius: 1 },
-        encoding: {
-          theta: { field: "a", type: "quantitative", scale: null },
-          theta2: { field: "b" },
-          radius: { field: "r", type: "quantitative", scale: null },
-          radius2: { field: "r2" },
-          color: { field: "color", type: "nominal", scale: null, legend: null },
-        },
-      },
+      arc("R - 7", "R * 0.62", track),
+      ...(opts.showThresholdMarkers === false ? [] : [arc("R", "R - 4", bands)]),
       {
         data: { values: [{ text }] },
-        mark: { type: "text", fontSize: Math.max(14, Math.round(radius / 3)), fontWeight: 600, color: opts.theme.text, baseline: "middle", dy: radius * 0.1 },
+        mark: { type: "text", fontSize: { expr: "max(14, round(R / 3))" }, fontWeight: 600, color: opts.theme.text, baseline: "middle", x: { expr: "width / 2" }, y: { expr: "1.1 * R + 2" } },
         encoding: { text: { field: "text" } },
       },
+      ...label(opts.minText, -1),
+      ...label(opts.maxText, 1),
     ],
     config: configOf(opts.theme),
   };

@@ -1412,6 +1412,7 @@
         "Button": 4
       },
       "tests": [
+        "dashboard_page.test.tsx",
         "grafana_page.test.tsx"
       ]
     },

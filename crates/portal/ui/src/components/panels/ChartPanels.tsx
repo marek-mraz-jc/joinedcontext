@@ -117,8 +117,19 @@ export function PieChartPanel({ title, frames, fieldConfig, options, height, loc
 export function HeatmapPanel({ title, frames, fieldConfig, options, height, locale, from, to }: ChartPanelProps): JSX.Element {
   const { t } = useTranslation();
   const built = useMemo(
-    () => heatmapSpec(frames, { fieldConfig, options, locale, theme: chartTheme(), height, from, to }),
-    [frames, fieldConfig, options, locale, height, from, to],
+    () =>
+      heatmapSpec(frames, {
+        fieldConfig,
+        options,
+        locale,
+        theme: chartTheme(),
+        height,
+        from,
+        to,
+        // Prometheus buckets (`le`) count readings up to each bound.
+        titles: frames.some((frame) => frame.fields.some((field) => field.labels?.le !== undefined)) ? { bucket: t("dashboardView.upperBound"), value: t("dashboardView.count") } : undefined,
+      }),
+    [frames, fieldConfig, options, locale, height, from, to, t],
   );
   const dateTime = useDateTime(locale);
   return (

@@ -4,14 +4,14 @@
  * panel reads its own data through the Portal, which runs the dashboard's saved queries only; the
  * page never sends a query. daiya's own `/d/{uid}` page stays the table view without script.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { api, ApiError, reasonOf, unwrap } from "../../api/client";
 import type { components } from "../../api/schema";
-import { Button, buttonClass, EmptyState, Field, Icon, PageFailed, PageHeader, PageLoading, Select, safeHref } from "../../components/ui";
+import { Alert, Button, buttonClass, EmptyState, Field, Icon, PageFailed, PageHeader, PageLoading, Select, safeHref } from "../../components/ui";
 import { bodyHeight, DashboardGrid } from "../../components/panels/DashboardGrid";
 import type { Frame } from "../../components/panels/frames";
 import type { PanelData, PanelDefinition } from "../../components/panels/PanelView";
@@ -40,8 +40,24 @@ function rangeLabel(from: string, t: (key: string, options?: Record<string, unkn
   return parts ? t(`dashboardView.ranges.${parts.n}${parts.unit}`, { defaultValue: from }) : from;
 }
 
+interface LivePanelProps {
+  project: string;
+  uid: string;
+  panel: PanelDefinition;
+  asked: Asked;
+  tick: number;
+  locale: string;
+  at: number;
+  /** The range and variables in words, for an empty panel. */
+  words: string;
+  onWiden?: () => void;
+  /** Tells the page whether this panel failed, so several failures make one notice. */
+  onFailed: (id: number, failed: boolean) => void;
+  quiet: boolean;
+}
+
 /** One panel and its own read, refetched on the refresh tick. */
-function LivePanel({ project, uid, panel, asked, tick, locale, at }: { project: string; uid: string; panel: PanelDefinition; asked: Asked; tick: number; locale: string; at: number }): JSX.Element {
+function LivePanel({ project, uid, panel, asked, tick, locale, at, words, onWiden, onFailed, quiet }: LivePanelProps): JSX.Element {
   const queryClient = useQueryClient();
   const key = ["projects", project, "grafana", "dashboards", uid, "panel", panel.id, asked, tick];
   const data = useQuery({
@@ -59,6 +75,8 @@ function LivePanel({ project, uid, panel, asked, tick, locale, at }: { project: 
       return { frames: answer.frames as unknown as Frame[], accessDenied: answer.accessDenied ?? undefined, error: answer.error ?? undefined };
     },
   });
+  const failed = data.isError || Boolean(data.data?.error);
+  useEffect(() => onFailed(panel.id, failed), [onFailed, panel.id, failed]);
   const from = resolveTime(asked.from, at) ?? at - 6 * 3_600_000;
   const to = resolveTime(asked.to, at) ?? at;
   return (
@@ -72,6 +90,9 @@ function LivePanel({ project, uid, panel, asked, tick, locale, at }: { project: 
       to={to}
       locale={locale}
       height={bodyHeight(panel)}
+      asked={words}
+      onWiden={onWiden}
+      quiet={quiet && failed}
     />
   );
 }
@@ -125,6 +146,9 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
   const [vars, setVars] = useState<Record<string, string>>({});
   const [tick, setTick] = useState(0);
   const [at, setAt] = useState(() => Date.now());
+  const queryClient = useQueryClient();
+  const [failing, setFailing] = useState<Record<number, boolean>>({});
+  const onFailed = useCallback((id: number, failed: boolean) => setFailing((now) => (Boolean(now[id]) === failed ? now : { ...now, [id]: failed })), []);
   const data: View | undefined = view.data;
   const every = refreshMs(refresh ?? data?.refresh ?? "");
   useEffect(() => {
@@ -185,6 +209,18 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
       </div>
     );
   }
+  const failed = Object.values(failing).filter(Boolean).length;
+  const longer = RANGES.slice(RANGES.indexOf(asked.from as (typeof RANGES)[number]) + 1)[0];
+  const words = [
+    // Inside a sentence: "Nothing for last 7 days".
+    rangeLabel(asked.from, t).replace(/^\p{Lu}/u, (first) => first.toLowerCase()),
+    ...data.variables.map((variable) => {
+      const value = asked.vars[variable.name];
+      return value ? `${variable.label || variable.name}: ${value === "$__all" ? t("dashboardView.all") : value}` : null;
+    }),
+  ]
+    .filter(Boolean)
+    .join(", ");
   const ranges: string[] = RANGES.includes(asked.from as (typeof RANGES)[number]) ? [...RANGES] : [asked.from, ...RANGES];
   const panels = data.panels as unknown as PanelDefinition[];
   return (
@@ -233,12 +269,47 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
           {t("dashboardView.refreshNow")}
         </Button>
       </div>
+      {failed > 1 ? (
+        <Alert
+          tone="danger"
+          title={t("dashboardView.failing", { n: failed })}
+          actions={
+            <Button size="sm" variant="secondary" onClick={() => void queryClient.invalidateQueries({ queryKey: ["projects", project, "grafana", "dashboards", uid, "panel"] })}>
+              <Icon name="refresh" className="size-4" />
+              {t("dashboardView.retryAll")}
+            </Button>
+          }
+        >
+          {t("dashboardView.failingHint")}
+        </Alert>
+      ) : null}
       {panels.length === 0 ? (
         <EmptyState icon="dashboards" title={t("dashboardView.noPanelsTitle")} description={t("dashboardView.noPanels")} />
       ) : (
         <DashboardGrid
           panels={panels}
-          render={(panel) => <LivePanel project={project} uid={uid} panel={panel} asked={asked} tick={tick} locale={locale} at={at} />}
+          render={(panel) => (
+            <LivePanel
+              project={project}
+              uid={uid}
+              panel={panel}
+              asked={asked}
+              tick={tick}
+              locale={locale}
+              at={at}
+              words={words}
+              onWiden={
+                longer
+                  ? () => {
+                      setAt(Date.now());
+                      setRange(longer);
+                    }
+                  : undefined
+              }
+              onFailed={onFailed}
+              quiet={failed > 1}
+            />
+          )}
         />
       )}
     </div>

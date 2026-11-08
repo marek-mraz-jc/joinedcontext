@@ -150,9 +150,12 @@ describe("stat", () => {
 
 describe("gauge", () => {
   it("draws the value's arc and prints it in the middle", async () => {
-    const svg = await svgOf(gaugeSpec(812e6, formatUnit(812e6, "bytes", 0, "en"), { min: 0, max: 1e9, thresholds: { mode: "absolute", steps: [{ color: "green", value: null }, { color: "red", value: 8e8 }] } }, { theme, height: 160, showThresholdMarkers: true }));
+    const svg = await svgOf(gaugeSpec(812e6, formatUnit(812e6, "bytes", 0, "en"), { min: 0, max: 1e9, thresholds: { mode: "absolute", steps: [{ color: "green", value: null }, { color: "red", value: 8e8 }] } }, { theme, height: 160, showThresholdMarkers: true, minText: "0 B", maxText: "954 MiB" }));
     expect(count(svg, /class="mark-arc/)).toBeGreaterThanOrEqual(1);
     expect(svg).toContain("774 MiB");
+    // The scale's ends, under the arc's ends.
+    expect(svg).toContain(">0 B<");
+    expect(svg).toContain(">954 MiB<");
   });
 });
 
@@ -162,6 +165,13 @@ describe("bargauge", () => {
     const meter = screen.getByRole("meter", { name: "portal" });
     expect(meter).toHaveAttribute("aria-valuenow", "812000000");
     expect(meter).toHaveAttribute("aria-valuetext", "774 MiB");
+  });
+
+  it("says what its colours mean: each threshold and the value it starts at", () => {
+    const thresholds = { mode: "absolute", steps: [{ color: "green", value: null }, { color: "red", value: 750e6 }] };
+    render(<BarGaugePanel title="Memory" frames={frames.memory} fieldConfig={{ defaults: { unit: "bytes", thresholds }, overrides: [] }} options={{}} height={120} locale="en" />);
+    const key = screen.getByRole("list", { name: "Colours by value" });
+    expect(within(key).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["below 715 MiB", "from 715 MiB"]);
   });
 });
 
@@ -257,16 +267,32 @@ describe("a panel card", () => {
     const user = userEvent.setup();
     let retried = 0;
     render(<PanelView panel={panel} data={{ frames: [], error: "prometheus answered 502" }} onRetry={() => (retried += 1)} {...common} />);
-    expect(screen.getByRole("alert")).toHaveTextContent("This panel's data source did not answer");
+    expect(screen.getByRole("alert")).toHaveTextContent("The data source did not answer");
     // The service's own words stay folded under Details: an operator's, not a next step.
     expect(screen.getByText("prometheus answered 502").closest("details")).not.toHaveAttribute("open");
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(retried).toBe(1);
   });
 
+  it("names the range it read when empty and offers a longer one", async () => {
+    const user = userEvent.setup();
+    let widened = 0;
+    render(<PanelView panel={panel} data={{ frames: frames.empty }} asked="Last hour, Station: Kallio" onWiden={() => (widened += 1)} {...common} />);
+    expect(screen.getByText("Nothing for Last hour, Station: Kallio. Pick a longer range or other values.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show a longer range" }));
+    expect(widened).toBe(1);
+  });
+
+  it("keeps a failed panel to one line when the page already sums up the failures", () => {
+    render(<PanelView panel={panel} data={{ frames: [], error: "prometheus answered 502" }} onRetry={() => undefined} quiet {...common} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Not read: see the notice above the panels.");
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+
   it("says why a source the person may not read shows nothing", () => {
     render(<PanelView panel={panel} data={{ frames: [], accessDenied: "You cannot read the source of this panel: helsinki-air" }} {...common} />);
     expect(screen.getByText("You cannot read this panel's data")).toBeInTheDocument();
+    expect(screen.getByText("You cannot read the source of this panel: helsinki-air. Ask a project owner for read access to it.")).toBeInTheDocument();
   });
 
   it("draws a type it does not know as a table and says so", async () => {

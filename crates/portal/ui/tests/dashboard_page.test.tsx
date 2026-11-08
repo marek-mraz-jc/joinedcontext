@@ -101,6 +101,20 @@ describe("the dashboard page", () => {
     expect(await screen.findByText(/not set up on this installation/)).toBeInTheDocument();
   });
 
+  it("sums up several failed panels above them and asks them all again", async () => {
+    const user = userEvent.setup();
+    const panels = [1, 2, 3].map((id) => ({ ...VIEW.panels[0], id, title: `Panel ${id}`, gridPos: { x: 0, y: id * 4, w: 6, h: 4 } }));
+    answers[`${BASE}/k6`] = { body: { ...VIEW, variables: [], panels } };
+    for (const id of [1, 2]) answers[`${BASE}/k6/panels/${id}`] = { body: { frames: [], error: "connection refused" } };
+    renderAt(() => <DashboardPage project="helsinki" uid="k6" />);
+    expect(await screen.findByText("2 panels could not be read")).toBeInTheDocument();
+    expect(screen.getAllByText("Not read: see the notice above the panels.")).toHaveLength(2);
+    expect(await screen.findByText("99.1%")).toBeInTheDocument();
+    const before = asked.length;
+    await user.click(screen.getByRole("button", { name: "Try all again" }));
+    await waitFor(() => expect(asked.length).toBeGreaterThan(before));
+  });
+
   it("says a dashboard without panels is empty", async () => {
     answers[`${BASE}/k6`] = { body: { ...VIEW, variables: [], panels: [] } };
     renderAt(() => <DashboardPage project="helsinki" uid="k6" />);
