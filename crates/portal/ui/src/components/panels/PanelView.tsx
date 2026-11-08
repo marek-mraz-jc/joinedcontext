@@ -121,7 +121,7 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
       </div>
     );
   } else if (!hasData(data.frames)) {
-    body = <EmptyState bare icon="chart" title={noValue ?? t("dashboardView.emptyTitle")} description={t("dashboardView.empty")} />;
+    body = <EmptyState bare icon="dashboards" title={noValue ?? t("dashboardView.emptyTitle")} description={t("dashboardView.empty")} />;
   } else {
     body = <Body panel={panel} data={data} from={from} to={to} locale={locale} height={height} />;
   }

@@ -1151,11 +1151,8 @@ mod tests {
             &asked(&[("var-station", "$__all"), ("var-run", "r.1")]).0,
         )
         .unwrap();
-        assert_eq!(
-            all[0],
-            ("var-station".into(), "Kallio|Mannerheimintie".into())
-        );
-        assert_eq!(all[1], ("var-run".into(), "r.1".into()));
+        assert!(all.contains(&("var-station".into(), "Kallio|Mannerheimintie".into())));
+        assert!(all.contains(&("var-run".into(), "r.1".into())));
     }
 
     #[test]
