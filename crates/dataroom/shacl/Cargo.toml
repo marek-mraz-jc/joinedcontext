@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "EUPL-1.2"
 description = "SHACL Core validator, built-in and uploaded versioned DCAT-AP profile registry, dry-run reports and form layout generator"
+publish = false
 
 [dependencies]
 chrono = { version = "0.4.38", features = ["serde"] }

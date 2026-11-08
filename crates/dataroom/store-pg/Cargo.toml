@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "EUPL-1.2"
 description = "PostgreSQL Store implementation for dataroom with forced RLS and boot checks"
+publish = false
 
 [dependencies]
 chrono = { version = "0.4.38", features = ["serde"] }
