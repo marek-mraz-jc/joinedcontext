@@ -2699,7 +2699,10 @@ async fn topics_page_lists_the_eu_themes_and_a_topic_opens_its_search() {
         ("/group/ENVI", "/dataset/?vocab_jc_topic=ENVI"),
         ("/sk/group/ENVI", "/sk/dataset/?vocab_jc_topic=ENVI"),
         ("/group/a%26b", "/dataset/?vocab_jc_topic=a%26b"),
-        ("/group/a&organization=x", "/dataset/?vocab_jc_topic=a%26organization%3Dx"),
+        (
+            "/group/a&organization=x",
+            "/dataset/?vocab_jc_topic=a%26organization%3Dx",
+        ),
     ] {
         let a = get(app, uri, None).await;
         assert_eq!(
