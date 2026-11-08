@@ -84,6 +84,21 @@ impl Subject {
         }
     }
 
+    /// The subject an anonymous public-dashboard query runs as (R7): a read-only member of
+    /// the dashboard's organization named after that dashboard, with no groups and no token.
+    /// It holds no role in any host authorizer; the query runs under a
+    /// [`PublicDashboardAuthorizer`] scoped to the one dashboard.
+    #[must_use]
+    pub fn public_dashboard(org_id: OrgId, dashboard_uid: &str) -> Self {
+        Self {
+            actor_id: Some(format!("{PUBLIC_DASHBOARD_ACTOR_PREFIX}{dashboard_uid}")),
+            organizations: vec![org_id],
+            groups: Vec::new(),
+            bearer_token: None,
+            read_only: true,
+        }
+    }
+
     #[must_use]
     pub fn with_bearer_token(mut self, token: impl Into<String>) -> Self {
         self.bearer_token = Some(token.into());
@@ -302,6 +317,66 @@ impl Decision {
 /// Single authorization decision interface (R9).
 pub trait Authorizer: Send + Sync {
     fn check(&self, ctx: &RequestCtx, action: Action, object: &ObjectTarget) -> Decision;
+}
+
+/// Actor id prefix of [`Subject::public_dashboard`].
+pub const PUBLIC_DASHBOARD_ACTOR_PREFIX: &str = "public-dashboard:";
+
+/// Least-privilege authorizer of an anonymous public-dashboard query (R7): read on the one
+/// dashboard and on the datasources its saved panel names, in its organization, for the
+/// subject of that dashboard. Every other check is a hidden denial (404).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicDashboardAuthorizer {
+    pub org_id: OrgId,
+    pub dashboard_uid: String,
+    pub datasource_uids: std::collections::BTreeSet<String>,
+}
+
+impl PublicDashboardAuthorizer {
+    #[must_use]
+    pub fn new(
+        org_id: OrgId,
+        dashboard_uid: impl Into<String>,
+        datasource_uids: impl IntoIterator<Item = String>,
+    ) -> Self {
+        Self {
+            org_id,
+            dashboard_uid: dashboard_uid.into(),
+            datasource_uids: datasource_uids.into_iter().collect(),
+        }
+    }
+}
+
+impl Authorizer for PublicDashboardAuthorizer {
+    fn check(&self, ctx: &RequestCtx, action: Action, object: &ObjectTarget) -> Decision {
+        let expected_actor = format!("{PUBLIC_DASHBOARD_ACTOR_PREFIX}{}", self.dashboard_uid);
+        if action != Action::Read
+            || ctx.org_id != self.org_id
+            || object.org_id() != self.org_id
+            || ctx.subject.actor_id.as_deref() != Some(expected_actor.as_str())
+        {
+            return Decision::deny_hidden(
+                "public dashboards are read-only and scoped to one dashboard",
+            );
+        }
+        let allowed = match object {
+            ObjectTarget::Dashboard { dashboard_uid, .. }
+            | ObjectTarget::PublicDashboard { dashboard_uid, .. } => {
+                *dashboard_uid == self.dashboard_uid
+            }
+            ObjectTarget::Datasource { datasource_uid, .. } => {
+                self.datasource_uids.contains(datasource_uid)
+            }
+            ObjectTarget::Organization { .. }
+            | ObjectTarget::Folder { .. }
+            | ObjectTarget::LibraryPanel { .. } => false,
+        };
+        if allowed {
+            Decision::allow("saved query of a public dashboard")
+        } else {
+            Decision::deny_hidden("not part of this public dashboard")
+        }
+    }
 }
 
 /// Role binding rule for [`PolicyAuthorizer`] (R9).

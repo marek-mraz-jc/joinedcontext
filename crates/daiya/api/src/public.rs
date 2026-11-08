@@ -13,7 +13,7 @@
 //!   is enabled by the owner, nor any other organization's data).
 //! - Revoke = token rotation (`rotate_public_dashboard_token`): old token immediately answers 404.
 
-use crate::render::{execute_targets_and_expressions, find_panel_in_slice, parse_time_str_ms};
+use crate::render::{execute_targets_with_authorizer, find_panel_in_slice, parse_time_str_ms};
 use crate::state::{DaiyaState, error_response, resolve_request_ctx};
 use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -24,7 +24,7 @@ use chrono::Utc;
 use daiya_expr::apply_transformations;
 use daiya_model::{
     Action, CanonicalJson, CrError, CrResult, DashboardDocument, FrameSet, ObjectTarget,
-    PublicDashboardRecord, RequestCtx, ShareType, Subject, sha256_hex,
+    PublicDashboardAuthorizer, PublicDashboardRecord, RequestCtx, ShareType, Subject, sha256_hex,
 };
 use daiya_query::PublicCacheKey;
 use jc_router::ClientAddr;
@@ -578,18 +578,30 @@ pub async fn execute_public_dashboard_query(
         ));
     }
 
-    // Execute saved queries under an internal organization reader context (never forwarding any caller credentials)
-    let svc_subject = Subject::authenticated("admin", vec![pubdash.org_id], vec![]);
+    // The saved queries run as the dashboard's own public subject (read-only, no token, no
+    // role anywhere) under an authorizer that allows reading exactly this dashboard's
+    // datasources: never the host's authorizer, never a caller credential.
+    let default_ds_uid = panel.datasource.as_ref().and_then(|d| d.uid.as_deref());
+    let panel_datasources = raw_targets
+        .iter()
+        .filter_map(|t| {
+            t.get("datasource")
+                .and_then(|d| d.get("uid").or(Some(d)))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .chain(default_ds_uid.map(str::to_owned));
+    let public_authz = PublicDashboardAuthorizer::new(pubdash.org_id, &dash.uid, panel_datasources);
     let svc_ctx = RequestCtx::new(
         pubdash.installation_id,
         pubdash.org_id,
         pubdash.instance_id,
-        svc_subject,
+        Subject::public_dashboard(pubdash.org_id, &dash.uid),
     );
-    let default_ds_uid = panel.datasource.as_ref().and_then(|d| d.uid.as_deref());
 
-    let mut frame_sets = execute_targets_and_expressions(
+    let mut frame_sets = execute_targets_with_authorizer(
         state,
+        &public_authz,
         &svc_ctx,
         default_ds_uid,
         &raw_targets,
