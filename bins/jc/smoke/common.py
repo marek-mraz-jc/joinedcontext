@@ -1,0 +1,149 @@
+"""Shared parts of the jc smoke suites: a loopback-only HTTP client, the result rows and the
+results.json + REPORT.md writer. Python 3 stdlib only (run with /opt/jc-py or any python3)."""
+
+from __future__ import annotations
+
+import base64
+import ipaddress
+import json
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+PASS, FAIL, SKIP = "pass", "fail", "skip"
+
+
+def loopback_only(base: str) -> None:
+    """The suites run against a rehearsal on this host only: never dev or prod."""
+    host = urllib.parse.urlparse(base).hostname or ""
+    if host == "localhost":
+        return
+    try:
+        if ipaddress.ip_address(host).is_loopback:
+            return
+    except ValueError:
+        pass
+    raise SystemExit(f"refusing {host}: the smoke suites run against a local rehearsal only")
+
+
+def read_token(path: str | None) -> str | None:
+    if not path:
+        return None
+    return Path(path).read_text().strip() or None
+
+
+def jwt_claims(token: str | None) -> dict:
+    """The payload of a JWT, unverified: only to pick which answer a check expects."""
+    if not token or token.count(".") != 2:
+        return {}
+    part = token.split(".")[1]
+    try:
+        return json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+    except ValueError:
+        return {}
+
+
+class Http:
+    """Never follows redirects; answers (status, headers with lower-case names, body bytes)."""
+
+    def __init__(self, base: str, timeout: float = 60):
+        self.base = base.rstrip("/")
+        self.timeout = timeout
+
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *a, **k):
+                return None
+
+        self.opener = urllib.request.build_opener(NoRedirect)
+
+    def call(self, method: str, path: str, token: str | None = None, headers: dict | None = None,
+             body: bytes | dict | None = None):
+        headers = dict(headers or {})
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        data = None
+        if body is not None:
+            data = body if isinstance(body, bytes) else json.dumps(body).encode()
+            headers.setdefault("Content-Type", "application/json")
+        req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
+        try:
+            with self.opener.open(req, timeout=self.timeout) as r:
+                return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, {k.lower(): v for k, v in (e.headers or {}).items()}, e.read() or b""
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+            return 0, {}, str(e).encode()
+
+
+def as_json(raw: bytes):
+    try:
+        return json.loads(raw) if raw else None
+    except ValueError:
+        return None
+
+
+def short(raw: bytes, n: int = 160) -> str:
+    return raw[:n].decode(errors="replace").replace("\n", " ")
+
+
+class Results:
+    """One row per check: id, target, call, expected, actual, result (pass/fail/skip), reason."""
+
+    def __init__(self, suite: str, base: str):
+        self.suite, self.base = suite, base
+        self.rows: list[dict] = []
+        self.lock = threading.Lock()
+        self.started = time.time()
+
+    def add(self, id: str, target: str, call: str, expected: str, actual: str, result: str,
+            reason: str = ""):
+        assert result in (PASS, FAIL, SKIP)
+        with self.lock:
+            self.rows.append({"id": id, "target": target, "call": call, "expected": expected,
+                              "actual": actual, "result": result, "reason": reason})
+
+    def check(self, id, target, call, expected, actual, ok: bool, reason: str = ""):
+        self.add(id, target, call, expected, actual, PASS if ok else FAIL, reason)
+
+    def skip(self, id, target, call, expected, reason):
+        self.add(id, target, call, expected, "", SKIP, reason)
+
+    def totals(self) -> dict:
+        out = {PASS: 0, FAIL: 0, SKIP: 0}
+        for r in self.rows:
+            out[r["result"]] += 1
+        return out
+
+    def write(self, out: Path, meta: dict | None = None) -> None:
+        out.mkdir(parents=True, exist_ok=True)
+        rows = sorted(self.rows, key=lambda r: (r["target"], r["id"]))
+        doc = {"suite": self.suite, "base": self.base, "seconds": round(time.time() - self.started),
+               "totals": self.totals(), **(meta or {}), "checks": rows}
+        (out / "results.json").write_text(json.dumps(doc, indent=1, ensure_ascii=False))
+        t = self.totals()
+        lines = [f"# Smoke suite `{self.suite}`", "",
+                 f"Base {self.base}; {t[PASS]} pass, {t[FAIL]} fail, {t[SKIP]} skip "
+                 f"({doc['seconds']} s).", ""]
+        for k, v in (meta or {}).items():
+            lines.append(f"- {k}: {v}")
+        if meta:
+            lines.append("")
+
+        def cell(s: str) -> str:
+            return str(s).replace("|", "\\|").replace("\n", " ")[:240]
+
+        for title, which in (("Failures", FAIL), ("Skipped", SKIP), ("Passed", PASS)):
+            chosen = [r for r in rows if r["result"] == which]
+            lines += [f"## {title} ({len(chosen)})", ""]
+            if not chosen:
+                lines += ["None.", ""]
+                continue
+            lines += ["| id | target | call | expected | actual | reason |", "|---|---|---|---|---|---|"]
+            for r in chosen:
+                lines.append("| " + " | ".join(cell(r[k]) for k in
+                                               ("id", "target", "call", "expected", "actual", "reason")) + " |")
+            lines.append("")
+        (out / "REPORT.md").write_text("\n".join(lines))
