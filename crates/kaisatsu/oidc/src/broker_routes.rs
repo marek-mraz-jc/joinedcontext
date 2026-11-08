@@ -18,7 +18,7 @@ use kaisatsu_crypto::{
     verify_jwt_with_jwk,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

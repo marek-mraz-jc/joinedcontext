@@ -509,7 +509,12 @@ async fn k14_scim_put_patch_groups_etags_errors_and_deactivation_session_revocat
 
     // DELETE Group
     let (st_gdel, _) = api
-        .call(Method::DELETE, &format!("{SCIM}/Groups/{gid}"), &admin, None)
+        .call(
+            Method::DELETE,
+            &format!("{SCIM}/Groups/{gid}"),
+            &admin,
+            None,
+        )
         .await;
     assert_eq!(st_gdel, StatusCode::NO_CONTENT);
     let (st_g404, _) = api

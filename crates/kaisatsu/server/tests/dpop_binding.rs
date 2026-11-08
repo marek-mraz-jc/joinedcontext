@@ -8,6 +8,7 @@ use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
 use http_body_util::BodyExt;
 use jc_router::Mount;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use kaisatsu_core::Store;
 use kaisatsu_crypto::*;
 use kaisatsu_server::router;
 use serde_json::{Value, json};
@@ -261,7 +262,11 @@ async fn k6_dpop_enforced_across_admin_odata_mcp_and_scim_and_server_nonce_round
 
     let endpoints = [
         ("GET", "/admin/realms/dev/users", None),
-        ("GET", "/api/v1/realms/dev/allowed?op=read&kind=Person", None),
+        (
+            "GET",
+            "/api/v1/realms/dev/allowed?op=read&kind=Person",
+            None,
+        ),
         ("GET", "/api/v1/realms/dev/odata/People", None),
         ("GET", "/api/v1/realms/dev/scim/v2/Users", None),
         (
@@ -300,7 +305,11 @@ async fn k6_dpop_enforced_across_admin_odata_mcp_and_scim_and_server_nonce_round
 
         // 1. Bearer with a DPoP-bound token -> 401 Unauthorized.
         let r = send(format!("Bearer {bound_admin_token}"), None).await;
-        assert_eq!(r.status(), StatusCode::UNAUTHORIZED, "Bearer accepted at {path}");
+        assert_eq!(
+            r.status(),
+            StatusCode::UNAUTHORIZED,
+            "Bearer accepted at {path}"
+        );
 
         // 2. Wrong htu, missing ath, wrong jkt -> 401 Unauthorized.
         for bad_proof in [
@@ -323,7 +332,11 @@ async fn k6_dpop_enforced_across_admin_odata_mcp_and_scim_and_server_nonce_round
             ),
         ] {
             let r = send(format!("DPoP {bound_admin_token}"), Some(bad_proof)).await;
-            assert_eq!(r.status(), StatusCode::UNAUTHORIZED, "bad proof accepted at {path}");
+            assert_eq!(
+                r.status(),
+                StatusCode::UNAUTHORIZED,
+                "bad proof accepted at {path}"
+            );
         }
 
         // 3. Valid proof succeeds once; replaying the same jti is refused.
@@ -336,9 +349,17 @@ async fn k6_dpop_enforced_across_admin_odata_mcp_and_scim_and_server_nonce_round
             None,
         );
         let r_ok = send(format!("DPoP {bound_admin_token}"), Some(ok_proof.clone())).await;
-        assert_eq!(r_ok.status(), StatusCode::OK, "valid DPoP refused at {path}");
+        assert_eq!(
+            r_ok.status(),
+            StatusCode::OK,
+            "valid DPoP refused at {path}"
+        );
         let r_replay = send(format!("DPoP {bound_admin_token}"), Some(ok_proof)).await;
-        assert_eq!(r_replay.status(), StatusCode::UNAUTHORIZED, "replayed jti accepted at {path}");
+        assert_eq!(
+            r_replay.status(),
+            StatusCode::UNAUTHORIZED,
+            "replayed jti accepted at {path}"
+        );
     }
 
     // 4. Enable server DPoP nonces on the realm and test AS + RS nonce round trip and stale nonce refusal.
@@ -375,10 +396,8 @@ async fn k6_dpop_enforced_across_admin_odata_mcp_and_scim_and_server_nonce_round
         .to_str()
         .unwrap()
         .to_owned();
-    let body_as_1: Value = serde_json::from_slice(
-        &resp_as_1.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let body_as_1: Value =
+        serde_json::from_slice(&resp_as_1.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(body_as_1["error"], "use_dpop_nonce");
 
     // Retry token endpoint with the server-issued nonce -> 200 OK + fresh DPoP-Nonce.

@@ -174,12 +174,11 @@ pub fn load_realm_files_from_path(
 /// `dir` (refusing symlinks out of `dir`), used by `--import-watch` (K17).
 pub fn compute_import_dir_digest(dir: &std::path::Path) -> Result<String> {
     use sha2::{Digest, Sha256};
-    let canonical_dir = dir.canonicalize().map_err(|e| {
-        kaisatsu_core::KaisatsuError::BadRequest(format!("{}: {e}", dir.display()))
-    })?;
-    let entries = std::fs::read_dir(dir).map_err(|e| {
-        kaisatsu_core::KaisatsuError::BadRequest(format!("{}: {e}", dir.display()))
-    })?;
+    let canonical_dir = dir
+        .canonicalize()
+        .map_err(|e| kaisatsu_core::KaisatsuError::BadRequest(format!("{}: {e}", dir.display())))?;
+    let entries = std::fs::read_dir(dir)
+        .map_err(|e| kaisatsu_core::KaisatsuError::BadRequest(format!("{}: {e}", dir.display())))?;
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     for entry in entries.flatten() {
         let p = entry.path();

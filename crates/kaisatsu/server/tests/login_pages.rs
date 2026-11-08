@@ -740,12 +740,23 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
     assert!(is_code(st_ve_done, &h_ve_done));
     let verified_member = user(&store, MEMBER).await;
     assert!(verified_member.email_verified);
-    assert!(!verified_member.required_actions.contains(&"VERIFY_EMAIL".into()));
+    assert!(
+        !verified_member
+            .required_actions
+            .contains(&"VERIFY_EMAIL".into())
+    );
 
     // --- K9 & K10: Reset credentials queues outbox row, dispatcher sends link, action-token works once ---
     let sink = RecordingSender::new();
-    let dispatcher = OutboxDispatcher::new(store_dyn.clone(), store.kek().clone(), Arc::new(sink.clone()));
-    let _ = dispatcher.dispatch_realm_batch(&mount(), "dev", 50).await.unwrap();
+    let dispatcher = OutboxDispatcher::new(
+        store_dyn.clone(),
+        store.kek().clone(),
+        Arc::new(sink.clone()),
+    );
+    let _ = dispatcher
+        .dispatch_realm_batch(&mount(), "dev", 50)
+        .await
+        .unwrap();
     let _ = sink.drain();
 
     // Unknown user on reset-credentials queues nothing
@@ -757,7 +768,10 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
     )
     .await;
     assert_eq!(
-        dispatcher.dispatch_realm_batch(&mount(), "dev", 50).await.unwrap(),
+        dispatcher
+            .dispatch_realm_batch(&mount(), "dev", 50)
+            .await
+            .unwrap(),
         0
     );
 
@@ -770,7 +784,10 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
     )
     .await;
     assert_eq!(
-        dispatcher.dispatch_realm_batch(&mount(), "dev", 50).await.unwrap(),
+        dispatcher
+            .dispatch_realm_batch(&mount(), "dev", 50)
+            .await
+            .unwrap(),
         1
     );
     let mails = sink.drain();
@@ -865,7 +882,19 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
 
     let mut att_obj = vec![0xa3, 0x63, b'f', b'm', b't', 0x64, b'n', b'o', b'n', b'e'];
     att_obj.extend_from_slice(&[0x67, b'a', b't', b't', b'S', b't', b'm', b't', 0xa0]);
-    att_obj.extend_from_slice(&[0x68, b'a', b'u', b't', b'h', b'D', b'a', b't', b'a', 0x58, auth_data.len() as u8]);
+    att_obj.extend_from_slice(&[
+        0x68,
+        b'a',
+        b'u',
+        b't',
+        b'h',
+        b'D',
+        b'a',
+        b't',
+        b'a',
+        0x58,
+        auth_data.len() as u8,
+    ]);
     att_obj.extend_from_slice(&auth_data);
 
     let cdata_create = URL_SAFE_NO_PAD.encode(

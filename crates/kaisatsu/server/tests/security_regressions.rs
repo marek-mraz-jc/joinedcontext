@@ -482,7 +482,7 @@ async fn start_login(app: &axum::Router, extra: &str) -> (String, String, String
     .unwrap();
     let csrf = extract_hidden_input(&html, "csrf_token");
     let code = extract_hidden_input(&html, "session_code");
-    ( format!("{login}##{cookie}"), csrf, code)
+    (format!("{login}##{cookie}"), csrf, code)
 }
 
 #[tokio::test]

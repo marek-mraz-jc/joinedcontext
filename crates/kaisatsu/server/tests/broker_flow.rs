@@ -19,11 +19,10 @@ use kaisatsu_core::*;
 use kaisatsu_crypto::*;
 use kaisatsu_oidc::{OutboundGuard, OutboundPolicy};
 use kaisatsu_server::{KaisatsuState, router};
-use kaisatsu_store_memory::MemoryStore;
-use parking_lot::Mutex;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 use tokio::net::TcpListener;
 use tower::ServiceExt;
 
@@ -53,30 +52,32 @@ async fn start_fake_upstream() -> (String, FakeUpstreamState) {
         last_token_form: Arc::new(Mutex::new(BTreeMap::new())),
     };
 
-    let app = Router::new()
-        .route(
-            "/jwks",
-            get(|State(s): State<FakeUpstreamState>| async move {
-                let jwk: Value = serde_json::from_str(&s.key.public_jwk_json).unwrap();
-                Json(json!({ "keys": [jwk] }))
-            }),
-        )
-        .route(
-            "/token",
-            post(
-                |State(s): State<FakeUpstreamState>, Form(form): Form<BTreeMap<String, String>>| async move {
-                    *s.last_token_form.lock() = form;
-                    let claims = s.next_claims.lock().clone();
-                    let id_token = sign_jwt(&s.key, &s.kek, Some("JWT"), &claims).unwrap();
-                    Json(json!({
-                        "access_token": "upstream-at",
-                        "token_type": "Bearer",
-                        "id_token": id_token
-                    }))
-                },
-            ),
-        )
-        .with_state(st.clone());
+    let app =
+        Router::new()
+            .route(
+                "/jwks",
+                get(|State(s): State<FakeUpstreamState>| async move {
+                    let jwk: Value = serde_json::from_str(&s.key.public_jwk_json).unwrap();
+                    Json(json!({ "keys": [jwk] }))
+                }),
+            )
+            .route(
+                "/token",
+                post(
+                    |State(s): State<FakeUpstreamState>,
+                     Form(form): Form<BTreeMap<String, String>>| async move {
+                        *s.last_token_form.lock().unwrap() = form;
+                        let claims = s.next_claims.lock().unwrap().clone();
+                        let id_token = sign_jwt(&s.key, &s.kek, Some("JWT"), &claims).unwrap();
+                        Json(json!({
+                            "access_token": "upstream-at",
+                            "token_type": "Bearer",
+                            "id_token": id_token
+                        }))
+                    },
+                ),
+            )
+            .with_state(st.clone());
 
     tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
@@ -206,7 +207,7 @@ async fn k12_upstream_oidc_broker_happy_path_pkce_state_nonce_and_link_confirmat
 
     // 3. Wrong nonce in upstream ID token is refused.
     let now = chrono::Utc::now().timestamp();
-    *up_state.next_claims.lock() = json!({
+    *up_state.next_claims.lock().unwrap() = json!({
         "iss": up_issuer,
         "sub": "entra-sub-1",
         "aud": "kaisatsu-broker-client",
@@ -225,11 +226,11 @@ async fn k12_upstream_oidc_broker_happy_path_pkce_state_nonce_and_link_confirmat
     assert_eq!(st_bad_nonce, StatusCode::UNAUTHORIZED);
 
     // Verify that the PKCE verifier sent to the upstream token endpoint hashes to `code_challenge`.
-    let sent_verifier = up_state.last_token_form.lock()["code_verifier"].clone();
+    let sent_verifier = up_state.last_token_form.lock().unwrap()["code_verifier"].clone();
     assert_eq!(sha256_base64url(&sent_verifier), code_challenge);
 
     // 4. Unverified e-mail is refused (`email_verified: false`).
-    *up_state.next_claims.lock() = json!({
+    *up_state.next_claims.lock().unwrap() = json!({
         "iss": up_issuer,
         "sub": "entra-sub-unverified",
         "aud": "kaisatsu-broker-client",
@@ -248,7 +249,7 @@ async fn k12_upstream_oidc_broker_happy_path_pkce_state_nonce_and_link_confirmat
     assert_eq!(st_unver, StatusCode::FORBIDDEN);
 
     // 5. Happy path for a new user (`new.broker@hel.fi`): creates user + link and redirects with code.
-    *up_state.next_claims.lock() = json!({
+    *up_state.next_claims.lock().unwrap() = json!({
         "iss": up_issuer,
         "sub": "entra-sub-new",
         "aud": "kaisatsu-broker-client",
@@ -279,7 +280,7 @@ async fn k12_upstream_oidc_broker_happy_path_pkce_state_nonce_and_link_confirmat
     .await;
     let u2 = url::Url::parse(h2[header::LOCATION].to_str().unwrap()).unwrap();
     let qp2: BTreeMap<String, String> = u2.query_pairs().into_owned().collect();
-    *up_state.next_claims.lock() = json!({
+    *up_state.next_claims.lock().unwrap() = json!({
         "iss": up_issuer,
         "sub": "entra-sub-existing",
         "aud": "kaisatsu-broker-client",
@@ -291,7 +292,10 @@ async fn k12_upstream_oidc_broker_happy_path_pkce_state_nonce_and_link_confirmat
     });
     let (st_conf, _, html_conf) = get_with_ck(
         &app,
-        &format!("/realms/dev/broker/entra/endpoint?code=c4&state={}", qp2["state"]),
+        &format!(
+            "/realms/dev/broker/entra/endpoint?code=c4&state={}",
+            qp2["state"]
+        ),
         &ck2,
     )
     .await;
@@ -331,5 +335,10 @@ async fn k12_upstream_oidc_broker_happy_path_pkce_state_nonce_and_link_confirmat
     )
     .await;
     assert_eq!(st_linked, StatusCode::SEE_OTHER);
-    assert!(h_linked[header::LOCATION].to_str().unwrap().contains("code="));
+    assert!(
+        h_linked[header::LOCATION]
+            .to_str()
+            .unwrap()
+            .contains("code=")
+    );
 }

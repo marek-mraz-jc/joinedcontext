@@ -609,7 +609,8 @@ async fn migrate_apply_and_serve_on_postgres_with_password_files() {
 /// - broken JSON file -> logs/returns error and keeps the last good realm state,
 /// - symlink escaping `import_dir` -> refused.
 #[tokio::test]
-async fn k17_import_dir_watch_applies_changes_keeps_last_good_state_on_error_and_refuses_symlinks() {
+async fn k17_import_dir_watch_applies_changes_keeps_last_good_state_on_error_and_refuses_symlinks()
+{
     use kaisatsu_core::{ClientRepresentation, Store};
     use kaisatsu_server::{compute_import_dir_digest, poll_import_dir_once};
     use kaisatsu_store_memory::MemoryStore;
@@ -636,7 +637,12 @@ async fn k17_import_dir_watch_applies_changes_keeps_last_good_state_on_error_and
     assert!(changed);
     assert_eq!(last_digest, compute_import_dir_digest(&dir).unwrap());
     assert_eq!(
-        store.get_realm("watch").await.unwrap().unwrap().display_name,
+        store
+            .get_realm("watch")
+            .await
+            .unwrap()
+            .unwrap()
+            .display_name,
         "Watch v1"
     );
 
@@ -671,7 +677,12 @@ async fn k17_import_dir_watch_applies_changes_keeps_last_good_state_on_error_and
         .unwrap();
     assert!(changed3);
     assert_eq!(
-        store.get_realm("watch").await.unwrap().unwrap().display_name,
+        store
+            .get_realm("watch")
+            .await
+            .unwrap()
+            .unwrap()
+            .display_name,
         "Watch v2"
     );
     assert!(
@@ -685,10 +696,19 @@ async fn k17_import_dir_watch_applies_changes_keeps_last_good_state_on_error_and
     // 4. Write a broken file -> poll returns error and keeps "Watch v2" as the last good state.
     let good_digest = last_digest.clone();
     std::fs::write(&realm_path, "{ broken json ").unwrap();
-    assert!(poll_import_dir_once(&store, &dir, &mut last_digest).await.is_err());
+    assert!(
+        poll_import_dir_once(&store, &dir, &mut last_digest)
+            .await
+            .is_err()
+    );
     assert_eq!(last_digest, good_digest);
     assert_eq!(
-        store.get_realm("watch").await.unwrap().unwrap().display_name,
+        store
+            .get_realm("watch")
+            .await
+            .unwrap()
+            .unwrap()
+            .display_name,
         "Watch v2"
     );
 
@@ -712,5 +732,4 @@ async fn k17_import_dir_watch_applies_changes_keeps_last_good_state_on_error_and
             "{err}"
         );
     }
-
 }

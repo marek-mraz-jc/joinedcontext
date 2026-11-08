@@ -100,7 +100,7 @@ impl DnsResolver for HickoryDnsResolver {
                 .map_err(|_| KaisatsuError::BadRequest("DNS TXT lookup returned no records".into()))?;
             let mut out = Vec::new();
             for record in response.answers() {
-                if let hickory_resolver::proto::rr::RData::TXT(txt) = record.data() {
+                if let hickory_resolver::proto::rr::RData::TXT(txt) = &record.data {
                     out.push(txt.to_string());
                 }
             }
