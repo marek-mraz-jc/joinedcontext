@@ -156,7 +156,8 @@ for (const width of [1440, 400]) {
       await expect(page.getByRole("button", { name: "This fiscal year", exact: true })).toBeVisible();
       await shot(page, "context-broker-timepicker", width);
       await page.keyboard.press("Escape");
-      await page.getByLabel("Refresh", { exact: true }).focus();
+      await page.getByRole("group", { name: "Refresh", exact: true }).locator("summary").click();
+      await expect(page.getByRole("menuitemradio", { name: "1m" })).toHaveAttribute("aria-checked", "true");
       await shot(page, "context-broker-refresh", width);
     });
   });
@@ -187,6 +188,9 @@ for (const width of [1440, 400]) {
     await page.getByLabel("Search dashboards").fill("no such board");
     await expect(page.getByRole("status").filter({ hasText: "No dashboard matches this search." })).toBeVisible();
     await shot(page, "list-no-match", width);
+    expect(await page.evaluate(pageFindings, { namespaces: NAMESPACES, layout: true })).toEqual([]);
+    await page.getByRole("button", { name: "Clear search and filters" }).click();
+    await expect(page.getByRole("list", { name: "Dashboards by folder" })).toBeVisible();
     expect(await page.evaluate(pageFindings, { namespaces: NAMESPACES, layout: true })).toEqual([]);
   });
 }

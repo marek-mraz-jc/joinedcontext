@@ -122,9 +122,20 @@ export function DashboardList({ project, items }: { project: string; items: read
         </Field>
       </div>
       {shown.length === 0 ? (
-        <p role="status" className="py-3 text-body text-fg-muted">
-          {t("grafana.dashboards.noMatch")}
-        </p>
+        <div role="status" className="flex flex-col items-start gap-2 py-3">
+          <p className="text-body text-fg-muted">{t("grafana.dashboards.noMatch")}</p>
+          {/* Grafana's empty search offers to clear the search and filters in one step. */}
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              setQuery("");
+              setTag("");
+            }}
+          >
+            {t("grafana.dashboards.clear")}
+          </Button>
+        </div>
       ) : searching ? (
         <ul aria-label={t("grafana.dashboards.results")}>
           {shown.map((item) => (

@@ -312,17 +312,49 @@ const SI_PREFIX = ["", "k", "M", "G", "T", "P"];
 const BIN_PREFIX = ["", "Ki", "Mi", "Gi", "Ti", "Pi"];
 
 function digits(value: number, decimals: number | undefined, locale: string): string {
-  // Below one, two significant digits: fixed decimals printed 0.005 and 0.015 as 0.01 and 0.02,
-  // so an axis repeated its labels.
-  if (decimals === undefined && value !== 0 && Math.abs(value) < 1) {
-    return new Intl.NumberFormat(locale, { maximumSignificantDigits: 2 }).format(value);
-  }
-  const auto = Math.abs(value) >= 100 ? 0 : Math.abs(value) >= 10 ? 1 : 2;
-  const fraction = decimals ?? auto;
-  return new Intl.NumberFormat(locale, {
-    minimumFractionDigits: decimals ?? 0,
-    maximumFractionDigits: fraction,
-  }).format(value);
+  // Grafana's toFixed: without decimals, getDecimalsForValue picks them, and the text keeps its
+  // trailing zeros (7.1 weeks is `7.10 weeks`, 0.005 is `0.00500`).
+  const fraction = Math.max(0, decimals ?? decimalsFor(value));
+  return new Intl.NumberFormat(locale, { useGrouping: false, minimumFractionDigits: fraction, maximumFractionDigits: fraction }).format(value);
+}
+
+/** Grafana's getDecimalsForValue: one significant digit past the first, two when the rest is above 2.25. */
+export function decimalsFor(value: number): number {
+  if (value === 0 || !Number.isFinite(value)) return 0;
+  if (value % 1 === 0) return 0;
+  const abs = Math.abs(value);
+  let dec = -Math.floor(Math.log10(abs)) + 1;
+  if (abs / 10 ** -dec > 2.25) dec += 1;
+  return Math.max(0, dec);
+}
+
+/**
+ * Grafana's time units (`ns` … `d`, valueFormats/dateTimeFormatters): each a ladder of
+ * [below this, divide by, word]; the last step catches the rest. A scaled word takes an `s` above
+ * 1 (`7.10 weeks`), the first step's never does (`3 day`), as Grafana writes them.
+ */
+const TIME_STEPS: Record<string, [number, number, string][]> = {
+  ns: [[1e3, 1, " ns"], [1e6, 1e3, " µs"], [1e9, 1e6, " ms"], [6e10, 1e9, " s"], [36e11, 6e10, " min"], [864e11, 36e11, " hour"], [Infinity, 864e11, " day"]],
+  µs: [[1e3, 1, " µs"], [1e6, 1e3, " ms"], [Infinity, 1e6, " s"]],
+  ms: [[1e3, 1, " ms"], [6e4, 1e3, " s"], [36e5, 6e4, " min"], [864e5, 36e5, " hour"], [31536e6, 864e5, " day"], [Infinity, 31536e6, " year"]],
+  s: [[1e-6, 1e-9, " ns"], [0.001, 1e-6, " µs"], [1, 0.001, " ms"], [60, 1, " s"], [3600, 60, " min"], [86400, 3600, " hour"], [604800, 86400, " day"], [31536e3, 604800, " week"], [Infinity, 31556900, " year"]],
+  m: [[60, 1, " min"], [1440, 60, " hour"], [10080, 1440, " day"], [604800, 10080, " week"], [Infinity, 525948, " year"]],
+  h: [[24, 1, " hour"], [168, 24, " day"], [8760, 168, " week"], [Infinity, 8760, " year"]],
+  d: [[7, 1, " day"], [365, 7, " week"], [Infinity, 365, " year"]],
+};
+const PLURAL = new Set([" min", " hour", " day", " week", " year"]);
+
+function timeUnit(value: number, steps: [number, number, string][], decimals: number | undefined, locale: string): string {
+  // Seconds alone print zero as `0 s`; below its first step `s` scales down to ms, µs and ns.
+  if (value === 0 && steps === TIME_STEPS.s) return "0 s";
+  const abs = Math.abs(value);
+  const at = steps.findIndex(([below]) => abs < below);
+  const [, size, word] = steps[at];
+  const shown = value / size;
+  // Grafana's first step of each unit keeps its own word; `s` has no plural at all.
+  const first = size === 1 && steps !== TIME_STEPS.s ? true : steps === TIME_STEPS.s && word === " s";
+  const plural = !first && PLURAL.has(word) && Math.abs(shown) > 1 ? "s" : "";
+  return `${digits(shown, decimals, locale)}${word}${plural}`;
 }
 
 function duration(ms: number, decimals: number | undefined, locale: string): string {
@@ -361,6 +393,7 @@ export function formatUnit(value: number | null, unit: string | undefined, decim
     return `${digits(value, decimals, locale)} ${unit}`;
   }
   const scaled = value * (shape.scale ?? 1);
+  if (unit in TIME_STEPS) return timeUnit(scaled, TIME_STEPS[unit], decimals, locale);
   if (shape.durationMs !== undefined) return duration(scaled * shape.durationMs, decimals, locale);
   let shown = scaled;
   let prefix = "";

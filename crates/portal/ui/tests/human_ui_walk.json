@@ -2646,6 +2646,32 @@
         "evidence/T-6509/saved-1440.png",
         "evidence/T-6509/saved-400.png"
       ]
+    },
+    "src/components/panels/TimePicker.tsx": {
+      "walkedBy": "jc-grafana-parity",
+      "date": "2026-11-08",
+      "screenshots": [
+        "evidence/jc-grafana-parity/shots/portal/portal-context-broker-timepicker-1440.png",
+        "evidence/jc-grafana-parity/shots/portal/portal-context-broker-timepicker-400.png",
+        "evidence/jc-grafana-parity/shots/portal/portal-context-broker-refresh-1440.png",
+        "evidence/jc-grafana-parity/shots/portal/portal-context-broker-refresh-400.png"
+      ]
+    },
+    "src/pages/grafana/DashboardList.tsx": {
+      "walkedBy": "jc-grafana-parity",
+      "date": "2026-11-08",
+      "screenshots": [
+        "evidence/jc-grafana-parity/shots/portal/portal-list-folders-1440.png",
+        "evidence/jc-grafana-parity/shots/portal/portal-list-folders-400.png",
+        "evidence/jc-grafana-parity/shots/portal/portal-list-folder-open-1440.png",
+        "evidence/jc-grafana-parity/shots/portal/portal-list-folder-open-400.png",
+        "evidence/jc-grafana-parity/shots/portal/portal-list-search-1440.png",
+        "evidence/jc-grafana-parity/shots/portal/portal-list-search-400.png",
+        "evidence/jc-grafana-parity/shots/portal/portal-list-tag-1440.png",
+        "evidence/jc-grafana-parity/shots/portal/portal-list-tag-400.png",
+        "evidence/jc-grafana-parity/shots/portal/portal-list-no-match-1440.png",
+        "evidence/jc-grafana-parity/shots/portal/portal-list-no-match-400.png"
+      ]
     }
   }
 }

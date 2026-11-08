@@ -1416,9 +1416,17 @@
         "grafana_page.test.tsx"
       ]
     },
+    "src/pages/grafana/DashboardList.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "dashboard_list.test.tsx"
+      ]
+    },
     "src/pages/grafana/DashboardPage.tsx": {
       "controls": {
-        "Button": 2,
+        "Button": 1,
         "Checkbox": 1
       },
       "tests": [
@@ -1437,7 +1445,7 @@
     },
     "src/components/panels/PanelView.tsx": {
       "controls": {
-        "Button": 2
+        "Button": 3
       },
       "tests": [
         "dashboard_panels.test.tsx"
@@ -1445,7 +1453,7 @@
     },
     "src/components/panels/TimePicker.tsx": {
       "controls": {
-        "Button": 2
+        "Button": 4
       },
       "tests": [
         "dashboard_time.test.tsx"

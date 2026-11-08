@@ -387,6 +387,22 @@ describe("the dashboard around the panels", () => {
     expect(formatDate(at - 3 * 3_600_000, "dateTimeFromNow", false, "en", at)).toBe("3 hours ago");
   });
 
+  it("climbs Grafana's time-unit ladders, plural only on a scaled word, as its value formats do", () => {
+    // slo panel 6: Grafana 12.4.14 prints 49.704 and 53.163 days as 7.10 and 7.59 weeks.
+    expect(formatUnit(49.704, "d")).toBe("7.10 weeks");
+    expect(formatUnit(53.163, "d")).toBe("7.59 weeks");
+    expect(formatUnit(3, "d")).toBe("3 day");
+    expect(formatUnit(400, "d")).toBe("1.10 years");
+    expect(formatUnit(0, "s")).toBe("0 s");
+    expect(formatUnit(0.25, "s")).toBe("250 ms");
+    expect(formatUnit(90, "s")).toBe("1.50 mins");
+    expect(formatUnit(7200, "s")).toBe("2 hours");
+    expect(formatUnit(1500, "ms")).toBe("1.50 s");
+    expect(formatUnit(45, "m")).toBe("45 min");
+    expect(formatUnit(30, "h")).toBe("1.25 days");
+    expect(formatUnit(2500, "ns")).toBe("2.50 µs");
+  });
+
   it("keeps an override's unit for its field only", () => {
     const config = { defaults: { unit: "percent" }, overrides: [{ matcher: { id: "byName", options: "pm25" }, properties: [{ id: "unit", value: "bytes" }] }] };
     expect(settingsFor(config, { name: "pm25", type: "number", values: [] }).unit).toBe("bytes");
