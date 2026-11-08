@@ -27,3 +27,16 @@ The native API of `daiya` is the OData 4.01 service at `/odata/v4` (R10a). The f
 | `POST /api/ds/query` | Grafana panels | `POST /odata/v4/Datasource.Query` |
 | `GET /api/public/dashboards/{accessToken}` | Anonymous viewer | Public dashboard view (sanitized) |
 | `POST /api/public/dashboards/{accessToken}/panels/{panelId}/query` | Anonymous viewer | `POST /odata/v4/PublicDashboard.Query` |
+
+## Differences from Grafana and Behaviour Matched
+
+These were verified by tests in `api/tests/compat_routes.rs`.
+
+- `PUT /api/datasources/uid/{uid}` answers 404 for an unknown uid and 403 for a provisioned (read-only) datasource, as Grafana does. `provision.sh` only PUTs after a POST answered 409.
+- `secureJsonData` in `POST`/`PUT /api/datasources` is refused with 400 naming `secretRefs` (§7.1). An empty `{}` is accepted.
+- `readOnly` in a datasource body is ignored. Only provisioning sets it, as Grafana's `json:"-"` field does.
+- A datasource or folder created without a uid gets a random 14-character short uid. A given uid over 40 characters or outside `a-zA-Z0-9-_` is refused with 400 (Grafana `IsValidShortUID`).
+- `POST /api/folders` on an existing uid answers 409.
+- `PATCH` of a public dashboard checks the `{uid}` in its path.
+- Datasource resource paths accept Grafana's `api/v1/labels`, `api/v1/label/{name}/values` and `api/v1/series` forms as well as the short ones.
+- Difference: the numeric `id` is a constant, or the row position in lists. Records have no numeric id.
