@@ -21,7 +21,6 @@ import base64
 import datetime as dt
 import hashlib
 import html
-import http.cookiejar
 import ipaddress
 import json
 import os
@@ -67,25 +66,47 @@ def cutoff_for(now: dt.datetime) -> dt.datetime:
 
 
 class Http:
-    """A small client with a cookie jar; never follows redirects by itself."""
+    """A small client with a browser-like cookie jar (Secure and __Host- cookies kept on
+    http://localhost, as browsers do); never follows redirects by itself."""
 
     def __init__(self, base: str):
         self.base = base.rstrip("/")
-        self.jar = http.cookiejar.CookieJar()
+        self.jar: dict[str, tuple[str, str]] = {}
 
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, *a, **k):
                 return None
 
-        self.opener = urllib.request.build_opener(
-            urllib.request.HTTPCookieProcessor(self.jar), NoRedirect
-        )
+        self.opener = urllib.request.build_opener(NoRedirect)
 
     def url(self, path: str) -> str:
         return path if path.startswith("http") else self.base + path
 
+    def _store(self, headers):
+        for raw in headers.get_all("Set-Cookie") or []:
+            parts = [p.strip() for p in raw.split(";")]
+            if "=" not in parts[0]:
+                continue
+            name, value = parts[0].split("=", 1)
+            path, expired = "/", False
+            for attr in parts[1:]:
+                low = attr.lower()
+                if low.startswith("path="):
+                    path = attr[5:]
+                if low == "max-age=0":
+                    expired = True
+            if expired or not value:
+                self.jar.pop(name, None)
+            else:
+                self.jar[name] = (value, path)
+
+    def _cookies(self, url: str) -> str:
+        path = urllib.parse.urlparse(url).path or "/"
+        return "; ".join(f"{n}={v}" for n, (v, p) in self.jar.items() if path.startswith(p))
+
     def call(self, method, path, body=None, headers=None, form=None, timeout=60):
         headers = dict(headers or {})
+        url = self.url(path)
         data = None
         if form is not None:
             data = urllib.parse.urlencode(form).encode()
@@ -93,11 +114,18 @@ class Http:
         elif body is not None:
             data = body if isinstance(body, bytes) else json.dumps(body).encode()
             headers.setdefault("Content-Type", "application/json")
-        req = urllib.request.Request(self.url(path), data=data, method=method, headers=headers)
+        if cookies := self._cookies(url):
+            headers.setdefault("Cookie", cookies)
+        if method not in ("GET", "HEAD") and "__Host-jc_csrf" in self.jar:
+            headers.setdefault("x-csrf-token", self.jar["__Host-jc_csrf"][0])
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
             with self.opener.open(req, timeout=timeout) as r:
+                self._store(r.headers)
                 return r.status, dict(r.headers), r.read()
         except urllib.error.HTTPError as e:
+            if e.headers:
+                self._store(e.headers)
             return e.code, dict(e.headers or {}), e.read() or b""
 
     def json(self, method, path, body=None, headers=None, form=None):
@@ -282,10 +310,31 @@ def cmd_synth(a):
 # realms
 
 
+TESTER = "rehearsal-tester"
+
+
 def strip_people(realm: dict) -> dict:
-    """The realm without people: no users, no credentials, no sessions; clients, scopes, roles,
-    groups, mappers and flows stay."""
-    return {k: v for k, v in realm.items() if k not in PEOPLE_KEYS}
+    """The realm without people: no person, no credential, no session. Clients, scopes, roles,
+    groups, mappers and flows stay, and so do the service-account users that carry a client's
+    role bindings (a client, not a person), without any credential."""
+    out = {k: v for k, v in realm.items() if k not in PEOPLE_KEYS}
+    accounts = []
+    for u in realm.get("users") or []:
+        if u.get("serviceAccountClientId"):
+            accounts.append({k: v for k, v in u.items() if k not in ("credentials", "email", "firstName", "lastName")})
+    if accounts:
+        out["users"] = accounts
+    return out
+
+
+def add_tester(realm: dict) -> dict:
+    """The rehearsal's own test person, its password a secret variable up.sh fills."""
+    out = dict(realm)
+    tester = {"username": TESTER, "enabled": True, "email": f"{TESTER}@rehearsal.invalid",
+              "emailVerified": True, "firstName": "Rehearsal", "lastName": "Tester",
+              "credentials": [{"type": "password", "value": "$(env:REHEARSAL_TESTER_PASSWORD)", "temporary": False}]}
+    out["users"] = list(out.get("users") or []) + [tester]
+    return out
 
 
 def cmd_realms(a):
@@ -297,7 +346,7 @@ def cmd_realms(a):
         name = realm.get("realm", "")
         if name in SKIPPED_REALMS:
             continue
-        clean = strip_people(realm)
+        clean = add_tester(strip_people(realm))
         (dst / f"{name}.json").write_text(json.dumps(clean, indent=1))
         taken.append(name)
         # The secret variables the realm names ($(env:NAME)): up.sh makes a value for each.
@@ -668,6 +717,33 @@ def make_person(h: Http, token: str, realm: str, username: str, groups=()):
     return uid, password
 
 
+def code_flow(h: Http, realm: str, client: dict, password: str):
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    redirect = client["redirectUris"][0].replace("*", "rehearsal")
+    q = urllib.parse.urlencode({"client_id": client["clientId"], "redirect_uri": redirect, "response_type": "code",
+                                "scope": "openid", "state": "rh", "code_challenge": challenge,
+                                "code_challenge_method": "S256"})
+    login_url, st, page = follow(h, f"/id/realms/{realm}/protocol/openid-connect/auth?{q}")
+    if st != 200:
+        return False, f"auth -> {st} {page[:200]!r}"
+    text = page.decode(errors="replace")
+    try:
+        form = {"csrf_token": _hidden(text, "csrf_token"), "session_code": _hidden(text, "session_code"),
+                "username": TESTER, "password": password}
+    except RuntimeError as e:
+        return False, str(e)
+    st, hdrs, body = h.call("POST", login_url, form=form)
+    loc = hdrs.get("Location") or hdrs.get("location") or ""
+    if "code=" not in loc:
+        return False, f"login -> {st} {loc or body[:300]!r}"
+    code = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query)["code"][0]
+    st, tok = h.json("POST", f"/id/realms/{realm}/protocol/openid-connect/token", form={
+        "grant_type": "authorization_code", "client_id": client["clientId"], "code": code,
+        "redirect_uri": redirect, "code_verifier": verifier})
+    return st == 200 and "id_token" in (tok or {}), f"token -> {st}"
+
+
 def cmd_smoke(a):
     loopback_only(a.base)
     state, export = Path(a.state), Path(a.export)
@@ -692,20 +768,33 @@ def cmd_smoke(a):
     for path in ["/", "/api/v1/projects", "/api/v1/version"]:
         st, _, body = h.call("GET", path)
         check(f"Portal {path}", st == 200, f"{st} {len(body)} B", f"GET {path}")
-    # 3. imported realm: present, clients and groups there, no people
-    try:
-        auth = {"Authorization": f"Bearer {tok}"}
-        realms = [p.stem for p in Path(a.realms).glob("*.json")] if a.realms else []
-        for realm in realms:
-            st, clients = h.json("GET", f"/id/admin/realms/{realm}/clients", headers=auth)
-            check(f"realm {realm}: clients", st == 200 and len(clients or []) > 0,
-                  f"{st} {len(clients or []) if isinstance(clients, list) else clients}",
-                  f"GET /id/admin/realms/{realm}/clients")
-            st, users = h.json("GET", f"/id/admin/realms/{realm}/users", headers=auth)
-            check(f"realm {realm}: no imported people", st == 200 and users == [], f"{st} {users}",
-                  f"GET /id/admin/realms/{realm}/users")
-    except Exception as e:  # noqa: BLE001
-        check("imported realm", False, str(e)[:300])
+    # 3. each imported realm: discovery, a client's secret grant, and the test person's code + PKCE
+    #    sign-in through a public client of the old realm (the code is read from the redirect,
+    #    never sent to the old host)
+    for f in sorted(Path(a.realms).glob("*.json")) if a.realms else []:
+        realm = json.loads(f.read_text())
+        name = realm["realm"]
+        st, disc = h.json("GET", f"/id/realms/{name}/.well-known/openid-configuration")
+        check(f"realm {name}: discovery", st == 200, f"{st}", f"GET /id/realms/{name}/.well-known/openid-configuration")
+        conf = next((c for c in realm.get("clients", []) if str(c.get("secret", "")).startswith("$(")
+                     and c.get("serviceAccountsEnabled")), None)
+        if conf:
+            var = re.search(r"\$\((?:env:)?([A-Z0-9_]+)\)", conf["secret"]).group(1)
+            secret = (state.parent / "secrets" / f"realm-{var}").read_text().strip()
+            st, tok = h.json("POST", f"/id/realms/{name}/protocol/openid-connect/token", form={
+                "grant_type": "client_credentials", "client_id": conf["clientId"], "client_secret": secret})
+            check(f"realm {name}: client {conf['clientId']} gets a token", st == 200 and "access_token" in (tok or {}),
+                  f"{st} {'' if st == 200 else str(tok)[:200]}", f"POST /id/realms/{name}/protocol/openid-connect/token")
+        publics = [c for c in realm.get("clients", []) if c.get("publicClient")
+                   and c.get("standardFlowEnabled", True) and c.get("redirectUris")]
+        # The Portal's own sign-in client first; a client asking for consent last.
+        publics.sort(key=lambda c: (c["clientId"] != "portal-ui", bool(c.get("consentRequired"))))
+        public = publics[0] if publics else None
+        if public:
+            ok, detail = code_flow(Http(a.base), name, public,
+                                   (state.parent / "secrets" / "realm-REHEARSAL_TESTER_PASSWORD").read_text().strip())
+            check(f"realm {name}: test person signs in through {public['clientId']}", ok, detail,
+                  f"/id/realms/{name}/protocol/openid-connect/auth")
     # 4. every exported repository is in shako with the exported files
     listing = json.loads((export / "gitea" / "repos.json").read_text())
     auth = {"Authorization": f"token {read_secret(state, 'shako-token')}"}
@@ -739,7 +828,8 @@ def cmd_smoke(a):
     pw = read_secret(state, "dashboards-password")
     dauth = {"Authorization": "Basic " + base64.b64encode(f"portal:{pw}".encode()).decode()}
     st, found = h.json("GET", "/dashboards/api/search?type=dash-db", headers=dauth)
-    want = len(list((export / "grafana" / "dashboards").glob("*.json")))
+    want = sum(1 for f in (export / "grafana" / "dashboards").glob("*.json")
+               if _daiya_kind(f.name) in ("dashboard", "model"))
     check(f"daiya: {want} dashboards", st == 200 and isinstance(found, list) and len(found) >= want,
           f"{st} {len(found) if isinstance(found, list) else found}", "GET /dashboards/api/search")
     # 8. every public Endpoint answers a query
@@ -751,9 +841,10 @@ def cmd_smoke(a):
             eps.append(m.group(1))
     bad = []
     for slug in sorted(set(eps)):
-        st, _, _ = Http(a.base).call("GET", f"/api/endpoint/{slug}/ngsi-ld/v1/types")
-        if st != 200:
-            bad.append(f"{slug}: {st}")
+        st, hdrs, body = Http(a.base).call("GET", f"/api/endpoint/{slug}/ngsi-ld/v1/types")
+        ctype = hdrs.get("Content-Type") or hdrs.get("content-type") or ""
+        if st != 200 or "json" not in ctype:
+            bad.append(f"{slug}: {st} {ctype} {body[:80]!r}")
     check(f"{len(set(eps))} public Endpoints answer a query", not bad and bool(eps),
           f"{len(bad)} failed: {'; '.join(bad[:5])}", "GET /api/endpoint/{slug}/ngsi-ld/v1/types")
     # 9. the 7-day rule holds in the broker: no instance older than the window
