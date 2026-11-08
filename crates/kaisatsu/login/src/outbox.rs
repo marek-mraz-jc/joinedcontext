@@ -73,17 +73,17 @@ impl RecordingSender {
     }
 
     pub fn set_failures(&self, count: u32) {
-        *self.fail_remaining.lock().unwrap() = count;
+        *self.fail_remaining.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = count;
     }
 
     #[must_use]
     pub fn drain(&self) -> Vec<RecordedMail> {
-        std::mem::take(&mut *self.sent.lock().unwrap())
+        std::mem::take(&mut *self.sent.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 
     #[must_use]
     pub fn messages(&self) -> Vec<RecordedMail> {
-        self.sent.lock().unwrap().clone()
+        self.sent.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
     }
 }
 
@@ -98,13 +98,13 @@ impl MailSender for RecordingSender {
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             {
-                let mut rem = self.fail_remaining.lock().unwrap();
+                let mut rem = self.fail_remaining.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 if *rem > 0 {
                     *rem -= 1;
                     return Err(KaisatsuError::Storage("simulated SMTP failure".into()));
                 }
             }
-            self.sent.lock().unwrap().push(RecordedMail {
+            self.sent.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(RecordedMail {
                 realm_id: realm_id.to_owned(),
                 to_address: to_address.to_owned(),
                 subject: subject.to_owned(),
