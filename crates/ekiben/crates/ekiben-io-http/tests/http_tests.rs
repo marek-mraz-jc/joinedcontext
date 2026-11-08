@@ -416,3 +416,60 @@ async fn oauth2_sends_the_client_as_bento_does() {
         assert_eq!(*seen.lock().unwrap(), want, "{refuse}");
     }
 }
+
+/// A server that answers every request with the status line it is given, as some sources do
+/// (a code without a phrase, a phrase of their own).
+async fn status_line_server(line: &'static str) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf).await;
+                let body = "down";
+                let answer = format!(
+                    "HTTP/1.1 {line}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = s.write_all(answer.as_bytes()).await;
+            });
+        }
+    });
+    format!("http://{addr}")
+}
+
+#[tokio::test]
+async fn an_unexpected_status_quotes_the_servers_own_phrase_as_go_does() {
+    let (reg, pctx, _) = setup_contexts(true);
+    // Go's Response.Status is the line as sent: Bento 1.22 printed "(598): 598 , Error: ...".
+    for (line, want) in [
+        ("598 ", "unexpected response code (598): 598 , Error: down"),
+        (
+            "503 Temporarily Down",
+            "unexpected response code (503): 503 Temporarily Down, Error: down",
+        ),
+        (
+            "404 Not Found",
+            "unexpected response code (404): 404 Not Found, Error: down",
+        ),
+    ] {
+        let url = status_line_server(line).await;
+        let conf = ComponentConfig::from_json_value(
+            &serde_json::json!({ "http": { "url": url, "verb": "GET", "retries": 0 } }),
+            "noop",
+            None,
+        )
+        .unwrap();
+        let p = reg.build_processor(&conf, &pctx, "0").unwrap();
+        let res = execute_all(&pctx, &[p], vec![vec![Part::from_str("")]])
+            .await
+            .unwrap();
+        let err = res[0][0]
+            .error_get()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(err.contains(want), "{line}: {err}");
+    }
+}

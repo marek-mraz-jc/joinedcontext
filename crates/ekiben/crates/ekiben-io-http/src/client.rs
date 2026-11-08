@@ -40,6 +40,16 @@ impl std::fmt::Display for UnexpectedHttpStatusError {
 
 impl std::error::Error for UnexpectedHttpStatusError {}
 
+/// Go's `Response.Status`: the code and the phrase the server sent (hyper keeps one that is not
+/// the canonical phrase, an empty one included, as `ReasonPhrase`), else the canonical phrase.
+pub fn go_status(resp: &reqwest::Response) -> String {
+    let phrase = match resp.extensions().get::<hyper::ext::ReasonPhrase>() {
+        Some(sent) => String::from_utf8_lossy(sent.as_bytes()).into_owned(),
+        None => resp.status().canonical_reason().unwrap_or("").to_string(),
+    };
+    format!("{} {phrase}", resp.status().as_u16())
+}
+
 /// The form of a client-credentials token request as x/oauth2 encodes it: `grant_type`, `scope`
 /// when scopes are set, the `endpoint_params` over both, and with `in_params` the client's id and
 /// secret; keys sorted, as Go's `url.Values.Encode` writes them.
@@ -618,6 +628,7 @@ impl HttpClient {
                 Ok(resp) => {
                     let status = resp.status();
                     let code = status.as_u16();
+                    let status_line = go_status(&resp);
                     let headers = resp.headers().clone();
 
                     let (succeeded, retry_strat) = self.check_status(code);
@@ -629,11 +640,7 @@ impl HttpClient {
 
                     let status_err = UnexpectedHttpStatusError {
                         code,
-                        status: format!(
-                            "{} {}",
-                            code,
-                            status.canonical_reason().unwrap_or("Error")
-                        ),
+                        status: status_line,
                         body: String::from_utf8_lossy(&body_bytes).into_owned(),
                         redacted_url,
                     };
