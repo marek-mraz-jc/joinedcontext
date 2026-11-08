@@ -5236,6 +5236,7 @@ dependencies = [
  "dataroom-store-pg",
  "ekiben-core",
  "ekiben-server",
+ "futures",
  "getrandom 0.3.4",
  "hex",
  "http-body-util",
@@ -5272,6 +5273,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "url",
  "zeroize",
 ]
 

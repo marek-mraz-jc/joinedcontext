@@ -224,8 +224,6 @@ pub struct FileConfig {
     #[serde(default)]
     pub dataroom: Option<DataroomSection>,
     #[serde(default)]
-    pub daiya: DaiyaSection,
-    #[serde(default)]
     pub ekiben: EkibenSection,
     #[serde(default)]
     pub antares: AntaresSection,
@@ -276,7 +274,6 @@ pub struct Config {
     pub mounts: BTreeMap<Module, MountOverride>,
     pub kaisatsu: KaisatsuSection,
     pub dataroom: DataroomSection,
-    pub daiya: DaiyaSection,
     pub ekiben: EkibenSection,
     pub antares: AntaresSection,
     pub shako: ShakoSection,
