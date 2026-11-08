@@ -209,7 +209,8 @@ class Suite:
                    bool(last and last.ok) and not lost and not extra)
         leaked = sorted(listed & {e.slug for e in closed})
         self.check("hub.list_endpoints.closed", t, "tools/call list_endpoints", "no closed Endpoint listed anonymously",
-                   f"closed listed: {leaked[:5]}", not leaked)
+                   f"closed listed: {leaked[:5]}; listing {last.brief(60) if last else 'none'}",
+                   bool(last and last.ok) and bool(listed) and not leaked)
         # SP-20: a closed Endpoint and one that does not exist are one answer.
         fake = "".join(secrets.choice("abcdefghijklmnopqrstuvwxyz234567") for _ in range(26))
         nope = self.hub.call("query_entities", {"endpoint": fake, "type": ["Thing"]})
@@ -328,8 +329,11 @@ class Suite:
         if door is self.hub:
             q["endpoint"] = e.slug
         b = door.call("query_entities", q)
+        # Answered without the probe, or refused because the probe's type is none the Endpoint
+        # serves (nothing of it can be stored readable): a door that is down passes neither.
+        unserved = b.refused and b.status == 200 and "not one of the types" in text_of(b.result)
         self.check(f"{label}.write.nothing", t, f"query_entities id={probe}", "the refused entity is not there",
-                   b.brief(100), probe not in ids_in(b.data))
+                   b.brief(100), (b.ok and probe not in ids_in(b.data)) or unserved)
 
     def hub_search(self, e: ex.Endpoint):
         types = self.x.granted(e)
