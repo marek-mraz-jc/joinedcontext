@@ -1023,25 +1023,21 @@ async fn advance_or_render(
             )
         };
 
-        let mut redirect_url = url::Url::parse(&auth_session.redirect_uri)
-            .map_err(|_| KaisatsuError::BadRequest("invalid redirect_uri".into()))?;
-        redirect_url
-            .query_pairs_mut()
-            .append_pair("code", &raw_code);
+        // The code goes back in the response mode the client asked for (query, fragment,
+        // form_post), as on the SSO path.
+        let mut pairs = vec![("code", raw_code.as_str())];
         if let Some(st) = &auth_session.state {
-            redirect_url.query_pairs_mut().append_pair("state", st);
+            pairs.push(("state", st.as_str()));
         }
-
-        return Ok((
-            StatusCode::SEE_OTHER,
-            [
-                (header::SET_COOKIE, set_cookie),
-                (header::LOCATION, redirect_url.to_string()),
-                (header::CACHE_CONTROL, "no-store".to_owned()),
-            ],
-            "",
-        )
-            .into_response());
+        let mut resp = kaisatsu_oidc::redirect_with_params(
+            &auth_session.redirect_uri,
+            &auth_session.response_mode,
+            &pairs,
+        );
+        let cookie = header::HeaderValue::from_str(&set_cookie)
+            .map_err(|_| KaisatsuError::Storage("invalid session cookie".into()))?;
+        resp.headers_mut().append(header::SET_COOKIE, cookie);
+        return Ok(resp);
     }
 
     auth_session.step_state_json = serde_json::to_string(&next_state).unwrap_or_default();

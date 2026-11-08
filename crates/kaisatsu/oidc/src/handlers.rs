@@ -453,7 +453,9 @@ fn extract_requested_acr(params: &BTreeMap<String, String>) -> Option<String> {
     None
 }
 
-fn redirect_with_params(
+/// The authorization response in the requested `response_mode` (`query`, `fragment`,
+/// `form_post`), used by the SSO path here and by the interactive login.
+pub fn redirect_with_params(
     redirect_uri: &str,
     response_mode: &str,
     pairs: &[(&str, &str)],
@@ -2472,6 +2474,12 @@ async fn enforce_dpop_binding(
     dpop_scheme: bool,
 ) -> Result<()> {
     let Some(bound) = claims.pointer("/cnf/jkt").and_then(Value::as_str) else {
+        // RFC 9449 section 7.1: the DPoP scheme carries a DPoP-bound token only.
+        if dpop_scheme {
+            return Err(KaisatsuError::Unauthorized(
+                "the DPoP scheme needs a DPoP-bound token".into(),
+            ));
+        }
         return Ok(());
     };
     if !dpop_scheme {
