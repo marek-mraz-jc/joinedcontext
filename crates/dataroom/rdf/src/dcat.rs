@@ -715,11 +715,7 @@ pub fn add_dataset_triples(
         }
 
         // Profile-specific licence / terms-of-use representation
-        let dist_lic = dist
-            .licence
-            .as_deref()
-            .or(dataset.licence_id.as_deref())
-            .or(dataset.licence_url.as_deref());
+        let dist_lic = distribution_licence(dataset, dist);
         let resolved_lic = dist_lic.and_then(find_licence);
 
         match profile {
@@ -760,31 +756,7 @@ pub fn add_dataset_triples(
                     ns::RDF_TYPE,
                     Term::Iri(format!("{}Specifikace", ns::CZ_PU)),
                 );
-                let tou = dist.terms_of_use.clone().unwrap_or_else(|| {
-                    let cc_url = resolved_lic
-                        .as_ref()
-                        .map(|l| l.url.clone())
-                        .filter(|u| !u.is_empty())
-                        .unwrap_or_else(|| {
-                            "https://data.gov.cz/podmínky-užití/neobsahuje-autorská-díla/".into()
-                        });
-                    TermsOfUse {
-                        authors_work: Some(cc_url.clone()),
-                        author_name: BTreeMap::new(),
-                        database_as_work: Some(
-                            "https://data.gov.cz/podmínky-užití/není-autorskoprávně-chráněnou-databází/"
-                                .into(),
-                        ),
-                        database_author_name: BTreeMap::new(),
-                        sui_generis_database: Some(
-                            "https://data.gov.cz/podmínky-užití/není-chráněna-zvláštním-právem-pořizovatele-databáze/"
-                                .into(),
-                        ),
-                        personal_data: Some(
-                            "https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/".into(),
-                        ),
-                    }
-                });
+                let tou = terms_of_use(dist, resolved_lic.as_ref(), DcatProfileKind::Cz);
                 if let Some(aw) = &tou.authors_work {
                     g.insert(
                         spec_node.clone(),
@@ -840,25 +812,7 @@ pub fn add_dataset_triples(
                     ns::RDF_TYPE,
                     Term::Iri(format!("{}TermsOfUse", ns::SK_LEG)),
                 );
-                let tou = dist.terms_of_use.clone().unwrap_or_else(|| {
-                    let cc_url = resolved_lic
-                        .as_ref()
-                        .map(|l| l.url.clone())
-                        .filter(|u| !u.is_empty())
-                        .unwrap_or_else(|| "https://creativecommons.org/licenses/by/4.0/".into());
-                    TermsOfUse {
-                        authors_work: Some(cc_url.clone()),
-                        author_name: BTreeMap::new(),
-                        database_as_work: Some(cc_url),
-                        database_author_name: BTreeMap::new(),
-                        sui_generis_database: Some(
-                            "https://creativecommons.org/publicdomain/zero/1.0/".into(),
-                        ),
-                        personal_data: Some(
-                            "https://data.gov.sk/def/personal-data-occurence-type/2".into(),
-                        ),
-                    }
-                });
+                let tou = terms_of_use(dist, resolved_lic.as_ref(), DcatProfileKind::Sk20);
                 if let Some(aw) = &tou.authors_work {
                     g.insert(
                         tou_node.clone(),
@@ -1180,6 +1134,51 @@ pub fn catalogue_to_graph(
     }
 
     g
+}
+
+/// The licence a distribution is published under: its own, else the dataset's.
+pub(crate) fn distribution_licence<'a>(
+    dataset: &'a Dataset,
+    dist: &'a Distribution,
+) -> Option<&'a str> {
+    dist.licence
+        .as_deref()
+        .or(dataset.licence_id.as_deref())
+        .or(dataset.licence_url.as_deref())
+}
+
+/// The CZ or SK terms of use of a distribution: the ones it carries, each missing field filled
+/// with the profile's default (the resolved licence's URL for the copyright fields). Both
+/// profiles' shapes require all four fields, and the JSON-LD and graph renderings share this.
+pub(crate) fn terms_of_use(
+    dist: &Distribution,
+    licence: Option<&dataroom_core::vocab::LicenceEntry>,
+    profile: DcatProfileKind,
+) -> TermsOfUse {
+    let licence_url = licence.map(|l| l.url.clone()).filter(|u| !u.is_empty());
+    let (authors, database, sui_generis, personal) = match profile {
+        DcatProfileKind::Sk20 => {
+            let cc = licence_url.unwrap_or_else(|| "https://creativecommons.org/licenses/by/4.0/".into());
+            (
+                cc.clone(),
+                cc,
+                "https://creativecommons.org/publicdomain/zero/1.0/".to_owned(),
+                "https://data.gov.sk/def/personal-data-occurence-type/2".to_owned(),
+            )
+        }
+        _ => (
+            licence_url.unwrap_or_else(|| "https://data.gov.cz/podmínky-užití/neobsahuje-autorská-díla/".into()),
+            "https://data.gov.cz/podmínky-užití/není-autorskoprávně-chráněnou-databází/".to_owned(),
+            "https://data.gov.cz/podmínky-užití/není-chráněna-zvláštním-právem-pořizovatele-databáze/".to_owned(),
+            "https://data.gov.cz/podmínky-užití/neobsahuje-osobní-údaje/".to_owned(),
+        ),
+    };
+    let mut tou = dist.terms_of_use.clone().unwrap_or_default();
+    tou.authors_work.get_or_insert(authors);
+    tou.database_as_work.get_or_insert(database);
+    tou.sui_generis_database.get_or_insert(sui_generis);
+    tou.personal_data.get_or_insert(personal);
+    tou
 }
 
 /// Serializes one [`Dataset`] in the requested [`RdfFormat`] and [`DcatProfileKind`] (C7, C17).
@@ -2176,6 +2175,70 @@ mod tests {
         ] {
             let g = parse(content.as_bytes(), fmt, RdfLimits::default()).expect("example parses");
             assert!(!g.is_empty());
+        }
+    }
+
+    /// A dataset whose free-text URL fields carry IRI-breaking characters.
+    fn hostile_dataset() -> Dataset {
+        serde_json::from_value(serde_json::json!({
+            "orgId": Uuid::nil(), "catalogueId": Uuid::nil(), "id": "pkg-x", "name": "x",
+            "title": {"cs": "X"}, "description": {}, "publisherId": "city",
+            "visibility": "public", "state": "active",
+            "landingPage": "https://e.org/lp> . <https://victim.example/ds> <http://purl.org/dc/terms/publisher> <https://evil.example/p",
+            "distributions": [{
+                "id": "res-1", "datasetId": "pkg-x", "title": {},
+                "accessUrl": "https://e.org/a\"b {c}|^`\\d e\n<https://evil.example/s> <https://evil.example/p> <https://evil.example/o> .\n",
+                "downloadUrl": "https://e.org/dl?q=<x>"
+            }],
+            "issued": "2026-11-01T10:00:00Z", "modified": "2026-11-02T10:00:00Z"
+        }))
+        .expect("hostile dataset fixture")
+    }
+
+    #[test]
+    fn a1_iri_breaking_characters_neither_inject_triples_nor_break_the_feed() {
+        let org = OrgId::from_uuid(Uuid::from_u128(1));
+        let cid = CatalogueId::from_uuid(Uuid::from_u128(10));
+        let cat = sample_catalogue(org, cid);
+        let ds = hostile_dataset();
+        let expected = dataset_to_graph(&ds, &cat, None, DcatProfileKind::Eu301).len();
+        for format in [
+            RdfFormat::Turtle,
+            RdfFormat::NTriples,
+            RdfFormat::RdfXml,
+            RdfFormat::JsonLd,
+        ] {
+            let text = serialize_dataset(&ds, &cat, None, format, DcatProfileKind::Eu301);
+            let g = parse(text.as_bytes(), format, RdfLimits::default())
+                .unwrap_or_else(|e| panic!("{format:?} output must parse: {e}\n{text}"));
+            assert_eq!(
+                g.len(),
+                expected,
+                "{format:?} added or lost triples:\n{text}"
+            );
+            assert!(
+                !g.triples
+                    .iter()
+                    .any(|t| t.predicate.starts_with("https://evil")
+                        || t.subject.as_iri() == Some("https://victim.example/ds")),
+                "{format:?} let a URL field write its own triple:\n{text}"
+            );
+        }
+        // The CZ and SK JSON-LD documents carry the same URLs as plain JSON strings.
+        for profile in [DcatProfileKind::Cz, DcatProfileKind::Sk20] {
+            let text = serialize_dataset(&ds, &cat, None, RdfFormat::JsonLd, profile);
+            let g = parse(text.as_bytes(), RdfFormat::JsonLd, RdfLimits::default())
+                .unwrap_or_else(|e| panic!("{profile:?} JSON-LD must parse: {e}\n{text}"));
+            let access = format!("{}accessURL", ns::DCAT);
+            assert_eq!(
+                g.triples.iter().filter(|t| t.predicate == access).count(),
+                1,
+                "{profile:?} JSON-LD lost the access URL:\n{text}"
+            );
+            assert!(!g
+                .triples
+                .iter()
+                .any(|t| t.predicate.starts_with("https://evil")));
         }
     }
 }

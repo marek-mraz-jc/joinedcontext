@@ -3,6 +3,7 @@
 
 use dataroom_core::{DataroomError, Result};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -82,6 +83,33 @@ impl RdfLimits {
             forbid_owl_imports: true,
         }
     }
+}
+
+/// An IRI as RDF syntax may write it: characters no IRI may hold (controls, space and
+/// `<>"{}|^`\`) are percent-encoded. Dataset URL fields are free text; written raw, a `>` ended
+/// the IRI and the rest of the field wrote triples of its own into the feed.
+pub fn iri_text(iri: &str) -> Cow<'_, str> {
+    let forbidden = |c: char| {
+        c.is_control()
+            || matches!(
+                c,
+                ' ' | '<' | '>' | '"' | '{' | '}' | '|' | '^' | '`' | '\\'
+            )
+    };
+    if !iri.contains(forbidden) {
+        return Cow::Borrowed(iri);
+    }
+    let mut out = String::with_capacity(iri.len() + 16);
+    for c in iri.chars() {
+        if forbidden(c) {
+            for byte in c.encode_utf8(&mut [0; 4]).bytes() {
+                out.push_str(&format!("%{byte:02X}"));
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    Cow::Owned(out)
 }
 
 /// An RDF subject node (IRI or blank node).

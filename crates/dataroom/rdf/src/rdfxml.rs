@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 //! RDF/XML (`.rdf`, `.xml`) parser (backed by `oxrdfxml`) and serializer for DCAT-AP graphs (A1, C7).
 
-use crate::graph::{ns, RdfGraph, RdfLimits, SubjectNode, Term, Triple};
+use crate::graph::{iri_text, ns, RdfGraph, RdfLimits, SubjectNode, Term, Triple};
 use crate::turtle::from_ox_triple;
 use dataroom_core::{DataroomError, Result};
 use oxrdfxml::RdfXmlParser;
@@ -232,7 +232,7 @@ pub fn serialize_rdfxml(graph: &RdfGraph) -> String {
         out.push_str("  <rdf:Description");
         match subj {
             SubjectNode::Named(iri) => {
-                out.push_str(&format!(" rdf:about=\"{}\">\n", xml_escape(iri)))
+                out.push_str(&format!(" rdf:about=\"{}\">\n", xml_escape(&iri_text(iri))))
             }
             SubjectNode::Blank(id) => {
                 out.push_str(&format!(" rdf:nodeID=\"{}\">\n", xml_escape(id)))
@@ -243,7 +243,10 @@ pub fn serialize_rdfxml(graph: &RdfGraph) -> String {
             out.push_str(&format!("    <{tag}{xmlns_extra}"));
             match &t.object {
                 Term::Iri(iri) => {
-                    out.push_str(&format!(" rdf:resource=\"{}\"/>\n", xml_escape(iri)));
+                    out.push_str(&format!(
+                        " rdf:resource=\"{}\"/>\n",
+                        xml_escape(&iri_text(iri))
+                    ));
                 }
                 Term::Blank(id) => {
                     out.push_str(&format!(" rdf:nodeID=\"{}\"/>\n", xml_escape(id)));
@@ -258,7 +261,7 @@ pub fn serialize_rdfxml(graph: &RdfGraph) -> String {
                     } else if lit.datatype != ns::XSD_STRING {
                         out.push_str(&format!(
                             " rdf:datatype=\"{}\">{}</{tag}>\n",
-                            xml_escape(&lit.datatype),
+                            xml_escape(&iri_text(&lit.datatype)),
                             xml_escape(&lit.value)
                         ));
                     } else {
@@ -284,7 +287,7 @@ fn split_qname(iri: &str, prefixes: &[(&str, &str)]) -> (String, String) {
         Some((p, _)) => (format!("{p}:{local}"), String::new()),
         None => (
             format!("ns0:{local}"),
-            format!(" xmlns:ns0=\"{}\"", xml_escape(ns_part)),
+            format!(" xmlns:ns0=\"{}\"", xml_escape(&iri_text(ns_part))),
         ),
     }
 }

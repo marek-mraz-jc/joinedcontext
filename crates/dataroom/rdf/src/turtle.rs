@@ -2,7 +2,7 @@
 //! Turtle (`.ttl`) and N-Triples (`.nt`) parser (backed by `oxttl`) and serializer with
 //! streaming resource limits (A1).
 
-use crate::graph::{ns, LiteralValue, RdfGraph, RdfLimits, SubjectNode, Term, Triple};
+use crate::graph::{iri_text, ns, LiteralValue, RdfGraph, RdfLimits, SubjectNode, Term, Triple};
 use dataroom_core::{DataroomError, Result};
 use oxttl::{NTriplesParser, TurtleParser};
 use std::collections::BTreeMap;
@@ -283,13 +283,10 @@ pub fn serialize_turtle(graph: &RdfGraph) -> String {
 pub fn serialize_ntriples(graph: &RdfGraph) -> String {
     let mut out = String::new();
     for t in &graph.triples {
-        let s = match &t.subject {
-            SubjectNode::Named(iri) => format!("<{iri}>"),
-            SubjectNode::Blank(id) => format!("_:{id}"),
-        };
-        let p = format!("<{}>", t.predicate);
+        let s = format_subject(&t.subject);
+        let p = format!("<{}>", iri_text(&t.predicate));
         let o = match &t.object {
-            Term::Iri(iri) => format!("<{iri}>"),
+            Term::Iri(iri) => format!("<{}>", iri_text(iri)),
             Term::Blank(id) => format!("_:{id}"),
             Term::Literal(lit) => {
                 let esc = escape_turtle_string(&lit.value);
@@ -298,7 +295,7 @@ pub fn serialize_ntriples(graph: &RdfGraph) -> String {
                 } else if lit.datatype == ns::XSD_STRING {
                     format!("\"{esc}\"")
                 } else {
-                    format!("\"{esc}\"^^<{}>", lit.datatype)
+                    format!("\"{esc}\"^^<{}>", iri_text(&lit.datatype))
                 }
             }
         };
@@ -309,7 +306,7 @@ pub fn serialize_ntriples(graph: &RdfGraph) -> String {
 
 fn format_subject(subj: &SubjectNode) -> String {
     match subj {
-        SubjectNode::Named(iri) => format!("<{iri}>"),
+        SubjectNode::Named(iri) => format!("<{}>", iri_text(iri)),
         SubjectNode::Blank(id) => format!("_:{id}"),
     }
 }
@@ -328,7 +325,7 @@ fn format_iri(iri: &str, prefixes: &[(&str, &str)]) -> String {
             }
         }
     }
-    format!("<{iri}>")
+    format!("<{}>", iri_text(iri))
 }
 
 /// Turtle's `PN_CHARS_BASE`: the letters a prefixed local name may hold. `char::is_alphanumeric`
