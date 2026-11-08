@@ -121,7 +121,8 @@
     "mappings": "Zuordnungen",
     "layers": "Kartenebenen",
     "csrs": "Kontextquellen",
-    "health": "Zustand"
+    "health": "Zustand",
+    "repositories": "Repositories"
   },
   "auth": {
     "lead": "Melden Sie sich mit dem Konto Ihrer Organisation an, um diese Plattform zu verwalten.",
@@ -6895,6 +6896,9 @@
         "capture": {
           "deleted": "MQTT-Mitschnitt gelöscht"
         }
+      },
+      "repository": {
+        "read": "Repository gelesen"
       }
     },
     "sources": {
@@ -11670,5 +11674,165 @@
     "saved": "Gespeichert. Die Änderung steht in der Zeitleiste.",
     "csvNeedsReason": "Geben Sie zuerst einen Grund an.",
     "csvNothing": "Die Datei enthält keinen neuen Wert zum Importieren."
+  },
+  "repositories": {
+    "title": "Repositories",
+    "intro": "Die Repositories des Projekts in der Forge: seine Konfiguration, seine eigenen und die seiner Anwendungen.",
+    "loading": "Repository wird geladen",
+    "filter": {
+      "label": "Nach Namen filtern",
+      "help": "Teil eines Namens oder einer Beschreibung, zum Beispiel config oder dash."
+    },
+    "empty": {
+      "title": "Noch keine Repositories",
+      "description": "Ein Repository erscheint hier, sobald die Konfiguration des Projekts oder eine Anwendung angelegt ist.",
+      "filtered": "Kein Repository passt",
+      "filteredHint": "Versuchen Sie einen kürzeren Teil des Namens, zum Beispiel config."
+    },
+    "column": {
+      "name": "Name",
+      "role": "Rolle",
+      "branch": "Standard-Branch",
+      "size": "Größe"
+    },
+    "role": {
+      "configuration": "Konfiguration",
+      "project": "Projekt",
+      "application": "Anwendung"
+    },
+    "archived": "Archiviert",
+    "pager": {
+      "label": "Seiten",
+      "previous": "Zurück",
+      "next": "Weiter",
+      "position": "{from}–{to} von {total}"
+    },
+    "back": "Alle Repositories",
+    "page": {
+      "intro": "Ein Repository des Projekts in der Forge.",
+      "views": "Ansichten des Repositorys"
+    },
+    "tab": {
+      "files": "Dateien",
+      "commits": "Commits",
+      "branches": "Branches und Tags",
+      "pulls": "Pull Requests",
+      "settings": "Einstellungen"
+    },
+    "clone": {
+      "label": "Klonen",
+      "copy": "Klon-Adresse kopieren",
+      "copied": "Kopiert",
+      "copyShort": "Kopieren"
+    },
+    "files": {
+      "breadcrumb": "Ordnerpfad",
+      "atRef": "Auf {ref}",
+      "emptyFolder": "Dieser Ordner ist leer",
+      "caption": "Dateien in {path}",
+      "name": "Name",
+      "size": "Größe",
+      "up": "Einen Ordner höher",
+      "truncated": "Der Ordner enthält mehr Einträge als angezeigt; öffnen Sie einen Unterordner für den Rest.",
+      "history": "Verlauf dieser Datei",
+      "emptyRepository": "Dieses Repository hat noch keine Commits",
+      "emptyRepositoryHint": "Dateien erscheinen, sobald die erste Änderung genehmigt und zusammengeführt ist."
+    },
+    "file": {
+      "tooLarge": "Diese Datei ist zu groß für die Anzeige",
+      "binary": "Diese Datei ist binär",
+      "notShown": "Ihre {size} werden hier nicht angezeigt; klonen Sie das Repository, um sie zu lesen."
+    },
+    "commits": {
+      "ofPath": "Commits, die {path} auf {ref} geändert haben",
+      "atRef": "Commits auf {ref}",
+      "empty": "Keine Commits auf diesem Branch",
+      "noMessage": "(keine Nachricht)",
+      "by": "{author} · {date}",
+      "all": "Alle Commits",
+      "sha": "Commit",
+      "parent": "Vorgänger",
+      "files": "{count, plural, one {# Datei geändert} other {# Dateien geändert}}",
+      "truncated": "Dieser Commit ändert mehr, als angezeigt werden kann; der Rest ist ausgelassen."
+    },
+    "status": {
+      "added": "Hinzugefügt",
+      "deleted": "Gelöscht",
+      "renamed": "Umbenannt",
+      "modified": "Geändert"
+    },
+    "diff": {
+      "binary": "Binärdatei, keine Textänderung angezeigt.",
+      "notShown": "Die Änderung ist zu groß für die Anzeige.",
+      "noChange": "Nur Modus oder Name der Datei haben sich geändert.",
+      "label": "Änderungen in {path}",
+      "added": "hinzugefügt",
+      "removed": "entfernt"
+    },
+    "branches": {
+      "title": "Branches",
+      "empty": "Keine Branches",
+      "default": "Standard",
+      "protected": "Geschützt"
+    },
+    "tags": {
+      "title": "Tags",
+      "empty": "Keine Tags"
+    },
+    "pulls": {
+      "filter": {
+        "label": "Status",
+        "help": "Welche Pull Requests aufgelistet werden, zum Beispiel Offen.",
+        "open": "Offen",
+        "closed": "Geschlossen",
+        "all": "Alle"
+      },
+      "empty": "Keine Pull Requests",
+      "emptyHint": "Eine im Portal vorgeschlagene Änderung öffnet hier einen Pull Request.",
+      "line": "#{number} von {author} · {date} · {head} nach {base}",
+      "all": "Alle Pull Requests",
+      "state": {
+        "open": "Offen",
+        "closed": "Geschlossen",
+        "merged": "Zusammengeführt"
+      },
+      "change": "Dieser Pull Request ist eine Portal-Änderung.",
+      "openChange": "Änderung öffnen",
+      "noBody": "Keine Beschreibung.",
+      "files": "{count, plural, one {# Datei} other {# Dateien}}",
+      "noFiles": "Keine Dateien geändert.",
+      "reviews": "Reviews",
+      "noReviews": "Noch keine Reviews.",
+      "verdict": {
+        "APPROVED": "Genehmigt",
+        "REQUEST_CHANGES": "Änderungen erbeten",
+        "COMMENT": "Kommentiert"
+      }
+    },
+    "settings": {
+      "intro": "Was die Forge für dieses Repository hält. Eine Änderung wird als Änderung des Projekts vorgeschlagen und genehmigt.",
+      "protection": "Branch-Schutz",
+      "noProtection": "Kein Branch ist geschützt.",
+      "pattern": "Branch",
+      "push": "Direkter Push",
+      "forcePush": "Force-Push",
+      "approvals": "Nötige Genehmigungen",
+      "webhooks": "Webhooks",
+      "webhooksHint": "Jede Adresse erscheint ohne ihr Geheimnis, das nie zurückgelesen wird.",
+      "noWebhooks": "Keine Webhooks.",
+      "active": "Aktiv",
+      "inactive": "Inaktiv",
+      "collaborators": "Wer Zugriff hat",
+      "noCollaborators": "Keine Gruppe hat eigenen Zugriff.",
+      "packages": "Pakete und Images",
+      "noPackages": "Aus diesem Repository wurde nichts veröffentlicht.",
+      "version": "Paket",
+      "kind": "Art",
+      "digest": "Digest und Größe",
+      "published": "Veröffentlicht",
+      "signed": "Signiert",
+      "yes": "Erlaubt",
+      "no": "Verweigert"
+    }
   }
 }

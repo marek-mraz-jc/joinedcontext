@@ -121,7 +121,8 @@
     "mappings": "Mapovania",
     "layers": "Mapové vrstvy",
     "csrs": "Kontextové zdroje",
-    "health": "Zdravie"
+    "health": "Zdravie",
+    "repositories": "Repozitáre"
   },
   "auth": {
     "lead": "Prihláste sa účtom svojej organizácie a spravujte túto platformu.",
@@ -6895,6 +6896,9 @@
         "capture": {
           "deleted": "Záznam MQTT vymazaný"
         }
+      },
+      "repository": {
+        "read": "Čítanie repozitára"
       }
     },
     "sources": {
@@ -11670,5 +11674,165 @@
     "saved": "Uložené. Zmena je na časovej osi.",
     "csvNeedsReason": "Najprv napíšte dôvod.",
     "csvNothing": "Súbor neobsahuje žiadnu novú hodnotu na import."
+  },
+  "repositories": {
+    "title": "Repozitáre",
+    "intro": "Repozitáre projektu na forge: jeho konfigurácia, jeho vlastné a repozitáre jeho aplikácií.",
+    "loading": "Načítava sa repozitár",
+    "filter": {
+      "label": "Filtrovať podľa názvu",
+      "help": "Časť názvu alebo popisu, napríklad config alebo dash."
+    },
+    "empty": {
+      "title": "Zatiaľ žiadne repozitáre",
+      "description": "Repozitár sa tu zobrazí, keď vznikne konfigurácia projektu alebo aplikácia.",
+      "filtered": "Žiadny repozitár nezodpovedá",
+      "filteredHint": "Skúste kratšiu časť názvu, napr. config."
+    },
+    "column": {
+      "name": "Názov",
+      "role": "Úloha",
+      "branch": "Predvolená vetva",
+      "size": "Veľkosť"
+    },
+    "role": {
+      "configuration": "Konfigurácia",
+      "project": "Projekt",
+      "application": "Aplikácia"
+    },
+    "archived": "Archivovaný",
+    "pager": {
+      "label": "Stránky",
+      "previous": "Predchádzajúca",
+      "next": "Ďalšia",
+      "position": "{from}–{to} z {total}"
+    },
+    "back": "Všetky repozitáre",
+    "page": {
+      "intro": "Repozitár projektu na forge.",
+      "views": "Pohľady na repozitár"
+    },
+    "tab": {
+      "files": "Súbory",
+      "commits": "Commity",
+      "branches": "Vetvy a značky",
+      "pulls": "Pull requesty",
+      "settings": "Nastavenia"
+    },
+    "clone": {
+      "label": "Klonovať",
+      "copy": "Kopírovať adresu na klonovanie",
+      "copied": "Skopírované",
+      "copyShort": "Kopírovať"
+    },
+    "files": {
+      "breadcrumb": "Cesta k priečinku",
+      "atRef": "Na {ref}",
+      "emptyFolder": "Tento priečinok je prázdny",
+      "caption": "Súbory v {path}",
+      "name": "Názov",
+      "size": "Veľkosť",
+      "up": "O priečinok vyššie",
+      "truncated": "Priečinok obsahuje viac položiek, ako sa zobrazuje; otvorte podpriečinok a uvidíte zvyšok.",
+      "history": "História tohto súboru",
+      "emptyRepository": "Tento repozitár zatiaľ nemá commity",
+      "emptyRepositoryHint": "Súbory sa zobrazia, keď sa prvá zmena schváli a zlúči."
+    },
+    "file": {
+      "tooLarge": "Tento súbor je príliš veľký na zobrazenie",
+      "binary": "Tento súbor je binárny",
+      "notShown": "Jeho {size} sa tu nezobrazujú; na čítanie si repozitár naklonujte."
+    },
+    "commits": {
+      "ofPath": "Commity, ktoré zmenili {path} na {ref}",
+      "atRef": "Commity na {ref}",
+      "empty": "Na tejto vetve nie sú commity",
+      "noMessage": "(bez správy)",
+      "by": "{author} · {date}",
+      "all": "Všetky commity",
+      "sha": "Commit",
+      "parent": "Rodič",
+      "files": "{count, plural, one {# zmenený súbor} few {# zmenené súbory} other {# zmenených súborov}}",
+      "truncated": "Tento commit mení viac, ako sa dá zobraziť; zvyšok je vynechaný."
+    },
+    "status": {
+      "added": "Pridaný",
+      "deleted": "Zmazaný",
+      "renamed": "Premenovaný",
+      "modified": "Zmenený"
+    },
+    "diff": {
+      "binary": "Binárny súbor, textová zmena sa nezobrazuje.",
+      "notShown": "Zmena je príliš veľká na zobrazenie.",
+      "noChange": "Zmenil sa len režim alebo názov súboru.",
+      "label": "Zmeny v {path}",
+      "added": "pridané",
+      "removed": "odobraté"
+    },
+    "branches": {
+      "title": "Vetvy",
+      "empty": "Žiadne vetvy",
+      "default": "Predvolená",
+      "protected": "Chránená"
+    },
+    "tags": {
+      "title": "Značky",
+      "empty": "Žiadne značky"
+    },
+    "pulls": {
+      "filter": {
+        "label": "Stav",
+        "help": "Ktoré pull requesty zobraziť, napr. Otvorené.",
+        "open": "Otvorené",
+        "closed": "Zatvorené",
+        "all": "Všetky"
+      },
+      "empty": "Žiadne pull requesty",
+      "emptyHint": "Zmena navrhnutá v Portáli tu otvorí pull request.",
+      "line": "#{number} od {author} · {date} · {head} do {base}",
+      "all": "Všetky pull requesty",
+      "state": {
+        "open": "Otvorený",
+        "closed": "Zatvorený",
+        "merged": "Zlúčený"
+      },
+      "change": "Tento pull request je zmena v Portáli.",
+      "openChange": "Otvoriť zmenu",
+      "noBody": "Bez popisu.",
+      "files": "{count, plural, one {# súbor} few {# súbory} other {# súborov}}",
+      "noFiles": "Žiadne zmenené súbory.",
+      "reviews": "Posúdenia",
+      "noReviews": "Zatiaľ žiadne posúdenia.",
+      "verdict": {
+        "APPROVED": "Schválené",
+        "REQUEST_CHANGES": "Žiada zmeny",
+        "COMMENT": "Komentár"
+      }
+    },
+    "settings": {
+      "intro": "Čo forge drží pre tento repozitár. Zmena sa navrhuje a schvaľuje ako zmena projektu.",
+      "protection": "Ochrana vetiev",
+      "noProtection": "Žiadna vetva nie je chránená.",
+      "pattern": "Vetva",
+      "push": "Priamy push",
+      "forcePush": "Vynútený push",
+      "approvals": "Potrebné schválenia",
+      "webhooks": "Webhooky",
+      "webhooksHint": "Každá adresa sa zobrazuje bez tajomstva, ktoré sa nikdy nečíta späť.",
+      "noWebhooks": "Žiadne webhooky.",
+      "active": "Aktívny",
+      "inactive": "Neaktívny",
+      "collaborators": "Kto má prístup",
+      "noCollaborators": "Žiadna skupina nemá vlastný prístup.",
+      "packages": "Balíky a obrazy",
+      "noPackages": "Z tohto repozitára sa nič nepublikovalo.",
+      "version": "Balík",
+      "kind": "Druh",
+      "digest": "Odtlačok a veľkosť",
+      "published": "Publikované",
+      "signed": "Podpísaný",
+      "yes": "Povolený",
+      "no": "Zakázaný"
+    }
   }
 }

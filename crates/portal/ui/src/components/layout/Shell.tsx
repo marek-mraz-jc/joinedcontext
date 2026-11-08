@@ -631,6 +631,9 @@ export function Shell({
   const knowledgeActive = Boolean(
     matchRoute({ to: "/projects/$project/knowledge", params: { project }, fuzzy: true }),
   );
+  const repositoriesActive = Boolean(
+    matchRoute({ to: "/projects/$project/repositories", params: { project }, fuzzy: true }),
+  );
   const mcpActive = Boolean(matchRoute({ to: "/projects/$project/mcp", params: { project } }));
   const catalogueActive = Boolean(matchRoute({ to: "/catalogue", fuzzy: true }));
   const importActive = Boolean(matchRoute({ to: "/projects/$project/import", params: { project } }));
@@ -645,6 +648,8 @@ export function Shell({
         ? "nav.ckan"
         : knowledgeActive
           ? "nav.knowledge"
+          : repositoriesActive
+            ? "nav.repositories"
           : mcpActive
             ? "nav.mcp"
             : importActive
@@ -869,6 +874,17 @@ export function Shell({
                 className={navLinkClass(knowledgeActive)}
               >
                 <NavLabel icon="search" label={t("nav.knowledge")} />
+              </Link>
+            </li>
+            <li>
+              <Link
+                to="/projects/$project/repositories"
+                params={{ project }}
+                onClick={closeNav}
+                aria-current={repositoriesActive ? "page" : undefined}
+                className={navLinkClass(repositoriesActive)}
+              >
+                <NavLabel icon="git" label={t("nav.repositories")} />
               </Link>
             </li>
             <li>
