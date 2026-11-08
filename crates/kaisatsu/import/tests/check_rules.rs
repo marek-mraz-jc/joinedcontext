@@ -341,3 +341,47 @@ async fn a_literal_otp_seed_is_refused_like_any_literal_secret() {
             .unwrap();
     }
 }
+
+#[test]
+fn the_client_authentication_flow_takes_the_methods_kaisatsu_implements() {
+    let mut d = ri();
+    let flows = d["authenticationFlows"].as_array_mut().unwrap();
+    flows.push(
+        json!({"alias": "clients", "topLevel": true, "builtIn": true,
+        "providerId": "client-flow", "authenticationExecutions": [
+            {"authenticator": "client-secret", "requirement": "ALTERNATIVE"},
+            {"authenticator": "client-jwt", "requirement": "ALTERNATIVE"},
+            {"authenticator": "federated-jwt", "requirement": "ALTERNATIVE"}]}),
+    );
+    check_realm_value(&d, &opts()).unwrap();
+    for unimplemented in ["client-secret-jwt", "client-x509"] {
+        let mut e = d.clone();
+        let last = e["authenticationFlows"].as_array().unwrap().len() - 1;
+        e["authenticationFlows"][last]["authenticationExecutions"][0]["authenticator"] =
+            json!(unimplemented);
+        let err = check_realm_value(&e, &opts()).unwrap_err().to_string();
+        assert!(
+            err.contains(&format!("unknown authenticator '{unimplemented}'")),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn the_reset_credentials_flow_takes_the_steps_kaisatsu_implements() {
+    let mut d = ri();
+    d["authenticationFlows"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"alias": "reset credentials",
+        "topLevel": true, "builtIn": true, "providerId": "basic-flow", "authenticationExecutions": [
+            {"authenticator": "reset-credentials-choose-user", "requirement": "REQUIRED"},
+            {"authenticator": "reset-credential-email", "requirement": "REQUIRED"},
+            {"authenticator": "reset-password", "requirement": "REQUIRED"}]}));
+    check_realm_value(&d, &opts()).unwrap();
+    let last = d["authenticationFlows"].as_array().unwrap().len() - 1;
+    d["authenticationFlows"][last]["authenticationExecutions"][0]["authenticator"] =
+        json!("reset-otp");
+    let err = check_realm_value(&d, &opts()).unwrap_err().to_string();
+    assert!(err.contains("unknown authenticator 'reset-otp'"), "{err}");
+}
