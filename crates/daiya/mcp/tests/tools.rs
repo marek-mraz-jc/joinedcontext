@@ -262,7 +262,7 @@ async fn datasource_tools_query_health_schema_and_resources() {
         &f.state,
         &f.admin,
         "daiya_datasource_resource",
-        json!({ "uid": "prom", "path": "labels" }),
+        json!({ "uid": "prom", "path": "api/v1/labels" }),
     )
     .await
     .unwrap();
