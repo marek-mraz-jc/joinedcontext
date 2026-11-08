@@ -348,7 +348,7 @@ pub async fn list_dashboards(
             })
         })
         .collect();
-    items.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    items.sort_by_key(|a| a.title.to_lowercase());
     Ok(Json(DashboardList {
         ready: true,
         reason: None,
