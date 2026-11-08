@@ -120,6 +120,35 @@ fn check_and_import_refuse_invalid_json_with_1_and_missing_files_with_4() {
 }
 
 #[test]
+fn an_unreadable_entry_in_a_dashboard_directory_is_an_io_failure() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new();
+    scratch.write("dir/a.json", &dashboard("a").to_string());
+    // A directory that only looks like a dashboard file.
+    std::fs::create_dir_all(scratch.0.join("dir/b.json")).unwrap();
+    let out = daiya(&["check", "-f", &scratch.path("dir")]);
+    assert_eq!(out.status.code(), Some(4), "{}", stderr(&out));
+
+    // A directory the operator may not list.
+    let locked = scratch.0.join("locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let listable = std::fs::read_dir(&locked).is_ok();
+    let out = daiya(&["import", "-f", locked.to_str().unwrap()]);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+    if listable {
+        println!("SKIP (locked directory): running with rights that ignore permissions");
+    } else {
+        assert_eq!(out.status.code(), Some(4), "{}", stderr(&out));
+        assert!(
+            stderr(&out).contains("failed to read directory"),
+            "{}",
+            stderr(&out)
+        );
+    }
+}
+
+#[test]
 fn check_and_import_refuse_a_dashboard_with_a_refused_feature() {
     let scratch = Scratch::new();
     let file = scratch.write("refused.json", &refused_dashboard("old").to_string());

@@ -1317,3 +1317,14 @@ fn a_url_the_driver_cannot_use_is_refused() {
         "{err}"
     );
 }
+
+#[tokio::test]
+async fn the_test_database_helper_reports_a_bad_or_unreachable_server() {
+    let err = connect_test_database("not a url").await.err().unwrap();
+    assert_eq!(err.status_code(), 500);
+    let err = connect_test_database("postgres://daiya_nobody@127.0.0.1:1/daiya_none")
+        .await
+        .err()
+        .unwrap();
+    assert!(err.to_string().contains("failed to connect"), "{err}");
+}

@@ -72,6 +72,23 @@ fn configuration_defaults_and_refusals() {
     assert!(config(json!({ "tokenFile": "/x" })).is_err());
     assert!(config(json!({ "store": { "kind": "postgres", "url": "u", "passwordFile": "p", "pasword": 1 } })).is_err());
     assert!(config(json!({ "store": { "kind": "sqlite" } })).is_err());
+    // A Postgres store without a pool size gets a small default pool, not one connection.
+    let pg = config(
+        json!({ "store": { "kind": "postgres", "url": "postgres://r@h/d", "passwordFile": "/p" } }),
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            pg.store,
+            StoreConfig::Postgres {
+                max_connections: 8,
+                migrate: None,
+                ..
+            }
+        ),
+        "{:?}",
+        pg.store
+    );
     assert!(config(json!({ "outbound": { "allowHttp": true, "allowPrivate": true } })).is_err());
 
     let bad_cidr =
