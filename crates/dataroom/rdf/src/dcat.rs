@@ -53,6 +53,28 @@ impl RdfFormat {
     }
 }
 
+/// The values of an `Accept`-style header, highest `q` first (ties keep their order), `q=0` and
+/// unreadable weights dropped (RFC 9110 section 12.4.2).
+fn by_quality(header: &str) -> Vec<&str> {
+    let mut items: Vec<(f32, &str)> = header
+        .split(',')
+        .filter_map(|part| {
+            let mut params = part.split(';');
+            let value = params.next()?.trim();
+            let q = match params.find_map(|p| {
+                let (k, v) = p.split_once('=')?;
+                k.trim().eq_ignore_ascii_case("q").then(|| v.trim())
+            }) {
+                Some(q) => q.parse::<f32>().ok().filter(|q| (0.0..=1.0).contains(q))?,
+                None => 1.0,
+            };
+            (q > 0.0 && !value.is_empty()).then_some((q, value))
+        })
+        .collect();
+    items.sort_by(|a, b| b.0.total_cmp(&a.0));
+    items.into_iter().map(|(_, v)| v).collect()
+}
+
 /// Negotiates an [`RdfFormat`] from an optional URL extension or `Accept` header.
 pub fn negotiate_rdf_format(ext: Option<&str>, accept: Option<&str>) -> Option<RdfFormat> {
     if let Some(ext) = ext {
@@ -60,15 +82,8 @@ pub fn negotiate_rdf_format(ext: Option<&str>, accept: Option<&str>) -> Option<R
             return Some(fmt);
         }
     }
-    let accept = accept?;
-    for part in accept.split(',') {
-        let media = part
-            .split(';')
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_ascii_lowercase();
-        match media.as_str() {
+    for media in by_quality(accept?) {
+        match media.to_ascii_lowercase().as_str() {
             "text/turtle" | "application/x-turtle" | "text/n3" => return Some(RdfFormat::Turtle),
             "application/ld+json" => return Some(RdfFormat::JsonLd),
             "application/rdf+xml" | "application/xml" => return Some(RdfFormat::RdfXml),
@@ -144,8 +159,7 @@ pub fn negotiate_profile(
         }
     }
     if let Some(hdr) = accept_profile_header {
-        for part in hdr.split(',') {
-            let token = part.split(';').next().unwrap_or("").trim();
+        for token in by_quality(hdr) {
             if let Some(kind) = DcatProfileKind::from_token(token) {
                 return (kind, kind.profile_uri().to_owned());
             }
@@ -282,19 +296,18 @@ pub fn add_dataset_triples(
             format!("{}contactPoint", ns::DCAT),
             cp_subj.to_term(),
         );
-        let vcard_class = match (profile, cp.kind) {
-            (DcatProfileKind::Eu301, _) => format!("{}Kind", ns::VCARD),
-            (_, ContactKind::Organization) => format!("{}Organization", ns::VCARD),
-            (_, ContactKind::Individual) => format!("{}Individual", ns::VCARD),
+        // vcard:Organization and vcard:Individual are subclasses of the vcard:Kind every
+        // profile asks for; with vcard:Kind alone an Individual read back as an Organization.
+        let vcard_class = match cp.kind {
+            ContactKind::Organization => format!("{}Organization", ns::VCARD),
+            ContactKind::Individual => format!("{}Individual", ns::VCARD),
         };
         g.insert(cp_subj.clone(), ns::RDF_TYPE, Term::Iri(vcard_class));
-        if profile != DcatProfileKind::Eu301 {
-            g.insert(
-                cp_subj.clone(),
-                ns::RDF_TYPE,
-                Term::Iri(format!("{}Kind", ns::VCARD)),
-            );
-        }
+        g.insert(
+            cp_subj.clone(),
+            ns::RDF_TYPE,
+            Term::Iri(format!("{}Kind", ns::VCARD)),
+        );
         for (lang, name) in &cp.name {
             if !name.is_empty() {
                 g.insert(
@@ -2240,5 +2253,359 @@ mod tests {
                 .iter()
                 .any(|t| t.predicate.starts_with("https://evil")));
         }
+    }
+
+    /// A dataset with every optional DCAT field filled.
+    fn full_dataset() -> Dataset {
+        serde_json::from_str(
+            r#"{
+            "orgId": "00000000-0000-0000-0000-000000000000", "catalogueId": "00000000-0000-0000-0000-000000000000", "id": "pkg-full", "name": "full",
+            "uri": "https://data.example.org/ds/full",
+            "title": {"cs": "Úplná datová sada", "en": "Full dataset"},
+            "description": {"cs": "Popis", "en": "Description"},
+            "publisherId": "city",
+            "publisher": {"uri": "https://data.example.org/org/city", "name": {"cs": "Město"},
+                          "email": "info@city.example", "homepage": "https://city.example",
+                          "agentType": "http://purl.org/adms/publishertype/LocalAuthority", "identifier": "00313271"},
+            "creator": {"uri": "https://data.example.org/org/author", "name": {"cs": "Autor"}},
+            "contactPoint": {"kind": "Individual", "name": {"cs": "Jan"}, "email": "jan@city.example"},
+            "visibility": "public", "state": "active",
+            "licenceId": "cc-by",
+            "themes": ["ENVI", "TRAN"],
+            "eurovocThemes": ["http://eurovoc.europa.eu/100141"],
+            "keywords": {"cs": ["ovzduší", "doprava"], "en": ["air"]},
+            "spatial": ["https://linked.cuzk.cz/resource/ruian/obec/554782"],
+            "spatialResolutionInMeters": 25.0,
+            "temporal": {"start": "2020-01-01", "end": "2025-12-31"},
+            "temporalResolution": "P1D",
+            "frequency": "daily",
+            "landingPage": "https://city.example/air",
+            "documentation": ["https://city.example/air/doc"],
+            "conformsTo": ["https://city.example/air/schema"],
+            "applicableLegislation": ["http://data.europa.eu/eli/reg_impl/2023/138/oj"],
+            "inSeries": "https://data.example.org/series/air",
+            "relations": ["https://data.example.org/ds/other"],
+            "sources": ["https://data.example.org/ds/source"],
+            "languages": ["http://publications.europa.eu/resource/authority/language/CES"],
+            "version": "2.1",
+            "versionNotes": {"en": "Second release"},
+            "accessRights": "http://publications.europa.eu/resource/authority/access-right/PUBLIC",
+            "provenance": {"en": "Measured by sensors"},
+            "dcatType": "http://publications.europa.eu/resource/authority/dataset-type/STATISTICAL",
+            "identifier": "AIR-1",
+            "alternateIdentifiers": ["urn:x:air"],
+            "distributions": [{
+                "id": "res-1", "datasetId": "pkg-full", "uri": "https://data.example.org/dist/1",
+                "title": {"cs": "CSV"}, "description": {"cs": "Měření"},
+                "accessUrl": "https://files.example.org/air", "downloadUrl": "https://files.example.org/air.csv",
+                "format": "CSV", "mediaType": "text/csv", "compressFormat": "application/gzip",
+                "packageFormat": "application/zip", "byteSize": 1234, "hash": "abc123",
+                "hashAlgorithm": "http://spdx.org/rdf/terms#checksumAlgorithm_sha256",
+                "licence": "cc-zero", "rights": {"en": "Free"},
+                "status": "http://publications.europa.eu/resource/authority/distribution-status/COMPLETED",
+                "availability": "http://data.europa.eu/r5r/availability/stable",
+                "conformsTo": ["https://city.example/air/csv-schema"],
+                "documentation": ["https://city.example/air/csv-doc"],
+                "languages": ["http://publications.europa.eu/resource/authority/language/CES"],
+                "applicableLegislation": ["http://data.europa.eu/eli/reg_impl/2023/138/oj"],
+                "temporalResolution": "PT1H", "spatialResolutionInMeters": 10.0,
+                "issued": "2026-01-01T00:00:00Z", "modified": "2026-02-01T00:00:00Z"
+            }, {
+                "id": "res-2", "datasetId": "pkg-full", "uri": "https://data.example.org/dist/2",
+                "title": {"cs": "API"}, "accessUrl": "https://api.example.org/air",
+                "accessServices": [{
+                    "id": "svc", "uri": "https://data.example.org/svc/air", "title": {"cs": "Služba"},
+                    "endpointUrls": ["https://api.example.org/air"],
+                    "endpointDescriptions": ["https://api.example.org/air/openapi.json"],
+                    "conformsTo": ["https://www.ogc.org/standard/sensorthings/"],
+                    "applicableLegislation": ["http://data.europa.eu/eli/reg_impl/2023/138/oj"]
+                }]
+            }],
+            "issued": "2026-11-01T10:00:00Z", "modified": "2026-11-02T10:00:00Z"
+        }"#,
+        )
+        .expect("full dataset fixture")
+    }
+
+    #[test]
+    fn every_profile_and_format_round_trips_a_full_dataset() {
+        let org = OrgId::from_uuid(Uuid::from_u128(1));
+        let cid = CatalogueId::from_uuid(Uuid::from_u128(10));
+        let cat = sample_catalogue(org, cid);
+        let src = full_dataset();
+        for profile in [
+            DcatProfileKind::Eu301,
+            DcatProfileKind::Cz,
+            DcatProfileKind::Sk20,
+        ] {
+            for format in [
+                RdfFormat::Turtle,
+                RdfFormat::NTriples,
+                RdfFormat::RdfXml,
+                RdfFormat::JsonLd,
+            ] {
+                let text = serialize_dataset(&src, &cat, None, format, profile);
+                let back = parse_datasets_from_rdf(
+                    &text,
+                    format,
+                    org,
+                    cid,
+                    "city",
+                    "cs",
+                    &RdfLimits::default(),
+                )
+                .unwrap_or_else(|e| panic!("{profile:?} {format:?}: {e}\n{text}"));
+                let ctx = format!("{profile:?} {format:?}");
+                assert_eq!(back.len(), 1, "{ctx}\n{text}");
+                let ds = &back[0];
+                assert_eq!(ds.title, src.title, "{ctx}");
+                assert_eq!(ds.uri, src.uri, "{ctx}");
+                assert_eq!(ds.spatial, src.spatial, "{ctx}");
+                assert_eq!(ds.distributions.len(), 2, "{ctx}\n{text}");
+                let csv = ds
+                    .distributions
+                    .iter()
+                    .find(|d| d.access_url == "https://files.example.org/air")
+                    .expect(&ctx);
+                assert_eq!(
+                    csv.download_url.as_deref(),
+                    Some("https://files.example.org/air.csv"),
+                    "{ctx}"
+                );
+                if format == RdfFormat::JsonLd && profile != DcatProfileKind::Eu301 {
+                    continue; // the CZ and SK JSON-LD documents carry the profile's core fields only
+                }
+                assert_eq!(ds.description, src.description, "{ctx}");
+                let sorted = |k: &BTreeMap<String, Vec<String>>| {
+                    k.iter()
+                        .map(|(l, v)| {
+                            let mut v = v.clone();
+                            v.sort();
+                            (l.clone(), v)
+                        })
+                        .collect::<BTreeMap<_, _>>()
+                };
+                assert_eq!(
+                    sorted(&ds.keywords),
+                    sorted(&src.keywords),
+                    "RDF keeps no keyword order: {ctx}"
+                );
+                assert_eq!(ds.temporal, src.temporal, "{ctx}");
+                assert_eq!(ds.landing_page, src.landing_page, "{ctx}");
+                assert_eq!(ds.documentation, src.documentation, "{ctx}");
+                assert_eq!(ds.conforms_to, src.conforms_to, "{ctx}");
+                assert_eq!(
+                    ds.applicable_legislation, src.applicable_legislation,
+                    "{ctx}"
+                );
+                assert_eq!(ds.in_series, src.in_series, "{ctx}");
+                if profile == DcatProfileKind::Eu301 {
+                    assert_eq!(
+                        ds.identifier, src.identifier,
+                        "only DCAT-AP writes dct:identifier"
+                    );
+                }
+                assert_eq!(
+                    ds.contact_point.as_ref().map(|c| c.kind),
+                    Some(ContactKind::Individual),
+                    "{ctx}"
+                );
+                assert_eq!(
+                    ds.contact_point.as_ref().map(|c| &c.email),
+                    Some(&"jan@city.example".to_owned()),
+                    "{ctx}"
+                );
+                assert_eq!(csv.byte_size, Some(1234), "{ctx}");
+                assert_eq!(csv.title, src.distributions[0].title, "{ctx}");
+                assert!(
+                    csv.terms_of_use.is_some() || profile == DcatProfileKind::Eu301,
+                    "{ctx}"
+                );
+                let api = ds
+                    .distributions
+                    .iter()
+                    .find(|d| d.access_url == "https://api.example.org/air")
+                    .expect(&ctx);
+                assert_eq!(api.access_services.len(), 1, "{ctx}\n{text}");
+                assert_eq!(
+                    api.access_services[0].endpoint_urls,
+                    ["https://api.example.org/air"],
+                    "{ctx}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn catalogue_graph_carries_contact_point_publishers_and_hydra_paging() {
+        let org = OrgId::from_uuid(Uuid::from_u128(1));
+        let cid = CatalogueId::from_uuid(Uuid::from_u128(10));
+        let mut cat = sample_catalogue(org, cid);
+        cat.contact_point = Some(
+            serde_json::from_value(serde_json::json!(
+            {"kind": "Organization", "name": {"cs": "Odbor"}, "email": "data@city.example"}))
+            .unwrap(),
+        );
+        let hydra = HydraPageInfo {
+            collection_uri: "https://opendata.example.org/catalog".into(),
+            current_page_uri: "https://opendata.example.org/catalog?page=2".into(),
+            total_items: 30,
+            items_per_page: 10,
+            first_page_uri: "https://opendata.example.org/catalog?page=1".into(),
+            last_page_uri: "https://opendata.example.org/catalog?page=3".into(),
+            next_page_uri: Some("https://opendata.example.org/catalog?page=3".into()),
+            prev_page_uri: Some("https://opendata.example.org/catalog?page=1".into()),
+        };
+        let pubs = BTreeMap::new();
+        for profile in [
+            DcatProfileKind::Eu301,
+            DcatProfileKind::Cz,
+            DcatProfileKind::Sk20,
+        ] {
+            for format in [
+                RdfFormat::Turtle,
+                RdfFormat::NTriples,
+                RdfFormat::RdfXml,
+                RdfFormat::JsonLd,
+            ] {
+                let text = serialize_catalogue(
+                    &cat,
+                    &[full_dataset()],
+                    &pubs,
+                    format,
+                    profile,
+                    Some(&hydra),
+                );
+                let g = parse(text.as_bytes(), format, RdfLimits::default())
+                    .unwrap_or_else(|e| panic!("{profile:?} {format:?}: {e}\n{text}"));
+                let page = SubjectNode::Named(hydra.current_page_uri.clone());
+                let next = g.first_object(&page, &format!("{}next", ns::HYDRA));
+                assert_eq!(
+                    next.as_ref().and_then(Term::as_iri),
+                    hydra.next_page_uri.as_deref(),
+                    "{profile:?} {format:?}\n{text}"
+                );
+                let cat_subj = SubjectNode::Named("https://opendata.example.org/catalog".into());
+                assert!(
+                    g.first_object(&cat_subj, &format!("{}contactPoint", ns::DCAT))
+                        .is_some(),
+                    "{profile:?} {format:?}"
+                );
+                assert_eq!(
+                    g.objects_of(&cat_subj, &format!("{}dataset", ns::DCAT)),
+                    [Term::Iri("https://data.example.org/ds/full".into())],
+                    "{profile:?} {format:?}"
+                );
+            }
+        }
+        // The first and last page have no previous and next link.
+        let first = HydraPageInfo {
+            prev_page_uri: None,
+            next_page_uri: None,
+            ..hydra
+        };
+        let g = catalogue_to_graph(&cat, &[], &pubs, DcatProfileKind::Eu301, Some(&first));
+        let page = SubjectNode::Named(first.current_page_uri.clone());
+        assert!(g
+            .first_object(&page, &format!("{}next", ns::HYDRA))
+            .is_none());
+        assert!(g
+            .first_object(&page, &format!("{}previous", ns::HYDRA))
+            .is_none());
+    }
+
+    #[test]
+    fn content_negotiation_by_format_and_profile() {
+        for (ext, f) in [
+            ("ttl", RdfFormat::Turtle),
+            (".JSONLD", RdfFormat::JsonLd),
+            ("rdf", RdfFormat::RdfXml),
+            ("nt", RdfFormat::NTriples),
+        ] {
+            assert_eq!(RdfFormat::from_extension(ext), Some(f));
+            assert!(f.content_type().ends_with("charset=utf-8"));
+        }
+        assert_eq!(RdfFormat::from_extension("csv"), None);
+        assert_eq!(
+            negotiate_rdf_format(Some("nt"), Some("text/turtle")),
+            Some(RdfFormat::NTriples),
+            "the extension wins"
+        );
+        assert_eq!(
+            negotiate_rdf_format(Some("csv"), Some("application/ld+json")),
+            Some(RdfFormat::JsonLd)
+        );
+        assert_eq!(negotiate_rdf_format(None, None), None);
+        assert_eq!(negotiate_rdf_format(None, Some("*/*")), None);
+        assert_eq!(
+            negotiate_rdf_format(
+                None,
+                Some("text/html,application/xhtml+xml;q=0.9,*/*;q=0.8")
+            ),
+            None,
+            "a browser gets HTML"
+        );
+        assert_eq!(
+            negotiate_rdf_format(None, Some("application/xml;q=0.1, Application/N-Triples")),
+            Some(RdfFormat::NTriples)
+        );
+        // Weights decide, and q=0 means "not acceptable" (RFC 9110 12.4.2).
+        assert_eq!(
+            negotiate_rdf_format(None, Some("text/turtle;q=0.2, application/ld+json;q=0.9")),
+            Some(RdfFormat::JsonLd)
+        );
+        assert_eq!(
+            negotiate_rdf_format(None, Some("text/turtle;q=0, application/rdf+xml")),
+            Some(RdfFormat::RdfXml)
+        );
+        assert_eq!(negotiate_rdf_format(None, Some("text/turtle;q=bad")), None);
+        assert_eq!(
+            negotiate_rdf_format(None, Some("text/html;q=0.1, text/turtle")),
+            Some(RdfFormat::Turtle)
+        );
+
+        for k in [
+            DcatProfileKind::Eu301,
+            DcatProfileKind::Cz,
+            DcatProfileKind::Sk20,
+        ] {
+            assert_eq!(DcatProfileKind::from_token(k.id()), Some(k));
+            assert_eq!(
+                DcatProfileKind::from_token(&format!("<{}>", k.profile_uri())),
+                Some(k)
+            );
+        }
+        assert_eq!(DcatProfileKind::from_token("dcat-ap-de"), None);
+        let cz = DcatProfileKind::Cz;
+        assert_eq!(
+            negotiate_profile(
+                Some("cz"),
+                Some("<https://datova-kancelaria.github.io/dcat-ap-sk-2.0/>"),
+                "eu"
+            )
+            .0,
+            cz,
+            "the query wins"
+        );
+        assert_eq!(
+            negotiate_profile(Some("de"), Some("unknown, sk"), "eu").0,
+            DcatProfileKind::Sk20
+        );
+        assert_eq!(
+            negotiate_profile(None, Some("cz;q=0.1, sk;q=0.8"), "eu").0,
+            DcatProfileKind::Sk20
+        );
+        assert_eq!(
+            negotiate_profile(None, Some("cz;q=0"), "eu").0,
+            DcatProfileKind::Eu301
+        );
+        assert_eq!(
+            negotiate_profile(None, None, "dcat-ap-cz"),
+            (cz, cz.profile_uri().to_owned())
+        );
+        assert_eq!(
+            negotiate_profile(None, None, "custom").0,
+            DcatProfileKind::Eu301
+        );
     }
 }
