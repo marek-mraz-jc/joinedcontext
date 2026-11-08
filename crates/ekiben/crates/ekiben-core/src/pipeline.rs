@@ -326,23 +326,62 @@ impl Input for InputWithProcessors {
 }
 
 /// An output's `batching` policy (`internal/component/output/batched_send.go` with
-/// `internal/batch/policy`): each written batch goes through Bento's batcher (`count`,
-/// `byte_size`, `check`, then the policy's `processors`) and every batch it flushes is written,
-/// the rest at the end. ponytail: the runner writes one transaction at a time and awaits it, so a
-/// batch never gathers messages of two transactions and `period` never fires; Bento's output
-/// may merge transactions written within `period`. The ack still follows the write.
+/// `internal/batch/policy`): messages gather across writes in Bento's batcher (`count`,
+/// `byte_size`, `check`, then the policy's `processors`) and go out when it triggers, when
+/// `period` passes since the first one waiting, or when the output closes.
+///
+/// ponytail: the runner awaits each write before the next, so a write that waited for its batch
+/// would stall the stream; a message that joins a batch is acknowledged at once. A batch whose
+/// later write fails is logged and counted (`output_error`) and the next write answers that error,
+/// where Bento would nack the messages. The Portal's outcome post, the one batched output the seed
+/// uses, sits in a `fallback` whose next output is `drop`, which acks them in Bento too. Upgrade
+/// path: let the runner hold acks per transaction until its batch is written.
 pub struct BatchedOutput {
     inner: Arc<dyn Output>,
-    batcher: tokio::sync::Mutex<Batcher>,
+    state: Arc<tokio::sync::Mutex<BatchState>>,
+}
+
+struct BatchState {
+    batcher: Batcher,
+    timer: bool,
+    failed: Option<CoreError>,
+    /// The stream the writes came from: `close` writes what still waits with it.
+    ctx: Option<StreamContext>,
 }
 
 impl BatchedOutput {
     pub fn new(inner: Arc<dyn Output>, batcher: Batcher) -> Self {
         Self {
             inner,
-            batcher: tokio::sync::Mutex::new(batcher),
+            state: Arc::new(tokio::sync::Mutex::new(BatchState {
+                batcher,
+                timer: false,
+                failed: None,
+                ctx: None,
+            })),
         }
     }
+}
+
+/// Flushes what waits and writes it.
+async fn flush_batched(
+    inner: &Arc<dyn Output>,
+    state: &mut BatchState,
+    ctx: &StreamContext,
+) -> Result<(), CoreError> {
+    match state.batcher.flush().await? {
+        Some(b) if !b.is_empty() => inner.write_batch(ctx, b).await,
+        _ => Ok(()),
+    }
+}
+
+/// A flush nobody awaits: its failure is logged, counted and answered by the next write.
+fn deferred_failure(state: &mut BatchState, ctx: &StreamContext, e: CoreError) {
+    tracing::warn!(stream = %ctx.stream_id, error = %e, "a batched output's write failed");
+    ctx.metrics
+        .output_error
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    state.failed.get_or_insert(e);
 }
 
 #[async_trait]
@@ -360,16 +399,31 @@ impl Output for BatchedOutput {
     }
 
     async fn write_batch(&self, ctx: &StreamContext, batch: Batch) -> Result<(), CoreError> {
-        let mut batcher = self.batcher.lock().await;
+        let mut state = self.state.lock().await;
+        if let Some(e) = state.failed.take() {
+            return Err(e);
+        }
+        if state.ctx.is_none() {
+            state.ctx = Some(ctx.clone());
+        }
         for part in batch {
-            if batcher.add(part) {
-                if let Some(b) = batcher.flush().await? {
-                    self.inner.write_batch(ctx, b).await?;
-                }
+            if state.batcher.add(part) {
+                flush_batched(&self.inner, &mut state, ctx).await?;
             }
         }
-        if let Some(b) = batcher.flush().await? {
-            self.inner.write_batch(ctx, b).await?;
+        if state.batcher.count() > 0 && !state.timer {
+            if let Some(wait) = state.batcher.until_next() {
+                state.timer = true;
+                let (inner, shared, ctx) = (self.inner.clone(), self.state.clone(), ctx.clone());
+                tokio::spawn(async move {
+                    tokio::time::sleep(wait).await;
+                    let mut state = shared.lock().await;
+                    state.timer = false;
+                    if let Err(e) = flush_batched(&inner, &mut state, &ctx).await {
+                        deferred_failure(&mut state, &ctx, e);
+                    }
+                });
+            }
         }
         Ok(())
     }
@@ -379,7 +433,15 @@ impl Output for BatchedOutput {
     }
 
     async fn close(&self) -> Result<(), CoreError> {
-        self.inner.close().await
+        let mut state = self.state.lock().await;
+        let flushed = match state.ctx.clone() {
+            Some(ctx) => flush_batched(&self.inner, &mut state, &ctx).await,
+            None => Ok(()),
+        };
+        let closed = self.inner.close().await;
+        flushed
+            .and(closed)
+            .and(state.failed.take().map_or(Ok(()), Err))
     }
 }
 

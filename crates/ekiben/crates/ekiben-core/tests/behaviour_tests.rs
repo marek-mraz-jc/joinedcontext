@@ -926,39 +926,97 @@ async fn input_with_processors_splits_drops_and_acks_once() {
     input.close().await.unwrap();
 }
 
-#[tokio::test]
-async fn an_output_batching_policy_cuts_by_count_and_runs_its_processors() {
-    let reg = registry();
+fn batched(
+    reg: &Arc<Registry>,
+    s: &StreamContext,
+    policy: serde_json::Value,
+) -> (Arc<dyn Output>, Arc<Collect>) {
     let collected = Arc::new(Collect::default());
     let c2 = collected.clone();
     reg.register_output("shared", move |_, _| Ok(c2.clone() as Arc<dyn Output>));
+    let out = reg
+        .build_output(&conf(json!({"shared": {"batching": policy}})), s)
+        .unwrap();
+    (out, collected)
+}
+
+fn written(c: &Collect) -> Vec<Vec<String>> {
+    c.0.lock().unwrap().iter().map(|b| texts(b)).collect()
+}
+
+#[tokio::test]
+async fn an_output_batching_policy_gathers_writes_cuts_by_count_and_runs_its_processors() {
+    let reg = registry();
     let (_tx, s) = stream_ctx(reg.clone());
     // The Portal's outcome post: `http_client.batching` with `count`, `period` and processors.
+    let (out, collected) = batched(
+        &reg,
+        &s,
+        json!({"count": 3, "period": "1h",
+        "processors": [{"split_each": {}}, {"upper": {}}]}),
+    );
+    out.write_batch(&s, parts(&["a"])).await.unwrap();
+    out.write_batch(&s, parts(&["b"])).await.unwrap();
+    assert!(written(&collected).is_empty(), "two of three wait");
+    out.write_batch(&s, parts(&["c", "d"])).await.unwrap();
+    // Bento's policy Flush joins the processors' batches into one (`policy.go`).
+    assert_eq!(written(&collected), vec![vec!["A", "B", "C"]]);
+    // What still waits goes out when the output closes.
+    out.close().await.unwrap();
+    assert_eq!(written(&collected), vec![vec!["A", "B", "C"], vec!["D"]]);
+}
+
+#[tokio::test]
+async fn an_output_batching_period_sends_what_waits() {
+    let reg = registry();
+    let (_tx, s) = stream_ctx(reg.clone());
+    let (out, collected) = batched(&reg, &s, json!({"count": 100, "period": "50ms"}));
+    out.write_batch(&s, parts(&["a"])).await.unwrap();
+    out.write_batch(&s, parts(&["b"])).await.unwrap();
+    assert!(written(&collected).is_empty());
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(written(&collected), vec![vec!["a", "b"]]);
+    out.write_batch(&s, parts(&["c"])).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(written(&collected), vec![vec!["a", "b"], vec!["c"]]);
+}
+
+/// Refuses every write.
+struct Refuses;
+#[async_trait]
+impl Output for Refuses {
+    fn output_type(&self) -> &'static str {
+        "refuses"
+    }
+    async fn write_batch(&self, _: &StreamContext, _: Batch) -> Result<(), CoreError> {
+        Err(CoreError::Other("the target refused".into()))
+    }
+}
+
+#[tokio::test]
+async fn a_batched_write_that_fails_later_is_counted_and_answered_by_the_next_write() {
+    let reg = registry();
+    reg.register_output("refuses", |_, _| Ok(Arc::new(Refuses) as Arc<dyn Output>));
+    let (_tx, s) = stream_ctx(reg.clone());
     let out = reg
         .build_output(
-            &conf(
-                json!({"shared": {"batching": {"count": 2, "period": "500ms",
-                "processors": [{"split_each": {}}, {"upper": {}}]}}}),
-            ),
+            &conf(json!({"refuses": {"batching": {"count": 100, "period": "20ms"}}})),
             &s,
         )
         .unwrap();
-    out.write_batch(&s, parts(&["a", "b", "c"])).await.unwrap();
-    let got: Vec<Vec<String>> = collected
-        .0
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|b| texts(b))
-        .collect();
-    // Bento's policy Flush joins the processors' batches into one (`policy.go`).
+    out.write_batch(&s, parts(&["a"])).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert_eq!(
-        got,
-        vec![
-            vec!["A".to_string(), "B".to_string()],
-            vec!["C".to_string()]
-        ]
+        s.metrics
+            .output_error
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1
     );
+    let err = out
+        .write_batch(&s, parts(&["b"]))
+        .await
+        .expect_err("the failure surfaces");
+    assert!(err.to_string().contains("the target refused"), "{err}");
 }
 
 #[tokio::test]
