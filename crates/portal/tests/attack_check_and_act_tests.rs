@@ -46,17 +46,17 @@ fn pipeline_yaml(body: &str) -> String {
 /// `merge_status` is what the forge answers the merge with: 200 for a branch that has not moved,
 /// 409 for Gitea's refusal of a `head_commit_id` that is no longer the head.
 async fn forge_at(merge_status: u16) -> MockServer {
-    let gitea = MockServer::start().await;
+    let shako = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path(common::REPO))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{}/pulls/13", common::REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "number": 13,
-            "html_url": "https://gitea.example/pulls/13",
+            "html_url": "https://shako.example/pulls/13",
             "state": "open",
             "title": "update Pipeline aq",
             "head": { "ref": BRANCH, "sha": REVIEWED },
@@ -66,14 +66,14 @@ async fn forge_at(merge_status: u16) -> MockServer {
             "mergeable": true,
             "merged": false
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{}/pulls/13/files", common::REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
             { "filename": MANIFEST_PATH, "status": "modified" }
         ])))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{}/contents/{MANIFEST_PATH}", common::REPO)))
@@ -82,7 +82,7 @@ async fn forge_at(merge_status: u16) -> MockServer {
             "sha": "blob-reviewed",
             "content": common::encode(&pipeline_yaml("  rate: 60\n")),
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{}/contents/{MANIFEST_PATH}", common::REPO)))
@@ -91,12 +91,12 @@ async fn forge_at(merge_status: u16) -> MockServer {
             "sha": "blob-base",
             "content": common::encode(&pipeline_yaml("  rate: 30\n")),
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{}/commits", common::REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     let body = if merge_status == 409 {
         json!({ "message": "head_commit_id does not match the head of the branch" })
@@ -106,14 +106,14 @@ async fn forge_at(merge_status: u16) -> MockServer {
     Mock::given(method("POST"))
         .and(path(format!("{}/pulls/13/merge", common::REPO)))
         .respond_with(ResponseTemplate::new(merge_status).set_body_json(body))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    gitea
+    shako
 }
 
 /// `steward@hel.fi` may approve Pipelines in `ovzdusie`.
-fn state_with(gitea: &MockServer) -> AppState {
-    let state = common::state_on(gitea);
+fn state_with(shako: &MockServer) -> AppState {
+    let state = common::state_on(shako);
     state.mirror.upsert(common::envelope(
         "Role",
         "approves-pipelines",
@@ -145,8 +145,8 @@ async fn approve(state: &AppState) -> common::Answer {
 }
 
 /// The body of the merge the forge received, if it received one.
-async fn merge_payload(gitea: &MockServer) -> Option<Value> {
-    gitea
+async fn merge_payload(shako: &MockServer) -> Option<Value> {
+    shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -163,11 +163,11 @@ async fn merge_payload(gitea: &MockServer) -> Option<Value> {
 /// a race this Portal can lose.
 #[tokio::test]
 async fn the_approval_pins_the_merge_to_the_commit_it_reviewed() {
-    let gitea = forge_at(200).await;
-    let state = state_with(&gitea);
+    let shako = forge_at(200).await;
+    let state = state_with(&shako);
     let answer = approve(&state).await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
-    let payload = merge_payload(&gitea)
+    let payload = merge_payload(&shako)
         .await
         .expect("the merge was asked for");
     assert_eq!(
@@ -182,8 +182,8 @@ async fn the_approval_pins_the_merge_to_the_commit_it_reviewed() {
 /// and answer 404 — this case is green only while the two are the same read.
 #[tokio::test]
 async fn every_file_of_the_review_is_read_at_that_same_commit() {
-    let gitea = forge_at(200).await;
-    let state = state_with(&gitea);
+    let shako = forge_at(200).await;
+    let state = state_with(&shako);
     let answer = common::send(
         &state,
         common::person("steward"),
@@ -209,8 +209,8 @@ async fn every_file_of_the_review_is_read_at_that_same_commit() {
 /// at the button is told what happened and what to do — not handed the forge's own JSON.
 #[tokio::test]
 async fn a_branch_that_moved_after_the_review_is_refused_in_words_a_person_can_act_on() {
-    let gitea = forge_at(409).await;
-    let state = state_with(&gitea);
+    let shako = forge_at(409).await;
+    let state = state_with(&shako);
     let answer = approve(&state).await;
     assert_eq!(
         answer.status,
@@ -239,7 +239,7 @@ const UPDATED: &str = "1683ddddeeeeffff000011112222aaaabbbbcccc";
 /// its base (PF-105), the update answers `update_status`, and the manifest's blob at the updated
 /// head is `blob-reviewed` when `main` left it alone.
 async fn behind_forge(update_status: u16, manifest_after: &str) -> MockServer {
-    let gitea = forge_at(200).await;
+    let shako = forge_at(200).await;
     Mock::given(method("POST"))
         .and(path(format!("{}/pulls/13/merge", common::REPO)))
         .respond_with(
@@ -248,7 +248,7 @@ async fn behind_forge(update_status: u16, manifest_after: &str) -> MockServer {
         )
         .up_to_n_times(1)
         .with_priority(1)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     let update = if update_status == 409 {
         json!({ "message": "merge failed because of conflict" })
@@ -259,14 +259,14 @@ async fn behind_forge(update_status: u16, manifest_after: &str) -> MockServer {
         .and(path(format!("{}/pulls/13/update", common::REPO)))
         .and(query_param("style", "merge"))
         .respond_with(ResponseTemplate::new(update_status).set_body_json(update))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{}/branches/{BRANCH}", common::REPO)))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": UPDATED } })),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     for (commit, blob) in [(REVIEWED, "blob-reviewed"), (UPDATED, manifest_after)] {
         Mock::given(method("GET"))
@@ -278,14 +278,14 @@ async fn behind_forge(update_status: u16, manifest_after: &str) -> MockServer {
                     { "path": "README.md", "type": "blob", "sha": format!("readme-{commit}") }
                 ]
             })))
-            .mount(&gitea)
+            .mount(&shako)
             .await;
     }
-    gitea
+    shako
 }
 
-async fn merges_asked(gitea: &MockServer) -> Vec<Value> {
-    gitea
+async fn merges_asked(shako: &MockServer) -> Vec<Value> {
+    shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -303,11 +303,11 @@ async fn merges_asked(gitea: &MockServer) -> Vec<Value> {
 /// A file of `main` it does not touch (`README.md`) moving is no reason to send it back.
 #[tokio::test]
 async fn a_branch_that_fell_behind_is_updated_and_merged_when_its_own_files_are_unchanged() {
-    let gitea = behind_forge(200, "blob-reviewed").await;
-    let state = state_with(&gitea);
+    let shako = behind_forge(200, "blob-reviewed").await;
+    let state = state_with(&shako);
     let answer = approve(&state).await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
-    let merges = merges_asked(&gitea).await;
+    let merges = merges_asked(&shako).await;
     assert_eq!(
         merges.len(),
         2,
@@ -325,8 +325,8 @@ async fn a_branch_that_fell_behind_is_updated_and_merged_when_its_own_files_are_
 /// covers what would merge. Nothing merges, and the reviewer is told which file and what to do.
 #[tokio::test]
 async fn a_branch_whose_own_file_main_changed_goes_back_to_its_reviewer() {
-    let gitea = behind_forge(200, "blob-main-changed-it").await;
-    let state = state_with(&gitea);
+    let shako = behind_forge(200, "blob-main-changed-it").await;
+    let state = state_with(&shako);
     let answer = approve(&state).await;
     assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
     for phrase in [MANIFEST_PATH, "Open the change again", "chg-0000000d"] {
@@ -337,7 +337,7 @@ async fn a_branch_whose_own_file_main_changed_goes_back_to_its_reviewer() {
         );
     }
     assert_eq!(
-        merges_asked(&gitea).await.len(),
+        merges_asked(&shako).await.len(),
         1,
         "a merge followed the refusal"
     );
@@ -347,8 +347,8 @@ async fn a_branch_whose_own_file_main_changed_goes_back_to_its_reviewer() {
 /// that moved, in words, never the forge's own.
 #[tokio::test]
 async fn a_branch_main_does_not_merge_into_is_refused_in_words_a_person_can_act_on() {
-    let gitea = behind_forge(409, "blob-reviewed").await;
-    let state = state_with(&gitea);
+    let shako = behind_forge(409, "blob-reviewed").await;
+    let state = state_with(&shako);
     let answer = approve(&state).await;
     assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
     assert!(
@@ -362,7 +362,7 @@ async fn a_branch_main_does_not_merge_into_is_refused_in_words_a_person_can_act_
         answer.text
     );
     assert_eq!(
-        merges_asked(&gitea).await.len(),
+        merges_asked(&shako).await.len(),
         1,
         "a merge followed the refusal"
     );

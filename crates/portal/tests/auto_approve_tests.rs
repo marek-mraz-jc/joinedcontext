@@ -20,7 +20,7 @@ use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::{Change, ChangePhase};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::ops::{self, Caller, Via};
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
@@ -143,7 +143,7 @@ async fn forge(rules: Value, files: &[(&str, &str)]) -> (MockServer, AppState) {
     }
     let pull = json!({
         "number": 1,
-        "html_url": "https://gitea.example.sk/pulls/1",
+        "html_url": "https://shako.example.sk/pulls/1",
         "state": "open",
         "title": "create ContextSpace mobility",
         "head": { "ref": "portal/create-contextspace-mobility-11111111", "sha": "head-1" },
@@ -178,14 +178,14 @@ async fn forge(rules: Value, files: &[(&str, &str)]) -> (MockServer, AppState) {
         .mount(&server)
         .await;
 
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().expect("url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
     state
         .mirror
         .upsert(org("Role", "admin-role", json!({ "rules": rules })));

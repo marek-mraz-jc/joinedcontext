@@ -23,7 +23,7 @@ const OTHER_FILE: &str = "projects/doprava/pipelines/buses.yaml";
 
 fn pull(number: u64, branch: &str) -> Value {
     json!({
-        "number": number, "html_url": format!("https://gitea.example/pulls/{number}"),
+        "number": number, "html_url": format!("https://shako.example/pulls/{number}"),
         "state": "open", "title": "a change", "head": { "ref": branch }, "base": { "ref": "main" },
         "created_at": "2026-09-18T10:00:00Z",
         "user": { "login": "jana", "full_name": "Jana", "email": "jana@banskabystrica.sk" },

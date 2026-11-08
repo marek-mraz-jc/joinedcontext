@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::reconciler::{Leadership, SyncError, Syncer};
 use joinedcontext_portal::store::Mirror;
 use serde_json::json;
@@ -72,15 +72,15 @@ async fn forge(files: &[(&str, &str)]) -> MockServer {
     server
 }
 
-fn client(server: &MockServer) -> Arc<GiteaClient> {
+fn client(server: &MockServer) -> Arc<ShakoClient> {
     Arc::new(
-        GiteaClient::new(
+        ShakoClient::new(
             server.uri().parse().expect("forge url"),
             "test-owner",
             "test-repo",
             "token-xyz",
         )
-        .expect("gitea client"),
+        .expect("shako client"),
     )
 }
 
@@ -206,7 +206,7 @@ async fn the_ready_route_answers_503_until_the_first_sync_and_200_after() {
     let syncer = Arc::new(Syncer::new(client(&server), Arc::clone(&mirror)));
     let app = server::app(
         AppState::new(Config::for_tests(), None)
-            .with_gitea(client(&server))
+            .with_shako(client(&server))
             .with_syncer(Arc::clone(&syncer)),
     );
     let get = |uri: &'static str| {

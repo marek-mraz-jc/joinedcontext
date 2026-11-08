@@ -214,14 +214,14 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// A forge that takes the two files and opens the merge request, and answers the open-pull list
 /// the name check reads (PF-67).
 async fn forge_with_no_open_projects() -> MockServer {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     Mock::given(http_method("GET"))
         .and(url_path(format!("{REPO}/pulls")))
         .and(query_param("state", "open"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    gitea
+    shako
 }
 
 /// An organization whose `projects.creation` is `creation`, with `banskabystrica` already open.
@@ -259,8 +259,8 @@ async fn open(state: &AppState, who: Identity, body: Value) -> (StatusCode, Stri
 }
 
 /// The files the merge request carries, by path: one `POST /contents` commit (T-6462).
-async fn written(gitea: &MockServer) -> Vec<String> {
-    common::committed_files(gitea, common::REPO)
+async fn written(shako: &MockServer) -> Vec<String> {
+    common::committed_files(shako, common::REPO)
         .await
         .into_iter()
         .map(|(path, _)| path)
@@ -268,8 +268,8 @@ async fn written(gitea: &MockServer) -> Vec<String> {
 }
 
 /// The body of each file the merge request wrote, decoded.
-async fn bodies(gitea: &MockServer) -> Vec<String> {
-    common::committed_files(gitea, common::REPO)
+async fn bodies(shako: &MockServer) -> Vec<String> {
+    common::committed_files(shako, common::REPO)
         .await
         .into_iter()
         .map(|(_, body)| body)
@@ -278,8 +278,8 @@ async fn bodies(gitea: &MockServer) -> Vec<String> {
 
 #[tokio::test]
 async fn anyone_may_open_a_project_and_gets_steward_on_it_and_nothing_else() {
-    let gitea = forge_with_no_open_projects().await;
-    let state = common::state_on(&gitea);
+    let shako = forge_with_no_open_projects().await;
+    let state = common::state_on(&shako);
     organization(&state, "anyone");
 
     let (status, body) = open(
@@ -292,7 +292,7 @@ async fn anyone_may_open_a_project_and_gets_steward_on_it_and_nothing_else() {
     let change: Value = serde_json::from_str(&body).expect("a change");
     assert_eq!(change["status"]["lane"], "yellow", "{body}");
 
-    let paths = written(&gitea).await;
+    let paths = written(&shako).await;
     assert!(
         paths.iter().any(|p| p == "projects/doprava/project.yaml"),
         "{paths:?}"
@@ -304,7 +304,7 @@ async fn anyone_may_open_a_project_and_gets_steward_on_it_and_nothing_else() {
         "{paths:?}"
     );
 
-    let binding = bodies(&gitea)
+    let binding = bodies(&shako)
         .await
         .into_iter()
         .find(|body| body.contains("kind: RoleBinding"))
@@ -316,7 +316,7 @@ async fn anyone_may_open_a_project_and_gets_steward_on_it_and_nothing_else() {
     assert!(binding.contains("nobody@hel.fi"), "{binding}");
 
     // The project file is one the loader takes (T-2643): `organizationRef` as jc-core reads it.
-    let project = bodies(&gitea)
+    let project = bodies(&shako)
         .await
         .into_iter()
         .find(|body| body.contains("kind: Project"))
@@ -328,8 +328,8 @@ async fn anyone_may_open_a_project_and_gets_steward_on_it_and_nothing_else() {
 
 #[tokio::test]
 async fn org_admin_is_the_default_and_a_person_without_propose_on_project_is_refused() {
-    let gitea = forge_with_no_open_projects().await;
-    let state = common::state_on(&gitea);
+    let shako = forge_with_no_open_projects().await;
+    let state = common::state_on(&shako);
     // No `projects.creation` at all: the default is `org-admin` (PF-65).
     state.mirror.upsert(envelope(
         "Organization",
@@ -341,13 +341,13 @@ async fn org_admin_is_the_default_and_a_person_without_propose_on_project_is_ref
     let (status, body) = open(&state, person("nobody"), json!({ "name": "doprava" })).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     assert!(body.contains("propose on Project"), "{body}");
-    assert!(written(&gitea).await.is_empty(), "nothing was written");
+    assert!(written(&shako).await.is_empty(), "nothing was written");
 }
 
 #[tokio::test]
 async fn a_group_setting_refuses_a_person_the_group_manifest_does_not_name() {
-    let gitea = forge_with_no_open_projects().await;
-    let state = common::state_on(&gitea);
+    let shako = forge_with_no_open_projects().await;
+    let state = common::state_on(&shako);
     organization(&state, "group:city-leads");
     state.mirror.upsert(envelope(
         "Group",
@@ -366,8 +366,8 @@ async fn a_group_setting_refuses_a_person_the_group_manifest_does_not_name() {
 
 #[tokio::test]
 async fn a_name_that_is_taken_or_not_a_label_is_refused_before_anything_is_written() {
-    let gitea = forge_with_no_open_projects().await;
-    let state = common::state_on(&gitea);
+    let shako = forge_with_no_open_projects().await;
+    let state = common::state_on(&shako);
     organization(&state, "anyone");
     state
         .mirror
@@ -384,18 +384,18 @@ async fn a_name_that_is_taken_or_not_a_label_is_refused_before_anything_is_writt
     let (status, body) = open(&state, person("nobody"), json!({ "name": "org" })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 
-    assert!(written(&gitea).await.is_empty(), "nothing was written");
+    assert!(written(&shako).await.is_empty(), "nothing was written");
 }
 
 #[tokio::test]
 async fn a_name_another_open_change_already_reserved_is_refused() {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     Mock::given(http_method("GET"))
         .and(url_path(format!("{REPO}/pulls")))
         .and(query_param("state", "open"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
             "number": 4,
-            "html_url": "https://gitea.example/pulls/4",
+            "html_url": "https://shako.example/pulls/4",
             "state": "open",
             "title": "open project doprava",
             "head": { "ref": "portal/create-project-doprava-0000000a" },
@@ -405,9 +405,9 @@ async fn a_name_another_open_change_already_reserved_is_refused() {
             "mergeable": true,
             "merged": false
         }])))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = common::state_on(&gitea);
+    let state = common::state_on(&shako);
     organization(&state, "anyone");
 
     let (status, body) = open(&state, person("nobody"), json!({ "name": "doprava" })).await;
@@ -417,8 +417,8 @@ async fn a_name_another_open_change_already_reserved_is_refused() {
 
 #[tokio::test]
 async fn the_door_opens_a_project_and_nothing_else() {
-    let gitea = forge_with_no_open_projects().await;
-    let state = common::state_on(&gitea);
+    let shako = forge_with_no_open_projects().await;
+    let state = common::state_on(&shako);
     organization(&state, "anyone");
 
     // The person who may open a project by the setting still proposes nothing else: the
@@ -455,21 +455,21 @@ async fn the_door_opens_a_project_and_nothing_else() {
 
 #[tokio::test]
 async fn anyone_plus_lax_merges_the_project_at_once_and_the_message_says_who_did() {
-    use joinedcontext_portal::git::GiteaClient;
+    use joinedcontext_portal::forge::ShakoClient;
 
-    let gitea = forge_with_no_open_projects().await;
+    let shako = forge_with_no_open_projects().await;
     let branding = std::env::temp_dir().join(format!("jc-branding-{}.yaml", std::process::id()));
     std::fs::write(&branding, "instanceName: \"Test\"\nvalidation: lax\n").expect("branding file");
     let mut config = Config::for_tests();
     config.branding_file = Some(branding.to_string_lossy().into_owned());
-    let client = GiteaClient::new(
-        gitea.uri().parse().expect("mock url"),
+    let client = ShakoClient::new(
+        shako.uri().parse().expect("mock url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    let state = AppState::new(config, None).with_gitea(Arc::new(client));
+    let state = AppState::new(config, None).with_shako(Arc::new(client));
     organization(&state, "anyone");
 
     let (status, body) = open(&state, person("nobody"), json!({ "name": "doprava" })).await;
@@ -479,7 +479,7 @@ async fn anyone_plus_lax_merges_the_project_at_once_and_the_message_says_who_did
     let change: Value = serde_json::from_str(&body).expect("a change");
     assert_eq!(change["status"]["phase"], "Merged", "{body}");
 
-    let merges: Vec<String> = gitea
+    let merges: Vec<String> = shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -500,8 +500,8 @@ async fn anyone_plus_lax_merges_the_project_at_once_and_the_message_says_who_did
 
 #[tokio::test]
 async fn anyone_on_a_strict_installation_waits_for_a_person() {
-    let gitea = forge_with_no_open_projects().await;
-    let state = common::state_on(&gitea);
+    let shako = forge_with_no_open_projects().await;
+    let state = common::state_on(&shako);
     organization(&state, "anyone");
 
     let (status, body) = open(&state, person("nobody"), json!({ "name": "doprava" })).await;
@@ -509,7 +509,7 @@ async fn anyone_on_a_strict_installation_waits_for_a_person() {
     let change: Value = serde_json::from_str(&body).expect("a change");
     assert_eq!(change["status"]["phase"], "PendingApproval", "{body}");
     assert!(
-        !gitea
+        !shako
             .received_requests()
             .await
             .unwrap_or_default()
@@ -523,8 +523,8 @@ async fn anyone_on_a_strict_installation_waits_for_a_person() {
 /// verdict does; a project no binding of the caller covers is not there at all (PF-59, R20).
 #[tokio::test]
 async fn the_project_carries_its_usage_against_the_quota_in_force() {
-    let gitea = common::forge().await;
-    let state = common::state_on(&gitea);
+    let shako = common::forge().await;
+    let state = common::state_on(&shako);
     state.mirror.upsert(envelope(
         "Organization",
         "bb",
@@ -612,14 +612,14 @@ const TREE: &[&str] = &[
 
 /// A forge that answers the tree, every blob and the open-pull list the deletion reads.
 async fn forge_with_a_tree(commits: Value) -> MockServer {
-    let gitea = forge_with_no_open_projects().await;
+    let shako = forge_with_no_open_projects().await;
     Mock::given(http_method("GET"))
         .and(url_path(format!("{REPO}/git/trees/main")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "truncated": false,
             "tree": TREE.iter().map(|path| json!({ "path": path, "type": "blob" })).collect::<Vec<_>>(),
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(http_method("GET"))
         .and(wiremock::matchers::path_regex(format!(
@@ -628,21 +628,21 @@ async fn forge_with_a_tree(commits: Value) -> MockServer {
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "sha": "blob-1", "content": "", "encoding": "base64"
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(http_method("GET"))
         .and(url_path(format!("{REPO}/commits")))
         .respond_with(ResponseTemplate::new(200).set_body_json(commits))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(http_method("POST"))
         .and(url_path(format!("{REPO}/contents")))
         .respond_with(
             ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    gitea
+    shako
 }
 
 /// The project, its spaces and endpoints, the roles that delete a project and the bindings that
@@ -720,8 +720,8 @@ async fn delete_project(state: &AppState, who: Identity, project: &str) -> (Stat
 }
 
 /// The paths the merge request removed, in its one commit (F-R2POR3-019).
-async fn removed(gitea: &MockServer) -> Vec<String> {
-    let commits: Vec<Value> = gitea
+async fn removed(shako: &MockServer) -> Vec<String> {
+    let commits: Vec<Value> = shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -746,8 +746,8 @@ async fn removed(gitea: &MockServer) -> Vec<String> {
 
 #[tokio::test]
 async fn deleting_a_project_removes_its_whole_tree_and_every_binding_that_names_it() {
-    let gitea = forge_with_a_tree(json!([])).await;
-    let state = common::state_on(&gitea);
+    let shako = forge_with_a_tree(json!([])).await;
+    let state = common::state_on(&shako);
     world_to_delete(&state);
 
     let (status, body) = delete_project(&state, person("admin"), "banskabystrica").await;
@@ -757,7 +757,7 @@ async fn deleting_a_project_removes_its_whole_tree_and_every_binding_that_names_
     assert_eq!(change["status"]["plan"]["delete"], 6, "{body}");
 
     assert_eq!(
-        removed(&gitea).await,
+        removed(&shako).await,
         vec![
             "projects/banskabystrica/endpoints/public-air.yaml",
             "projects/banskabystrica/project.yaml",
@@ -774,8 +774,8 @@ async fn deleting_a_project_removes_its_whole_tree_and_every_binding_that_names_
 
 #[tokio::test]
 async fn a_share_from_another_project_refuses_the_deletion_and_names_it() {
-    let gitea = forge_with_a_tree(json!([])).await;
-    let state = common::state_on(&gitea);
+    let shako = forge_with_a_tree(json!([])).await;
+    let state = common::state_on(&shako);
     world_to_delete(&state);
     state.mirror.upsert(envelope(
         "SharedSpaceReference",
@@ -787,13 +787,13 @@ async fn a_share_from_another_project_refuses_the_deletion_and_names_it() {
     let (status, body) = delete_project(&state, person("admin"), "banskabystrica").await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(body.contains("helsinki/bb-air"), "{body}");
-    assert!(removed(&gitea).await.is_empty(), "nothing was written");
+    assert!(removed(&shako).await.is_empty(), "nothing was written");
 }
 
 #[tokio::test]
 async fn a_share_by_endpoint_ref_refuses_the_deletion_too() {
-    let gitea = forge_with_a_tree(json!([])).await;
-    let state = common::state_on(&gitea);
+    let shako = forge_with_a_tree(json!([])).await;
+    let state = common::state_on(&shako);
     world_to_delete(&state);
     // The in-organization form names the project, not the slug (EP-77).
     state.mirror.upsert(envelope(
@@ -806,13 +806,13 @@ async fn a_share_by_endpoint_ref_refuses_the_deletion_too() {
     let (status, body) = delete_project(&state, person("admin"), "banskabystrica").await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(body.contains("helsinki/bb-air"), "{body}");
-    assert!(removed(&gitea).await.is_empty(), "nothing was written");
+    assert!(removed(&shako).await.is_empty(), "nothing was written");
 }
 
 #[tokio::test]
 async fn a_project_nobody_bound_the_caller_to_is_not_there_and_one_they_only_read_is_refused() {
-    let gitea = forge_with_a_tree(json!([])).await;
-    let state = common::state_on(&gitea);
+    let shako = forge_with_a_tree(json!([])).await;
+    let state = common::state_on(&shako);
     world_to_delete(&state);
     // A reader of the project: bound, so the project is there, and refused, because reading is
     // not deleting (PF-59, PF-77).
@@ -839,7 +839,7 @@ async fn a_project_nobody_bound_the_caller_to_is_not_there_and_one_they_only_rea
     // A stranger is told the project is not there, never that it is not theirs (R20).
     let (status, body) = delete_project(&state, person("nobody"), "banskabystrica").await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-    assert!(removed(&gitea).await.is_empty(), "nothing was written");
+    assert!(removed(&shako).await.is_empty(), "nothing was written");
 }
 
 /// PF-78: the name of a deleted project stays reserved for the organization's cooling period,
@@ -847,12 +847,12 @@ async fn a_project_nobody_bound_the_caller_to_is_not_there_and_one_they_only_rea
 #[tokio::test]
 async fn the_name_of_a_deleted_project_is_refused_until_the_cooling_period_passes() {
     let day_ago = (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339();
-    let gitea = forge_with_a_tree(json!([{
+    let shako = forge_with_a_tree(json!([{
         "sha": "c0ffee", "commit": { "message": "delete project mobilita",
         "author": { "name": "admin", "email": "admin@hel.fi", "date": day_ago } }
     }]))
     .await;
-    let state = common::state_on(&gitea);
+    let state = common::state_on(&shako);
     organization(&state, "anyone");
 
     let (status, body) = open(&state, person("jana"), json!({ "name": "mobilita" })).await;
@@ -861,12 +861,12 @@ async fn the_name_of_a_deleted_project_is_refused_until_the_cooling_period_passe
 
     // The same name once the period has passed: a project again, nothing written before.
     let long_ago = (chrono::Utc::now() - chrono::Duration::days(60)).to_rfc3339();
-    let gitea = forge_with_a_tree(json!([{
+    let shako = forge_with_a_tree(json!([{
         "sha": "c0ffee", "commit": { "message": "delete project mobilita",
         "author": { "name": "admin", "email": "admin@hel.fi", "date": long_ago } }
     }]))
     .await;
-    let state = common::state_on(&gitea);
+    let state = common::state_on(&shako);
     organization(&state, "anyone");
     let (status, body) = open(&state, person("jana"), json!({ "name": "mobilita" })).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
@@ -876,12 +876,12 @@ async fn the_name_of_a_deleted_project_is_refused_until_the_cooling_period_passe
 #[tokio::test]
 async fn an_organization_may_set_no_cooling_period_at_all() {
     let day_ago = (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339();
-    let gitea = forge_with_a_tree(json!([{
+    let shako = forge_with_a_tree(json!([{
         "sha": "c0ffee", "commit": { "message": "delete project mobilita",
         "author": { "name": "admin", "email": "admin@hel.fi", "date": day_ago } }
     }]))
     .await;
-    let state = common::state_on(&gitea);
+    let state = common::state_on(&shako);
     state.mirror.upsert(envelope(
         "Organization",
         "bb",

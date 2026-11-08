@@ -12,7 +12,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::git::{Author, FileDelete, FileWrite, GitError, GiteaClient, MergeStyle, PullRequest};
+use crate::forge::{Author, FileDelete, FileWrite, GitError, ShakoClient, MergeStyle, PullRequest};
 
 /// Who the forge records as the author of an automatic proposal.
 ///
@@ -45,11 +45,11 @@ pub struct Proposal<'a> {
 ///
 /// The merge request is opened even when `auto_merge` is set: the merge is a second step on a
 /// request that exists, so what merged is in the forge's history either way.
-pub async fn open(gitea: &GiteaClient, proposal: &Proposal<'_>) -> Result<PullRequest, GitError> {
-    let default_branch = gitea.default_branch().await?;
-    create_or_reuse(gitea, proposal.branch, &default_branch).await?;
+pub async fn open(shako: &ShakoClient, proposal: &Proposal<'_>) -> Result<PullRequest, GitError> {
+    let default_branch = shako.default_branch().await?;
+    create_or_reuse(shako, proposal.branch, &default_branch).await?;
     // What is open already: this branch's own merge request is updated, not opened again.
-    let open_now = match gitea.list_pull_requests("open").await {
+    let open_now = match shako.list_pull_requests("open").await {
         Ok(pulls) => pulls,
         Err(err) => {
             tracing::warn!(error = %err, "open merge requests not listed; a second one may open");
@@ -64,17 +64,17 @@ pub async fn open(gitea: &GiteaClient, proposal: &Proposal<'_>) -> Result<PullRe
     for (path, content) in &proposal.files {
         // The sha of what the branch already holds, so a retry updates the file instead of
         // being refused for creating one that exists.
-        let existing = gitea.get_file(path, proposal.branch).await.ok().flatten();
+        let existing = shako.get_file(path, proposal.branch).await.ok().flatten();
         // The same bytes are not written again: a rerun adds no empty commit to the review. A
         // native file an earlier run committed formatted (before F-POR2-017) counts as the same.
         if existing.as_ref().is_some_and(|file| {
-            file.content == crate::git::gitea::committed_text(path, content)
+            file.content == crate::forge::shako::committed_text(path, content)
                 || jc_core::yaml_fmt::format(content).is_ok_and(|text| text == file.content)
         }) {
             continue;
         }
         let existing = existing.map(|file| file.sha);
-        gitea
+        shako
             .put_file(&FileWrite {
                 path,
                 branch: proposal.branch,
@@ -89,10 +89,10 @@ pub async fn open(gitea: &GiteaClient, proposal: &Proposal<'_>) -> Result<PullRe
     for path in &proposal.removed {
         // A path the source dropped and the repository never had is not an error: the run
         // that dropped it may have got this far before and failed on a later file.
-        let Some(existing) = gitea.get_file(path, proposal.branch).await.ok().flatten() else {
+        let Some(existing) = shako.get_file(path, proposal.branch).await.ok().flatten() else {
             continue;
         };
-        gitea
+        shako
             .delete_file(&FileDelete {
                 path,
                 branch: proposal.branch,
@@ -109,7 +109,7 @@ pub async fn open(gitea: &GiteaClient, proposal: &Proposal<'_>) -> Result<PullRe
     {
         Some(pull) => pull.clone(),
         None => {
-            gitea
+            shako
                 .create_pull_request(
                     proposal.branch,
                     &default_branch,
@@ -122,7 +122,7 @@ pub async fn open(gitea: &GiteaClient, proposal: &Proposal<'_>) -> Result<PullRe
 
     if let Some(line) = proposal.line {
         for older in superseded(&open_now, line, proposal.branch) {
-            match gitea.close_pull_request(older.number).await {
+            match shako.close_pull_request(older.number).await {
                 Ok(()) => {
                     tracing::info!(number = older.number, by = %proposal.branch, "closed a merge request this proposal supersedes")
                 }
@@ -134,7 +134,7 @@ pub async fn open(gitea: &GiteaClient, proposal: &Proposal<'_>) -> Result<PullRe
     }
 
     if proposal.auto_merge {
-        gitea
+        shako
             .merge(pull.number, MergeStyle::Merge, proposal.title, None)
             .await?;
     }
@@ -143,11 +143,11 @@ pub async fn open(gitea: &GiteaClient, proposal: &Proposal<'_>) -> Result<PullRe
 
 /// The branch, whether or not a previous attempt already created it.
 async fn create_or_reuse(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     branch: &str,
     default_branch: &str,
 ) -> Result<(), GitError> {
-    match gitea.create_branch(branch, default_branch).await {
+    match shako.create_branch(branch, default_branch).await {
         Ok(()) => Ok(()),
         Err(GitError::Conflict(_)) => {
             tracing::info!(branch = %branch, "continuing on the branch an earlier run started");
@@ -207,7 +207,7 @@ mod tests {
 
     /// A forge where `mirror/bb-peer` already has merge request 7 open beside two of the
     /// digest-named days before it, and the branch already holds `files`.
-    async fn forge(files: &[(&str, &str)]) -> (wiremock::MockServer, GiteaClient) {
+    async fn forge(files: &[(&str, &str)]) -> (wiremock::MockServer, ShakoClient) {
         use base64::Engine;
         use wiremock::matchers::{method, path, path_regex};
         use wiremock::{Mock, ResponseTemplate};
@@ -270,9 +270,9 @@ mod tests {
             .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({})))
             .mount(&server)
             .await;
-        let gitea =
-            GiteaClient::new(server.uri().parse().expect("url"), "o", "r", "t").expect("client");
-        (server, gitea)
+        let shako =
+            ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "t").expect("client");
+        (server, shako)
     }
 
     async fn calls(server: &wiremock::MockServer, verb: &str) -> Vec<String> {
@@ -289,12 +289,12 @@ mod tests {
     #[tokio::test]
     async fn a_proposal_updates_its_open_merge_request_and_closes_the_days_before_it() {
         // What an earlier run committed: the text in the commit layout (T-5052).
-        let (server, gitea) = forge(&[("models/air.yaml", "same\n")]).await;
+        let (server, shako) = forge(&[("models/air.yaml", "same\n")]).await;
         let mut files = BTreeMap::new();
         files.insert("models/air.yaml".to_owned(), "same".to_owned());
         files.insert("models/air/schema.linkml.yaml".to_owned(), "new".to_owned());
         let pull = open(
-            &gitea,
+            &shako,
             &Proposal {
                 branch: "mirror/bb-peer",
                 title: "mirror 2 foreign model(s) for bb/peer",

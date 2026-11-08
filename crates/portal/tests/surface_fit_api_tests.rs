@@ -26,7 +26,7 @@ fn admin() -> Identity {
 /// The Portal whose space `air` holds `linkml` in `lifecycle`, and a space `bare` without a model.
 /// Deprecated backs a surface like published, without the four artifacts (DM-02, DM-26).
 async fn portal(linkml: &str, lifecycle: &str) -> (AppState, wiremock::MockServer) {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     Mock::given(method("GET"))
         .and(path(format!(
             "{}/contents/projects/{PROJECT}/spaces/air/datamodels/model.linkml.yaml",
@@ -36,9 +36,9 @@ async fn portal(linkml: &str, lifecycle: &str) -> (AppState, wiremock::MockServe
             "sha": "sha-linkml-1",
             "content": common::encode(linkml)
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = common::state_on(&gitea);
+    let state = common::state_on(&shako);
     for space in ["air", "bare"] {
         state
             .mirror
@@ -50,7 +50,7 @@ async fn portal(linkml: &str, lifecycle: &str) -> (AppState, wiremock::MockServe
         PROJECT,
         json!({ "contextSpaceRef": "air", "linkml": "./model.linkml.yaml", "version": "1.0.0", "lifecycle": lifecycle }),
     ));
-    (state, gitea)
+    (state, shako)
 }
 
 async fn fit(state: &AppState, who: Identity, space: &str) -> (StatusCode, Value) {

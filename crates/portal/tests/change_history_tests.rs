@@ -17,7 +17,7 @@ const APPROVER: &str = "eva.approver@banskabystrica.sk";
 fn closed(number: u64, branch: &str, merged: bool, sha: &str) -> Value {
     json!({
         "number": number,
-        "html_url": format!("https://gitea.example.sk/pulls/{number}"),
+        "html_url": format!("https://shako.example.sk/pulls/{number}"),
         "state": "closed",
         "title": branch,
         "head": { "ref": branch, "sha": format!("head-{number}") },
@@ -330,8 +330,8 @@ async fn the_export_is_the_history_as_csv_with_names_and_reasons() {
         lines,
         vec![
             "closedAt,change,outcome,kind,name,operation,proposedBy,decidedBy,reason,mergeRequest",
-            &format!("2026-10-02T10:00:00Z,chg-00000002,Rejected,Endpoint,public-air,update,Jana Kováčová,{APPROVER},the URL is the old one,https://gitea.example.sk/pulls/2"),
-            &format!("2026-10-01T10:00:00Z,chg-00000001,Merged,ContextSpace,mobility,create,Jana Kováčová,{APPROVER},,https://gitea.example.sk/pulls/1"),
+            &format!("2026-10-02T10:00:00Z,chg-00000002,Rejected,Endpoint,public-air,update,Jana Kováčová,{APPROVER},the URL is the old one,https://shako.example.sk/pulls/2"),
+            &format!("2026-10-01T10:00:00Z,chg-00000001,Merged,ContextSpace,mobility,create,Jana Kováčová,{APPROVER},,https://shako.example.sk/pulls/1"),
         ],
         "{}",
         answer.text

@@ -14,7 +14,7 @@ use base64::Engine;
 use common::{envelope, forge, person, state_on, REPO};
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::gitea::committed_text;
+use joinedcontext_portal::forge::shako::committed_text;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
@@ -238,7 +238,7 @@ async fn world_with(extra: &[(&str, &str)]) -> (MockServer, AppState) {
         },
         None,
     )
-    .with_gitea(state_on(&server).gitea.clone().expect("forge"));
+    .with_shako(state_on(&server).shako.clone().expect("forge"));
     state.mirror.upsert(envelope(
         "Organization",
         "bb",

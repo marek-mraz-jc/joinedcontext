@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use jcctl::foreign_models::{FetchError, SchemaApi};
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::sync::mirror::{run_once, LastFetch, Peers};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -206,8 +206,8 @@ async fn forge(files: &[(&str, String)]) -> (MockServer, Arc<Forge>) {
     (server, recorded)
 }
 
-fn client(server: &MockServer) -> GiteaClient {
-    GiteaClient::new(
+fn client(server: &MockServer) -> ShakoClient {
+    ShakoClient::new(
         server.uri().parse().expect("a url"),
         "test-owner",
         "test-repo",
@@ -365,16 +365,16 @@ async fn the_schedule_decides_whether_a_peer_is_fetched_at_all() {
     let (server, _) = forge(&[reference()]).await;
     let peer = Arc::new(FakePeer::new());
     let last_fetch = LastFetch::default();
-    let gitea = client(&server);
+    let shako = client(&server);
     let now = 1_757_000_000;
 
-    run_once(&gitea, PUBLIC_URL, &peers(&peer), &last_fetch, now)
+    run_once(&shako, PUBLIC_URL, &peers(&peer), &last_fetch, now)
         .await
         .expect("the first pass runs");
     let after_first = peer.fetches.load(Ordering::Relaxed);
     assert!(after_first > 0, "the first pass fetches");
 
-    run_once(&gitea, PUBLIC_URL, &peers(&peer), &last_fetch, now + 3_600)
+    run_once(&shako, PUBLIC_URL, &peers(&peer), &last_fetch, now + 3_600)
         .await
         .expect("the second pass runs");
     assert_eq!(
@@ -383,7 +383,7 @@ async fn the_schedule_decides_whether_a_peer_is_fetched_at_all() {
         "an hour later is not a day later, and the default mirror schedule is a day"
     );
 
-    run_once(&gitea, PUBLIC_URL, &peers(&peer), &last_fetch, now + 90_000)
+    run_once(&shako, PUBLIC_URL, &peers(&peer), &last_fetch, now + 90_000)
         .await
         .expect("the third pass runs");
     assert!(

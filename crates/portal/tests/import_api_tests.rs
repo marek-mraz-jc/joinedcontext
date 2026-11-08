@@ -18,7 +18,7 @@ use http_body_util::BodyExt;
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
@@ -264,14 +264,14 @@ fn state_with(
     org: Vec<Value>,
 ) -> (AppState, String) {
     let cookie = cookies(&config, groups);
-    let gitea = Arc::new(
-        GiteaClient::new(
+    let shako = Arc::new(
+        ShakoClient::new(
             server.uri().parse().expect("forge url"),
             "bb",
             "org",
             "token",
         )
-        .expect("gitea client"),
+        .expect("shako client"),
     );
     let mirror = Arc::new(Mirror::new());
     for yaml in existing {
@@ -294,7 +294,7 @@ fn state_with(
         mirror.upsert(serde_json::from_value(manifest).expect("organization manifest"));
     }
     let state = AppState::new(config, None)
-        .with_gitea(gitea)
+        .with_shako(shako)
         .with_mirror(mirror);
     (state, cookie)
 }

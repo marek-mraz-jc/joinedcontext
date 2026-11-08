@@ -19,7 +19,7 @@ use crate::auth::session::Identity;
 use crate::auth::CurrentUser;
 use crate::change::{Change, ChangePhase, ChangeStatus, Lane, Operation, PlanSummary};
 use crate::error::{ApiError, ProblemDetails};
-use crate::git::Author;
+use crate::forge::Author;
 use crate::state::AppState;
 use crate::store::ListOptions;
 use crate::tools::model_tools::{Artifacts, MAX_REQUEST_BYTES};
@@ -318,15 +318,15 @@ pub async fn read_source(state: &AppState, project: &str, name: &str) -> Result<
 
     let confined = confine_linkml_path(linkml)?;
 
-    let gitea = state
+    let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let gitea: &crate::git::GiteaClient = &gitea;
+    let shako: &crate::forge::ShakoClient = &shako;
 
-    let default_branch = gitea.default_branch().await?;
+    let default_branch = shako.default_branch().await?;
     let repo_path = format!("{}/{confined}", model_folder(project, &envelope.spec, name));
 
-    let file = gitea
+    let file = shako
         .get_file(&repo_path, &default_branch)
         .await?
         .ok_or_else(|| {
@@ -1207,10 +1207,10 @@ pub async fn share_model(
     )
     .await?;
 
-    let gitea = state
+    let shako = state
         .forge_for(&project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let commit = gitea.branch_head(&gitea.default_branch().await?).await?;
+    let commit = shako.branch_head(&shako.default_branch().await?).await?;
     let origin = DataModelOrigin {
         project: project.clone(),
         space: spec.context_space_ref.clone(),
@@ -1300,29 +1300,29 @@ pub(crate) async fn propose_model(
     let (title, body) = (proposal.title.as_str(), proposal.body.as_str());
     let files = model_files(&proposal)?;
 
-    let gitea = state
+    let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let gitea: &crate::git::GiteaClient = &gitea;
+    let shako: &crate::forge::ShakoClient = &shako;
 
-    let default_branch = gitea.default_branch().await?;
+    let default_branch = shako.default_branch().await?;
     let operation = if creating {
         Operation::Create
     } else {
         Operation::Update
     };
     let branch = branch_name(project, "datamodel", name, operation);
-    let held = crate::api::mutate::turn(gitea, &branch).await;
-    let branch = create_or_reuse_branch(gitea, &held, &default_branch).await?;
-    commit_model(gitea, identity, project, title, &branch, files).await?;
+    let held = crate::api::mutate::turn(shako, &branch).await;
+    let branch = create_or_reuse_branch(shako, &held, &default_branch).await?;
+    commit_model(shako, identity, project, title, &branch, files).await?;
 
     crate::telemetry::proposed(lane, "DataModel");
 
-    let pr = gitea
+    let pr = shako
         .create_pull_request(&branch, &default_branch, title, body)
         .await?;
 
-    let change_meta = crate::api::changes::change_meta(state, gitea, pr.number, project);
+    let change_meta = crate::api::changes::change_meta(state, shako, pr.number, project);
     let change_status = ChangeStatus::new(
         lane,
         ChangePhase::PendingApproval,
@@ -1358,28 +1358,28 @@ pub(crate) async fn propose_model_onto(
     let (project, name, lane) = (proposal.namespace, proposal.name, proposal.lane);
     let title = proposal.title.clone();
     let files = model_files(&proposal)?;
-    let gitea = state
+    let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let gitea: &crate::git::GiteaClient = &gitea;
-    let default_branch = gitea.default_branch().await?;
+    let shako: &crate::forge::ShakoClient = &shako;
+    let default_branch = shako.default_branch().await?;
     let operation = if proposal.creating {
         Operation::Create
     } else {
         Operation::Update
     };
     let own = branch_name(project, "datamodel", name, operation);
-    if let Some(pending) = crate::api::mutate::open_change_on(state, gitea, &own, project).await? {
+    if let Some(pending) = crate::api::mutate::open_change_on(state, shako, &own, project).await? {
         return Err(ApiError::Conflict(format!(
             "a change for DataModel '{name}' is already open: {}; approve or reject it first",
             pending.name
         )));
     }
-    match gitea.create_branch(branch, &default_branch).await {
-        Ok(()) | Err(crate::git::GitError::Conflict(_)) => {}
+    match shako.create_branch(branch, &default_branch).await {
+        Ok(()) | Err(crate::forge::GitError::Conflict(_)) => {}
         Err(err) => return Err(err.into()),
     }
-    commit_model(gitea, identity, project, &title, branch, files).await?;
+    commit_model(shako, identity, project, &title, branch, files).await?;
     crate::telemetry::proposed(lane, "DataModel");
     Ok(lane)
 }
@@ -1448,7 +1448,7 @@ fn model_files(proposal: &ModelProposal<'_>) -> Result<Vec<(String, String)>, Ap
 /// Commits a model's files onto `branch` in one commit: a forge failure halfway leaves no branch
 /// holding a manifest without its source or artifacts (F-POR1-023).
 async fn commit_model(
-    gitea: &crate::git::GiteaClient,
+    shako: &crate::forge::ShakoClient,
     identity: &Identity,
     project: &str,
     title: &str,
@@ -1459,7 +1459,7 @@ async fn commit_model(
     let commit_msg = format!("{title} with its source and artifacts");
     let mut files = Vec::with_capacity(writes.len());
     for (file_p, content) in writes {
-        let existing_sha = gitea
+        let existing_sha = shako
             .get_file(&file_p, branch)
             .await
             .ok()
@@ -1467,7 +1467,7 @@ async fn commit_model(
             .map(|f| f.sha);
         files.push((file_p, content, existing_sha));
     }
-    gitea
+    shako
         .write_files(
             branch,
             &commit_msg,

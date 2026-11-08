@@ -66,15 +66,15 @@ fn stranger() -> Identity {
 
 /// A forge that answers main's head, and a mirror with one space and the viewer's read-only binding.
 async fn world() -> (MockServer, AppState) {
-    let gitea = forge().await;
+    let shako = forge().await;
     Mock::given(method("GET"))
         .and(path(format!("{REPO}/branches/main")))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": "base1" } })),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_on(&gitea);
+    let state = state_on(&shako);
     state.mirror.upsert(envelope(
         "ContextSpace",
         "air",
@@ -107,7 +107,7 @@ async fn world() -> (MockServer, AppState) {
         json!({ "role": "editor", "subjects": [{ "group": "editors" }],
                 "scope": { "project": PROJECT } }),
     ));
-    (gitea, state)
+    (shako, state)
 }
 
 /// The workspace `name` of `project`, owned by `owner`, opened at `base1`.
@@ -128,8 +128,8 @@ async fn opened(state: &AppState, project: &str, name: &str, owner: &str) {
 }
 
 /// Everything the forge was asked, as `VERB /path`.
-async fn touched(gitea: &MockServer) -> Vec<String> {
-    gitea
+async fn touched(shako: &MockServer) -> Vec<String> {
+    shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -151,7 +151,7 @@ fn opening(name: &str) -> Value {
 /// the project, the second tells a member what they are missing — and neither cuts a branch.
 #[tokio::test]
 async fn opening_hides_a_project_from_a_stranger_and_names_the_grant_to_a_viewer() {
-    let (gitea, state) = world().await;
+    let (shako, state) = world().await;
 
     for (who, uri, expected) in [
         (stranger(), WS, StatusCode::NOT_FOUND),
@@ -169,7 +169,7 @@ async fn opening_hides_a_project_from_a_stranger_and_names_the_grant_to_a_viewer
         );
     }
 
-    let writes: Vec<String> = touched(&gitea)
+    let writes: Vec<String> = touched(&shako)
         .await
         .into_iter()
         .filter(|call| !call.starts_with("GET "))
@@ -257,7 +257,7 @@ async fn a_title_or_a_ttl_outside_its_bounds_is_refused_and_the_bound_itself_is_
 /// (`src/ops/workspaces.rs:535`).
 #[tokio::test]
 async fn a_body_that_is_not_an_opening_request_is_refused_by_the_extractor() {
-    let (gitea, state) = world().await;
+    let (shako, state) = world().await;
 
     let bad_bodies = [
         json!({ "name": "air-v2", "ttl_days": 3 }),
@@ -282,7 +282,7 @@ async fn a_body_that_is_not_an_opening_request_is_refused_by_the_extractor() {
         );
     }
 
-    let writes: Vec<String> = touched(&gitea)
+    let writes: Vec<String> = touched(&shako)
         .await
         .into_iter()
         .filter(|call| !call.starts_with("GET "))
@@ -300,7 +300,7 @@ async fn a_body_that_is_not_an_opening_request_is_refused_by_the_extractor() {
 /// case pins is the order rather than a wrong answer.
 #[tokio::test]
 async fn a_name_the_store_refuses_is_read_from_the_forge_before_it_is_refused() {
-    let (gitea, state) = world().await;
+    let (shako, state) = world().await;
 
     let refused = [
         json!({ "name": "x".repeat(MAX_NAME + 1) }),
@@ -325,7 +325,7 @@ async fn a_name_the_store_refuses_is_read_from_the_forge_before_it_is_refused() 
     }
 
     // The two reads that happened before each of those refusals, and no write.
-    let calls = touched(&gitea).await;
+    let calls = touched(&shako).await;
     assert!(
         calls.iter().any(|call| call.ends_with("/branches/main")),
         "the forge was not read at all, so the order has changed: {calls:?}",
@@ -590,8 +590,8 @@ async fn reading_a_workspace_of_another_project_is_not_there_in_the_same_words_a
 #[tokio::test]
 async fn a_workspace_whose_branch_is_gone_reads_as_one_that_changed_nothing() {
     // A forge with nothing mounted: every call answers 404, which is how a missing branch looks.
-    let gitea = MockServer::start().await;
-    let state = state_on(&gitea);
+    let shako = MockServer::start().await;
+    let state = state_on(&shako);
     opened(&state, PROJECT, "air-v2", "jana@hel.fi").await;
 
     let answer = send(&state, steward(), "GET", WS, None).await;
@@ -604,7 +604,7 @@ async fn a_workspace_whose_branch_is_gone_reads_as_one_that_changed_nothing() {
         answer.text,
     );
     assert!(
-        touched(&gitea).await.is_empty(),
+        touched(&shako).await.is_empty(),
         "the listing asked the forge something",
     );
 
@@ -636,7 +636,7 @@ async fn a_workspace_whose_branch_is_gone_reads_as_one_that_changed_nothing() {
 
     // And the read did ask the forge for the branch, so the emptiness is the forge's answer and not
     // a shortcut taken before it.
-    let calls = touched(&gitea).await;
+    let calls = touched(&shako).await;
     assert!(
         calls.iter().any(|call| call.contains("workspace/air-v2")),
         "the branch was never asked for: {calls:?}",
@@ -653,7 +653,7 @@ async fn a_workspace_whose_branch_is_gone_reads_as_one_that_changed_nothing() {
 /// Neither of them costs the forge a write, so a refusal never leaves a branch merged or deleted.
 #[tokio::test]
 async fn only_the_owner_updates_brings_back_or_throws_away_and_a_refusal_writes_nothing() {
-    let (gitea, state) = world().await;
+    let (shako, state) = world().await;
     opened(&state, PROJECT, "air-v2", "jana@hel.fi").await;
 
     let routes: Vec<(&str, String, Option<Value>)> = vec![
@@ -690,7 +690,7 @@ async fn only_the_owner_updates_brings_back_or_throws_away_and_a_refusal_writes_
         );
     }
 
-    let writes: Vec<String> = touched(&gitea)
+    let writes: Vec<String> = touched(&shako)
         .await
         .into_iter()
         .filter(|call| !call.starts_with("GET "))
@@ -704,7 +704,7 @@ async fn only_the_owner_updates_brings_back_or_throws_away_and_a_refusal_writes_
 /// same request, because `resolutions` defaults.
 #[tokio::test]
 async fn an_update_body_that_is_not_a_list_of_resolutions_is_refused_before_main_is_read() {
-    let (gitea, state) = world().await;
+    let (shako, state) = world().await;
     opened(&state, PROJECT, "air-v2", "jana@hel.fi").await;
     let uri = format!("{WS}/air-v2/update");
 
@@ -730,7 +730,7 @@ async fn an_update_body_that_is_not_a_list_of_resolutions_is_refused_before_main
     }
 
     // Nothing of that reached the forge: the extractor answered every one of them.
-    let calls = touched(&gitea).await;
+    let calls = touched(&shako).await;
     assert!(
         calls.is_empty(),
         "a body the extractor refuses reached the forge: {calls:?}",
@@ -765,13 +765,13 @@ async fn an_update_body_that_is_not_a_list_of_resolutions_is_refused_before_main
 /// whether something was there.
 #[tokio::test]
 async fn a_second_discard_and_a_name_nobody_has_are_the_same_answer() {
-    let (gitea, state) = world().await;
+    let (shako, state) = world().await;
     opened(&state, PROJECT, "air-v2", "jana@hel.fi").await;
 
     // The first discard is the owner's and takes the branch with it.
     let answer = send(&state, steward(), "DELETE", &format!("{WS}/air-v2"), None).await;
     assert_eq!(answer.status, StatusCode::NO_CONTENT, "{}", answer.text);
-    let deleted: Vec<String> = touched(&gitea)
+    let deleted: Vec<String> = touched(&shako)
         .await
         .into_iter()
         .filter(|call| call.starts_with("DELETE "))
@@ -798,7 +798,7 @@ async fn a_second_discard_and_a_name_nobody_has_are_the_same_answer() {
     }
 
     // And nothing was deleted a second time.
-    let deleted: Vec<String> = touched(&gitea)
+    let deleted: Vec<String> = touched(&shako)
         .await
         .into_iter()
         .filter(|call| call.starts_with("DELETE ") && call.contains("workspace/"))

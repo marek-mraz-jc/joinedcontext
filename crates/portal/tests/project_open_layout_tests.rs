@@ -399,7 +399,7 @@ async fn a_project_change_keeps_its_id_and_its_repository() {
 }
 
 /// PF-106: the gateway's forge user reads the configuration's repositories and nothing more,
-/// so a project repository the Portal opens names it as a reader; without `JC_GITEA_READER`
+/// so a project repository the Portal opens names it as a reader; without `JC_SHAKO_READER`
 /// nobody is added.
 #[tokio::test]
 async fn the_gateway_reads_a_project_repository_the_portal_opens() {
@@ -410,20 +410,20 @@ async fn the_gateway_reads_a_project_repository_the_portal_opens() {
         .mount(&server)
         .await;
     let uri = server.uri();
-    let client = joinedcontext_portal::git::GiteaClient::from_env(|key| {
+    let client = joinedcontext_portal::forge::ShakoClient::from_env(|key| {
         match key {
-            "JC_GITEA_URL" => Some(uri.as_str()),
-            "JC_GITEA_OWNER" => Some("test-owner"),
-            "JC_GITEA_REPO" => Some("test-repo"),
-            "JC_GITEA_TOKEN" => Some("token-xyz"),
-            "JC_GITEA_READER" => Some("jc-gateway"),
+            "JC_SHAKO_URL" => Some(uri.as_str()),
+            "JC_SHAKO_OWNER" => Some("test-owner"),
+            "JC_SHAKO_REPO" => Some("test-repo"),
+            "JC_SHAKO_TOKEN" => Some("token-xyz"),
+            "JC_SHAKO_READER" => Some("jc-gateway"),
             _ => None,
         }
         .map(str::to_owned)
     })
     .expect("config")
     .expect("configured");
-    state.gitea = Some(std::sync::Arc::new(client));
+    state.shako = Some(std::sync::Arc::new(client));
     let (status, text) = open(&state).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{text}");
     assert_eq!(

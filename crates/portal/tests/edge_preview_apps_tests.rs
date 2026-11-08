@@ -67,15 +67,15 @@ fn preview_uri(name: &str) -> String {
 
 /// The forge, the viewer's read-only binding, and the workspace `air-v2` owned by `jana`.
 async fn world() -> (MockServer, AppState) {
-    let gitea = forge().await;
+    let shako = forge().await;
     Mock::given(method("GET"))
         .and(path(format!("{REPO}/branches/main")))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": "base1" } })),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_on(&gitea);
+    let state = state_on(&shako);
     state.mirror.upsert(envelope(
         "Role",
         "reader",
@@ -90,7 +90,7 @@ async fn world() -> (MockServer, AppState) {
                 "scope": { "project": PROJECT } }),
     ));
     opened(&state, WS).await;
-    (gitea, state)
+    (shako, state)
 }
 
 async fn opened(state: &AppState, name: &str) {

@@ -25,7 +25,7 @@ use wiremock::MockServer;
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
@@ -133,7 +133,7 @@ fn cookie(config: &Config, roles: &[&str]) -> String {
 /// `received_requests`, so a case can prove a refusal never reached it.
 async fn flow_world() -> (MockServer, axum::Router, String) {
     let forge = MockServer::start().await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         forge.uri().parse().expect("a url"),
         "test-owner",
         "test-repo",
@@ -144,7 +144,7 @@ async fn flow_world() -> (MockServer, axum::Router, String) {
     let session = cookie(&config, &[ROLE]);
     let state = AppState::new(config, None)
         .with_mirror(flow_mirror())
-        .with_gitea(Arc::new(client));
+        .with_shako(Arc::new(client));
     (forge, server::app(state), session)
 }
 
@@ -278,8 +278,8 @@ async fn every_refusal_of_a_flow_happens_before_a_branch_exists() {
     let roleless_app = server::app(
         AppState::new(config, None)
             .with_mirror(flow_mirror())
-            .with_gitea(Arc::new(
-                GiteaClient::new(
+            .with_shako(Arc::new(
+                ShakoClient::new(
                     forge.uri().parse().expect("a url"),
                     "test-owner",
                     "test-repo",

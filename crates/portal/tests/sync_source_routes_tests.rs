@@ -42,9 +42,9 @@ const DETACH: &str = "/api/v1/projects/bb/syncsources/regional/detach";
 
 /// The Portal with the sync loop running over the mock forge, one source `bb/regional` in the
 /// mirror, and a role `driver` with `verbs` on SyncSource bound to `jana` on project bb.
-fn state_with(gitea: &MockServer, verbs: &[&str]) -> AppState {
-    let mut state = state_on(gitea);
-    let client = state.gitea.clone().expect("forge client");
+fn state_with(shako: &MockServer, verbs: &[&str]) -> AppState {
+    let mut state = state_on(shako);
+    let client = state.shako.clone().expect("forge client");
     let remote: Remote = Arc::new(Unreachable);
     state.sync = Some(Arc::new(Driver::new(
         client,
@@ -77,8 +77,8 @@ fn state_with(gitea: &MockServer, verbs: &[&str]) -> AppState {
     state
 }
 
-async fn forge_writes(gitea: &MockServer) -> Vec<String> {
-    gitea
+async fn forge_writes(shako: &MockServer) -> Vec<String> {
+    shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -90,8 +90,8 @@ async fn forge_writes(gitea: &MockServer) -> Vec<String> {
 
 #[tokio::test]
 async fn a_person_without_a_binding_drives_nothing_and_the_source_stays_as_it_was() {
-    let gitea = common::forge().await;
-    let state = state_with(&gitea, &["propose", "delete"]);
+    let shako = common::forge().await;
+    let state = state_with(&shako, &["propose", "delete"]);
     for (uri, body) in [
         (PAUSE, Some(json!({ "paused": true }))),
         (SYNC, None),
@@ -108,13 +108,13 @@ async fn a_person_without_a_binding_drives_nothing_and_the_source_stays_as_it_wa
     }
     let driver = state.sync.as_ref().expect("loop");
     assert!(!driver.status("bb", "regional").await.state.paused);
-    assert!(forge_writes(&gitea).await.is_empty(), "{REPO} was written");
+    assert!(forge_writes(&shako).await.is_empty(), "{REPO} was written");
 }
 
 #[tokio::test]
 async fn propose_on_the_source_pauses_it_but_does_not_detach_it() {
-    let gitea = common::forge().await;
-    let state = state_with(&gitea, &["propose"]);
+    let shako = common::forge().await;
+    let state = state_with(&shako, &["propose"]);
 
     let answer = send(
         &state,
@@ -139,18 +139,18 @@ async fn propose_on_the_source_pauses_it_but_does_not_detach_it() {
     let answer = send(&state, person("jana"), "POST", DETACH, None).await;
     assert_eq!(answer.status, StatusCode::FORBIDDEN, "{}", answer.text);
     assert!(answer.text.contains("delete"), "{}", answer.text);
-    assert!(forge_writes(&gitea).await.is_empty());
+    assert!(forge_writes(&shako).await.is_empty());
 }
 
 #[tokio::test]
 async fn delete_on_the_source_opens_the_detach_merge_request() {
-    let gitea = common::forge().await;
-    let state = state_with(&gitea, &["delete"]);
+    let shako = common::forge().await;
+    let state = state_with(&shako, &["delete"]);
 
     let answer = send(&state, person("jana"), "POST", DETACH, None).await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
     assert!(
-        forge_writes(&gitea)
+        forge_writes(&shako)
             .await
             .iter()
             .any(|w| w == &format!("POST {REPO}/pulls")),
@@ -160,8 +160,8 @@ async fn delete_on_the_source_opens_the_detach_merge_request() {
 
 #[tokio::test]
 async fn a_binding_answers_404_for_a_source_that_is_not_there_and_403_for_another_project() {
-    let gitea = common::forge().await;
-    let state = state_with(&gitea, &["propose", "delete"]);
+    let shako = common::forge().await;
+    let state = state_with(&shako, &["propose", "delete"]);
 
     let answer = send(
         &state,
@@ -183,5 +183,5 @@ async fn a_binding_answers_404_for_a_source_that_is_not_there_and_403_for_anothe
     )
     .await;
     assert_eq!(answer.status, StatusCode::FORBIDDEN, "{}", answer.text);
-    assert!(forge_writes(&gitea).await.is_empty());
+    assert!(forge_writes(&shako).await.is_empty());
 }

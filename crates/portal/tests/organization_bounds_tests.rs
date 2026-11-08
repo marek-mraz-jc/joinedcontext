@@ -13,7 +13,7 @@ use wiremock::MockServer;
 use common::{checked_send, envelope, forge, person};
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::API_VERSION;
 use joinedcontext_portal::state::AppState;
@@ -36,9 +36,9 @@ fn spec(spaces: u32) -> Value {
 
 /// The Portal with the operator's `bounds`, and the forge it writes to, kept alive beside it.
 async fn state(bounds: Value) -> (AppState, MockServer) {
-    let gitea = forge().await;
-    let client = GiteaClient::new(
-        gitea.uri().parse().expect("mock url"),
+    let shako = forge().await;
+    let client = ShakoClient::new(
+        shako.uri().parse().expect("mock url"),
         "test-owner",
         "test-repo",
         "token-xyz",
@@ -46,11 +46,11 @@ async fn state(bounds: Value) -> (AppState, MockServer) {
     .expect("client");
     let mut config = Config::for_tests();
     config.organization_bounds = serde_json::from_value(bounds).expect("bounds");
-    let state = AppState::new(config, None).with_gitea(Arc::new(client));
+    let state = AppState::new(config, None).with_shako(Arc::new(client));
     state
         .mirror
         .upsert(envelope("Organization", "hel", ORG_NAMESPACE, spec(10)));
-    (state, gitea)
+    (state, shako)
 }
 
 async fn propose(state: &AppState, spaces: u32) -> common::Answer {

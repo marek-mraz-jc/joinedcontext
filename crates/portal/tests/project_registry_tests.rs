@@ -332,7 +332,7 @@ async fn a_second_repoint_waits_for_the_open_one() {
     Mock::given(method("GET"))
         .and(path(format!("{REPO}/pulls")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-            "number": 41, "html_url": "https://gitea.example/pulls/41", "state": "open",
+            "number": 41, "html_url": "https://shako.example/pulls/41", "state": "open",
             "title": "repoint project ovzdusie", "head": { "ref": BRANCH }, "base": { "ref": "main" },
             "created_at": "2026-10-10T09:00:00Z", "mergeable": true, "merged": false
         }])))
@@ -393,7 +393,7 @@ async fn the_repoint_is_listed_among_the_organization_changes() {
     Mock::given(method("GET"))
         .and(path(format!("{REPO}/pulls")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-            "number": 41, "html_url": "https://gitea.example/pulls/41", "state": "open",
+            "number": 41, "html_url": "https://shako.example/pulls/41", "state": "open",
             "title": "repoint project ovzdusie", "head": { "ref": BRANCH }, "base": { "ref": "main" },
             "created_at": "2026-10-10T09:00:00Z",
             "user": { "login": "vlasta", "full_name": "vlasta", "email": "vlasta@hel.fi" },

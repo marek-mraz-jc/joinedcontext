@@ -11,7 +11,7 @@ use std::sync::Arc;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use hmac::{Hmac, Mac};
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::pipeline_secrets::{Backend, Resolver};
 use joinedcontext_portal::reconciler::Syncer;
 use joinedcontext_portal::store::Mirror;
@@ -117,9 +117,9 @@ fn repository() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
-fn client(server: &MockServer) -> Arc<GiteaClient> {
+fn client(server: &MockServer) -> Arc<ShakoClient> {
     Arc::new(
-        GiteaClient::new(
+        ShakoClient::new(
             server.uri().parse().expect("forge url"),
             "test-owner",
             "test-repo",

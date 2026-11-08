@@ -253,13 +253,13 @@ pub(crate) async fn detach_for(
     user: &CurrentUser,
     project: &str,
     name: &str,
-) -> Result<(crate::git::PullRequest, SyncSourceStatus), ApiError> {
+) -> Result<(crate::forge::PullRequest, SyncSourceStatus), ApiError> {
     may_drive(state, user, project, Verb::Delete)?;
     let driver = driver(state)?;
-    let gitea = state
+    let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let gitea: &crate::git::GiteaClient = &gitea;
+    let shako: &crate::forge::ShakoClient = &shako;
     let (project, name) = named(state, project, name)?;
 
     let info = resource::by_kind(KIND)
@@ -272,7 +272,7 @@ pub(crate) async fn detach_for(
     driver.pause(&project, &name, true).await;
 
     let pull = proposal::open(
-        gitea,
+        shako,
         &Proposal {
             branch: &format!("detach/{project}-{name}"),
             title: &format!("detach sync source {project}/{name}"),
@@ -301,6 +301,10 @@ pub(crate) async fn detach_for(
     Ok((pull, status))
 }
 
+
+/// The signature header of an outside Gitea origin, a product the SyncSource reads from and
+/// that is not the Portal's own forge.
+const OUTSIDE_GITEA_SIGNATURE: &str = "x-gitea-signature";
 #[utoipa::path(
     post,
     path = "/api/v1/webhooks/sync/{project}/{name}",
@@ -310,7 +314,8 @@ pub(crate) async fn detach_for(
     params(
         ("project" = String, Path, description = "Project name"),
         ("name" = String, Path, description = "SyncSource name"),
-        ("x-gitea-signature" = String, Header, description = "HMAC-SHA256 of the request body"),
+        ("x-shako-signature" = Option<String>, Header, description = "HMAC-SHA256 of the request body, from a shako origin"),
+        ("x-gitea-signature" = Option<String>, Header, description = "HMAC-SHA256 of the request body, from an outside Gitea origin"),
     ),
     request_body(
         content = serde_json::Value,
@@ -336,14 +341,17 @@ pub async fn webhook(
     // `spec.webhook`, and one whose reference did not resolve — all three are this `401`, because
     // the door is unauthenticated until the signature verifies and a `404` here would be an
     // existence oracle over the sources of every project (PF-59, R20).
-    let presented = headers
-        .get(crate::api::webhook::SIGNATURE_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    if !state
-        .webhook_secrets
-        .verifies(&project, &name, &body, presented)
-    {
+    // A shako origin signs in its own header; an outside Gitea origin in Gitea's. Both carry
+    // the same hex HMAC-SHA256 of the body with this source's secret.
+    let presented: Vec<&str> = [crate::api::webhook::SIGNATURE_HEADER, OUTSIDE_GITEA_SIGNATURE]
+        .into_iter()
+        .filter_map(|header| headers.get(header).and_then(|value| value.to_str().ok()))
+        .collect();
+    if !presented.iter().any(|signature| {
+        state
+            .webhook_secrets
+            .verifies(&project, &name, &body, signature)
+    }) {
         return Err(ApiError::Unauthorized);
     }
 

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::reconciler::Syncer;
 use joinedcontext_portal::resource::{ObjectMeta, Phase, ResourceEnvelope, Status, API_VERSION};
 use joinedcontext_portal::store::Mirror;
@@ -17,7 +17,7 @@ async fn sync_fills_mirror_from_tree_with_live_status_and_observed_revision() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
     let client =
-        Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+        Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
     let mirror = Arc::new(Mirror::new());
     let syncer = Syncer::new(Arc::clone(&client), Arc::clone(&mirror));
 
@@ -143,7 +143,7 @@ async fn sync_skips_unparseable_yaml_and_unknown_kinds_while_loading_valid_manif
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
     let client =
-        Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+        Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
     let mirror = Arc::new(Mirror::new());
     let syncer = Syncer::new(Arc::clone(&client), Arc::clone(&mirror));
 
@@ -250,7 +250,7 @@ async fn sync_replaces_untrusted_status_block_from_manifest_file() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
     let client =
-        Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+        Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
     let mirror = Arc::new(Mirror::new());
     let syncer = Syncer::new(Arc::clone(&client), Arc::clone(&mirror));
 
@@ -341,7 +341,7 @@ async fn failed_tree_listing_preserves_mirror_and_records_error_in_sync_status()
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
     let client =
-        Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+        Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
     let mirror = Arc::new(Mirror::new());
 
     mirror.upsert(ResourceEnvelope {
@@ -421,7 +421,7 @@ async fn sync_loads_the_groups_of_users_groups_into_the_mirror() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
     let client =
-        Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+        Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
     let mirror = Arc::new(Mirror::new());
     let syncer = Syncer::new(Arc::clone(&client), Arc::clone(&mirror));
 
@@ -457,7 +457,7 @@ async fn sync_loads_the_groups_of_users_groups_into_the_mirror() {
         .mount(&server)
         .await;
 
-    // The seed's own file (deployment components/gitea/apps/helsinki-alerts/grants/).
+    // The seed's own file (deployment components/shako/apps/helsinki-alerts/grants/).
     let group = "apiVersion: joinedcontext.com/v1alpha1\nkind: Group\nmetadata:\n  name: helsinki-alerts-steward\n  namespace: org\n  annotations:\n    joinedcontext.com/app: helsinki/helsinki-alerts\nspec:\n  description: The stewards of helsinki-alerts, its default group (AP-118).\n  members:\n  - user: demo.steward@hel.fi\n";
     Mock::given(method("GET"))
         .and(path(

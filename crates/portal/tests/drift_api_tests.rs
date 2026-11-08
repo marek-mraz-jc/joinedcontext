@@ -324,14 +324,14 @@ async fn adopting_proposes_the_seed_file_with_the_live_values_as_a_change() {
         .map(str::to_owned)
     })
     .expect("config");
-    let client = joinedcontext_portal::git::GiteaClient::new(
+    let client = joinedcontext_portal::forge::ShakoClient::new(
         forge_url.parse().expect("mock url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    let mut state = AppState::new(config, None).with_gitea(Arc::new(client));
+    let mut state = AppState::new(config, None).with_shako(Arc::new(client));
     state.drift = scanned();
     let answer = common::send(
         &state,

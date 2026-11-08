@@ -1926,7 +1926,7 @@ mod new_dashboard_tests {
 
     use super::*;
     use crate::agents::change::{ChangeResource, NewLayer};
-    use crate::git::GiteaClient;
+    use crate::forge::ShakoClient;
     use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
     use crate::state::AppState;
     use std::sync::Arc;
@@ -1968,10 +1968,10 @@ mod new_dashboard_tests {
             )
             .mount(&forge)
             .await;
-        let client = GiteaClient::new(forge.uri().parse().expect("url"), "org", "manifests", "t")
+        let client = ShakoClient::new(forge.uri().parse().expect("url"), "org", "manifests", "t")
             .expect("a forge client");
         let state =
-            AppState::new(crate::config::Config::for_tests(), None).with_gitea(Arc::new(client));
+            AppState::new(crate::config::Config::for_tests(), None).with_shako(Arc::new(client));
         put(
             &state,
             "ContextSpace",

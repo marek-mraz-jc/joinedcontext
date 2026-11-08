@@ -14,7 +14,7 @@ use base64::Engine;
 use http_body_util::BodyExt;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
@@ -340,9 +340,9 @@ async fn get_as(uri: &str, with_forge: bool, bound: Option<&str>) -> Answer {
         }
     }
     if with_forge {
-        let client = GiteaClient::new(server.uri().parse().unwrap(), "bb", "org", "token")
-            .expect("gitea client");
-        state = state.with_gitea(Arc::new(client));
+        let client = ShakoClient::new(server.uri().parse().unwrap(), "bb", "org", "token")
+            .expect("shako client");
+        state = state.with_shako(Arc::new(client));
     }
     let response = server::app(state)
         .oneshot(
@@ -803,9 +803,9 @@ async fn a_session_with_no_binding_in_the_project_is_answered_404_everywhere_it_
     let server = forge().await;
     let config = Config::for_tests();
     let cookie = stranger_cookie(&config);
-    let client = GiteaClient::new(server.uri().parse().unwrap(), "bb", "org", "token")
-        .expect("gitea client");
-    let state = AppState::new(config, None).with_gitea(Arc::new(client));
+    let client = ShakoClient::new(server.uri().parse().unwrap(), "bb", "org", "token")
+        .expect("shako client");
+    let state = AppState::new(config, None).with_shako(Arc::new(client));
     let app = server::app(state);
 
     for uri in [

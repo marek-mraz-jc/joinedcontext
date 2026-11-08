@@ -22,7 +22,7 @@ use crate::auth::session::Identity;
 use crate::auth::CurrentUser;
 use crate::change::{Change, Operation};
 use crate::error::{ApiError, ProblemDetails};
-use crate::git::{Author, GiteaClient};
+use crate::forge::{Author, ShakoClient};
 use crate::resource::is_dns1123;
 use crate::state::AppState;
 
@@ -239,7 +239,7 @@ async fn propose(
 async fn land(
     state: &AppState,
     identity: &Identity,
-    repo: &GiteaClient,
+    repo: &ShakoClient,
     project: &str,
     app: &str,
     files: &[(String, String)],
@@ -367,11 +367,11 @@ async fn create(
     template: &Template,
     needs: &[Value],
 ) -> Result<Change, ApiError> {
-    let gitea = state
-        .gitea
+    let shako = state
+        .shako
         .as_deref()
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let repo = gitea.for_application(repository::name(project, app));
+    let repo = shako.for_application(repository::name(project, app));
     let planned = json!({ "git": { "url": repo.clone_url(), "ref": "main" } });
     propose(
         state,

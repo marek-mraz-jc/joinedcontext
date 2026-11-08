@@ -3,8 +3,8 @@
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use joinedcontext_portal::error::ApiError;
-use joinedcontext_portal::git::{
-    Author, FileDelete, FileWrite, GitError, GiteaClient, MergeStyle, RepoFile, ReviewEvent,
+use joinedcontext_portal::forge::{
+    Author, FileDelete, FileWrite, GitError, ShakoClient, MergeStyle, RepoFile, ReviewEvent,
 };
 use serde_json::json;
 use wiremock::matchers::{body_json, header, method, path, query_param};
@@ -14,7 +14,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 async fn default_branch_and_branch_head() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
-    let client = GiteaClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
+    let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/test-owner/test-repo"))
@@ -48,7 +48,7 @@ async fn default_branch_and_branch_head() {
 async fn create_branch_success_and_conflict() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
-    let client = GiteaClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
+    let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     Mock::given(method("POST"))
         .and(path("/api/v1/repos/test-owner/test-repo/branches"))
@@ -90,7 +90,7 @@ async fn create_branch_success_and_conflict() {
 async fn get_file_decodes_base64_and_handles_404() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
-    let client = GiteaClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
+    let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     let raw_text = "apiVersion: joinedcontext.com/v1alpha1\nkind: Dashboard\n";
     // Gitea wraps the base64 payload, so the fixture is built with the line breaks in it
@@ -146,7 +146,7 @@ async fn get_file_decodes_base64_and_handles_404() {
 async fn put_file_creates_and_replaces() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
-    let client = GiteaClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
+    let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     // Create (sha is None -> omitted from JSON)
     Mock::given(method("PUT"))
@@ -220,7 +220,7 @@ async fn put_file_creates_and_replaces() {
 async fn delete_file_sends_sha() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
-    let client = GiteaClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
+    let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     Mock::given(method("DELETE"))
         .and(path(
@@ -258,7 +258,7 @@ async fn delete_file_sends_sha() {
 async fn create_and_get_pull_request() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
-    let client = GiteaClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
+    let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     Mock::given(method("POST"))
         .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
@@ -271,7 +271,7 @@ async fn create_and_get_pull_request() {
         })))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
             "number": 17,
-            "html_url": "https://gitea.example.com/test-owner/test-repo/pulls/17",
+            "html_url": "https://shako.example.com/test-owner/test-repo/pulls/17",
             "state": "open",
             "mergeable": true,
             "merged": false
@@ -284,7 +284,7 @@ async fn create_and_get_pull_request() {
         .and(header("authorization", "token secret-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "number": 17,
-            "html_url": "https://gitea.example.com/test-owner/test-repo/pulls/17",
+            "html_url": "https://shako.example.com/test-owner/test-repo/pulls/17",
             "state": "closed",
             "mergeable": null,
             "merged": true
@@ -299,7 +299,7 @@ async fn create_and_get_pull_request() {
     assert_eq!(pr.number, 17);
     assert_eq!(
         pr.url,
-        "https://gitea.example.com/test-owner/test-repo/pulls/17"
+        "https://shako.example.com/test-owner/test-repo/pulls/17"
     );
     assert_eq!(pr.state, "open");
     assert_eq!(pr.mergeable, Some(true));
@@ -326,7 +326,7 @@ async fn create_and_get_pull_request() {
 async fn review_and_merge() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
-    let client = GiteaClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
+    let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     Mock::given(method("POST"))
         .and(path("/api/v1/repos/test-owner/test-repo/pulls/17/reviews"))
@@ -374,7 +374,7 @@ async fn review_and_merge() {
 #[tokio::test]
 async fn merge_without_a_reviewed_commit_sends_no_head_commit_id() {
     let server = MockServer::start().await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().unwrap(),
         "test-owner",
         "test-repo",
@@ -400,8 +400,8 @@ async fn merge_without_a_reviewed_commit_sends_no_head_commit_id() {
 
 #[test]
 fn gitea_client_redacts_token_in_debug() {
-    let url = "https://gitea.example.com".parse().unwrap();
-    let client = GiteaClient::new(url, "owner", "repo", "my-secret-token").unwrap();
+    let url = "https://shako.example.com".parse().unwrap();
+    let client = ShakoClient::new(url, "owner", "repo", "my-secret-token").unwrap();
     let debug = format!("{client:?}");
     assert!(!debug.contains("my-secret-token"));
     assert!(debug.contains("[redacted]"));
@@ -409,11 +409,11 @@ fn gitea_client_redacts_token_in_debug() {
 
 #[test]
 fn from_env_fail_closed_behavior() {
-    let empty = GiteaClient::from_env(|_| None).unwrap();
+    let empty = ShakoClient::from_env(|_| None).unwrap();
     assert!(empty.is_none());
 
-    let err1 = GiteaClient::from_env(|k| match k {
-        "JC_GITEA_URL" => Some("https://gitea.example.com".to_string()),
+    let err1 = ShakoClient::from_env(|k| match k {
+        "JC_SHAKO_URL" => Some("https://shako.example.com".to_string()),
         _ => None,
     })
     .unwrap_err();
@@ -422,30 +422,30 @@ fn from_env_fail_closed_behavior() {
         other => panic!("expected Config error, got {other:?}"),
     }
 
-    let err2 = GiteaClient::from_env(|k| match k {
-        "JC_GITEA_URL" => Some("https://gitea.example.com".to_string()),
-        "JC_GITEA_OWNER" => Some("owner".to_string()),
-        "JC_GITEA_REPO" => Some("repo".to_string()),
+    let err2 = ShakoClient::from_env(|k| match k {
+        "JC_SHAKO_URL" => Some("https://shako.example.com".to_string()),
+        "JC_SHAKO_OWNER" => Some("owner".to_string()),
+        "JC_SHAKO_REPO" => Some("repo".to_string()),
         _ => None,
     })
     .unwrap_err();
     assert!(matches!(err2, GitError::Config(_)));
 
-    let err_url = GiteaClient::from_env(|k| match k {
-        "JC_GITEA_URL" => Some("not-a-valid-url".to_string()),
-        "JC_GITEA_OWNER" => Some("owner".to_string()),
-        "JC_GITEA_REPO" => Some("repo".to_string()),
-        "JC_GITEA_TOKEN" => Some("token".to_string()),
+    let err_url = ShakoClient::from_env(|k| match k {
+        "JC_SHAKO_URL" => Some("not-a-valid-url".to_string()),
+        "JC_SHAKO_OWNER" => Some("owner".to_string()),
+        "JC_SHAKO_REPO" => Some("repo".to_string()),
+        "JC_SHAKO_TOKEN" => Some("token".to_string()),
         _ => None,
     })
     .unwrap_err();
     assert!(matches!(err_url, GitError::Config(_)));
 
-    let complete = GiteaClient::from_env(|k| match k {
-        "JC_GITEA_URL" => Some("https://gitea.example.com".to_string()),
-        "JC_GITEA_OWNER" => Some("my-owner".to_string()),
-        "JC_GITEA_REPO" => Some("my-repo".to_string()),
-        "JC_GITEA_TOKEN" => Some("my-token".to_string()),
+    let complete = ShakoClient::from_env(|k| match k {
+        "JC_SHAKO_URL" => Some("https://shako.example.com".to_string()),
+        "JC_SHAKO_OWNER" => Some("my-owner".to_string()),
+        "JC_SHAKO_REPO" => Some("my-repo".to_string()),
+        "JC_SHAKO_TOKEN" => Some("my-token".to_string()),
         _ => None,
     })
     .unwrap()
@@ -458,7 +458,7 @@ fn from_env_fail_closed_behavior() {
 async fn list_tree_filters_blobs_and_detects_truncated() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
-    let client = GiteaClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
+    let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/test-owner/test-repo/git/trees/main"))
@@ -512,7 +512,7 @@ async fn list_tree_filters_blobs_and_detects_truncated() {
 async fn list_tree_reads_every_page_of_a_large_tree() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
-    let client = GiteaClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
+    let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     let entries = |from: usize, to: usize| -> Vec<serde_json::Value> {
         (from..to)
@@ -595,7 +595,7 @@ fn git_error_converts_to_api_error() {
 #[tokio::test]
 async fn change_files_uploads_and_deletes_in_one_commit() {
     let server = MockServer::start().await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().unwrap(),
         "test-owner",
         "test-repo",
@@ -646,7 +646,7 @@ async fn change_files_uploads_and_deletes_in_one_commit() {
 async fn pull_request_files_lists_every_page_and_marks_deletions() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
-    let client = GiteaClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
+    let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     let page = |n: usize| -> Vec<serde_json::Value> {
         (0..n)
@@ -681,7 +681,7 @@ async fn pull_request_files_lists_every_page_and_marks_deletions() {
 async fn delete_branch_drops_a_branch_and_ignores_one_already_gone() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
-    let client = GiteaClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
+    let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     Mock::given(method("DELETE"))
         .and(path(
@@ -721,7 +721,7 @@ async fn delete_branch_drops_a_branch_and_ignores_one_already_gone() {
 #[tokio::test]
 async fn a_branch_with_a_slash_is_resolved_before_its_tree_is_read() {
     let server = MockServer::start().await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().unwrap(),
         "test-owner",
         "test-repo",
@@ -778,7 +778,7 @@ async fn a_branch_with_a_slash_is_resolved_before_its_tree_is_read() {
 #[tokio::test]
 async fn a_missing_application_repository_is_created_private_on_main() {
     let server = MockServer::start().await;
-    let config = GiteaClient::new(
+    let config = ShakoClient::new(
         server.uri().parse().unwrap(),
         "joinedcontext",
         "configuration",
@@ -817,7 +817,7 @@ async fn a_missing_application_repository_is_created_private_on_main() {
 #[tokio::test]
 async fn an_existing_application_repository_is_left_as_it_is() {
     let server = MockServer::start().await;
-    let config = GiteaClient::new(
+    let config = ShakoClient::new(
         server.uri().parse().unwrap(),
         "joinedcontext",
         "configuration",
@@ -866,7 +866,7 @@ async fn an_existing_application_repository_is_left_as_it_is() {
 #[tokio::test]
 async fn a_refused_repository_creation_is_an_error() {
     let server = MockServer::start().await;
-    let config = GiteaClient::new(
+    let config = ShakoClient::new(
         server.uri().parse().unwrap(),
         "joinedcontext",
         "configuration",
@@ -898,13 +898,13 @@ async fn a_refused_repository_creation_is_an_error() {
 /// AP-77, AP-78: the clone address is the forge's public https one, never the cluster name.
 #[test]
 fn the_clone_address_is_the_public_forge() {
-    let config = GiteaClient::from_env(|key| {
+    let config = ShakoClient::from_env(|key| {
         match key {
-            "JC_GITEA_URL" => Some("http://gitea-http.dev.svc.cluster.local:3000"),
-            "JC_GITEA_OWNER" => Some("joinedcontext"),
-            "JC_GITEA_REPO" => Some("configuration"),
-            "JC_GITEA_TOKEN" => Some("t"),
-            "JC_GITEA_PUBLIC_URL" => Some("https://2.28.67.127.sslip.io/gitea/"),
+            "JC_SHAKO_URL" => Some("http://shako-http.dev.svc.cluster.local:3000"),
+            "JC_SHAKO_OWNER" => Some("joinedcontext"),
+            "JC_SHAKO_REPO" => Some("configuration"),
+            "JC_SHAKO_TOKEN" => Some("t"),
+            "JC_SHAKO_PUBLIC_URL" => Some("https://2.28.67.127.sslip.io/shako/"),
             _ => None,
         }
         .map(str::to_owned)
@@ -914,7 +914,7 @@ fn the_clone_address_is_the_public_forge() {
     let repo = config.for_repository("helsinki_city-bikes");
     assert_eq!(
         repo.clone_url(),
-        "https://2.28.67.127.sslip.io/gitea/joinedcontext/helsinki_city-bikes.git"
+        "https://2.28.67.127.sslip.io/shako/joinedcontext/helsinki_city-bikes.git"
     );
     assert_eq!(repo.owner, "joinedcontext");
     assert_eq!(
@@ -929,7 +929,7 @@ fn the_clone_address_is_the_public_forge() {
 async fn a_forge_error_keeps_only_its_message() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
-    let client = GiteaClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
+    let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
     let body = json!({
         "message": "invalid username, password or token",
         "url": "https://forge.example/api/swagger"
@@ -966,7 +966,7 @@ async fn a_forge_error_keeps_only_its_message() {
 async fn put_file_commits_yaml_in_the_canonical_layout() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
-    let client = GiteaClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
+    let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
     let messy = "kind: Policy\napiVersion: joinedcontext.com/v1alpha1\nmetadata:\n    name: a\n";
     let tidy = jc_core::yaml_fmt::format(messy).expect("formats");
     assert_ne!(tidy, messy);
@@ -1011,7 +1011,7 @@ async fn a_call_over_mcp_signs_its_commit_and_its_merge_request() {
     use wiremock::matchers::body_partial_json;
 
     let server = MockServer::start().await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().unwrap(),
         "test-owner",
         "test-repo",
@@ -1036,7 +1036,7 @@ async fn a_call_over_mcp_signs_its_commit_and_its_merge_request() {
         })))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
             "number": 18,
-            "html_url": "https://gitea.example.com/test-owner/test-repo/pulls/18",
+            "html_url": "https://shako.example.com/test-owner/test-repo/pulls/18",
             "state": "open",
             "body": "x\n\nProposed-Via: mcp; client=mcp-mobile",
             "merged": false

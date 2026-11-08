@@ -11,7 +11,7 @@ use joinedcontext_portal::change::Operation;
 use joinedcontext_portal::change::{Change, ChangePhase, Lane};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::error::ProblemDetails;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
@@ -65,7 +65,7 @@ async fn delete_returns_202_with_change_and_commits_to_gitea() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/test-owner/test-repo"))
@@ -98,7 +98,7 @@ async fn delete_returns_202_with_change_and_commits_to_gitea() {
         .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
             "number": 55,
-            "html_url": "https://gitea.example.sk/pulls/55",
+            "html_url": "https://shako.example.sk/pulls/55",
             "state": "open",
             "mergeable": true,
             "merged": false
@@ -107,7 +107,7 @@ async fn delete_returns_202_with_change_and_commits_to_gitea() {
         .await;
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
 
     state.mirror.upsert(ResourceEnvelope {
         api_version: API_VERSION.to_string(),
@@ -155,7 +155,7 @@ async fn delete_returns_202_with_change_and_commits_to_gitea() {
     assert_eq!(change.status.plan.delete, 1);
     assert_eq!(
         change.status.merge_request.as_deref(),
-        Some("https://gitea.example.sk/pulls/55")
+        Some("https://shako.example.sk/pulls/55")
     );
 
     let requests = server.received_requests().await.expect("received requests");
@@ -226,10 +226,10 @@ async fn delete_missing_name_returns_404() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     let app = server::app(state);
 
     let response = app
@@ -273,10 +273,10 @@ async fn delete_unknown_plural_returns_404() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     let app = server::app(state);
 
     let response = app
@@ -322,10 +322,10 @@ async fn delete_blocked_by_dependents_returns_409_naming_this_projects_reference
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
 
     state.mirror.upsert(ResourceEnvelope {
         api_version: API_VERSION.to_string(),
@@ -501,10 +501,10 @@ async fn delete_without_csrf_header_returns_403() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
 
     state.mirror.upsert(ResourceEnvelope {
         api_version: API_VERSION.to_string(),
@@ -548,9 +548,9 @@ async fn delete_without_csrf_header_returns_403() {
     assert_eq!(problem.r#type, "https://joinedcontext.com/errors/forbidden");
 }
 
-fn space_state(client: GiteaClient) -> (Config, AppState) {
+fn space_state(client: ShakoClient) -> (Config, AppState) {
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     state.mirror.upsert(ResourceEnvelope {
         api_version: API_VERSION.to_string(),
         kind: "ContextSpace".to_string(),
@@ -632,7 +632,7 @@ async fn a_stale_branch_is_recreated_from_main_before_the_removal_is_written() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
     mount_repo_and_file(&server).await;
     let branch = branch_name("ovzdusie", "ContextSpace", "mobility", Operation::Delete);
     Mock::given(method("GET"))
@@ -666,7 +666,7 @@ async fn a_stale_branch_is_recreated_from_main_before_the_removal_is_written() {
         .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
             "number": 56,
-            "html_url": "https://gitea.example.sk/pulls/56",
+            "html_url": "https://shako.example.sk/pulls/56",
             "state": "open",
             "merged": false
         })))
@@ -716,7 +716,7 @@ async fn a_second_removal_while_one_is_open_names_the_open_change() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
     mount_repo_and_file(&server).await;
     let branch = branch_name("ovzdusie", "ContextSpace", "mobility", Operation::Delete);
     Mock::given(method("GET"))
@@ -724,7 +724,7 @@ async fn a_second_removal_while_one_is_open_names_the_open_change() {
         .and(query_param("state", "open"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
             "number": 300,
-            "html_url": "https://gitea.example.sk/pulls/300",
+            "html_url": "https://shako.example.sk/pulls/300",
             "state": "open",
             "head": { "ref": branch },
             "base": { "ref": "main" },
@@ -762,7 +762,7 @@ async fn deleting_a_datamodel_removes_its_source_and_its_artefacts_in_one_change
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/test-owner/test-repo"))
@@ -814,7 +814,7 @@ async fn deleting_a_datamodel_removes_its_source_and_its_artefacts_in_one_change
         .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
             "number": 57,
-            "html_url": "https://gitea.example.sk/pulls/57",
+            "html_url": "https://shako.example.sk/pulls/57",
             "state": "open",
             "merged": false
         })))
@@ -889,7 +889,7 @@ async fn a_source_another_manifest_still_names_survives_the_delete() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/test-owner/test-repo"))
@@ -935,7 +935,7 @@ async fn a_source_another_manifest_still_names_survives_the_delete() {
         .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
             "number": 58,
-            "html_url": "https://gitea.example.sk/pulls/58",
+            "html_url": "https://shako.example.sk/pulls/58",
             "state": "open",
             "merged": false
         })))
@@ -1052,17 +1052,17 @@ mod under_identity {
     }
 
     /// The space `mobility` of `ovzdusie` and whatever `extra` holds, with the reader's binding.
-    fn state_with(gitea: Option<&MockServer>, extra: Vec<ResourceEnvelope>) -> AppState {
+    fn state_with(shako: Option<&MockServer>, extra: Vec<ResourceEnvelope>) -> AppState {
         let mut state = AppState::new(Config::for_tests(), None);
-        if let Some(server) = gitea {
-            let client = GiteaClient::new(
+        if let Some(server) = shako {
+            let client = ShakoClient::new(
                 server.uri().parse().expect("url"),
                 "test-owner",
                 "test-repo",
                 "t",
             )
             .expect("a forge client");
-            state = state.with_gitea(Arc::new(client));
+            state = state.with_shako(Arc::new(client));
         }
         state.mirror.upsert(manifest(
             "ContextSpace",

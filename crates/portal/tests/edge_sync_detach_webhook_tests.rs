@@ -31,7 +31,7 @@ use common::{envelope, forge, person, send};
 use jcctl::sync::{RemoteError, SyncRemote};
 use joinedcontext_portal::api::webhook::{EVENT_HEADER, SIGNATURE_HEADER};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
@@ -49,7 +49,7 @@ const GITEA: &str = "the-forges-own-webhook-secret";
 const STATUS: &str = "/api/v1/projects/bb/syncsources/regional/status";
 const DETACH: &str = "/api/v1/projects/bb/syncsources/regional/detach";
 const HOOK: &str = "/api/v1/webhooks/sync/bb/regional";
-const GITEA_HOOK: &str = "/api/v1/webhooks/gitea";
+const GITEA_HOOK: &str = "/api/v1/webhooks/shako";
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -82,32 +82,32 @@ fn sign(secret: &str, body: &str) -> String {
         .collect()
 }
 
-/// The Portal over `gitea` with the webhook secrets an installation has configured. The config is
+/// The Portal over `shako` with the webhook secrets an installation has configured. The config is
 /// behind an `Arc` once the state holds it, so the two secrets are set here rather than afterwards.
-fn portal_on(gitea: &MockServer, secret: Option<&str>, previous: Option<&str>) -> AppState {
+fn portal_on(shako: &MockServer, secret: Option<&str>, previous: Option<&str>) -> AppState {
     let mut config = Config::for_tests();
-    config.gitea_webhook_secret = secret.map(str::to_owned);
-    config.gitea_webhook_secret_previous = previous.map(str::to_owned);
-    let client = GiteaClient::new(
-        gitea.uri().parse().expect("mock url"),
+    config.shako_webhook_secret = secret.map(str::to_owned);
+    config.shako_webhook_secret_previous = previous.map(str::to_owned);
+    let client = ShakoClient::new(
+        shako.uri().parse().expect("mock url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    AppState::new(config, None).with_gitea(Arc::new(client))
+    AppState::new(config, None).with_shako(Arc::new(client))
 }
 
-/// The Portal with the sync loop over `gitea`, the source `bb/regional` in the mirror, and a role
+/// The Portal with the sync loop over `shako`, the source `bb/regional` in the mirror, and a role
 /// carrying `verbs` on SyncSource bound to `jana`.
 fn state_with(
-    gitea: &MockServer,
+    shako: &MockServer,
     verbs: &[&str],
     secret: Option<&str>,
     previous: Option<&str>,
 ) -> AppState {
-    let mut state = portal_on(gitea, secret, previous);
-    let client = state.gitea.clone().expect("forge client");
+    let mut state = portal_on(shako, secret, previous);
+    let client = state.shako.clone().expect("forge client");
     let remote: Remote = Arc::new(Unreachable);
     state.sync = Some(Arc::new(Driver::new(
         client,
@@ -175,8 +175,8 @@ async fn hook(
 }
 
 /// Everything the forge was asked to do, as `VERB /path`, so a case can prove it was asked nothing.
-async fn touched(gitea: &MockServer) -> Vec<String> {
-    gitea
+async fn touched(shako: &MockServer) -> Vec<String> {
+    shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -194,8 +194,8 @@ async fn touched(gitea: &MockServer) -> Vec<String> {
 /// made, and a source that is not there is not disclosed to them either.
 #[tokio::test]
 async fn detaching_without_delete_touches_neither_the_loop_nor_the_forge() {
-    let gitea = forge().await;
-    let state = state_with(&gitea, &["read", "propose"], None, None);
+    let shako = forge().await;
+    let state = state_with(&shako, &["read", "propose"], None, None);
 
     let answer = send(&state, person("jana"), "POST", DETACH, None).await;
     assert_eq!(answer.status, StatusCode::FORBIDDEN, "{}", answer.text);
@@ -208,7 +208,7 @@ async fn detaching_without_delete_touches_neither_the_loop_nor_the_forge() {
     assert_eq!(reported["paused"], json!(false), "{}", status.text);
 
     // The forge was read for nothing and written to not at all.
-    let writes: Vec<String> = touched(&gitea)
+    let writes: Vec<String> = touched(&shako)
         .await
         .into_iter()
         .filter(|call| !call.starts_with("GET "))
@@ -222,8 +222,8 @@ async fn detaching_without_delete_touches_neither_the_loop_nor_the_forge() {
 /// could not be a source is told the same as one asking for a source that is simply absent.
 #[tokio::test]
 async fn a_detach_of_a_source_that_is_not_there_is_the_same_answer_for_every_name() {
-    let gitea = forge().await;
-    let state = state_with(&gitea, &["read", "propose", "delete"], None, None);
+    let shako = forge().await;
+    let state = state_with(&shako, &["read", "propose", "delete"], None, None);
 
     // A name that is not there, one that differs only in case, one that walks up a directory and one
     // with a trailing space: the same problem document for all four, and the only thing that varies
@@ -254,7 +254,7 @@ async fn a_detach_of_a_source_that_is_not_there_is_the_same_answer_for_every_nam
     }
 
     // Nothing was written for any of them: a probe of four names costs the forge nothing.
-    let writes: Vec<String> = touched(&gitea)
+    let writes: Vec<String> = touched(&shako)
         .await
         .into_iter()
         .filter(|call| !call.starts_with("GET "))
@@ -274,8 +274,8 @@ async fn a_detach_of_a_source_that_is_not_there_is_the_same_answer_for_every_nam
 async fn a_detach_the_forge_refuses_leaves_the_source_paused_and_no_merge_request() {
     // A forge with nothing mounted: every call it gets answers 404, which is what a repository the
     // Portal cannot read looks like from inside `proposal::open`.
-    let gitea = MockServer::start().await;
-    let state = state_with(&gitea, &["read", "propose", "delete"], None, None);
+    let shako = MockServer::start().await;
+    let state = state_with(&shako, &["read", "propose", "delete"], None, None);
 
     let answer = send(&state, person("jana"), "POST", DETACH, None).await;
     assert!(
@@ -311,8 +311,8 @@ async fn a_detach_the_forge_refuses_leaves_the_source_paused_and_no_merge_reques
 /// source in the path are looked at, so the door says nothing about what the installation syncs.
 #[tokio::test]
 async fn the_sync_webhook_refuses_before_it_reads_the_project_or_the_source() {
-    let gitea = forge().await;
-    let state = state_with(&gitea, &["read", "propose", "delete"], Some(SECRET), None);
+    let shako = forge().await;
+    let state = state_with(&shako, &["read", "propose", "delete"], Some(SECRET), None);
     let body = r#"{"pushed":true}"#;
 
     // The signature covers the exact bytes: the same JSON with one space in it is a different body.
@@ -357,7 +357,7 @@ async fn the_sync_webhook_refuses_before_it_reads_the_project_or_the_source() {
     }
 
     // And no refusal reached the forge.
-    let writes: Vec<String> = touched(&gitea)
+    let writes: Vec<String> = touched(&shako)
         .await
         .into_iter()
         .filter(|call| !call.starts_with("GET "))
@@ -374,9 +374,9 @@ async fn the_sync_webhook_refuses_before_it_reads_the_project_or_the_source() {
 /// per pass, and the route asks what it left (`src/sync/webhook_secrets.rs`).
 #[tokio::test]
 async fn a_source_is_run_by_its_own_secret_and_by_nobody_elses() {
-    let gitea = forge().await;
+    let shako = forge().await;
     // The platform's own Gitea secret is a third value here, so an answer that took it would show.
-    let state = state_with(&gitea, &["read", "propose", "delete"], Some(GITEA), None);
+    let state = state_with(&shako, &["read", "propose", "delete"], Some(GITEA), None);
     state
         .webhook_secrets
         .replace_all(std::collections::BTreeMap::from([
@@ -433,8 +433,8 @@ async fn a_source_is_run_by_its_own_secret_and_by_nobody_elses() {
 /// rotation is an outage, which is why nobody rotates.
 #[tokio::test]
 async fn the_retiring_secret_is_accepted_until_a_pass_drops_it() {
-    let gitea = forge().await;
-    let state = state_with(&gitea, &["read", "propose", "delete"], Some(GITEA), None);
+    let shako = forge().await;
+    let state = state_with(&shako, &["read", "propose", "delete"], Some(GITEA), None);
     let body = r#"{"pushed":true}"#;
     let held = |secrets: Vec<String>| {
         state
@@ -479,8 +479,8 @@ async fn the_retiring_secret_is_accepted_until_a_pass_drops_it() {
 /// have no secret backend — to a caller who has proved nothing.
 #[tokio::test]
 async fn every_refusal_at_the_sync_webhook_is_the_same_answer() {
-    let gitea = forge().await;
-    let state = state_with(&gitea, &["read", "propose", "delete"], None, None);
+    let shako = forge().await;
+    let state = state_with(&shako, &["read", "propose", "delete"], None, None);
     assert!(
         state.webhook_secrets.is_empty(),
         "this case is about a Portal that has resolved no webhook secret at all",
@@ -510,7 +510,7 @@ async fn every_refusal_at_the_sync_webhook_is_the_same_answer() {
         "the refusals are not worded alike: {answers:?}",
     );
 
-    let writes: Vec<String> = touched(&gitea)
+    let writes: Vec<String> = touched(&shako)
         .await
         .into_iter()
         .filter(|call| !call.starts_with("GET "))
@@ -528,8 +528,8 @@ async fn every_refusal_at_the_sync_webhook_is_the_same_answer() {
 /// refused only after the signature was good, so an unauthorised caller never reaches the parser.
 #[tokio::test]
 async fn the_gitea_hook_takes_one_signature_of_these_bytes_and_parses_nothing_before_it() {
-    let gitea = MockServer::start().await;
-    let state = portal_on(&gitea, Some(SECRET), None);
+    let shako = MockServer::start().await;
+    let state = portal_on(&shako, Some(SECRET), None);
     let body = r#"{"ref":"refs/heads/main"}"#;
     let signature = sign(SECRET, body);
 
@@ -580,7 +580,7 @@ async fn the_gitea_hook_takes_one_signature_of_these_bytes_and_parses_nothing_be
     }
 
     assert!(
-        touched(&gitea).await.is_empty(),
+        touched(&shako).await.is_empty(),
         "the forge was touched by a webhook that synced nothing",
     );
 }
@@ -590,8 +590,8 @@ async fn the_gitea_hook_takes_one_signature_of_these_bytes_and_parses_nothing_be
 /// 204 — accepted, so the forge stops retrying, and nothing is read or written because of them.
 #[tokio::test]
 async fn a_signed_event_that_changes_nothing_is_accepted_and_syncs_nothing() {
-    let gitea = MockServer::start().await;
-    let state = portal_on(&gitea, Some(SECRET), None);
+    let shako = MockServer::start().await;
+    let state = portal_on(&shako, Some(SECRET), None);
 
     let nothing_to_do = [
         ("a tag", "push", json!({ "ref": "refs/tags/v1.0.0" })),
@@ -650,19 +650,19 @@ async fn a_signed_event_that_changes_nothing_is_accepted_and_syncs_nothing() {
     }
 
     assert!(
-        touched(&gitea).await.is_empty(),
+        touched(&shako).await.is_empty(),
         "the forge was touched for an event that changes nothing",
     );
 }
 
-/// CC-08: with no `x-gitea-event` header the payload's own shape decides, and a header the Portal
+/// CC-08: with no `x-shako-event` header the payload's own shape decides, and a header the Portal
 /// cannot read as text is the same as none. The event name is read case-insensitively, so `PUSH` and
 /// `Push` are the event `push` — worth pinning, because the branch a push carries decides whether the
 /// mirror is read again.
 #[tokio::test]
 async fn the_event_header_is_read_case_insensitively_and_its_absence_reads_the_payload() {
-    let gitea = MockServer::start().await;
-    let state = portal_on(&gitea, Some(SECRET), None);
+    let shako = MockServer::start().await;
+    let state = portal_on(&shako, Some(SECRET), None);
 
     // No syncer is configured, so an accepted event is a 202 that reads nothing: this case is about
     // which events are accepted, and `webhook_tests.rs` is about the sync one of them triggers.
@@ -694,7 +694,7 @@ async fn the_event_header_is_read_case_insensitively_and_its_absence_reads_the_p
     assert_eq!(status, StatusCode::NO_CONTENT, "{text}");
 
     assert!(
-        touched(&gitea).await.is_empty(),
+        touched(&shako).await.is_empty(),
         "the forge was touched although no syncer is configured",
     );
 }

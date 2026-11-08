@@ -11,7 +11,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{envelope, forge, person, send};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::pipeline_log::{NewLine, Outcome};
 use joinedcontext_portal::pipeline_outcomes::Reason;
@@ -39,9 +39,9 @@ fn tenant_count(tenant: &str, entities: u64) -> Mock {
 
 /// `remover` reads and deletes spaces, pipelines and endpoints of `ovzdusie`, against a forge and
 /// a broker whose `ovzdusie-air` tenant holds 1 234 entities.
-async fn world(gitea: &MockServer, broker: &MockServer) -> AppState {
-    let client = GiteaClient::new(
-        gitea.uri().parse().expect("a url"),
+async fn world(shako: &MockServer, broker: &MockServer) -> AppState {
+    let client = ShakoClient::new(
+        shako.uri().parse().expect("a url"),
         "test-owner",
         "test-repo",
         "token-xyz",
@@ -55,7 +55,7 @@ async fn world(gitea: &MockServer, broker: &MockServer) -> AppState {
         },
         None,
     )
-    .with_gitea(std::sync::Arc::new(client));
+    .with_shako(std::sync::Arc::new(client));
     state.mirror.upsert(envelope(
         "ContextSpace",
         "air",
@@ -107,8 +107,8 @@ async fn dry_run(state: &AppState, plural: &str, name: &str) -> (StatusCode, Val
 
 #[tokio::test]
 async fn a_space_names_the_entities_it_holds() {
-    let (gitea, broker) = (forge().await, MockServer::start().await);
-    let state = world(&gitea, &broker).await;
+    let (shako, broker) = (forge().await, MockServer::start().await);
+    let state = world(&shako, &broker).await;
     // `air` is still named by its pipeline and endpoint, which the dry run refuses as the removal
     // would (MF-07); `lonely` is a space nothing references.
     tenant_count("ovzdusie-lonely", 1234).mount(&broker).await;
@@ -130,8 +130,8 @@ async fn a_space_names_the_entities_it_holds() {
 
 #[tokio::test]
 async fn a_pipeline_names_its_refused_records_and_its_runs() {
-    let (gitea, broker) = (forge().await, MockServer::start().await);
-    let state = world(&gitea, &broker).await;
+    let (shako, broker) = (forge().await, MockServer::start().await);
+    let state = world(&shako, &broker).await;
     let reason = Reason {
         rule: "sh:datatype".into(),
         path: "pm10".into(),
@@ -175,8 +175,8 @@ async fn a_pipeline_names_its_refused_records_and_its_runs() {
 
 #[tokio::test]
 async fn a_resource_that_takes_nothing_with_it_says_nothing_and_a_dry_run_writes_nothing() {
-    let (gitea, broker) = (forge().await, MockServer::start().await);
-    let state = world(&gitea, &broker).await;
+    let (shako, broker) = (forge().await, MockServer::start().await);
+    let state = world(&shako, &broker).await;
     let (status, body) = dry_run(&state, "endpoints", "public-air").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.get("goesWith").is_none(), "{body}");
@@ -187,7 +187,7 @@ async fn a_resource_that_takes_nothing_with_it_says_nothing_and_a_dry_run_writes
         "a pipeline that never ran takes nothing: {body}"
     );
 
-    let writes: Vec<String> = gitea
+    let writes: Vec<String> = shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -202,8 +202,8 @@ async fn a_resource_that_takes_nothing_with_it_says_nothing_and_a_dry_run_writes
 /// removal takes with it is information, never a reason to refuse it.
 #[tokio::test]
 async fn a_count_the_broker_cannot_give_is_left_out_and_the_dry_run_still_answers() {
-    let (gitea, broker) = (forge().await, MockServer::start().await);
-    let state = world(&gitea, &broker).await;
+    let (shako, broker) = (forge().await, MockServer::start().await);
+    let state = world(&shako, &broker).await;
     state.mirror.upsert(envelope(
         "ContextSpace",
         "silent",

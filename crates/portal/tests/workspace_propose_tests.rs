@@ -9,7 +9,7 @@ use joinedcontext_portal::api::mutate::{
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::change::Operation;
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::ops::workspaces::{Opening, Scope};
 use joinedcontext_portal::resource::API_VERSION;
 use joinedcontext_portal::state::AppState;
@@ -65,14 +65,14 @@ async fn forge() -> MockServer {
 }
 
 async fn state_on(server: &MockServer) -> AppState {
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().unwrap(),
         "test-owner",
         "test-repo",
         "t",
     )
     .unwrap();
-    AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client))
+    AppState::new(Config::for_tests(), None).with_shako(Arc::new(client))
 }
 
 fn space(name: &str) -> Value {

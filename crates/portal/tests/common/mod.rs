@@ -21,7 +21,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
@@ -272,48 +272,48 @@ pub fn mirror_holding(namespace: &str, resources: &[(&str, &str)]) -> Arc<Mirror
     Arc::new(mirror)
 }
 
-/// The Portal's state against the mock forge `gitea`, with an empty mirror.
-pub fn state_on(gitea: &MockServer) -> AppState {
-    let client = GiteaClient::new(
-        gitea.uri().parse().expect("mock url"),
+/// The Portal's state against the mock forge `shako`, with an empty mirror.
+pub fn state_on(shako: &MockServer) -> AppState {
+    let client = ShakoClient::new(
+        shako.uri().parse().expect("mock url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client))
+    AppState::new(Config::for_tests(), None).with_shako(Arc::new(client))
 }
 
 /// A state on a forge that takes every write and answers for as long as the test binary runs.
 /// A dropped `MockServer` goes back to wiremock's pool, and the next test that takes it resets
 /// its mocks while this state still asks it: a 404 from a forge that held the file (T-3824).
 pub async fn state_on_forge() -> AppState {
-    let gitea = forge().await;
-    let state = state_on(&gitea);
-    std::mem::forget(gitea);
+    let shako = forge().await;
+    let state = state_on(&shako);
+    std::mem::forget(shako);
     state
 }
 
 /// A forge that takes every write: branches, files, merge requests, merges and closes. The files
 /// and merge requests a test reads are mounted on top of it.
 pub async fn forge() -> MockServer {
-    let gitea = MockServer::start().await;
-    mount_repository(&gitea, REPO).await;
-    gitea
+    let shako = MockServer::start().await;
+    mount_repository(&shako, REPO).await;
+    shako
 }
 
 /// One more repository of the forge that takes every write, at `REPO`-style `repo` (a project
 /// repository of layout 2 beside the organization's, CC-85).
-pub async fn mount_repository(gitea: &MockServer, repo: &str) {
+pub async fn mount_repository(shako: &MockServer, repo: &str) {
     Mock::given(method("GET"))
         .and(path(repo))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
-        .mount(gitea)
+        .mount(shako)
         .await;
     Mock::given(method("POST"))
         .and(path(format!("{repo}/branches")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
-        .mount(gitea)
+        .mount(shako)
         .await;
     for verb in ["PUT", "POST", "DELETE"] {
         Mock::given(method(verb))
@@ -322,31 +322,31 @@ pub async fn mount_repository(gitea: &MockServer, repo: &str) {
                 ResponseTemplate::new(201)
                     .set_body_json(json!({ "commit": { "sha": "commit-1" } })),
             )
-            .mount(gitea)
+            .mount(shako)
             .await;
     }
     Mock::given(method("POST"))
         .and(path(format!("{repo}/pulls")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 9, "html_url": "https://gitea.example/pulls/9", "state": "open",
+            "number": 9, "html_url": "https://shako.example/pulls/9", "state": "open",
             "mergeable": true, "merged": false
         })))
-        .mount(gitea)
+        .mount(shako)
         .await;
     Mock::given(path_regex(format!("^{repo}/pulls/[0-9]+/(merge|reviews)$")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
-        .mount(gitea)
+        .mount(shako)
         .await;
     Mock::given(method("PATCH"))
         .and(path_regex(format!("^{repo}/pulls/[0-9]+$")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "state": "closed" })))
-        .mount(gitea)
+        .mount(shako)
         .await;
     Mock::given(method("GET"))
         .and(path_regex(format!("^{repo}/contents/.*")))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .with_priority(9)
-        .mount(gitea)
+        .mount(shako)
         .await;
     // Every file of one change goes in one commit to `POST /contents`, which is the repository
     // path itself and not a path under it, so the per-file mocks above never match it (T-0900).
@@ -355,7 +355,7 @@ pub async fn mount_repository(gitea: &MockServer, repo: &str) {
         .respond_with(
             ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "commit-1" } })),
         )
-        .mount(gitea)
+        .mount(shako)
         .await;
     // One open change per resource: a removal asks the forge for the open merge requests first
     // (CC-34, T-0883). This fixture has none open — at the fallback priority, so a suite that
@@ -364,7 +364,7 @@ pub async fn mount_repository(gitea: &MockServer, repo: &str) {
         .and(path(format!("{repo}/pulls")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
         .with_priority(9)
-        .mount(gitea)
+        .mount(shako)
         .await;
     // A removal lists the tree to find the files the resource owns beside its manifest (T-0900).
     // This fixture holds manifests alone, so the listing is empty and a delete removes the one
@@ -376,7 +376,7 @@ pub async fn mount_repository(gitea: &MockServer, repo: &str) {
             ResponseTemplate::new(200).set_body_json(json!({ "tree": [], "truncated": false })),
         )
         .with_priority(9)
-        .mount(gitea)
+        .mount(shako)
         .await;
 }
 
@@ -633,9 +633,9 @@ pub async fn stream_requests(runner: &MockServer) -> Vec<wiremock::Request> {
 
 /// Every `(path, text)` the commits of `POST {repo}/contents` wrote, each commit in the order it
 /// lists its files.
-pub async fn committed_files(gitea: &wiremock::MockServer, repo: &str) -> Vec<(String, String)> {
+pub async fn committed_files(shako: &wiremock::MockServer, repo: &str) -> Vec<(String, String)> {
     use base64::Engine;
-    gitea
+    shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -656,8 +656,8 @@ pub async fn committed_files(gitea: &wiremock::MockServer, repo: &str) -> Vec<(S
 }
 
 /// The paths a deletion removed in its one commit, `POST /contents` (F-R2POR3-019), sorted.
-pub async fn removed_in_one_commit(gitea: &wiremock::MockServer) -> Vec<String> {
-    let mut paths: Vec<String> = gitea
+pub async fn removed_in_one_commit(shako: &wiremock::MockServer) -> Vec<String> {
+    let mut paths: Vec<String> = shako
         .received_requests()
         .await
         .unwrap_or_default()

@@ -15,7 +15,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{envelope, forge, person, send, REPO};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::space_move::Moves;
 use joinedcontext_portal::state::AppState;
@@ -120,14 +120,14 @@ async fn world_with(held: bool, target_digest: Value, on_main: &str, empty_first
     config.broker_url_template = Some(format!("http://{{broker}}:{port}"));
     config.broker_admin_token_file = Some(token);
     config.gateway_url = Some(gateway.uri());
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         forge.uri().parse().expect("mock url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    let mut state = AppState::new(config, None).with_gitea(Arc::new(client));
+    let mut state = AppState::new(config, None).with_shako(Arc::new(client));
     state.space_moves = Arc::new(Moves::new(
         Duration::from_millis(20),
         Duration::from_millis(300),

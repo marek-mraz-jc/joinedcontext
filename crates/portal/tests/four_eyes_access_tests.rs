@@ -12,7 +12,7 @@ use joinedcontext_portal::api::changes::{approve_change_for, ApprovedBy};
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::error::ApiError;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{self, ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::state::AppState;
@@ -98,7 +98,7 @@ async fn forge(kind: &str) -> (MockServer, AppState) {
         .await;
     let pull = json!({
         "number": 1,
-        "html_url": "https://gitea.example.sk/pulls/1",
+        "html_url": "https://shako.example.sk/pulls/1",
         "state": "open",
         "title": format!("create {kind} {name}"),
         "head": { "ref": format!("portal/create-{}-{name}-11111111", kind.to_ascii_lowercase()), "sha": "head-1" },
@@ -124,14 +124,14 @@ async fn forge(kind: &str) -> (MockServer, AppState) {
         .mount(&server)
         .await;
 
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().expect("url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
     let mut kinds: Vec<&str> = ACCESS_KINDS.to_vec();
     kinds.push("ContextSpace");
     state.mirror.upsert(org(

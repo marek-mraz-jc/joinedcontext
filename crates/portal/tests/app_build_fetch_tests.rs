@@ -10,7 +10,7 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use joinedcontext_portal::apps::fetch::fetch_missing;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::store::Mirror;
 
 const COMMIT: &str = "8c56954a1f0e3d2c1b0a99887766554433221100";
@@ -66,7 +66,7 @@ fn mirror_naming(digest: &str) -> Mirror {
     mirror
 }
 
-async fn forge_holding(bytes: Vec<u8>) -> (MockServer, GiteaClient) {
+async fn forge_holding(bytes: Vec<u8>) -> (MockServer, ShakoClient) {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path(BUNDLE))
@@ -74,7 +74,7 @@ async fn forge_holding(bytes: Vec<u8>) -> (MockServer, GiteaClient) {
         .expect(1)
         .mount(&server)
         .await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         url::Url::parse(&server.uri()).expect("forge url"),
         "test-owner",
         "configuration",
@@ -131,7 +131,7 @@ async fn a_replica_reads_the_version_of_the_digest_and_not_the_older_build_of_th
         .expect(0)
         .mount(&server)
         .await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         url::Url::parse(&server.uri()).expect("forge url"),
         "test-owner",
         "configuration",
@@ -193,15 +193,15 @@ mod tempdir {
 }
 
 /// A client whose applications live in `joinedcontext-apps` with their own token (PF-106).
-fn moved_client(server: &MockServer) -> GiteaClient {
+fn moved_client(server: &MockServer) -> ShakoClient {
     let uri = server.uri();
-    GiteaClient::from_env(move |name| match name {
-        "JC_GITEA_URL" => Some(uri.clone()),
-        "JC_GITEA_OWNER" => Some("test-owner".to_owned()),
-        "JC_GITEA_REPO" => Some("configuration".to_owned()),
-        "JC_GITEA_TOKEN" => Some("portal-token".to_owned()),
-        "JC_GITEA_APPS_OWNER" => Some("joinedcontext-apps".to_owned()),
-        "JC_GITEA_APPS_TOKEN" => Some("apps-token".to_owned()),
+    ShakoClient::from_env(move |name| match name {
+        "JC_SHAKO_URL" => Some(uri.clone()),
+        "JC_SHAKO_OWNER" => Some("test-owner".to_owned()),
+        "JC_SHAKO_REPO" => Some("configuration".to_owned()),
+        "JC_SHAKO_TOKEN" => Some("portal-token".to_owned()),
+        "JC_SHAKO_APPS_OWNER" => Some("joinedcontext-apps".to_owned()),
+        "JC_SHAKO_APPS_TOKEN" => Some("apps-token".to_owned()),
         _ => None,
     })
     .expect("config")

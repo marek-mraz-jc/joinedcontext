@@ -78,7 +78,7 @@ async fn world() -> (MockServer, AppState) {
         .await;
 
     let mut state = state_on(&server);
-    let client = state.gitea.clone().expect("forge client");
+    let client = state.shako.clone().expect("forge client");
     let remote: Remote = Arc::new(Silent);
     state.sync = Some(Arc::new(Driver::new(
         client,
@@ -259,7 +259,7 @@ async fn detaching_needs_delete_and_pausing_needs_propose() {
     let detached = doors::call("jc_syncsource_detach", &session(steward()), &state, named()).await;
     assert_eq!(StatusCode::OK, detached.status, "{}", detached.text());
     assert_eq!(
-        "https://gitea.example/pulls/9",
+        "https://shako.example/pulls/9",
         detached.body["url"],
         "{}",
         detached.text()

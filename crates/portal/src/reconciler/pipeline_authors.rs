@@ -24,7 +24,7 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::auth::session::Identity;
-use crate::git::{GitError, GiteaClient};
+use crate::forge::{GitError, ShakoClient};
 use crate::people::{Admin, People, PeopleError};
 use crate::store::Mirror;
 
@@ -73,7 +73,7 @@ pub struct Placed<'a> {
     pub namespace: String,
     pub name: String,
     pub manifest: Value,
-    pub forge: &'a GiteaClient,
+    pub forge: &'a ShakoClient,
     pub git_ref: &'a str,
     pub path: String,
 }
@@ -392,7 +392,7 @@ mod tests {
         })
     }
 
-    async fn forge(message: &str) -> (MockServer, GiteaClient) {
+    async fn forge(message: &str) -> (MockServer, ShakoClient) {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/api/v1/repos/o/r/commits"))
@@ -412,15 +412,15 @@ mod tests {
         (server, client)
     }
 
-    fn stub_client(server: &MockServer) -> GiteaClient {
+    fn stub_client(server: &MockServer) -> ShakoClient {
         let base = url::Url::parse(&server.uri()).expect("the stub's address");
-        GiteaClient::new(base, "o", "r", "t").expect("a client for the stub")
+        ShakoClient::new(base, "o", "r", "t").expect("a client for the stub")
     }
 
     async fn judged(
         mirror: &Mirror,
         rights: &AuthorRights,
-        client: &GiteaClient,
+        client: &ShakoClient,
     ) -> Option<String> {
         judged_at(mirror, rights, client, "main").await
     }
@@ -428,7 +428,7 @@ mod tests {
     async fn judged_at(
         mirror: &Mirror,
         rights: &AuthorRights,
-        client: &GiteaClient,
+        client: &ShakoClient,
         git_ref: &str,
     ) -> Option<String> {
         let placed = Placed {

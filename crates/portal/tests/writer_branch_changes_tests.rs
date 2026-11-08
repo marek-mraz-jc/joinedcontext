@@ -16,7 +16,7 @@ use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::Lane;
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
@@ -104,14 +104,14 @@ fn pull(number: u64, branch: &str, head_repo: u64, (login, email): (&str, &str))
 /// 12 (Wera's, from a fork) and 13 (Olli's) are open, and 11's head commit claims to be Jana's.
 async fn forge(writer_verbs: &[&str]) -> (MockServer, AppState) {
     let server = MockServer::start().await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().expect("url"),
         "test-owner",
         "organization-config",
         "token-xyz",
     )
     .expect("client");
-    let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
     state.mirror.set_layout(2);
     state.mirror.set_repositories(BTreeMap::from([(
         "ovzdusie".to_owned(),

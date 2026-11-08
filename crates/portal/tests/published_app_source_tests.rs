@@ -15,7 +15,7 @@ use wiremock::MockServer;
 
 use common::{checked_send as send, envelope, forge, person};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::API_VERSION;
 use joinedcontext_portal::state::AppState;
@@ -23,9 +23,9 @@ use joinedcontext_portal::state::AppState;
 const APPS: &str = "/api/v1/projects/helsinki/apps";
 
 /// A Portal whose static host holds `shipped` in `apps_dir`, and `jana`, who may propose Apps.
-fn state_with(gitea: &MockServer, apps_dir: &std::path::Path) -> AppState {
-    let client = GiteaClient::new(
-        gitea.uri().parse().expect("mock url"),
+fn state_with(shako: &MockServer, apps_dir: &std::path::Path) -> AppState {
+    let client = ShakoClient::new(
+        shako.uri().parse().expect("mock url"),
         "test-owner",
         "test-repo",
         "token-xyz",
@@ -35,7 +35,7 @@ fn state_with(gitea: &MockServer, apps_dir: &std::path::Path) -> AppState {
         apps_dir: Some(apps_dir.to_string_lossy().into_owned()),
         ..Config::for_tests()
     };
-    let state = AppState::new(config, None).with_gitea(Arc::new(client));
+    let state = AppState::new(config, None).with_shako(Arc::new(client));
     state.mirror.upsert(envelope(
         "Role",
         "app-editor",
@@ -115,9 +115,9 @@ fn repository(name: &str) -> Value {
 /// the field and the two ways out; the same App from its own repository is accepted.
 #[tokio::test]
 async fn a_published_static_app_on_a_folder_is_refused_and_one_on_its_repository_is_accepted() {
-    let gitea = forge().await;
+    let shako = forge().await;
     let dir = apps_dir();
-    let state = state_with(&gitea, &dir);
+    let state = state_with(&shako, &dir);
 
     let refused = send(
         &state,
@@ -148,9 +148,9 @@ async fn a_published_static_app_on_a_folder_is_refused_and_one_on_its_repository
 /// this Portal holds it; the refusal names the App being written and no other (PF-59).
 #[tokio::test]
 async fn the_shipped_mark_is_believed_only_where_the_bundle_is() {
-    let gitea = forge().await;
+    let shako = forge().await;
     let dir = apps_dir();
-    let state = state_with(&gitea, &dir);
+    let state = state_with(&shako, &dir);
 
     let shipped = send(
         &state,
@@ -185,9 +185,9 @@ async fn the_shipped_mark_is_believed_only_where_the_bundle_is() {
 /// the way out the refusal names.
 #[tokio::test]
 async fn an_app_on_a_folder_can_still_be_retired() {
-    let gitea = forge().await;
+    let shako = forge().await;
     let dir = apps_dir();
-    let state = state_with(&gitea, &dir);
+    let state = state_with(&shako, &dir);
 
     let retired = send(
         &state,

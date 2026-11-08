@@ -12,7 +12,7 @@ use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::{Change, ChangePhase, Lane};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::error::ProblemDetails;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::reconciler::Syncer;
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
@@ -108,10 +108,10 @@ async fn list_changes_filters_portal_prefix_sorts_newest_first_with_metadata() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     let app = server::app(state);
 
     // Mock pull requests: PR 1 (portal/), PR 2 (feature/ non-portal), PR 3 (portal/)
@@ -121,7 +121,7 @@ async fn list_changes_filters_portal_prefix_sorts_newest_first_with_metadata() {
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
             {
                 "number": 1,
-                "html_url": "https://gitea.example.sk/pulls/1",
+                "html_url": "https://shako.example.sk/pulls/1",
                 "state": "open",
                 "title": "create ContextSpace mobility",
                 "head": { "ref": "portal/create-contextspace-mobility-11111111" },
@@ -137,7 +137,7 @@ async fn list_changes_filters_portal_prefix_sorts_newest_first_with_metadata() {
             },
             {
                 "number": 2,
-                "html_url": "https://gitea.example.sk/pulls/2",
+                "html_url": "https://shako.example.sk/pulls/2",
                 "state": "open",
                 "title": "manual feature branch",
                 "head": { "ref": "feature/custom-branch" },
@@ -153,7 +153,7 @@ async fn list_changes_filters_portal_prefix_sorts_newest_first_with_metadata() {
             },
             {
                 "number": 3,
-                "html_url": "https://gitea.example.sk/pulls/3",
+                "html_url": "https://shako.example.sk/pulls/3",
                 "state": "open",
                 "title": "delete ContextSpace traffic",
                 "head": { "ref": "portal/delete-contextspace-traffic-33333333" },
@@ -300,7 +300,7 @@ spec:
 #[tokio::test]
 async fn open_changes_are_read_side_by_side_and_listed_newest_first() {
     let server = MockServer::start().await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().expect("url"),
         "test-owner",
         "test-repo",
@@ -308,13 +308,13 @@ async fn open_changes_are_read_side_by_side_and_listed_newest_first() {
     )
     .expect("client");
     let config = Config::for_tests();
-    let app = server::app(AppState::new(config.clone(), None).with_gitea(Arc::new(client)));
+    let app = server::app(AppState::new(config.clone(), None).with_shako(Arc::new(client)));
 
     let prs: Vec<Value> = (1..=4)
         .map(|n| {
             json!({
                 "number": n,
-                "html_url": format!("https://gitea.example.sk/pulls/{n}"),
+                "html_url": format!("https://shako.example.sk/pulls/{n}"),
                 "state": "open",
                 "title": "delete ContextSpace traffic",
                 "head": { "ref": format!("portal/delete-contextspace-traffic-{n}{n}{n}{n}{n}{n}{n}{n}") },
@@ -407,10 +407,10 @@ async fn get_change_returns_redacted_plan_diff() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     let app = server::app(state);
 
     // PR 10 in hex is chg-0000000a
@@ -418,7 +418,7 @@ async fn get_change_returns_redacted_plan_diff() {
         .and(path("/api/v1/repos/test-owner/test-repo/pulls/10"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "number": 10,
-            "html_url": "https://gitea.example.sk/pulls/10",
+            "html_url": "https://shako.example.sk/pulls/10",
             "state": "open",
             "title": "update ContextSpace mobility",
             "head": { "ref": "portal/update-contextspace-mobility-12345678" },
@@ -573,10 +573,10 @@ async fn invalid_change_id_returns_400() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     let app = server::app(state);
 
     let invalid_ids = [
@@ -637,10 +637,10 @@ async fn approve_without_portal_approver_role_returns_403() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     let app = server::app(state);
 
     let viewer_cookies = session_and_csrf_cookies(
@@ -690,10 +690,10 @@ async fn approve_self_approval_returns_403_and_makes_no_git_mutations() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     let app = server::app(state);
 
     // PR author is jana.kovacova@banskabystrica.sk
@@ -701,7 +701,7 @@ async fn approve_self_approval_returns_403_and_makes_no_git_mutations() {
         .and(path("/api/v1/repos/test-owner/test-repo/pulls/1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "number": 1,
-            "html_url": "https://gitea.example.sk/pulls/1",
+            "html_url": "https://shako.example.sk/pulls/1",
             "state": "open",
             "title": "create ContextSpace mobility",
             "head": { "ref": "portal/create-contextspace-mobility-11111111" },
@@ -803,17 +803,17 @@ async fn reject_own_proposal_is_allowed() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     let app = server::app(state);
 
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/test-owner/test-repo/pulls/1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "number": 1,
-            "html_url": "https://gitea.example.sk/pulls/1",
+            "html_url": "https://shako.example.sk/pulls/1",
             "state": "open",
             "title": "create ContextSpace mobility",
             "head": { "ref": "portal/create-contextspace-mobility-11111111" },
@@ -922,10 +922,10 @@ async fn approve_red_lane_requires_confirm_and_records_git_actions() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     let app = server::app(state);
 
     // Red lane change: deletion of ContextSpace mobility
@@ -933,7 +933,7 @@ async fn approve_red_lane_requires_confirm_and_records_git_actions() {
         .and(path("/api/v1/repos/test-owner/test-repo/pulls/2"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "number": 2,
-            "html_url": "https://gitea.example.sk/pulls/2",
+            "html_url": "https://shako.example.sk/pulls/2",
             "state": "open",
             "title": "delete ContextSpace mobility",
             "head": { "ref": "portal/delete-contextspace-mobility-22222222" },
@@ -1127,7 +1127,7 @@ async fn successful_approve_answers_202_deploying() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
     let client = Arc::new(client);
@@ -1135,7 +1135,7 @@ async fn successful_approve_answers_202_deploying() {
     let mirror = Arc::new(Mirror::new());
     let syncer = Arc::new(Syncer::new(Arc::clone(&client), Arc::clone(&mirror)));
     let state = AppState::new(config.clone(), None)
-        .with_gitea(client)
+        .with_shako(client)
         .with_syncer(syncer);
     let app = server::app(state.clone());
 
@@ -1144,7 +1144,7 @@ async fn successful_approve_answers_202_deploying() {
         .and(path("/api/v1/repos/test-owner/test-repo/pulls/3"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "number": 3,
-            "html_url": "https://gitea.example.sk/pulls/3",
+            "html_url": "https://shako.example.sk/pulls/3",
             "state": "open",
             "title": "create ContextSpace sandbox-space",
             "head": { "ref": "portal/create-contextspace-sandbox-space-33333333" },
@@ -1308,9 +1308,9 @@ async fn rejecting_an_applications_change_ends_the_run_that_proposed_it() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     let run = |id: &str, status: &str| -> AgentRun {
         serde_json::from_value(json!({
             "id": id, "project": "ovzdusie", "appName": "city-bikes", "endpointName": "bikes",
@@ -1339,7 +1339,7 @@ async fn rejecting_an_applications_change_ends_the_run_that_proposed_it() {
         .and(path("/api/v1/repos/test-owner/test-repo/pulls/4"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "number": 4,
-            "html_url": "https://gitea.example.sk/pulls/4",
+            "html_url": "https://shako.example.sk/pulls/4",
             "state": "open",
             "title": "create App city-bikes",
             "head": { "ref": "portal/create-app-city-bikes-44444444" },
@@ -1430,17 +1430,17 @@ async fn reject_answers_202_rejected_and_requests_changes_without_merge() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     let app = server::app(state.clone());
 
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/test-owner/test-repo/pulls/4"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "number": 4,
-            "html_url": "https://gitea.example.sk/pulls/4",
+            "html_url": "https://shako.example.sk/pulls/4",
             "state": "open",
             "title": "create ContextSpace mobility",
             "head": { "ref": "portal/create-contextspace-mobility-44444444" },
@@ -1600,10 +1600,10 @@ async fn approve_without_csrf_header_returns_403() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     let app = server::app(state);
 
     // Approver session cookie is present, but X-CSRF-Token header is missing
@@ -1651,14 +1651,14 @@ async fn own_change_of(verbs: &[&str]) -> (MockServer, AppState) {
     use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 
     let server = MockServer::start().await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().expect("url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
     let org = |kind: &str, name: &str, spec: serde_json::Value| ResourceEnvelope {
         api_version: API_VERSION.to_owned(),
         kind: kind.to_owned(),
@@ -1685,7 +1685,7 @@ async fn own_change_of(verbs: &[&str]) -> (MockServer, AppState) {
         .and(path("/api/v1/repos/test-owner/test-repo/pulls/1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "number": 1,
-            "html_url": "https://gitea.example.sk/pulls/1",
+            "html_url": "https://shako.example.sk/pulls/1",
             "state": "open",
             "title": "create ContextSpace mobility",
             "head": { "ref": "portal/create-contextspace-mobility-11111111" },
@@ -1845,14 +1845,14 @@ async fn bundle_on(
     use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 
     let server = MockServer::start().await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().expect("url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
     let org = |kind: &str, name: &str, spec: Value| ResourceEnvelope {
         api_version: API_VERSION.to_owned(),
         kind: kind.to_owned(),
@@ -1883,7 +1883,7 @@ async fn bundle_on(
         .and(path("/api/v1/repos/test-owner/test-repo/pulls/7"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "number": 7,
-            "html_url": "https://gitea.example.sk/pulls/7",
+            "html_url": "https://shako.example.sk/pulls/7",
             "state": "open",
             "title": "import bundle",
             "head": { "ref": branch },
@@ -2164,7 +2164,7 @@ async fn readable_changes_fixture(kinds: &[&str]) -> (MockServer, AppState) {
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
             {
                 "number": 1,
-                "html_url": "https://gitea.example.sk/pulls/1",
+                "html_url": "https://shako.example.sk/pulls/1",
                 "state": "open",
                 "title": "create ContextSpace mobility",
                 "head": { "ref": "portal/create-contextspace-mobility-11111111" },
@@ -2341,14 +2341,14 @@ async fn change_of_file_by(
     use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 
     let server = MockServer::start().await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().expect("url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
     let org = |kind: &str, name: &str, spec: Value| ResourceEnvelope {
         api_version: API_VERSION.to_owned(),
         kind: kind.to_owned(),
@@ -2373,7 +2373,7 @@ async fn change_of_file_by(
         .and(path("/api/v1/repos/test-owner/test-repo/pulls/66"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "number": 66,
-            "html_url": "https://gitea.example.sk/pulls/66",
+            "html_url": "https://shako.example.sk/pulls/66",
             "state": "open",
             "title": "share air quality",
             "head": { "ref": branch },

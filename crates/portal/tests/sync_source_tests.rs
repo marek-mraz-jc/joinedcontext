@@ -15,7 +15,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use jc_core::kinds::SyncOrigin;
 use jcctl::sync::{RemoteError, SyncRemote};
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::sync::driver::{Driver, Remote};
 use joinedcontext_portal::sync::state::States;
 use serde_json::{json, Value};
@@ -278,9 +278,9 @@ async fn forge(files: &[(&str, String)]) -> (MockServer, Arc<Forge>) {
     (server, recorded)
 }
 
-fn client(server: &MockServer) -> Arc<GiteaClient> {
+fn client(server: &MockServer) -> Arc<ShakoClient> {
     Arc::new(
-        GiteaClient::new(
+        ShakoClient::new(
             server.uri().parse().expect("a url"),
             "test-owner",
             "test-repo",

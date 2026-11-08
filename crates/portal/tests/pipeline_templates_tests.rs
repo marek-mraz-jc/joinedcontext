@@ -11,8 +11,8 @@ use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::state::AppState;
 
 async fn world() -> (wiremock::MockServer, AppState) {
-    let gitea = forge().await;
-    let state = state_on(&gitea);
+    let shako = forge().await;
+    let state = state_on(&shako);
     for (role, verbs, project) in [
         ("editor", json!(["read", "propose"]), "helsinki"),
         ("reader", json!(["read"]), "helsinki"),
@@ -31,7 +31,7 @@ async fn world() -> (wiremock::MockServer, AppState) {
             json!({ "subjects": [{ "user": format!("{role}@hel.fi") }], "role": role, "scope": { "project": project } }),
         ));
     }
-    (gitea, state)
+    (shako, state)
 }
 
 async fn call(

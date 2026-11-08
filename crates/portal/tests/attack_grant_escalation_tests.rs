@@ -58,8 +58,8 @@ fn escalating_binding() -> String {
 /// The steward may read and propose Pipelines in `ovzdusie`, and propose RoleBindings there —
 /// enough to reach the hold, and nowhere near enough to pass it. `owns-everything` exists in the
 /// organization so the binding names a role that is really there.
-fn state_with(gitea: &MockServer) -> AppState {
-    let state = common::state_on(gitea);
+fn state_with(shako: &MockServer) -> AppState {
+    let state = common::state_on(shako);
     state.mirror.upsert(common::envelope(
         "Role",
         "owns-everything",
@@ -100,7 +100,7 @@ fn state_with(gitea: &MockServer) -> AppState {
 /// A forge whose `workspace/escalation` branch carries the escalating binding and whose base and
 /// main do not: exactly one file to bring back.
 async fn forge_with_workspace() -> MockServer {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     let branch_head = "ws-head-sha";
     Mock::given(method("GET"))
         .and(path(format!(
@@ -111,7 +111,7 @@ async fn forge_with_workspace() -> MockServer {
             "name": format!("workspace/{WORKSPACE}"),
             "commit": { "id": branch_head },
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{}/branches/main", common::REPO)))
@@ -119,7 +119,7 @@ async fn forge_with_workspace() -> MockServer {
             "name": "main",
             "commit": { "id": "main-sha" },
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{}/git/trees/{branch_head}", common::REPO)))
@@ -127,7 +127,7 @@ async fn forge_with_workspace() -> MockServer {
             "tree": [{ "path": BINDING_PATH, "type": "blob", "sha": "blob-binding" }],
             "truncated": false,
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     for git_ref in ["base-sha", "main-sha"] {
         Mock::given(method("GET"))
@@ -135,7 +135,7 @@ async fn forge_with_workspace() -> MockServer {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "tree": [], "truncated": false,
             })))
-            .mount(&gitea)
+            .mount(&shako)
             .await;
     }
     Mock::given(method("GET"))
@@ -145,17 +145,17 @@ async fn forge_with_workspace() -> MockServer {
             "sha": "blob-binding",
             "content": common::encode(&escalating_binding()),
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    gitea
+    shako
 }
 
 /// PF-52, T-1684: a grant above the proposer's own rights does not come back out of a workspace.
 /// The refusal names the verb that is missing, and no merge request is opened for it.
 #[tokio::test]
 async fn a_grant_above_the_proposers_rights_is_not_brought_back_from_a_workspace() {
-    let gitea = forge_with_workspace().await;
-    let state = state_with(&gitea);
+    let shako = forge_with_workspace().await;
+    let state = state_with(&shako);
     state
         .workspaces
         .create(Opening {
@@ -188,7 +188,7 @@ async fn a_grant_above_the_proposers_rights_is_not_brought_back_from_a_workspace
         "the refusal has to say who is held to what: {}",
         answer.text
     );
-    let opened: Vec<String> = gitea
+    let opened: Vec<String> = shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -209,15 +209,15 @@ async fn a_grant_above_the_proposers_rights_is_not_brought_back_from_a_workspace
 /// words, before anything is planned.
 #[tokio::test]
 async fn a_grant_above_the_proposers_rights_is_refused_inside_an_import() {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     Mock::given(method("GET"))
         .and(path_regex(format!("^{}/git/trees/.*", common::REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "tree": [], "truncated": false,
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea);
+    let state = state_with(&shako);
     let answer = common::send(
         &state,
         common::person("steward"),
@@ -245,7 +245,7 @@ async fn a_grant_above_the_proposers_rights_is_refused_inside_an_import() {
 /// simply refused every binding.
 #[tokio::test]
 async fn a_grant_inside_the_proposers_own_rights_still_comes_back() {
-    let gitea = forge_with_workspace().await;
+    let shako = forge_with_workspace().await;
     // The same path, a binding to the role the steward holds themselves.
     let within = "apiVersion: joinedcontext.com/v1alpha1\nkind: RoleBinding\nmetadata:\n  name: \
                   everything-for-me\n  namespace: org\nspec:\n  subjects:\n  - group: \
@@ -258,9 +258,9 @@ async fn a_grant_inside_the_proposers_own_rights_still_comes_back() {
             "content": common::encode(within),
         })))
         .with_priority(1)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea);
+    let state = state_with(&shako);
     state
         .workspaces
         .create(Opening {
@@ -294,8 +294,8 @@ async fn a_grant_inside_the_proposers_own_rights_still_comes_back() {
 /// person reading the answer learns which verb is missing, not what else the file said.
 #[tokio::test]
 async fn the_refusal_names_the_verb_and_carries_nothing_else_of_the_manifest() {
-    let gitea = forge_with_workspace().await;
-    let state = state_with(&gitea);
+    let shako = forge_with_workspace().await;
+    let state = state_with(&shako);
     state
         .workspaces
         .create(Opening {
@@ -342,7 +342,7 @@ async fn self_grant(file: &str, yaml: &str) -> (MockServer, AppState) {
     } else {
         "policy"
     };
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     let ok = |body: Value| ResponseTemplate::new(200).set_body_json(body);
     Mock::given(method("GET"))
         .and(path_regex(format!("^{}/contents/", common::REPO)))
@@ -350,13 +350,13 @@ async fn self_grant(file: &str, yaml: &str) -> (MockServer, AppState) {
             json!({ "sha": "blob-1", "content": common::encode(yaml) }),
         ))
         .with_priority(1)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{}/pulls/1", common::REPO)))
         .respond_with(ok(json!({
             "number": 1,
-            "html_url": "https://gitea.example.sk/pulls/1",
+            "html_url": "https://shako.example.sk/pulls/1",
             "state": "open",
             "title": "create a grant",
             "head": { "ref": format!("portal/create-{kind}-mine-11111111"), "sha": "head-1" },
@@ -367,15 +367,15 @@ async fn self_grant(file: &str, yaml: &str) -> (MockServer, AppState) {
             "merged": false
         })))
         .with_priority(1)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{}/pulls/1/files", common::REPO)))
         .respond_with(ok(json!([{ "filename": file, "status": "added" }])))
         .with_priority(1)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = common::state_on(&gitea);
+    let state = common::state_on(&shako);
     state.mirror.upsert(common::envelope(
         "Role",
         "grants-access",
@@ -401,7 +401,7 @@ async fn self_grant(file: &str, yaml: &str) -> (MockServer, AppState) {
         ORG_NAMESPACE,
         json!({ "members": [{ "user": AUTHOR }] }),
     ));
-    (gitea, state)
+    (shako, state)
 }
 
 fn policy(rules: &str) -> String {
@@ -427,8 +427,8 @@ async fn approve(state: &AppState, who: Identity) -> Result<(), ApiError> {
     .map(drop)
 }
 
-async fn merged(gitea: &MockServer) -> bool {
-    gitea
+async fn merged(shako: &MockServer) -> bool {
+    shako
         .received_requests()
         .await
         .expect("requests")
@@ -439,7 +439,7 @@ async fn merged(gitea: &MockServer) -> bool {
 /// The author's own approval is refused with the rule's words, nothing merges, and a peer's
 /// approval of the same change goes through.
 async fn waits_for_another_person(file: &str, yaml: &str, author: Identity) {
-    let (gitea, state) = self_grant(file, yaml).await;
+    let (shako, state) = self_grant(file, yaml).await;
     let err = approve(&state, author)
         .await
         .expect_err("approved by its author");
@@ -449,13 +449,13 @@ async fn waits_for_another_person(file: &str, yaml: &str, author: Identity) {
             && err.to_string().contains("PF-58"),
         "{err}"
     );
-    assert!(!merged(&gitea).await, "merged by its author");
+    assert!(!merged(&shako).await, "merged by its author");
 
-    let (gitea, state) = self_grant(file, yaml).await;
+    let (shako, state) = self_grant(file, yaml).await;
     approve(&state, common::person("peer"))
         .await
         .unwrap_or_else(|err| panic!("a peer approves: {err:?}"));
-    assert!(merged(&gitea).await, "a peer's approval did not merge");
+    assert!(merged(&shako).await, "a peer's approval did not merge");
 }
 
 #[tokio::test]
@@ -501,9 +501,9 @@ async fn an_administrator_cannot_approve_their_own_self_grant() {
 async fn a_policy_for_someone_else_is_approved_by_its_administrator_author() {
     let yaml =
         policy("  assignee:\n    kind: user\n    id: someone@hel.fi\n  operations: [read]\n");
-    let (gitea, state) = self_grant(POLICY_PATH, &yaml).await;
+    let (shako, state) = self_grant(POLICY_PATH, &yaml).await;
     approve(&state, common::person("steward"))
         .await
         .unwrap_or_else(|err| panic!("{err:?}"));
-    assert!(merged(&gitea).await);
+    assert!(merged(&shako).await);
 }

@@ -90,18 +90,18 @@ pub struct Config {
     /// How often the reconciler re-reads the configuration repository
     /// (`JC_PORTAL_SYNC_INTERVAL`, whole seconds, default `60`).
     pub sync_interval: Duration,
-    /// The secret the forge signs its webhook calls with (`JC_GITEA_WEBHOOK_SECRET`). A
+    /// The secret the forge signs its webhook calls with (`JC_SHAKO_WEBHOOK_SECRET`). A
     /// secret. `None` leaves the hook route refusing every call, so a change is picked up at
     /// the next sync rather than at the push.
-    pub gitea_webhook_secret: Option<String>,
+    pub shako_webhook_secret: Option<String>,
     /// The secret this Portal accepted before the current one, during a rotation
-    /// (`JC_GITEA_WEBHOOK_SECRET_PREVIOUS`). A secret (T-0982).
+    /// (`JC_SHAKO_WEBHOOK_SECRET_PREVIOUS`). A secret (T-0982).
     ///
     /// A webhook secret is shared with the forge, so the two sides cannot change at the same
     /// instant: the new one is written here as the active secret and the old one stays accepted
     /// until the forge's own hook is updated, then it is removed. Without it a rotation is a
     /// window in which every push is refused, which is why nobody rotates.
-    pub gitea_webhook_secret_previous: Option<String>,
+    pub shako_webhook_secret_previous: Option<String>,
     /// Base URL of a project's Bento pipeline runner with `{project}` still in it, e.g.
     /// `http://pipeline-runner.{project}-pipeline-runner.svc.cluster.local:4195`
     /// (`JC_PORTAL_PIPELINE_RUNNER_URL`). `None` leaves the metrics route answering 503
@@ -277,7 +277,7 @@ pub struct Config {
     /// none, so no one can mark a run; AG-93, T-2816).
     pub journey_users: Vec<String>,
     /// Values a hosting process (the `jc` binary) supplies for the forge variables
-    /// (`JC_GITEA_*`) the environment leaves unset, read by `AppState::from_config` after
+    /// (`JC_SHAKO_*`) the environment leaves unset, read by `AppState::from_config` after
     /// `from_vars`. Empty for the standalone Portal; an environment value always wins.
     pub host_vars: std::collections::BTreeMap<String, String>,
     /// The client the reconciler manages the realm's groups with: a `ServiceAccount` client
@@ -384,13 +384,13 @@ impl std::fmt::Debug for Config {
             )
             .field("sync_interval", &self.sync_interval)
             .field(
-                "gitea_webhook_secret",
-                &self.gitea_webhook_secret.as_ref().map(|_| "[redacted]"),
+                "shako_webhook_secret",
+                &self.shako_webhook_secret.as_ref().map(|_| "[redacted]"),
             )
             .field(
-                "gitea_webhook_secret_previous",
+                "shako_webhook_secret_previous",
                 &self
-                    .gitea_webhook_secret_previous
+                    .shako_webhook_secret_previous
                     .as_ref()
                     .map(|_| "[redacted]"),
             )
@@ -983,9 +983,9 @@ fn build_pod_settings(
             reason: "JC_PORTAL_BUILD_NAMESPACE is set, and a build pod needs its image".into(),
         }),
     };
-    let forge = set("JC_GITEA_URL").ok_or_else(|| ConfigError::Invalid {
+    let forge = set("JC_SHAKO_URL").ok_or_else(|| ConfigError::Invalid {
         var: "JC_PORTAL_BUILD_NAMESPACE",
-        reason: "a build pod registers with the forge, and JC_GITEA_URL is not set".into(),
+        reason: "a build pod registers with the forge, and JC_SHAKO_URL is not set".into(),
     })?;
     let cache_size = set("JC_PORTAL_BUILD_CACHE_SIZE").unwrap_or_else(|| "1Gi".into());
     let digits = cache_size.trim_end_matches("Gi").trim_end_matches("Mi");
@@ -1016,10 +1016,10 @@ fn build_pod_settings(
 /// - `JC_PORTAL_APPS_REGISTRY` — the host, and port if any, of the forge's container registry;
 ///   an App's image is composed as `{registry}/{forge organization}/app-{name}@{digest}`, the
 ///   organization being the applications' own when they have one of their own.
-/// - `JC_GITEA_APPS_OWNER` — the forge organization the generated applications' repositories,
+/// - `JC_SHAKO_APPS_OWNER` — the forge organization the generated applications' repositories,
 ///   packages and images live in, apart from the configuration's (PF-106); the configuration's
 ///   organization when unset.
-/// - `JC_GITEA_APPS_TOKEN` — the token of the applications' own machine user, which writes their
+/// - `JC_SHAKO_APPS_TOKEN` — the token of the applications' own machine user, which writes their
 ///   repositories and packages and nothing of the configuration's; set with the owner or not at
 ///   all.
 /// - `JC_PORTAL_APPS_PULL_SECRET_NAME` — the name of the `dockerconfigjson` Secret in the apps
@@ -1079,11 +1079,11 @@ fn app_settings(
             }
             // The applications' organization when there is one (PF-106): their images are
             // published there, beside their repositories.
-            let owner = set("JC_GITEA_APPS_OWNER")
-                .or_else(|| set("JC_GITEA_OWNER"))
+            let owner = set("JC_SHAKO_APPS_OWNER")
+                .or_else(|| set("JC_SHAKO_OWNER"))
                 .ok_or_else(|| ConfigError::Invalid {
                     var: "JC_PORTAL_APPS_REGISTRY",
-                    reason: "the images live under the forge's organization, and JC_GITEA_OWNER \
+                    reason: "the images live under the forge's organization, and JC_SHAKO_OWNER \
                              is not set"
                         .to_owned(),
                 })?;
@@ -1726,8 +1726,8 @@ impl Config {
         };
         let sync_interval = Duration::from_secs(sync_interval_secs);
 
-        let gitea_webhook_secret = lookup("JC_GITEA_WEBHOOK_SECRET");
-        let gitea_webhook_secret_previous = lookup("JC_GITEA_WEBHOOK_SECRET_PREVIOUS");
+        let shako_webhook_secret = lookup("JC_SHAKO_WEBHOOK_SECRET");
+        let shako_webhook_secret_previous = lookup("JC_SHAKO_WEBHOOK_SECRET_PREVIOUS");
 
         // The space surface's base: one host, no path. A typo here is a subscription that never
         // reaches its broker, so it is refused at startup like every other address.
@@ -1895,8 +1895,8 @@ impl Config {
             cookie_key,
             cookie_keys_previous,
             sync_interval,
-            gitea_webhook_secret,
-            gitea_webhook_secret_previous,
+            shako_webhook_secret,
+            shako_webhook_secret_previous,
             pipeline_runner_url,
             pipeline_identity,
             pipelines_concurrency,
@@ -1974,8 +1974,8 @@ impl Config {
             cookie_key: Key::generate(),
             cookie_keys_previous: Vec::new(),
             sync_interval: Duration::ZERO,
-            gitea_webhook_secret: None,
-            gitea_webhook_secret_previous: None,
+            shako_webhook_secret: None,
+            shako_webhook_secret_previous: None,
             pipeline_runner_url: None,
             pipeline_identity: false,
             pipelines_concurrency: (1, 1),
@@ -2969,12 +2969,12 @@ mod tests {
     fn sync_interval_and_webhook_secret_configuration() {
         let config = Config::from_vars(|k| match k {
             "JC_PORTAL_SYNC_INTERVAL" => Some("30".to_string()),
-            "JC_GITEA_WEBHOOK_SECRET" => Some("my-secret".to_string()),
+            "JC_SHAKO_WEBHOOK_SECRET" => Some("my-secret".to_string()),
             _ => None,
         })
         .expect("config");
         assert_eq!(config.sync_interval, Duration::from_secs(30));
-        assert_eq!(config.gitea_webhook_secret.as_deref(), Some("my-secret"));
+        assert_eq!(config.shako_webhook_secret.as_deref(), Some("my-secret"));
 
         let debug = format!("{config:?}");
         assert!(!debug.contains("my-secret"));
@@ -3017,7 +3017,7 @@ mod tests {
             "JC_PORTAL_BUILD_NAMESPACE" => Some("dev".to_string()),
             "JC_PORTAL_BUILD_IMAGE_NODE" => Some("r.example.org/builder@sha256:aa".to_string()),
             "JC_PORTAL_BUILD_IMAGE_RUST" => Some("r.example.org/rust@sha256:bb".to_string()),
-            "JC_GITEA_URL" => Some("http://gitea-http.dev.svc.cluster.local:3000".to_string()),
+            "JC_SHAKO_URL" => Some("http://shako-http.dev.svc.cluster.local:3000".to_string()),
             _ => None,
         };
         let settings = Config::from_vars(complete)
@@ -3027,7 +3027,7 @@ mod tests {
         assert_eq!(settings.cache_size, "1Gi");
         assert_eq!(
             settings.forge,
-            "http://gitea-http.dev.svc.cluster.local:3000"
+            "http://shako-http.dev.svc.cluster.local:3000"
         );
 
         let without_namespace = Config::from_vars(|k| match k {
@@ -3046,7 +3046,7 @@ mod tests {
             ("JC_PORTAL_BUILD_NAMESPACE", Some("Dev_ns")),
             ("JC_PORTAL_BUILD_CACHE_SIZE", Some("1TB")),
             ("JC_PORTAL_BUILD_CACHE_SIZE", Some("Gi")),
-            ("JC_GITEA_URL", None),
+            ("JC_SHAKO_URL", None),
         ] {
             let refused = Config::from_vars(|k| match k == var {
                 true => value.map(str::to_owned),
@@ -3195,7 +3195,7 @@ mod tests {
 
         let dev = Config::from_vars(with(vec![
             ("JC_PORTAL_APPS_REGISTRY", "2.28.67.127.sslip.io"),
-            ("JC_GITEA_OWNER", "joinedcontext"),
+            ("JC_SHAKO_OWNER", "joinedcontext"),
             ("JC_PORTAL_APPS_PULL_SECRET_NAME", "app-registry"),
             ("JC_PORTAL_APISIX_NAMESPACE", "dev"),
         ]))
@@ -3213,8 +3213,8 @@ mod tests {
         // pulls their images there.
         let apart = Config::from_vars(with(vec![
             ("JC_PORTAL_APPS_REGISTRY", "2.28.67.127.sslip.io"),
-            ("JC_GITEA_OWNER", "joinedcontext"),
-            ("JC_GITEA_APPS_OWNER", "joinedcontext-apps"),
+            ("JC_SHAKO_OWNER", "joinedcontext"),
+            ("JC_SHAKO_APPS_OWNER", "joinedcontext-apps"),
         ]))
         .unwrap()
         .app_settings
@@ -3234,7 +3234,7 @@ mod tests {
         ] {
             match Config::from_vars(with(vec![
                 (var, value),
-                ("JC_GITEA_OWNER", "joinedcontext"),
+                ("JC_SHAKO_OWNER", "joinedcontext"),
             ])) {
                 Err(ConfigError::Invalid { var: refused, .. }) => {
                     assert_eq!(refused, var, "{value}")
@@ -3243,7 +3243,7 @@ mod tests {
             }
         }
         match Config::from_vars(with(vec![("JC_PORTAL_APPS_REGISTRY", "forge.example.org")])) {
-            Err(ConfigError::Invalid { reason, .. }) => assert!(reason.contains("JC_GITEA_OWNER")),
+            Err(ConfigError::Invalid { reason, .. }) => assert!(reason.contains("JC_SHAKO_OWNER")),
             Ok(_) => panic!("a registry without the forge's organization was accepted"),
         }
     }

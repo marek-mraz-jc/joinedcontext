@@ -14,7 +14,7 @@ use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::{Change, ChangePhase, Lane};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
@@ -113,7 +113,7 @@ fn seed_datamodel(state: &AppState, project: &str, name: &str, linkml_path: &str
 async fn get_source_answers_file_content_and_yaml_content_type() {
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
 
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/owner/repo"))
@@ -136,7 +136,7 @@ async fn get_source_answers_file_content_and_yaml_content_type() {
 
     let config = Config::for_tests();
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_datamodel(
         &state,
         "ovzdusie",
@@ -175,7 +175,7 @@ async fn a_model_source_that_is_valid_base64_is_returned_as_written() {
     const WRITTEN: &str = "aGVsbG8=";
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/owner/repo"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
@@ -193,7 +193,7 @@ async fn a_model_source_that_is_valid_base64_is_returned_as_written() {
         .await;
     let config = Config::for_tests();
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_datamodel(
         &state,
         "ovzdusie",
@@ -225,11 +225,11 @@ async fn a_model_source_that_is_valid_base64_is_returned_as_written() {
 async fn path_traversal_and_absolute_paths_are_400_and_forge_is_not_called() {
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
 
     let config = Config::for_tests();
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
 
     seed_datamodel(
         &state,
@@ -329,7 +329,7 @@ async fn anonymous_request_returns_401() {
 async fn put_breaking_change_under_same_major_is_400_naming_removed_slot() {
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
 
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/owner/repo"))
@@ -352,7 +352,7 @@ async fn put_breaking_change_under_same_major_is_400_naming_removed_slot() {
 
     let config = Config::for_tests();
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_datamodel(
         &state,
         "ovzdusie",
@@ -406,7 +406,7 @@ slots:
 async fn put_source_that_does_not_compile_is_400_with_tool_messages() {
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
 
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/owner/repo"))
@@ -442,7 +442,7 @@ async fn put_source_that_does_not_compile_is_400_with_tool_messages() {
         ..Config::for_tests()
     };
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_datamodel(
         &state,
         "ovzdusie",
@@ -494,7 +494,7 @@ slots:
 async fn put_dry_run_all_returns_200_and_proposes_nothing() {
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
 
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/owner/repo"))
@@ -529,7 +529,7 @@ async fn put_dry_run_all_returns_200_and_proposes_nothing() {
         ..Config::for_tests()
     };
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_datamodel(
         &state,
         "ovzdusie",
@@ -595,7 +595,7 @@ slots:
 async fn put_creates_change_and_writes_manifest_source_and_four_artifacts() {
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
 
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/owner/repo"))
@@ -675,7 +675,7 @@ async fn put_creates_change_and_writes_manifest_source_and_four_artifacts() {
         ..Config::for_tests()
     };
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_datamodel(
         &state,
         "ovzdusie",
@@ -799,7 +799,7 @@ slots:
 async fn create_bikes_through(uri: &str) -> Vec<String> {
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
 
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/owner/repo"))
@@ -862,7 +862,7 @@ async fn create_bikes_through(uri: &str) -> Vec<String> {
         ..Config::for_tests()
     };
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_space(&state, "ovzdusie", "mobility");
 
     let response = server::app(state)
@@ -950,11 +950,11 @@ async fn put_for_an_unknown_model_without_a_space_creates_a_project_model() {
 async fn put_of_a_source_past_the_limit_is_refused_and_the_forge_is_not_called() {
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
 
     let config = Config::for_tests();
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_space(&state, "ovzdusie", "mobility");
 
     // One byte over: the refusal is the size, not the content.
@@ -1147,7 +1147,7 @@ fn seed_spaceless(state: &AppState, namespace: &str, name: &str, version: &str, 
 /// Tools that compiles anything; one repository serves both, as `forge_for("org")` does here.
 async fn importing_world() -> (MockServer, MockServer, AppState, String) {
     let forge = MockServer::start().await;
-    let gitea = GiteaClient::new(forge.uri().parse().expect("url"), "owner", "repo", "token")
+    let shako = ShakoClient::new(forge.uri().parse().expect("url"), "owner", "repo", "token")
         .expect("client");
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/owner/repo"))
@@ -1182,7 +1182,7 @@ async fn importing_world() -> (MockServer, MockServer, AppState, String) {
         ..Config::for_tests()
     };
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_datamodel(
         &state,
         "ovzdusie",

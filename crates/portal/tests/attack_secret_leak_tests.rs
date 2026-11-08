@@ -91,12 +91,12 @@ fn redaction_keeps_the_path_and_takes_both_values() {
 /// A forge holding merge request 11: a ContextSpace of `ovzdusie` whose credentials change, with
 /// both sides of the file mounted.
 async fn forge_with_change() -> MockServer {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     Mock::given(method("GET"))
         .and(path(format!("{}/pulls/11", common::REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "number": 11,
-            "html_url": "https://gitea.example/pulls/11",
+            "html_url": "https://shako.example/pulls/11",
             "state": "open",
             "title": "update ContextSpace mobility",
             "head": { "ref": "portal/update-contextspace-mobility-1685aaaa" },
@@ -106,14 +106,14 @@ async fn forge_with_change() -> MockServer {
             "mergeable": true,
             "merged": false
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{}/pulls/11/files", common::REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
             { "filename": "projects/ovzdusie/spaces/mobility/space.yaml", "status": "modified" }
         ])))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     for (git_ref, age) in [
         ("portal/update-contextspace-mobility-1685aaaa", "new"),
@@ -142,16 +142,16 @@ async fn forge_with_change() -> MockServer {
                 "sha": format!("blob-{age}"),
                 "content": common::encode(&yaml),
             })))
-            .mount(&gitea)
+            .mount(&shako)
             .await;
     }
-    gitea
+    shako
 }
 
 /// `reader@hel.fi` reads ContextSpace across the organization: enough to open the Change, which
 /// is exactly the caller this vector is about.
-fn state_with(gitea: &MockServer) -> AppState {
-    let state = common::state_on(gitea);
+fn state_with(shako: &MockServer) -> AppState {
+    let state = common::state_on(shako);
     state.mirror.upsert(common::envelope(
         "Role",
         "reads-spaces",
@@ -176,8 +176,8 @@ fn state_with(gitea: &MockServer) -> AppState {
 /// here, and the value itself is nowhere in the answer.
 #[tokio::test]
 async fn no_credential_of_a_manifest_reaches_the_page_that_reviews_it() {
-    let gitea = forge_with_change().await;
-    let state = state_with(&gitea);
+    let shako = forge_with_change().await;
+    let state = state_with(&shako);
     let answer = common::send(
         &state,
         common::person("reader"),
@@ -221,8 +221,8 @@ async fn no_credential_of_a_manifest_reaches_the_page_that_reviews_it() {
 /// stored as a draft and read back by the page.
 #[tokio::test]
 async fn the_check_that_refuses_a_typed_credential_names_the_field_and_not_the_value() {
-    let gitea = common::forge().await;
-    let state = common::state_on(&gitea);
+    let shako = common::forge().await;
+    let state = common::state_on(&shako);
     for key in SECRET_KEYS {
         let manifest = json!({
             "apiVersion": "joinedcontext.com/v1alpha1",

@@ -7,7 +7,7 @@
 
 use joinedcontext_portal::apps::build_pods::{dispatch_once, Settings};
 use joinedcontext_portal::apps::kube::KubeClient;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::store::Mirror;
 use serde_json::{json, Value};
@@ -20,7 +20,7 @@ const REGISTRATION: &str = "repository-scoped-registration-token";
 fn settings() -> Settings {
     Settings {
         namespace: NS.into(),
-        forge: "http://gitea-http.dev.svc.cluster.local:3000".into(),
+        forge: "http://shako-http.dev.svc.cluster.local:3000".into(),
         node_image: "r.example.org/builder@sha256:aa".into(),
         rust_image: "r.example.org/builder-rust@sha256:bb".into(),
         cache_size: "1Gi".into(),
@@ -41,9 +41,9 @@ fn mirror(apps: &[(&str, &str)]) -> Mirror {
     mirror
 }
 
-fn clients(server: &MockServer) -> (KubeClient, GiteaClient) {
+fn clients(server: &MockServer) -> (KubeClient, ShakoClient) {
     let kube = KubeClient::with_token(&server.uri(), "portal-sa-token").expect("a kube client");
-    let forge = GiteaClient::new(
+    let forge = ShakoClient::new(
         server.uri().parse().expect("a url"),
         "joinedcontext",
         "configuration",
@@ -62,7 +62,7 @@ fn job(id: u64, repo: &str, label: &str) -> Value {
         "id": id,
         "labels": [label],
         "status": "queued",
-        "url": format!("http://gitea-http.dev.svc.cluster.local:3000/api/v1/repos/joinedcontext/{repo}/actions/jobs/{id}"),
+        "url": format!("http://shako-http.dev.svc.cluster.local:3000/api/v1/repos/joinedcontext/{repo}/actions/jobs/{id}"),
     })
 }
 

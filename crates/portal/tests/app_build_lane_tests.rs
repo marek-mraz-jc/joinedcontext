@@ -21,8 +21,8 @@ const APPS: &str = "/api/v1/projects/ovzdusie/apps";
 
 /// `builder@hel.fi` is the build lane: propose on App, constrained to `status.build`.
 /// `jana@hel.fi` proposes Apps like anybody else.
-fn state_with(gitea: &MockServer) -> AppState {
-    let state = common::state_on(gitea);
+fn state_with(shako: &MockServer) -> AppState {
+    let state = common::state_on(shako);
     state.mirror.upsert(envelope(
         "Role",
         "app-builder",
@@ -136,24 +136,24 @@ fn version(digest: &str) -> String {
 /// The forge after a run of `COMMIT` uploaded `bundle` and the SBOM as run 5's artifacts, and
 /// with the default branch at `head`. The artifact download redirects to the forge's public
 /// ROOT_URL, which the Portal cannot reach, as Gitea does.
-async fn built_on_forge(gitea: &MockServer, head: &str, bundle: &[u8], size: Option<u64>) {
-    built_on_forge_as(gitea, head, "bundle", bundle, size).await;
+async fn built_on_forge(shako: &MockServer, head: &str, bundle: &[u8], size: Option<u64>) {
+    built_on_forge_as(shako, head, "bundle", bundle, size).await;
 }
 
 /// The forge after a run uploaded `built` as the artifact `{artifact}-{COMMIT}`, as above.
 async fn built_on_forge_as(
-    gitea: &MockServer,
+    shako: &MockServer,
     head: &str,
     artifact: &str,
     bundle: &[u8],
     size: Option<u64>,
 ) {
-    built_on_forge_in(gitea, APP_REPO, head, artifact, bundle, size).await;
+    built_on_forge_in(shako, APP_REPO, head, artifact, bundle, size).await;
 }
 
 /// The same, with the App's repository at `APP_REPO`'s place `app_repo`.
 async fn built_on_forge_in(
-    gitea: &MockServer,
+    shako: &MockServer,
     app_repo: &str,
     head: &str,
     artifact: &str,
@@ -163,19 +163,19 @@ async fn built_on_forge_in(
     Mock::given(method("GET"))
         .and(path(app_repo))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
-        .mount(gitea)
+        .mount(shako)
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{app_repo}/branches/main")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": head } })))
-        .mount(gitea)
+        .mount(shako)
         .await;
     // Any other name: none, as the forge answers.
     Mock::given(method("GET"))
         .and(path(format!("{app_repo}/actions/artifacts")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "artifacts": [] })))
         .with_priority(10)
-        .mount(gitea)
+        .mount(shako)
         .await;
     for (id, name, bytes) in [(11, artifact, bundle), (12, "sbom", SBOM)] {
         let artifact = |id: u64, run: u64, sha: &str| {
@@ -192,7 +192,7 @@ async fn built_on_forge_in(
                 // An artifact of this name from a run of another commit never counts.
                 "artifacts": [artifact(id, 5, COMMIT), artifact(id + 90, 9, "0000000000000000000000000000000000000000")],
             })))
-            .mount(gitea)
+            .mount(shako)
             .await;
         Mock::given(method("GET"))
             .and(path(format!("{app_repo}/actions/artifacts/{id}/zip")))
@@ -202,20 +202,20 @@ async fn built_on_forge_in(
                 // (`https://host/git/`); the Portal dials the API base, where no `/git` exists.
                 format!("https://forge.public.example/git{app_repo}/actions/artifacts/{id}/zip/raw?sig=s{id}&expires=9"),
             ))
-            .mount(gitea)
+            .mount(shako)
             .await;
         Mock::given(method("GET"))
             .and(path(format!("{app_repo}/actions/artifacts/{id}/zip/raw")))
             .and(query_param("sig", format!("s{id}")))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(bytes.to_vec()))
-            .mount(gitea)
+            .mount(shako)
             .await;
     }
 }
 
 /// The package files the Portal wrote, in order.
-async fn published(gitea: &MockServer) -> Vec<String> {
-    gitea
+async fn published(shako: &MockServer) -> Vec<String> {
+    shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -225,11 +225,11 @@ async fn published(gitea: &MockServer) -> Vec<String> {
         .collect()
 }
 
-async fn package_takes(gitea: &MockServer, status: u16) {
+async fn package_takes(shako: &MockServer, status: u16) {
     Mock::given(method("PUT"))
         .and(wiremock::matchers::path_regex(format!("^{PACKAGE}/.*")))
         .respond_with(ResponseTemplate::new(status))
-        .mount(gitea)
+        .mount(shako)
         .await;
 }
 
@@ -249,9 +249,9 @@ fn build_of(commit: &str) -> Value {
 }
 
 /// What the merge request wrote, decoded.
-async fn committed(gitea: &MockServer) -> Vec<String> {
+async fn committed(shako: &MockServer) -> Vec<String> {
     use base64::Engine;
-    gitea
+    shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -270,10 +270,10 @@ async fn committed(gitea: &MockServer) -> Vec<String> {
 
 #[tokio::test]
 async fn only_the_build_lane_writes_the_build_and_the_refusal_says_whose_field_it_is() {
-    let gitea = forge().await;
-    built_on_forge(&gitea, COMMIT, BUNDLE, None).await;
-    package_takes(&gitea, 201).await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    built_on_forge(&shako, COMMIT, BUNDLE, None).await;
+    package_takes(&shako, 201).await;
+    let state = state_with(&shako);
 
     let refused = send(
         &state,
@@ -286,13 +286,13 @@ async fn only_the_build_lane_writes_the_build_and_the_refusal_says_whose_field_i
     assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
     assert!(refused.text.contains("build lane"), "{}", refused.text);
     assert!(
-        committed(&gitea).await.is_empty(),
+        committed(&shako).await.is_empty(),
         "nothing was written for a refused proposal"
     );
 
     let accepted = as_lane(&state, app(Some(build()), None)).await;
     assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
-    let written = committed(&gitea).await;
+    let written = committed(&shako).await;
     assert!(
         written.iter().any(|file| file.contains("status:")
             && file.contains("digest:")
@@ -300,14 +300,14 @@ async fn only_the_build_lane_writes_the_build_and_the_refusal_says_whose_field_i
         "the build the lane wrote is what lands in the repository: {written:?}"
     );
     assert_eq!(
-        published(&gitea).await,
+        published(&shako).await,
         vec![
             format!("/{}/bundle.tar.gz", version(&digest(BUNDLE))),
             format!("/{}/sbom.cdx.json", version(&digest(BUNDLE)))
         ],
         "the Portal publishes the package itself (AP-101)"
     );
-    let raw: Vec<_> = gitea
+    let raw: Vec<_> = shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -332,36 +332,36 @@ async fn only_the_build_lane_writes_the_build_and_the_refusal_says_whose_field_i
 async fn a_build_is_read_and_published_in_the_applications_organization() {
     const APART: &str = "/api/v1/repos/test-owner-apps/ovzdusie_air-quality";
     const PACKAGE_APART: &str = "/api/packages/test-owner-apps/generic/app-air-quality";
-    let gitea = forge().await;
-    built_on_forge_in(&gitea, APART, COMMIT, "bundle", BUNDLE, None).await;
+    let shako = forge().await;
+    built_on_forge_in(&shako, APART, COMMIT, "bundle", BUNDLE, None).await;
     Mock::given(method("PUT"))
         .and(wiremock::matchers::path_regex(format!(
             "^{PACKAGE_APART}/.*"
         )))
         .respond_with(ResponseTemplate::new(201))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let mut state = state_with(&gitea);
-    let uri = gitea.uri();
-    let client = joinedcontext_portal::git::GiteaClient::from_env(|key| {
+    let mut state = state_with(&shako);
+    let uri = shako.uri();
+    let client = joinedcontext_portal::forge::ShakoClient::from_env(|key| {
         match key {
-            "JC_GITEA_URL" => Some(uri.as_str()),
-            "JC_GITEA_OWNER" => Some("test-owner"),
-            "JC_GITEA_REPO" => Some("test-repo"),
-            "JC_GITEA_TOKEN" => Some("token-xyz"),
-            "JC_GITEA_APPS_OWNER" => Some("test-owner-apps"),
-            "JC_GITEA_APPS_TOKEN" => Some("apps-token"),
+            "JC_SHAKO_URL" => Some(uri.as_str()),
+            "JC_SHAKO_OWNER" => Some("test-owner"),
+            "JC_SHAKO_REPO" => Some("test-repo"),
+            "JC_SHAKO_TOKEN" => Some("token-xyz"),
+            "JC_SHAKO_APPS_OWNER" => Some("test-owner-apps"),
+            "JC_SHAKO_APPS_TOKEN" => Some("apps-token"),
             _ => None,
         }
         .map(str::to_owned)
     })
     .expect("config")
     .expect("configured");
-    state.gitea = Some(std::sync::Arc::new(client));
+    state.shako = Some(std::sync::Arc::new(client));
 
     let accepted = as_lane(&state, app(Some(build()), None)).await;
     assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
-    let requests = gitea.received_requests().await.unwrap_or_default();
+    let requests = shako.received_requests().await.unwrap_or_default();
     let token = |r: &wiremock::Request| {
         r.headers
             .get("authorization")
@@ -460,20 +460,20 @@ async fn a_build_the_workflow_did_not_make_is_refused_and_nothing_is_published()
         ),
     ];
     for (what, head, bundle, size, status, code, says) in cases {
-        let gitea = forge().await;
-        built_on_forge(&gitea, head, bundle, size).await;
-        package_takes(&gitea, 201).await;
-        let state = state_with(&gitea);
+        let shako = forge().await;
+        built_on_forge(&shako, head, bundle, size).await;
+        package_takes(&shako, 201).await;
+        let state = state_with(&shako);
 
         let refused = as_lane(&state, app(Some(status), None)).await;
         assert_eq!(refused.status, code, "{what}: {}", refused.text);
         assert!(refused.text.contains(says), "{what}: {}", refused.text);
         assert!(
-            published(&gitea).await.is_empty(),
+            published(&shako).await.is_empty(),
             "{what}: a package was published"
         );
         assert!(
-            committed(&gitea).await.is_empty(),
+            committed(&shako).await.is_empty(),
             "{what}: the build was written"
         );
     }
@@ -484,21 +484,21 @@ async fn a_build_the_workflow_did_not_make_is_refused_and_nothing_is_published()
 #[tokio::test]
 async fn a_version_already_published_is_the_same_build_or_a_refusal() {
     for (held, accepted) in [(BUNDLE, true), (b"other bytes".as_slice(), false)] {
-        let gitea = forge().await;
-        built_on_forge(&gitea, COMMIT, BUNDLE, None).await;
-        package_takes(&gitea, 409).await;
+        let shako = forge().await;
+        built_on_forge(&shako, COMMIT, BUNDLE, None).await;
+        package_takes(&shako, 409).await;
         let at = version(&digest(BUNDLE));
         Mock::given(method("GET"))
             .and(path(format!("{PACKAGE}/{at}/bundle.tar.gz")))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(held.to_vec()))
-            .mount(&gitea)
+            .mount(&shako)
             .await;
         Mock::given(method("GET"))
             .and(path(format!("{PACKAGE}/{at}/sbom.cdx.json")))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(SBOM.to_vec()))
-            .mount(&gitea)
+            .mount(&shako)
             .await;
-        let state = state_with(&gitea);
+        let state = state_with(&shako);
 
         let answer = as_lane(&state, app(Some(build()), None)).await;
         if accepted {
@@ -512,7 +512,7 @@ async fn a_version_already_published_is_the_same_build_or_a_refusal() {
                 "{}",
                 answer.text
             );
-            assert!(committed(&gitea).await.is_empty());
+            assert!(committed(&shako).await.is_empty());
         }
     }
 }
@@ -522,31 +522,31 @@ async fn a_version_already_published_is_the_same_build_or_a_refusal() {
 /// of its own instead of a refusal that would keep every platform fix from the App.
 #[tokio::test]
 async fn a_rebuild_of_the_same_commit_with_other_bytes_is_a_version_of_its_own() {
-    let gitea = forge().await;
-    built_on_forge(&gitea, COMMIT, BUNDLE, None).await;
+    let shako = forge().await;
+    built_on_forge(&shako, COMMIT, BUNDLE, None).await;
     // The registry refuses a second file under the bare commit, where the old build sits.
     Mock::given(method("PUT"))
         .and(wiremock::matchers::path_regex(format!(
             "^{PACKAGE}/{COMMIT}/.*"
         )))
         .respond_with(ResponseTemplate::new(409))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(wiremock::matchers::path_regex(format!(
             "^{PACKAGE}/{COMMIT}/.*"
         )))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(b"the old build".to_vec()))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    package_takes(&gitea, 201).await;
-    let state = state_with(&gitea);
+    package_takes(&shako, 201).await;
+    let state = state_with(&shako);
 
     let answer = as_lane(&state, app(Some(build()), None)).await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
     let at = version(&digest(BUNDLE));
     assert_eq!(
-        published(&gitea).await,
+        published(&shako).await,
         vec![
             format!("/{at}/bundle.tar.gz"),
             format!("/{at}/sbom.cdx.json")
@@ -560,9 +560,9 @@ async fn a_rebuild_of_the_same_commit_with_other_bytes_is_a_version_of_its_own()
 /// set the pin back, and nothing published for it.
 #[tokio::test]
 async fn a_build_judged_against_a_mirror_behind_main_is_refused_and_nothing_written() {
-    let gitea = forge().await;
-    built_on_forge(&gitea, COMMIT, BUNDLE, None).await;
-    package_takes(&gitea, 201).await;
+    let shako = forge().await;
+    built_on_forge(&shako, COMMIT, BUNDLE, None).await;
+    package_takes(&shako, 201).await;
     let mut pinned = app(None, None);
     pinned["spec"]["source"]["git"]["ref"] = json!("2222222222222222222222222222222222222222");
     Mock::given(method("GET"))
@@ -576,27 +576,27 @@ async fn a_build_judged_against_a_mirror_behind_main_is_refused_and_nothing_writ
             "content": common::encode(&serde_norway::to_string(&pinned).expect("yaml")),
         })))
         .with_priority(1)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea);
+    let state = state_with(&shako);
 
     let refused = as_lane(&state, app(Some(build()), None)).await;
     assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.text);
     assert!(refused.text.contains("read it again"), "{}", refused.text);
     assert!(
-        published(&gitea).await.is_empty(),
+        published(&shako).await.is_empty(),
         "a package was published"
     );
     assert!(
-        committed(&gitea).await.is_empty(),
+        committed(&shako).await.is_empty(),
         "the stale App was written"
     );
 }
 
 #[tokio::test]
 async fn every_other_part_of_status_is_refused_even_from_the_build_lane() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
 
     for status in [
         json!({ "phase": "Live" }),
@@ -617,8 +617,8 @@ async fn every_other_part_of_status_is_refused_even_from_the_build_lane() {
 /// AP-13a: a digest in an annotation is a digest somebody typed, whoever they are.
 #[tokio::test]
 async fn an_image_annotation_is_refused_from_the_build_lane_too() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
 
     for key in ["joinedcontext.com/image", "joinedcontext.com/module"] {
         let refused = as_lane(&state, app(Some(build()), Some(key))).await;
@@ -631,8 +631,8 @@ async fn an_image_annotation_is_refused_from_the_build_lane_too() {
 /// person who may propose that kind is refused on the content.
 #[tokio::test]
 async fn a_build_on_another_kind_is_refused() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
 
     let refused = send(
         &state,
@@ -659,7 +659,7 @@ fn manifest_path() -> String {
 }
 
 /// The forge's answer to "which files does merge request 9 change".
-async fn change_holds(gitea: &MockServer, paths: &[&str]) {
+async fn change_holds(shako: &MockServer, paths: &[&str]) {
     let files: Vec<Value> = paths
         .iter()
         .map(|path| json!({ "filename": path, "status": "changed" }))
@@ -667,13 +667,13 @@ async fn change_holds(gitea: &MockServer, paths: &[&str]) {
     Mock::given(method("GET"))
         .and(path(format!("{}/pulls/9/files", common::REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!(files)))
-        .mount(gitea)
+        .mount(shako)
         .await;
 }
 
 /// The merge messages the Portal sent the forge.
-async fn merges(gitea: &MockServer) -> Vec<String> {
-    gitea
+async fn merges(shako: &MockServer) -> Vec<String> {
+    shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -690,18 +690,18 @@ async fn merges(gitea: &MockServer) -> Vec<String> {
 /// approved its source; the Portal merges the lane's Change itself and says so in the merge commit.
 #[tokio::test]
 async fn a_checked_build_is_merged_by_the_portal_and_the_commit_names_it() {
-    let gitea = forge().await;
-    built_on_forge(&gitea, COMMIT, BUNDLE, None).await;
-    package_takes(&gitea, 201).await;
-    change_holds(&gitea, &[&manifest_path()]).await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    built_on_forge(&shako, COMMIT, BUNDLE, None).await;
+    package_takes(&shako, 201).await;
+    change_holds(&shako, &[&manifest_path()]).await;
+    let state = state_with(&shako);
 
     let accepted = as_lane(&state, app(Some(build()), None)).await;
     assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
     let change: Value = serde_json::from_str(&accepted.text).expect("a Change");
     assert_eq!(change["status"]["phase"], "Deploying", "{change}");
 
-    let merged = merges(&gitea).await;
+    let merged = merges(&shako).await;
     assert_eq!(merged.len(), 1, "one merge: {merged:?}");
     assert!(
         merged[0].contains("Approved by the Portal") && merged[0].contains("AP-104"),
@@ -714,41 +714,41 @@ async fn a_checked_build_is_merged_by_the_portal_and_the_commit_names_it() {
 /// manifest is no longer the build alone, so it waits for a person and nothing is merged.
 #[tokio::test]
 async fn a_build_change_that_carries_another_file_waits_for_a_person() {
-    let gitea = forge().await;
-    built_on_forge(&gitea, COMMIT, BUNDLE, None).await;
-    package_takes(&gitea, 201).await;
+    let shako = forge().await;
+    built_on_forge(&shako, COMMIT, BUNDLE, None).await;
+    package_takes(&shako, 201).await;
     change_holds(
-        &gitea,
+        &shako,
         &[
             &manifest_path(),
             "projects/ovzdusie/spaces/ovzdusie/policies/app-air-quality.yaml",
         ],
     )
     .await;
-    let state = state_with(&gitea);
+    let state = state_with(&shako);
 
     let accepted = as_lane(&state, app(Some(build()), None)).await;
     assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
     let change: Value = serde_json::from_str(&accepted.text).expect("a Change");
     assert_eq!(change["status"]["phase"], "PendingApproval", "{change}");
-    assert!(merges(&gitea).await.is_empty(), "nothing is merged");
+    assert!(merges(&shako).await.is_empty(), "nothing is merged");
 }
 
 /// A merge the forge refuses (the branch moved, a conflict with `main`) leaves the lane's Change
 /// waiting for a person, the way it waited before the Portal approved builds; the write stands.
 #[tokio::test]
 async fn a_build_change_the_forge_will_not_merge_waits_for_a_person() {
-    let gitea = forge().await;
-    built_on_forge(&gitea, COMMIT, BUNDLE, None).await;
-    package_takes(&gitea, 201).await;
-    change_holds(&gitea, &[&manifest_path()]).await;
+    let shako = forge().await;
+    built_on_forge(&shako, COMMIT, BUNDLE, None).await;
+    package_takes(&shako, 201).await;
+    change_holds(&shako, &[&manifest_path()]).await;
     Mock::given(method("POST"))
         .and(path(format!("{}/pulls/9/merge", common::REPO)))
         .respond_with(ResponseTemplate::new(409).set_body_json(json!({ "message": "conflict" })))
         .with_priority(1)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea);
+    let state = state_with(&shako);
 
     let accepted = as_lane(&state, app(Some(build()), None)).await;
     assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
@@ -759,13 +759,13 @@ async fn a_build_change_the_forge_will_not_merge_waits_for_a_person() {
 /// A person's App change is theirs to have approved: the build lane's approval never reaches it.
 #[tokio::test]
 async fn a_persons_app_change_is_not_approved_by_the_portal() {
-    let gitea = forge().await;
-    change_holds(&gitea, &[&manifest_path()]).await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    change_holds(&shako, &[&manifest_path()]).await;
+    let state = state_with(&shako);
 
     let proposed = send(&state, person("jana"), "POST", APPS, Some(app(None, None))).await;
     assert_eq!(proposed.status, StatusCode::ACCEPTED, "{}", proposed.text);
-    assert!(merges(&gitea).await.is_empty(), "nothing is merged");
+    assert!(merges(&shako).await.is_empty(), "nothing is merged");
 }
 
 /// The OCI layout `lane.mjs image` writes, as a tar, and its manifest digest.
@@ -804,32 +804,32 @@ fn image_layout() -> (Vec<u8>, String, Vec<u8>) {
 
 /// The container registry of the forge: a token for the Portal's own token, no blob held yet,
 /// and a manifest stored under the digest `stored`.
-async fn registry_takes(gitea: &MockServer, stored: &str) {
+async fn registry_takes(shako: &MockServer, stored: &str) {
     Mock::given(method("GET"))
         .and(path("/v2/token"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(json!({ "token": "registry-bearer" })),
         )
-        .mount(gitea)
+        .mount(shako)
         .await;
     Mock::given(method("HEAD"))
         .and(wiremock::matchers::path_regex(
             "^/v2/test-owner/app-air-quality/blobs/sha256:.*",
         ))
         .respond_with(ResponseTemplate::new(404))
-        .mount(gitea)
+        .mount(shako)
         .await;
     Mock::given(method("POST"))
         .and(path("/v2/test-owner/app-air-quality/blobs/uploads/"))
         .respond_with(ResponseTemplate::new(201))
-        .mount(gitea)
+        .mount(shako)
         .await;
     Mock::given(method("PUT"))
         .and(path(format!(
             "/v2/test-owner/app-air-quality/manifests/{COMMIT}"
         )))
         .respond_with(ResponseTemplate::new(201).insert_header("Docker-Content-Digest", stored))
-        .mount(gitea)
+        .mount(shako)
         .await;
 }
 
@@ -847,18 +847,18 @@ fn fullstack(status: Value) -> Value {
 #[tokio::test]
 async fn a_fullstack_build_is_pushed_to_the_registry_as_checked_then_written() {
     let (layout, image, manifest) = image_layout();
-    let gitea = forge().await;
-    built_on_forge_as(&gitea, COMMIT, "image", &layout, None).await;
-    registry_takes(&gitea, &image).await;
-    package_takes(&gitea, 201).await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    built_on_forge_as(&shako, COMMIT, "image", &layout, None).await;
+    registry_takes(&shako, &image).await;
+    package_takes(&shako, 201).await;
+    let state = state_with(&shako);
     let mut status = build();
     status["build"]["digest"] = json!(image);
 
     let accepted = as_lane(&state, fullstack(status)).await;
     assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
 
-    let requests = gitea.received_requests().await.unwrap_or_default();
+    let requests = shako.received_requests().await.unwrap_or_default();
     let uploads: Vec<String> = requests
         .iter()
         .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/blobs/uploads/"))
@@ -884,11 +884,11 @@ async fn a_fullstack_build_is_pushed_to_the_registry_as_checked_then_written() {
     );
     assert_eq!(pushed.headers["authorization"], "Bearer registry-bearer");
     assert_eq!(
-        published(&gitea).await,
+        published(&shako).await,
         vec![format!("/{}/sbom.cdx.json", version(&image))],
         "the SBOM beside it; an image is no bundle"
     );
-    assert!(committed(&gitea)
+    assert!(committed(&shako)
         .await
         .iter()
         .any(|file| file.contains(&image)));
@@ -904,11 +904,11 @@ async fn a_fullstack_build_the_registry_stores_otherwise_is_refused() {
         (image.clone(), other.clone(), "the registry stored"),
         (other.clone(), image.clone(), "names no manifest"),
     ] {
-        let gitea = forge().await;
-        built_on_forge_as(&gitea, COMMIT, "image", &layout, None).await;
-        registry_takes(&gitea, &stored).await;
-        package_takes(&gitea, 201).await;
-        let state = state_with(&gitea);
+        let shako = forge().await;
+        built_on_forge_as(&shako, COMMIT, "image", &layout, None).await;
+        registry_takes(&shako, &stored).await;
+        package_takes(&shako, 201).await;
+        let state = state_with(&shako);
         let mut status = build();
         status["build"]["digest"] = json!(proposed);
 
@@ -916,7 +916,7 @@ async fn a_fullstack_build_the_registry_stores_otherwise_is_refused() {
         assert!(refused.status.is_client_error(), "{}", refused.text);
         assert!(refused.text.contains(says), "{}", refused.text);
         assert!(
-            committed(&gitea).await.is_empty(),
+            committed(&shako).await.is_empty(),
             "the build was written: {says}"
         );
     }
@@ -927,10 +927,10 @@ async fn a_fullstack_build_the_registry_stores_otherwise_is_refused() {
 /// build, or propose an App change with no build at all; and its build write commits no grant.
 #[tokio::test]
 async fn the_lanes_rule_writes_the_build_of_an_app_on_main_and_nothing_else() {
-    let gitea = forge().await;
-    built_on_forge(&gitea, COMMIT, BUNDLE, None).await;
-    package_takes(&gitea, 201).await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    built_on_forge(&shako, COMMIT, BUNDLE, None).await;
+    package_takes(&shako, 201).await;
+    let state = state_with(&shako);
 
     let created = send(
         &state,
@@ -971,7 +971,7 @@ async fn the_lanes_rule_writes_the_build_of_an_app_on_main_and_nothing_else() {
     plain["spec"]["visibility"] = json!("organization");
     let refused = send(&state, person("builder"), "PUT", &one, Some(plain)).await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
-    assert!(committed(&gitea).await.is_empty(), "nothing was written");
+    assert!(committed(&shako).await.is_empty(), "nothing was written");
 
     let accepted = send(
         &state,
@@ -982,7 +982,7 @@ async fn the_lanes_rule_writes_the_build_of_an_app_on_main_and_nothing_else() {
     )
     .await;
     assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
-    let commits: Vec<Value> = gitea
+    let commits: Vec<Value> = shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -1035,7 +1035,7 @@ fn wasm_bundle() -> Vec<u8> {
 }
 
 /// The App's repository at `COMMIT` holds `files` under `migrations/`.
-async fn migrations_on_forge(gitea: &MockServer, files: &[(&str, &str)]) {
+async fn migrations_on_forge(shako: &MockServer, files: &[(&str, &str)]) {
     use base64::Engine;
     let tree: Vec<Value> = files
         .iter()
@@ -1048,7 +1048,7 @@ async fn migrations_on_forge(gitea: &MockServer, files: &[(&str, &str)]) {
             ResponseTemplate::new(200)
                 .set_body_json(json!({ "sha": COMMIT, "tree": tree, "truncated": false })),
         )
-        .mount(gitea)
+        .mount(shako)
         .await;
     for (name, sql) in files {
         Mock::given(method("GET"))
@@ -1058,7 +1058,7 @@ async fn migrations_on_forge(gitea: &MockServer, files: &[(&str, &str)]) {
                 "sha": format!("blob-{name}"),
                 "content": base64::engine::general_purpose::STANDARD.encode(sql),
             })))
-            .mount(gitea)
+            .mount(shako)
             .await;
     }
 }
@@ -1100,12 +1100,12 @@ fn wasm_apps(
 #[tokio::test]
 async fn a_wasm_app_is_published_component_stored_shard_kept_schema_migrated() {
     let _one = ONE_APP_AT_A_TIME.lock().await;
-    let gitea = forge().await;
+    let shako = forge().await;
     let bundle = wasm_bundle();
-    built_on_forge(&gitea, COMMIT, &bundle, None).await;
-    package_takes(&gitea, 201).await;
+    built_on_forge(&shako, COMMIT, &bundle, None).await;
+    package_takes(&shako, 201).await;
     migrations_on_forge(
-        &gitea,
+        &shako,
         &[(
             "0001_notes.sql",
             "CREATE TABLE notes (id bigserial PRIMARY KEY, body text NOT NULL)",
@@ -1114,7 +1114,7 @@ async fn a_wasm_app_is_published_component_stored_shard_kept_schema_migrated() {
     .await;
     let store = object_store().await;
     let world = common::apps_db::world("publish").await;
-    let state = state_with(&gitea).with_wasm_apps(wasm_apps(&world, &store));
+    let state = state_with(&shako).with_wasm_apps(wasm_apps(&world, &store));
 
     let mut status = build();
     status["build"]["digest"] = json!(digest(&bundle));
@@ -1138,7 +1138,7 @@ async fn a_wasm_app_is_published_component_stored_shard_kept_schema_migrated() {
     );
     assert_eq!(stored[0].body, COMPONENT);
 
-    let manifest = committed(&gitea).await.join("\n");
+    let manifest = committed(&shako).await.join("\n");
     assert!(
         manifest.contains(&format!("component: sha256:{component}")),
         "{manifest}"
@@ -1151,7 +1151,7 @@ async fn a_wasm_app_is_published_component_stored_shard_kept_schema_migrated() {
         manifest.contains("shard: 0") || manifest.contains("shard: 1"),
         "{manifest}"
     );
-    assert_eq!(published(&gitea).await.len(), 2, "the bundle and the SBOM");
+    assert_eq!(published(&shako).await.len(), 2, "the bundle and the SBOM");
 
     let id = joinedcontext_portal::apps::apps_db::app_id("ovzdusie", "air-quality");
     let tables: i64 = sqlx::query_scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema = $1 AND table_name = 'notes'")
@@ -1167,12 +1167,12 @@ async fn a_wasm_app_is_published_component_stored_shard_kept_schema_migrated() {
 #[tokio::test]
 async fn a_failed_migration_holds_a_wasm_apps_publication() {
     let _one = ONE_APP_AT_A_TIME.lock().await;
-    let gitea = forge().await;
+    let shako = forge().await;
     let bundle = wasm_bundle();
-    built_on_forge(&gitea, COMMIT, &bundle, None).await;
-    package_takes(&gitea, 201).await;
+    built_on_forge(&shako, COMMIT, &bundle, None).await;
+    package_takes(&shako, 201).await;
     migrations_on_forge(
-        &gitea,
+        &shako,
         &[(
             "0001_broken.sql",
             "CREATE TABLE notes (id bigserial PRIMARY KEY,",
@@ -1181,25 +1181,25 @@ async fn a_failed_migration_holds_a_wasm_apps_publication() {
     .await;
     let store = object_store().await;
     let world = common::apps_db::world("held").await;
-    let state = state_with(&gitea).with_wasm_apps(wasm_apps(&world, &store));
+    let state = state_with(&shako).with_wasm_apps(wasm_apps(&world, &store));
 
     let mut status = build();
     status["build"]["digest"] = json!(digest(&bundle));
     let refused = as_lane(&state, wasm_app(Some(status))).await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
     assert!(refused.text.contains("0001_broken.sql"), "{}", refused.text);
-    assert!(published(&gitea).await.is_empty(), "nothing was published");
-    assert!(committed(&gitea).await.is_empty(), "nothing was committed");
+    assert!(published(&shako).await.is_empty(), "nothing was published");
+    assert!(committed(&shako).await.is_empty(), "nothing was committed");
 }
 
 /// Without an apps database a wasm App is not published, and the answer says so (AP-149).
 #[tokio::test]
 async fn a_portal_without_an_apps_database_publishes_no_wasm_app() {
-    let gitea = forge().await;
+    let shako = forge().await;
     let bundle = wasm_bundle();
-    built_on_forge(&gitea, COMMIT, &bundle, None).await;
-    package_takes(&gitea, 201).await;
-    let state = state_with(&gitea);
+    built_on_forge(&shako, COMMIT, &bundle, None).await;
+    package_takes(&shako, 201).await;
+    let state = state_with(&shako);
     let mut status = build();
     status["build"]["digest"] = json!(digest(&bundle));
     let refused = as_lane(&state, wasm_app(Some(status))).await;
@@ -1214,5 +1214,5 @@ async fn a_portal_without_an_apps_database_publishes_no_wasm_app() {
         "{}",
         refused.text
     );
-    assert!(published(&gitea).await.is_empty());
+    assert!(published(&shako).await.is_empty());
 }

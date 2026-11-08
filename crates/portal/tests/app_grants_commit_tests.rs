@@ -25,8 +25,8 @@ const GENERATED: &str = "portal/app-reconciler";
 /// The steward an App names by Keycloak user id (ADR-N-061, PF-126).
 const JANA_ID: &str = "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14";
 
-fn state_with(gitea: &MockServer) -> AppState {
-    let state = common::state_on(gitea);
+fn state_with(shako: &MockServer) -> AppState {
+    let state = common::state_on(shako);
     state.mirror.upsert(envelope(
         "Role",
         "app-editor",
@@ -109,9 +109,9 @@ fn generated(
 }
 
 /// Every file of every multi-file commit the forge received: `(operation, path, yaml)`.
-async fn committed(gitea: &MockServer) -> Vec<(String, String, String)> {
+async fn committed(shako: &MockServer) -> Vec<(String, String, String)> {
     let mut files = Vec::new();
-    for request in gitea.received_requests().await.unwrap_or_default() {
+    for request in shako.received_requests().await.unwrap_or_default() {
         if request.method.as_str() != "POST"
             || request.url.path() != format!("{}/contents", common::REPO)
         {
@@ -136,13 +136,13 @@ async fn committed(gitea: &MockServer) -> Vec<(String, String, String)> {
 
 #[tokio::test]
 async fn a_published_role_gated_app_commits_its_endpoint_and_one_policy_per_role() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
 
     let accepted = send(&state, person("jana"), "POST", APPS, Some(app("published"))).await;
     assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
 
-    let files = committed(&gitea).await;
+    let files = committed(&shako).await;
     let endpoint = files
         .iter()
         .find(|(op, path, _)| {
@@ -207,8 +207,8 @@ async fn a_published_role_gated_app_commits_its_endpoint_and_one_policy_per_role
 
 #[tokio::test]
 async fn republishing_keeps_the_endpoints_slug() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     state.mirror.upsert(generated(
         "Endpoint",
         "app-bikes",
@@ -217,7 +217,7 @@ async fn republishing_keeps_the_endpoints_slug() {
 
     let accepted = send(&state, person("jana"), "POST", APPS, Some(app("published"))).await;
     assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
-    let files = committed(&gitea).await;
+    let files = committed(&shako).await;
     let endpoint = files
         .iter()
         .find(|(_, p, _)| p.ends_with("app-bikes.yaml"))
@@ -231,15 +231,15 @@ async fn republishing_keeps_the_endpoints_slug() {
 
 #[tokio::test]
 async fn a_retired_app_removes_its_grants_and_leaves_another_apps_alone() {
-    let gitea = forge().await;
+    let shako = forge().await;
     Mock::given(method("GET"))
         .and(path_regex(format!("^{}/contents/.*\\.yaml$", common::REPO)))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(json!({ "sha": "blob-1", "content": "" })),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea);
+    let state = state_with(&shako);
     state.mirror.upsert(generated(
         "Endpoint",
         "app-bikes",
@@ -266,7 +266,7 @@ async fn a_retired_app_removes_its_grants_and_leaves_another_apps_alone() {
 
     let accepted = send(&state, person("jana"), "POST", APPS, Some(app("retired"))).await;
     assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
-    let files = committed(&gitea).await;
+    let files = committed(&shako).await;
     let deleted: Vec<&String> = files
         .iter()
         .filter(|(op, _, _)| op == "delete")
@@ -294,8 +294,8 @@ async fn a_retired_app_removes_its_grants_and_leaves_another_apps_alone() {
 
 #[tokio::test]
 async fn a_hand_written_endpoint_with_the_apps_name_is_refused_not_overwritten() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     state.mirror.upsert(envelope(
         "Endpoint",
         "app-bikes",
@@ -306,7 +306,7 @@ async fn a_hand_written_endpoint_with_the_apps_name_is_refused_not_overwritten()
     let refused = send(&state, person("jana"), "POST", APPS, Some(app("published"))).await;
     assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.text);
     assert!(refused.text.contains("app-bikes"), "{}", refused.text);
-    assert!(committed(&gitea).await.is_empty(), "nothing was committed");
+    assert!(committed(&shako).await.is_empty(), "nothing was committed");
 }
 
 /// The assigner of every committed Policy: one `did:web:` line per Policy file.
@@ -328,8 +328,8 @@ fn assigners(files: &[(String, String, String)]) -> Vec<String> {
 #[tokio::test]
 async fn an_apps_policies_name_the_projects_publisher_else_the_organization() {
     for domain in [Some("kaupunki.hel.fi"), None] {
-        let gitea = forge().await;
-        let state = state_with(&gitea);
+        let shako = forge().await;
+        let state = state_with(&shako);
         let mut spec = json!({ "organizationRef": { "kind": "Organization", "name": "helsinki" } });
         if let Some(domain) = domain {
             spec["domain"] = json!(domain);
@@ -347,7 +347,7 @@ async fn an_apps_policies_name_the_projects_publisher_else_the_organization() {
 
         let accepted = send(&state, person("jana"), "POST", APPS, Some(app("published"))).await;
         assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
-        let found = assigners(&committed(&gitea).await);
+        let found = assigners(&committed(&shako).await);
         assert_eq!(found.len(), 2, "{found:?}");
         assert!(found.iter().all(|a| *a == want), "{want}: {found:?}");
     }
@@ -355,22 +355,22 @@ async fn an_apps_policies_name_the_projects_publisher_else_the_organization() {
 
 #[tokio::test]
 async fn deleting_an_app_removes_its_endpoint_and_policies_in_the_same_commit() {
-    let gitea = forge().await;
+    let shako = forge().await;
     Mock::given(method("GET"))
         .and(path_regex(format!("^{}/contents/.*\\.yaml$", common::REPO)))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(json!({ "sha": "blob-1", "content": "" })),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path_regex(format!("^{}/git/trees/.*", common::REPO)))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(json!({ "tree": [], "truncated": false })),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea);
+    let state = state_with(&shako);
     state.mirror.upsert(envelope(
         "App",
         "bikes",
@@ -401,7 +401,7 @@ async fn deleting_an_app_removes_its_endpoint_and_policies_in_the_same_commit() 
     )
     .await;
     assert_eq!(removed.status, StatusCode::ACCEPTED, "{}", removed.text);
-    let deleted: Vec<String> = committed(&gitea)
+    let deleted: Vec<String> = committed(&shako)
         .await
         .into_iter()
         .filter(|(op, _, _)| op == "delete")
@@ -460,8 +460,8 @@ fn planned(text: &str) -> Vec<(String, Value)> {
 /// the same commit as its grants, and the access entry giving it the role; the plan names both.
 #[tokio::test]
 async fn every_role_of_a_proposed_app_commits_its_default_group() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
 
     let checked = send(
         &state,
@@ -482,7 +482,7 @@ async fn every_role_of_a_proposed_app_commits_its_default_group() {
 
     let accepted = send(&state, person("jana"), "POST", APPS, Some(app("published"))).await;
     assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
-    let files = committed(&gitea).await;
+    let files = committed(&shako).await;
     for name in ["bikes-viewer", "bikes-steward"] {
         let (_, _, yaml) = files
             .iter()
@@ -508,15 +508,15 @@ async fn every_role_of_a_proposed_app_commits_its_default_group() {
 /// the role, and the App names the group nowhere; a group of another owner is never touched.
 #[tokio::test]
 async fn a_role_taken_away_removes_its_group_and_warns_about_its_members() {
-    let gitea = forge().await;
+    let shako = forge().await;
     Mock::given(method("GET"))
         .and(path_regex(format!("^{}/contents/.*\\.yaml$", common::REPO)))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(json!({ "sha": "blob-1", "content": "" })),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea);
+    let state = state_with(&shako);
     state
         .mirror
         .upsert(group("bikes-viewer", true, &["ada@hel.fi", "bo@hel.fi"]));
@@ -553,7 +553,7 @@ async fn a_role_taken_away_removes_its_group_and_warns_about_its_members() {
 
     let accepted = send(&state, person("jana"), "POST", APPS, Some(only_steward)).await;
     assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
-    let files = committed(&gitea).await;
+    let files = committed(&shako).await;
     let deleted: Vec<&String> = files
         .iter()
         .filter(|(op, _, _)| op == "delete")
@@ -581,8 +581,8 @@ async fn a_role_taken_away_removes_its_group_and_warns_about_its_members() {
 /// door, naming both owners, and nothing reaches the forge.
 #[tokio::test]
 async fn a_default_group_named_like_the_organizations_group_is_refused() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     state
         .mirror
         .upsert(group("bikes-viewer", false, &["ada@hel.fi"]));
@@ -595,22 +595,22 @@ async fn a_default_group_named_like_the_organizations_group_is_refused() {
         "{}",
         refused.text
     );
-    assert!(committed(&gitea).await.is_empty());
+    assert!(committed(&shako).await.is_empty());
 }
 
 /// AP-118 at the import door: an imported App's roles come with their default groups, listed as
 /// created, and the App gives each role to its group.
 #[tokio::test]
 async fn an_imported_app_brings_its_default_groups() {
-    let gitea = forge().await;
+    let shako = forge().await;
     Mock::given(method("GET"))
         .and(path_regex(format!("^{}/git/trees/.*", common::REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "tree": [], "truncated": false,
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea);
+    let state = state_with(&shako);
     state.mirror.upsert(group("bikes-steward", true, &[]));
 
     let checked = send(

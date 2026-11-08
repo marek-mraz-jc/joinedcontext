@@ -16,7 +16,7 @@ use http_body_util::BodyExt;
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, Phase, ResourceEnvelope, Status, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
@@ -304,7 +304,7 @@ async fn the_status_needs_a_session() {
 #[tokio::test]
 async fn a_catalogue_is_configured_through_the_resource_api_as_a_change_proposal() {
     let forge = MockServer::start().await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         forge.uri().parse().expect("mock url"),
         "test-owner",
         "test-repo",
@@ -339,7 +339,7 @@ async fn a_catalogue_is_configured_through_the_resource_api_as_a_change_proposal
         .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
             "number": 7,
-            "html_url": "https://gitea.example.sk/pulls/7",
+            "html_url": "https://shako.example.sk/pulls/7",
             "state": "open",
             "mergeable": true,
             "merged": false
@@ -349,7 +349,7 @@ async fn a_catalogue_is_configured_through_the_resource_api_as_a_change_proposal
 
     let config = Config::for_tests();
     let cookies = format!("{}; {CSRF_COOKIE}={CSRF_TOKEN}", session_cookie(&config));
-    let app = server::app(AppState::new(config, None).with_gitea(Arc::new(client)));
+    let app = server::app(AppState::new(config, None).with_shako(Arc::new(client)));
 
     let response = app
         .oneshot_checked(

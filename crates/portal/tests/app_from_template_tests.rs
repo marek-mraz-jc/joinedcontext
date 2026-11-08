@@ -62,8 +62,8 @@ async fn world() -> (MockServer, AppState) {
     }
 
     let mut state = state_on(&server);
-    if let Some(gitea) = state.gitea.as_mut().and_then(std::sync::Arc::get_mut) {
-        gitea.public_base = "https://forge.example/".parse().expect("a url");
+    if let Some(shako) = state.shako.as_mut().and_then(std::sync::Arc::get_mut) {
+        shako.public_base = "https://forge.example/".parse().expect("a url");
     }
     state.mirror.set_layout(2);
     state.mirror.set_repositories(BTreeMap::from([(

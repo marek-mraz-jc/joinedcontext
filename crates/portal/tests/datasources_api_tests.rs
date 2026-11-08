@@ -20,7 +20,7 @@ use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::{Change, ChangePhase};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::error::ProblemDetails;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, Phase, ResourceEnvelope, Status, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
@@ -177,27 +177,27 @@ async fn one_source_comes_back_with_its_reference_and_no_credential() {
 
 #[tokio::test]
 async fn a_write_becomes_a_merge_request_at_the_kinds_own_path() {
-    let gitea = MockServer::start().await;
-    let base_url = gitea.uri().parse().expect("mock url");
+    let shako = MockServer::start().await;
+    let base_url = shako.uri().parse().expect("mock url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/test-owner/test-repo"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("POST"))
         .and(path("/api/v1/repos/test-owner/test-repo/branches"))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path(format!(
             "/api/v1/repos/test-owner/test-repo/contents/{MANIFEST_PATH}"
         )))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("PUT"))
         .and(path(format!(
@@ -206,22 +206,22 @@ async fn a_write_becomes_a_merge_request_at_the_kinds_own_path() {
         .respond_with(
             ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "commit-1" } })),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("POST"))
         .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
             "number": 7,
-            "html_url": "https://gitea.example.sk/pulls/7",
+            "html_url": "https://shako.example.sk/pulls/7",
             "state": "open",
             "mergeable": true,
             "merged": false
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     let response = server::app(state)
         .oneshot_checked(
             Request::builder()

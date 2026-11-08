@@ -23,7 +23,7 @@ const ENDPOINT_YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpo
 fn pull(number: u64, merged: bool) -> Value {
     json!({
         "number": number,
-        "html_url": format!("https://gitea.example/pulls/{number}"),
+        "html_url": format!("https://shako.example/pulls/{number}"),
         "state": if merged { "closed" } else { "open" },
         "title": "update",
         "head": { "ref": format!("portal/update-pipeline-air-ingest-{number:08x}"), "sha": format!("head-{number}") },
@@ -37,7 +37,7 @@ fn pull(number: u64, merged: bool) -> Value {
 /// Change 6 is merged and wrote the pipeline, its bento file and an endpoint and deleted another
 /// pipeline; change 8 is open.
 async fn world() -> (MockServer, AppState) {
-    let gitea = forge().await;
+    let shako = forge().await;
     let files = json!([
         { "filename": PIPELINE, "status": "modified" },
         { "filename": NATIVE, "status": "modified" },
@@ -49,12 +49,12 @@ async fn world() -> (MockServer, AppState) {
         Mock::given(method("GET"))
             .and(path(format!("{REPO}/pulls/{number}")))
             .respond_with(ResponseTemplate::new(200).set_body_json(pull(number, merged)))
-            .mount(&gitea)
+            .mount(&shako)
             .await;
         Mock::given(method("GET"))
             .and(path(format!("{REPO}/pulls/{number}/files")))
             .respond_with(ResponseTemplate::new(200).set_body_json(files.clone()))
-            .mount(&gitea)
+            .mount(&shako)
             .await;
     }
     for (file, content) in [
@@ -69,10 +69,10 @@ async fn world() -> (MockServer, AppState) {
                 ResponseTemplate::new(200)
                     .set_body_json(json!({ "sha": "blob", "content": encode(content) })),
             )
-            .mount(&gitea)
+            .mount(&shako)
             .await;
     }
-    let state = state_on(&gitea);
+    let state = state_on(&shako);
     for (role, kinds) in [
         ("pipelines", json!(["Pipeline"])),
         ("both", json!(["Pipeline", "Endpoint"])),
@@ -90,7 +90,7 @@ async fn world() -> (MockServer, AppState) {
             json!({ "subjects": [{ "user": format!("{role}@hel.fi") }], "role": role, "scope": { "project": PROJECT } }),
         ));
     }
-    (gitea, state)
+    (shako, state)
 }
 
 async fn manifests(state: &AppState, who: &str, project: &str, id: &str) -> (u16, Value) {
@@ -128,7 +128,7 @@ fn names(body: &Value) -> Vec<String> {
 
 #[tokio::test]
 async fn a_merged_change_answers_the_manifests_it_wrote_at_its_last_commit() {
-    let (gitea, state) = world().await;
+    let (shako, state) = world().await;
     let (status, body) = manifests(&state, "both", PROJECT, "chg-00000006").await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["kind"], json!("List"));
@@ -142,7 +142,7 @@ async fn a_merged_change_answers_the_manifests_it_wrote_at_its_last_commit() {
         body["items"][0]["spec"]["secretRefs"][0],
         json!({ "name": "mqtt", "key": "password" })
     );
-    let written = gitea
+    let written = shako
         .received_requests()
         .await
         .unwrap_or_default()

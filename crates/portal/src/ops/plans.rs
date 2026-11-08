@@ -1071,7 +1071,7 @@ async fn open_together(
     plan: &Plan,
 ) -> Result<Vec<Value>, OpError> {
     let project = plan.project.as_str();
-    let gitea = state
+    let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
     let branch = format!("portal/import-plan-{plan_id}");
@@ -1120,7 +1120,7 @@ async fn open_together(
             }
             Err(err) => {
                 if !lanes.is_empty() {
-                    if let Err(gone) = gitea.delete_branch(&branch).await {
+                    if let Err(gone) = shako.delete_branch(&branch).await {
                         tracing::warn!(%branch, error = %gone, "a refused plan left its branch");
                     }
                 }
@@ -1145,17 +1145,17 @@ async fn open_together(
         body.push_str(line);
     }
     let title = format!("apply {} changes in {project}", plan.items.len());
-    let pull = gitea
+    let pull = shako
         .create_pull_request(
             &branch,
-            &gitea.default_branch().await.map_err(ApiError::from)?,
+            &shako.default_branch().await.map_err(ApiError::from)?,
             &title,
             &body,
         )
         .await
         .map_err(ApiError::from)?;
     let change = crate::change::Change::new(
-        crate::api::changes::change_meta(state, &gitea, pull.number, project),
+        crate::api::changes::change_meta(state, &shako, pull.number, project),
         crate::change::ChangeStatus::new(
             lane,
             crate::change::ChangePhase::PendingApproval,
@@ -1395,7 +1395,7 @@ struct RevertInput {
 /// A file of the forge as a value: the YAML parsed, or its text when it is no YAML, so two reads
 /// of one file compare by content and not by formatting.
 async fn file_at(
-    forge: &crate::git::GiteaClient,
+    forge: &crate::forge::ShakoClient,
     path: &str,
     at: &str,
 ) -> Result<Option<Value>, OpError> {
@@ -1418,11 +1418,11 @@ fn manifest_names(manifest: &Value) -> Option<(String, String)> {
 /// The merged pull request `number` of change `id` with the commit it merged as: `NotFound` for a change
 /// that is no Portal change of `project`, `Conflict` for one not merged (yet).
 async fn merged_change(
-    forge: &crate::git::GiteaClient,
+    forge: &crate::forge::ShakoClient,
     number: u64,
     project: &str,
     id: &str,
-) -> Result<(crate::git::PullRequest, String), OpError> {
+) -> Result<(crate::forge::PullRequest, String), OpError> {
     let missing = || {
         OpError::Api(ApiError::NotFound(format!(
             "change '{id}' not found in project '{project}'"
@@ -1430,7 +1430,7 @@ async fn merged_change(
     };
     let pr = match forge.pull_request(number).await {
         Ok(pr) => pr,
-        Err(crate::git::GitError::NotFound | crate::git::GitError::Api { status: 404, .. }) => {
+        Err(crate::forge::GitError::NotFound | crate::forge::GitError::Api { status: 404, .. }) => {
             return Err(missing())
         }
         Err(err) => return Err(OpError::Api(err.into())),
@@ -2477,10 +2477,10 @@ mod tests {
     }
 
     async fn on_forge(server: &wiremock::MockServer) -> AppState {
-        let forge = crate::git::GiteaClient::new(server.uri().parse().expect("url"), "o", "r", "t")
+        let forge = crate::forge::ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "t")
             .expect("client");
         let state = AppState::new(crate::config::Config::for_tests(), None)
-            .with_gitea(std::sync::Arc::new(forge));
+            .with_shako(std::sync::Arc::new(forge));
         let plan = model_and_space();
         let space = plan.items[1].manifest.as_ref().expect("manifest");
         super::super::proposals::record_check(

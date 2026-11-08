@@ -26,15 +26,15 @@ const FILE: &str = r#"pipeline:
 "#;
 
 async fn world(file: ResponseTemplate) -> (AppState, MockServer) {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     Mock::given(method("GET"))
         .and(path_regex(format!(
             "^{REPO}/contents/projects/helsinki/.*pipelines/vehicles/bento.yaml$"
         )))
         .respond_with(file)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = common::state_on(&gitea);
+    let state = common::state_on(&shako);
     state.mirror.upsert(envelope(
         "Role",
         "space-reader",
@@ -78,7 +78,7 @@ async fn world(file: ResponseTemplate) -> (AppState, MockServer) {
         "helsinki",
         pipeline("events"),
     ));
-    (state, gitea)
+    (state, shako)
 }
 
 fn file_answer() -> ResponseTemplate {
@@ -162,7 +162,7 @@ async fn a_forge_that_fails_names_the_pipeline_whose_rows_are_missing() {
 
 #[tokio::test]
 async fn a_caller_without_read_on_the_space_is_refused_before_the_forge() {
-    let (state, gitea) = world(file_answer()).await;
+    let (state, shako) = world(file_answer()).await;
     let refused = send(&state, person("mikko"), "GET", AUDIT, None).await;
     assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.text);
     let other = send(
@@ -174,7 +174,7 @@ async fn a_caller_without_read_on_the_space_is_refused_before_the_forge() {
     )
     .await;
     assert_eq!(other.status, StatusCode::NOT_FOUND, "{}", other.text);
-    let asked = gitea.received_requests().await.unwrap_or_default();
+    let asked = shako.received_requests().await.unwrap_or_default();
     assert!(
         !asked.iter().any(|r| r.url.path().ends_with("bento.yaml")),
         "the forge was asked for a mapping"

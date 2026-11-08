@@ -143,7 +143,7 @@ async fn forge(held: &str) -> (MockServer, Arc<Mutex<Vec<Value>>>) {
     Mock::given(method("POST"))
         .and(path(format!("{REPO}/pulls")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 7, "html_url": "https://gitea.example.sk/pulls/7", "state": "open",
+            "number": 7, "html_url": "https://shako.example.sk/pulls/7", "state": "open",
             "mergeable": true, "merged": false
         })))
         .mount(&server)
@@ -191,14 +191,14 @@ async fn world() -> World {
     config.pipeline_secrets = Some(joinedcontext_portal::pipeline_secrets::Backend::Sops {
         age_key_file: key_file,
     });
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(
-        joinedcontext_portal::git::GiteaClient::new(
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(
+        joinedcontext_portal::forge::ShakoClient::new(
             forge.uri().parse().expect("url"),
             "test-owner",
             "test-repo",
             "token-secret-form",
         )
-        .expect("gitea"),
+        .expect("shako"),
     ));
     state.mirror.upsert(envelope(
         "Role",

@@ -35,7 +35,7 @@ use super::streams::{
 };
 use crate::activity::{ActivityEvent, ActivityStore};
 use crate::apps::converge::{Converger, Outcome};
-use crate::git::{Author, FileWrite, GitError, GiteaClient};
+use crate::forge::{Author, FileWrite, GitError, ShakoClient};
 use crate::resource::ResourceEnvelope;
 use crate::store::Mirror;
 use jcctl::loader::Repository;
@@ -114,7 +114,7 @@ fn drift_summary(err: &SyncError) -> String {
 
 /// Background reconciler synchronizing repository manifests into the in-memory mirror.
 pub struct Syncer {
-    gitea: Arc<GiteaClient>,
+    shako: Arc<ShakoClient>,
     mirror: Arc<Mirror>,
     status: Arc<RwLock<SyncStatus>>,
     running: Arc<Mutex<()>>,
@@ -244,9 +244,6 @@ pub struct Syncer {
     stalls: super::stall::StallWatch,
     /// The reason last logged for each pipeline that is not run (T-4373).
     unscheduled: super::stall::Unscheduled,
-    /// Whether the last run found the project teams the bootstrap's, so that is said once and
-    /// not on every sync (T-3323).
-    teams_left_to_bootstrap: Arc<std::sync::atomic::AtomicBool>,
     /// The pipelines the last run paused for refused access (PL-93), so the feed says it once.
     access_paused: Arc<tokio::sync::Mutex<BTreeMap<(String, String), String>>>,
     /// The catalogue waves (5f, 5f', 5g) run beside the sync, one at a time (T-5519): locked
@@ -256,9 +253,9 @@ pub struct Syncer {
 }
 
 impl Syncer {
-    pub fn new(gitea: Arc<GiteaClient>, mirror: Arc<Mirror>) -> Self {
+    pub fn new(shako: Arc<ShakoClient>, mirror: Arc<Mirror>) -> Self {
         Self {
-            gitea,
+            shako,
             mirror,
             status: Arc::new(RwLock::new(SyncStatus {
                 leader: true,
@@ -278,7 +275,6 @@ impl Syncer {
             streams: None,
             stalls: super::stall::StallWatch::default(),
             unscheduled: super::stall::Unscheduled::default(),
-            teams_left_to_bootstrap: Arc::default(),
             access_paused: Arc::default(),
             catalogue: Arc::default(),
             registrations: None,
@@ -731,8 +727,8 @@ impl Syncer {
             return Ok(());
         }
         let started = std::time::Instant::now();
-        let default_branch = self.gitea.default_branch().await?;
-        let revision = self.gitea.branch_head(&default_branch).await?;
+        let default_branch = self.shako.default_branch().await?;
+        let revision = self.shako.branch_head(&default_branch).await?;
         let Some((scratch, repository)) = self.staged_apart(&revision).await? else {
             return Ok(());
         };
@@ -945,7 +941,7 @@ impl Syncer {
         &self,
         revision: &str,
     ) -> Result<Option<(Render, Repository)>, SyncError> {
-        let org = listing(&self.gitea, revision, false).await?;
+        let org = listing(&self.shako, revision, false).await?;
         let last = self
             .last_render
             .lock()
@@ -957,7 +953,7 @@ impl Syncer {
             }
         }
         let into = Scratch::new(revision)?;
-        let staged = stage_listed(&self.gitea, revision, &org).await?;
+        let staged = stage_listed(&self.shako, revision, &org).await?;
         let (render, repository) = self.render(staged, org, Some(into)).await?;
         Ok(render.unstaged.is_empty().then_some((render, repository)))
     }
@@ -967,7 +963,7 @@ impl Syncer {
     /// same files at the same blobs as when it staged them (T-4481). At 10,000 Endpoints the
     /// stage and load took 5 s of a 7.6 s wave that changed nothing.
     async fn staged(&self, revision: &str) -> Result<(Arc<Render>, Arc<Repository>), SyncError> {
-        let org = listing(&self.gitea, revision, false).await?;
+        let org = listing(&self.shako, revision, false).await?;
         let last = self
             .last_render
             .lock()
@@ -979,7 +975,7 @@ impl Syncer {
             }
         }
         let (render, repository) = self
-            .render(stage_listed(&self.gitea, revision, &org).await?, org, None)
+            .render(stage_listed(&self.shako, revision, &org).await?, org, None)
             .await?;
         let fresh = (Arc::new(render), Arc::new(repository));
         *self.last_render.lock().unwrap_or_else(|p| p.into_inner()) = Some(fresh.clone());
@@ -1026,7 +1022,7 @@ impl Syncer {
                 tracing::warn!(project = %slug, "a repository outside the forge is not read by the Portal yet");
                 continue;
             };
-            let client = self.gitea.for_repository(name);
+            let client = self.shako.for_repository(name);
             let project = match listing(&client, &git_ref, true).await {
                 Ok(listed) => stage_listed(&client, &git_ref, &listed)
                     .await
@@ -1080,8 +1076,8 @@ impl Syncer {
     async fn do_sync(&self, leader: bool, seen: u64) -> Result<(usize, String), SyncError> {
         let mut steps = Steps::start();
         // 1. Resolve default branch and its commit revision
-        let default_branch = self.gitea.default_branch().await?;
-        let revision = self.gitea.branch_head(&default_branch).await?;
+        let default_branch = self.shako.default_branch().await?;
+        let revision = self.shako.branch_head(&default_branch).await?;
         steps.mark("revision");
 
         // 2, 3. The repository as files on disk, this run's own; in layout 2 the organization
@@ -1116,7 +1112,7 @@ impl Syncer {
         // 5b. Every replica serves `/apps/*` from its own disk, so each one fetches the builds
         //     the new mirror names before anything is leader-only (AP-102).
         if let Some(cache) = self.apps_cache_dir.as_deref() {
-            crate::apps::fetch::fetch_missing(&self.gitea, Path::new(cache), &fresh_mirror).await;
+            crate::apps::fetch::fetch_missing(&self.shako, Path::new(cache), &fresh_mirror).await;
         }
         steps.mark("app_builds");
 
@@ -1196,21 +1192,16 @@ impl Syncer {
         //     drift lands on the Group manifests of this run's mirror, so the Access page shows
         //     where the console and the repository disagreed.
         //     Beside them, each registered project's `{slug}-readers` and `{slug}-writers`,
-        //     filled from its bindings, which the forge maps onto the teams of 5c* (PF-87).
+        //     filled from its bindings (PF-87).
         let projects = fresh_mirror.repositories();
         self.converge_groups(&fresh_mirror, &projects).await;
         steps.mark("groups");
-
-        // 5c*. The forge teams those groups map onto: two per project of layout 2, each
-        //      reaching its project's repository alone; a gone project's teams go (PF-87).
-        self.converge_project_teams(&fresh_mirror, &projects).await;
-        steps.mark("project_teams");
 
         // 5c'. People whose removal Change has been decided (PF-93): merged, the Keycloak user
         //      goes; closed unmerged, the pending removal is dropped and the person stays
         //      disabled for an administrator to enable.
         if let Some((people, pool)) = self.people.as_ref() {
-            crate::api::people::finish_deletions(people, pool, &self.gitea).await;
+            crate::api::people::finish_deletions(people, pool, &self.shako).await;
         }
         steps.mark("people");
 
@@ -1487,7 +1478,7 @@ impl Syncer {
                 observed_revision: Some(revision.to_string()),
                 // The branch, not the revision: a Source link should keep working after the
                 // next commit, and the observed revision is right there beside it.
-                source_url: Some(scratch.browse_url(&self.gitea, &path, default_branch)),
+                source_url: Some(scratch.browse_url(&self.shako, &path, default_branch)),
                 conditions: Vec::new(),
                 build,
                 shard,
@@ -1549,7 +1540,7 @@ impl Syncer {
                 continue;
             }
             match self
-                .gitea
+                .shako
                 .for_repository(repository.as_str())
                 .archive_repository()
                 .await
@@ -1624,46 +1615,6 @@ impl Syncer {
             }
             super::groups::record(fresh_mirror, &outcomes);
             self.say_group_drift(&outcomes).await;
-        }
-    }
-
-    async fn converge_project_teams(
-        &self,
-        fresh_mirror: &Mirror,
-        projects: &BTreeMap<String, String>,
-    ) {
-        if fresh_mirror.layout() == 2 {
-            let outcomes = match super::project_teams::converge(&self.gitea, projects).await {
-                super::project_teams::Teams::Kept(outcomes) => {
-                    self.teams_left_to_bootstrap
-                        .store(false, std::sync::atomic::Ordering::Relaxed);
-                    outcomes
-                }
-                super::project_teams::Teams::LeftToTheBootstrap => {
-                    // Said once, and again only after the forge user was an owner in between.
-                    if !self
-                        .teams_left_to_bootstrap
-                        .swap(true, std::sync::atomic::Ordering::Relaxed)
-                    {
-                        tracing::info!(
-                            organization = %self.gitea.owner,
-                            "project teams are the bootstrap's: the Portal's forge user owns no organization, so it writes no team (T-2647)"
-                        );
-                    }
-                    Vec::new()
-                }
-            };
-            for outcome in outcomes {
-                match (&outcome.error, outcome.changes.is_empty()) {
-                    (Some(error), _) => {
-                        tracing::warn!(team = %outcome.team, %error, "project team did not converge")
-                    }
-                    (None, false) => {
-                        tracing::info!(team = %outcome.team, changes = %outcome.changes.join("; "), "project team brought to its project")
-                    }
-                    (None, true) => {}
-                }
-            }
         }
     }
 
@@ -2443,7 +2394,7 @@ impl Syncer {
                 .strip_prefix("projects/")
                 .and_then(|tail| tail.split_once('/'))
                 .and_then(|(slug, _)| scratch.projects.get(slug))
-                .map_or((self.gitea.as_ref(), revision), |(client, git_ref)| {
+                .map_or((self.shako.as_ref(), revision), |(client, git_ref)| {
                     (client, git_ref.as_str())
                 });
             placed.push(super::pipeline_authors::Placed {
@@ -2740,13 +2691,13 @@ impl Syncer {
             return Ok(());
         };
         for (path, content) in files {
-            let existing = self.gitea.get_file(path, branch).await?;
-            let committed = crate::git::gitea::committed_text(path, &content);
+            let existing = self.shako.get_file(path, branch).await?;
+            let committed = crate::forge::shako::committed_text(path, &content);
             if existing.as_ref().map(|f| f.content.as_str()) == Some(&*committed) {
                 continue;
             }
             let message = format!("roles: compile users/ into {path} (T-0527)");
-            self.gitea
+            self.shako
                 .put_file(&FileWrite {
                     path,
                     branch,
@@ -2784,25 +2735,25 @@ impl Syncer {
             by_repository.entry(slug).or_default().insert(path);
         }
         for (slug, paths) in by_repository {
-            let (gitea, branch) = if slug.is_empty() {
-                (&*self.gitea, default_branch.to_owned())
+            let (shako, branch) = if slug.is_empty() {
+                (&*self.shako, default_branch.to_owned())
             } else {
-                let Some((gitea, git_ref)) = render.projects.get(&slug) else {
+                let Some((shako, git_ref)) = render.projects.get(&slug) else {
                     continue;
                 };
                 if git_ref.is_empty() {
-                    match gitea.default_branch().await {
-                        Ok(branch) => (gitea, branch),
+                    match shako.default_branch().await {
+                        Ok(branch) => (shako, branch),
                         Err(error) => {
                             tracing::warn!(project = %slug, %error, "retired representations stay: no default branch");
                             continue;
                         }
                     }
                 } else {
-                    (gitea, git_ref.clone())
+                    (shako, git_ref.clone())
                 }
             };
-            match migrate(gitea, &branch, &paths).await {
+            match migrate(shako, &branch, &paths).await {
                 Ok(0) => {}
                 Ok(files) => {
                     tracing::info!(project = %slug, files, "retired representations dropped from Endpoint and App manifests")
@@ -2950,7 +2901,7 @@ struct Render {
     /// The staged checkouts, held so they are removed when the last sync that reads them ends.
     _staged: Vec<Scratch>,
     /// Slug → the project's repository and the ref it renders at.
-    projects: BTreeMap<String, (GiteaClient, String)>,
+    projects: BTreeMap<String, (ShakoClient, String)>,
     /// The registered projects whose repository did not stage in this run. What the mirror
     /// holds of them is the last render, or nothing on a replica's first run, so a step that
     /// removes what the mirror lacks waits for a run where this is empty.
@@ -2986,7 +2937,7 @@ impl Render {
 
     /// Where a person reads the file at `path` of the render: in its project's repository at
     /// the entry's ref for a mounted project, in the organization's otherwise.
-    fn browse_url(&self, organization: &GiteaClient, path: &str, branch: &str) -> String {
+    fn browse_url(&self, organization: &ShakoClient, path: &str, branch: &str) -> String {
         let clean = path.trim_start_matches('/');
         if let Some((slug, rest)) = clean
             .strip_prefix("projects/")
@@ -3625,7 +3576,7 @@ output_error{stream="kpi"} 6
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     /// A forge serving `files` at revision `rev-1`, and a client of it.
-    async fn forge(files: &[(&str, &str)]) -> (MockServer, GiteaClient) {
+    async fn forge(files: &[(&str, &str)]) -> (MockServer, ShakoClient) {
         let server = MockServer::start().await;
         let tree: Vec<serde_json::Value> = files
             .iter()
@@ -3650,7 +3601,7 @@ output_error{stream="kpi"} 6
                 .mount(&server)
                 .await;
         }
-        let gitea = GiteaClient::new(
+        let shako = ShakoClient::new(
             server.uri().parse().expect("forge url"),
             "test-owner",
             "test-repo",
@@ -3658,7 +3609,7 @@ output_error{stream="kpi"} 6
         )
         .expect("client");
 
-        (server, gitea)
+        (server, shako)
     }
 
     /// T-0935: the SOPS backend decrypts a Pipeline's `secretRef` from the repository's own
@@ -3675,9 +3626,9 @@ output_error{stream="kpi"} 6
             ("projects/helsinki/secrets/demo-feed.enc.yaml", ENCRYPTED),
         ];
 
-        let (_server, gitea) = forge(&files).await;
+        let (_server, shako) = forge(&files).await;
 
-        let scratch = stage(&gitea, "rev-1").await.expect("the run stages");
+        let scratch = stage(&shako, "rev-1").await.expect("the run stages");
         let staged = scratch
             .path()
             .join("projects/helsinki/secrets/demo-feed.enc.yaml");
@@ -3717,8 +3668,8 @@ output_error{stream="kpi"} 6
                 SOURCE,
             ),
         ];
-        let (_forge, gitea) = forge(&files).await;
-        let scratch = stage(&gitea, "rev-1").await.expect("the run stages");
+        let (_forge, shako) = forge(&files).await;
+        let scratch = stage(&shako, "rev-1").await.expect("the run stages");
         let repository = Repository::load(scratch.path()).expect("the staged tree loads");
 
         let schema = json!({"types": {"KeyPerformanceIndicator": {}}});
@@ -3898,9 +3849,9 @@ output_error{stream="kpi"} 6
     #[tokio::test]
     async fn a_merge_goes_live_past_a_running_run_and_the_next_run_converges_the_rest() {
         let base = catalogue_files();
-        let (_forge, gitea, shared) = changing_forge(&base).await;
+        let (_forge, shako, shared) = changing_forge(&base).await;
         let mirror = Arc::new(Mirror::new());
-        let syncer = Syncer::new(Arc::new(gitea), Arc::clone(&mirror));
+        let syncer = Syncer::new(Arc::new(shako), Arc::clone(&mirror));
         syncer.sync_once().await.expect("the first run loads");
 
         next_revision(&shared, &base, &[second_endpoint(), second_catalogue()]);
@@ -3928,9 +3879,9 @@ output_error{stream="kpi"} 6
     #[tokio::test]
     async fn a_run_from_before_a_merge_does_not_undo_it() {
         let base = catalogue_files();
-        let (_forge, gitea, shared) = changing_forge(&base).await;
+        let (_forge, shako, shared) = changing_forge(&base).await;
         let mirror = Arc::new(Mirror::new());
-        let syncer = Syncer::new(Arc::new(gitea), Arc::clone(&mirror));
+        let syncer = Syncer::new(Arc::new(shako), Arc::clone(&mirror));
         syncer.sync_once().await.expect("the first run loads");
         let seen = *syncer.merges.lock().await;
 
@@ -3952,8 +3903,8 @@ output_error{stream="kpi"} 6
     #[tokio::test]
     async fn a_push_that_goes_live_with_nothing_stops_no_run() {
         let base = catalogue_files();
-        let (_forge, gitea, shared) = changing_forge(&base).await;
-        let syncer = Syncer::new(Arc::new(gitea), Arc::new(Mirror::new()));
+        let (_forge, shako, shared) = changing_forge(&base).await;
+        let syncer = Syncer::new(Arc::new(shako), Arc::new(Mirror::new()));
         syncer.sync_once().await.expect("the first run loads");
         next_revision(&shared, &base, &[second_catalogue()]);
         syncer.go_live().await.expect("the push loads");
@@ -3965,9 +3916,9 @@ output_error{stream="kpi"} 6
     #[tokio::test]
     async fn a_failed_merge_pass_is_repaired_by_the_whole_run() {
         let base = catalogue_files();
-        let (forge, gitea, shared) = changing_forge(&base).await;
+        let (forge, shako, shared) = changing_forge(&base).await;
         let mirror = Arc::new(Mirror::new());
-        let syncer = Syncer::new(Arc::new(gitea), Arc::clone(&mirror));
+        let syncer = Syncer::new(Arc::new(shako), Arc::clone(&mirror));
         syncer.sync_once().await.expect("the first run loads");
 
         next_revision(&shared, &base, &[second_endpoint()]);
@@ -3988,9 +3939,9 @@ output_error{stream="kpi"} 6
     /// T-6455: before a first run the mirror is empty, not behind: nothing goes live from it.
     #[tokio::test]
     async fn nothing_goes_live_before_the_first_run() {
-        let (_forge, gitea, _shared) = changing_forge(&catalogue_files()).await;
+        let (_forge, shako, _shared) = changing_forge(&catalogue_files()).await;
         let mirror = Arc::new(Mirror::new());
-        let syncer = Syncer::new(Arc::new(gitea), Arc::clone(&mirror));
+        let syncer = Syncer::new(Arc::new(shako), Arc::clone(&mirror));
         syncer.go_live().await.expect("nothing to do");
         assert_eq!(mirror.len(), 0);
     }
@@ -4039,10 +3990,10 @@ output_error{stream="kpi"} 6
         std::fs::write(&token, "t\n").expect("the token");
 
         let base = two_spaces();
-        let (_forge, gitea, shared) = changing_forge(&base).await;
+        let (_forge, shako, shared) = changing_forge(&base).await;
         let views = super::super::views::ViewSync::new(broker.uri(), &token);
         let syncer =
-            Syncer::new(Arc::new(gitea), Arc::new(Mirror::new())).with_views(Arc::new(views));
+            Syncer::new(Arc::new(shako), Arc::new(Mirror::new())).with_views(Arc::new(views));
         syncer.sync_once().await.expect("the first run loads");
 
         let seen = broker.received_requests().await.unwrap_or_default().len();
@@ -4100,8 +4051,8 @@ output_error{stream="kpi"} 6
                 schema,
             ),
         ];
-        let (_forge, gitea) = forge(&files).await;
-        let scratch = stage(&gitea, "rev-1").await.expect("the run stages");
+        let (_forge, shako) = forge(&files).await;
+        let scratch = stage(&shako, "rev-1").await.expect("the run stages");
         let repository = Repository::load(scratch.path()).expect("the staged tree loads");
 
         let compiled = crate::pipeline_validation::load(&repository, scratch.path());
@@ -4133,8 +4084,8 @@ output_error{stream="kpi"} 6
                 r#"{"definitions": {"Event": {"properties": {"name": {"type": "string"}}}}}"#,
             ),
         ];
-        let (_forge, gitea) = forge(&files).await;
-        let scratch = stage_project(&gitea, "rev-1")
+        let (_forge, shako) = forge(&files).await;
+        let scratch = stage_project(&shako, "rev-1")
             .await
             .expect("the run stages");
         let staged = scratch
@@ -4163,8 +4114,8 @@ output_error{stream="kpi"} 6
 
     #[tokio::test]
     async fn zero_duration_does_not_loop() {
-        let gitea = Arc::new(
-            GiteaClient::new(
+        let shako = Arc::new(
+            ShakoClient::new(
                 "http://localhost:3000".parse().unwrap(),
                 "test-owner",
                 "test-repo",
@@ -4173,7 +4124,7 @@ output_error{stream="kpi"} 6
             .unwrap(),
         );
         let mirror = Arc::new(Mirror::new());
-        let syncer = Arc::new(Syncer::new(gitea, mirror));
+        let syncer = Arc::new(Syncer::new(shako, mirror));
         let handle = syncer.spawn_periodic(Duration::ZERO);
         let res = tokio::time::timeout(Duration::from_millis(100), handle).await;
         assert!(
@@ -4184,8 +4135,8 @@ output_error{stream="kpi"} 6
 
     #[tokio::test]
     async fn a_sync_asked_for_during_a_sync_runs_after_it() {
-        let gitea = Arc::new(
-            GiteaClient::new(
+        let shako = Arc::new(
+            ShakoClient::new(
                 "http://127.0.0.1:9".parse().unwrap(),
                 "test-owner",
                 "test-repo",
@@ -4194,7 +4145,7 @@ output_error{stream="kpi"} 6
             .unwrap(),
         );
         let mirror = Arc::new(Mirror::new());
-        let syncer = Arc::new(Syncer::new(gitea, mirror));
+        let syncer = Arc::new(Syncer::new(shako, mirror));
 
         let guard = syncer.running.lock().await;
         let waiting = tokio::spawn({
@@ -4220,7 +4171,7 @@ output_error{stream="kpi"} 6
     /// A forge whose files a test changes between runs; each change is the next revision.
     type Files = Arc<std::sync::Mutex<(u32, Vec<(String, String)>)>>;
 
-    async fn changing_forge(files: &[(&str, String)]) -> (MockServer, GiteaClient, Files) {
+    async fn changing_forge(files: &[(&str, String)]) -> (MockServer, ShakoClient, Files) {
         let server = MockServer::start().await;
         let shared: Files = Arc::new(std::sync::Mutex::new((
             1,
@@ -4280,14 +4231,14 @@ output_error{stream="kpi"} 6
             })
             .mount(&server)
             .await;
-        let gitea = GiteaClient::new(
+        let shako = ShakoClient::new(
             server.uri().parse().expect("forge url"),
             "test-owner",
             "test-repo",
             "token",
         )
         .expect("client");
-        (server, gitea, shared)
+        (server, shako, shared)
     }
 
     fn manifest(kind: &str, name: &str, spec: serde_json::Value) -> String {
@@ -4386,11 +4337,11 @@ output_error{stream="kpi"} 6
     /// CKAN wave held a merged change out of the mirror for 10.6 minutes.
     #[tokio::test]
     async fn a_slow_catalogue_does_not_hold_the_mirror_swap() {
-        let (_forge, gitea, _files) = changing_forge(&catalogue_files()).await;
+        let (_forge, shako, _files) = changing_forge(&catalogue_files()).await;
         let (gateway, catalog) = slow_catalogue(Duration::from_secs(5)).await;
         let mirror = Arc::new(Mirror::new());
         let syncer =
-            Syncer::new(Arc::new(gitea), Arc::clone(&mirror)).with_catalog(Arc::new(catalog));
+            Syncer::new(Arc::new(shako), Arc::clone(&mirror)).with_catalog(Arc::new(catalog));
 
         tokio::time::timeout(Duration::from_secs(3), syncer.sync_once())
             .await
@@ -4410,10 +4361,10 @@ output_error{stream="kpi"} 6
     /// T-5519: a run during a busy catalogue wave skips its own wave rather than queueing it.
     #[tokio::test]
     async fn a_run_during_a_busy_catalogue_wave_skips_its_own() {
-        let (_forge, gitea, _files) = changing_forge(&catalogue_files()).await;
+        let (_forge, shako, _files) = changing_forge(&catalogue_files()).await;
         let (gateway, catalog) = slow_catalogue(Duration::from_secs(2)).await;
         let syncer =
-            Syncer::new(Arc::new(gitea), Arc::new(Mirror::new())).with_catalog(Arc::new(catalog));
+            Syncer::new(Arc::new(shako), Arc::new(Mirror::new())).with_catalog(Arc::new(catalog));
 
         syncer.sync_once().await.expect("the first run loads");
         until_the_feed_is_asked(&gateway, 1).await;
@@ -4469,10 +4420,10 @@ output_error{stream="kpi"} 6
         ));
         let without_bikes = files.clone();
         files.push(bikes);
-        let (_forge, gitea, shared) = changing_forge(&files).await;
+        let (_forge, shako, shared) = changing_forge(&files).await;
         let (gateway, catalog) = slow_catalogue(Duration::from_secs(4)).await;
         let activity = crate::activity::ActivityStore::new(None);
-        let syncer = Syncer::new(Arc::new(gitea), Arc::new(Mirror::new()))
+        let syncer = Syncer::new(Arc::new(shako), Arc::new(Mirror::new()))
             .with_catalog(Arc::new(catalog))
             .with_ckan(Arc::new(super::super::ckan::CkanSync::new(
                 "portal.example.fi",
@@ -4612,7 +4563,7 @@ output_error{stream="kpi"} 6
         let server = MockServer::start().await;
         let base_url = server.uri().parse().unwrap();
         let client =
-            Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+            Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
         let mirror = Arc::new(Mirror::new());
         let activity = crate::activity::ActivityStore::new(None);
         let syncer = Arc::new(
@@ -4652,7 +4603,7 @@ output_error{stream="kpi"} 6
         use crate::pipeline_log::{NewLine, Outcome};
         use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
         let client = Arc::new(
-            GiteaClient::new("http://localhost:3000".parse().unwrap(), "o", "r", "t").unwrap(),
+            ShakoClient::new("http://localhost:3000".parse().unwrap(), "o", "r", "t").unwrap(),
         );
         let mirror = Arc::new(Mirror::new());
         let envelope =
@@ -4752,7 +4703,7 @@ output_error{stream="kpi"} 6
         let server = MockServer::start().await;
         let base_url = server.uri().parse().unwrap();
         let client =
-            Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+            Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
         let mirror = Arc::new(Mirror::new());
         let activity = crate::activity::ActivityStore::new(None);
         let syncer = Arc::new(
@@ -4871,7 +4822,7 @@ output_error{stream="kpi"} 6
         let server = MockServer::start().await;
         let base_url = server.uri().parse().unwrap();
         let client =
-            Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+            Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
         let mirror = Arc::new(Mirror::new());
         let syncer = Arc::new(Syncer::new(Arc::clone(&client), Arc::clone(&mirror)));
 
@@ -4907,7 +4858,7 @@ output_error{stream="kpi"} 6
     #[tokio::test]
     async fn a_run_reuses_the_last_stage_while_the_blobs_are_the_same() {
         let server = MockServer::start().await;
-        let gitea = GiteaClient::new(
+        let shako = ShakoClient::new(
             server.uri().parse().unwrap(),
             "test-owner",
             "test-repo",
@@ -4936,7 +4887,7 @@ output_error{stream="kpi"} 6
         };
         tree(Some("t4481-blob-a"), 5).mount(&server).await;
         mount_file(&server, file, "rev-1", "t4481-blob-a", &space(false)).await;
-        let syncer = Syncer::new(Arc::new(gitea), Arc::new(Mirror::new()));
+        let syncer = Syncer::new(Arc::new(shako), Arc::new(Mirror::new()));
 
         let (first, _) = syncer.staged("rev-1").await.expect("stages");
         let (again, repository) = syncer.staged("rev-1").await.expect("reuses");
@@ -5005,7 +4956,7 @@ output_error{stream="kpi"} 6
         let server = MockServer::start().await;
         let base_url = server.uri().parse().unwrap();
         let client =
-            Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+            Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
         let mirror = Arc::new(Mirror::new());
         let syncer = Arc::new(Syncer::new(Arc::clone(&client), Arc::clone(&mirror)));
 
@@ -5126,7 +5077,7 @@ output_error{stream="kpi"} 6
         let server = MockServer::start().await;
         let base_url = server.uri().parse().unwrap();
         let client =
-            Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+            Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
         let mirror = Arc::new(Mirror::new());
 
         // Pre-seed mirror to prove it is NOT emptied on failure
@@ -5443,9 +5394,9 @@ output_error{stream="kpi"} 6
     }
 
     fn bare_syncer() -> Syncer {
-        let gitea = GiteaClient::new("http://localhost:3000".parse().unwrap(), "o", "r", "token")
+        let shako = ShakoClient::new("http://localhost:3000".parse().unwrap(), "o", "r", "token")
             .expect("a forge client");
-        Syncer::new(Arc::new(gitea), Arc::new(Mirror::new()))
+        Syncer::new(Arc::new(shako), Arc::new(Mirror::new()))
     }
 
     fn write_tree(dir: &Path, files: &[(&str, &str)]) {

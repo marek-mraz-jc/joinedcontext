@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use super::run::AgentRun;
-use crate::git::{GitError, GiteaClient, MergeStyle, PullRequest};
+use crate::forge::{GitError, ShakoClient, MergeStyle, PullRequest};
 
 /// The longest repository name the forge accepts.
 pub const MAX_NAME: usize = 100;
@@ -134,7 +134,7 @@ pub fn readme(project: &str, app: &str, title: Option<&str>, clone_url: &str) ->
 /// The open merge request from the run's branch into the repository's default branch, or a new
 /// one when none is open (AP-77).
 pub async fn open_merge_request(
-    repo: &GiteaClient,
+    repo: &ShakoClient,
     run: &AgentRun,
 ) -> Result<PullRequest, GitError> {
     let base = repo.default_branch().await?;
@@ -163,7 +163,7 @@ pub async fn open_merge_request(
 /// nor the build folder (AP-77). A run that never committed a version has a branch that is `main`
 /// as the repository was created, and merging it would leave `main` with the README alone, which
 /// is how a published application once served nothing (T-2603).
-pub async fn holds_application(repo: &GiteaClient, sha: &str) -> Result<bool, GitError> {
+pub async fn holds_application(repo: &ShakoClient, sha: &str) -> Result<bool, GitError> {
     Ok(repo
         .list_tree(sha)
         .await?
@@ -175,7 +175,7 @@ pub async fn holds_application(repo: &GiteaClient, sha: &str) -> Result<bool, Gi
 /// the approved manifest names: a branch that moved after publish is refused, never merged
 /// unread (AP-77, PF-57). A merge commit keeps `sha` in `main`'s history.
 pub async fn merge_published(
-    repo: &GiteaClient,
+    repo: &ShakoClient,
     run: &AgentRun,
     sha: &str,
     approver: &str,
@@ -393,9 +393,9 @@ mod tests {
         })
     }
 
-    async fn forge() -> (wiremock::MockServer, GiteaClient) {
+    async fn forge() -> (wiremock::MockServer, ShakoClient) {
         let server = wiremock::MockServer::start().await;
-        let config = GiteaClient::new(
+        let config = ShakoClient::new(
             server.uri().parse().expect("a url"),
             "joinedcontext",
             "configuration",

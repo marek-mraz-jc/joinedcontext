@@ -1161,15 +1161,15 @@ impl Driver {
         message: &str,
     ) -> Result<(), String> {
         // A workspace run's folder is in the project's own repository in layout 2 (CC-87).
-        let Some(gitea) = self.state.forge_for(&self.project) else {
+        let Some(shako) = self.state.forge_for(&self.project) else {
             return Ok(());
         };
         if self.branch.is_empty() {
             return Ok(());
         }
         let repo = match &self.repository {
-            Some(name) => gitea.for_application(name.clone()),
-            None => (*gitea).clone(),
+            Some(name) => shako.for_application(name.clone()),
+            None => (*shako).clone(),
         };
         let first = committed.is_empty();
         let mut uploads: Vec<(String, String)> = files
@@ -1276,7 +1276,7 @@ impl Driver {
     /// After the commit, so the forge repository exists and the first push carries this pass. A
     /// copy that cannot be set up is said on the run and costs the pass nothing: the forge holds
     /// the commit either way, and the next pass tries again.
-    async fn mirror_to_github(&self, repo: &crate::git::GiteaClient) {
+    async fn mirror_to_github(&self, repo: &crate::forge::ShakoClient) {
         let Some(mirror) = self.state.github_mirror.as_deref() else {
             return;
         };
@@ -1285,11 +1285,11 @@ impl Driver {
             self.app_name, self.project
         );
         let said = match mirror.mirror(repo, &description).await {
-            Ok(crate::git::github_mirror::Mirrored::Current) => return,
-            Ok(crate::git::github_mirror::Mirrored::Added) => {
+            Ok(crate::forge::github_mirror::Mirrored::Current) => return,
+            Ok(crate::forge::github_mirror::Mirrored::Added) => {
                 "The application's repository is now copied to GitHub on every commit.".to_owned()
             }
-            Ok(crate::git::github_mirror::Mirrored::Repaired(failed)) => format!(
+            Ok(crate::forge::github_mirror::Mirrored::Repaired(failed)) => format!(
                 "The copy on GitHub had stopped following the forge ({failed}); it was set up again."
             ),
             Err(err) => {
@@ -1658,13 +1658,13 @@ mod repository_tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
-    use crate::git::GiteaClient;
+    use crate::forge::ShakoClient;
 
     const REPO: &str = "/api/v1/repos/joinedcontext/helsinki_city-bikes";
     const BRANCH: &str = "agent/app-city-bikes/run-1";
 
     fn driver(server: &MockServer) -> (AppState, Driver) {
-        let gitea = GiteaClient::new(
+        let shako = ShakoClient::new(
             server.uri().parse().expect("a url"),
             "joinedcontext",
             "configuration",
@@ -1672,7 +1672,7 @@ mod repository_tests {
         )
         .expect("a client");
         let state =
-            AppState::new(crate::config::Config::for_tests(), None).with_gitea(Arc::new(gitea));
+            AppState::new(crate::config::Config::for_tests(), None).with_shako(Arc::new(shako));
         let mut driver = Driver::for_tests(state.clone(), "helsinki");
         driver.repository = Some("helsinki_city-bikes".into());
         driver.app_name = "city-bikes".into();
@@ -2022,7 +2022,7 @@ mod repository_tests {
 
         let (state, mut driver) = driver(&forge);
         let state = state.with_github_mirror(Arc::new(
-            crate::git::github_mirror::GithubMirror::at(&github.uri(), "hel-apps", "ghp_secret"),
+            crate::forge::github_mirror::GithubMirror::at(&github.uri(), "hel-apps", "ghp_secret"),
         ));
         driver.state = state.clone();
         let mut committed = files();
@@ -2056,7 +2056,7 @@ mod repository_tests {
 
         let (state, mut driver) = driver(&forge);
         let state = state.with_github_mirror(Arc::new(
-            crate::git::github_mirror::GithubMirror::at(&github.uri(), "hel-apps", "ghp_secret"),
+            crate::forge::github_mirror::GithubMirror::at(&github.uri(), "hel-apps", "ghp_secret"),
         ));
         driver.state = state.clone();
         let mut committed = files();

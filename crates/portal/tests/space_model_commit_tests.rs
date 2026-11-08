@@ -19,8 +19,8 @@ use joinedcontext_portal::state::AppState;
 
 const SPACES: &str = "/api/v1/projects/helsinki/spaces";
 
-fn state_with(gitea: &wiremock::MockServer) -> AppState {
-    let state = common::state_on(gitea);
+fn state_with(shako: &wiremock::MockServer) -> AppState {
+    let state = common::state_on(shako);
     state.mirror.upsert(envelope(
         "Role",
         "space-editor",
@@ -51,7 +51,7 @@ fn space(name: &str, spec: Value) -> Value {
 
 /// Every file the forge was asked to write, one request per file or several in one commit:
 /// `(path, content)`.
-async fn committed(gitea: &wiremock::MockServer) -> Vec<(String, String)> {
+async fn committed(shako: &wiremock::MockServer) -> Vec<(String, String)> {
     let decode = |value: &Value| {
         value
             .as_str()
@@ -62,7 +62,7 @@ async fn committed(gitea: &wiremock::MockServer) -> Vec<(String, String)> {
     let one = format!("{}/contents/", common::REPO);
     let many = format!("{}/contents", common::REPO);
     let mut files = Vec::new();
-    for request in gitea.received_requests().await.unwrap_or_default() {
+    for request in shako.received_requests().await.unwrap_or_default() {
         if !matches!(request.method.as_str(), "POST" | "PUT") {
             continue;
         }
@@ -91,8 +91,8 @@ fn file<'a>(files: &'a [(String, String)], suffix: &str) -> Option<&'a str> {
 
 #[tokio::test]
 async fn a_new_space_change_carries_its_empty_model_and_names_it() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
 
     let accepted = send(
         &state,
@@ -104,7 +104,7 @@ async fn a_new_space_change_carries_its_empty_model_and_names_it() {
     .await;
     assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
 
-    let files = committed(&gitea).await;
+    let files = committed(&shako).await;
     let manifest = file(&files, "spaces/parking/space.yaml")
         .unwrap_or_else(|| panic!("the space manifest is committed: {files:?}"));
     let manifest: Value = serde_norway::from_str(manifest).expect("yaml");
@@ -137,8 +137,8 @@ async fn a_new_space_change_carries_its_empty_model_and_names_it() {
 
 #[tokio::test]
 async fn a_space_that_already_has_a_model_gets_no_second() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     state.mirror.upsert(envelope(
         "DataModel",
         "garages",
@@ -160,7 +160,7 @@ async fn a_space_that_already_has_a_model_gets_no_second() {
     )
     .await;
     assert_eq!(accepted.status, StatusCode::ACCEPTED, "{}", accepted.text);
-    let files = committed(&gitea).await;
+    let files = committed(&shako).await;
     assert!(
         files
             .iter()

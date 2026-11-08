@@ -211,7 +211,7 @@ fn branch(family: &Family, number: u64) -> String {
 }
 
 async fn forge() -> MockServer {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
 
     // Every existing resource has its file; a new one has none.
     for family in &FAMILIES {
@@ -225,7 +225,7 @@ async fn forge() -> MockServer {
                 "sha": "sha-existing", "content": encode(&file)
             })))
             .with_priority(2)
-            .mount(&gitea)
+            .mount(&shako)
             .await;
     }
     // The merge requests the approval cells decide: one by somebody else and one by each person.
@@ -242,7 +242,7 @@ async fn forge() -> MockServer {
                 .and(path(format!("{REPO}/pulls/{number}")))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                     "number": number,
-                    "html_url": format!("https://gitea.example/pulls/{number}"),
+                    "html_url": format!("https://shako.example/pulls/{number}"),
                     "state": "open",
                     "title": format!("create {} proposed", family.kind),
                     "head": { "ref": head },
@@ -252,7 +252,7 @@ async fn forge() -> MockServer {
                     "mergeable": true,
                     "merged": false
                 })))
-                .mount(&gitea)
+                .mount(&shako)
                 .await;
             Mock::given(method("GET"))
                 .and(path(format!("{REPO}/pulls/{number}/files")))
@@ -260,7 +260,7 @@ async fn forge() -> MockServer {
                     "filename": format!("projects/helsinki/{}/proposed.yaml", family.plural),
                     "status": "added"
                 }])))
-                .mount(&gitea)
+                .mount(&shako)
                 .await;
             let file = serde_norway::to_string(&manifest(family, "proposed")).expect("yaml");
             Mock::given(method("GET"))
@@ -270,17 +270,17 @@ async fn forge() -> MockServer {
                     "sha": "sha-proposed", "content": encode(&file)
                 })))
                 .with_priority(1)
-                .mount(&gitea)
+                .mount(&shako)
                 .await;
         }
     }
-    gitea
+    shako
 }
 
 /// The organization's roles and a binding of each person over the whole organization, the
 /// context space the manifests read, and one existing resource of each family.
-fn state_with(gitea: &MockServer) -> AppState {
-    let state = common::state_on(gitea);
+fn state_with(shako: &MockServer) -> AppState {
+    let state = common::state_on(shako);
     // Entity: a pipeline writes only what its proposer may write, the space behind its target
     // Endpoint (PL-94).
     let kinds: Vec<&str> = FAMILIES
@@ -397,8 +397,8 @@ fn check(misses: &mut Vec<String>, cell: &str, answer: &Answer, expect: &Expect)
 
 #[tokio::test]
 async fn every_role_meets_every_route_and_operation_exactly_as_the_table_says() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     let mut misses = Vec::new();
 
     for (index, family) in FAMILIES.iter().enumerate() {

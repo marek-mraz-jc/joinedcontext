@@ -13,7 +13,7 @@ use wiremock::MockServer;
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::ops::verdict::{Finding, Level, Verdict};
 use joinedcontext_portal::resource::API_VERSION;
 use joinedcontext_portal::server;
@@ -62,10 +62,10 @@ fn session_cookie(
     parts.join("; ")
 }
 
-async fn setup_mock_gitea() -> (MockServer, GiteaClient) {
+async fn setup_mock_gitea() -> (MockServer, ShakoClient) {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
-    let client = GiteaClient::new(base_url, "owner", "repo", "token").unwrap();
+    let client = ShakoClient::new(base_url, "owner", "repo", "token").unwrap();
 
     wiremock::Mock::given(wiremock::matchers::method("GET"))
         .and(wiremock::matchers::path("/api/v1/repos/owner/repo"))
@@ -190,7 +190,7 @@ async fn strict_mode_check_runs_and_attaches_verdict_then_propose_succeeds() {
     let mirror = Arc::new(Mirror::new());
     let state = AppState::new(config.clone(), None)
         .with_mirror(mirror)
-        .with_gitea(Arc::new(gitea_client));
+        .with_shako(Arc::new(gitea_client));
 
     let manifest = json!({
         "apiVersion": API_VERSION,
@@ -486,7 +486,7 @@ async fn lax_mode_allows_propose_with_warning() {
     let mirror = Arc::new(Mirror::new());
     let state = AppState::new(config.clone(), None)
         .with_mirror(mirror)
-        .with_gitea(Arc::new(gitea_client));
+        .with_shako(Arc::new(gitea_client));
 
     let manifest = json!({
         "apiVersion": API_VERSION,
@@ -712,7 +712,7 @@ async fn strict_portal() -> (MockServer, AppState, axum::Router) {
     let config = Config::for_tests();
     let state = AppState::new(config.clone(), None)
         .with_mirror(Arc::new(Mirror::new()))
-        .with_gitea(Arc::new(gitea_client));
+        .with_shako(Arc::new(gitea_client));
     assert_eq!(
         state.branding().validation,
         joinedcontext_portal::branding::Validation::Strict
@@ -914,7 +914,7 @@ async fn a_lax_portal_proposes_an_unchecked_bare_manifest() {
     config.branding_file = Some(branding_path.to_string_lossy().to_string());
     let state = AppState::new(config.clone(), None)
         .with_mirror(Arc::new(Mirror::new()))
-        .with_gitea(Arc::new(gitea_client));
+        .with_shako(Arc::new(gitea_client));
     STEWARD.with(|steward| {
         *steward.borrow_mut() = session_cookie(
             &config,
@@ -942,7 +942,7 @@ async fn rest_door_with_a_draft_reaches_the_check_and_the_gate() {
     let mirror = Arc::new(Mirror::new());
     let state = AppState::new(config.clone(), None)
         .with_mirror(mirror)
-        .with_gitea(Arc::new(gitea_client));
+        .with_shako(Arc::new(gitea_client));
 
     let manifest = json!({
         "apiVersion": API_VERSION,
@@ -1123,7 +1123,7 @@ async fn a_check_naming_an_unsaved_draft_creates_it_so_propose_follows_at_once()
     let config = Config::for_tests();
     let state = AppState::new(config.clone(), None)
         .with_mirror(Arc::new(Mirror::new()))
-        .with_gitea(Arc::new(gitea_client));
+        .with_shako(Arc::new(gitea_client));
     let app = server::app(state.clone());
     let cookie = session_cookie(
         &config,

@@ -19,7 +19,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::auth::CurrentUser;
 use crate::change::{Change, ChangePhase, ChangeStatus, Lane, PlanSummary};
 use crate::error::{ApiError, ProblemDetails};
-use crate::git::Author;
+use crate::forge::Author;
 use crate::people::KcUser;
 use crate::permissions::{is_person_id, ORG_NAMESPACE};
 use crate::resource::ResourceEnvelope;
@@ -403,13 +403,13 @@ async fn propose(
     } else {
         repository
     };
-    let gitea = state
+    let shako = state
         .forge_for(namespace)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let default_branch = gitea.default_branch().await?;
+    let default_branch = shako.default_branch().await?;
     // Held until the merge request is open, so a second proposal finds it (F-POR2-011).
-    let held = crate::api::mutate::turn(&gitea, "portal/name-people-by-id").await;
-    let branch = crate::api::mutate::create_or_reuse_branch(&gitea, &held, &default_branch).await?;
+    let held = crate::api::mutate::turn(&shako, "portal/name-people-by-id").await;
+    let branch = crate::api::mutate::create_or_reuse_branch(&shako, &held, &default_branch).await?;
     let mut uploads = Vec::with_capacity(manifests.len());
     for envelope in manifests {
         let info = crate::resource::by_kind(&envelope.kind).ok_or_else(|| {
@@ -430,7 +430,7 @@ async fn propose(
     }
     let (author_name, author_email) = crate::api::mutate::author_credentials(identity, namespace);
     let title = "name people by their Keycloak user id (ADR-N-061)";
-    gitea
+    shako
         .change_files(
             &branch,
             title,
@@ -449,10 +449,10 @@ async fn propose(
          administrators. The history keeps the old text.",
         uploads.len()
     );
-    let pr = gitea
+    let pr = shako
         .create_pull_request(&branch, &default_branch, title, &body)
         .await?;
-    let meta = crate::api::changes::change_meta(state, &gitea, pr.number, namespace);
+    let meta = crate::api::changes::change_meta(state, &shako, pr.number, namespace);
     let change = Change::new(
         meta,
         ChangeStatus::new(

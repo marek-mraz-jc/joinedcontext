@@ -28,7 +28,7 @@ use serde_json::Value;
 
 use super::proposal::{self, Proposal};
 use super::state::{States, Stored};
-use crate::git::{GiteaClient, PullRequest};
+use crate::forge::{ShakoClient, PullRequest};
 use crate::reconciler::daemon::SyncError;
 use crate::reconciler::staging::{stage, Scratch};
 
@@ -87,7 +87,7 @@ pub enum RunError {
     #[error("the repository does not load: {0}")]
     Load(#[from] jcctl::loader::LoadError),
     #[error("forge: {0}")]
-    Git(#[from] crate::git::GitError),
+    Git(#[from] crate::forge::GitError),
     #[error("the sync task did not finish: {0}")]
     Task(String),
     #[error("no sync source named {0} in project {1}")]
@@ -96,7 +96,7 @@ pub enum RunError {
 
 /// The loop: the repository's sync sources, their memory and the way out to their origins.
 pub struct Driver {
-    gitea: Arc<GiteaClient>,
+    shako: Arc<ShakoClient>,
     states: Arc<States>,
     remote: Remote,
     /// The sync sources of one revision of the repository, so a tick where nothing is due
@@ -105,9 +105,9 @@ pub struct Driver {
 }
 
 impl Driver {
-    pub fn new(gitea: Arc<GiteaClient>, states: Arc<States>, remote: Remote) -> Self {
+    pub fn new(shako: Arc<ShakoClient>, states: Arc<States>, remote: Remote) -> Self {
         Self {
-            gitea,
+            shako,
             states,
             remote,
             cached: Mutex::new(None),
@@ -127,8 +127,8 @@ impl Driver {
 
     /// One pass: the sources that are due, or the one named.
     async fn pass(&self, now: u64, only: Option<(&str, &str)>) -> Result<Run, RunError> {
-        let default_branch = self.gitea.default_branch().await?;
-        let revision = self.gitea.branch_head(&default_branch).await?;
+        let default_branch = self.shako.default_branch().await?;
+        let revision = self.shako.branch_head(&default_branch).await?;
         let (sources, staged) = self.sources(&revision).await?;
 
         let mut wanted: Vec<(RawManifest, bool)> = Vec::new();
@@ -166,9 +166,9 @@ impl Driver {
         // the whole pass, and only now that something is going to run.
         let scratch = match staged {
             Some(scratch) => scratch,
-            None => stage(&self.gitea, &revision).await?,
+            None => stage(&self.shako, &revision).await?,
         };
-        let pulls = self.gitea.list_pull_requests("all").await?;
+        let pulls = self.shako.list_pull_requests("all").await?;
 
         let mut run = Run::default();
         for (source, asked) in &wanted {
@@ -273,7 +273,7 @@ impl Driver {
         let body = serde_json::to_string_pretty(&plan.envelope).unwrap_or_default();
 
         let pull = match proposal::open(
-            &self.gitea,
+            &self.shako,
             &Proposal {
                 branch: &plan.name,
                 title: &title,
@@ -366,7 +366,7 @@ impl Driver {
             return Ok((hit.1, None));
         }
 
-        let scratch = stage(&self.gitea, revision).await?;
+        let scratch = stage(&self.shako, revision).await?;
         let repository = Repository::load(scratch.path())?;
         let sources: Vec<RawManifest> = repository
             .iter()

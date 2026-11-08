@@ -9,7 +9,7 @@ use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{encode, envelope, forge, person, send, state_on, REPO};
-use joinedcontext_portal::git::gitea::committed_text;
+use joinedcontext_portal::forge::shako::committed_text;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::state::AppState;
 
@@ -28,7 +28,7 @@ const YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmeta
 fn pull(number: u64, branch: &str, merged: bool) -> Value {
     json!({
         "number": number,
-        "html_url": format!("https://gitea.example/pulls/{number}"),
+        "html_url": format!("https://shako.example/pulls/{number}"),
         "state": if merged { "closed" } else { "open" },
         "title": branch,
         "head": { "ref": branch, "sha": format!("head-{number}") },
@@ -42,11 +42,11 @@ fn pull(number: u64, branch: &str, merged: bool) -> Value {
 /// Change 7 removed the pipeline `air-ingest` and its bento file and is merged; change 8 is still
 /// open; change 6 changed a file and removed nothing.
 async fn world() -> (MockServer, AppState) {
-    let gitea = forge().await;
+    let shako = forge().await;
     Mock::given(method("GET"))
         .and(path(REPO))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     for (number, branch, merged, files) in [
         (
@@ -99,12 +99,12 @@ async fn world() -> (MockServer, AppState) {
         Mock::given(method("GET"))
             .and(path(format!("{REPO}/pulls/{number}")))
             .respond_with(ResponseTemplate::new(200).set_body_json(pull(number, branch, merged)))
-            .mount(&gitea)
+            .mount(&shako)
             .await;
         Mock::given(method("GET"))
             .and(path(format!("{REPO}/pulls/{number}/files")))
             .respond_with(ResponseTemplate::new(200).set_body_json(files))
-            .mount(&gitea)
+            .mount(&shako)
             .await;
     }
     for (file, content) in [
@@ -121,10 +121,10 @@ async fn world() -> (MockServer, AppState) {
                 ResponseTemplate::new(200)
                     .set_body_json(json!({ "sha": "blob", "content": encode(content) })),
             )
-            .mount(&gitea)
+            .mount(&shako)
             .await;
     }
-    let state = state_on(&gitea);
+    let state = state_on(&shako);
     for (role, verbs) in [
         ("restorer", json!(["read", "propose"])),
         ("reader", json!(["read"])),
@@ -142,7 +142,7 @@ async fn world() -> (MockServer, AppState) {
             json!({ "subjects": [{ "user": format!("{role}@hel.fi") }], "role": role, "scope": { "project": PROJECT } }),
         ));
     }
-    (gitea, state)
+    (shako, state)
 }
 
 async fn restore(state: &AppState, who: &str, id: &str) -> (u16, Value) {
@@ -160,8 +160,8 @@ async fn restore(state: &AppState, who: &str, id: &str) -> (u16, Value) {
     )
 }
 
-async fn writes(gitea: &MockServer) -> Vec<(String, String, String)> {
-    gitea
+async fn writes(shako: &MockServer) -> Vec<(String, String, String)> {
+    shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -179,14 +179,14 @@ async fn writes(gitea: &MockServer) -> Vec<(String, String, String)> {
 
 #[tokio::test]
 async fn a_merged_removal_is_proposed_again_as_one_change_with_every_file_it_removed() {
-    let (gitea, state) = world().await;
+    let (shako, state) = world().await;
     let (status, body) = restore(&state, "restorer", "chg-00000007").await;
     assert_eq!(status, 202, "{body}");
     assert_eq!(body["metadata"]["name"], json!("chg-00000009"), "{body}");
     assert_eq!(body["status"]["phase"], json!("PendingApproval"));
     assert_eq!(body["status"]["plan"]["create"], json!(1));
 
-    let sent = writes(&gitea).await;
+    let sent = writes(&shako).await;
     let branch = sent
         .iter()
         .find(|(_, path, _)| path.ends_with("/branches"))
@@ -222,7 +222,7 @@ async fn a_merged_removal_is_proposed_again_as_one_change_with_every_file_it_rem
 
 #[tokio::test]
 async fn what_cannot_be_restored_is_refused_in_words_and_nothing_is_written() {
-    let (gitea, state) = world().await;
+    let (shako, state) = world().await;
     let (status, body) = restore(&state, "restorer", "chg-00000008").await;
     assert_eq!(status, 409, "{body}");
     assert!(
@@ -261,15 +261,15 @@ async fn what_cannot_be_restored_is_refused_in_words_and_nothing_is_written() {
     assert_eq!(status, 400);
 
     assert!(
-        writes(&gitea).await.is_empty(),
+        writes(&shako).await.is_empty(),
         "a refusal wrote: {:?}",
-        writes(&gitea).await
+        writes(&shako).await
     );
 }
 
 #[tokio::test]
 async fn a_resource_that_is_back_on_main_is_not_restored_over() {
-    let (gitea, state) = world().await;
+    let (shako, state) = world().await;
     Mock::given(method("GET"))
         .and(path(format!("{REPO}/contents/{MANIFEST}")))
         .and(query_param("ref", "main"))
@@ -277,7 +277,7 @@ async fn a_resource_that_is_back_on_main_is_not_restored_over() {
             ResponseTemplate::new(200)
                 .set_body_json(json!({ "sha": "new", "content": encode(YAML) })),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     let (status, body) = restore(&state, "restorer", "chg-00000007").await;
     assert_eq!(status, 409, "{body}");
@@ -288,7 +288,7 @@ async fn a_resource_that_is_back_on_main_is_not_restored_over() {
             .contains("in the project again"),
         "{body}"
     );
-    assert!(writes(&gitea).await.is_empty());
+    assert!(writes(&shako).await.is_empty());
 }
 
 /// Every file answers to a kind (integrator review of T-3247): a native file to its folder's, so a
@@ -296,7 +296,7 @@ async fn a_resource_that_is_back_on_main_is_not_restored_over() {
 /// restored by nobody.
 #[tokio::test]
 async fn a_file_without_a_manifest_is_held_to_the_kind_of_its_folder() {
-    let (gitea, state) = world().await;
+    let (shako, state) = world().await;
     let (status, body) = restore(&state, "restorer", "chg-00000005").await;
     assert_eq!(status, 403, "{body}");
     assert!(
@@ -316,21 +316,21 @@ async fn a_file_without_a_manifest_is_held_to_the_kind_of_its_folder() {
             .contains("no kind"),
         "{body}"
     );
-    assert!(writes(&gitea).await.is_empty());
+    assert!(writes(&shako).await.is_empty());
 }
 
 /// T-3274: a merged update reads its "before" where the change was cut from, not on `main`, which
 /// already holds what it made: its page and its history say which field it changed.
 #[tokio::test]
 async fn a_merged_update_shows_the_field_it_changed() {
-    let (gitea, state) = world().await;
+    let (shako, state) = world().await;
     Mock::given(method("GET"))
         .and(path(format!("{REPO}/contents/{MANIFEST}")))
         .and(query_param("ref", "head-6"))
         .respond_with(ResponseTemplate::new(200).set_body_json(
             json!({ "sha": "blob", "content": encode(&YAML.replace("name: air\n", "name: dust\n")) }),
         ))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     // The pipeline lives under its space, so the change's head tree is where its file is found.
     Mock::given(method("GET"))
@@ -339,7 +339,7 @@ async fn a_merged_update_shows_the_field_it_changed() {
             "truncated": false,
             "tree": [{ "path": MANIFEST, "type": "blob", "sha": "blob" }]
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     let answer = send(
         &state,
@@ -378,7 +378,7 @@ async fn undo(state: &AppState, who: &str, id: &str) -> (u16, Value) {
 }
 
 /// What change 6 made of the pipeline, and what `main` holds now.
-async fn made_and_now(gitea: &MockServer, now: &str) {
+async fn made_and_now(shako: &MockServer, now: &str) {
     let made = YAML.replace("name: air\n", "name: dust\n");
     for (git_ref, content) in [("head-6", made.as_str()), ("main", now)] {
         Mock::given(method("GET"))
@@ -388,7 +388,7 @@ async fn made_and_now(gitea: &MockServer, now: &str) {
                 ResponseTemplate::new(200)
                     .set_body_json(json!({ "sha": git_ref, "content": encode(content) })),
             )
-            .mount(gitea)
+            .mount(shako)
             .await;
     }
 }
@@ -396,12 +396,12 @@ async fn made_and_now(gitea: &MockServer, now: &str) {
 /// T-3274: a merged update is undone by one new change that puts back the file as it was before.
 #[tokio::test]
 async fn a_merged_update_is_undone_by_a_change_that_puts_the_file_back() {
-    let (gitea, state) = world().await;
-    made_and_now(&gitea, &YAML.replace("name: air\n", "name: dust\n")).await;
+    let (shako, state) = world().await;
+    made_and_now(&shako, &YAML.replace("name: air\n", "name: dust\n")).await;
     let (status, body) = undo(&state, "restorer", "chg-00000006").await;
     assert_eq!(status, 202, "{body}");
     assert_eq!(body["status"]["plan"]["update"], json!(1), "{body}");
-    let sent = writes(&gitea).await;
+    let sent = writes(&shako).await;
     let commit = sent
         .iter()
         .find(|(_, path, _)| path.ends_with("/contents"))
@@ -422,8 +422,8 @@ async fn a_merged_update_is_undone_by_a_change_that_puts_the_file_back() {
 /// person who may not propose the kind.
 #[tokio::test]
 async fn an_update_changed_again_since_or_a_removal_is_not_undone() {
-    let (gitea, state) = world().await;
-    made_and_now(&gitea, &YAML.replace("name: air\n", "name: smoke\n")).await;
+    let (shako, state) = world().await;
+    made_and_now(&shako, &YAML.replace("name: air\n", "name: smoke\n")).await;
     let (status, body) = undo(&state, "restorer", "chg-00000006").await;
     assert_eq!(status, 409, "{body}");
     assert!(
@@ -444,23 +444,23 @@ async fn an_update_changed_again_since_or_a_removal_is_not_undone() {
     );
     let (status, _) = undo(&state, "restorer", "chg-00000008").await;
     assert_eq!(status, 409);
-    assert!(writes(&gitea).await.is_empty(), "nothing is written");
+    assert!(writes(&shako).await.is_empty(), "nothing is written");
 }
 
 #[tokio::test]
 async fn undoing_needs_propose_on_the_kind() {
-    let (gitea, state) = world().await;
-    made_and_now(&gitea, &YAML.replace("name: air\n", "name: dust\n")).await;
+    let (shako, state) = world().await;
+    made_and_now(&shako, &YAML.replace("name: air\n", "name: dust\n")).await;
     let (status, body) = undo(&state, "reader", "chg-00000006").await;
     assert_eq!(status, 403, "{body}");
-    assert!(writes(&gitea).await.is_empty());
+    assert!(writes(&shako).await.is_empty());
 }
 
 /// T-5698: a restore or an undo is judged as a proposal of the manifest it puts back, its space
 /// included: a steward bound to space `air` restores and undoes nothing of space `water`.
 #[tokio::test]
 async fn a_steward_of_one_space_restores_and_undoes_nothing_of_another() {
-    let (gitea, state) = world().await;
+    let (shako, state) = world().await;
     for space in ["air", "water"] {
         state
             .mirror
@@ -487,10 +487,10 @@ async fn a_steward_of_one_space_restores_and_undoes_nothing_of_another() {
             .respond_with(ResponseTemplate::new(200).set_body_json(
                 json!({ "sha": git_ref, "content": encode(&WATER_YAML.replace("water\n", "water\n  audience: public\n")) }),
             ))
-            .mount(&gitea)
+            .mount(&shako)
             .await;
     }
     let (status, body) = undo(&state, "air", "chg-00000002").await;
     assert_eq!(status, 403, "{body}");
-    assert!(writes(&gitea).await.is_empty(), "nothing is written");
+    assert!(writes(&shako).await.is_empty(), "nothing is written");
 }

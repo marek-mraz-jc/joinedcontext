@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 
 use serde_norway::Value;
 
-use crate::git::{Author, GitError, GiteaClient};
+use crate::forge::{Author, GitError, ShakoClient};
 
 /// The representations an Endpoint manifest may no longer name.
 pub const RETIRED: [&str; 5] = ["xlsx", "parquet", "json", "zip", "geojson"];
@@ -135,13 +135,13 @@ pub fn owner(layout: u32, path: &str) -> (String, String) {
 /// Rewrites `paths` of the repository on `branch` without the retired representations, in one
 /// commit. Answers how many files the commit changed; none changed is no commit.
 pub async fn migrate(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     branch: &str,
     paths: &BTreeSet<String>,
 ) -> Result<usize, GitError> {
     let mut uploads = Vec::new();
     for path in paths {
-        let Some(file) = gitea.get_file(path, branch).await? else {
+        let Some(file) = shako.get_file(path, branch).await? else {
             continue;
         };
         if let Some(content) = strip(&file.content) {
@@ -153,7 +153,7 @@ pub async fn migrate(
     if uploads.is_empty() {
         return Ok(0);
     }
-    gitea
+    shako
         .update_files(
             branch,
             "endpoints and apps: CSV is the one file an Endpoint offers (T-4600)",
@@ -272,7 +272,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let gitea = GiteaClient::new(
+        let shako = ShakoClient::new(
             server.uri().parse().expect("forge url"),
             "test-owner",
             "test-repo",
@@ -281,7 +281,7 @@ mod tests {
         .expect("client");
 
         let paths = BTreeSet::from(["a.yaml".to_owned()]);
-        assert!(migrate(&gitea, "main", &paths).await.is_err());
+        assert!(migrate(&shako, "main", &paths).await.is_err());
     }
 
     const APP: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: App\nmetadata:\n  name: air-quality\n  namespace: helsinki\nspec:\n  dataNeeds:\n  - contextSpaceRef: air\n    types: [AirQualityObserved]\n    operations: [queryEntities]\n    representations: [ngsi-ld, geojson]\n  - contextSpaceRef: air\n    types: [WeatherObserved]\n    operations: [queryEntities]\n    representations: [xlsx]\n  - contextSpaceRef: air\n    types: [Device]\n    operations: [queryEntities]\n";
@@ -404,7 +404,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let gitea = GiteaClient::new(
+        let shako = ShakoClient::new(
             server.uri().parse().expect("forge url"),
             "test-owner",
             "test-repo",
@@ -413,7 +413,7 @@ mod tests {
         .expect("client");
 
         let paths = BTreeSet::from(["a.yaml".to_owned(), "b.yaml".to_owned()]);
-        assert_eq!(migrate(&gitea, "main", &paths).await.expect("migrates"), 1);
+        assert_eq!(migrate(&shako, "main", &paths).await.expect("migrates"), 1);
 
         let requests = server.received_requests().await.expect("recorded");
         let commit = requests
@@ -431,6 +431,6 @@ mod tests {
         assert_eq!(files[0]["sha"], "blob-sha", "the blob this run read");
 
         let only_clean = BTreeSet::from(["b.yaml".to_owned()]);
-        assert_eq!(migrate(&gitea, "main", &only_clean).await.expect("ok"), 0);
+        assert_eq!(migrate(&shako, "main", &only_clean).await.expect("ok"), 0);
     }
 }

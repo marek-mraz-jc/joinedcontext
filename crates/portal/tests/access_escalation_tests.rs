@@ -59,8 +59,8 @@ fn project(name: &str) -> Value {
 ///   on the helsinki project only.
 /// - `approver`: approves every kind over the organization and proposes nothing.
 /// - `limited`: proposes bindings, and Endpoints that are not public.
-fn state_with(gitea: &MockServer) -> AppState {
-    let state = common::state_on(gitea);
+fn state_with(shako: &MockServer) -> AppState {
+    let state = common::state_on(shako);
     let kinds = json!(["Endpoint", "Pipeline", "Role", "RoleBinding"]);
     for (name, rules) in [
         (
@@ -133,12 +133,12 @@ fn state_with(gitea: &MockServer) -> AppState {
 
 /// A merge request by `someone@hel.fi` on `branch`, whose head (or, for a removal, base) holds
 /// `manifest` at `file`.
-async fn pull(gitea: &MockServer, number: u64, branch: &str, file: &str, manifest: &Value) {
+async fn pull(shako: &MockServer, number: u64, branch: &str, file: &str, manifest: &Value) {
     Mock::given(method("GET"))
         .and(path(format!("{REPO}/pulls/{number}")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "number": number,
-            "html_url": format!("https://gitea.example/pulls/{number}"),
+            "html_url": format!("https://shako.example/pulls/{number}"),
             "state": "open",
             "title": branch,
             "head": { "ref": branch },
@@ -148,7 +148,7 @@ async fn pull(gitea: &MockServer, number: u64, branch: &str, file: &str, manifes
             "mergeable": true,
             "merged": false
         })))
-        .mount(gitea)
+        .mount(shako)
         .await;
     let git_ref = if branch.starts_with("portal/delete-") {
         "main"
@@ -165,7 +165,7 @@ async fn pull(gitea: &MockServer, number: u64, branch: &str, file: &str, manifes
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
             { "filename": file, "status": status }
         ])))
-        .mount(gitea)
+        .mount(shako)
         .await;
     let yaml = serde_norway::to_string(manifest).expect("yaml");
     Mock::given(method("GET"))
@@ -175,14 +175,14 @@ async fn pull(gitea: &MockServer, number: u64, branch: &str, file: &str, manifes
             "sha": format!("sha-{number}"), "content": encode(&yaml)
         })))
         .with_priority(1)
-        .mount(gitea)
+        .mount(shako)
         .await;
 }
 
 async fn forge() -> MockServer {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     pull(
-        &gitea,
+        &shako,
         ADMIN_GRANT,
         "portal/create-rolebinding-jana-admin-00000301",
         "users/assignments/jana-admin.yaml",
@@ -190,7 +190,7 @@ async fn forge() -> MockServer {
     )
     .await;
     pull(
-        &gitea,
+        &shako,
         REMOVAL,
         "portal/delete-rolebinding-jana-steward-00000302",
         "users/assignments/jana-steward.yaml",
@@ -198,14 +198,14 @@ async fn forge() -> MockServer {
     )
     .await;
     pull(
-        &gitea,
+        &shako,
         STEWARD_GRANT,
         "portal/create-rolebinding-jana-helsinki-00000303",
         "users/assignments/jana-helsinki.yaml",
         &binding("jana-helsinki", "steward", project("helsinki")),
     )
     .await;
-    gitea
+    shako
 }
 
 fn refused(answer: &Answer, words: &str) {
@@ -225,8 +225,8 @@ fn red_change(answer: &Answer) {
 
 #[tokio::test]
 async fn a_binding_is_refused_when_its_role_names_a_verb_its_proposer_lacks_on_its_scope() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     let lead = || person("lead");
 
     // A steward holds no verb on bindings at all.
@@ -344,8 +344,8 @@ async fn a_binding_is_refused_when_its_role_names_a_verb_its_proposer_lacks_on_i
 
 #[tokio::test]
 async fn a_constraint_the_proposer_is_held_to_cannot_be_dropped_by_the_role_they_grant() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
 
     let answer = send(
         &state,
@@ -378,8 +378,8 @@ async fn a_constraint_the_proposer_is_held_to_cannot_be_dropped_by_the_role_they
 
 #[tokio::test]
 async fn a_role_is_checked_against_its_proposer_over_the_whole_organization() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     let publisher = role(
         "endpoint-publisher",
         json!([{ "kinds": ["Endpoint"], "verbs": ["propose", "approve"] }]),
@@ -413,8 +413,8 @@ async fn a_role_is_checked_against_its_proposer_over_the_whole_organization() {
 
 #[tokio::test]
 async fn a_service_account_holds_no_role_of_the_organization_its_proposer_lacks() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     let account = |role: &str| {
         json!({
             "apiVersion": API_VERSION,
@@ -459,8 +459,8 @@ async fn a_service_account_holds_no_role_of_the_organization_its_proposer_lacks(
 
 #[tokio::test]
 async fn the_operations_registry_refuses_the_same_grant_in_the_same_words() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
 
     let answer = send(
         &state,
@@ -492,8 +492,8 @@ async fn the_operations_registry_refuses_the_same_grant_in_the_same_words() {
 #[tokio::test]
 async fn an_approver_approves_a_grant_only_within_their_own_rights_and_a_removal_only_with_delete()
 {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     let approve = |number: u64| format!("/api/v1/projects/org/changes/chg-{number:08x}/approve");
 
     // Approving org-admin over the organization needs every verb of it.
@@ -561,7 +561,7 @@ async fn an_approver_approves_a_grant_only_within_their_own_rights_and_a_removal
             answer.text
         );
     }
-    assert!(gitea
+    assert!(shako
         .received_requests()
         .await
         .expect("requests")
@@ -571,8 +571,8 @@ async fn an_approver_approves_a_grant_only_within_their_own_rights_and_a_removal
 
 #[tokio::test]
 async fn the_bootstrap_group_grants_the_first_administrator_into_an_empty_repository() {
-    let gitea = forge().await;
-    let state = common::state_on(&gitea);
+    let shako = forge().await;
+    let state = common::state_on(&shako);
     state.mirror.upsert(envelope(
         "Role",
         "org-admin",
@@ -609,8 +609,8 @@ fn project_role(project: &str, name: &str, rules: Value) -> Value {
 
 #[tokio::test]
 async fn a_project_role_may_not_grant_a_verb_its_proposer_lacks_in_that_project() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
 
     // The lead is steward on helsinki: propose and approve on Endpoint and Pipeline there, and
     // no delete anywhere. A role of helsinki granting delete is above their own rights.
@@ -668,8 +668,8 @@ async fn a_project_role_may_not_grant_a_verb_its_proposer_lacks_in_that_project(
 async fn a_role_of_one_project_grants_nothing_in_another_and_nothing_at_organization_scope() {
     use joinedcontext_portal::permissions;
 
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     // helsinki's own role, and jana bound to it in helsinki.
     state.mirror.upsert(envelope(
         "Role",
@@ -731,8 +731,8 @@ async fn a_role_of_one_project_grants_nothing_in_another_and_nothing_at_organiza
 /// project write the organization's grants.
 #[tokio::test]
 async fn a_project_role_naming_an_organization_kind_is_refused_at_the_door() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
 
     // The lead proposes and approves Role and RoleBinding over the whole organization, so the
     // refusal is the kind's place, not their rights.
@@ -769,8 +769,8 @@ async fn a_project_role_naming_an_organization_kind_is_refused_at_the_door() {
 /// written, and the one in its own project is the red-lane change it always was.
 #[tokio::test]
 async fn a_binding_of_a_project_role_outside_its_project_is_refused() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     state.mirror.upsert(envelope(
         "Role",
         "pipeline-author",
@@ -815,8 +815,8 @@ async fn a_binding_of_a_project_role_outside_its_project_is_refused() {
 /// nobody bound the caller to is not there — 404, never 403, on the project and on its roles.
 #[tokio::test]
 async fn a_project_the_person_cannot_read_is_not_found_on_its_settings_routes() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     for route in [
         "/api/v1/projects/helsinki",
         "/api/v1/projects/helsinki/roles",
@@ -836,8 +836,8 @@ async fn a_project_the_person_cannot_read_is_not_found_on_its_settings_routes() 
 async fn a_project_role_is_read_through_the_operations_beside_the_organizations() {
     use joinedcontext_portal::ops::{self, Caller, Via};
 
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     state.mirror.upsert(envelope(
         "Role",
         "air-analyst",
@@ -880,8 +880,8 @@ async fn a_project_role_is_read_through_the_operations_beside_the_organizations(
 
 #[tokio::test]
 async fn a_project_role_sent_without_a_namespace_is_judged_in_its_project() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     // T-6266: org-admin scoped to the helsinki project, as a project's opener holds it.
     state.mirror.upsert(envelope(
         "RoleBinding",

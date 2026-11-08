@@ -13,7 +13,7 @@ use base64::Engine;
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
@@ -100,9 +100,9 @@ fn spec() -> Value {
 /// Proposes `metadata` over the stored source through the REST route and answers the manifest
 /// the forge was asked to commit.
 async fn committed(metadata: Value) -> Value {
-    let gitea = MockServer::start().await;
-    let client = GiteaClient::new(
-        gitea.uri().parse().expect("url"),
+    let shako = MockServer::start().await;
+    let client = ShakoClient::new(
+        shako.uri().parse().expect("url"),
         "test-owner",
         "test-repo",
         "t",
@@ -111,46 +111,46 @@ async fn committed(metadata: Value) -> Value {
     Mock::given(method("GET"))
         .and(path("/api/v1/repos/test-owner/test-repo"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("POST"))
         .and(path("/api/v1/repos/test-owner/test-repo/branches"))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     let contents = format!("/api/v1/repos/test-owner/test-repo/contents/{MANIFEST_PATH}");
     Mock::given(method("GET"))
         .and(path(contents.clone()))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("PUT"))
         .and(path(contents.clone()))
         .respond_with(
             ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("POST"))
         .and(path(contents.clone()))
         .respond_with(
             ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("POST"))
         .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 7, "html_url": "https://gitea.example.sk/pulls/7",
+            "number": 7, "html_url": "https://shako.example.sk/pulls/7",
             "state": "open", "mergeable": true, "merged": false
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
 
     let config = Config::for_tests();
     let state = AppState::new(config.clone(), None)
         .with_mirror(mirror())
-        .with_gitea(Arc::new(client));
+        .with_shako(Arc::new(client));
     let response = server::app(state)
         .oneshot_checked(
             Request::builder()
@@ -173,7 +173,7 @@ async fn committed(metadata: Value) -> Value {
         .await
         .expect("response");
     assert_eq!(response.status(), StatusCode::ACCEPTED);
-    let written = gitea
+    let written = shako
         .received_requests()
         .await
         .expect("recorded")

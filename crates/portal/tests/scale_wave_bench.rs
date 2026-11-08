@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::reconciler::Syncer;
 use joinedcontext_portal::store::Mirror;
 use serde_json::json;
@@ -94,10 +94,10 @@ async fn a_wave_over_the_generated_organization() {
         .mount(&forge)
         .await;
 
-    let gitea = GiteaClient::new(forge.uri().parse().expect("url"), "bench", "org", "token")
+    let shako = ShakoClient::new(forge.uri().parse().expect("url"), "bench", "org", "token")
         .expect("client");
     let mirror = Arc::new(Mirror::new());
-    let syncer = Syncer::new(Arc::new(gitea), Arc::clone(&mirror));
+    let syncer = Syncer::new(Arc::new(shako), Arc::clone(&mirror));
     for wave in 1..=3 {
         let started = std::time::Instant::now();
         let loaded = syncer.sync_once().await.expect("the wave runs");

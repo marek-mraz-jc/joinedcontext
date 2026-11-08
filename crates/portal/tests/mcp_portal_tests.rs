@@ -37,7 +37,7 @@ async fn forge_mocks(server: &MockServer) {
         .await;
     let pull = json!({
         "number": 1,
-        "html_url": "https://gitea.example.sk/pulls/1",
+        "html_url": "https://shako.example.sk/pulls/1",
         "state": "open",
         "title": "create ContextSpace mobility",
         "head": { "ref": "portal/create-contextspace-mobility-11111111" },
@@ -349,19 +349,19 @@ async fn setup_state_with(extra: Vec<ResourceEnvelope>) -> (AppState, String, En
     // The same mock server plays the forge: `/realms/...` is Keycloak, `/api/v1/repos/...` is
     // Gitea, so a change's plan and a model's source are readable over MCP (T-0847).
     forge_mocks(mock_server).await;
-    let gitea = joinedcontext_portal::git::GiteaClient::new(
+    let shako = joinedcontext_portal::forge::ShakoClient::new(
         mock_server.uri().parse().expect("mock url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
-    .expect("gitea client");
+    .expect("shako client");
 
     let state = AppState::from_config(config)
         .await
         .expect("state")
         .with_mirror(mirror)
-        .with_gitea(std::sync::Arc::new(gitea));
+        .with_shako(std::sync::Arc::new(shako));
 
     (state, issuer, signer, "key-mcp-test".to_string())
 }

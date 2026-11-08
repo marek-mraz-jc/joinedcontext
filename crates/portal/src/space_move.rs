@@ -17,7 +17,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::git::{Author, FileWrite, GiteaClient};
+use crate::forge::{Author, FileWrite, ShakoClient};
 
 /// The annotation that holds a space read-only while it moves (ADR-N-047 §2.6).
 pub const MOVING_TO: &str = "joinedcontext.com/moving-to";
@@ -79,7 +79,7 @@ pub struct Plan {
     /// The gateway's addresses; each name stands for every address it resolves to, so a
     /// headless Service names every pod.
     pub gateways: Vec<String>,
-    pub forge: Arc<GiteaClient>,
+    pub forge: Arc<ShakoClient>,
     /// The space's manifest in the repository.
     pub path: String,
     /// Who started it, for the commit messages.
@@ -274,7 +274,7 @@ impl Moves {
         change: impl FnOnce(&mut serde_norway::Mapping),
     ) -> Result<bool, String> {
         let failed =
-            |err: crate::git::GitError| format!("the repository refused the commit: {err}");
+            |err: crate::forge::GitError| format!("the repository refused the commit: {err}");
         let branch = plan.forge.default_branch().await.map_err(failed)?;
         let file = plan
             .forge
@@ -518,7 +518,7 @@ mod tests {
     }
 
     fn plan(gateways: &[&MockServer]) -> Plan {
-        let forge = GiteaClient::new("http://127.0.0.1:1".parse().expect("url"), "o", "r", "t")
+        let forge = ShakoClient::new("http://127.0.0.1:1".parse().expect("url"), "o", "r", "t")
             .expect("client");
         Plan {
             project: "p".into(),

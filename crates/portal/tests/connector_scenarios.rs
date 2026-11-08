@@ -588,7 +588,7 @@ async fn forge(server: &MockServer) {
     const BRANCH: &str = "portal/update-contextspace-doprava-42";
     let pull = json!({
         "number": 42,
-        "html_url": "https://gitea.example.sk/pulls/42",
+        "html_url": "https://shako.example.sk/pulls/42",
         "state": "open",
         "title": "update ContextSpace doprava",
         "head": { "ref": BRANCH },
@@ -632,7 +632,7 @@ async fn forge(server: &MockServer) {
     Mock::given(method("POST"))
         .and(path(format!("{REPO}/pulls")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 77, "html_url": "https://gitea.example.sk/pulls/77", "state": "open",
+            "number": 77, "html_url": "https://shako.example.sk/pulls/77", "state": "open",
             "mergeable": true, "merged": false
         })))
         .mount(server)
@@ -773,7 +773,7 @@ async fn merged_changes(server: &MockServer) {
     for (number, prefix, file, status, before, after) in changes {
         let pull = json!({
             "number": number,
-            "html_url": format!("https://gitea.example.sk/pulls/{number}"),
+            "html_url": format!("https://shako.example.sk/pulls/{number}"),
             "state": "closed",
             "title": format!("change {number}"),
             "head": { "ref": format!("{prefix}/update-contextspace-{number}"), "sha": format!("head-{number}") },
@@ -1528,20 +1528,20 @@ impl Harness {
         }
         let mut state = state
             .with_mirror(mirror.clone())
-            .with_gitea(std::sync::Arc::new(
-                joinedcontext_portal::git::GiteaClient::new(
+            .with_shako(std::sync::Arc::new(
+                joinedcontext_portal::forge::ShakoClient::new(
                     server.uri().parse().expect("mock url"),
                     "test-owner",
                     "test-repo",
                     "token-scenarios",
                 )
-                .expect("gitea client"),
+                .expect("shako client"),
             ));
         // The sync loop's memory, in memory: S-25 pauses and resumes a source, and nothing
         // here runs the loop, so its origin is never fetched.
         state.sync = Some(std::sync::Arc::new(
             joinedcontext_portal::sync::driver::Driver::new(
-                state.gitea.clone().expect("gitea client"),
+                state.shako.clone().expect("shako client"),
                 std::sync::Arc::new(joinedcontext_portal::sync::state::States::new(None)),
                 std::sync::Arc::new(Unreached),
             ),
@@ -1558,7 +1558,7 @@ impl Harness {
         .map(std::sync::Arc::new);
         // The run queue of every seeded Pipeline, so a run-now has a queued pipeline to start.
         let deployer = std::sync::Arc::new(StreamDeployer::new(runner.uri()));
-        let syncer = Syncer::new(state.gitea.clone().expect("the forge"), mirror.clone())
+        let syncer = Syncer::new(state.shako.clone().expect("the forge"), mirror.clone())
             .with_streams(std::sync::Arc::clone(&deployer));
         let state = state.with_syncer(std::sync::Arc::new(syncer));
         deployer
@@ -2607,8 +2607,8 @@ async fn the_change_tools_link_the_portal_approval_page() {
     let page = format!("\"url\":\"https://portal.test/projects/{own}/approvals/chg-0000002a\"");
     let step = |call: &str, args: Value| {
         json!({ "proves": "expect", "call": call, "args": args,
-            "contains": [page, "\"mergeRequest\":\"https://gitea.example.sk/pulls/42\""],
-            "absent": ["\"url\":\"https://gitea"] })
+            "contains": [page, "\"mergeRequest\":\"https://shako.example.sk/pulls/42\""],
+            "absent": ["\"url\":\"https://shako"] })
     };
     let script = json!([
         step("jc_change_list", json!({})),

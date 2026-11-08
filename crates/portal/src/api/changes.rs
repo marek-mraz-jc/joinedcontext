@@ -16,7 +16,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::auth::CurrentUser;
 use crate::change::{self, Change, ChangeMeta, ChangePhase, ChangeStatus, Lane, Operation};
 use crate::error::{ApiError, ProblemDetails};
-use crate::git::{GitError, GiteaClient, MergeStyle, PullRequest, ReviewEvent};
+use crate::forge::{GitError, ShakoClient, MergeStyle, PullRequest, ReviewEvent};
 use crate::plan::{self, FieldChange, PlanDiff};
 use crate::resource::ResourceEnvelope;
 use crate::state::AppState;
@@ -111,13 +111,13 @@ pub struct AwaitedChange {
 /// (MF-48). One the forge no longer knows is `Rejected`: what it would have created never will be.
 async fn awaited_changes(
     state: &AppState,
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     pr: &PullRequest,
     project: &str,
 ) -> Result<Vec<AwaitedChange>, ApiError> {
     let mut awaited = Vec::new();
     for number in crate::references::waited_on(&pr.body) {
-        let phase = match gitea.pull_request(number).await {
+        let phase = match shako.pull_request(number).await {
             Ok(other) if other.merged => ChangePhase::Merged,
             Ok(other) if other.state == "closed" => ChangePhase::Rejected,
             Ok(_) => ChangePhase::PendingApproval,
@@ -125,7 +125,7 @@ async fn awaited_changes(
             Err(err) => return Err(err.into()),
         };
         awaited.push(AwaitedChange {
-            name: change_meta(state, gitea, number, project).name,
+            name: change_meta(state, shako, number, project).name,
             phase,
         });
     }
@@ -340,10 +340,10 @@ pub fn resolve_change(
     state: &AppState,
     project: &str,
     id: &str,
-) -> Result<(std::sync::Arc<GiteaClient>, u64), ApiError> {
+) -> Result<(std::sync::Arc<ShakoClient>, u64), ApiError> {
     let (organization, number) = parse_change_ref(id)?;
     let forge = if organization {
-        state.gitea.clone()
+        state.shako.clone()
     } else {
         state.forge_for(project)
     };
@@ -356,7 +356,7 @@ pub fn resolve_change(
 /// `chg-` otherwise (CC-87).
 pub fn change_meta(
     state: &AppState,
-    forge: &GiteaClient,
+    forge: &ShakoClient,
     number: u64,
     project: &str,
 ) -> ChangeMeta {
@@ -472,12 +472,12 @@ pub(crate) struct ManifestData {
 }
 
 async fn find_manifest_in_tree(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     git_ref: &str,
     project: &str,
     resource_name: &str,
 ) -> Result<Option<String>, ApiError> {
-    let tree = match gitea.list_tree(git_ref).await {
+    let tree = match shako.list_tree(git_ref).await {
         Ok(t) => t,
         Err(_) => return Ok(None),
     };
@@ -508,7 +508,7 @@ fn names_manifest(path: &str, project: &str, name: &str) -> bool {
 /// call the listing pays anyway, where the tree walk read every file of the repository once per
 /// open change (T-6347).
 fn manifest_in_files(
-    files: Option<&[crate::git::gitea::ChangedFile]>,
+    files: Option<&[crate::forge::shako::ChangedFile]>,
     project: &str,
     name: &str,
     deleted: bool,
@@ -555,14 +555,14 @@ enum Standing {
 /// neither repository nor e-mail lets nothing through.
 async fn standing(
     state: &AppState,
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     project: &str,
     pr: &PullRequest,
 ) -> Result<Standing, ApiError> {
     if is_change_branch(&pr.head_branch) {
         return Ok(Standing::Change);
     }
-    if !gitea.is_project_repository() {
+    if !shako.is_project_repository() {
         return Ok(Standing::Unlisted);
     }
     if !pr.same_repository {
@@ -581,7 +581,7 @@ async fn standing(
              on the project makes them one"
         )));
     }
-    let main = gitea.default_branch().await?;
+    let main = shako.default_branch().await?;
     let base = pr
         .base_branch
         .strip_prefix("refs/heads/")
@@ -597,12 +597,12 @@ async fn standing(
 /// The `404` of a pull request that is not a Change, said like one that is not there (R20).
 async fn require_change(
     state: &AppState,
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     project: &str,
     id: &str,
     pr: &PullRequest,
 ) -> Result<(), ApiError> {
-    match standing(state, gitea, project, pr).await? {
+    match standing(state, shako, project, pr).await? {
         Standing::Change => Ok(()),
         Standing::Outside(_) | Standing::Unlisted => Err(ApiError::NotFound(format!(
             "change proposal '{id}' not found in project '{project}'"
@@ -687,10 +687,10 @@ fn headline_rank(path: &str) -> u8 {
 }
 
 async fn bundle_headline(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     pr: &PullRequest,
     project: &str,
-    files: Option<&[crate::git::gitea::ChangedFile]>,
+    files: Option<&[crate::forge::shako::ChangedFile]>,
 ) -> Result<Option<ManifestData>, ApiError> {
     let branch = pr
         .head_branch
@@ -717,7 +717,7 @@ async fn bundle_headline(
     let files = match files {
         Some(files) => files,
         None => {
-            fetched = gitea.pull_request_files(pr.number).await?;
+            fetched = shako.pull_request_files(pr.number).await?;
             &fetched
         }
     };
@@ -732,7 +732,7 @@ async fn bundle_headline(
         } else {
             pr.head_ref()
         };
-        let Some(content) = gitea.get_file(&file.path, git_ref).await? else {
+        let Some(content) = shako.get_file(&file.path, git_ref).await? else {
             continue;
         };
         let Ok(envelope) = serde_norway::from_str::<ResourceEnvelope>(&content.content) else {
@@ -743,7 +743,7 @@ async fn bundle_headline(
         } else if file.added {
             (Operation::Create, None, Some(envelope.clone()))
         } else {
-            let base = gitea
+            let base = shako
                 .get_file(&file.path, pr.base_ref())
                 .await?
                 .and_then(|base| serde_norway::from_str::<ResourceEnvelope>(&base.content).ok());
@@ -760,13 +760,13 @@ async fn bundle_headline(
     // No manifest: a change of seed entities alone (an adopted drift) is headed by its first
     // seed file, read on both sides.
     for file in files.iter().filter(|file| !file.deleted) {
-        let Some(head) = gitea.get_file(&file.path, pr.head_ref()).await? else {
+        let Some(head) = shako.get_file(&file.path, pr.head_ref()).await? else {
             continue;
         };
         let Some(head) = seed_envelope(&file.path, &head.content) else {
             continue;
         };
-        let base = gitea
+        let base = shako
             .get_file(&file.path, pr.base_ref())
             .await?
             .and_then(|base| seed_envelope(&file.path, &base.content));
@@ -809,16 +809,16 @@ fn is_secret_branch(branch: &str) -> bool {
 /// removes, named by its path. The branch is no key to the name (a project and a name both hold
 /// `-`), and no content is read: the file holds ciphertext and the headline names no value.
 async fn secret_headline(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     pr: &PullRequest,
     project: &str,
-    files: Option<&[crate::git::gitea::ChangedFile]>,
+    files: Option<&[crate::forge::shako::ChangedFile]>,
 ) -> Result<Option<ManifestData>, ApiError> {
     let fetched;
     let files = match files {
         Some(files) => files,
         None => {
-            fetched = gitea.pull_request_files(pr.number).await?;
+            fetched = shako.pull_request_files(pr.number).await?;
             &fetched
         }
     };
@@ -843,16 +843,16 @@ async fn secret_headline(
 /// The headline manifest of `pr`. `files` is the merge request's file list when the caller holds
 /// it: the manifest is found there before any probe (T-6347); `None` reads it only for a bundle.
 async fn load_manifest_data(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     pr: &PullRequest,
     project: &str,
-    files: Option<&[crate::git::gitea::ChangedFile]>,
+    files: Option<&[crate::forge::shako::ChangedFile]>,
 ) -> Result<Option<ManifestData>, ApiError> {
     if is_secret_branch(&pr.head_branch) {
-        return secret_headline(gitea, pr, project, files).await;
+        return secret_headline(shako, pr, project, files).await;
     }
     let Some(branch_info) = parse_branch_name(&pr.head_branch) else {
-        return bundle_headline(gitea, pr, project, files).await;
+        return bundle_headline(shako, pr, project, files).await;
     };
 
     let kind_info =
@@ -884,7 +884,7 @@ async fn load_manifest_data(
                 if path.is_some() {
                     break;
                 }
-                if let Ok(Some(_)) = gitea.get_file(&candidate, pr.base_ref()).await {
+                if let Ok(Some(_)) = shako.get_file(&candidate, pr.base_ref()).await {
                     path = Some(candidate);
                     break;
                 }
@@ -893,7 +893,7 @@ async fn load_manifest_data(
             let path = match path {
                 Some(p) => Some(p),
                 None => {
-                    find_manifest_in_tree(gitea, pr.base_ref(), project, &branch_info.resource_name)
+                    find_manifest_in_tree(shako, pr.base_ref(), project, &branch_info.resource_name)
                         .await?
                 }
             };
@@ -902,7 +902,7 @@ async fn load_manifest_data(
                 return Ok(None);
             };
 
-            let base_file = gitea
+            let base_file = shako
                 .get_file(&repo_path, pr.base_ref())
                 .await?
                 .ok_or_else(|| {
@@ -932,7 +932,7 @@ async fn load_manifest_data(
             {
                 Some(found)
             } else if let Some(cand) = direct {
-                if let Ok(Some(_)) = gitea.get_file(&cand, pr.head_ref()).await {
+                if let Ok(Some(_)) = shako.get_file(&cand, pr.head_ref()).await {
                     Some(cand)
                 } else {
                     None
@@ -947,13 +947,13 @@ async fn load_manifest_data(
             let path = match path {
                 Some(p) => Some(p),
                 None if branch_info.kind_lower == "project"
-                    && !gitea.is_project_repository()
-                    && matches!(gitea.get_file(&registry, pr.head_ref()).await, Ok(Some(_))) =>
+                    && !shako.is_project_repository()
+                    && matches!(shako.get_file(&registry, pr.head_ref()).await, Ok(Some(_))) =>
                 {
                     Some(registry)
                 }
                 None => {
-                    find_manifest_in_tree(gitea, pr.head_ref(), project, &branch_info.resource_name)
+                    find_manifest_in_tree(shako, pr.head_ref(), project, &branch_info.resource_name)
                         .await?
                 }
             };
@@ -964,9 +964,9 @@ async fn load_manifest_data(
 
             // The two sides are independent reads: one round trip, not two (T-6347).
             let (head_file, base_file) =
-                tokio::join!(gitea.get_file(&repo_path, pr.head_ref()), async {
+                tokio::join!(shako.get_file(&repo_path, pr.head_ref()), async {
                     if branch_info.operation == Operation::Update {
-                        gitea
+                        shako
                             .get_file(&repo_path, pr.base_ref())
                             .await
                             .ok()
@@ -1019,15 +1019,15 @@ async fn load_manifest_data(
 /// The human behind a pull request: the author of its head commit (CC-44; the forge token only
 /// posts the pull request), the poster when the branch has no commit yet or the forge does not
 /// answer.
-async fn human_author(gitea: &GiteaClient, pr: &crate::git::gitea::PullRequest) -> ChangeAuthor {
-    head_author(gitea, pr).await.unwrap_or_else(|_| poster(pr))
+async fn human_author(shako: &ShakoClient, pr: &crate::forge::shako::PullRequest) -> ChangeAuthor {
+    head_author(shako, pr).await.unwrap_or_else(|_| poster(pr))
 }
 
 /// What [`human_author`] names, or the forge's error when it could not say: the list keeps only
 /// an answer, never the fallback a forge blip gave (T-6347).
 async fn head_author(
-    gitea: &GiteaClient,
-    pr: &crate::git::gitea::PullRequest,
+    shako: &ShakoClient,
+    pr: &crate::forge::shako::PullRequest,
 ) -> Result<ChangeAuthor, GitError> {
     // A writer's own branch: the forge account that opened it. Its commits say whatever their
     // author configured, and an approver named there could approve their own Change (T-3433).
@@ -1035,7 +1035,7 @@ async fn head_author(
         return Ok(poster(pr));
     }
     // The head commit, not the branch: a merged change's branch may be gone (T-3292).
-    let commits = gitea.list_commits(pr.head_ref(), "", 1).await?;
+    let commits = shako.list_commits(pr.head_ref(), "", 1).await?;
     Ok(match commits.first() {
         Some(commit) if !commit.author.trim().is_empty() => ChangeAuthor {
             name: commit.author.clone(),
@@ -1049,11 +1049,11 @@ async fn head_author(
 /// name a second person could share. A forge error answers no, so the caller falls back to the
 /// approve rules (T-6535).
 async fn proposed_by(
-    gitea: &GiteaClient,
-    pr: &crate::git::gitea::PullRequest,
+    shako: &ShakoClient,
+    pr: &crate::forge::shako::PullRequest,
     identity: &crate::auth::session::Identity,
 ) -> bool {
-    let author = match head_author(gitea, pr).await {
+    let author = match head_author(shako, pr).await {
         Ok(author) => author,
         Err(GitError::NotFound) => poster(pr),
         Err(_) => return false,
@@ -1070,7 +1070,7 @@ fn same_email(a: Option<&str>, b: Option<&str>) -> bool {
 }
 
 /// The forge account that opened `pr`.
-fn poster(pr: &crate::git::gitea::PullRequest) -> ChangeAuthor {
+fn poster(pr: &crate::forge::shako::PullRequest) -> ChangeAuthor {
     ChangeAuthor {
         name: pr.author_name.clone(),
         email: pr.author_email.clone(),
@@ -1085,7 +1085,7 @@ fn poster(pr: &crate::git::gitea::PullRequest) -> ChangeAuthor {
 /// (a `Policy`, a `Role`, a registration) is Red here too, and the kinds whose lane depends on
 /// their spec — a public `Endpoint`, a sandbox `ContextSpace` — are what the headline manifest
 /// already classifies with its spec in hand.
-fn lane_of_paths(files: &[crate::git::gitea::ChangedFile]) -> Lane {
+fn lane_of_paths(files: &[crate::forge::shako::ChangedFile]) -> Lane {
     files.iter().fold(Lane::Green, |lane, file| {
         let operation = if file.deleted {
             Operation::Delete
@@ -1286,10 +1286,10 @@ pub async fn change_history_readable(
     if page == 0 {
         return Err(ApiError::BadRequest("page counts from 1".into()));
     }
-    let gitea = state
+    let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let gitea: &GiteaClient = &gitea;
+    let shako: &ShakoClient = &shako;
     let name = query.name.as_deref().map(str::trim).map(str::to_lowercase);
     let author = query
         .author
@@ -1300,13 +1300,13 @@ pub async fn change_history_readable(
     let since = history_day("since", query.since.as_deref())?;
     let until = history_day("until", query.until.as_deref())?;
 
-    let prs = gitea
+    let prs = shako
         .list_pull_requests_page("closed", page, HISTORY_PAGE)
         .await?;
     let next = (prs.len() == HISTORY_PAGE as usize).then_some(page + 1);
     let mut items = Vec::new();
     for pr in &prs {
-        if !matches!(standing(state, gitea, project, pr).await?, Standing::Change) {
+        if !matches!(standing(state, shako, project, pr).await?, Standing::Change) {
             continue;
         }
         // The day it was decided, `closed_at`'s first ten characters, against the filter's days.
@@ -1316,8 +1316,8 @@ pub async fn change_history_readable(
         {
             continue;
         }
-        let files = gitea.pull_request_files(pr.number).await?;
-        let Some(data) = closed_headline(gitea, pr, project, &files).await? else {
+        let files = shako.pull_request_files(pr.number).await?;
+        let Some(data) = closed_headline(shako, pr, project, &files).await? else {
             continue;
         };
         if query
@@ -1335,8 +1335,8 @@ pub async fn change_history_readable(
         if !may_read_change(&effective, &proposal) {
             continue;
         }
-        proposal.metadata = change_meta(state, gitea, pr.number, project);
-        proposal.author = human_author(gitea, pr).await;
+        proposal.metadata = change_meta(state, shako, pr.number, project);
+        proposal.author = human_author(shako, pr).await;
         if let Some(author) = &author {
             let who = format!(
                 "{} {}",
@@ -1349,7 +1349,7 @@ pub async fn change_history_readable(
             }
         }
         proposal.file_count = Some(files.len());
-        proposal.decision = decision_of(gitea, pr).await?;
+        proposal.decision = decision_of(shako, pr).await?;
         items.push(proposal);
     }
     Ok(ChangeList {
@@ -1363,10 +1363,10 @@ pub async fn change_history_readable(
 /// branch names the resource when it is a single one; a bundle is headed by its first manifest in
 /// the project, the `Project` first, as `bundle_headline` heads an open one.
 async fn closed_headline(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     pr: &PullRequest,
     project: &str,
-    files: &[crate::git::gitea::ChangedFile],
+    files: &[crate::forge::shako::ChangedFile],
 ) -> Result<Option<ManifestData>, ApiError> {
     let home = if project == crate::permissions::ORG_NAMESPACE {
         "users/".to_owned()
@@ -1381,7 +1381,7 @@ async fn closed_headline(
         return Ok(None);
     }
     if is_secret_branch(&pr.head_branch) {
-        return secret_headline(gitea, pr, project, Some(files)).await;
+        return secret_headline(shako, pr, project, Some(files)).await;
     }
     if let Some(branch) = parse_branch_name(&pr.head_branch) {
         let kind = crate::resource::kinds()
@@ -1410,7 +1410,7 @@ async fn closed_headline(
         let named = if file.deleted {
             named_by_path(&file.path).map(|(kind, name)| (kind, name, None))
         } else {
-            gitea
+            shako
                 .get_file(&file.path, pr.head_ref())
                 .await?
                 .and_then(|content| {
@@ -1465,7 +1465,7 @@ fn named_by_path(path: &str) -> Option<(String, String)> {
 /// commit's "Approved in the Portal by …" line, or the rejection review. A change merged or closed
 /// in the forge itself names nobody.
 async fn decision_of(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     pr: &PullRequest,
 ) -> Result<Option<ChangeDecision>, ApiError> {
     let at = Some(pr.closed_at.clone()).filter(|at| !at.is_empty());
@@ -1473,7 +1473,7 @@ async fn decision_of(
         if pr.merge_commit_sha.is_empty() {
             return Ok(None);
         }
-        let message = gitea.commit_message(&pr.merge_commit_sha).await?;
+        let message = shako.commit_message(&pr.merge_commit_sha).await?;
         return Ok(approver_in(&message).map(|by| ChangeDecision {
             by,
             via: connector_in(&message),
@@ -1481,7 +1481,7 @@ async fn decision_of(
             reason: None,
         }));
     }
-    let reviews = gitea.review_bodies(pr.number).await?;
+    let reviews = shako.review_bodies(pr.number).await?;
     Ok(reviews
         .iter()
         .rev()
@@ -1618,7 +1618,7 @@ const LISTED_AT_ONCE: usize = 16;
 /// What the list reads of one open merge request: its files, its headline manifest on head and
 /// base, and its author.
 pub(crate) struct ChangeRead {
-    carried: Vec<crate::git::gitea::ChangedFile>,
+    carried: Vec<crate::forge::shako::ChangedFile>,
     data: Option<ManifestData>,
     author: ChangeAuthor,
 }
@@ -1663,7 +1663,7 @@ impl ChangeReads {
 /// a branch name moves.
 async fn change_read(
     state: &AppState,
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     project: &str,
     pr: &PullRequest,
 ) -> Result<std::sync::Arc<ChangeRead>, ApiError> {
@@ -1684,11 +1684,11 @@ async fn change_read(
     // and the list stops promising a lane the detail page contradicts. The author needs nothing
     // the manifest reads find, so both run at once.
     let manifest = async {
-        let carried = gitea.pull_request_files(pr.number).await?;
-        let data = load_manifest_data(gitea, pr, project, Some(&carried)).await?;
+        let carried = shako.pull_request_files(pr.number).await?;
+        let data = load_manifest_data(shako, pr, project, Some(&carried)).await?;
         Ok::<_, ApiError>((carried, data))
     };
-    let (manifest, author) = tokio::join!(manifest, head_author(gitea, pr));
+    let (manifest, author) = tokio::join!(manifest, head_author(shako, pr));
     let (carried, data) = manifest?;
     let settled = author.is_ok();
     let read = std::sync::Arc::new(ChangeRead {
@@ -1711,11 +1711,11 @@ enum Listed {
 
 async fn listed(
     state: &AppState,
-    gitea: &crate::git::GiteaClient,
+    shako: &crate::forge::ShakoClient,
     project: &str,
     pr: &PullRequest,
 ) -> Result<Listed, ApiError> {
-    match standing(state, gitea, project, pr).await? {
+    match standing(state, shako, project, pr).await? {
         Standing::Change => {}
         Standing::Outside(reason) => {
             return Ok(Listed::Outside(OutsideMergeRequest {
@@ -1731,8 +1731,8 @@ async fn listed(
     // The awaited changes move without a commit of this one: asked on every list, beside the
     // reads its head and base commits fix (T-6347).
     let (read, waits_on) = tokio::join!(
-        change_read(state, gitea, project, pr),
-        awaited_changes(state, gitea, pr, project)
+        change_read(state, shako, project, pr),
+        awaited_changes(state, shako, pr, project)
     );
     let read = read?;
     let Some(data) = read.data.as_ref() else {
@@ -1741,7 +1741,7 @@ async fn listed(
 
     let plan = plan::diff(data.base_envelope.as_ref(), data.head_envelope.as_ref());
     let mut proposal = build_proposal(pr, project, data, plan, None, lane_of_paths(&read.carried));
-    proposal.metadata = change_meta(state, gitea, pr.number, project);
+    proposal.metadata = change_meta(state, shako, pr.number, project);
     proposal.author = read.author.clone();
     // The count only: a listing that read every file of every open change to render
     // "+3 files" would pay for the detail page on the way past it (T-0861).
@@ -1753,17 +1753,17 @@ async fn listed(
 /// Every open change of `project`, unfiltered: a caller reads it through
 /// [`list_changes_readable`], which keeps what its rights read (F-R2POR4-011).
 async fn list_changes_for(state: &AppState, project: &str) -> Result<ChangeList, ApiError> {
-    let gitea = state
+    let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let gitea: &crate::git::GiteaClient = &gitea;
+    let shako: &crate::forge::ShakoClient = &shako;
 
-    let prs = gitea.list_pull_requests("open").await?;
+    let prs = shako.list_pull_requests("open").await?;
     // Each merge request costs a few forge reads: four at a time, in the forge's order. One
     // merged or closed between the list and its own reads answers 404 there: it is no longer
     // open, so it leaves the list instead of failing it whole (T-6324).
     let listed: Vec<Listed> = futures_util::stream::iter(prs.into_iter().map(|pr| async move {
-        match listed(state, gitea, project, &pr).await {
+        match listed(state, shako, project, &pr).await {
             Err(ApiError::NotFound(_)) => Ok(Listed::Unlisted),
             other => other,
         }
@@ -1823,14 +1823,14 @@ pub async fn change_for(
     project: &str,
     id: &str,
 ) -> Result<ChangeProposal, ApiError> {
-    let (gitea, pr_number) = resolve_change(state, project, id)?;
-    let gitea: &crate::git::GiteaClient = &gitea;
+    let (shako, pr_number) = resolve_change(state, project, id)?;
+    let shako: &crate::forge::ShakoClient = &shako;
 
-    let pr = gitea.pull_request(pr_number).await?;
-    require_change(state, gitea, project, id, &pr).await?;
+    let pr = shako.pull_request(pr_number).await?;
+    require_change(state, shako, project, id, &pr).await?;
 
-    let pr_files = gitea.pull_request_files(pr.number).await?;
-    let data = load_manifest_data(gitea, &pr, project, Some(&pr_files))
+    let pr_files = shako.pull_request_files(pr.number).await?;
+    let data = load_manifest_data(shako, &pr, project, Some(&pr_files))
         .await?
         .ok_or_else(|| {
             ApiError::NotFound(format!(
@@ -1840,15 +1840,15 @@ pub async fn change_for(
 
     let plan = plan::diff(data.base_envelope.as_ref(), data.head_envelope.as_ref());
     let redacted_fields = redact(plan.fields.clone());
-    let author = human_author(gitea, &pr).await;
-    let files = changed_files(gitea, &pr, pr_files).await?;
+    let author = human_author(shako, &pr).await;
+    let files = changed_files(shako, &pr, pr_files).await?;
     // Here every file's spec was read, so the lane each one carries is the exact one the
     // approval computes rather than the path's lower bound (T-1224).
     let carried = files.iter().fold(Lane::Green, |lane, file| {
         crate::api::import::riskiest(lane, file.lane)
     });
     // A forge that cannot say is a Change without a CI line, never a detail that fails (CC-90).
-    let ci = match gitea.commit_state(pr.head_ref()).await {
+    let ci = match shako.commit_state(pr.head_ref()).await {
         Ok(ci) => ci,
         Err(error) => {
             tracing::debug!(change = %id, %error, "the forge did not say the head commit's CI");
@@ -1857,8 +1857,8 @@ pub async fn change_for(
     };
     Ok(ChangeProposal {
         ci,
-        metadata: change_meta(state, gitea, pr_number, project),
-        waits_on: awaited_changes(state, gitea, &pr, project).await?,
+        metadata: change_meta(state, shako, pr_number, project),
+        waits_on: awaited_changes(state, shako, &pr, project).await?,
         author,
         file_count: Some(files.len()),
         files: Some(files),
@@ -1973,9 +1973,9 @@ fn administers(
 /// ponytail: one `get_file` per changed file, as the approval does; the tree diff is the
 /// upgrade for both at once.
 async fn changed_files(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     pr: &PullRequest,
-    files: Vec<crate::git::gitea::ChangedFile>,
+    files: Vec<crate::forge::shako::ChangedFile>,
 ) -> Result<Vec<ChangeFile>, ApiError> {
     let mut listed = Vec::new();
     for file in files {
@@ -1983,7 +1983,7 @@ async fn changed_files(
             let path = file.path.clone();
             let git_ref = git_ref.to_owned();
             async move {
-                gitea
+                shako
                     .get_file(&path, &git_ref)
                     .await
                     .map(|found| found.map(|found| found.content))
@@ -2050,7 +2050,7 @@ async fn approve_every_file(
     state: &AppState,
     identity: &crate::auth::session::Identity,
     project: &str,
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     pr: &PullRequest,
 ) -> Result<(Lane, bool, bool, bool, bool, bool), ApiError> {
     // The caller's grants, per project, computed where each file actually lives (PF-50, T-1682).
@@ -2067,13 +2067,13 @@ async fn approve_every_file(
     let mut grants_approver = false;
     let mut grants_access = false;
     let mut files = Vec::new();
-    for file in gitea.pull_request_files(pr.number).await? {
+    for file in shako.pull_request_files(pr.number).await? {
         let git_ref = if file.deleted {
             pr.base_ref()
         } else {
             pr.head_ref()
         };
-        let content = gitea
+        let content = shako
             .get_file(&file.path, git_ref)
             .await?
             .ok_or_else(|| {
@@ -2262,7 +2262,7 @@ async fn approve_every_file(
 /// account, the assistant or MCP, so a service account approving such a file is refused here.
 fn public_publication(
     identity: &crate::auth::session::Identity,
-    file: &crate::git::gitea::ChangedFile,
+    file: &crate::forge::shako::ChangedFile,
     envelope: &ResourceEnvelope,
     was_public: bool,
 ) -> Result<bool, ApiError> {
@@ -2410,12 +2410,12 @@ pub async fn approve_change_for(
     }
     may_approve_anything(state, identity, project)?;
     crate::auth::session::require_second_factor(identity, &state.config)?;
-    let (gitea, pr_number) = resolve_change(state, project, id)?;
-    let gitea: &crate::git::GiteaClient = &gitea;
+    let (shako, pr_number) = resolve_change(state, project, id)?;
+    let shako: &crate::forge::ShakoClient = &shako;
 
-    let pr = gitea.pull_request(pr_number).await?;
-    require_change(state, gitea, project, id, &pr).await?;
-    let data = load_manifest_data(gitea, &pr, project, None)
+    let pr = shako.pull_request(pr_number).await?;
+    require_change(state, shako, project, id, &pr).await?;
+    let data = load_manifest_data(shako, &pr, project, None)
         .await?
         .ok_or_else(|| {
             ApiError::NotFound(format!(
@@ -2484,7 +2484,7 @@ pub async fn approve_change_for(
         publishes,
         grants_approver,
         grants_access,
-    ) = approve_every_file(state, identity, project, gitea, &pr).await?;
+    ) = approve_every_file(state, identity, project, shako, &pr).await?;
     if connector.is_some() && (publishes || grants_access) {
         return Err(ApiError::Denied(
             "a change that grants access or publishes publicly waits for a person's approval in the Portal, even through an autonomous connector (T-6552, PF-58, EP-142)".to_string(),
@@ -2496,11 +2496,11 @@ pub async fn approve_change_for(
             "a public publication or a public App is approved by a person in the Portal, never by the assistant, an agent or MCP (EP-142, AP-175)".to_string(),
         ));
     }
-    merges_after(id, &awaited_changes(state, gitea, &pr, project).await?)?;
+    merges_after(id, &awaited_changes(state, shako, &pr, project).await?)?;
 
     // A forge blip must not make a proposer a stranger to their own Change: only a head the
     // forge says is not there falls back to who opened the merge request.
-    let author = match head_author(gitea, &pr).await {
+    let author = match head_author(shako, &pr).await {
         Err(GitError::NotFound) => poster(&pr),
         read => read?,
     };
@@ -2598,7 +2598,7 @@ pub async fn approve_change_for(
         }
         _ => merge_msg,
     };
-    merge_when_ready(gitea, pr_number, &merge_msg, &pr.head_sha, id).await?;
+    merge_when_ready(shako, pr_number, &merge_msg, &pr.head_sha, id).await?;
     say_merged(state, project, id, &data, approver, connector).await;
 
     // A published application's own repository merges once its Change has (AP-77).
@@ -2621,7 +2621,7 @@ pub async fn approve_change_for(
     sync_soon(state);
 
     let plan = plan::diff(data.base_envelope.as_ref(), data.head_envelope.as_ref());
-    let change_meta = change_meta(state, gitea, pr_number, project);
+    let change_meta = change_meta(state, shako, pr_number, project);
     let change_status = ChangeStatus::new(lane, ChangePhase::Deploying, plan.summary)
         .in_repository(&pr.repository)
         .proposed_through(&pr.body)
@@ -2762,7 +2762,7 @@ async fn say_rejected(
 /// 409 and both mean the same thing to whoever approved (T-1683, CC-80). A branch another merge
 /// overtook is brought up to date first (PF-105, `bring_up_to_date`).
 async fn merge_when_ready(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     pr_number: u64,
     message: &str,
     head_sha: &str,
@@ -2771,13 +2771,13 @@ async fn merge_when_ready(
     let mut head = head_sha.to_owned();
     let mut attempt = 0;
     loop {
-        match gitea
+        match shako
             .merge(pr_number, MergeStyle::Squash, message, Some(&head))
             .await
         {
             Err(err) if behind_base(&err) && attempt < 15 => {
                 attempt += 1;
-                head = bring_up_to_date(gitea, pr_number, head_sha, id).await?;
+                head = bring_up_to_date(shako, pr_number, head_sha, id).await?;
             }
             Err(GitError::Api { status: 405, .. }) if attempt < 15 => {
                 attempt += 1;
@@ -2808,23 +2808,23 @@ fn behind_base(err: &GitError) -> bool {
 /// when every file the Change touches reads the same there, so a file `main` changed meanwhile
 /// sends the Change back to its reviewer, naming the file.
 async fn bring_up_to_date(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     pr_number: u64,
     approved: &str,
     id: &str,
 ) -> Result<String, ApiError> {
-    match gitea.update_pull_request(pr_number).await {
+    match shako.update_pull_request(pr_number).await {
         Err(GitError::Conflict(_)) => return Err(moved_on(id)),
         other => other?,
     }
-    let pr = gitea.pull_request(pr_number).await?;
+    let pr = shako.pull_request(pr_number).await?;
     // The branch, not the pull request: the forge refreshes the pull's head in the background.
-    let head = gitea.branch_head(&pr.head_branch).await?;
+    let head = shako.branch_head(&pr.head_branch).await?;
     let before: std::collections::HashMap<String, String> =
-        gitea.list_tree_blobs(approved).await?.into_iter().collect();
+        shako.list_tree_blobs(approved).await?.into_iter().collect();
     let after: std::collections::HashMap<String, String> =
-        gitea.list_tree_blobs(&head).await?.into_iter().collect();
-    let changed: Vec<String> = gitea
+        shako.list_tree_blobs(&head).await?.into_iter().collect();
+    let changed: Vec<String> = shako
         .pull_request_files(pr_number)
         .await?
         .into_iter()
@@ -2863,7 +2863,7 @@ fn sync_soon(state: &AppState) {
 /// the pending Change, as it was before this approval existed.
 pub(crate) async fn approve_build(
     state: &AppState,
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     pr: &PullRequest,
     manifest_path: &str,
     change: Change,
@@ -2873,7 +2873,7 @@ pub(crate) async fn approve_build(
          checked against the App's repository and published (AP-73, AP-104)",
         change.metadata.name, pr.title
     );
-    merge_if_only(state, gitea, pr, &[manifest_path], &message, change).await
+    merge_if_only(state, shako, pr, &[manifest_path], &message, change).await
 }
 
 /// Merges `pr` now, pinned to the commit the Portal wrote, when every file it changes is one of
@@ -2883,14 +2883,14 @@ pub(crate) async fn approve_build(
 /// or one the forge will not merge comes back as the pending Change it was, waiting for a person.
 pub(crate) async fn merge_if_only(
     state: &AppState,
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     pr: &PullRequest,
     paths: &[&str],
     message: &str,
     change: Change,
 ) -> Change {
     let id = change.metadata.name.clone();
-    let only_these = match gitea.pull_request_files(pr.number).await {
+    let only_these = match shako.pull_request_files(pr.number).await {
         Ok(files) => {
             !files.is_empty()
                 && files
@@ -2906,7 +2906,7 @@ pub(crate) async fn merge_if_only(
         tracing::warn!(change = %id, "the change carries a file the Portal did not check and waits for a person");
         return change;
     }
-    if let Err(err) = merge_when_ready(gitea, pr.number, message, &pr.head_sha, &id).await {
+    if let Err(err) = merge_when_ready(shako, pr.number, message, &pr.head_sha, &id).await {
         tracing::warn!(change = %id, error = %err, "the change waits for a person: the forge did not merge it");
         return change;
     }
@@ -2929,24 +2929,24 @@ pub(crate) async fn merge_if_narrowing(
     narrows: impl Fn(&ResourceEnvelope, &ResourceEnvelope) -> bool,
 ) -> Change {
     let id = change.metadata.name.clone();
-    let Ok((gitea, number)) = resolve_change(state, project, &id) else {
+    let Ok((shako, number)) = resolve_change(state, project, &id) else {
         return change;
     };
-    let pr = match gitea.pull_request(number).await {
+    let pr = match shako.pull_request(number).await {
         Ok(pr) => pr,
         Err(err) => {
             tracing::warn!(change = %id, error = %err, "the revoke waits for a person: its merge request could not be read");
             return change;
         }
     };
-    let files = match gitea.pull_request_files(pr.number).await {
+    let files = match shako.pull_request_files(pr.number).await {
         Ok(files) => files,
         Err(err) => {
             tracing::warn!(change = %id, error = %err, "the revoke waits for a person: its files could not be read");
             return change;
         }
     };
-    let narrowed = match load_manifest_data(&gitea, &pr, project, Some(&files)).await {
+    let narrowed = match load_manifest_data(&shako, &pr, project, Some(&files)).await {
         Ok(Some(ManifestData {
             base_envelope: Some(base),
             head_envelope: Some(head),
@@ -2962,7 +2962,7 @@ pub(crate) async fn merge_if_narrowing(
         return change;
     };
     let path = file.path.clone();
-    merge_if_only(state, &gitea, &pr, &[path.as_str()], message, change).await
+    merge_if_only(state, &shako, &pr, &[path.as_str()], message, change).await
 }
 
 /// A person decides a Change with their own Portal session; a bearer token is a workload's or an
@@ -3092,17 +3092,17 @@ pub async fn reject_change_for(
             .err()
             .unwrap_or(found)
     };
-    let (gitea, pr_number) = resolve_change(state, project, id).map_err(hide)?;
-    let gitea: &crate::git::GiteaClient = &gitea;
+    let (shako, pr_number) = resolve_change(state, project, id).map_err(hide)?;
+    let shako: &crate::forge::ShakoClient = &shako;
 
-    let pr = gitea
+    let pr = shako
         .pull_request(pr_number)
         .await
         .map_err(|e| hide(e.into()))?;
-    require_change(state, gitea, project, id, &pr)
+    require_change(state, shako, project, id, &pr)
         .await
         .map_err(hide)?;
-    let data = load_manifest_data(gitea, &pr, project, None)
+    let data = load_manifest_data(shako, &pr, project, None)
         .await
         .map_err(hide)?
         .ok_or_else(|| {
@@ -3112,7 +3112,7 @@ pub async fn reject_change_for(
         })?;
     // The proposer withdraws their own change: closing never merges, so the second-person rule
     // of approval does not hold it open (T-6535). Anyone else rejects with `approve` (PF-50).
-    let withdrawn = proposed_by(gitea, &pr, identity).await;
+    let withdrawn = proposed_by(shako, &pr, identity).await;
     if !withdrawn {
         approves?;
         may_approve(state, identity, project, &data)?;
@@ -3126,12 +3126,12 @@ pub async fn reject_change_for(
         Some(reason) => format!("Change proposal rejected in the Portal by {rejecter}: {reason}"),
         None => format!("Change proposal rejected in the Portal by {rejecter}"),
     };
-    gitea
+    shako
         .review(pr_number, ReviewEvent::Comment, &comment)
         .await?;
     // Closed, not merged, is what the list reads back as Rejected; a comment alone would leave
     // the proposal pending.
-    gitea.close_pull_request(pr_number).await?;
+    shako.close_pull_request(pr_number).await?;
 
     // The run that proposed a rejected application stops waiting for it (T-3015). An
     // organization Change (`chg-org-`) never publishes an application, and its number counts
@@ -3165,7 +3165,7 @@ pub async fn reject_change_for(
         Lane::Yellow
     };
 
-    let change_meta = change_meta(state, gitea, pr_number, project);
+    let change_meta = change_meta(state, shako, pr_number, project);
     let change_status = ChangeStatus::new(lane, ChangePhase::Rejected, plan.summary)
         .in_repository(&pr.repository)
         .proposed_through(&pr.body)
@@ -3370,7 +3370,7 @@ mod tests {
             "spec": {"audience": "public", "publish": {"ckan": {}}}
         }))
         .unwrap();
-        let file = |deleted| crate::git::gitea::ChangedFile {
+        let file = |deleted| crate::forge::shako::ChangedFile {
             path: "projects/p/endpoints/air.yaml".into(),
             deleted,
             added: false,
@@ -3393,7 +3393,7 @@ mod tests {
             "spec": {"visibility": "public"}
         }))
         .unwrap();
-        let file = crate::git::gitea::ChangedFile {
+        let file = crate::forge::shako::ChangedFile {
             path: "projects/p/apps/map.yaml".into(),
             deleted: false,
             added: false,
@@ -3651,18 +3651,18 @@ mod tests {
     #[tokio::test]
     async fn a_change_closed_while_the_list_is_read_leaves_the_list_instead_of_failing_it() {
         let server = MockServer::start().await;
-        let client = GiteaClient::new(
+        let client = ShakoClient::new(
             server.uri().parse().unwrap(),
             "test-owner",
             "test-repo",
             "token-xyz",
         )
         .unwrap();
-        let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+        let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
         let pull = |number: u64, branch: &str| {
             json!({
                 "number": number,
-                "html_url": format!("https://gitea.example.sk/pulls/{number}"),
+                "html_url": format!("https://shako.example.sk/pulls/{number}"),
                 "state": "open",
                 "title": "create ContextSpace mobility",
                 "head": { "ref": branch },
@@ -3735,21 +3735,21 @@ mod tests {
     #[tokio::test]
     async fn the_list_reads_a_bounded_number_of_forge_calls_per_change_and_no_tree() {
         let server = MockServer::start().await;
-        let client = GiteaClient::new(
+        let client = ShakoClient::new(
             server.uri().parse().unwrap(),
             "test-owner",
             "test-repo",
             "token-xyz",
         )
         .unwrap();
-        let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+        let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
         let manifest_path = "projects/ovzdusie/spaces/air/endpoints/air-quality.yaml";
         Mock::given(method("GET"))
             .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
             .and(query_param("state", "open"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
                 "number": 7,
-                "html_url": "https://gitea.example.sk/pulls/7",
+                "html_url": "https://shako.example.sk/pulls/7",
                 "state": "open",
                 "title": "update Endpoint air-quality",
                 "head": { "ref": "portal/update-endpoint-air-quality-12345678" },
@@ -3824,7 +3824,7 @@ mod tests {
             .and(query_param("state", "open"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
                 "number": 7,
-                "html_url": "https://gitea.example.sk/pulls/7",
+                "html_url": "https://shako.example.sk/pulls/7",
                 "state": "open",
                 "title": "update Endpoint air-quality",
                 "head": { "ref": "portal/update-endpoint-air-quality-12345678", "sha": head },
@@ -3883,14 +3883,14 @@ mod tests {
     }
 
     fn state_on(server: &MockServer) -> AppState {
-        let client = GiteaClient::new(
+        let client = ShakoClient::new(
             server.uri().parse().unwrap(),
             "test-owner",
             "test-repo",
             "token-xyz",
         )
         .unwrap();
-        AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client))
+        AppState::new(Config::for_tests(), None).with_shako(Arc::new(client))
     }
 
     /// Even in one wave the list cost ~1.1 s on dev (p90 1.5 s), and the notification badge asks
@@ -3963,20 +3963,20 @@ mod tests {
     #[tokio::test]
     async fn the_list_reads_its_open_changes_in_one_wave_of_two_round_trips() {
         let server = MockServer::start().await;
-        let client = GiteaClient::new(
+        let client = ShakoClient::new(
             server.uri().parse().unwrap(),
             "test-owner",
             "test-repo",
             "token-xyz",
         )
         .unwrap();
-        let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+        let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
         let slow = std::time::Duration::from_millis(150);
         let pulls: Vec<Value> = (1..=8)
             .map(|n| {
                 json!({
                     "number": n,
-                    "html_url": format!("https://gitea.example.sk/pulls/{n}"),
+                    "html_url": format!("https://shako.example.sk/pulls/{n}"),
                     "state": "open",
                     "title": format!("update Endpoint air-{n}"),
                     "head": { "ref": format!("portal/update-endpoint-air-{n}-1234567{n}") },
@@ -4081,9 +4081,9 @@ mod tests {
     async fn test_approve_checks_role_and_self_approval() {
         let server = MockServer::start().await;
         let base_url = server.uri().parse().unwrap();
-        let client = GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap();
+        let client = ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap();
         let config = Config::for_tests();
-        let state = AppState::new(config, None).with_gitea(Arc::new(client));
+        let state = AppState::new(config, None).with_shako(Arc::new(client));
 
         // 1. Missing role -> 403 Forbidden
         let viewer = test_user("viewer@example.sk", vec!["portal-viewer"]);
@@ -4102,7 +4102,7 @@ mod tests {
             .and(path("/api/v1/repos/test-owner/test-repo/pulls/1"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "number": 1,
-                "html_url": "https://gitea.example.sk/pulls/1",
+                "html_url": "https://shako.example.sk/pulls/1",
                 "state": "open",
                 "title": "create ContextSpace mobility",
                 "head": { "ref": "portal/create-contextspace-mobility-12345678" },
@@ -4162,18 +4162,18 @@ mod tests {
             [(author_commit(), true), (ResponseTemplate::new(500), false)]
         {
             let server = MockServer::start().await;
-            let client = GiteaClient::new(
+            let client = ShakoClient::new(
                 server.uri().parse().unwrap(),
                 "test-owner",
                 "test-repo",
                 "token-xyz",
             )
             .unwrap();
-            let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+            let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
             Mock::given(method("GET"))
                 .and(path("/api/v1/repos/test-owner/test-repo/pulls/1"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                    "number": 1, "html_url": "https://gitea.example.sk/pulls/1", "state": "open",
+                    "number": 1, "html_url": "https://shako.example.sk/pulls/1", "state": "open",
                     "title": "create ContextSpace mobility",
                     "head": { "ref": "portal/create-contextspace-mobility-12345678", "sha": "head-1" },
                     "base": { "ref": "main", "sha": "base-1" },
@@ -4234,15 +4234,15 @@ mod tests {
     async fn test_approve_red_lane_requires_confirm() {
         let server = MockServer::start().await;
         let base_url = server.uri().parse().unwrap();
-        let client = GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap();
+        let client = ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap();
         let config = Config::for_tests();
-        let state = AppState::new(config, None).with_gitea(Arc::new(client));
+        let state = AppState::new(config, None).with_shako(Arc::new(client));
 
         Mock::given(method("GET"))
             .and(path("/api/v1/repos/test-owner/test-repo/pulls/2"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "number": 2,
-                "html_url": "https://gitea.example.sk/pulls/2",
+                "html_url": "https://shako.example.sk/pulls/2",
                 "state": "open",
                 "title": "delete ContextSpace mobility",
                 "head": { "ref": "portal/delete-contextspace-mobility-12345678" },
@@ -4439,20 +4439,20 @@ mod tests {
     /// [`secret_forge`] with the file's status in the change (`added`, `deleted`).
     async fn secret_forge_with(file: &str, content: &str, status: &str) -> (MockServer, AppState) {
         let server = MockServer::start().await;
-        let client = GiteaClient::new(
+        let client = ShakoClient::new(
             server.uri().parse().unwrap(),
             "test-owner",
             "test-repo",
             "token-xyz",
         )
         .unwrap();
-        let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+        let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
         Mock::given(method("GET"))
             .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
             .and(query_param("state", "open"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
                 "number": 9,
-                "html_url": "https://gitea.example.sk/pulls/9",
+                "html_url": "https://shako.example.sk/pulls/9",
                 "state": "open",
                 "title": "add secret github-token",
                 "head": { "ref": "portal/secret-hel-mobility-github-token" },
@@ -4550,13 +4550,13 @@ mod tests {
         );
 
         // The detail, approval and rejection read the headline without a file list in hand.
-        let gitea = state.forge_for("hel-mobility").unwrap();
+        let shako = state.forge_for("hel-mobility").unwrap();
         let pr = PullRequest {
             number: 9,
             head_branch: "portal/secret-hel-mobility-github-token".into(),
             ..PullRequest::default()
         };
-        let data = load_manifest_data(&gitea, &pr, "hel-mobility", None)
+        let data = load_manifest_data(&shako, &pr, "hel-mobility", None)
             .await
             .unwrap()
             .expect("a secret change has a headline");
@@ -4566,7 +4566,7 @@ mod tests {
         );
         assert_eq!(data.operation, Operation::Create);
         // A secrets file of another project heads nothing here.
-        assert!(load_manifest_data(&gitea, &pr, "other", None)
+        assert!(load_manifest_data(&shako, &pr, "other", None)
             .await
             .unwrap()
             .is_none());
@@ -4647,10 +4647,10 @@ mod tests {
         let (_server, state) = secret_forge(file, SEALED).await;
         data_source_grant(&state, "approver@hel.fi", &["approve"], None);
         data_source_grant(&state, "air@hel.fi", &["approve"], Some("air"));
-        let gitea = state.forge_for("hel-mobility").unwrap();
+        let shako = state.forge_for("hel-mobility").unwrap();
         let walk = |who: &'static str| {
-            let (state, gitea, pr) = (state.clone(), gitea.clone(), pr.clone());
-            async move { approve_every_file(&state, &person(who), "hel-mobility", &gitea, &pr).await }
+            let (state, shako, pr) = (state.clone(), shako.clone(), pr.clone());
+            async move { approve_every_file(&state, &person(who), "hel-mobility", &shako, &pr).await }
         };
         assert!(walk("approver@hel.fi").await.is_ok());
         assert!(matches!(walk("air@hel.fi").await, Err(ApiError::Denied(_))));
@@ -4661,14 +4661,14 @@ mod tests {
 
         let (_plain, state) = secret_forge(file, "github-token:\n  token: hunter2\n").await;
         data_source_grant(&state, "approver@hel.fi", &["approve"], None);
-        let gitea = state.forge_for("hel-mobility").unwrap();
+        let shako = state.forge_for("hel-mobility").unwrap();
         assert!(
             matches!(
                 approve_every_file(
                     &state,
                     &person("approver@hel.fi"),
                     "hel-mobility",
-                    &gitea,
+                    &shako,
                     &pr
                 )
                 .await,
@@ -4695,12 +4695,12 @@ mod tests {
         for content in [fake_sops, half_sealed, manifest] {
             let (_server, state) = secret_forge(file, content).await;
             data_source_grant(&state, "approver@hel.fi", &["approve", "delete"], None);
-            let gitea = state.forge_for("hel-mobility").unwrap();
+            let shako = state.forge_for("hel-mobility").unwrap();
             let answer = approve_every_file(
                 &state,
                 &person("approver@hel.fi"),
                 "hel-mobility",
-                &gitea,
+                &shako,
                 &pr,
             )
             .await;
@@ -4715,18 +4715,18 @@ mod tests {
         let (_server, state) = secret_forge_with(file, fake_sops, "deleted").await;
         data_source_grant(&state, "approver@hel.fi", &["approve", "delete"], None);
         data_source_grant(&state, "air@hel.fi", &["approve"], None);
-        let gitea = state.forge_for("hel-mobility").unwrap();
+        let shako = state.forge_for("hel-mobility").unwrap();
         assert!(approve_every_file(
             &state,
             &person("approver@hel.fi"),
             "hel-mobility",
-            &gitea,
+            &shako,
             &pr
         )
         .await
         .is_ok());
         assert!(matches!(
-            approve_every_file(&state, &person("air@hel.fi"), "hel-mobility", &gitea, &pr).await,
+            approve_every_file(&state, &person("air@hel.fi"), "hel-mobility", &shako, &pr).await,
             Err(ApiError::Denied(_))
         ));
     }

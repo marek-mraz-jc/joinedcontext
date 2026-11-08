@@ -18,7 +18,7 @@ use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
@@ -338,9 +338,9 @@ async fn portal_state_with(
     let config = config(&proxy.uri());
     let mut state = AppState::new(config.clone(), None).with_mirror(mirror(provider));
     if let Some(forge) = forge {
-        let client = GiteaClient::new(forge.uri().parse().expect("url"), "org", "manifests", "t")
+        let client = ShakoClient::new(forge.uri().parse().expect("url"), "org", "manifests", "t")
             .expect("a forge client");
-        state = state.with_gitea(Arc::new(client));
+        state = state.with_shako(Arc::new(client));
     }
     let app = server::app(state.clone());
     let cookie = session_cookie(&config, STEWARD);
@@ -2453,11 +2453,11 @@ async fn preview_errors_and_call_function_answer_the_model_as_tool_results() {
         .mount(&proxy)
         .await;
     mount_types(&proxy).await;
-    let client = GiteaClient::new(forge.uri().parse().expect("url"), "org", "manifests", "t")
+    let client = ShakoClient::new(forge.uri().parse().expect("url"), "org", "manifests", "t")
         .expect("a forge client");
     let state = AppState::new(config.clone(), Some(oidc))
         .with_mirror(mirror("anthropic"))
-        .with_gitea(Arc::new(client));
+        .with_shako(Arc::new(client));
     let app = server::app(state.clone());
     let cookie = session_cookie(&config, STEWARD);
 

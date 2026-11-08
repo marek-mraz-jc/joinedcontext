@@ -12,8 +12,8 @@ use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{Status, API_VERSION};
 use joinedcontext_portal::state::AppState;
 
-fn state(gitea: &wiremock::MockServer, verification: &str) -> AppState {
-    let state = common::state_on(gitea);
+fn state(shako: &wiremock::MockServer, verification: &str) -> AppState {
+    let state = common::state_on(shako);
     let mut organization = envelope(
         "Organization",
         "hel",
@@ -93,16 +93,16 @@ async fn propose(state: &AppState, hostnames: Value) -> common::Answer {
 
 #[tokio::test]
 async fn a_name_of_the_verified_domain_is_proposed() {
-    let gitea = forge().await;
-    let state = state(&gitea, "verified");
+    let shako = forge().await;
+    let state = state(&shako, "verified");
     let answer = propose(&state, json!(["air.hel.fi"])).await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
 }
 
 #[tokio::test]
 async fn a_name_outside_the_domain_or_held_by_another_app_is_refused_before_a_change() {
-    let gitea = forge().await;
-    let state = state(&gitea, "verified");
+    let shako = forge().await;
+    let state = state(&shako, "verified");
     for (names, says) in [
         (
             json!(["air.example.com"]),
@@ -125,8 +125,8 @@ async fn a_name_outside_the_domain_or_held_by_another_app_is_refused_before_a_ch
 
 #[tokio::test]
 async fn no_name_is_taken_while_the_domain_is_not_verified() {
-    let gitea = forge().await;
-    let state = state(&gitea, "pending");
+    let shako = forge().await;
+    let state = state(&shako, "pending");
     let answer = propose(&state, json!(["air.hel.fi"])).await;
     assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
     assert!(answer.text.contains("verified first"), "{}", answer.text);

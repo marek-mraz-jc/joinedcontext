@@ -384,17 +384,17 @@ pub async fn open_project(
     may_open(&state, identity)?;
 
     let name = request.name.trim().to_owned();
-    let gitea = state
-        .gitea
+    let shako = state
+        .shako
         .as_deref()
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    new_project_name(&state, gitea, &name).await?;
+    new_project_name(&state, shako, &name).await?;
 
     let mut files = open_project_files(&state, identity, &request, &name)?;
     // Layout 2 (CC-85, PF-86): the project gets a repository of its own, seeded here, and the
     // organization's Change carries its registry entry in place of the project's own file.
     let own_repository = if state.mirror.layout() == 2 {
-        let repository = gitea.for_project(&name, &name);
+        let repository = shako.for_project(&name, &name);
         seed_project_repository(&repository, identity, &name, &mut files).await?;
         Some(repository)
     } else {
@@ -440,10 +440,10 @@ pub async fn open_project(
     // message says so (PF-66, PF-57).
     if lets_anyone_open(&state) && state.branding().validation == crate::branding::Validation::Lax {
         let (_, number) = crate::api::changes::parse_change_ref(&change.metadata.name)?;
-        gitea
+        shako
             .merge(
                 number,
-                crate::git::MergeStyle::Squash,
+                crate::forge::MergeStyle::Squash,
                 &format!(
                     "Merge change proposal {}: open project {name}\n\nMerged by the platform: \
                      the organization lets anyone open a project and this installation runs \
@@ -476,7 +476,7 @@ pub async fn open_project(
 /// project's cooling period, not proposed by an open change.
 pub(crate) async fn new_project_name(
     state: &AppState,
-    gitea: &crate::git::GiteaClient,
+    shako: &crate::forge::ShakoClient,
     name: &str,
 ) -> Result<(), ApiError> {
     if !resource::is_dns1123(name) {
@@ -502,14 +502,14 @@ pub(crate) async fn new_project_name(
     }
     // A name a deleted project held stays reserved for the organization's cooling period, so
     // nobody opens a project that inherits another one's URNs, dashboards and links (PF-78).
-    if let Some(free) = reserved_until(state, gitea, name).await {
+    if let Some(free) = reserved_until(state, shako, name).await {
         return Err(ApiError::Conflict(format!(
             "project '{name}' was deleted and its name stays reserved until {} (PF-78)",
             free.format("%Y-%m-%d")
         )));
     }
     // A name reserved by an open change is taken, even though nothing is merged yet (PF-67).
-    let open = gitea.list_pull_requests("open").await?;
+    let open = shako.list_pull_requests("open").await?;
     let reserved = format!("portal/create-project-{name}-");
     if open.iter().any(|pr| pr.head_branch.starts_with(&reserved)) {
         return Err(ApiError::Conflict(format!(
@@ -653,7 +653,7 @@ const VALIDATE_WORKFLOW: &str = include_str!("project-validate.yml");
 /// A repository of that name that is already there is refused, never adopted: somebody else's
 /// history would become the project's. A failure after the repository exists removes it.
 async fn seed_project_repository(
-    repository: &crate::git::GiteaClient,
+    repository: &crate::forge::ShakoClient,
     identity: &crate::auth::session::Identity,
     name: &str,
     files: &mut Vec<(String, String)>,
@@ -692,7 +692,7 @@ async fn seed_project_repository(
         ),
     ];
     let (author_name, author_email) = crate::api::mutate::author_credentials(identity, name);
-    let author = crate::git::Author {
+    let author = crate::forge::Author {
         name: &author_name,
         email: &author_email,
     };
@@ -706,8 +706,7 @@ async fn seed_project_repository(
                 &[],
             )
             .await?;
-        repository.protect_branch("main").await?;
-        repository.let_the_reader_in().await
+        repository.protect_branch("main").await
     }
     .await;
     if let Err(error) = seeded {
@@ -783,13 +782,13 @@ pub async fn duplicate_project(
         .repository_of(&origin)
         .ok_or_else(|| ApiError::NotFound(format!("project '{origin}' not found")))?;
     let name = request.name.trim().to_owned();
-    let gitea = state
-        .gitea
+    let shako = state
+        .shako
         .as_deref()
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    new_project_name(&state, gitea, &name).await?;
+    new_project_name(&state, shako, &name).await?;
 
-    let source = gitea.for_project(&origin_repo, &origin);
+    let source = shako.for_project(&origin_repo, &origin);
     let mut files = open_project_files(
         &state,
         identity,
@@ -803,7 +802,7 @@ pub async fn duplicate_project(
     into_registry_entry(&mut files, &name, &name, Some(&request.parameters))?;
     check_parameters(&source, &origin, &name, &files).await?;
 
-    let copy = gitea.for_project(&name, &name);
+    let copy = shako.for_project(&name, &name);
     if !copy.migrate_repository(&source).await? {
         return Err(ApiError::Conflict(format!(
             "a repository named '{name}' is already in the forge; a duplicate goes only into a \
@@ -827,7 +826,6 @@ pub async fn duplicate_project(
         )
         .await?;
         copy.protect_branch("main").await?;
-        copy.let_the_reader_in().await?;
         let report = crate::api::import::ImportReport {
             created: files.iter().map(|(path, _)| path.clone()).collect(),
             replaced: Vec::new(),
@@ -867,7 +865,7 @@ pub async fn duplicate_project(
 /// for an undeclared parameter, or one that does not fit, is the caller's `400` before anything
 /// is copied (CC-88).
 async fn check_parameters(
-    source: &crate::git::GiteaClient,
+    source: &crate::forge::ShakoClient,
     origin: &str,
     name: &str,
     files: &[(String, String)],
@@ -954,7 +952,7 @@ async fn registered(
     state: &AppState,
     identity: &crate::auth::session::Identity,
     project: &str,
-) -> Result<(std::sync::Arc<crate::git::GiteaClient>, String, Registered), ApiError> {
+) -> Result<(std::sync::Arc<crate::forge::ShakoClient>, String, Registered), ApiError> {
     let missing = || ApiError::NotFound(format!("project '{project}' not found"));
     if !crate::permissions::for_request(state, identity, project).may_read_project() {
         return Err(missing());
@@ -966,13 +964,13 @@ async fn registered(
                 .into(),
         ));
     }
-    let gitea = state
-        .gitea
+    let shako = state
+        .shako
         .clone()
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let base = gitea.default_branch().await?;
+    let base = shako.default_branch().await?;
     let path = format!("projects/{project}.yaml");
-    let file = gitea.get_file(&path, &base).await?.ok_or_else(missing)?;
+    let file = shako.get_file(&path, &base).await?.ok_or_else(missing)?;
     let manifest: Value = serde_norway::from_str(&file.content).map_err(|e| {
         ApiError::Internal(format!("the registry entry {path} does not parse: {e}"))
     })?;
@@ -986,7 +984,7 @@ async fn registered(
         )));
     }
     Ok((
-        gitea,
+        shako,
         base,
         Registered {
             path,
@@ -1000,7 +998,7 @@ async fn registered(
 /// The project's own `project.yaml` at `git_ref` of its local repository, `None` when the
 /// repository holds no such ref or no such file there.
 async fn project_file_at(
-    project_repository: &crate::git::GiteaClient,
+    project_repository: &crate::forge::ShakoClient,
     project: &str,
     git_ref: &str,
 ) -> Result<Option<jc_core::kinds::ProjectSpec>, ApiError> {
@@ -1044,7 +1042,7 @@ pub async fn get_registry_entry(
     State(state): State<AppState>,
     axum::extract::Path(project): axum::extract::Path<String>,
 ) -> Result<Json<RegistryEntry>, ApiError> {
-    let (gitea, _, entry) = registered(&state, &user.0.identity, &project).await?;
+    let (shako, _, entry) = registered(&state, &user.0.identity, &project).await?;
     let git_ref = entry.spec.git_ref.clone().unwrap_or_default();
     let repository = json_of(&entry.spec.repository)?;
     let local_name = entry
@@ -1054,7 +1052,7 @@ pub async fn get_registry_entry(
         .and_then(|repository| repository.name.as_deref());
     let (declarations, tags) = match local_name {
         Some(repo) => {
-            let local = gitea.for_project(repo, &project);
+            let local = shako.for_project(repo, &project);
             let declared = project_file_at(&local, &project, &git_ref)
                 .await?
                 .map(|own| own.parameters)
@@ -1114,7 +1112,7 @@ pub async fn repoint_project(
             "name the ref to run, the parameter values, or both (PF-86)".into(),
         ));
     }
-    let (gitea, base, entry) = registered(&state, identity, &project).await?;
+    let (shako, base, entry) = registered(&state, identity, &project).await?;
     // The registry entry is the organization's manifest of the project: the same rule as editing
     // its title from the organization (PF-86, PF-52).
     crate::permissions::for_request(&state, identity, crate::permissions::ORG_NAMESPACE).check(
@@ -1156,7 +1154,7 @@ pub async fn repoint_project(
     // (CC-86, CC-89).
     if let Some(repo) = proposed.repository.as_ref().and_then(|r| r.name.as_deref()) {
         let git_ref = proposed.git_ref.as_deref().unwrap_or_default();
-        let local = gitea.for_project(repo, &project);
+        let local = shako.for_project(repo, &project);
         let own = project_file_at(&local, &project, git_ref)
             .await?
             .ok_or_else(|| {
@@ -1170,9 +1168,9 @@ pub async fn repoint_project(
     }
 
     let branch = format!("portal/update-project-{project}-registry");
-    let held = crate::api::mutate::turn(&gitea, &branch).await;
+    let held = crate::api::mutate::turn(&shako, &branch).await;
     if let Some(pending) =
-        crate::api::mutate::open_change_on(&state, &gitea, &branch, &project).await?
+        crate::api::mutate::open_change_on(&state, &shako, &branch, &project).await?
     {
         return Err(ApiError::Conflict(format!(
             "a repoint of project '{project}' is already proposed: {}; approve or reject it first",
@@ -1181,16 +1179,16 @@ pub async fn repoint_project(
     }
     let content = serde_norway::to_string(&manifest)
         .map_err(|e| ApiError::Internal(format!("manifest did not serialise: {e}")))?;
-    let branch = crate::api::mutate::create_or_reuse_branch(&gitea, &held, &base).await?;
+    let branch = crate::api::mutate::create_or_reuse_branch(&shako, &held, &base).await?;
     let (author_name, author_email) = crate::api::mutate::author_credentials(identity, &project);
-    gitea
-        .put_file(&crate::git::FileWrite {
+    shako
+        .put_file(&crate::forge::FileWrite {
             path: &entry.path,
             branch: &branch,
             message: &format!("update {}", entry.path),
             content: &content,
             sha: Some(&entry.sha),
-            author: crate::git::Author {
+            author: crate::forge::Author {
                 name: &author_name,
                 email: &author_email,
             },
@@ -1216,13 +1214,13 @@ pub async fn repoint_project(
         entry.path,
         lines.join("\n")
     );
-    let pull = gitea
+    let pull = shako
         .create_pull_request(&branch, &base, &format!("repoint project {project}"), &body)
         .await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(Change::new(
-            crate::api::changes::change_meta(&state, &gitea, pull.number, &project),
+            crate::api::changes::change_meta(&state, &shako, pull.number, &project),
             crate::change::ChangeStatus::new(
                 crate::change::Lane::Red,
                 crate::change::ChangePhase::PendingApproval,
@@ -1260,7 +1258,7 @@ pub(crate) struct Remount<'a> {
 /// that is not YAML, or does not parse, stays as it is. Answers the commit, `None` when nothing
 /// changed.
 pub(crate) async fn remount_copy(
-    copy: &crate::git::GiteaClient,
+    copy: &crate::forge::ShakoClient,
     identity: &crate::auth::session::Identity,
     remount: &Remount<'_>,
 ) -> Result<Option<String>, ApiError> {
@@ -1304,7 +1302,7 @@ pub(crate) async fn remount_copy(
         .change_files(
             "main",
             &remount.message,
-            crate::git::Author {
+            crate::forge::Author {
                 name: &author_name,
                 email: &author_email,
             },
@@ -1395,11 +1393,11 @@ fn remount_manifests(text: &str, remount: &Remount<'_>) -> Option<String> {
 /// would leave grants behind pointing at a project that is gone.
 pub(crate) async fn deletion_plan(
     state: &AppState,
-    gitea: &crate::git::GiteaClient,
+    shako: &crate::forge::ShakoClient,
     project: &str,
     git_ref: &str,
 ) -> Result<Vec<String>, ApiError> {
-    let tree = gitea.list_tree(git_ref).await?;
+    let tree = shako.list_tree(git_ref).await?;
     let prefix = format!("projects/{project}/");
     // Layout 2 holds the project's registry entry instead of its tree (PF-86); the sync
     // archives the project's repository once the entry is gone.
@@ -1532,21 +1530,21 @@ fn cooldown_days(state: &AppState) -> u64 {
 /// history is the record, so the reservation survives a restart and a re-sync of the mirror.
 async fn reserved_until(
     state: &AppState,
-    gitea: &crate::git::GiteaClient,
+    shako: &crate::forge::ShakoClient,
     name: &str,
 ) -> Option<chrono::DateTime<chrono::Utc>> {
     let days = cooldown_days(state);
     if days == 0 {
         return None;
     }
-    let branch = gitea.default_branch().await.ok()?;
+    let branch = shako.default_branch().await.ok()?;
     // The project's own file in layout 1, its registry entry in layout 2 (PF-86).
     let mut removed = None;
     for path in [
         format!("projects/{name}/project.yaml"),
         format!("projects/{name}.yaml"),
     ] {
-        let history = gitea
+        let history = shako
             .list_commits(&branch, &path, 1)
             .await
             .unwrap_or_default();
@@ -1617,43 +1615,43 @@ pub async fn delete_project_for(
         )));
     }
 
-    let gitea = state
-        .gitea
+    let shako = state
+        .shako
         .as_deref()
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let default_branch = gitea.default_branch().await?;
-    let files = deletion_plan(state, gitea, project, &default_branch).await?;
+    let default_branch = shako.default_branch().await?;
+    let files = deletion_plan(state, shako, project, &default_branch).await?;
     if files.is_empty() {
         return Err(missing());
     }
 
     let branch = format!("portal/delete-project-{project}");
-    let held = crate::api::mutate::turn(gitea, &branch).await;
+    let held = crate::api::mutate::turn(shako, &branch).await;
     if let Some(pending) =
-        crate::api::mutate::open_change_on(state, gitea, &branch, project).await?
+        crate::api::mutate::open_change_on(state, shako, &branch, project).await?
     {
         return Err(ApiError::Conflict(format!(
             "deleting project '{project}' is already proposed: {}; approve or reject it first",
             pending.name
         )));
     }
-    let branch = crate::api::mutate::create_or_reuse_branch(gitea, &held, &default_branch).await?;
+    let branch = crate::api::mutate::create_or_reuse_branch(shako, &held, &default_branch).await?;
     let (author_name, author_email) = crate::api::mutate::author_credentials(identity, project);
     // One commit for every file, not a read and a commit per file (F-R2POR3-019). The blob
     // shas are the base's: the forge refuses the commit if the branch holds another version.
     let planned: BTreeSet<&str> = files.iter().map(String::as_str).collect();
-    let deletes: Vec<(String, String)> = gitea
+    let deletes: Vec<(String, String)> = shako
         .list_tree_blobs(&default_branch)
         .await?
         .into_iter()
         .filter(|(path, _)| planned.contains(path.as_str()))
         .collect();
     if !deletes.is_empty() {
-        gitea
+        shako
             .change_files(
                 &branch,
                 &format!("delete project {project} (PF-77)"),
-                crate::git::Author {
+                crate::forge::Author {
                     name: &author_name,
                     email: &author_email,
                 },
@@ -1677,13 +1675,13 @@ pub async fn delete_project_for(
          merges (CC-07). The name stays reserved afterwards (PF-78).",
         files.len()
     );
-    let pull = gitea
+    let pull = shako
         .create_pull_request(&branch, &default_branch, &title, &body)
         .await?;
 
     let summary = crate::change::PlanSummary::new(0, 0, files.len());
     Ok(Change::new(
-        crate::api::changes::change_meta(state, gitea, pull.number, project),
+        crate::api::changes::change_meta(state, shako, pull.number, project),
         crate::change::ChangeStatus::new(
             crate::change::Lane::Red,
             crate::change::ChangePhase::PendingApproval,

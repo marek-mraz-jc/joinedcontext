@@ -9,7 +9,7 @@ use http_body_util::BodyExt;
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
@@ -354,12 +354,12 @@ async fn an_administrators_revoke_proposes_the_account_without_the_grant() {
     Mock::given(method("POST"))
         .and(path(format!("{repo}/pulls")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 7, "html_url": "https://gitea.example.org/pulls/7",
+            "number": 7, "html_url": "https://shako.example.org/pulls/7",
             "state": "open", "mergeable": true, "merged": false
         })))
         .mount(&forge)
         .await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         forge.uri().parse().expect("url"),
         "owner",
         "config",
@@ -368,7 +368,7 @@ async fn an_administrators_revoke_proposes_the_account_without_the_grant() {
     .expect("client");
     let config = Config::for_tests();
     let state = seeded(
-        AppState::new(config.clone(), None).with_gitea(Arc::new(client)),
+        AppState::new(config.clone(), None).with_shako(Arc::new(client)),
         two_grants(),
     );
     // Ana holds no pipeline-admin: a revoke is measured against the account it replaces, not
@@ -383,7 +383,7 @@ async fn an_administrators_revoke_proposes_the_account_without_the_grant() {
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
-    assert!(body.contains("gitea.example.org/pulls/7"), "{body}");
+    assert!(body.contains("shako.example.org/pulls/7"), "{body}");
     let put = forge
         .received_requests()
         .await

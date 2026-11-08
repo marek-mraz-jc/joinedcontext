@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::reconciler::Syncer;
 use joinedcontext_portal::store::Mirror;
 use serde_json::json;
@@ -78,7 +78,7 @@ async fn organization(server: &MockServer) {
 }
 
 fn syncer(server: &MockServer) -> (Syncer, Arc<Mirror>) {
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().expect("url"),
         "test-owner",
         "test-repo",

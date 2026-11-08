@@ -25,14 +25,14 @@ fn approver() -> Identity {
 async fn a_workspace_brought_back_is_listed_and_read_with_its_name() {
     let server = forge().await;
     let pull = json!({
-        "number": 5, "html_url": "https://gitea.example/pulls/5", "state": "open",
+        "number": 5, "html_url": "https://shako.example/pulls/5", "state": "open",
         "title": "workspace air-v2: Air", "head": { "ref": "workspace/air-v2" }, "base": { "ref": "main" },
         "created_at": "2026-09-18T10:00:00Z",
         "user": { "login": "jana", "full_name": "Jana", "email": "jana@hel.fi" },
         "mergeable": true, "merged": false
     });
     let other = json!({
-        "number": 6, "html_url": "https://gitea.example/pulls/6", "state": "open",
+        "number": 6, "html_url": "https://shako.example/pulls/6", "state": "open",
         "title": "someone's branch", "head": { "ref": "feature/x" }, "base": { "ref": "main" },
         "created_at": "2026-09-18T11:00:00Z", "user": { "login": "x" }, "mergeable": true, "merged": false
     });

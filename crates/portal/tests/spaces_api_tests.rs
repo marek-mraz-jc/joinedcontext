@@ -20,8 +20,8 @@ const SPACES: &str = "/api/v1/projects/doprava/spaces";
 /// `wide@hel.fi` proposes and reads spaces across the organization; `narrow@hel.fi` does the
 /// same in `doprava` alone. `helsinki` already holds a space pinned to `doprava-mhd`, the
 /// segment `doprava`'s `mhd` would render.
-fn state_with(gitea: &MockServer) -> AppState {
-    let state = common::state_on(gitea);
+fn state_with(shako: &MockServer) -> AppState {
+    let state = common::state_on(shako);
     state.mirror.upsert(envelope(
         "Role",
         "space-editor",
@@ -70,8 +70,8 @@ fn detail(body: &str) -> String {
 
 #[tokio::test]
 async fn a_name_another_project_holds_is_refused_and_the_holder_is_named_only_to_a_reader() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
 
     let seen = send(&state, person("wide"), "POST", SPACES, Some(space("mhd"))).await;
     assert_eq!(seen.status, StatusCode::FORBIDDEN, "{}", seen.text);
@@ -91,8 +91,8 @@ async fn a_name_another_project_holds_is_refused_and_the_holder_is_named_only_to
 
 #[tokio::test]
 async fn the_dry_run_refuses_the_taken_name_and_passes_a_free_one() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
 
     let checked = send(
         &state,
@@ -123,8 +123,8 @@ async fn the_dry_run_refuses_the_taken_name_and_passes_a_free_one() {
 
 #[tokio::test]
 async fn a_project_may_still_update_its_own_space_of_that_name() {
-    let gitea = forge().await;
-    let state = state_with(&gitea);
+    let shako = forge().await;
+    let state = state_with(&shako);
     state.mirror.upsert(envelope(
         "ContextSpace",
         "vlaky",
@@ -147,15 +147,15 @@ async fn a_project_may_still_update_its_own_space_of_that_name() {
 /// the single-manifest door (T-2561).
 #[tokio::test]
 async fn an_import_carrying_a_taken_segment_is_refused_the_same_way() {
-    let gitea = forge().await;
+    let shako = forge().await;
     Mock::given(method("GET"))
         .and(path_regex(format!("^{}/git/trees/.*", common::REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "tree": [], "truncated": false,
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&gitea);
+    let state = state_with(&shako);
     let import = "/api/v1/projects/doprava/import?dryRun=All";
 
     let taken = send(&state, person("narrow"), "POST", import, Some(space("mhd"))).await;

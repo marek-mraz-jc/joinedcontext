@@ -3509,16 +3509,16 @@ mod the_registry_a_run_reaches {
 // ---------------------------------------------------------------------------------------------
 
 /// A forge whose public address is https, as a clone address has to be (AP-02).
-fn forge(server: &wiremock::MockServer) -> Arc<joinedcontext_portal::git::GiteaClient> {
-    let mut gitea = joinedcontext_portal::git::GiteaClient::new(
+fn forge(server: &wiremock::MockServer) -> Arc<joinedcontext_portal::forge::ShakoClient> {
+    let mut shako = joinedcontext_portal::forge::ShakoClient::new(
         server.uri().parse().expect("a url"),
         "joinedcontext",
         "configuration",
         "forge-token",
     )
     .expect("a client");
-    gitea.public_base = "https://forge.example/".parse().expect("a url");
-    Arc::new(gitea)
+    shako.public_base = "https://forge.example/".parse().expect("a url");
+    Arc::new(shako)
 }
 
 fn static_body(app: &str) -> Value {
@@ -3568,7 +3568,7 @@ async fn a_static_application_run_lives_in_its_own_repository() {
     let config = config();
     let state = AppState::new(config.clone(), None)
         .with_mirror(mirror(Some(builder_profile_spec())))
-        .with_gitea(forge(&server));
+        .with_shako(forge(&server));
     let app = server::app(state);
     let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
 
@@ -3617,7 +3617,7 @@ async fn a_static_run_links_its_github_copy_beside_the_forge() {
     let server = wiremock::MockServer::start().await;
     let config = config();
     let github =
-        joinedcontext_portal::git::github_mirror::GithubMirror::from_env(|name| match name {
+        joinedcontext_portal::forge::github_mirror::GithubMirror::from_env(|name| match name {
             "JC_APP_MIRROR_GITHUB_OWNER" => Some("hel-apps".to_owned()),
             "JC_APP_MIRROR_GITHUB_TOKEN" => Some("ghp_never_shown".to_owned()),
             _ => None,
@@ -3626,7 +3626,7 @@ async fn a_static_run_links_its_github_copy_beside_the_forge() {
         .expect("on");
     let state = AppState::new(config.clone(), None)
         .with_mirror(mirror(Some(builder_profile_spec())))
-        .with_gitea(forge(&server))
+        .with_shako(forge(&server))
         .with_github_mirror(Arc::new(github));
     let app = server::app(state);
     let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
@@ -3678,7 +3678,7 @@ async fn a_static_run_with_no_commit_is_not_published() {
     let config = config();
     let state = AppState::new(config.clone(), None)
         .with_mirror(mirror(Some(builder_profile_spec())))
-        .with_gitea(forge(&server));
+        .with_shako(forge(&server));
     let run = a_static_run(AgentRunStatus::Previewing);
     state.agents.create_run(&run).await.expect("a run");
     let app = server::app(state.clone());
@@ -3750,7 +3750,7 @@ async fn a_static_run_whose_branch_holds_no_application_is_not_published() {
     let config = config();
     let state = AppState::new(config.clone(), None)
         .with_mirror(mirror(Some(builder_profile_spec())))
-        .with_gitea(forge(&server));
+        .with_shako(forge(&server));
     let run = a_static_run(AgentRunStatus::Previewing);
     state.agents.create_run(&run).await.expect("a run");
     let app = server::app(state.clone());
@@ -3806,7 +3806,7 @@ async fn approving_the_change_merges_the_applications_repository_at_the_publishe
     let config = config();
     let state = AppState::new(config.clone(), None)
         .with_mirror(mirror(Some(builder_profile_spec())))
-        .with_gitea(forge(&server));
+        .with_shako(forge(&server));
     let merged = a_static_run(AgentRunStatus::AwaitingApproval);
     let refused = a_static_run(AgentRunStatus::AwaitingApproval);
     for run in [&merged, &refused] {
@@ -3992,7 +3992,7 @@ async fn a_change_closed_on_the_forge_ends_its_waiting_run() {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     let server = MockServer::start().await;
-    let state = AppState::new(config(), None).with_gitea(forge(&server));
+    let state = AppState::new(config(), None).with_shako(forge(&server));
     let closed = waiting_on(&state, 5).await;
     let merged = waiting_on(&state, 6).await;
     let open = waiting_on(&state, 7).await;

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::ops::workspaces::{mirror_of, Opening, Scope};
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::state::AppState;
@@ -116,14 +116,14 @@ async fn world(open: bool, branch_exists: bool) -> (MockServer, AppState) {
     file(&server, "workspace/bikes-v2", c, &pipeline("c", "5m")).await;
     file(&server, "abc", gone, &pipeline("gone", "1h")).await;
 
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().unwrap(),
         "test-owner",
         "test-repo",
         "t",
     )
     .unwrap();
-    let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
     for (name, period) in [("a", "60s"), ("b", "60s"), ("gone", "1h")] {
         state.mirror.upsert(envelope(name, period));
     }

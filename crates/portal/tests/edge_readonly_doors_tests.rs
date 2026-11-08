@@ -27,7 +27,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
@@ -211,14 +211,14 @@ async fn a_history_is_a_read_of_one_project_and_of_as_many_commits_as_it_serves(
         }])))
         .mount(&forge)
         .await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         forge.uri().parse().expect("a url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("a client");
-    let state = state_with_two_projects().with_gitea(Arc::new(client));
+    let state = state_with_two_projects().with_shako(Arc::new(client));
 
     // A caller no binding covers, and a name that could not be a project.
     for (who, project) in [
