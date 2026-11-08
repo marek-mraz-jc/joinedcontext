@@ -120,13 +120,14 @@ impl Store for MemoryStore {
     }
 
     fn list_publishers<'a>(&'a self, ctx: &'a RequestCtx) -> BoxFuture<'a, Result<Vec<Publisher>>> {
-        let list = self
+        let mut list: Vec<Publisher> = self
             .read_inner()
             .publishers
             .iter()
             .filter(|((oid, cid, _), _)| *oid == ctx.org_id && *cid == ctx.catalogue_id)
             .map(|(_, p)| p.clone())
             .collect();
+        list.sort_by(|a, b| a.name.cmp(&b.name));
         Box::pin(std::future::ready(Ok(list)))
     }
 
@@ -536,7 +537,7 @@ impl Store for MemoryStore {
         ctx: &'a RequestCtx,
         source_id: Option<&'a str>,
     ) -> BoxFuture<'a, Result<Vec<HarvestRun>>> {
-        let list = self
+        let mut list: Vec<HarvestRun> = self
             .read_inner()
             .harvest_runs
             .iter()
@@ -547,6 +548,8 @@ impl Store for MemoryStore {
             })
             .map(|(_, r)| r.clone())
             .collect();
+        // Newest first, as the Postgres store orders them.
+        list.sort_by_key(|r| std::cmp::Reverse(r.started_at));
         Box::pin(std::future::ready(Ok(list)))
     }
 
