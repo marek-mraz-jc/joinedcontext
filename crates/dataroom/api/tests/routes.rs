@@ -2990,3 +2990,302 @@ async fn a_missing_default_catalogue_is_not_found() {
     assert_eq!(a.status, StatusCode::NOT_FOUND);
     assert!(a.body.contains("default catalogue not found"), "{}", a.body);
 }
+
+#[tokio::test]
+async fn solr_local_parameters_in_a_query_are_refused_everywhere() {
+    let w = world().await;
+    let app = &w.app;
+    let a = get(app, "/api/3/action/package_search?q=%7B%21lucene%7Dx", None).await;
+    assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", a.body);
+    assert!(ckan_error(&a)["q"][0]
+        .as_str()
+        .unwrap()
+        .contains("Solr local parameters"));
+    let a = get(app, "/api/v1/catalogue?q=%7B%21lucene%7Dx", None).await;
+    assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", a.body);
+    // The pages answer an empty result rather than an error page.
+    for uri in [
+        "/dataset?q=%7B%21lucene%7Dx",
+        "/organization/city?q=%7B%21lucene%7Dx",
+    ] {
+        let a = get(app, uri, None).await;
+        assert_eq!(a.status, StatusCode::OK, "{uri}");
+        assert!(!a.body.contains("/dataset/open\""), "{uri} lists nothing");
+    }
+}
+
+#[tokio::test]
+async fn edge_answers_of_feeds_odata_pages_and_ckan() {
+    let w = world().await;
+    let app = &w.app;
+    let ctx = w.admin_ctx();
+    // A publisher feed by the publisher's id, beside another publisher's dataset; ties in the
+    // modification time are ordered by name.
+    w.store
+        .upsert_publisher(&ctx, publisher("dept", &[]))
+        .await
+        .unwrap();
+    w.store
+        .upsert_dataset(&ctx, dataset("dept-data", "dept", "public", 3))
+        .await
+        .unwrap();
+    w.store
+        .upsert_dataset(&ctx, dataset("also-open", "city", "public", 2))
+        .await
+        .unwrap();
+    let a = get(app, "/publisher/pub-city/catalog.ttl", None).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert!(
+        a.body.contains("open.csv") && !a.body.contains("dept-data.csv"),
+        "{}",
+        a.body
+    );
+    let a = get(app, "/feeds/organization/pub-city.atom", None).await;
+    let also = a.body.find("/dataset/also-open<").unwrap();
+    let open = a.body.find("/dataset/open<").unwrap();
+    assert!(also < open, "same time: by name");
+    let a = get(app, "/feeds/tag/ovzdusie.atom", None).await;
+    assert!(a.body.find("/dataset/also-open<").unwrap() < a.body.find("/dataset/open<").unwrap());
+    let a = send(
+        app,
+        Method::GET,
+        "/catalog.ttl",
+        None,
+        &[(
+            "accept-profile",
+            "<https://data.slovensko.sk/def/dcat-ap-sk/2.0>",
+        )],
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(a.status, StatusCode::OK);
+    assert!(!a.header("content-profile").is_empty());
+
+    // OData: the service root and paths without an entity set are not supported; a bad skip
+    // token is refused; a long set pages with a nextLink.
+    for uri in [
+        "/odata/v4/",
+        "/odata/v4/$count",
+        "/odata/v4/Datasets('pkg-open')/Distributions",
+        "/odata/v4/Datasets?$skiptoken=garbage",
+    ] {
+        let a = get(app, uri, None).await;
+        assert!(a.status.is_client_error(), "{uri}: {} {}", a.status, a.body);
+    }
+    for i in 0..101 {
+        let mut ds = dataset(&format!("bulk-{i:03}"), "city", "public", 1);
+        ds.distributions.truncate(1);
+        w.store.upsert_dataset(&ctx, ds).await.unwrap();
+    }
+    let a = get(app, "/odata/v4/Datasets", None).await;
+    let v = a.json();
+    assert_eq!(v["value"].as_array().unwrap().len(), 100);
+    let next = v["@odata.nextLink"].as_str().unwrap().to_owned();
+    assert!(next.starts_with("/odata/v4/Datasets?$skiptoken="), "{next}");
+    let a = get(app, &next, None).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert!(
+        !a.json()["value"].as_array().unwrap().is_empty(),
+        "{}",
+        a.body
+    );
+
+    // CKAN: a failing view lookup leaves package_show without views, a failing name check
+    // in package_create refuses.
+    w.store.fail(&["list_resource_views"]);
+    let a = get(app, "/api/3/action/package_show?id=open", None).await;
+    assert_eq!(a.status, StatusCode::OK);
+    let a = get(app, "/dataset/open", None).await;
+    assert_eq!(a.status, StatusCode::OK);
+    w.store.heal();
+    w.store.fail(&["get_dataset"]);
+    let a = ckan(
+        app,
+        "package_create",
+        Some("tok-editor"),
+        json!({"name": "new-one", "owner_org": "city"}),
+    )
+    .await;
+    assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", a.body);
+    w.store.heal();
+    // A JSON body that is not an object carries no id.
+    let a = send(
+        app,
+        Method::POST,
+        "/api/3/action/package_patch?id=open",
+        Some("tok-editor"),
+        &[],
+        Body::from("[1]"),
+    )
+    .await;
+    assert_eq!(ckan_error(&a)["id"][0], "Missing value", "{}", a.body);
+    let a = ckan(app, "resource_patch", Some("tok-editor"), json!({"id": "res-open-0", "name": "x", "name_translated": {"sk": "Preložené", "en": "Translated"}})).await;
+    assert_eq!(
+        a.json()["result"]["name"],
+        "Preložené",
+        "an explicit per-language map wins: {}",
+        a.body
+    );
+    w.store.fail(&["get_publisher"]);
+    let a = ckan(app, "resource_view_list", None, json!({"id": "res-open-0"})).await;
+    assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR);
+    w.store.heal();
+
+    // allowed surfaces a failing lookup; the default catalogue lookup can fail too.
+    w.store.fail(&["get_dataset"]);
+    let a = get(
+        app,
+        "/api/v1/allowed?operation=dataset.get&object=open",
+        None,
+    )
+    .await;
+    assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", a.body);
+    w.store.heal();
+    w.store.fail(&["get_catalogue"]);
+    let a = send(
+        app,
+        Method::GET,
+        "/about",
+        None,
+        &[("host", "localhost")],
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR);
+    w.store.heal();
+
+    // Pages: a language cookie and Accept-Language pick the language.
+    let a = send(
+        app,
+        Method::GET,
+        "/about",
+        None,
+        &[("cookie", "ckan_lang=en"), ("accept-language", "en")],
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(a.status, StatusCode::OK);
+    assert!(a.body.contains("lang=\"en\""), "{}", &a.body[..400]);
+}
+
+#[tokio::test]
+async fn mounting_at_the_root_is_the_plain_router() {
+    let w = world_with(|s| mount("/", s)).await;
+    let a = get(&w.app, "/", None).await;
+    assert_eq!(a.status, StatusCode::OK);
+    let a = get(&w.app, "/organization/old", None).await;
+    assert_eq!(a.header("location"), "/organization/city");
+}
+
+#[tokio::test]
+async fn a_domain_that_is_no_header_value_never_becomes_a_redirect() {
+    let w = world_with(|s| {
+        router(s.with_installation_branding(BrandingBlock {
+            domain: "bad\u{1}domain".into(),
+            ..BrandingBlock::default()
+        }))
+    })
+    .await;
+    let a = get(&w.app, "/user/login", None).await;
+    assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", a.body);
+    assert!(a.body.contains("redirect target is not a valid URL"));
+}
+
+#[tokio::test]
+async fn odata_refuses_what_it_does_not_serve() {
+    let w = world().await;
+    for (uri, status, says) in [
+        (
+            "/odata/v4/$batch",
+            StatusCode::NOT_IMPLEMENTED,
+            "resource path",
+        ),
+        (
+            "/odata/v4/Datasets/$ref",
+            StatusCode::NOT_IMPLEMENTED,
+            "navigation or nested segment",
+        ),
+        (
+            "/odata/v4/Datasets(id='pkg-open')",
+            StatusCode::NOT_IMPLEMENTED,
+            "navigation or nested segment",
+        ),
+        (
+            "/odata/v4/Datasets('pkg-open')/name",
+            StatusCode::NOT_IMPLEMENTED,
+            "navigation or nested segment",
+        ),
+        (
+            "/odata/v4/Datasets(true)",
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "key must be string or integer",
+        ),
+        (
+            "/odata/v4/Datasets/$export?$skiptoken=garbage",
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "not one this service wrote",
+        ),
+        (
+            "/odata/v4/Datasets?$orderby=distributions",
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Unresolved",
+        ),
+        (
+            "/odata/v4/$crossjoin(Datasets)",
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "CrossJoin",
+        ),
+    ] {
+        let a = get(&w.app, uri, None).await;
+        assert_eq!(a.status, status, "{uri}: {}", a.body);
+        assert!(a.body.contains(says), "{uri}: {}", a.body);
+        assert_eq!(a.header("content-type"), "application/problem+json");
+    }
+    // An unknown entity set is not found, whatever the suffix.
+    for uri in [
+        "/odata/v4/Nothing/$export",
+        "/odata/v4/Nothing/$allowed?op=read",
+    ] {
+        assert_eq!(
+            get(&w.app, uri, None).await.status,
+            StatusCode::NOT_FOUND,
+            "{uri}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn unknown_datasets_maps_without_a_platform_service_and_refused_patches() {
+    let w = world_with(router).await;
+    let app = &w.app;
+    for uri in ["/dataset/ghost", "/dataset/ghost.ttl"] {
+        let a = get(app, uri, None).await;
+        assert_eq!(a.status, StatusCode::NOT_FOUND, "{uri}");
+        assert!(
+            a.body.contains("dataset 'ghost' not found"),
+            "{uri}: {}",
+            a.body
+        );
+    }
+    // Without a platform domain no map service is on the platform, so there is no map.
+    for uri in ["/map/open", "/map/open/res-open-1"] {
+        let a = get(app, uri, None).await;
+        assert_eq!(a.status, StatusCode::NOT_FOUND, "{uri}");
+        assert!(a.body.contains("map not available"), "{uri}: {}", a.body);
+    }
+    let a = ckan(
+        app,
+        "package_patch",
+        Some("tok-member"),
+        json!({"id": "open", "title": "Hijacked"}),
+    )
+    .await;
+    assert_eq!(a.status, StatusCode::FORBIDDEN, "{}", a.body);
+    let ds = w
+        .store
+        .get_dataset(&w.admin_ctx(), "open")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(ds.title.get("sk").map(String::as_str), Some("Hijacked"));
+}
