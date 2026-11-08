@@ -307,10 +307,10 @@ spec:
         de: "Angehakt wird ein öffentlicher Endpunkt von selbst ein Datensatz des Katalogs; sonst führt ihn kein Katalog."
     catalog.datasets:
       help:
-        en: "Empty, a public endpoint is one dataset under its own name; each entry here is a dataset of its own, holding only the types and rows it names."
-        sk: "Ak je prázdne, verejný endpoint je jeden dataset pod vlastným názvom; každý záznam tu je samostatný dataset len s typmi a riadkami, ktoré uvádza."
-        cs: "Je-li prázdné, veřejný endpoint je jeden dataset pod vlastním názvem; každý záznam zde je samostatný dataset jen s typy a řádky, které uvádí."
-        de: "Leer ist ein öffentlicher Endpunkt ein Datensatz unter eigenem Namen; jeder Eintrag hier ist ein eigener Datensatz mit nur den Typen und Zeilen, die er nennt."
+        en: "Each entry is a catalogue dataset of its own, holding only the types and rows it names; with no entry, a public endpoint is one dataset under its own name."
+        sk: "Každý záznam je samostatný dataset katalógu len s typmi a riadkami, ktoré uvádza; bez záznamu je verejný endpoint jeden dataset pod vlastným názvom."
+        cs: "Každý záznam je samostatný dataset katalogu jen s typy a řádky, které uvádí; bez záznamu je veřejný endpoint jeden dataset pod vlastním názvem."
+        de: "Jeder Eintrag ist ein eigener Katalog-Datensatz mit nur den Typen und Zeilen, die er nennt; ohne Eintrag ist ein öffentlicher Endpunkt ein Datensatz unter eigenem Namen."
     catalog.datasets[].name:
       help:
         en: "The dataset's name in the catalogue and its address, unique there: lowercase letters, digits, - and _, such as air-quality-stations."
@@ -324,6 +324,7 @@ spec:
         cs: "Název, který člověk čte v katalogu, například Kvalita ovzduší na měřicích stanicích."
         de: "Der Titel, den Menschen im Katalog lesen, etwa Luftqualität an den Messstationen."
     catalog.datasets[].description:
+      widget: textarea
       help:
         en: "One or two sentences on what this dataset holds and how it differs from the endpoint's other datasets."
         sk: "Jedna či dve vety o tom, čo dataset obsahuje a čím sa líši od ostatných datasetov endpointu."

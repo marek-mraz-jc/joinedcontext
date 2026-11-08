@@ -22,8 +22,9 @@ const LINKML = [
   "  mode: { range: string }",
   "",
 ].join("\n");
+// What jc-manifest answers for a name another Endpoint publishes on the same catalogue (EP-177).
 const REFUSAL =
-  "Endpoint city/stops, space transport: spec.catalog.datasets[1].name: the dataset `stops-bus` is published on catalogue opendata by Endpoint city/buses; name it city-stops-bus (EP-177)";
+  "Endpoint city/stops: not published: the CKAN dataset `stops-bus` on opendata is also what Endpoint city/buses publishes, and one catalogue holds one dataset of a name, so neither is written; give the spec.catalog.datasets entry a name of its own, such as `city-stops-bus` (EP-177)";
 
 async function stubApi(page: Page): Promise<string[]> {
   const posted: string[] = [];
@@ -105,7 +106,7 @@ for (const width of [1440, 400]) {
       await expect(datasets.getByText("Value does not match pattern")).toHaveCount(0);
       posted.length = 0;
       await page.getByRole("button", { name: "Check", exact: true }).click();
-      const refusal = page.getByRole("alert").filter({ hasText: "datasets[1].name" });
+      const refusal = page.getByRole("alert").filter({ hasText: "city-stops-bus" });
       await expect(refusal).toBeVisible();
       const body = JSON.parse(posted.at(-1) ?? "{}") as { spec?: { catalog?: { datasets?: unknown[] } } };
       expect(body.spec?.catalog?.datasets).toEqual([
