@@ -173,6 +173,28 @@ describe("the Organization page", () => {
     expect(screen.queryByRole("heading", { level: 2 })).toBeNull();
   });
 
+  it("sends an Organization's own administrator to the installation's administrators for an installation section", async () => {
+    // ADR-N-058 section 2.4: Members, Groups and Settings are theirs; Brokers is the installation's.
+    const own = renderAt("brokers", {
+      permissions: {
+        project: "org",
+        bootstrap: false,
+        grants: [
+          {
+            role: "org-admin",
+            binding: "zilina-admins",
+            organization: "zilina",
+            rule: { kinds: ["RoleBinding", "Group", "Organization"], verbs: ["propose", "approve"] },
+          },
+        ],
+      } as unknown as Effective,
+    });
+    expect(await screen.findByText(en.organization.installationOnly)).toBeInTheDocument();
+    expect(screen.getByText(en.askAdmins.installationTitle)).toBeInTheDocument();
+    expect(screen.queryByText(en.organization.adminOnly)).toBeNull();
+    expect(own.requests).not.toContain("GET /api/v1/organization/brokers");
+  });
+
   // T-4831 (D-environments): the API's 404 for a kind the role reads none of was the Portal's
   // "This page does not exist"; it says who sees them instead, and asks the API for nothing.
   it("tells an administrator whose role reads no environments who does, instead of a missing page", async () => {

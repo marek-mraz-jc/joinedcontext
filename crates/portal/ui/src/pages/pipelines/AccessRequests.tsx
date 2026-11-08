@@ -578,7 +578,7 @@ export function AccessRequestInbox({ project, space }: { project: string; space?
               <p className="text-caption text-fg">{request.reason}</p>
               {decidable ? (
                 <div className="flex max-w-prose flex-col gap-2">
-                  <Field id={reasonId} label={t("pipelines.access.decisionReason")} help={t("pipelines.access.decisionReasonHelp")}>
+                  <Field id={reasonId} label={t("pipelines.access.decisionReason")} help={t("pipelines.access.decision.reasonHelp")}>
                     <Input
                       id={reasonId}
                       value={reasons[request.id] ?? ""}

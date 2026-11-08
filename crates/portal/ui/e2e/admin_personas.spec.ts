@@ -314,7 +314,8 @@ for (const width of [1440, 400]) {
 
       // Refusals: an installation section, and a project of another Organization (404, PF-59).
       await page.goto("/organization/brokers?lang=en");
-      await expect(page.getByText("This page is for organization administrators.")).toBeVisible();
+      await expect(page.getByText("This section belongs to the installation: only its administrators open it.", { exact: false })).toBeVisible();
+      await expect(page.getByText("Ask the installation's administrators")).toBeVisible();
       await shot(page, `organization-refused-installation-${width}`);
       await page.goto("/projects/helsinki/spaces?lang=en");
       await expect(page.getByRole("alert")).toContainText("project 'helsinki' not found");

@@ -3363,7 +3363,9 @@
       "inSpace": "· v priestore {space}",
       "on": "na {endpoint}, žiada {who}",
       "decisionReason": "Dôvod pre žiadateľa",
-      "decisionReasonHelp": "Potrebný na zamietnutie alebo odvolanie; žiadateľ si ho prečíta, napríklad: Povolené na pilot do júna; o zápis požiadajte znova.",
+      "decision": {
+        "reasonHelp": "Potrebný na zamietnutie alebo odvolanie; žiadateľ si ho prečíta, napríklad: Povolené na pilot do júna; o zápis požiadajte znova."
+      },
       "approve": "Schváliť",
       "approveOf": "Schváliť prístup pre {account}",
       "decline": "Zamietnuť",
@@ -7496,6 +7498,7 @@
     },
     "title": "Administrácia",
     "adminOnly": "Táto stránka je pre administrátorov organizácie. O to, čo tu potrebujete, požiadajte niektorého z nich.",
+    "installationOnly": "Táto časť patrí inštalácii: otvárajú ju iba jej správcovia. Časti vašej organizácie sú v ponuke vľavo.",
     "lead": "Čo je rovnaké v každom projekte: nastavenia organizácie, jej členovia, roly, skupiny a servisné účty a jej projekty. Každá zmena sa tu navrhuje a schvaľuje.",
     "tab": {
       "settings": "Nastavenia",
@@ -11629,6 +11632,7 @@
   },
   "askAdmins": {
     "title": "Obráťte sa na administrátora organizácie",
+    "installationTitle": "Opýtajte sa správcov inštalácie",
     "contacts": "Kontakty vašej organizácie",
     "back": "Späť na vaše projekty"
   },

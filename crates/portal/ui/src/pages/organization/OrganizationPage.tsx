@@ -321,7 +321,13 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
         {/* The purpose line a person who cannot administer still reads (T-3852). */}
         <PageHeader title={t("organization.title")} description={t("organization.lead")} />
         {known ? (
-          <AskAdmins message={t("organization.adminOnly")} back={anchor} />
+          own !== undefined ? (
+            // An Organization's own administrator asked for an installation section: their own
+            // sections are beside it in the menu, and the installation's administrators decide this one.
+            <AskAdmins message={t("organization.installationOnly")} back={anchor} installation />
+          ) : (
+            <AskAdmins message={t("organization.adminOnly")} back={anchor} />
+          )
         ) : (
           <PageLoading label={t("app.loading")} />
         )}

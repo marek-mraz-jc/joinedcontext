@@ -299,7 +299,7 @@ describe("access requests on the pages (PL-90, PL-91, PL-93)", () => {
     expect(within(first).getByText("· in space air")).toBeInTheDocument();
     expect(within(second).getByText("· in space traffic")).toBeInTheDocument();
     // The reason field carries its hint with an example (owner rule 2026-10-21).
-    expect(within(first).getByLabelText(L.decisionReason)).toHaveAccessibleDescription(L.decisionReasonHelp);
+    expect(within(first).getByLabelText(L.decisionReason)).toHaveAccessibleDescription(L.decision.reasonHelp);
     await userEvent.click(within(first).getByRole("button", { name: "Approve access for city-kpis/pl-air-index" }));
     await waitFor(() => expect(sent.map((s) => s.path)).toEqual(["/api/v1/projects/helsinki/access-requests/ar-0a1b2c3d4e5f/approve"]));
   });

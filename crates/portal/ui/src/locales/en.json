@@ -3363,7 +3363,9 @@
       "inSpace": "· in space {space}",
       "on": "on {endpoint}, asked by {who}",
       "decisionReason": "Reason for the requester",
-      "decisionReasonHelp": "Needed to decline or revoke; the requester reads it, for example: Granted for the pilot until June; ask again for write access.",
+      "decision": {
+        "reasonHelp": "Needed to decline or revoke; the requester reads it, for example: Granted for the pilot until June; ask again for write access."
+      },
       "approve": "Approve",
       "approveOf": "Approve access for {account}",
       "decline": "Decline",
@@ -7496,6 +7498,7 @@
     },
     "title": "Administration",
     "adminOnly": "This page is for organization administrators. Ask one of them for what you need here.",
+    "installationOnly": "This section belongs to the installation: only its administrators open it. Your Organization's own sections are in the menu on the left.",
     "lead": "What is the same in every project: the organization's settings, its members, roles, groups and service accounts, and its projects. Every change here is proposed and approved.",
     "tab": {
       "settings": "Settings",
@@ -11629,6 +11632,7 @@
   },
   "askAdmins": {
     "title": "Ask an organization administrator",
+    "installationTitle": "Ask the installation's administrators",
     "contacts": "Your organization's contacts",
     "back": "Back to your projects"
   },
