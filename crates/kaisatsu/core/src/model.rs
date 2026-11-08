@@ -193,15 +193,6 @@ impl RealmConfig {
             .and_then(|s| serde_json::from_str::<BTreeMap<String, i32>>(s).ok())
             .unwrap_or_else(|| BTreeMap::from([("pwd".into(), 1), ("mfa".into(), 2)]))
     }
-
-    /// True when the realm requires server-issued DPoP nonces on DPoP proofs (RFC 9449 §§8–9).
-    #[must_use]
-    pub fn dpop_nonce_required(&self) -> bool {
-        self.attributes
-            .get("dpop.require.nonce")
-            .or_else(|| self.attributes.get("dpop.nonce.enabled"))
-            .is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1")
-    }
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
