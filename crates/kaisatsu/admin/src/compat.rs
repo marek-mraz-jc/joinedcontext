@@ -941,12 +941,51 @@ async fn compat_create_user(
         .unwrap_or_default();
     user.realm_roles = default_roles;
     user.client_roles.clear();
-    user.groups.clear();
+    // As Keycloak's POST /users: each `groups` path names a group the person joins; an unknown
+    // path is 404 and a group the caller may not manage members of is 403, both before the
+    // person exists. Joining goes through `member_add`, the PUT /users/{id}/groups/{gid} path.
+    let groups = std::mem::take(&mut user.groups);
+    let allowed = ctx.allowed_orgs();
+    let mut joins = Vec::with_capacity(groups.len());
+    for path in &groups {
+        let group = state
+            .oidc
+            .store
+            .get_group_by_path(&realm, allowed.as_deref(), path)
+            .await?
+            .ok_or_else(|| KaisatsuError::NotFound(format!("Group {path} not found")))?;
+        check_decision(state.authorizer.check(
+            &ctx,
+            Action::Update,
+            &ObjectTarget::Group {
+                realm_id: realm.clone(),
+                org_id: group.org_id.clone(),
+                group_id: group.id.clone(),
+                managed_by: group.managed_by.clone(),
+            },
+        ))?;
+        joins.push(group.id);
+    }
     user.service_account_client_id = None;
     if user.id.is_empty() || !ctx.principal.is_realm_admin() {
         user.id = uuid::Uuid::now_v7().to_string();
     }
     let created = state.oidc.store.create_user(user).await?;
+    let member_add = state
+        .registry
+        .find("member_add")
+        .ok_or_else(|| KaisatsuError::NotSupported("unknown operation member_add".into()))?;
+    for group_id in joins {
+        crate::operations::execute(
+            &state,
+            &mount,
+            &ctx,
+            member_add,
+            Some(&created.id),
+            &json!({ "groupId": group_id }),
+        )
+        .await?;
+    }
     let location = format!(
         "{}/admin/realms/{realm}/users/{}",
         mount.public_base(),

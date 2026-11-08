@@ -48,10 +48,14 @@ pub enum Secret {
     AntaresAdminToken,
     DashboardsPassword,
     CatalogueToken,
+    /// The age identity of the Portal's SOPS backend (`AGE-SECRET-KEY-1...`): it decrypts the
+    /// repository's `projects/{p}/secrets/*.enc.yaml`, which is how a `secretRef` or a
+    /// CkanInstance `apiTokenRef` resolves.
+    PortalAgeKey,
 }
 
 impl Secret {
-    pub const ALL: [Secret; 11] = [
+    pub const ALL: [Secret; 12] = [
         Secret::KaisatsuKek,
         Secret::PortalClientSecret,
         Secret::PortalAdminClientSecret,
@@ -63,6 +67,7 @@ impl Secret {
         Secret::AntaresAdminToken,
         Secret::DashboardsPassword,
         Secret::CatalogueToken,
+        Secret::PortalAgeKey,
     ];
 
     /// File name inside the state directory.
@@ -80,13 +85,22 @@ impl Secret {
             Secret::AntaresAdminToken => "antares-admin-token",
             Secret::DashboardsPassword => "dashboards-password",
             Secret::CatalogueToken => "catalogue-token",
+            Secret::PortalAgeKey => "portal-age-key",
         }
     }
 
-    fn random_bytes(self) -> usize {
+    /// A fresh value: an age identity for the SOPS key, else random bytes as hex.
+    fn fresh(self) -> Result<String, StartError> {
         match self {
-            Secret::PortalCookieKey => 64,
-            _ => 32,
+            Secret::PortalAgeKey => {
+                use age::secrecy::ExposeSecret as _;
+                Ok(age::x25519::Identity::generate()
+                    .to_string()
+                    .expose_secret()
+                    .to_owned())
+            }
+            Secret::PortalCookieKey => random_hex(64),
+            _ => random_hex(32),
         }
     }
 
@@ -106,6 +120,7 @@ impl Secret {
             Secret::AntaresAdminToken => &[Module::Antares],
             Secret::DashboardsPassword => &[Module::Daiya, Module::Portal],
             Secret::CatalogueToken => &[Module::Dataroom, Module::Portal],
+            Secret::PortalAgeKey => &[Module::Portal],
         }
     }
 }
@@ -166,9 +181,9 @@ fn random_hex(bytes: usize) -> Result<String, StartError> {
 
 /// Reads the secret in `path`, or writes a fresh one there first (0600, created exclusively, so
 /// two starts never write two values).
-fn read_or_create(path: &Path, bytes: usize) -> Result<String, StartError> {
+fn read_or_create(path: &Path, secret: Secret) -> Result<String, StartError> {
     if !path.exists() {
-        let value = random_hex(bytes)?;
+        let value = secret.fresh()?;
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -201,7 +216,7 @@ impl Setup {
                 continue;
             }
             let path = dir.join(secret.file_name());
-            let value = read_or_create(&path, secret.random_bytes())?;
+            let value = read_or_create(&path, secret)?;
             held.insert(secret.file_name(), Held { path, value });
         }
         Ok(Self {
@@ -304,7 +319,14 @@ mod tests {
             let held = first.get(secret).unwrap();
             #[cfg(unix)]
             assert_eq!(mode(&held.path), 0o600, "{}", secret.file_name());
-            assert_eq!(held.value.len(), secret.random_bytes() * 2);
+            if secret == Secret::PortalAgeKey {
+                assert!(
+                    held.value.starts_with("AGE-SECRET-KEY-1"),
+                    "an age identity"
+                );
+            } else {
+                assert!(held.value.len() >= 64, "{}", secret.file_name());
+            }
         }
         assert_ne!(
             first.value(Secret::ShakoToken),
@@ -389,5 +411,36 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    /// A secret sealed for the Portal's setup identity resolves through the Portal's SOPS
+    /// resolver, which is how a CkanInstance `apiTokenRef` or a pipeline `secretRef` reads.
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn a_secret_sealed_for_the_setup_identity_resolves() {
+        use joinedcontext_portal::pipeline_secrets::{Backend, Resolver};
+        use joinedcontext_portal::secret_files;
+        let tmp = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(&tmp.path().join("state"), &[Module::Portal]).unwrap();
+        let key = setup.path(Secret::PortalAgeKey).unwrap().to_path_buf();
+        let recipient = secret_files::own_recipient(&key).unwrap();
+        let keys = BTreeMap::from([(
+            "token".to_owned(),
+            zeroize::Zeroizing::new("ckan-token-value".to_owned()),
+        )]);
+        let text =
+            secret_files::encrypt("ckan", &keys, &[recipient], "2026-11-08T00:00:00Z").unwrap();
+        let tree = tmp.path().join("repo");
+        let file = tree.join(secret_files::path_of("org", "ckan"));
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, text).unwrap();
+        let reference = jc_core::envelope::SecretRef {
+            name: "ckan".to_owned(),
+            key: Some("token".to_owned()),
+            env_var: None,
+        };
+        let resolver = Resolver::new(Backend::Sops { age_key_file: key });
+        let value = resolver.one(&tree, "org", &reference).await.unwrap();
+        assert_eq!(value, "ckan-token-value");
     }
 }

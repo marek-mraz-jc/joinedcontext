@@ -381,3 +381,16 @@ CREATE POLICY cat_plugin_isolation ON dataroom.cat_plugin
         org_id = dataroom.current_org()
         AND catalogue_id = dataroom.current_catalogue()
     );
+
+-- The application role a deployment grants to its LOGIN role (as daiya_app and shako_app):
+-- data access only, no ownership, no BYPASSRLS, so forced RLS applies to it.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'dataroom_app') THEN
+        CREATE ROLE dataroom_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+    END IF;
+END
+$$;
+GRANT USAGE ON SCHEMA dataroom TO dataroom_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA dataroom TO dataroom_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA dataroom TO dataroom_app;

@@ -461,6 +461,7 @@ pub fn router(state: DataroomState) -> Router {
         .route("/{lang}/user/login", get(handle_user_login_lang))
         // Server-rendered UI and dataset RDF content negotiation (including /{lang}/... prefix)
         .route("/", get(handle_ui_dispatch_root))
+        .merge(theme_scripts())
         // Every other path is a UI page: a fallback rather than `/{*path}`, because a root
         // catch-all conflicts with the `/{lang}/...` routes in the router's matcher.
         .fallback(handle_ui_dispatch_fallback)
@@ -1021,6 +1022,29 @@ async fn handle_jc_theme_css() -> Response {
         JC_THEME_CSS,
     )
         .into_response()
+}
+
+/// One route per theme script (`dataroom_web::JC_SCRIPTS`): a fixed list, so no path reaches a
+/// file the crate does not embed.
+fn theme_scripts() -> Router<DataroomState> {
+    dataroom_web::JC_SCRIPTS
+        .iter()
+        .fold(Router::new(), |router, &(name, body)| {
+            router.route(
+                &format!("/{name}"),
+                get(move || async move {
+                    (
+                        StatusCode::OK,
+                        [
+                            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+                            (header::CACHE_CONTROL, "public, max-age=3600"),
+                        ],
+                        body,
+                    )
+                        .into_response()
+                }),
+            )
+        })
 }
 
 async fn handle_jc_enums_json() -> Response {

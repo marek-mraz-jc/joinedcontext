@@ -25,6 +25,11 @@ struct Jc {
 
 impl Drop for Jc {
     fn drop(&mut self) {
+        // JC_E2E_LOG=<file> keeps jc's whole log of the run for a reader.
+        if let Some(path) = std::env::var_os("JC_E2E_LOG") {
+            let lines = self.log.lock().map(|l| l.join("\n")).unwrap_or_default();
+            let _ = std::fs::write(path, lines);
+        }
         let _ = Command::new("kill")
             .args(["-TERM", &self.child.id().to_string()])
             .status();
@@ -693,6 +698,77 @@ async fn the_portal_runs_on_its_sibling_modules() {
             "c propose: POST /api/v1/projects/org/groups -> {} {}",
             proposed.status, proposed.text
         ));
+    }
+
+    // c2. A project opened in the Portal and approved by the second administrator lands in the
+    // organization repository of shako (layout 1) and GET /api/v1/projects lists it.
+    let opened = browser
+        .send(
+            Method::POST,
+            &jc.url("/api/v1/projects"),
+            Some(Body::Json(&json!({
+                "name": "e2e-city",
+                "displayName": "E2E city",
+                "description": "A project the e2e opens."
+            }))),
+            true,
+        )
+        .await;
+    println!("open project: {} {}", opened.status, opened.text);
+    assert!(
+        opened.status.is_success(),
+        "open project: {} {}",
+        opened.status,
+        opened.text
+    );
+    let id = opened.json()["metadata"]["name"]
+        .as_str()
+        .expect("the Change's name")
+        .to_owned();
+    let mut approver = Browser::new();
+    sign_in(&jc, &mut approver, "e2e.person@jc.invalid", approver_pw).await;
+    let approved = approver
+        .send(
+            Method::POST,
+            &jc.url(&format!("/api/v1/projects/e2e-city/changes/{id}/approve")),
+            Some(Body::Json(&json!({"confirm": "e2e-city"}))),
+            true,
+        )
+        .await;
+    println!("approve {id}: {} {}", approved.status, approved.text);
+    assert!(
+        approved.status.is_success(),
+        "approve the project: {} {}",
+        approved.status,
+        approved.text
+    );
+    let clone = tempfile::tempdir().unwrap();
+    let out = git_clone(&jc, &clone.path().join("config"));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        clone
+            .path()
+            .join("config/projects/e2e-city/project.yaml")
+            .is_file(),
+        "the project's file is in jc/config"
+    );
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let listed = browser.get(&jc.url("/api/v1/projects")).await;
+        if listed.text.contains("\"e2e-city\"") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "GET /api/v1/projects lists e2e-city: {} {}",
+            listed.status,
+            listed.text
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
     // d. ekiben: the Portal's runner calls carry no bearer, which hosted ekiben refuses.

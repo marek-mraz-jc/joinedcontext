@@ -10,6 +10,7 @@ pub mod app;
 pub mod config;
 pub mod module;
 mod modules;
+pub mod pg;
 mod provision;
 pub mod runtime;
 pub mod setup;
