@@ -527,18 +527,16 @@ async fn the_portal_runs_on_its_sibling_modules() {
             "{name} written to the state dir"
         );
     }
-    for name in ["portal-client-secret"] {
-        let value = jc.secret(name);
-        assert!(!jc.log_has(&value), "{name} appears in the log");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(jc.state.join(name))
-                .unwrap()
-                .permissions()
-                .mode();
-            assert_eq!(mode & 0o777, 0o600, "{name}");
-        }
+    let kept = "portal-client-secret";
+    assert!(!jc.log_has(&jc.secret(kept)), "{kept} appears in the log");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(jc.state.join(kept))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "{kept}");
     }
 
     // a. Sign-in through kaisatsu.

@@ -657,3 +657,34 @@ async fn another_modules_secret_is_not_readable_through_an_ekiben_stream() {
 
     running.stop().await.expect("clean stop");
 }
+
+/// The Portal's age identity is read once at start: a missing or unusable file refuses the start,
+/// naming the file and never its content.
+#[tokio::test]
+async fn a_missing_or_unusable_age_key_file_refuses_start() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
+    let fx = fixture();
+    let garbage = fx._dir.path().join("not-an-identity");
+    std::fs::write(&garbage, "jc-test-not-an-age-identity-7Qx2\n").unwrap();
+    for path in [fx._dir.path().join("missing-age-key"), garbage] {
+        let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
+        cfg.portal.age_key_file = Some(path.clone());
+        let err = jc::start(&cfg, CancellationToken::new())
+            .await
+            .err()
+            .expect("refused");
+        assert!(
+            matches!(
+                err,
+                StartError::Module {
+                    module: Module::Portal,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        let said = err.to_string();
+        assert!(said.contains(&path.display().to_string()), "{said}");
+        assert!(!said.contains("7Qx2"), "{said}");
+    }
+}

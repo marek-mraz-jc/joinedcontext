@@ -6,6 +6,9 @@
 //!   organization's variable map, so a stream never reads another module's secret;
 //! - `file` inputs and outputs are confined to one directory (`file_root`), so a stream cannot
 //!   read another module's key file or `/proc/self/environ`;
+//! - with the Portal in the same process, the pipeline credentials its reconciler resolves from
+//!   each project's own SOPS files reach that same map ([`HostRunner`]), in place of the
+//!   Kubernetes Secret the Portal writes for a runner in a cluster;
 //! - private and loopback HTTP targets stay refused (ekiben's default quotas), so a stream cannot
 //!   call the other modules' listeners from inside the process.
 
@@ -13,12 +16,13 @@ use crate::app::StartError;
 use crate::config::EkibenSection;
 use crate::module::Module;
 use axum::Router;
-use ekiben_core::{EnvAccess, OrgId, ResourceManager};
+use ekiben_core::{EnvAccess, OrgContext, OrgId, ResourceManager};
 use ekiben_server::{
     ServerAuthConfig, ServerState, StreamManager, build_full_registry, build_router,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 fn err(e: impl std::fmt::Display) -> StartError {
     StartError::module(Module::Ekiben, e)
@@ -48,6 +52,7 @@ pub fn build(
     cfg: &EkibenSection,
     setup: &crate::setup::Setup,
     vars: &BTreeMap<String, jc_secret::Secret>,
+    portal_beside: bool,
 ) -> Result<Router, StartError> {
     let token = setup
         .value(crate::setup::Secret::EkibenToken)
@@ -56,9 +61,14 @@ pub fn build(
     let root = file_root(cfg.file_root.as_deref())?;
     tracing::info!(file_root = %root.display(), "ekiben file components confined");
     let resources = ResourceManager::new();
-    resources
-        .get_or_create_org(&OrgId::default())
-        .replace_secrets(variables(vars));
+    let runner = HostRunner {
+        org: resources.get_or_create_org(&OrgId::default()),
+        given: variables(vars),
+    };
+    runner.org.replace_secrets(runner.given.clone());
+    if portal_beside {
+        hand_to_portal(runner);
+    }
     let manager = StreamManager::new(
         build_full_registry(),
         resources,
@@ -78,6 +88,42 @@ pub fn build(
     Ok(build_router(state))
 }
 
+/// The default organization's variable map, as the Portal's reconciler sees the runner: what
+/// `jc` was given (`EKIBEN_VAR_*`) plus the pipeline credentials of the last sync. A given name
+/// wins over a pipeline's, so a project cannot replace a variable the operator set.
+pub struct HostRunner {
+    org: Arc<OrgContext>,
+    given: HashMap<String, String>,
+}
+
+impl HostRunner {
+    /// The variables after a sync handed `resolved`.
+    fn merged(&self, resolved: BTreeMap<String, String>) -> HashMap<String, String> {
+        let mut out: HashMap<String, String> = resolved.into_iter().collect();
+        for (name, value) in &self.given {
+            if out.insert(name.clone(), value.clone()).is_some() {
+                tracing::warn!(variable = %name, "a pipeline credential names a variable jc was given; jc's value is kept");
+            }
+        }
+        out
+    }
+}
+
+#[cfg(feature = "portal")]
+impl joinedcontext_portal::pipeline_secrets::RunnerSecrets for HostRunner {
+    fn replace(&self, values: BTreeMap<String, String>) {
+        self.org.replace_secrets(self.merged(values));
+    }
+}
+
+#[cfg(feature = "portal")]
+fn hand_to_portal(runner: HostRunner) {
+    joinedcontext_portal::pipeline_secrets::hand_runner_secrets_to(Arc::new(runner));
+}
+
+#[cfg(not(feature = "portal"))]
+fn hand_to_portal(_: HostRunner) {}
+
 /// The default organization's variable map: what `jc` read from `EKIBEN_VAR_*`.
 fn variables(vars: &BTreeMap<String, jc_secret::Secret>) -> HashMap<String, String> {
     vars.iter()
@@ -88,6 +134,23 @@ fn variables(vars: &BTreeMap<String, jc_secret::Secret>) -> HashMap<String, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_given_variable_wins_over_a_pipeline_credential_of_the_same_name() {
+        let resources = ResourceManager::new();
+        let runner = HostRunner {
+            org: resources.get_or_create_org(&OrgId::default()),
+            given: HashMap::from([("SHARED".to_owned(), "operator".to_owned())]),
+        };
+        let merged = runner.merged(BTreeMap::from([
+            ("SHARED".to_owned(), "pipeline".to_owned()),
+            ("GOLEMIO_KEY".to_owned(), "k".to_owned()),
+        ]));
+        assert_eq!(merged["SHARED"], "operator");
+        assert_eq!(merged["GOLEMIO_KEY"], "k");
+        // A later sync without the credential drops it again.
+        assert_eq!(runner.merged(BTreeMap::new()).len(), 1);
+    }
 
     #[test]
     fn file_root_is_created_private() {

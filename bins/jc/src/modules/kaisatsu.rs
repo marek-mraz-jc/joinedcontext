@@ -98,7 +98,13 @@ pub async fn build(
     let store = open_kaisatsu_store(cfg, kek.clone()).await?;
     if let Some(dir) = &cfg.import_dir {
         let files = load_realm_files_from_path(dir).map_err(|e| err(&e))?;
-        apply_realm_files(&store, &files, &ApplyOptions::default())
+        // A realm file reads no environment here: its secrets are `$(file:...)` under the
+        // configured directory.
+        let options = ApplyOptions {
+            secrets_dir: cfg.import_secrets_dir.clone(),
+            ..ApplyOptions::default()
+        };
+        apply_realm_files(&store, &files, &options)
             .await
             .map_err(|e| err(&e))?;
     }
@@ -161,6 +167,7 @@ mod tests {
         let mem_section = KaisatsuSection {
             kek_file: Some(kek_path),
             import_dir: None,
+            import_secrets_dir: None,
             database_url_file: None,
             db_password_file: None,
             db_max_connections: None,
@@ -200,6 +207,7 @@ mod tests {
             KaisatsuSection {
                 kek_file: Some(kek_path.clone()),
                 import_dir: None,
+                import_secrets_dir: None,
                 database_url_file: Some(url_file),
                 db_password_file: Some(pw_file),
                 db_max_connections: Some(2),

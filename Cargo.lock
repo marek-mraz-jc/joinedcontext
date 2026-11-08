@@ -5082,6 +5082,7 @@ dependencies = [
  "jc-router",
  "jc-secret",
  "joinedcontext-portal",
+ "jsonwebtoken 11.1.0",
  "kaisatsu-core",
  "kaisatsu-crypto",
  "kaisatsu-import",

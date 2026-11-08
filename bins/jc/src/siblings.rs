@@ -66,6 +66,12 @@ impl Siblings {
         }
     }
 
+    /// Adds a module that runs in another container: `public` is its mount there, `internal` the
+    /// loopback forwarder that carries the Portal's calls to it ([`crate::door::Remote`]).
+    pub fn insert_remote(&mut self, module: Module, sibling: Sibling) {
+        self.modules.insert(module, sibling);
+    }
+
     #[must_use]
     pub fn get(&self, module: Module) -> Option<&Sibling> {
         self.modules.get(&module)
@@ -223,6 +229,14 @@ pub fn portal_vars(
                         .map(|p| p.display().to_string()),
                 ),
             ],
+        );
+    }
+    if let Some(path) = &setup.age_key_file
+        && unset("JC_PORTAL_SOPS_AGE_KEY_FILE")
+    {
+        out.insert(
+            "JC_PORTAL_SOPS_AGE_KEY_FILE".to_owned(),
+            path.display().to_string(),
         );
     }
     out

@@ -173,6 +173,13 @@ pub async fn build_router(
         if plan.module == Module::Shako {
             let state = modules::shako::build_state(&cfg.shako, ctx.setup, ctx.secrets)?;
             let (main_router, v2_router) = modules::shako::build(state, plan.mount.clone());
+            let (main_router, v2_router) = match ctx.door {
+                Some(door) => (
+                    door.guard(Module::Shako, main_router, ctx.setup),
+                    door.guard(Module::Shako, v2_router, ctx.setup),
+                ),
+                None => (main_router, v2_router),
+            };
             builder = builder.mount(plan.spec.clone(), main_router);
             // S1: mount `/v2/` at the host root in both one-domain and host modes
             let v2_spec = MountSpec {
@@ -189,7 +196,10 @@ pub async fn build_router(
             portal = Some((late, plan.mount));
             continue;
         }
-        let router = modules::build(plan.module, cfg, ctx, plan.mount, shutdown, tasks).await?;
+        let mut router = modules::build(plan.module, cfg, ctx, plan.mount, shutdown, tasks).await?;
+        if let Some(door) = ctx.door {
+            router = door.guard(plan.module, router, ctx.setup);
+        }
         builder = builder.mount(plan.spec, router);
     }
     Ok(Built {
@@ -205,6 +215,91 @@ fn bearer_matches(headers: &HeaderMap, expected: &jc_secret::Secret) -> bool {
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .is_some_and(|got| expected.matches(got.trim().as_bytes()))
+}
+
+/// The service credentials a role split needs held although the Portal and the module do not
+/// run together: the modules this container serves through its door, and the remote modules its
+/// Portal calls through a forwarder.
+fn split_credentials(cfg: &Config) -> Vec<crate::setup::Secret> {
+    let served = crate::config::SPLIT_MODULES
+        .into_iter()
+        .filter(|m| cfg.door.is_some() && cfg.roles.contains(m));
+    served
+        .chain(cfg.remote_modules.keys().copied())
+        .filter_map(crate::setup::Secret::service_credential)
+        .collect()
+}
+
+/// One loopback forwarder per `[remote.modules]` entry, each added to `siblings` so the Portal
+/// calls the module there with the per-boot credential setup holds for it.
+async fn remote_forwarders(
+    cfg: &Config,
+    secrets: &crate::config::Secrets,
+    setup: &Setup,
+    siblings: &mut Siblings,
+) -> Result<Vec<(TcpListener, Router)>, StartError> {
+    let (Some(section), Some(secret)) = (&cfg.remote, &secrets.remote_client_secret) else {
+        return Ok(Vec::new());
+    };
+    let remote = Arc::new(
+        crate::door::Remote::new(section, secret.secret.clone()).map_err(StartError::Setup)?,
+    );
+    let mut out = Vec::new();
+    for (module, base) in &cfg.remote_modules {
+        let local = crate::setup::Secret::service_credential(*module)
+            .and_then(|s| setup.get(s))
+            .map(|held| held.value.clone())
+            .ok_or_else(|| StartError::Setup(format!("no credential held for {module}")))?;
+        let (listener, router) = remote
+            .forward(*module, base.clone(), local)
+            .await
+            .map_err(StartError::Serve)?;
+        let at = listener.local_addr().map_err(StartError::Serve)?;
+        tracing::info!(module = module.name(), remote = %base, forwarder = %at, "remote module");
+        siblings.insert_remote(
+            *module,
+            crate::siblings::Sibling {
+                public: base.clone(),
+                internal: format!("http://{at}"),
+            },
+        );
+        out.push((listener, router));
+    }
+    Ok(out)
+}
+
+/// The Portal's age identity, from `--portal-age-key-file` or the Portal's own
+/// `JC_PORTAL_SOPS_AGE_KEY_FILE`, read once here so a missing or unusable file refuses the start
+/// instead of failing every project's secrets at the first sync. The error names the file only.
+fn portal_age_key(
+    cfg: &Config,
+    secrets: &crate::config::Secrets,
+) -> Result<Option<std::path::PathBuf>, StartError> {
+    if !cfg.roles.contains(&Module::Portal) {
+        return Ok(None);
+    }
+    let Some(path) = secrets.portal_age_key_file.clone().or_else(|| {
+        crate::config::portal_env("JC_PORTAL_SOPS_AGE_KEY_FILE").map(std::path::PathBuf::from)
+    }) else {
+        return Ok(None);
+    };
+    check_age_key(&path).map_err(|e| {
+        StartError::module(
+            Module::Portal,
+            format!("the age key file {}: {e}", path.display()),
+        )
+    })?;
+    Ok(Some(path))
+}
+
+#[cfg(feature = "portal")]
+fn check_age_key(path: &std::path::Path) -> Result<(), String> {
+    joinedcontext_portal::pipeline_secrets::check_age_key_file(path)
+}
+
+#[cfg(not(feature = "portal"))]
+fn check_age_key(_: &std::path::Path) -> Result<(), String> {
+    Ok(())
 }
 
 /// The start report: one line per secret with its name and where it came from (`env`, `file`,
@@ -343,20 +438,37 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         None => None,
     };
     let plans = plan_mounts(cfg)?;
-    let setup = Setup::prepare(&cfg.state_dir, &cfg.roles, &secrets.module)?;
+    let mut setup = Setup::prepare_with(
+        &cfg.state_dir,
+        &cfg.roles,
+        &secrets.module,
+        &split_credentials(cfg),
+    )?;
+    setup.age_key_file = portal_age_key(cfg, &secrets)?;
     report_secrets(cfg.profile, &secrets, &setup);
     // Bound before the modules are built: the Portal's sibling addresses name this listener.
     let listener = bind(cfg.listen).await?;
     let addr = listener.local_addr().map_err(StartError::Serve)?;
-    let siblings = Siblings::new(&plans, addr);
+    let mut siblings = Siblings::new(&plans, addr);
+    let forwarders = remote_forwarders(cfg, &secrets, &setup, &mut siblings).await?;
+    let door = match &cfg.door {
+        Some(section) => Some(Arc::new(
+            crate::door::Door::new(section).map_err(StartError::Setup)?,
+        )),
+        None => None,
+    };
     let ctx = modules::BuildCtx {
         setup: &setup,
         siblings: &siblings,
         secrets: &secrets,
+        door: door.as_ref(),
     };
     let tasks = TaskTracker::new();
     let built = build_router(cfg, ctx, plans, &shutdown, &tasks).await?;
     let mut servers = vec![serve(listener, built.router, shutdown.clone())];
+    for (listener, router) in forwarders {
+        servers.push(serve(listener, router, shutdown.clone()));
+    }
     let mut admin_addr = None;
     if let (Some(admin), Some(token)) = (cfg.admin_listen, admin_token) {
         let admin_router = admin_router(token)?;

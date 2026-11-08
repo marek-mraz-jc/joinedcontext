@@ -65,6 +65,20 @@ impl Secret {
         Secret::CatalogueToken,
     ];
 
+    /// The credential the Portal calls `module` with, for the modules a role split may place in
+    /// another container.
+    #[must_use]
+    pub fn service_credential(module: Module) -> Option<Secret> {
+        match module {
+            Module::Shako => Some(Secret::ShakoToken),
+            Module::Ekiben => Some(Secret::EkibenToken),
+            Module::Antares => Some(Secret::AntaresAdminToken),
+            Module::Daiya => Some(Secret::DashboardsPassword),
+            Module::Dataroom => Some(Secret::CatalogueToken),
+            Module::Kaisatsu | Module::Portal => None,
+        }
+    }
+
     /// File name inside the state directory.
     #[must_use]
     pub fn file_name(self) -> &'static str {
@@ -152,6 +166,9 @@ pub struct Given {
 pub struct Setup {
     pub dir: PathBuf,
     held: BTreeMap<&'static str, Held>,
+    /// The age identity that decrypts the projects' SOPS secrets, checked at start: the Portal
+    /// reads it per sync to resolve each project's `secretRef`s.
+    pub age_key_file: Option<PathBuf>,
 }
 
 fn err(e: impl std::fmt::Display) -> StartError {
@@ -228,6 +245,19 @@ impl Setup {
         roles: &[Module],
         given: &BTreeMap<Secret, Given>,
     ) -> Result<Self, StartError> {
+        Self::prepare_with(dir, roles, given, &[])
+    }
+
+    /// As [`Setup::prepare`], also holding the service credentials in `split` although the
+    /// Portal or the module is not in `roles`: in a role split the module's container holds the
+    /// credential its door swaps a verified token for, and the Portal's container the one its
+    /// loopback forwarder swaps for a token ([`Secret::service_credential`]).
+    pub fn prepare_with(
+        dir: &Path,
+        roles: &[Module],
+        given: &BTreeMap<Secret, Given>,
+        split: &[Secret],
+    ) -> Result<Self, StartError> {
         private_dir(dir)?;
         let mut held = BTreeMap::new();
         for secret in Secret::ALL {
@@ -236,7 +266,7 @@ impl Setup {
             if !on_disk {
                 remove_stale(&path)?;
             }
-            if !secret.needs().iter().all(|m| roles.contains(m)) {
+            if !secret.needs().iter().all(|m| roles.contains(m)) && !split.contains(&secret) {
                 continue;
             }
             let entry = match given.get(&secret) {
@@ -269,6 +299,7 @@ impl Setup {
         Ok(Self {
             dir: dir.to_path_buf(),
             held,
+            age_key_file: None,
         })
     }
 

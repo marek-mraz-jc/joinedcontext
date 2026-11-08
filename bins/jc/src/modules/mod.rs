@@ -34,6 +34,8 @@ pub struct BuildCtx<'a> {
     pub setup: &'a Setup,
     pub siblings: &'a Siblings,
     pub secrets: &'a crate::config::Secrets,
+    /// `[door]`: verifies kaisatsu tokens for the modules this container serves to others.
+    pub door: Option<&'a std::sync::Arc<crate::door::Door>>,
 }
 
 /// Builds the router of `module` mounted at `mount`.
@@ -56,7 +58,12 @@ pub async fn build(
             daiya::build(ctx.setup, mount).map_err(|e| StartError::module(Module::Daiya, e))
         }
         #[cfg(feature = "ekiben")]
-        Module::Ekiben => ekiben::build(&cfg.ekiben, ctx.setup, &ctx.secrets.ekiben_vars),
+        Module::Ekiben => ekiben::build(
+            &cfg.ekiben,
+            ctx.setup,
+            &ctx.secrets.ekiben_vars,
+            cfg.roles.contains(&Module::Portal),
+        ),
         #[cfg(feature = "antares")]
         Module::Antares => antares::build(&cfg.antares, ctx.setup).await,
         #[cfg(feature = "portal")]

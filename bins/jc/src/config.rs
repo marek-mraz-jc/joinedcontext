@@ -74,6 +74,10 @@ pub struct Cli {
     /// kaisatsu: realm files (JSON) applied at start.
     #[arg(long, env = "JCBIN_KAISATSU_IMPORT_DIR")]
     pub kaisatsu_import_dir: Option<PathBuf>,
+    /// kaisatsu: the only directory a realm file's `$(file:...)` secret may name (a realm file
+    /// reads no environment inside `jc`).
+    #[arg(long, env = "JCBIN_KAISATSU_IMPORT_SECRETS_DIR")]
+    pub kaisatsu_import_secrets_dir: Option<PathBuf>,
     /// kaisatsu: file holding the PostgreSQL connection URL without password (secrets mount).
     #[arg(long, env = "JCBIN_KAISATSU_DATABASE_URL_FILE")]
     pub kaisatsu_database_url_file: Option<PathBuf>,
@@ -162,6 +166,7 @@ pub struct MountOverride {
 pub struct KaisatsuSection {
     pub kek_file: Option<PathBuf>,
     pub import_dir: Option<PathBuf>,
+    pub import_secrets_dir: Option<PathBuf>,
     pub database_url_file: Option<PathBuf>,
     pub db_password_file: Option<PathBuf>,
     pub db_max_connections: Option<u32>,
@@ -225,6 +230,48 @@ pub struct PortalSection {
     pub age_key_file: Option<PathBuf>,
 }
 
+/// `[door]`: this `jc` serves its modules to callers in other containers (role split). A request
+/// carrying a token kaisatsu signed for one of these clients, with audience the module's name
+/// (`shako`, `ekiben`, `daiya`, `dataroom`, `antares`), is let in as the module's service
+/// caller; every other request reaches the module unchanged. No client named admits nobody.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DoorSection {
+    /// The issuer the tokens name (`iss`).
+    pub issuer: String,
+    /// Where the issuer's signing keys are (`.../protocol/openid-connect/certs`).
+    pub jwks_url: String,
+    /// The client ids (`azp`) admitted.
+    #[serde(default)]
+    pub clients: Vec<String>,
+}
+
+/// `[remote]`: modules this `jc`'s Portal calls in other containers (role split). The Portal
+/// calls each on a loopback forwarder with a per-boot credential; the forwarder swaps it for a
+/// client-credentials token of `client_id` with the module's name as scope and audience.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteSection {
+    /// kaisatsu's token endpoint.
+    pub token_url: String,
+    pub client_id: String,
+    /// File holding the client secret (or `JCBIN_REMOTE_CLIENT_SECRET[_FILE]`).
+    pub client_secret_file: Option<PathBuf>,
+    /// Module name to the public base of its mount in the other container.
+    #[serde(default)]
+    pub modules: BTreeMap<String, String>,
+}
+
+/// The modules a role split may place behind a [`DoorSection`] or a [`RemoteSection`]: those
+/// the Portal calls with a service credential.
+pub const SPLIT_MODULES: [Module; 5] = [
+    Module::Shako,
+    Module::Ekiben,
+    Module::Daiya,
+    Module::Dataroom,
+    Module::Antares,
+];
+
 /// The TOML file. Unknown keys are refused so a typo never silently keeps a default.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -258,6 +305,8 @@ pub struct FileConfig {
     pub daiya: DaiyaSection,
     #[serde(default)]
     pub portal: PortalSection,
+    pub door: Option<DoorSection>,
+    pub remote: Option<RemoteSection>,
 }
 
 /// Errors while assembling the configuration.
@@ -286,6 +335,8 @@ pub enum ConfigError {
     Secret(#[from] jc_secret::ReadError),
     #[error("{0} is a file only: set {0}_FILE (or the config file's key) to its path")]
     FileOnly(&'static str),
+    #[error("[remote]: {0}")]
+    Remote(String),
 }
 
 /// The resolved configuration `jc` runs with.
@@ -311,6 +362,10 @@ pub struct Config {
     pub shako: ShakoSection,
     pub daiya: DaiyaSection,
     pub portal: PortalSection,
+    pub door: Option<DoorSection>,
+    pub remote: Option<RemoteSection>,
+    /// `[remote.modules]`, parsed: each module and the base it is called at.
+    pub remote_modules: BTreeMap<Module, String>,
 }
 
 impl Config {
@@ -382,6 +437,9 @@ impl Config {
         let kaisatsu = KaisatsuSection {
             kek_file: cli.kaisatsu_kek_file.or(file.kaisatsu.kek_file),
             import_dir: cli.kaisatsu_import_dir.or(file.kaisatsu.import_dir),
+            import_secrets_dir: cli
+                .kaisatsu_import_secrets_dir
+                .or(file.kaisatsu.import_secrets_dir),
             database_url_file: cli
                 .kaisatsu_database_url_file
                 .or(file.kaisatsu.database_url_file),
@@ -420,6 +478,10 @@ impl Config {
         let portal = PortalSection {
             age_key_file: cli.portal_age_key_file.or(file.portal.age_key_file),
         };
+        let remote_modules = match &file.remote {
+            Some(remote) => remote_modules(remote, &roles)?,
+            None => BTreeMap::new(),
+        };
         Ok(Self {
             roles,
             listen: cli.listen.or(file.listen).unwrap_or_else(|| {
@@ -448,8 +510,43 @@ impl Config {
             shako,
             daiya,
             portal,
+            door: file.door,
+            remote: file.remote,
+            remote_modules,
         })
     }
+}
+
+/// `[remote.modules]` checked: a split module, not also run here, at an http(s) base.
+fn remote_modules(
+    remote: &RemoteSection,
+    roles: &[Module],
+) -> Result<BTreeMap<Module, String>, ConfigError> {
+    let bad = |m: String| Err(ConfigError::Remote(m));
+    if !roles.contains(&Module::Portal) {
+        return bad("only a jc running the Portal calls remote modules".into());
+    }
+    let web = |url: &str| url.starts_with("https://") || url.starts_with("http://");
+    if !web(&remote.token_url) {
+        return bad("token_url must be an http(s) URL".into());
+    }
+    let mut out = BTreeMap::new();
+    for (name, url) in &remote.modules {
+        let module: Module = name
+            .parse()
+            .map_err(|_| ConfigError::Remote(format!("'{name}' is no module")))?;
+        if !SPLIT_MODULES.contains(&module) {
+            return bad(format!("{module} cannot run in another container"));
+        }
+        if roles.contains(&module) {
+            return bad(format!("{module} runs in this jc and in another container"));
+        }
+        if !web(url) {
+            return bad(format!("{module}: '{url}' is not an http(s) URL"));
+        }
+        out.insert(module, url.trim_end_matches('/').to_owned());
+    }
+    Ok(out)
 }
 
 /// The process environment `jc` reads: its own `JCBIN_*` keys and the `EKIBEN_VAR_*` values it
@@ -491,6 +588,8 @@ pub struct Secrets {
     /// The age identity the Portal decrypts project secrets with (a file: the Portal reads it
     /// per resolution).
     pub portal_age_key_file: Option<PathBuf>,
+    /// `[remote]`'s client secret.
+    pub remote_client_secret: Option<Given>,
 }
 
 impl Secrets {
@@ -573,6 +672,19 @@ impl Secrets {
             return Err(ConfigError::FileOnly("JCBIN_PORTAL_AGE_KEY"));
         }
         out.portal_age_key_file = cfg.portal.age_key_file.clone();
+        if let Some(remote) = &cfg.remote {
+            let file = remote.client_secret_file.clone().or_else(|| {
+                env.get("JCBIN_REMOTE_CLIENT_SECRET_FILE")
+                    .map(PathBuf::from)
+            });
+            out.remote_client_secret = given("JCBIN_REMOTE_CLIENT_SECRET", file.as_deref())?;
+            if out.remote_client_secret.is_none() {
+                return Err(ConfigError::Remote(
+                    "no client secret: set client_secret_file or JCBIN_REMOTE_CLIENT_SECRET_FILE"
+                        .into(),
+                ));
+            }
+        }
         Ok(out)
     }
 
@@ -588,6 +700,9 @@ impl Secrets {
         }
         if self.portal_age_key_file.is_some() {
             out.push(("portal-age-key", jc_secret::Source::File));
+        }
+        if let Some(g) = &self.remote_client_secret {
+            out.push(("remote-client-secret", g.source));
         }
         out
     }
@@ -977,6 +1092,42 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
         assert_eq!(
             secrets.ekiben_vars["EKIBEN_VAR_JC_GATEWAY_URL"].expose(),
             "http://gw"
+        );
+    }
+
+    #[test]
+    fn a_remote_module_is_checked_and_its_client_secret_is_required() {
+        let parse = |toml: &str| Config::parse_file(Path::new("jc.toml"), toml).unwrap();
+        let remote = "[remote]\ntoken_url = \"http://id/token\"\nclient_id = \"portal-remote\"\n[remote.modules]\n";
+        let merge = |role: &str, modules: &str| {
+            Config::merge(cli(&["--role", role]), parse(&format!("{remote}{modules}")))
+        };
+        let cfg = merge("portal", "shako = \"https://git.city.test/\"").unwrap();
+        assert_eq!(cfg.remote_modules[&Module::Shako], "https://git.city.test");
+        for (role, modules, said) in [
+            (
+                "dataroom",
+                "shako = \"https://g\"",
+                "only a jc running the Portal",
+            ),
+            ("portal,shako", "shako = \"https://g\"", "runs in this jc"),
+            (
+                "portal",
+                "kaisatsu = \"https://g\"",
+                "cannot run in another",
+            ),
+            ("portal", "shako = \"file:///etc\"", "not an http(s) URL"),
+        ] {
+            let err = merge(role, modules).unwrap_err().to_string();
+            assert!(err.contains(said), "{role} {modules}: {err}");
+        }
+        let err = Secrets::load_from(&cfg, &BTreeMap::new()).unwrap_err();
+        assert!(err.to_string().contains("no client secret"), "{err}");
+        let env = BTreeMap::from([("JCBIN_REMOTE_CLIENT_SECRET".to_owned(), "s3cret".to_owned())]);
+        let secrets = Secrets::load_from(&cfg, &env).unwrap();
+        assert_eq!(
+            secrets.remote_client_secret.unwrap().source,
+            jc_secret::Source::Env
         );
     }
 
