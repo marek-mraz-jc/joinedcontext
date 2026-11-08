@@ -1332,3 +1332,50 @@ fn a_colliding_entry_is_refused_and_its_sibling_is_not() {
         "hel-air-no2".to_owned()
     )));
 }
+
+/// EP-174, EP-178: an Endpoint the planner cannot place this pass (a second CkanInstance made
+/// its catalogue ambiguous) is said to be unpublished and keeps the dataset it had: neither a
+/// withdrawal nor a sweep deletes it while its author fixes the block.
+#[tokio::test]
+async fn an_endpoint_the_pass_cannot_place_keeps_its_dataset() {
+    let previous = Mirror::new();
+    previous.upsert(envelope("CkanInstance", "hel-fi", instance()));
+    previous.upsert(envelope(
+        "Endpoint",
+        "bikes",
+        endpoint("bikes", "public", None),
+    ));
+
+    let repository = std::env::temp_dir().join(format!("jc-ckan-held-{}", std::process::id()));
+    std::fs::create_dir_all(&repository).expect("a scratch directory");
+    let mut second = instance();
+    second["url"] = json!("https://open.example.fi");
+    std::fs::write(
+        repository.join("helsinki.yaml"),
+        [
+            manifest_in(PROJECT, "CkanInstance", "hel-fi", instance()),
+            manifest_in(PROJECT, "CkanInstance", "open-fi", second),
+            manifest_in(
+                PROJECT,
+                "Endpoint",
+                "bikes",
+                endpoint("bikes", "public", None),
+            ),
+        ]
+        .join("---\n"),
+    )
+    .expect("the project");
+    let repo = jcctl::loader::Repository::load(&repository).expect("the repository loads");
+    let reports = CkanSync::new(HOST)
+        .converge(&repo, &previous, &repository)
+        .await;
+    std::fs::remove_dir_all(&repository).expect("cleaned up");
+
+    assert!(
+        reports.iter().any(|r| r.endpoint == "bikes"
+            && matches!(&r.publication, Publication::Failed(reason) if reason.contains("open-fi"))),
+        "{reports:?}"
+    );
+    // Without the guard the pass withdraws `bikes` from hel-fi: a report of that dataset.
+    assert!(!reports.iter().any(|r| r.dataset == "bikes"), "{reports:?}");
+}
