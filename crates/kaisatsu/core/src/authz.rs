@@ -206,6 +206,8 @@ pub enum ObjectTarget {
         realm_id: String,
         org_id: Option<String>,
         scope_id: String,
+        /// The `managed-by` mark of a scope with no protocol mappers; `None` for any other.
+        managed_by: Option<String>,
     },
     Session {
         realm_id: String,
@@ -428,9 +430,16 @@ impl Authorizer for LocalAuthorizer {
             ObjectTarget::Role { .. } | ObjectTarget::ClientScope { .. } => {
                 // K3: `view-clients` (and `query-groups`) grants read only on roles and client
                 // scopes; writes require `manage-clients`, `org-admin`, `application-manager`, or `realm-admin`.
+                // One exception, the Portal's hub scopes (hub_scopes.rs): `view-clients` writes a
+                // client scope marked `managed-by: joinedcontext` that carries no protocol mapper.
+                let portal_scope = matches!(
+                    object,
+                    ObjectTarget::ClientScope { managed_by: Some(m), .. } if m == "joinedcontext"
+                ) && ctx.principal.has_realm_mgmt_role("view-clients");
                 let can_write = ctx.principal.has_realm_mgmt_role("manage-clients")
                     || ctx.principal.has_org_role(org_id, "org-admin")
-                    || ctx.principal.has_org_role(org_id, "application-manager");
+                    || ctx.principal.has_org_role(org_id, "application-manager")
+                    || portal_scope;
                 let can_read = can_write
                     || ctx.principal.has_realm_mgmt_role("view-clients")
                     || ctx.principal.has_realm_mgmt_role("query-groups");
