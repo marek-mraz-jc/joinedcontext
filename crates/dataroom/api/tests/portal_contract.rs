@@ -564,7 +564,9 @@ async fn several_datasets_of_one_endpoint_converge_and_withdraw_one_by_one() {
         .iter()
         .filter_map(Package::from_ckan)
         .collect();
-    let folded: Vec<(&str, &str, Option<(String, Option<String>)>)> = packages
+    // A package as the catalogue reads it: name, the Endpoint's slug, the (type, q) of its rows.
+    type Read<'a> = (&'a str, &'a str, Option<(String, Option<String>)>);
+    let folded: Vec<Read> = packages
         .iter()
         .map(|p| (p.name.as_str(), p.slug.as_str(), p.rows.clone()))
         .collect();
