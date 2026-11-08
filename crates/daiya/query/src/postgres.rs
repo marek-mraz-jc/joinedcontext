@@ -22,10 +22,11 @@ use crate::{
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use daiya_expr::parse_duration_ms;
-use daiya_model::{FieldColumn, FieldType, Frame, FrameMeta, FrameSet};
+use daiya_model::{FieldColumn, FieldType, Frame, FrameMeta, FrameSet, Notice, NoticeSeverity};
 use regex::Regex;
 use serde_json::{Value, json};
-use sqlx::{Column, PgPool, Row, TypeInfo};
+use sqlx::postgres::{PgValueFormat, PgValueRef};
+use sqlx::{Column, PgPool, Row, TypeInfo, ValueRef};
 use std::collections::{BTreeMap, BTreeSet};
 
 const FORBIDDEN_SQL_KEYWORDS: &[&str] = &[
@@ -121,12 +122,18 @@ pub fn strip_sql_comments(sql: &str) -> String {
             // A comment separates tokens like whitespace (`FROM/**/t` is `FROM t`).
             out.push(' ');
             i += 2;
+            // An unterminated comment runs to the end of the text.
+            let mut closed = false;
             while i + 1 < n {
                 if bytes[i] == b'*' && bytes[i + 1] == b'/' {
                     i += 2;
+                    closed = true;
                     break;
                 }
                 i += 1;
+            }
+            if !closed {
+                i = n;
             }
         } else if i + 1 < n && b == b'-' && bytes[i + 1] == b'-' {
             out.push(' ');
@@ -1004,13 +1011,13 @@ fn pg_err(e: &sqlx::Error) -> DsError {
 
 /// Runs the checked SELECT inside a READ ONLY transaction with a statement timeout and
 /// standard-conforming strings (the scanner's view of literals), reads at most
-/// [`MAX_SQL_ROWS`] rows and rolls back. The database refuses a write even if the text check
+/// [`MAX_SQL_ROWS`] rows (answering whether more were left) and rolls back. The database refuses a write even if the text check
 /// ever missed one.
 async fn run_read_only(
     pool: &PgPool,
     verified_sql: &str,
     timeout: std::time::Duration,
-) -> Result<Vec<sqlx::postgres::PgRow>, DsError> {
+) -> Result<(Vec<sqlx::postgres::PgRow>, bool), DsError> {
     use futures_util::TryStreamExt;
     let mut tx = pool.begin().await.map_err(|e| pg_err(&e))?;
     sqlx::query("SET TRANSACTION READ ONLY")
@@ -1024,17 +1031,170 @@ async fn run_read_only(
         .await
         .map_err(|e| pg_err(&e))?;
     let mut rows = Vec::new();
+    let mut truncated = false;
     {
         let mut stream = sqlx::query(sqlx::AssertSqlSafe(verified_sql.to_owned())).fetch(&mut *tx);
         while let Some(row) = stream.try_next().await.map_err(|e| pg_err(&e))? {
-            rows.push(row);
-            if rows.len() >= MAX_SQL_ROWS {
+            if rows.len() == MAX_SQL_ROWS {
+                truncated = true;
                 break;
             }
+            rows.push(row);
         }
     }
     tx.rollback().await.map_err(|e| pg_err(&e))?;
-    Ok(rows)
+    Ok((rows, truncated))
+}
+
+/// A NUMERIC value as a float: Postgres' binary form is base-10000 digits with a weight
+/// (`src/backend/utils/adt/numeric.c`, `numeric_send`). NaN and the infinities have no JSON
+/// number and read as none.
+fn numeric_to_f64(value: &PgValueRef<'_>) -> Option<f64> {
+    if value.is_null() {
+        return None;
+    }
+    if value.format() == PgValueFormat::Text {
+        return value
+            .as_str()
+            .ok()?
+            .parse::<f64>()
+            .ok()
+            .filter(|f| f.is_finite());
+    }
+    let b = value.as_bytes().ok()?;
+    let word = |i: usize| -> Option<u16> { Some(u16::from_be_bytes([*b.get(i)?, *b.get(i + 1)?])) };
+    let ndigits = word(0)?;
+    let weight = i32::from(word(2)?.cast_signed());
+    let negative = match word(4)? {
+        0x0000 => false,
+        0x4000 => true,
+        _ => return None,
+    };
+    let mut v = 0f64;
+    for k in 0..ndigits {
+        let digit = f64::from(word(8 + 2 * usize::from(k))?);
+        v += digit * 10_000f64.powi(weight - i32::from(k));
+    }
+    Some(if negative { -v } else { v })
+}
+
+/// The frame columns of a result: time, number, bool, text, JSON and uuid columns by their
+/// Postgres type; a column of another type is a text column of empty values with a notice
+/// naming it, never a silent gap.
+fn rows_to_fields(rows: &[sqlx::postgres::PgRow]) -> (Vec<FieldColumn>, Vec<Notice>) {
+    let Some(first) = rows.first() else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut notices = Vec::new();
+    let mut fields = Vec::with_capacity(first.columns().len());
+    for (idx, col) in first.columns().iter().enumerate() {
+        let type_name = col.type_info().name().to_ascii_uppercase();
+        let field_type = match type_name.as_str() {
+            "TIMESTAMPTZ" | "TIMESTAMP" | "DATE" => FieldType::Time,
+            "INT2" | "INT4" | "INT8" | "FLOAT4" | "FLOAT8" | "NUMERIC" => FieldType::Number,
+            "BOOL" => FieldType::Bool,
+            "JSON" | "JSONB" => FieldType::Json,
+            "TEXT" | "VARCHAR" | "CHAR" | "BPCHAR" | "NAME" | "UUID" => FieldType::String,
+            other => {
+                notices.push(Notice {
+                    severity: NoticeSeverity::Warning,
+                    text: format!(
+                        "column '{}' has type {other}, which is not read; cast it to text or a number",
+                        col.name()
+                    ),
+                });
+                FieldType::String
+            }
+        };
+        let values = rows.iter().map(|row| cell(row, idx, &type_name)).collect();
+        fields.push(FieldColumn {
+            name: col.name().to_owned(),
+            field_type,
+            unit: None,
+            display_name: None,
+            labels: BTreeMap::new(),
+            values,
+        });
+    }
+    (fields, notices)
+}
+
+fn cell(row: &sqlx::postgres::PgRow, idx: usize, type_name: &str) -> Value {
+    let number = |f: Option<f64>| {
+        f.and_then(serde_json::Number::from_f64)
+            .map_or(Value::Null, Value::Number)
+    };
+    let time = |ms: Option<i64>| ms.map_or(Value::Null, Value::from);
+    match type_name {
+        "TIMESTAMPTZ" => time(
+            row.try_get::<Option<DateTime<Utc>>, _>(idx)
+                .ok()
+                .flatten()
+                .map(|t| t.timestamp_millis()),
+        ),
+        "TIMESTAMP" => time(
+            row.try_get::<Option<chrono::NaiveDateTime>, _>(idx)
+                .ok()
+                .flatten()
+                .map(|t| t.and_utc().timestamp_millis()),
+        ),
+        "DATE" => time(
+            row.try_get::<Option<chrono::NaiveDate>, _>(idx)
+                .ok()
+                .flatten()
+                .map(|d| {
+                    d.and_time(chrono::NaiveTime::MIN)
+                        .and_utc()
+                        .timestamp_millis()
+                }),
+        ),
+        "INT2" => number(
+            row.try_get::<Option<i16>, _>(idx)
+                .ok()
+                .flatten()
+                .map(f64::from),
+        ),
+        "INT4" => number(
+            row.try_get::<Option<i32>, _>(idx)
+                .ok()
+                .flatten()
+                .map(f64::from),
+        ),
+        "INT8" => number(
+            row.try_get::<Option<i64>, _>(idx)
+                .ok()
+                .flatten()
+                .map(|i| i as f64),
+        ),
+        "FLOAT4" => number(
+            row.try_get::<Option<f32>, _>(idx)
+                .ok()
+                .flatten()
+                .map(f64::from),
+        ),
+        "FLOAT8" => number(row.try_get::<Option<f64>, _>(idx).ok().flatten()),
+        "NUMERIC" => number(row.try_get_raw(idx).ok().and_then(|v| numeric_to_f64(&v))),
+        "BOOL" => row
+            .try_get::<Option<bool>, _>(idx)
+            .ok()
+            .flatten()
+            .map_or(Value::Null, Value::Bool),
+        "JSON" | "JSONB" => row
+            .try_get::<Option<Value>, _>(idx)
+            .ok()
+            .flatten()
+            .unwrap_or(Value::Null),
+        "UUID" => row
+            .try_get::<Option<uuid::Uuid>, _>(idx)
+            .ok()
+            .flatten()
+            .map_or(Value::Null, |u| Value::String(u.to_string())),
+        _ => row
+            .try_get::<Option<String>, _>(idx)
+            .ok()
+            .flatten()
+            .map_or(Value::Null, Value::String),
+    }
 }
 
 /// Built-in Postgres datasource executing verified read-only `SELECT` queries over granted views (R3, §3.2).
@@ -1112,55 +1272,15 @@ impl Datasource for PostgresDatasource {
                     continue;
                 };
 
-                let rows = run_read_only(pool, &verified_sql, ctx.timeout).await?;
-
-                let mut fields: Vec<FieldColumn> = Vec::new();
-                if let Some(first_row) = rows.first() {
-                    for col in first_row.columns() {
-                        let type_name = col.type_info().name().to_ascii_uppercase();
-                        let ft = match type_name.as_str() {
-                            "TIMESTAMPTZ" | "TIMESTAMP" => FieldType::Time,
-                            "INT2" | "INT4" | "INT8" | "FLOAT4" | "FLOAT8" | "NUMERIC" => {
-                                FieldType::Number
-                            }
-                            "BOOL" => FieldType::Bool,
-                            _ => FieldType::String,
-                        };
-                        fields.push(FieldColumn {
-                            name: col.name().to_owned(),
-                            field_type: ft,
-                            unit: None,
-                            display_name: None,
-                            labels: BTreeMap::new(),
-                            values: Vec::with_capacity(rows.len()),
-                        });
-                    }
-                }
-
-                for row in &rows {
-                    for (c_idx, f) in fields.iter_mut().enumerate() {
-                        let val = match f.field_type {
-                            FieldType::Time => row
-                                .try_get::<DateTime<Utc>, _>(c_idx)
-                                .ok()
-                                .map_or(Value::Null, |dt| Value::from(dt.timestamp_millis())),
-                            FieldType::Number => row
-                                .try_get::<f64, _>(c_idx)
-                                .or_else(|_| row.try_get::<i64, _>(c_idx).map(|i| i as f64))
-                                .ok()
-                                .and_then(serde_json::Number::from_f64)
-                                .map_or(Value::Null, Value::Number),
-                            FieldType::Bool => row
-                                .try_get::<bool, _>(c_idx)
-                                .ok()
-                                .map_or(Value::Null, Value::Bool),
-                            _ => row
-                                .try_get::<String, _>(c_idx)
-                                .ok()
-                                .map_or(Value::Null, Value::String),
-                        };
-                        f.values.push(val);
-                    }
+                let (rows, truncated) = run_read_only(pool, &verified_sql, ctx.timeout).await?;
+                let (fields, mut notices) = rows_to_fields(&rows);
+                if truncated {
+                    notices.push(Notice {
+                        severity: NoticeSeverity::Warning,
+                        text: format!(
+                            "Results have been limited to {MAX_SQL_ROWS} rows because the row limit was reached"
+                        ),
+                    });
                 }
 
                 out.push(FrameSet::new(
@@ -1171,6 +1291,7 @@ impl Datasource for PostgresDatasource {
                         fields,
                         meta: FrameMeta {
                             executed_query_string: Some(verified_sql),
+                            notices,
                             ..FrameMeta::default()
                         },
                     }],
@@ -1180,8 +1301,14 @@ impl Datasource for PostgresDatasource {
         })
     }
 
-    fn health<'a>(&'a self, _ctx: &'a QueryCtx) -> DsFuture<'a, Health> {
+    fn health<'a>(&'a self, ctx: &'a QueryCtx) -> DsFuture<'a, Health> {
         Box::pin(async move {
+            // Grafana's check pings the database; without a pool only the checker runs.
+            if let Some(pool) = &self.pool
+                && let Err(e) = run_read_only(pool, "SELECT 1", ctx.timeout).await
+            {
+                return Health::error(e.to_string());
+            }
             Health::ok(format!(
                 "Postgres datasource ready ({} granted view(s))",
                 self.allowed_views.len()
