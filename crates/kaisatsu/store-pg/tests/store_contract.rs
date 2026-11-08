@@ -742,7 +742,8 @@ async fn roles_and_clients(store: &dyn Store) {
         .expect("lookup")
         .expect("service account person");
     assert_eq!(sa.service_account_client_id.as_deref(), Some("hel-app"));
-    // Upsert by client id without secret or mappers keeps both.
+    // Upsert by client id without a secret keeps the secret; the mappers are the ones given
+    // (removing the last mapper must be possible; callers that merge do so themselves).
     let again = store
         .upsert_client(ClientRepresentation {
             realm_id: R.into(),
@@ -755,7 +756,7 @@ async fn roles_and_clients(store: &dyn Store) {
         .expect("client again");
     assert_eq!(again.id, client.id);
     assert_eq!(again.secret.as_deref(), Some(secret.as_str()));
-    assert_eq!(again.protocol_mappers.len(), 1);
+    assert!(again.protocol_mappers.is_empty());
     let public = store
         .upsert_client(ClientRepresentation {
             id: "pub-uuid".into(),

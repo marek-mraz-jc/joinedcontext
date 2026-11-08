@@ -330,12 +330,18 @@ impl KeyManager {
                 80,
                 if immediate { "ACTIVE" } else { "PASSIVE" },
             )?,
-            _ => Self::generate_es256(
+            "ES256" => Self::generate_es256(
                 realm_id,
                 kek,
                 100,
                 if immediate { "ACTIVE" } else { "PASSIVE" },
             )?,
+            // No HS* (or any other) token keys: an unknown name never falls back silently.
+            other => {
+                return Err(KaisatsuError::BadRequest(format!(
+                    "unsupported signing algorithm {other}; use ES256, RS256 or EdDSA"
+                )));
+            }
         };
         if immediate {
             for k in existing

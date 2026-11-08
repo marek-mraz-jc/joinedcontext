@@ -2050,9 +2050,6 @@ impl Store for PgStore {
                 if client.secret.is_none() {
                     client.secret = existing.secret;
                 }
-                if client.protocol_mappers.is_empty() && !existing.protocol_mappers.is_empty() {
-                    client.protocol_mappers = existing.protocol_mappers;
-                }
             } else if !client.public_client && client.secret.is_none() {
                 client.secret = Some(kaisatsu_crypto::random_handle_256());
             }

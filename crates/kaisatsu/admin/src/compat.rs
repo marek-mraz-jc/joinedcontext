@@ -524,10 +524,25 @@ async fn compat_create_realm(
     State(state): State<AdminState>,
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
-    Json(mut realm): Json<RealmConfig>,
+    Json(raw): Json<Value>,
 ) -> Result<StatusCode> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
-    if realm.id.is_empty() {
+    let mut realm: RealmConfig = serde_json::from_value(raw.clone())
+        .map_err(|e| KaisatsuError::BadRequest(format!("invalid realm: {e}")))?;
+    // keycloak-config-cli posts `{"realm": "x", ...}` without an id: the id is the realm name,
+    // never the type's default id.
+    if raw
+        .get("realm")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+    {
+        return Err(KaisatsuError::BadRequest("realm is required".into()));
+    }
+    if raw
+        .get("id")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+    {
         realm.id = realm.realm.clone();
     }
     let ctx = extract_admin_ctx(&state, &mount, &realm.id, &headers).await?;
@@ -635,6 +650,38 @@ async fn compat_partial_import(
     ))?;
 
     let mode = payload.if_resource_exists.to_ascii_uppercase();
+    if !matches!(mode.as_str(), "FAIL" | "SKIP" | "OVERWRITE") {
+        return Err(KaisatsuError::BadRequest(format!(
+            "invalid ifResourceExists: {mode}"
+        )));
+    }
+    // FAIL is all or nothing, as in Keycloak: a conflict is found before anything is written.
+    if mode == "FAIL" {
+        for u in &payload.users {
+            let by_id = if u.id.is_empty() {
+                None
+            } else {
+                state
+                    .oidc
+                    .store
+                    .get_user_by_id(&realm_name, None, &u.id)
+                    .await?
+            };
+            if by_id.is_some()
+                || state
+                    .oidc
+                    .store
+                    .get_user_by_username_or_email(&realm_name, None, &u.username)
+                    .await?
+                    .is_some()
+            {
+                return Err(KaisatsuError::Conflict(format!(
+                    "partialImport FAIL: user {} already exists",
+                    u.username
+                )));
+            }
+        }
+    }
     let mut added = 0u32;
     let mut overwritten = 0u32;
     let mut skipped = 0u32;
@@ -659,17 +706,8 @@ async fn compat_partial_import(
             None
         };
         let existing = existing_by_id.or(existing_by_name);
-        match (existing, mode.as_str()) {
-            (Some(_), "FAIL") => {
-                return Err(KaisatsuError::Conflict(format!(
-                    "partialImport FAIL: user {} already exists",
-                    u.username
-                )));
-            }
-            (Some(_), "SKIP") => {
-                skipped += 1;
-            }
-            (Some(old), "OVERWRITE") => {
+        match existing {
+            Some(old) if mode == "OVERWRITE" => {
                 let _ = state
                     .oidc
                     .store
@@ -678,14 +716,11 @@ async fn compat_partial_import(
                 state.oidc.store.create_user(u).await?;
                 overwritten += 1;
             }
-            (None, _) => {
+            // SKIP (FAIL found its conflicts before writing).
+            Some(_) => skipped += 1,
+            None => {
                 state.oidc.store.create_user(u).await?;
                 added += 1;
-            }
-            _ => {
-                return Err(KaisatsuError::BadRequest(format!(
-                    "invalid ifResourceExists: {mode}"
-                )));
             }
         }
     }
@@ -1450,7 +1485,8 @@ async fn compat_update_group(
     if group.path.is_empty() {
         group.path = existing.path;
     }
-    if group.org_id.is_none() {
+    // Only a realm admin moves a group to another organization.
+    if group.org_id.is_none() || !ctx.principal.is_realm_admin() {
         group.org_id = existing.org_id;
     }
     if let Some(vals) = group.attributes.get("managed-by")
@@ -1908,12 +1944,17 @@ async fn compat_update_client(
     ))?;
     client.id = uuid.clone();
     client.realm_id = realm;
-    if client.org_id.is_none() {
+    // Only a realm admin moves an application to another organization.
+    if client.org_id.is_none() || !ctx.principal.is_realm_admin() {
         client.org_id = existing.org_id;
     }
     // W1 quirk-free behaviour: preserve existing default/optional scopes when PUT body omits them
     if client.default_client_scopes.is_empty() && !existing.default_client_scopes.is_empty() {
         client.default_client_scopes = existing.default_client_scopes;
+    }
+    // Keycloak's PUT without `protocolMappers` keeps them (they have their own routes).
+    if client.protocol_mappers.is_empty() {
+        client.protocol_mappers = existing.protocol_mappers;
     }
     let updated = state.oidc.store.upsert_client(client).await?;
     record_admin_write(
@@ -2337,6 +2378,12 @@ async fn compat_update_client_mapper(
 ) -> Result<StatusCode> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
+    if !kaisatsu_core::claims::is_known_mapper_kind(&mapper.protocol_mapper) {
+        return Err(KaisatsuError::BadRequest(format!(
+            "unknown protocolMapper kind: {}",
+            mapper.protocol_mapper
+        )));
+    }
     let allowed = ctx.allowed_orgs();
     let mut client = state
         .oidc
@@ -2664,12 +2711,16 @@ async fn compat_create_client_scope(
 ) -> Result<Response> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
+    if scope.org_id.is_none() {
+        scope.org_id = ctx.active_org_id.clone();
+    }
+    // Authorized on the organization the scope is stored under (none = realm-wide).
     check_decision(state.authorizer.check(
         &ctx,
         Action::Create,
         &ObjectTarget::ClientScope {
             realm_id: realm.clone(),
-            org_id: ctx.active_org_id.clone(),
+            org_id: scope.org_id.clone(),
             scope_id: "*".into(),
         },
     ))?;
@@ -2727,17 +2778,28 @@ async fn compat_update_client_scope(
 ) -> Result<StatusCode> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
+    // Authorized on the stored scope's organization: a realm-wide scope (`roles`, `openid`) is
+    // realm-admin business, whatever organization the caller acts for.
+    let existing = state
+        .oidc
+        .store
+        .get_client_scope(&realm, &id)
+        .await?
+        .ok_or_else(|| KaisatsuError::NotFound("client scope not found".into()))?;
     check_decision(state.authorizer.check(
         &ctx,
         Action::Update,
         &ObjectTarget::ClientScope {
             realm_id: realm.clone(),
-            org_id: ctx.active_org_id.clone(),
-            scope_id: id.clone(),
+            org_id: existing.org_id.clone(),
+            scope_id: existing.id.clone(),
         },
     ))?;
     scope.id = id.clone();
     scope.realm_id = realm;
+    if scope.org_id.is_none() || !ctx.principal.is_realm_admin() {
+        scope.org_id = existing.org_id;
+    }
     state.oidc.store.upsert_client_scope(scope).await?;
     record_admin_write(
         &state,
@@ -2759,19 +2821,22 @@ async fn compat_delete_client_scope(
 ) -> Result<StatusCode> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
+    let existing = state
+        .oidc
+        .store
+        .get_client_scope(&realm, &id)
+        .await?
+        .ok_or_else(|| KaisatsuError::NotFound("client scope not found".into()))?;
     check_decision(state.authorizer.check(
         &ctx,
         Action::Delete,
         &ObjectTarget::ClientScope {
             realm_id: realm.clone(),
-            org_id: ctx.active_org_id.clone(),
-            scope_id: id.clone(),
+            org_id: existing.org_id,
+            scope_id: existing.id,
         },
     ))?;
-    let deleted = state.oidc.store.delete_client_scope(&realm, &id).await?;
-    if !deleted {
-        return Err(KaisatsuError::NotFound("client scope not found".into()));
-    }
+    state.oidc.store.delete_client_scope(&realm, &id).await?;
     record_admin_write(
         &state,
         &ctx,
@@ -2792,13 +2857,22 @@ async fn compat_clear_brute_force(
 ) -> Result<StatusCode> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
+    // Authorized on the person's own organization: an organization admin never unlocks the
+    // brute-force protection of somebody outside it.
+    let allowed = ctx.allowed_orgs();
+    let user = state
+        .oidc
+        .store
+        .get_user_by_id(&realm, allowed.as_deref(), &user_id)
+        .await?
+        .ok_or_else(|| KaisatsuError::NotFound("user not found".into()))?;
     check_decision(state.authorizer.check(
         &ctx,
         Action::Update,
         &ObjectTarget::Person {
             realm_id: realm.clone(),
-            org_id: ctx.active_org_id.clone(),
-            person_id: user_id.clone(),
+            org_id: user.org_id,
+            person_id: user.id,
         },
     ))?;
     state

@@ -1136,6 +1136,12 @@ pub async fn apply_realm_files(
             let prev = existing_clients
                 .iter()
                 .find(|c| c.client_id == client.client_id);
+            // A file without protocol mappers keeps the stored ones (no-delete apply).
+            if client.protocol_mappers.is_empty()
+                && let Some(p) = prev
+            {
+                client.protocol_mappers = p.protocol_mappers.clone();
+            }
             if let Some(raw_sec) = client.secret.clone() {
                 // An unset variable keeps the client's current secret (re-applying an export);
                 // a new client without its variable fails the apply.

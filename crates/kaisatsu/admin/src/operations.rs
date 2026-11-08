@@ -586,7 +586,8 @@ pub async fn execute(
     }
 }
 
-/// `Allowed(operation, object)`: the decision the call itself would make, without revealing a
+/// `Allowed(operation, object)`: the decision the call itself would make (on the object's own
+/// organization, as the call judges it), without revealing a
 /// hidden record (a missing id and another organization's id answer the same, W5). `operation`
 /// is a registry operation name or an action verb (`read`, `create`, `update`, `delete`,
 /// `apply`); `object` is `Set('key')`, a bare set, or absent for the realm.
@@ -634,7 +635,7 @@ async fn allowed(state: &AdminState, ctx: &RequestCtx, params: &Value) -> Result
             };
             ObjectTarget::Person {
                 realm_id: realm,
-                org_id: u.org_id.or(ctx.active_org_id.clone()),
+                org_id: u.org_id,
                 person_id: uid.to_owned(),
             }
         }
@@ -647,7 +648,7 @@ async fn allowed(state: &AdminState, ctx: &RequestCtx, params: &Value) -> Result
             };
             ObjectTarget::Group {
                 realm_id: realm,
-                org_id: g.org_id.or(ctx.active_org_id.clone()),
+                org_id: g.org_id,
                 group_id: gid.to_owned(),
                 managed_by: g.managed_by,
             }
@@ -661,7 +662,7 @@ async fn allowed(state: &AdminState, ctx: &RequestCtx, params: &Value) -> Result
             };
             ObjectTarget::Application {
                 realm_id: realm,
-                org_id: c.org_id.or(ctx.active_org_id.clone()),
+                org_id: c.org_id,
                 client_id: c.client_id,
                 managed_by: c.managed_by,
             }
