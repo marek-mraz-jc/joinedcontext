@@ -958,7 +958,11 @@ async fn an_mcp_proposal_outside_the_callers_organization_is_refused_before_aski
     };
     let refused = ask(organization("hel", "hel.fi")).await;
     assert_eq!(refused["result"]["isError"], json!(true), "{refused}");
-    assert_ne!(refused["result"]["status"], json!("input_required"), "{refused}");
+    assert_ne!(
+        refused["result"]["status"],
+        json!("input_required"),
+        "{refused}"
+    );
     // Its own Organization's settings are still asked for, as before.
     let own = ask(organization("esp", "espoo.fi")).await;
     assert_ne!(own["result"]["isError"], json!(true), "{own}");
