@@ -30,7 +30,6 @@ PAGES = [
     ("catalogue", "/catalogue"),
     ("endpoints", "/endpoints"),
     ("organization", "/organization"),
-    ("shako-web", "/git/"),
     ("dataroom", "/opendata/"),
 ]
 
@@ -55,7 +54,8 @@ def main():
             ctx = browser.new_context(viewport={"width": width, "height": height})
             page = ctx.new_page()
             errors: list[str] = []
-            page.on("console", lambda m: errors.append(m.text[:200]) if m.type == "error" else None)
+            page.on("response", lambda r: errors.append(f"{r.status} {r.request.method} {r.url.removeprefix(a.base)}"[:200])
+                    if r.status >= 400 else None)
             page.goto(a.base + "/api/v1/auth/login")
             page.fill("input[name=username]", "rehearsal-shots")
             page.fill("input[name=password]", password)
@@ -70,12 +70,12 @@ def main():
                 h1 = page.locator("h1").first.inner_text(timeout=2000) if page.locator("h1").count() else ""
                 rows.append({"page": name, "path": path.format(p=a.project), "width": width,
                              "status": resp.status if resp else None, "h1": h1.strip()[:120],
-                             "consoleErrors": errors[:5], "file": file.name})
+                             "failedRequests": sorted(set(errors))[:8], "file": file.name})
             ctx.close()
         browser.close()
     (out / "shots.json").write_text(json.dumps(rows, indent=1))
     for r in rows:
-        print(f"{r['width']:5} {r['status']} {r['page']:14} h1={r['h1']!r} errors={len(r['consoleErrors'])}")
+        print(f"{r['width']:5} {r['status']} {r['page']:14} h1={r['h1']!r} failed={r['failedRequests']}")
 
 
 if __name__ == "__main__":

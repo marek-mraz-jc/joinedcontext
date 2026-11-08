@@ -87,6 +87,8 @@ export ANTARES_HISTORY_BACKFILL=on
 # jc is one process: the local notification bus cannot double-fire.
 export ANTARES_ALLOW_SHARED_LOCAL=1
 export JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false JC_PORTAL_SYNC_INTERVAL=10
+# The Portal's internal listener (/metrics, run callbacks) on loopback, one port per environment.
+export JC_INTERNAL_BIND=127.0.0.1:$((pg_port + 100))
 export RUST_LOG=${RUST_LOG:-info,sqlx=warn}
 # The deployment's configuration repository (defaults/environment/global.yaml configRepo).
 export JC_GITEA_OWNER=${REHEARSAL_CONFIG_OWNER:-joinedcontext} JC_GITEA_REPO=${REHEARSAL_CONFIG_REPO:-configuration}

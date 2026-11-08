@@ -752,6 +752,19 @@ def make_person(h: Http, token: str, realm: str, username: str, groups=()):
                       body={"type": "password", "value": password, "temporary": False})
     if st not in (200, 204):
         raise RuntimeError(f"password of {username}: {st} {body}")
+    # Group membership is set explicitly: a create body's `groups` is not honoured everywhere.
+    st, tree = h.json("GET", f"/id/admin/realms/{realm}/groups?briefRepresentation=false", headers=auth)
+    by_path, todo = {}, list(tree or [])
+    while todo:
+        g = todo.pop()
+        by_path[g.get("path")] = g["id"]
+        todo += g.get("subGroups") or []
+    for path in groups:
+        if path not in by_path:
+            raise RuntimeError(f"group {path} of {username}: not in realm {realm}")
+        st, body = h.json("PUT", f"/id/admin/realms/{realm}/users/{uid}/groups/{by_path[path]}", headers=auth)
+        if st not in (200, 204):
+            raise RuntimeError(f"group {path} of {username}: {st} {body}")
     return uid, password
 
 
