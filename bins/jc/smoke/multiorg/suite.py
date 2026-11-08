@@ -34,6 +34,12 @@ PROJECT_READS = ["", "/spaces", "/endpoints", "/pipelines", "/apps", "/datamodel
                  "/serviceaccounts", "/activity", "/syncsources", "/mqttbrokers", "/drafts"]
 
 
+def claims(token: str) -> dict:
+    """The payload of a JWT, unverified: only to read which audience kaisatsu wrote."""
+    part = token.split(".")[1]
+    return json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+
+
 class Suite:
     def __init__(self, a):
         self.a = a
@@ -42,6 +48,7 @@ class Suite:
         self.state = Path(a.state) if a.state else None
         self.export = Path(a.export)
         self.people: dict[str, dict] = {}
+        self.dashboards: dict[str, tuple[str, str]] = {}  # org -> (project, name) the suite committed
 
     # ---- results
     def row(self, id_, target, call, expected, actual, ok, reason=""):
@@ -58,7 +65,7 @@ class Suite:
         for org, v in m.items():
             exp[org] = {"projects": {}}
             for p in v["projects"]:
-                kinds = {"Endpoint": [], "Pipeline": [], "CkanInstance": []}
+                kinds = {"Endpoint": [], "Pipeline": [], "CkanInstance": [], "Dashboard": []}
                 for f in (files / CONFIG[0] / p).rglob("*.yaml"):
                     text = f.read_text(errors="replace")
                     for kind in kinds:
@@ -66,12 +73,21 @@ class Suite:
                             n = re.search(r"^metadata:\s*\n(?:\s+.*\n)*?\s+name:\s*([\w.-]+)", text, re.M)
                             if n:
                                 kinds[kind].append(n.group(1))
+                closed = {}  # slug -> (name, audience) of every Endpoint that is not public
+                for f in (files / CONFIG[0] / p).glob("spaces/*/endpoints/*.yaml"):
+                    text = f.read_text(errors="replace")
+                    aud = re.search(r"^\s*audience:\s*([\w-]+)", text, re.M)
+                    slug = re.search(r"^\s*slug:\s*([a-z2-7]+)", text, re.M)
+                    name = re.search(r"^metadata:\s*\n(?:\s+.*\n)*?\s+name:\s*([\w.-]+)", text, re.M)
+                    if aud and slug and name and aud.group(1) != "public":
+                        closed[slug.group(1)] = (name.group(1), aud.group(1))
                 ckan = []
                 for f in (files / CONFIG[0] / p / "ckan").glob("*.yaml"):
                     d = re.search(r"organizationDefault:\s*([\w.-]+)", f.read_text())
                     if d:
                         ckan.append(d.group(1))
-                exp[org]["projects"][p] = {k: sorted(set(v)) for k, v in kinds.items()} | {"ckanOrgs": ckan}
+                exp[org]["projects"][p] = {k: sorted(set(v)) for k, v in kinds.items()} | {"ckanOrgs": ckan,
+                                                                                          "closed": closed}
         self.exp = exp
         orgs = files / CONFIG[0] / CONFIG[1] / "organizations"
         self.installation = next((f.stem for f in orgs.glob("*.yaml")
@@ -103,25 +119,62 @@ class Suite:
                               f"  name: multiorg-{org}-{kind}\n  namespace: org\nspec:\n  subjects:\n"
                               f"    - user: {p['id']} # {p['username']}\n  role: {role}\n"
                               f"  scope: {{ organization: {org} }}\n"))
-        self.commit(files, "multiorg smoke: test persons' RoleBindings")
+        for org, e in self.exp.items():
+            subjects = "".join(f"    - id: {self.people[f'{org}-{k}']['id']}\n      kind: User\n" for k in ("admin", "member"))
+            files.append((f"users/delegation/multiorg-{org}.yaml",
+                          "apiVersion: joinedcontext.com/v1alpha1\nkind: DelegationPolicy\nmetadata:\n"
+                          f"  name: multiorg-{org}\n  namespace: org\nspec:\n  aboveCeiling: refuse\n"
+                          f"  maxExpiry: P30D\n  projects: [{', '.join(sorted(e['projects']))}]\n"
+                          f"  segments: [data-read, context]\n  subjects:\n{subjects}  writes: false\n"))
+        self.commit(files, "multiorg smoke: test persons' RoleBindings and DelegationPolicies")
+        # One organization-wide Dashboard per Organization, in its first project with an Endpoint
+        # (the exports hold Dashboards only for helsinki).
+        for org, e in self.exp.items():
+            project = next((p for p in sorted(e["projects"]) if e["projects"][p]["Endpoint"]), None)
+            if not project:
+                continue
+            endpoint = sorted(e["projects"][project]["Endpoint"])[0]
+            self.dashboards[org] = (project, f"multiorg-{org}")
+            self.commit([(f"dashboards/multiorg-{org}.yaml",
+                          "apiVersion: joinedcontext.com/v1alpha1\nkind: Dashboard\nmetadata:\n"
+                          f"  name: multiorg-{org}\n  namespace: {project}\nspec:\n"
+                          f"  title: multiorg {org}\n  visibility: organization\n  pages:\n"
+                          f"    - title: Overview\n      widgets:\n        - widgetType: temporal-chart\n"
+                          f"          endpointRef: {endpoint}\n")],
+                        f"multiorg smoke: a Dashboard of {org}", repo=("joinedcontext", project))
         # Wait until each admin sees its Organization's projects (the Portal's sync).
         deadline = time.time() + self.a.sync_timeout
         pending = set(self.exp)
         while pending and time.time() < deadline:
             for org in sorted(pending):
                 st, body = self.session(f"{org}-admin").json("GET", "/api/v1/projects")
-                if st == 200 and set(self.exp[org]["projects"]) <= {i["name"] for i in body.get("items", [])}:
+                st_d, _ = self.session("platform").json("GET", f"/api/v1/projects/org/delegationpolicies/multiorg-{org}")
+                dash = self.dashboards.get(org)
+                st_b = self.session("platform").json("GET", f"/api/v1/projects/{dash[0]}/dashboards/{dash[1]}")[0] if dash else 200
+                if st == 200 and st_d == 200 and st_b == 200 and self.bound(org) >= {f"mo-{org}-admin", f"mo-{org}-member"} and \
+                        set(self.exp[org]["projects"]) <= {i["name"] for i in body.get("items", [])}:
                     pending.discard(org)
             if pending:
                 time.sleep(5)
         self.row("setup.bindings-synced", ",".join(self.exp), "GET /api/v1/projects (each org admin)",
-                 "every admin lists its projects", f"not yet: {sorted(pending)}" if pending else "all",
+                 "every admin lists its projects; DelegationPolicy, Dashboard and {org}_bound group synced", f"not yet: {sorted(pending)}" if pending else "all",
                  not pending)
 
-    def commit(self, files, message):
+    def bound(self, org) -> set:
+        """Usernames in the reconciler's group `{org}_bound` (jc_org of org-scoped bindings)."""
+        h = self.client()
+        auth = {"Authorization": f"Bearer {R.admin_token(h, self.state)}"}
+        st, groups = h.json("GET", f"/id/admin/realms/jc/groups?search={org}_bound", headers=auth)
+        g = next((g for g in groups or [] if isinstance(g, dict) and g.get("name") == f"{org}_bound"), None)
+        if st != 200 or not g:
+            return set()
+        st, members = h.json("GET", f"/id/admin/realms/jc/groups/{g['id']}/members", headers=auth)
+        return {m["username"] for m in members} if st == 200 and isinstance(members, list) else set()
+
+    def commit(self, files, message, repo=CONFIG):
         h = self.client()
         auth = {"Authorization": f"token {R.read_secret(self.state, 'shako-token')}"}
-        owner, repo = CONFIG
+        owner, repo = repo
         ops = []
         for path, text in files:
             st, cur = h.json("GET", f"/git/api/v1/repos/{owner}/{repo}/contents/{path}?ref=main", headers=auth)
@@ -148,22 +201,25 @@ class Suite:
             p["http"] = h
         return p["http"]
 
-    def bearer(self, key) -> str | None:
+    def bearer(self, key, scope="mcp:portal", client=None) -> str | None:
         """An MCP access token of the person, as a local MCP client gets one: code flow with PKCE
         through the realm's public client mcp-local, scope mcp:portal (audience portal-api); the
         redirect to the loopback callback is read, never followed."""
         p = self.people[key]
-        if "token" in p:
-            return p["token"]
+        held = p.setdefault("tokens", {})
+        if scope in held:
+            return held[scope]
+        # A confidential client (the Portal's own) redirects to the Portal's callback, read here.
+        client_id, secret_file = client or (MCP_CLIENT, None)
         h = self.client()
         verifier = secrets.token_urlsafe(48)
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-        redirect = "http://127.0.0.1/callback"
-        q = urllib.parse.urlencode({"client_id": MCP_CLIENT, "redirect_uri": redirect, "response_type": "code",
-                                    "scope": "openid mcp:portal", "state": "mo", "code_challenge": challenge,
+        redirect = f"{self.base}/api/v1/auth/callback" if secret_file else "http://127.0.0.1/callback"
+        q = urllib.parse.urlencode({"client_id": client_id, "redirect_uri": redirect, "response_type": "code",
+                                    "scope": f"openid {scope}", "state": "mo", "code_challenge": challenge,
                                     "code_challenge_method": "S256"})
         login_url, st, page = R.follow(h, f"/id/realms/jc/protocol/openid-connect/auth?{q}")
-        p["token"] = None
+        held[scope] = None
         if st != 200:
             return None
         text = page.decode(errors="replace")
@@ -175,10 +231,11 @@ class Suite:
             return None
         code = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query)["code"][0]
         st, tok = h.json("POST", "/id/realms/jc/protocol/openid-connect/token", form={
-            "grant_type": "authorization_code", "client_id": MCP_CLIENT, "code": code,
-            "redirect_uri": redirect, "code_verifier": verifier})
-        p["token"] = tok.get("access_token") if st == 200 and isinstance(tok, dict) else None
-        return p["token"]
+            "grant_type": "authorization_code", "client_id": client_id, "code": code,
+            "redirect_uri": redirect, "code_verifier": verifier,
+            **({"client_secret": R.read_secret(self.state, secret_file)} if secret_file else {})})
+        held[scope] = tok.get("access_token") if st == 200 and isinstance(tok, dict) else None
+        return held[scope]
 
     # ---- checks
     def check_projects(self):
@@ -245,22 +302,29 @@ class Suite:
                          st in DENIED and st_after == 200)
 
     def check_people(self):
-        """The members list of an org admin names nobody bound only to another Organization."""
+        """The members list of an org admin names its own people and nobody bound only to another
+        Organization. The installation Organization's admins hold the realm-wide Person read
+        (ADR-N-058 §2.2): their row is a skip naming that, for the owner to decide."""
         for org in self.exp:
             st, body = self.session(f"{org}-admin").json("GET", "/api/v1/organization/people")
             emails = {i.get("email", "") for i in (body or {}).get("items", [])} if st == 200 else set()
             own = {f"mo-{org}-admin@rehearsal.invalid", f"mo-{org}-member@rehearsal.invalid"}
-            foreign = sorted(x for x in emails if re.match(r"mo-(.+)-(admin|member)@", x)
-                             and re.match(r"mo-(.+)-(admin|member)@", x).group(1) != org)
-            if st in DENIED:
-                self.row(f"people.{org}-admin", org, "GET /api/v1/organization/people",
-                         "own members, nobody of another org", f"{st}", None,
-                         "an org admin may not list people at all here")
-                continue
+            foreign = sorted(x for x in emails if (m := re.match(r"mo-(.+)-(admin|member)@", x)) and m.group(1) != org)
             self.row(f"people.{org}-admin.own", org, "GET /api/v1/organization/people", f"{sorted(own)} listed",
                      f"{st}, missing {sorted(own - emails)}", st == 200 and own <= emails)
-            self.row(f"people.{org}-admin.no-foreign", org, "GET /api/v1/organization/people",
-                     "nobody of another org", f"foreign {foreign}", st == 200 and not foreign)
+            if org == self.installation:
+                self.row(f"people.{org}-admin.no-foreign", org, "GET /api/v1/organization/people",
+                         "nobody of another org", f"{st}, foreign {foreign}", None if foreign else st == 200,
+                         "installation admin: realm-wide Person read (ADR-N-058 §2.2); lists other "
+                         "Organizations' people: owner decision" if foreign else "")
+            else:
+                self.row(f"people.{org}-admin.no-foreign", org, "GET /api/v1/organization/people",
+                         "nobody of another org", f"{st}, foreign {foreign}", st in (200, *DENIED) and not foreign)
+            st, body = self.session(f"{org}-member").json("GET", "/api/v1/organization/people")
+            emails = json.dumps(body)
+            foreign = sorted({m.group(1) for m in re.finditer(r"mo-([a-z]+)-(?:admin|member)@", emails)} - {org})
+            self.row(f"people.{org}-member", org, "GET /api/v1/organization/people", "403/404 or nobody of another org",
+                     f"{st}, foreign {foreign}", st in DENIED or (st == 200 and not foreign))
 
     def check_mcp(self):
         everything = {p for o in self.exp.values() for p in o["projects"]}
@@ -366,6 +430,124 @@ class Suite:
                          "refused, no foreign object named", f"{st}, refused={refused}, foreign {found[:4]}",
                          refused and not found)
 
+    def check_connectors(self):
+        """Each org admin's connector, scoped to its own project, is invisible and untouchable to
+        the other Organizations' people; a connector scoped to a foreign project is refused."""
+        made = {}
+        expires = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 7 * 86400))
+        for org, e in self.exp.items():
+            own = sorted(e["projects"])[0]
+            h = self.session(f"{org}-admin")
+            st, body = h.json("POST", "/api/v1/connectors", body={
+                "name": f"mo-{org}", "segments": ["data-read", "context"], "expiresAt": expires,
+                "scope": [{"project": own, "access": "read"}]})
+            cid = (body or {}).get("id") if isinstance(body, dict) else None
+            self.row(f"connectors.{org}-admin.create", org, "POST /api/v1/connectors", "201 with id",
+                     f"{st} {str(body)[:160] if not cid else cid}", st in (200, 201) and bool(cid))
+            if cid:
+                made[org] = (cid, own)
+            for other, oe in self.exp.items():
+                if other == org:
+                    continue
+                foreign = sorted(oe["projects"])[0]
+                st, body = h.json("POST", "/api/v1/connectors", body={
+                    "name": f"mo-{org}-into-{other}", "segments": ["data-read", "context"], "expiresAt": expires,
+                    "scope": [{"project": foreign, "access": "read"}]})
+                if st in (200, 201) and isinstance(body, dict) and body.get("id"):
+                    h.call("DELETE", f"/api/v1/connectors/{body['id']}")
+                # Only the scope differs from the own connector's body: without that one, a 4xx
+                # proves nothing.
+                self.row(f"connectors.{org}-admin.create-into.{foreign}", f"{org}->{other}",
+                         f"POST /api/v1/connectors scope {foreign}", "4xx (own create 201)", f"{st} {str(body)[:160]}",
+                         (400 <= st < 500) if cid else None, "" if cid else "own create failed: no control")
+        for owner, (cid, own) in made.items():
+            for other in self.exp:
+                if other == owner:
+                    continue
+                for kind in ("admin", "member"):
+                    h = self.session(f"{other}-{kind}")
+                    st, _, _ = h.call("GET", f"/api/v1/connectors/{cid}")
+                    st_list, lst = h.json("GET", "/api/v1/connectors")
+                    listed = cid in json.dumps(lst)
+                    st_del, _, _ = h.call("DELETE", f"/api/v1/connectors/{cid}")
+                    st_act, _, _ = h.call("GET", f"/api/v1/connectors/{cid}/activity")
+                    self.row(f"connectors.{other}-{kind}.on.{owner}", f"{other}->{owner}",
+                             f"GET, DELETE, GET activity /api/v1/connectors/{cid}; GET /api/v1/connectors",
+                             "404/403 each, not listed", f"get {st}, delete {st_del}, activity {st_act}, listed {listed}",
+                             st in DENIED and st_del in DENIED and st_act in DENIED and not listed)
+                    tok = self.bearer(f"{other}-{kind}", f"connector:{cid}")
+                    if tok:
+                        st, res = self.client().json("POST", f"/c/{cid}", headers={
+                            "Authorization": f"Bearer {tok}", "Accept": "application/json, text/event-stream"},
+                            body={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+                        self.row(f"connectors.{other}-{kind}.mcp.{owner}", f"{other}->{owner}",
+                                 f"POST /c/{cid} tools/list", "401/403/404", f"{st}", st in (401, *DENIED))
+            st, _, _ = self.session(f"{owner}-admin").call("GET", f"/api/v1/connectors/{cid}")
+            self.row(f"connectors.{owner}-admin.still-there", owner, f"GET /api/v1/connectors/{cid}", "200",
+                     f"{st}", st == 200)
+            tok = self.bearer(f"{owner}-admin", f"connector:{cid}")
+            if not tok:
+                self.row(f"connectors.{owner}-admin.mcp", owner, f"POST /c/{cid}", "a connector token", "none",
+                         None, f"code flow with scope connector:{cid} through mcp-local gave no token")
+                continue
+            h = self.client()
+            auth = {"Authorization": f"Bearer {tok}", "Accept": "application/json, text/event-stream"}
+            st, init = h.json("POST", f"/c/{cid}", headers=auth, body={
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                           "clientInfo": {"name": "multiorg-smoke", "version": "1"}}})
+            st2, lst = h.json("POST", f"/c/{cid}", headers=auth,
+                              body={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+            tools = sorted(t["name"] for t in ((lst or {}).get("result") or {}).get("tools", [])) if st2 == 200 else []
+            self.people[f"{owner}-admin"]["connectorTools"] = tools
+            found = [m for m in self.foreign_marks(owner) if m in json.dumps(init) + json.dumps(lst)]
+            self.row(f"connectors.{owner}-admin.mcp", owner, f"POST /c/{cid} initialize + tools/list",
+                     "200, tools, no foreign object named", f"{st}/{st2}, {len(tools)} tools, foreign {found[:3]}",
+                     st == 200 and st2 == 200 and bool(tools) and not found)
+
+    def check_data(self):
+        """Endpoints that are not public: another Organization's people never see them in the
+        readable catalogue or the MCP hub, and never read them through the gateway."""
+        for org in self.exp:
+            foreign = {slug: (p, *v) for o, oe in self.exp.items() if o != org
+                       for p, pe in oe["projects"].items() for slug, v in pe["closed"].items()}
+            own_org = {slug for p, pe in self.exp[org]["projects"].items()
+                       for slug, (_, aud) in pe["closed"].items() if aud == "organization"}
+            for kind in ("admin", "member"):
+                key = f"{org}-{kind}"
+                st, body = self.session(key).json("GET", "/api/v1/catalogue/readable")
+                slugs = {d.get("slug") for d in (body or {}).get("datasets", [])} if st == 200 else set()
+                seen = sorted(f"{foreign[x][0]}/{foreign[x][1]}" for x in slugs & set(foreign))
+                self.row(f"data.{key}.readable.no-foreign", org, "GET /api/v1/catalogue/readable",
+                         "no closed Endpoint of another org", f"{st}, {len(slugs)} listed, foreign {seen[:4]}",
+                         st == 200 and not seen)
+                if own_org:
+                    missing = sorted(own_org - slugs)
+                    self.row(f"data.{key}.readable.own-organization", org, "GET /api/v1/catalogue/readable",
+                             f"its {len(own_org)} organization Endpoints", f"{st}, missing {len(missing)}",
+                             st == 200 and not missing)
+                tok = self.bearer(key, "gateway-hub", client=("portal-api", "portal-client-secret"))
+                aud = claims(tok).get("aud") if tok else None
+                if "mcp-hub" not in (aud if isinstance(aud, list) else [aud]):
+                    self.row(f"data.{key}.hub", org, "POST /api/mcp", "a token with audience mcp-hub",
+                             f"aud {aud}", None, "kaisatsu gave portal-api no gateway-hub scope (aud mcp-hub): "
+                             "the hub and direct Endpoint reads by a person's token are not checked")
+                    continue
+                auth = {"Authorization": f"Bearer {tok}", "Accept": "application/json, text/event-stream"}
+                st, res = self.client().json("POST", "/api/mcp", headers=auth, body={
+                    "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                    "params": {"name": "list_endpoints", "arguments": {}}})
+                text = json.dumps(res, ensure_ascii=False)
+                seen = sorted(f"{v[0]}/{v[1]}" for x, v in foreign.items() if x in text)
+                self.row(f"data.{key}.hub.list_endpoints", org, "POST /api/mcp tools/call list_endpoints",
+                         "answers, no closed Endpoint of another org", f"{st}, foreign {seen[:4]}",
+                         st == 200 and "result" in (res or {}) and not seen)
+                for slug, (p, name, aud) in sorted(foreign.items())[:6]:
+                    st, _, _ = self.client().call("GET", f"/api/endpoint/{slug}/ngsi-ld/v1/types",
+                                                  headers={"Authorization": f"Bearer {tok}"})
+                    self.row(f"data.{key}.read.{p}/{name}", org, f"GET /api/endpoint/{slug}/ngsi-ld/v1/types",
+                             f"401/403/404 ({aud} Endpoint of another org)", f"{st}", st in (401, *DENIED))
+
     def check_catalogue(self):
         """Each Organization's CKAN organisations hold only its datasets, in search, page and feed."""
         h = self.client()
@@ -384,15 +566,103 @@ class Suite:
                 self.row(f"catalogue.{org}.{c}.search", org, f"package_search fq=organization:{c}",
                          f"only {c}", f"{st}, {len(rs)} datasets, other orgs {wrong}", st == 200 and not wrong)
                 names = {r.get("name") for r in rs}
+                st, body = h.json("GET", f"/api/v1/catalogue?publisher={urllib.parse.quote(c)}")
+                ds = (body or {}).get("datasets", []) if st == 200 else []
+                wrong = sorted({(d.get("publisher") or {}).get("name") for d in ds} - {c})
+                self.row(f"catalogue.{org}.{c}.portal", org, f"GET /api/v1/catalogue?publisher={c}",
+                         f"200, {len(rs)} datasets, only {c}",
+                         f"{st}, total {(body or {}).get('total')}, other publishers {wrong}",
+                         st == 200 and not wrong and (bool((body or {}).get("total")) or not rs))
                 for kind, path in (("page", f"/opendata/organization/{c}"),
                                    ("dcat", f"/opendata/publisher/{c}/catalog.jsonld")):
                     st, _, raw = h.call("GET", path)
                     text = raw.decode(errors="replace")
                     other_names = {r.get("name") for r in results
                                    if (r.get("organization") or {}).get("name") in others}
-                    leaked = sorted(n for n in other_names if n and re.search(rf"\b{re.escape(n)}\b", text))
+                    leaked = sorted(n for n in other_names if n and re.search(rf"dataset/{re.escape(n)}(?![\w-])", text))
                     self.row(f"catalogue.{org}.{c}.{kind}", org, f"GET {path}", "200, no dataset of another org",
                              f"{st}, {len(names)} own, leaked {leaked[:3]}", st == 200 and not leaked)
+
+    def check_dashboards(self):
+        """Each Organization's Dashboards (the export's and the suite's own) are listed for its
+        people and refused to every other Organization's, item by item; the platform admin reads all."""
+        for org, e in self.exp.items():
+            want = {(p, d) for p, v in e["projects"].items() for d in v["Dashboard"]}
+            if org in self.dashboards:
+                want.add(self.dashboards[org])
+            if not want:
+                self.row(f"dashboards.{org}", org, "-", "a Dashboard", "none", None,
+                         "no Dashboard in the export and no project with an Endpoint to add one")
+                continue
+            for p, d in sorted(want):
+                for kind in ("admin", "member"):
+                    st, body = self.session(f"{org}-{kind}").json("GET", f"/api/v1/projects/{p}/dashboards")
+                    names = {i.get("metadata", {}).get("name", i.get("name")) for i in (body or {}).get("items", [])} \
+                        if st == 200 and isinstance(body, dict) else set()
+                    self.row(f"dashboards.{org}.{p}.{d}.own-{kind}", org, f"GET /api/v1/projects/{p}/dashboards",
+                             f"200 listing {d}", f"{st}, listed {d in names}", st == 200 and d in names)
+                path = f"/api/v1/projects/{p}/dashboards/{d}"
+                st, _ = self.session("platform").json("GET", path)
+                self.row(f"dashboards.{org}.{p}.{d}.platform", org, f"GET {path}", "200", st, st == 200)
+                for other in self.exp:
+                    if other == org:
+                        continue
+                    for kind in ("admin", "member"):
+                        for call in (path, f"/api/v1/projects/{p}/dashboards"):
+                            st, body = self.session(f"{other}-{kind}").json("GET", call)
+                            leaked = st == 200 and d in json.dumps(body)
+                            self.row(f"dashboards.{org}.{p}.{d}.foreign-{other}-{kind}{'' if call == path else '-list'}",
+                                     org, f"GET {call} as mo-{other}-{kind}", "403/404",
+                                     f"{st}{', names it' if leaked else ''}", st in DENIED)
+
+    def check_ui(self):
+        """Shots at 1440 and 400 px per persona: the project list, an own project and a foreign
+        project's address, which must show no foreign project content."""
+        from playwright.sync_api import sync_playwright  # only this step needs a browser
+
+        out = self.a.out / "shots"
+        out.mkdir(parents=True, exist_ok=True)
+        everything = {p for o in self.exp.values() for p in o["projects"]}
+        shots = []
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(args=["--disable-dev-shm-usage", "--disable-gpu"])
+            for key, p in self.people.items():
+                org = key.rsplit("-", 1)[0] if key != "platform" else None
+                own = sorted(self.exp[org]["projects"])[0] if org else "helsinki"
+                foreign = sorted(sorted(o["projects"])[0] for k, o in self.exp.items() if k != org)[0] if org else None
+                pages = [("projects", "/"), ("own-project", f"/projects/{own}"), ("organization", "/organization")]
+                if foreign:
+                    pages.append(("foreign-project", f"/projects/{foreign}"))
+                for width, height in ((1440, 900), (400, 860)):
+                    ctx = browser.new_context(viewport={"width": width, "height": height})
+                    page = ctx.new_page()
+                    page.goto(self.base + "/api/v1/auth/login")
+                    page.fill("input[name=username]", p["username"])
+                    page.fill("input[name=password]", p["password"])
+                    page.locator("input[name=password]").press("Enter")
+                    page.wait_for_url(re.compile(re.escape(self.base) + r"/(?!id/).*"), timeout=30000)
+                    for name, path in pages:
+                        page.goto(self.base + path, wait_until="networkidle", timeout=60000)
+                        page.wait_for_timeout(1500)
+                        file = out / f"{key}-{name}-{width}.png"
+                        page.screenshot(path=str(file), full_page=False)
+                        text = page.locator("body").inner_text(timeout=5000)
+                        shots.append({"persona": key, "page": name, "path": path, "width": width, "file": file.name})
+                        if name == "projects" and org:
+                            names = set(re.findall(r"[a-z0-9-]+", text.lower()))
+                            seen_foreign = sorted(x for x in everything - set(self.exp[org]["projects"])
+                                                  if x in names and x not in self.exp[org]["projects"])
+                            self.row(f"ui.{key}.projects.{width}", org, f"GET {path} (browser)",
+                                     "no project of another org on the page", f"foreign {seen_foreign}",
+                                     not seen_foreign)
+                        if name == "foreign-project":
+                            other = next(k for k, o in self.exp.items() if foreign in o["projects"])
+                            leaked = [n for n in self.exp[other]["projects"][foreign]["Endpoint"] if len(n) >= 8 and n in text]
+                            self.row(f"ui.{key}.foreign-project.{width}", f"{org}->{other}", f"GET {path} (browser)",
+                                     "a not-found page, no object of the project", f"leaked {leaked[:3]}", not leaked)
+                    ctx.close()
+            browser.close()
+        (out / "shots.json").write_text(json.dumps(shots, indent=1))
 
     def run(self):
         self.expectations()
@@ -405,7 +675,9 @@ class Suite:
             self.row("setup", "all", "persons and bindings", "made", str(ex)[:300], False)
             return
         steps = (self.check_projects, self.check_project_reads, self.check_writes, self.check_people,
-                 self.check_mcp, self.check_catalogue)
+                 self.check_mcp, self.check_connectors, self.check_data, self.check_catalogue, self.check_dashboards)
+        if self.a.shots:
+            steps += (self.check_ui,)
         for step in steps:
             if self.a.only and step.__name__.removeprefix("check_") not in self.a.only.split(","):
                 continue
@@ -417,7 +689,8 @@ class Suite:
     def write(self, out: Path):
         out.mkdir(parents=True, exist_ok=True)
         (out / "results.json").write_text(json.dumps(self.rows, indent=1))
-        tools = {k: v.get("tools") for k, v in self.people.items() if v.get("tools") is not None}
+        tools = {k: {"portal": v.get("tools"), "connector": v.get("connectorTools")}
+                 for k, v in self.people.items() if v.get("tools") is not None or v.get("connectorTools")}
         (out / "mcp-tools.json").write_text(json.dumps(tools, indent=1))
         n = {r: sum(1 for x in self.rows if x["result"] == r) for r in ("pass", "fail", "skip")}
         lines = ["# multiorg smoke", "", f"Base {self.base}; organizations {', '.join(self.exp)}; "
@@ -440,7 +713,8 @@ def main(argv):
     ap.add_argument("--state", help="the rehearsal's state dir (realm admin client, forge token)")
     ap.add_argument("--admin-token-file", help="unused: persons are made through --state")
     ap.add_argument("--person-token-file", help="unused: persons are made through --state")
-    ap.add_argument("--only", help="comma list of check groups: projects,project_reads,writes,people,mcp,catalogue")
+    ap.add_argument("--only", help="comma list of check groups: projects,project_reads,writes,people,mcp,connectors,data,catalogue,dashboards,ui")
+    ap.add_argument("--shots", action="store_true", help="browser shots 1440/400 per persona (Playwright)")
     ap.add_argument("--sync-timeout", type=int, default=180)
     a = ap.parse_args(argv)
     R.loopback_only(a.base_url)
