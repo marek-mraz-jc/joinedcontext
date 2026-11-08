@@ -53,6 +53,9 @@ def test_the_old_side_guard_lets_only_reads_and_the_sign_in_post_through():
         ("GET", "https://portal.dev.joinedcontext.com/projects/x", "continue"),
         ("POST", f"https://{kc}/realms/dev/login-actions/authenticate?x=1", "continue"),
         ("POST", "https://portal.dev.joinedcontext.com/api/v1/projects/x/drafts", "abort"),
+        ("POST", f"https://{kc}/realms/dev/protocol/openid-connect/token", "continue"),
+        ("POST", f"https://{kc}/admin/realms/dev/users?x=/protocol/openid-connect/token", "abort"),
+        ("POST", f"https://{kc}/realms/dev/account/credentials", "abort"),
         ("PUT", f"https://{kc}/admin/realms/dev/users/1", "abort"),
         ("DELETE", "https://dev.joinedcontext.com/grafana/api/dashboards/uid/x", "abort"),
     ]:

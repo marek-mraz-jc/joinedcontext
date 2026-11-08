@@ -60,13 +60,17 @@ LAYOUT = [
       "if(l.length<2) return false; const t=l.map(e=>Math.round(e.getBoundingClientRect().top));"
       "return t.every(x=>Math.abs(x-t[0])<4) && getComputedStyle(l[0]).listStyleType==='none'})()", "masthead nav items share one row"),
     J("skip link hidden until focused", "(()=>{const a=[...document.querySelectorAll('a')].find(e=>/Skip to|Preskočiť/.test(e.textContent));"
-      "if(!a) return true; const r=a.getBoundingClientRect(); return r.width<=1||r.height<=1})()", "skip link has no visible box"),
+      "if(!a) return true; for(let e=a;e;e=e.parentElement){const r=e.getBoundingClientRect(), c=getComputedStyle(e);"
+      "if(r.width<=1||r.height<=1||c.clip!=='auto'||c.visibility==='hidden'||c.display==='none') return true} return false})()",
+      "skip link or an ancestor has no visible box"),
     J("logo text not cut", "(()=>{const e=document.querySelector('.masthead .logo, .masthead .jc-brand');"
       "return !!e && e.scrollWidth<=e.clientWidth+1})()", "brand scrollWidth <= clientWidth"),
     J("footer in columns", "(()=>{const c=[...document.querySelectorAll('footer .row > *')];"
       "return c.length>=2 && Math.abs(c[0].getBoundingClientRect().top-c[1].getBoundingClientRect().top)<4})()", "footer columns side by side"),
-    F("assistant launcher button", "#jc-assistant button, button:has-text('Opýtajte sa asistenta'), a:has-text('Opýtajte sa asistenta')"),
-    J("AI chips Claude / ChatGPT / Copilot", "['Claude','ChatGPT','Copilot'].every(w=>document.body.innerText.includes(w))", "all three names on the page"),
+    F("assistant launcher button", "#jc-assistant summary, summary:has-text('Opýtajte sa asistenta'), button:has-text('Opýtajte sa asistenta')"),
+    J("AI chips Claude / ChatGPT / Copilot", "document.querySelectorAll('.jc-assistants-link .jc-seg').length>=3"
+      " && [...document.querySelectorAll('.jc-assistants-link .jc-seg')].every(e=>e.getBoundingClientRect().width>8)",
+      "three drawn chips in .jc-assistants-link"),
 ]
 DATASET_CONTENT = [
     J("Živé dáta grid with filters and paging", "!!document.querySelector('table, [role=grid]') && /Filter/.test(document.body.innerText)"
@@ -164,8 +168,7 @@ for _p in CKAN_PAGES_:
     CKAN_PAGES.append(_p)
 
 # --- AI assistant (production's assistant and the launcher on the catalogue pages) -----------------
-ASSIST_LAUNCH = [F("launcher button", "#jc-assistant button, button:has-text('Opýtajte sa asistenta')"),
-                 J("AI chips Claude / ChatGPT / Copilot", "['Claude','ChatGPT','Copilot'].every(w=>document.body.innerText.includes(w))", "all three names"),
+ASSIST_LAUNCH = [LAYOUT[4], LAYOUT[5],
                  F("assistant dock frame", "iframe[src*='assistant'], iframe[src*='/widget']"),
                  J("question box in the dock", "!!document.querySelector('textarea, input[type=text]') && location.href.includes('widget')", "a text box inside the widget frame")]
 ASSIST_PAGE = [F("question box", "textarea, input[type=text]"), F("send button", "button[type=submit], button:has-text('Odosla'), button:has-text('Send')"),
@@ -173,7 +176,7 @@ ASSIST_PAGE = [F("question box", "textarea, input[type=text]"), F("send button",
 ASSIST_PAGES = [
     {"id": "launcher-home", "prod": "/", "old": f"https://opendata.{DOMAIN}/", "new": "/opendata/", "features": ASSIST_LAUNCH},
     {"id": "launcher-open", "prod": "/", "old": f"https://opendata.{DOMAIN}/", "new": "/opendata/", "settle": 6000,
-     "then": [{"click": "#jc-assistant button, button:has-text('Opýtajte sa asistenta')"}], "features": ASSIST_LAUNCH},
+     "then": [{"click": "#jc-assistant summary, summary:has-text('Opýtajte sa asistenta')"}], "features": ASSIST_LAUNCH},
     {"id": "launcher-dataset", "prod": f"/dataset/{DATASET}", "old": f"https://opendata.{DOMAIN}/dataset/{DATASET}",
      "new": f"/opendata/dataset/{DATASET}", "features": ASSIST_LAUNCH},
     {"id": "assistants-guide", "prod": "/assistants", "old": f"https://opendata.{DOMAIN}/assistants", "new": "/opendata/assistants",
@@ -334,6 +337,21 @@ def _first(items, key):
     return None
 
 
+def add_dashboards(found: list) -> None:
+    """One page per dashboard (and its daiya table page). The new side and compose take the old side's
+    list from vars-old.json, so a dashboard daiya does not list to the person still gets its row."""
+    known = {p["id"] for p in GRAFANA_PAGES}
+    for d in found:
+        pid = "dash-" + d["uid"]
+        if pid in known:
+            continue
+        GRAFANA_PAGES.append({"id": pid, "old": f"/grafana/d/{d['uid']}", "new": "/projects/{project}/grafana/dashboards/" + d["uid"],
+                              "features": GRAFANA_DASH, "settle": 8000, "title": d.get("title")})
+        GRAFANA_PAGES.append({"id": pid + "-daiya-tables", "old": None, "why": "daiya's own server-side page has no Grafana twin",
+                              "new": f"/dashboards/d/{d['uid']}", "features": [F("tables", "table")], "settle": 3000})
+        known.add(pid)
+
+
 def resolve(pair: str, side: str, base: str, page) -> dict:
     """Names a page path needs, read on that side with GETs only."""
     b = base_of(pair, side, base)
@@ -350,16 +368,8 @@ def resolve(pair: str, side: str, base: str, page) -> dict:
         if side == "old":
             _visit(page, f"{b}{pre}/")  # the session cookie of the dashboards host comes with the first page
         found = _get(page, f"{b}{pre}/api/search?type=dash-db&limit=200") or []
-        PAIRS["grafana"].setdefault("_found", {})[side] = found
-        known = {p["id"] for p in GRAFANA_PAGES}
-        for d in found:
-            pid = "dash-" + d["uid"]
-            if pid not in known:
-                GRAFANA_PAGES.append({"id": pid, "old": f"/grafana/d/{d['uid']}", "new": "/projects/{project}/grafana/dashboards/" + d["uid"],
-                                      "features": GRAFANA_DASH, "settle": 8000, "title": d.get("title")})
-                GRAFANA_PAGES.append({"id": pid + "-daiya-tables", "old": None, "why": "daiya's own server-side page has no Grafana twin",
-                                      "new": f"/dashboards/d/{d['uid']}", "features": [F("tables", "table")], "settle": 3000})
-                known.add(pid)
+        v["dashboards"] = [{"uid": d["uid"], "title": d.get("title")} for d in found if d.get("uid")]
+        add_dashboards(v["dashboards"])
     elif pair == "gitea" and side == "new":
         pass  # the Portal's repository pages take the names the old side resolved (shako's API wants a token)
     elif pair == "gitea":
