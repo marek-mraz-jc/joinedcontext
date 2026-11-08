@@ -4,6 +4,7 @@
 //! per-organization query cache, and WASM component host adapter + WIT world (R3, R5, R6).
 
 pub mod cache;
+pub mod factory;
 pub mod guard;
 pub mod loki;
 pub mod ngsild;
@@ -17,6 +18,7 @@ pub use cache::{CacheKey, PublicCacheKey, QueryCache};
 pub use daiya_model::{
     ColumnValues, FieldColumn, FieldType, Frame, FrameMeta, FrameSet, Notice, NoticeSeverity,
 };
+pub use factory::{DriverDeps, OutboundPolicy, build_driver, guard_for};
 pub use guard::{GuardConfig, OutboundGuard, OutboundRequest, OutboundResponse};
 pub use loki::LokiDatasource;
 pub use ngsild::NgsiLdDatasource;
@@ -125,6 +127,54 @@ impl SecretResolver for MapSecretResolver {
                 secret_ref: secret_ref.to_owned(),
                 reason: "secretRef not found in organization secret store".into(),
             })
+    }
+}
+
+/// Resolves a `secretRef` from a file in the secrets mount at call time:
+/// `<dir>/<org-uuid>/<secretRef>`, one directory per organization, so a datasource of one
+/// organization cannot name another organization's secret. A `secretRef` is one path segment
+/// of `[A-Za-z0-9._-]`, never `.`/`..` or hidden.
+#[derive(Debug, Clone)]
+pub struct FileSecretResolver {
+    dir: std::path::PathBuf,
+}
+
+impl FileSecretResolver {
+    #[must_use]
+    pub fn new(dir: impl Into<std::path::PathBuf>) -> Self {
+        Self { dir: dir.into() }
+    }
+}
+
+impl SecretResolver for FileSecretResolver {
+    fn resolve_secret(
+        &self,
+        org_id: OrgId,
+        secret_ref: &str,
+    ) -> Result<Zeroizing<String>, DsError> {
+        let refuse = |reason: &str| DsError::SecretResolution {
+            secret_ref: secret_ref.to_owned(),
+            reason: reason.to_owned(),
+        };
+        if secret_ref.is_empty()
+            || secret_ref.len() > 200
+            || secret_ref.starts_with('.')
+            || !secret_ref
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        {
+            return Err(refuse("secretRef must be one name of [A-Za-z0-9._-]"));
+        }
+        let path = self.dir.join(org_id.to_string()).join(secret_ref);
+        let raw = Zeroizing::new(
+            std::fs::read_to_string(&path)
+                .map_err(|_| refuse("secretRef not found in organization secret store"))?,
+        );
+        let value = raw.trim_end_matches(['\r', '\n']);
+        if value.is_empty() {
+            return Err(refuse("secret is empty"));
+        }
+        Ok(Zeroizing::new(value.to_owned()))
     }
 }
 

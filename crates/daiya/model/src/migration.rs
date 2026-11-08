@@ -402,12 +402,16 @@ fn process_panels_v38(panels: &mut [Value]) {
             .get_mut("defaults")
             .and_then(Value::as_object_mut)
             && let Some(custom) = defaults.get_mut("custom").and_then(Value::as_object_mut)
-            && let Some(dm_val) = custom.remove("displayMode")
-            && let Some(dm_str) = dm_val.as_str()
+            && let Some(dm_str) = custom
+                .get("displayMode")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
         {
+            // Grafana migrates only a string displayMode; anything else stays verbatim.
+            custom.remove("displayMode");
             custom.insert(
                 "cellOptions".to_owned(),
-                migrate_table_display_mode_to_cell_options(dm_str),
+                migrate_table_display_mode_to_cell_options(&dm_str),
             );
         }
         if let Some(overrides) = field_config

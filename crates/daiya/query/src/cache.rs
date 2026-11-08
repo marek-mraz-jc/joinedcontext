@@ -126,6 +126,25 @@ struct OrgCacheBucket {
     stats: BTreeMap<String, (u64, u64)>, // datasource_uid -> (hits, misses)
 }
 
+impl OrgCacheBucket {
+    /// Evicts the oldest entries, authenticated first and then public (both share the
+    /// organization's ceiling), until `incoming` more bytes fit under `max`.
+    fn make_room(&mut self, incoming: usize, max: usize) {
+        while self.bytes_used + incoming > max {
+            let evicted = if let Some(key) = self.order.pop_front() {
+                self.entries.remove(&key)
+            } else if let Some(key) = self.public_order.pop_front() {
+                self.public_entries.remove(&key)
+            } else {
+                break;
+            };
+            if let Some(e) = evicted {
+                self.bytes_used = self.bytes_used.saturating_sub(e.bytes);
+            }
+        }
+    }
+}
+
 /// Thread-safe per-organization query cache (R3, R7, R10).
 #[derive(Debug)]
 pub struct QueryCache {
@@ -164,6 +183,7 @@ impl QueryCache {
         }
         if let Some(expired) = bucket.entries.remove(key) {
             bucket.bytes_used = bucket.bytes_used.saturating_sub(expired.bytes);
+            bucket.order.retain(|k| k != key);
         }
         let stat = bucket.stats.entry(key.datasource_uid.clone()).or_default();
         stat.1 += 1;
@@ -181,16 +201,9 @@ impl QueryCache {
 
         if let Some(old) = bucket.entries.remove(&key) {
             bucket.bytes_used = bucket.bytes_used.saturating_sub(old.bytes);
+            bucket.order.retain(|k| k != &key);
         }
-
-        while bucket.bytes_used + approx_bytes > self.max_bytes_per_org {
-            let Some(oldest_key) = bucket.order.pop_front() else {
-                break;
-            };
-            if let Some(evicted) = bucket.entries.remove(&oldest_key) {
-                bucket.bytes_used = bucket.bytes_used.saturating_sub(evicted.bytes);
-            }
-        }
+        bucket.make_room(approx_bytes, self.max_bytes_per_org);
 
         bucket.bytes_used += approx_bytes;
         bucket.order.push_back(key.clone());
@@ -224,6 +237,7 @@ impl QueryCache {
         }
         if let Some(expired) = bucket.public_entries.remove(key) {
             bucket.bytes_used = bucket.bytes_used.saturating_sub(expired.bytes);
+            bucket.public_order.retain(|k| k != key);
         }
         let stat = bucket
             .stats
@@ -243,15 +257,9 @@ impl QueryCache {
         let bucket = guard.entry((key.org_id, key.instance_id)).or_default();
         if let Some(old) = bucket.public_entries.remove(&key) {
             bucket.bytes_used = bucket.bytes_used.saturating_sub(old.bytes);
+            bucket.public_order.retain(|k| k != &key);
         }
-        while bucket.bytes_used + approx_bytes > self.max_bytes_per_org {
-            let Some(oldest) = bucket.public_order.pop_front() else {
-                break;
-            };
-            if let Some(ev) = bucket.public_entries.remove(&oldest) {
-                bucket.bytes_used = bucket.bytes_used.saturating_sub(ev.bytes);
-            }
-        }
+        bucket.make_room(approx_bytes, self.max_bytes_per_org);
         bucket.bytes_used += approx_bytes;
         let ds_tag = format!("public:{}", key.dashboard_uid);
         bucket.public_order.push_back(key.clone());

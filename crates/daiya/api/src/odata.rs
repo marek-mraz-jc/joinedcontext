@@ -28,7 +28,7 @@ use daiya_import::{
     import_dashboards,
 };
 use daiya_model::{Action, CrError, CrResult, ObjectTarget, RequestCtx};
-use daiya_query::{QueryCtx, ResourceReq};
+use daiya_query::{Health, QueryCtx, ResourceReq};
 use jc_router::ClientAddr;
 use odata_table::{
     MemoryTable, Operation as TableOp, Scope, Table, TableError, allowed as table_allowed,
@@ -64,20 +64,7 @@ async fn build_entity_table(
             .list_dashboards(ctx.org_id)
             .await?
             .into_iter()
-            .filter(|d| {
-                state
-                    .authorizer
-                    .check(
-                        ctx,
-                        Action::Read,
-                        &ObjectTarget::Dashboard {
-                            org_id: ctx.org_id,
-                            dashboard_uid: d.uid.clone(),
-                            folder_uid: d.folder_uid.clone(),
-                        },
-                    )
-                    .allowed
-            })
+            .filter(|d| can_read_dashboard(state, ctx, &d.uid, d.folder_uid.as_deref()))
             .map(|d| {
                 json!({
                     "uid": d.uid,
@@ -97,6 +84,9 @@ async fn build_entity_table(
             let dashboards = state.store.list_dashboards(ctx.org_id).await?;
             let mut vers = Vec::new();
             for d in dashboards {
+                if !can_read_dashboard(state, ctx, &d.uid, d.folder_uid.as_deref()) {
+                    continue;
+                }
                 for v in state
                     .store
                     .list_dashboard_versions(ctx.org_id, &d.uid)
@@ -121,6 +111,19 @@ async fn build_entity_table(
             .list_folders(ctx.org_id)
             .await?
             .into_iter()
+            .filter(|f| {
+                state
+                    .authorizer
+                    .check(
+                        ctx,
+                        Action::Read,
+                        &ObjectTarget::Folder {
+                            org_id: ctx.org_id,
+                            folder_uid: f.uid.clone(),
+                        },
+                    )
+                    .allowed
+            })
             .map(|f| {
                 json!({
                     "uid": f.uid,
@@ -169,6 +172,20 @@ async fn build_entity_table(
             .list_library_panels(ctx.org_id)
             .await?
             .into_iter()
+            .filter(|p| {
+                state
+                    .authorizer
+                    .check(
+                        ctx,
+                        Action::Read,
+                        &ObjectTarget::LibraryPanel {
+                            org_id: ctx.org_id,
+                            panel_uid: p.uid.clone(),
+                            folder_uid: p.folder_uid.clone(),
+                        },
+                    )
+                    .allowed
+            })
             .map(|p| {
                 json!({
                     "uid": p.uid,
@@ -185,6 +202,19 @@ async fn build_entity_table(
             .list_public_dashboards(ctx.org_id)
             .await?
             .into_iter()
+            .filter(|p| {
+                state
+                    .authorizer
+                    .check(
+                        ctx,
+                        Action::Read,
+                        &ObjectTarget::PublicDashboard {
+                            org_id: ctx.org_id,
+                            dashboard_uid: p.dashboard_uid.clone(),
+                        },
+                    )
+                    .allowed
+            })
             .map(|p| {
                 json!({
                     "uid": p.uid,
@@ -244,6 +274,28 @@ async fn build_entity_table(
     };
 
     MemoryTable::new(info, rows).map_err(map_table_error)
+}
+
+/// Read decision on a dashboard in its folder: every set listing a dashboard or what hangs
+/// off one (its versions) keeps only the rows this decision allows.
+fn can_read_dashboard(
+    state: &DaiyaState,
+    ctx: &RequestCtx,
+    uid: &str,
+    folder_uid: Option<&str>,
+) -> bool {
+    state
+        .authorizer
+        .check(
+            ctx,
+            Action::Read,
+            &ObjectTarget::Dashboard {
+                org_id: ctx.org_id,
+                dashboard_uid: uid.to_owned(),
+                folder_uid: folder_uid.map(str::to_owned),
+            },
+        )
+        .allowed
 }
 
 fn map_table_error(err: TableError) -> CrError {
@@ -461,26 +513,20 @@ pub async fn exec_odata_datasource_health(
     );
     dec.into_result(format!("Datasource '{uid}' not found"))?;
 
-    let ds_rec = state.store.get_datasource(ctx.org_id, uid).await?;
-    let drv = state.get_datasource_driver(ctx.org_id, uid);
-    if ds_rec.is_none() && drv.is_none() {
-        return Err(CrError::NotFound(format!("Datasource '{uid}' not found")));
-    }
-
-    if let Some(driver) = drv {
-        let q_ctx = QueryCtx::new(ctx.org_id, ctx.instance_id, ctx.subject.clone(), 0, 1000);
-        let h = driver.health(&q_ctx).await;
-        return Ok(json!({
-            "@odata.context": "$metadata#JoinedContext.Daiya.HealthStatus",
-            "status": h.status,
-            "message": h.message,
-        }));
-    }
-
+    // A datasource whose driver cannot be built (refused host, bad configuration, a kind
+    // with no driver) is reported unhealthy with the reason, never "working".
+    let h = match state.driver_for(ctx.org_id, uid).await {
+        Ok(Some(driver)) => {
+            let q_ctx = QueryCtx::new(ctx.org_id, ctx.instance_id, ctx.subject.clone(), 0, 1000);
+            driver.health(&q_ctx).await
+        }
+        Ok(None) => return Err(CrError::NotFound(format!("Datasource '{uid}' not found"))),
+        Err(err) => Health::error(err.public_detail()),
+    };
     Ok(json!({
         "@odata.context": "$metadata#JoinedContext.Daiya.HealthStatus",
-        "status": "ok",
-        "message": "Data source is working",
+        "status": h.status,
+        "message": h.message,
     }))
 }
 
@@ -499,19 +545,21 @@ pub async fn exec_odata_datasource_editor_schema(
     );
     dec.into_result(format!("Datasource '{uid}' not found"))?;
 
-    if let Some(driver) = state.get_datasource_driver(ctx.org_id, uid) {
-        let schema = driver.editor();
-        return Ok(serde_json::to_value(schema).unwrap_or(Value::Null));
+    let registered = state.get_datasource_driver(ctx.org_id, uid);
+    let ds_rec = state.store.get_datasource(ctx.org_id, uid).await?;
+    let driver = match (registered, &ds_rec) {
+        (Some(driver), _) => Some(driver),
+        (None, Some(record)) => state.driver_for_record(record).await.ok(),
+        (None, None) => return Err(CrError::NotFound(format!("Datasource '{uid}' not found"))),
+    };
+    if let Some(driver) = driver {
+        return Ok(serde_json::to_value(driver.editor()).unwrap_or(Value::Null));
     }
-
-    let ds_rec = state
-        .store
-        .get_datasource(ctx.org_id, uid)
-        .await?
-        .ok_or_else(|| CrError::NotFound(format!("Datasource '{uid}' not found")))?;
-
+    // The editor of a datasource whose driver cannot be built yet (the host is refused or
+    // the configuration incomplete) is a plain object form, so it can still be fixed.
+    let kind = ds_rec.map(|r| r.kind).unwrap_or_default();
     Ok(json!({
-        "kind": ds_rec.kind,
+        "kind": kind,
         "jsonSchema": { "type": "object" },
         "fieldHints": [],
     }))
@@ -535,7 +583,8 @@ pub async fn exec_odata_datasource_resource(
     dec.into_result(format!("Datasource '{uid}' not found"))?;
 
     let driver = state
-        .get_datasource_driver(ctx.org_id, uid)
+        .driver_for(ctx.org_id, uid)
+        .await?
         .ok_or_else(|| CrError::NotFound(format!("Datasource '{uid}' not found")))?;
     let q_ctx = QueryCtx::new(ctx.org_id, ctx.instance_id, ctx.subject.clone(), 0, 1000);
     let resp = driver
@@ -1163,14 +1212,15 @@ async fn odata_batch(
             "GET" => match build_entity_table(&state, &ctx, seg_name).await {
                 Ok(table) => {
                     let scope = scope_for_ctx(&state, &ctx);
-                    let opts = parse_odata_query_options(&table.info().model, seg_name, query_part)
-                        .unwrap_or_default();
-                    match table_query(&table, &opts, &scope, MAX_PAGE_SIZE).await {
-                        Ok(ans) => (200, json!({ "value": ans.rows })),
-                        Err(e) => {
-                            let ce = map_table_error(e);
-                            (ce.status_code(), ce.to_odata_error())
-                        }
+                    match parse_odata_query_options(&table.info().model, seg_name, query_part) {
+                        Ok(opts) => match table_query(&table, &opts, &scope, MAX_PAGE_SIZE).await {
+                            Ok(ans) => (200, json!({ "value": ans.rows })),
+                            Err(e) => {
+                                let ce = map_table_error(e);
+                                (ce.status_code(), ce.to_odata_error())
+                            }
+                        },
+                        Err(e) => (e.status_code(), e.to_odata_error()),
                     }
                 }
                 Err(e) => (e.status_code(), e.to_odata_error()),

@@ -186,7 +186,7 @@ pub fn reduce_frames(
     let mapper = ReduceMapper::new(mode);
     let mut out = Vec::with_capacity(inputs.len());
 
-    for (idx, val) in inputs.iter().enumerate() {
+    for val in inputs {
         match val {
             ExprValue::Series {
                 labels,
@@ -215,22 +215,19 @@ pub fn reduce_frames(
                 notices,
                 ..
             } => {
-                let mapped = match mode {
-                    ReduceMode::Strict => Some(*value),
-                    _ => mapper.map_input(*value),
-                };
-                let Some(v) = mapped else {
+                // A number is already reduced: only the output mapper applies, and a mode
+                // that maps it to null drops it (`commands.go`, `case mathexp.Number`).
+                let v = mapper.map_output(*value);
+                if v.is_none() && !matches!(mode, ReduceMode::Strict) {
                     continue;
-                };
-                let mut new_notices = notices.clone();
-                if matches!(mode, ReduceMode::Strict) && idx == 0 {
-                    new_notices.push(Notice {
-                        severity: NoticeSeverity::Warning,
-                        text: format!(
-                            "Reduce operation is not needed. Input query or expression {var_to_reduce} is already reduced data."
-                        ),
-                    });
                 }
+                let mut new_notices = notices.clone();
+                new_notices.push(Notice {
+                    severity: NoticeSeverity::Warning,
+                    text: format!(
+                        "Reduce operation is not needed. Input query or expression {var_to_reduce} is already reduced data."
+                    ),
+                });
                 out.push(ExprValue::Number {
                     name: ref_id.to_owned(),
                     labels: labels.clone(),

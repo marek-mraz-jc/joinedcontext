@@ -13,7 +13,7 @@ use daiya_model::{
 };
 use daiya_store_memory::MemoryStore;
 use daiya_store_pg::{
-    REQUIRED_RLS_TABLES, TableRlsStatus, connect_test_pg_store, validate_rls_catalog_rows,
+    REQUIRED_RLS_TABLES, TableRlsStatus, connect_test_database, validate_rls_catalog_rows,
 };
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -428,24 +428,28 @@ async fn isolation_suite_passes_on_postgres_store() {
         println!("SKIP: DAIYA_TEST_DATABASE_URL is unset");
         return;
     };
-    let pg = connect_test_pg_store(&db_url)
+    // The suite runs on the application login role (no SUPERUSER, no BYPASSRLS), so every
+    // isolation property below is forced RLS at work, not only the WHERE clauses.
+    let db = connect_test_database(&db_url)
         .await
         .expect("connect test postgres");
 
-    // Verify creating a table without forced RLS is caught by verify_rls_enforced() (R8)
+    // Creating a table without forced RLS is caught by verify_rls_enforced(), by name (R8).
     sqlx::query("CREATE TABLE IF NOT EXISTS cr_test_unforced (org_id UUID)")
-        .execute(pg.pool())
+        .execute(&db.admin)
         .await
         .unwrap();
-    let boot_err = pg.verify_rls_enforced().await;
+    let boot_err = db.app.verify_rls_enforced().await;
     sqlx::query("DROP TABLE IF EXISTS cr_test_unforced")
-        .execute(pg.pool())
+        .execute(&db.admin)
         .await
         .unwrap();
+    let boot_err =
+        boot_err.expect_err("boot check must refuse a cr_* table without FORCE ROW LEVEL SECURITY");
     assert!(
-        boot_err.is_err(),
-        "boot check must refuse a cr_* table without FORCE ROW LEVEL SECURITY"
+        boot_err.to_string().contains("cr_test_unforced"),
+        "{boot_err}"
     );
 
-    run_8_isolation_tests(&pg).await;
+    run_8_isolation_tests(&db.app).await;
 }

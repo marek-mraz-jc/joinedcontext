@@ -48,6 +48,21 @@ pub struct PgPoolConfig {
     pub max_connections: u32,
 }
 
+async fn read_password_file(secret_file_path: &Path) -> CrResult<Zeroizing<String>> {
+    let raw = Zeroizing::new(
+        tokio::fs::read_to_string(secret_file_path)
+            .await
+            .map_err(|e| {
+                CrError::Internal(format!("failed to read postgres password file: {e}"))
+            })?,
+    );
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(CrError::BadRequest("postgres secret file is empty".into()));
+    }
+    Ok(Zeroizing::new(trimmed.to_owned()))
+}
+
 impl PgPoolConfig {
     /// Reads the database password from `secret_file_path` in the secrets mount (R8).
     pub async fn from_secret_file(
@@ -58,21 +73,33 @@ impl PgPoolConfig {
         secret_file_path: impl AsRef<Path>,
         max_connections: u32,
     ) -> CrResult<Self> {
-        let raw = tokio::fs::read_to_string(secret_file_path.as_ref())
-            .await
-            .map_err(|e| {
-                CrError::Internal(format!("failed to read postgres password file: {e}"))
-            })?;
-        let trimmed = raw.trim().to_owned();
-        if trimmed.is_empty() {
-            return Err(CrError::BadRequest("postgres secret file is empty".into()));
-        }
+        let password = read_password_file(secret_file_path.as_ref()).await?;
         Ok(Self {
             host: host.into(),
             port,
             database: database.into(),
             app_role: app_role.into(),
-            password: Zeroizing::new(trimmed),
+            password,
+            max_connections: max_connections.max(1),
+        })
+    }
+
+    /// Takes host, port, database and role from a `postgres://role@host:port/database` URL
+    /// and the password from `secret_file_path`. A URL that carries a password is refused: the
+    /// password lives only in the secrets mount, never in a configuration file or argv (R8).
+    pub async fn from_url_and_secret_file(
+        url: &str,
+        secret_file_path: impl AsRef<Path>,
+        max_connections: u32,
+    ) -> CrResult<Self> {
+        let opts = parse_url_without_password(url)?;
+        let password = read_password_file(secret_file_path.as_ref()).await?;
+        Ok(Self {
+            host: opts.get_host().to_owned(),
+            port: opts.get_port(),
+            database: opts.get_database().unwrap_or("daiya").to_owned(),
+            app_role: opts.get_username().to_owned(),
+            password,
             max_connections: max_connections.max(1),
         })
     }
@@ -90,6 +117,110 @@ impl PgPoolConfig {
             .await
             .map_err(|e| CrError::Internal(format!("failed to connect to postgres: {e}")))
     }
+}
+
+/// Parses a Postgres URL and refuses one with an embedded password or no role name.
+pub fn parse_url_without_password(url: &str) -> CrResult<PgConnectOptions> {
+    let parsed = url::Url::parse(url)
+        .map_err(|_| CrError::BadRequest("database URL is not a valid URL".into()))?;
+    if !matches!(parsed.scheme(), "postgres" | "postgresql") {
+        return Err(CrError::BadRequest(
+            "database URL must use the postgres:// scheme".into(),
+        ));
+    }
+    if parsed.password().is_some() {
+        return Err(CrError::BadRequest(
+            "database URL must not carry a password; use the password file".into(),
+        ));
+    }
+    if parsed.username().is_empty() {
+        return Err(CrError::BadRequest(
+            "database URL must name the database role".into(),
+        ));
+    }
+    PgConnectOptions::from_str(url)
+        .map_err(|_| CrError::BadRequest("database URL is not a valid postgres URL".into()))
+}
+
+/// Advisory lock key held while the schema migration runs, so replicas booting together do
+/// not race on `CREATE TABLE IF NOT EXISTS`.
+const MIGRATION_LOCK_KEY: i64 = 0x6461_6979_615f_6d67;
+
+/// Runs the schema migration (`0001_initial.sql`) on `pool` under an advisory lock. The pool
+/// must belong to the migrating role (the table owner), not to the application role.
+///
+/// The applied migration's SHA-256 is recorded in `daiya_schema_migrations`; when it matches,
+/// nothing runs. Re-running the DDL (policies, grants) on a live database takes exclusive
+/// locks and deadlocks against application transactions, so a replica that boots next to a
+/// serving one must not do it.
+pub async fn migrate(pool: &PgPool) -> CrResult<()> {
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|e| CrError::MigrationFailed(format!("connect: {e}")))?;
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(MIGRATION_LOCK_KEY)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| CrError::MigrationFailed(format!("advisory lock: {e}")))?;
+    let result = migrate_locked(&mut conn).await;
+    let unlock = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(MIGRATION_LOCK_KEY)
+        .execute(&mut *conn)
+        .await;
+    result?;
+    unlock.map_err(|e| CrError::MigrationFailed(format!("advisory unlock: {e}")))?;
+    Ok(())
+}
+
+async fn migrate_locked(conn: &mut sqlx::PgConnection) -> CrResult<()> {
+    let failed = |e: sqlx::Error| CrError::MigrationFailed(e.to_string());
+    let checksum = daiya_model::sha256_hex(MIGRATION_SQL.as_bytes());
+    sqlx::raw_sql(
+        "CREATE TABLE IF NOT EXISTS daiya_schema_migrations (
+            version INTEGER PRIMARY KEY,
+            checksum TEXT NOT NULL,
+            applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )",
+    )
+    .execute(&mut *conn)
+    .await
+    .map_err(failed)?;
+    let applied: Option<String> =
+        sqlx::query_scalar("SELECT checksum FROM daiya_schema_migrations WHERE version = 1")
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(failed)?;
+    if applied.as_deref() == Some(checksum.as_str()) {
+        return Ok(());
+    }
+    sqlx::raw_sql(MIGRATION_SQL)
+        .execute(&mut *conn)
+        .await
+        .map_err(failed)?;
+    sqlx::query(
+        "INSERT INTO daiya_schema_migrations (version, checksum) VALUES (1, $1)
+         ON CONFLICT (version) DO UPDATE SET checksum = EXCLUDED.checksum, applied_at = NOW()",
+    )
+    .bind(&checksum)
+    .execute(&mut *conn)
+    .await
+    .map_err(failed)?;
+    Ok(())
+}
+
+/// Maps a database error: a unique violation is a 409 conflict, everything else is internal
+/// (its text never reaches a client, see `CrError::public_detail`).
+fn db_err(e: sqlx::Error) -> CrError {
+    if let sqlx::Error::Database(db) = &e
+        && db.code().as_deref() == Some("23505")
+    {
+        return CrError::Conflict(format!(
+            "already exists ({})",
+            db.constraint().unwrap_or("unique constraint")
+        ));
+    }
+    CrError::Internal(e.to_string())
 }
 
 /// Row returned by the `pg_class` / `pg_policy` boot inspection query.
@@ -169,13 +300,9 @@ impl PgStore {
         &self.pool
     }
 
-    /// Runs the schema migrations (`0001_initial.sql`).
+    /// Runs the schema migration on this store's pool (see [`migrate`]).
     pub async fn run_migrations(&self) -> CrResult<()> {
-        sqlx::raw_sql(MIGRATION_SQL)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| CrError::Internal(format!("migration failed: {e}")))?;
-        Ok(())
+        migrate(&self.pool).await
     }
 
     /// Begins a transaction scoped to `org_id` via `SELECT set_config('cr.org', $1, true)` (§5.3).
@@ -254,8 +381,12 @@ impl PgStore {
 impl DaiyaStore for PgStore {
     fn verify_rls_enforced(&self) -> StoreFuture<'_, ()> {
         Box::pin(async move {
+            // Both the role the session logged in as and the role it acts as: a superuser
+            // login that did `SET ROLE` can `RESET ROLE` and leave RLS behind.
             let role_row = sqlx::query(
-                "SELECT rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user",
+                "SELECT COALESCE(bool_or(rolbypassrls), true) AS rolbypassrls,
+                        COALESCE(bool_or(rolsuper), true) AS rolsuper
+                 FROM pg_roles WHERE rolname IN (current_user, session_user)",
             )
             .fetch_one(&self.pool)
             .await
@@ -305,10 +436,8 @@ impl DaiyaStore for PgStore {
             .bind(org_id.as_uuid())
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
 
             Ok(opt.map_or_else(OrgQuotas::default, |row| OrgQuotas {
                 max_dashboards: row.get::<i64, _>("max_dashboards") as u64,
@@ -362,10 +491,8 @@ impl DaiyaStore for PgStore {
             .bind(q.min_public_interval_ms)
             .execute(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(())
         })
     }
@@ -380,10 +507,8 @@ impl DaiyaStore for PgStore {
             .bind(org_id.as_uuid())
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows.into_iter().map(row_to_folder).collect())
         })
     }
@@ -400,10 +525,8 @@ impl DaiyaStore for PgStore {
             .bind(&uid)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row.map(row_to_folder))
         })
     }
@@ -416,6 +539,13 @@ impl DaiyaStore for PgStore {
                 ));
             }
             let mut tx = self.begin_org_tx(folder.org_id).await?;
+            check_folder_parents(
+                &mut tx,
+                folder.org_id,
+                &folder.uid,
+                folder.parent_uid.clone(),
+            )
+            .await?;
             let row = sqlx::query(
                 "INSERT INTO cr_folder (installation_id, org_id, instance_id, project_id, uid, parent_uid, title, version, managed_by, created_by, updated_by)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10)
@@ -440,10 +570,8 @@ impl DaiyaStore for PgStore {
             .bind(&folder.updated_by)
             .fetch_one(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row_to_folder(row))
         })
     }
@@ -457,16 +585,14 @@ impl DaiyaStore for PgStore {
                 .bind(&uid)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+                .map_err(db_err)?;
             let res = sqlx::query("DELETE FROM cr_folder WHERE org_id = $1 AND uid = $2")
                 .bind(org_id.as_uuid())
                 .bind(&uid)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+                .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(res.rows_affected() > 0)
         })
     }
@@ -481,10 +607,8 @@ impl DaiyaStore for PgStore {
             .bind(org_id.as_uuid())
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows.into_iter().map(row_to_dashboard).collect())
         })
     }
@@ -501,10 +625,8 @@ impl DaiyaStore for PgStore {
             .bind(&uid)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row.map(row_to_dashboard))
         })
     }
@@ -540,7 +662,7 @@ impl DaiyaStore for PgStore {
             .bind(&dashboard.uid)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
 
             let parent_version = if let Some(ex) = existing_row {
                 let ex_ver: i32 = ex.get("version");
@@ -565,7 +687,7 @@ impl DaiyaStore for PgStore {
                         .bind(dashboard.org_id.as_uuid())
                         .fetch_one(&mut *tx)
                         .await
-                        .map_err(|e| CrError::Internal(e.to_string()))?;
+                        .map_err(db_err)?;
                 if cnt as u64 >= quotas.max_dashboards {
                     return Err(CrError::QuotaExceeded {
                         resource: "dashboards".into(),
@@ -626,7 +748,7 @@ impl DaiyaStore for PgStore {
             .bind(&dashboard.updated_by)
             .fetch_one(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
 
             sqlx::query(
                 "INSERT INTO cr_dashboard_version (installation_id, org_id, instance_id, dashboard_uid, version, parent_version, restored_from, message, model, created_by)
@@ -638,16 +760,20 @@ impl DaiyaStore for PgStore {
             .bind(&dashboard.uid)
             .bind(dashboard.version)
             .bind(parent_version)
-            .bind(if msg.is_empty() { "Saved" } else { &msg })
+            .bind(if !msg.is_empty() {
+                msg.as_str()
+            } else if parent_version == 0 {
+                "Initial save"
+            } else {
+                "Updated dashboard"
+            })
             .bind(&dashboard.data)
             .bind(&dashboard.updated_by)
             .execute(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
 
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row_to_dashboard(saved))
         })
     }
@@ -663,22 +789,20 @@ impl DaiyaStore for PgStore {
             .bind(&uid)
             .execute(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
             sqlx::query("DELETE FROM cr_public_dashboard WHERE org_id = $1 AND dashboard_uid = $2")
                 .bind(org_id.as_uuid())
                 .bind(&uid)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+                .map_err(db_err)?;
             let res = sqlx::query("DELETE FROM cr_dashboard WHERE org_id = $1 AND uid = $2")
                 .bind(org_id.as_uuid())
                 .bind(&uid)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+                .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(res.rows_affected() > 0)
         })
     }
@@ -699,10 +823,8 @@ impl DaiyaStore for PgStore {
             .bind(&uid)
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows
                 .into_iter()
                 .map(|r| DashboardVersionRecord {
@@ -732,10 +854,8 @@ impl DaiyaStore for PgStore {
             .bind(org_id.as_uuid())
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows.into_iter().map(row_to_datasource).collect())
         })
     }
@@ -756,10 +876,8 @@ impl DaiyaStore for PgStore {
             .bind(&uid)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row.map(row_to_datasource))
         })
     }
@@ -780,10 +898,8 @@ impl DaiyaStore for PgStore {
             .bind(&name)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row.map(row_to_datasource))
         })
     }
@@ -802,7 +918,7 @@ impl DaiyaStore for PgStore {
             .bind(&ds.uid)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
 
             if exists.is_none() {
                 let cnt: i64 =
@@ -810,12 +926,27 @@ impl DaiyaStore for PgStore {
                         .bind(ds.org_id.as_uuid())
                         .fetch_one(&mut *tx)
                         .await
-                        .map_err(|e| CrError::Internal(e.to_string()))?;
+                        .map_err(db_err)?;
                 if cnt as u64 >= quotas.max_datasources {
                     return Err(CrError::QuotaExceeded {
                         resource: "datasources".into(),
                         limit: quotas.max_datasources,
                     });
+                }
+                if ds.kind.starts_with("wasm:") {
+                    let wasm: i64 = sqlx::query_scalar(
+                        "SELECT COUNT(*) FROM cr_datasource WHERE org_id = $1 AND kind LIKE 'wasm:%'",
+                    )
+                    .bind(ds.org_id.as_uuid())
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(db_err)?;
+                    if wasm as u64 >= quotas.max_wasm_plugins {
+                        return Err(CrError::QuotaExceeded {
+                            resource: "wasm_plugins".into(),
+                            limit: quotas.max_wasm_plugins,
+                        });
+                    }
                 }
             }
 
@@ -827,7 +958,7 @@ impl DaiyaStore for PgStore {
                 .bind(&ds.uid)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+                .map_err(db_err)?;
             }
 
             let secret_refs_json = serde_json::to_value(&ds.secret_refs).unwrap_or_default();
@@ -868,10 +999,8 @@ impl DaiyaStore for PgStore {
             .bind(&ds.wasm_digest)
             .fetch_one(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row_to_datasource(row))
         })
     }
@@ -887,7 +1016,7 @@ impl DaiyaStore for PgStore {
             .bind(&uid)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
             if ro == Some(true) {
                 return Err(CrError::Forbidden(
                     "Cannot delete read-only data source".into(),
@@ -898,10 +1027,8 @@ impl DaiyaStore for PgStore {
                 .bind(&uid)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+                .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(res.rows_affected() > 0)
         })
     }
@@ -916,10 +1043,8 @@ impl DaiyaStore for PgStore {
             .bind(org_id.as_uuid())
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows.into_iter().map(row_to_library_panel).collect())
         })
     }
@@ -940,10 +1065,8 @@ impl DaiyaStore for PgStore {
             .bind(&uid)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row.map(row_to_library_panel))
         })
     }
@@ -978,10 +1101,8 @@ impl DaiyaStore for PgStore {
             .bind(&panel.model)
             .fetch_one(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row_to_library_panel(row))
         })
     }
@@ -995,10 +1116,8 @@ impl DaiyaStore for PgStore {
                 .bind(&uid)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+                .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(res.rows_affected() > 0)
         })
     }
@@ -1013,10 +1132,8 @@ impl DaiyaStore for PgStore {
             .bind(org_id.as_uuid())
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows.into_iter().map(row_to_public_dashboard).collect())
         })
     }
@@ -1037,10 +1154,8 @@ impl DaiyaStore for PgStore {
             .bind(&uid)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row.map(row_to_public_dashboard))
         })
     }
@@ -1061,10 +1176,8 @@ impl DaiyaStore for PgStore {
             .bind(&duid)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row.map(row_to_public_dashboard))
         })
     }
@@ -1077,16 +1190,12 @@ impl DaiyaStore for PgStore {
         Box::pin(async move {
             // Forced RLS hides every row while `cr.org` is unset; the `public_token_lookup`
             // policy shows the one row whose hash this transaction names.
-            let mut tx = self
-                .pool
-                .begin()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            let mut tx = self.pool.begin().await.map_err(db_err)?;
             sqlx::query("SELECT set_config('cr.public_token', $1, true)")
                 .bind(&th)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+                .map_err(db_err)?;
             let row = sqlx::query(
                 "SELECT installation_id, org_id, instance_id, uid, dashboard_uid, access_token_hash, is_enabled, time_selection_enabled, annotations_enabled, show_query_text, share, created_by, updated_by, created_at, updated_at
                  FROM cr_public_dashboard WHERE access_token_hash = $1",
@@ -1094,10 +1203,8 @@ impl DaiyaStore for PgStore {
             .bind(&th)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
 
             let Some(pd_row) = row else {
                 return Ok(None);
@@ -1115,6 +1222,19 @@ impl DaiyaStore for PgStore {
         let raw_token = pubdash.access_token.clone();
         Box::pin(async move {
             let mut tx = self.begin_org_tx(pubdash.org_id).await?;
+            let dashboard_exists: Option<i32> =
+                sqlx::query_scalar("SELECT 1 FROM cr_dashboard WHERE org_id = $1 AND uid = $2")
+                    .bind(pubdash.org_id.as_uuid())
+                    .bind(&pubdash.dashboard_uid)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(db_err)?;
+            if dashboard_exists.is_none() {
+                return Err(CrError::NotFound(format!(
+                    "dashboard '{}' not found",
+                    pubdash.dashboard_uid
+                )));
+            }
             let row = sqlx::query(
                 "INSERT INTO cr_public_dashboard (installation_id, org_id, instance_id, uid, dashboard_uid, access_token_hash, is_enabled, time_selection_enabled, annotations_enabled, show_query_text, share, created_by, updated_by)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
@@ -1144,10 +1264,8 @@ impl DaiyaStore for PgStore {
             .bind(&pubdash.updated_by)
             .fetch_one(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             pubdash = row_to_public_dashboard(row);
             pubdash.access_token = raw_token;
             Ok(pubdash)
@@ -1163,10 +1281,8 @@ impl DaiyaStore for PgStore {
                 .bind(&uid)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+                .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(res.rows_affected() > 0)
         })
     }
@@ -1181,10 +1297,8 @@ impl DaiyaStore for PgStore {
             .bind(org_id.as_uuid())
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows
                 .into_iter()
                 .map(|r| QueryCacheStatRecord {
@@ -1225,10 +1339,8 @@ impl DaiyaStore for PgStore {
             .bind(stat.bytes_used as i64)
             .execute(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(())
         })
     }
@@ -1243,10 +1355,8 @@ impl DaiyaStore for PgStore {
             .bind(org_id.as_uuid())
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows
                 .into_iter()
                 .map(|r| ImportReportRecord {
@@ -1285,13 +1395,46 @@ impl DaiyaStore for PgStore {
             .bind(report.created_at)
             .execute(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| CrError::Internal(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(())
         })
     }
+}
+
+/// Refuses a parent chain that loops back (also to the folder itself) or nests deeper than
+/// Grafana's `MaxNestedFolderDepth` of 4 (`GF pkg/services/folder/model.go:30`).
+async fn check_folder_parents(
+    tx: &mut Transaction<'_, Postgres>,
+    org_id: OrgId,
+    folder_uid: &str,
+    mut parent_uid: Option<String>,
+) -> CrResult<()> {
+    let mut depth = 0usize;
+    let mut visited = std::collections::BTreeSet::new();
+    visited.insert(folder_uid.to_owned());
+    while let Some(p_uid) = parent_uid.filter(|p| !p.is_empty()) {
+        if !visited.insert(p_uid.clone()) {
+            return Err(CrError::BadRequest("cyclic folder parentUid".into()));
+        }
+        depth += 1;
+        // Grafana counts the new folder too (`len(parents)+1 >= MaxNestedFolderDepth`).
+        if depth >= 4 {
+            return Err(CrError::BadRequest(
+                "folder nesting depth exceeds maximum allowed depth of 4".into(),
+            ));
+        }
+        parent_uid = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT parent_uid FROM cr_folder WHERE org_id = $1 AND uid = $2",
+        )
+        .bind(org_id.as_uuid())
+        .bind(&p_uid)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(db_err)?
+        .flatten();
+    }
+    Ok(())
 }
 
 fn row_to_folder(r: sqlx::postgres::PgRow) -> FolderRecord {
@@ -1409,16 +1552,80 @@ fn row_to_public_dashboard(r: sqlx::postgres::PgRow) -> PublicDashboardRecord {
     }
 }
 
-/// Helper to connect a test [`PgStore`] from `DAIYA_TEST_DATABASE_URL`.
-pub async fn connect_test_pg_store(url: &str) -> CrResult<PgStore> {
-    let opts = PgConnectOptions::from_str(url)
+/// Login role the test helper creates for the application side: a member of `daiya_app`,
+/// with no `SUPERUSER` and no `BYPASSRLS`, exactly what a deployment gives the server.
+pub const TEST_APP_LOGIN_ROLE: &str = "daiya_app_login";
+
+/// A migrated test database: `admin` is the migrating (owner) connection, `app` the store on
+/// the application login role, so forced RLS applies to every query `app` makes.
+pub struct TestDatabase {
+    pub admin: PgPool,
+    pub app: PgStore,
+    /// The application role's pool configuration (fresh password, kept only in memory).
+    pub app_config: PgPoolConfig,
+}
+
+static TEST_ROLE_PASSWORD: tokio::sync::OnceCell<Zeroizing<String>> =
+    tokio::sync::OnceCell::const_new();
+
+/// Connects to `admin_url` (the `DAIYA_TEST_DATABASE_URL`, a role that may create tables and
+/// roles), runs the migration, makes sure the `daiya_app_login` role exists with a random
+/// password set once per process, and opens the store as that role.
+pub async fn connect_test_database(admin_url: &str) -> CrResult<TestDatabase> {
+    let opts = PgConnectOptions::from_str(admin_url)
         .map_err(|e| CrError::Internal(format!("invalid test db url: {e}")))?;
-    let pool = PgPoolOptions::new()
+    let admin = PgPoolOptions::new()
         .max_connections(4)
-        .connect_with(opts)
+        .connect_with(opts.clone())
         .await
         .map_err(|e| CrError::Internal(format!("failed to connect test db: {e}")))?;
-    let store = PgStore::new(pool);
-    store.run_migrations().await?;
-    Ok(store)
+    migrate(&admin).await?;
+    let password = TEST_ROLE_PASSWORD
+        .get_or_try_init(|| async {
+            let password = Zeroizing::new(format!(
+                "{}{}",
+                uuid::Uuid::new_v4().simple(),
+                uuid::Uuid::new_v4().simple()
+            ));
+            let mut conn = admin.acquire().await.map_err(db_err)?;
+            sqlx::query("SELECT pg_advisory_lock($1)")
+                .bind(MIGRATION_LOCK_KEY)
+                .execute(&mut *conn)
+                .await
+                .map_err(db_err)?;
+            // The password is two hex UUIDs, safe inside a literal; role DDL takes no binds.
+            let ddl = format!(
+                "DO $$ BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{TEST_APP_LOGIN_ROLE}') THEN
+                        CREATE ROLE {TEST_APP_LOGIN_ROLE} LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE INHERIT;
+                    END IF;
+                 END $$;
+                 ALTER ROLE {TEST_APP_LOGIN_ROLE} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '{}';
+                 GRANT daiya_app TO {TEST_APP_LOGIN_ROLE};",
+                password.as_str()
+            );
+            let result = sqlx::raw_sql(sqlx::AssertSqlSafe(ddl)).execute(&mut *conn).await;
+            sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(MIGRATION_LOCK_KEY)
+                .execute(&mut *conn)
+                .await
+                .map_err(db_err)?;
+            result.map_err(db_err)?;
+            Ok::<_, CrError>(password)
+        })
+        .await?;
+    let app_config = PgPoolConfig {
+        host: opts.get_host().to_owned(),
+        port: opts.get_port(),
+        database: opts.get_database().unwrap_or("postgres").to_owned(),
+        app_role: TEST_APP_LOGIN_ROLE.to_owned(),
+        password: password.clone(),
+        max_connections: 4,
+    };
+    let app = PgStore::new(app_config.connect().await?);
+    Ok(TestDatabase {
+        admin,
+        app,
+        app_config,
+    })
 }

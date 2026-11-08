@@ -9,8 +9,8 @@ use daiya_expr::{
     parse_duration_ms,
 };
 use daiya_model::{
-    Action, CrError, CrResult, DashboardDocument, DataTransformerConfig, FieldType, Frame,
-    FrameSet, GridPos, ObjectTarget, OrgId, PanelSpec, RequestCtx, Subject,
+    Action, Authorizer, CrError, CrResult, DashboardDocument, DataTransformerConfig, FieldType,
+    Frame, FrameSet, GridPos, ObjectTarget, OrgId, PanelSpec, RequestCtx, Subject,
     sanitize_markdown_to_html, validation::html_escape,
 };
 use daiya_query::{CacheKey, Query, QueryCtx};
@@ -154,10 +154,43 @@ pub fn find_panel_in_slice(panels: &[PanelSpec], panel_id: u32) -> Option<PanelS
     None
 }
 
-/// Executes a mixed list of datasource targets and `__expr__` expressions (R3, R4, R6).
+/// Executes a mixed list of datasource targets and `__expr__` expressions (R3, R4, R6),
+/// deciding each datasource read with the state's authorizer.
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_targets_and_expressions(
     state: &DaiyaState,
+    req_ctx: &RequestCtx,
+    default_ds_uid: Option<&str>,
+    raw_targets: &[Value],
+    from_ms: i64,
+    to_ms: i64,
+    interval_ms: u64,
+    max_data_points: u32,
+    variables: &BTreeMap<String, String>,
+    skip_cache: bool,
+) -> CrResult<Vec<FrameSet>> {
+    execute_targets_with_authorizer(
+        state,
+        state.authorizer.as_ref(),
+        req_ctx,
+        default_ds_uid,
+        raw_targets,
+        from_ms,
+        to_ms,
+        interval_ms,
+        max_data_points,
+        variables,
+        skip_cache,
+    )
+    .await
+}
+
+/// [`execute_targets_and_expressions`] with an explicit authorizer: the public-dashboard door
+/// passes its [`daiya_model::PublicDashboardAuthorizer`] instead of the host's.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn execute_targets_with_authorizer(
+    state: &DaiyaState,
+    authorizer: &dyn Authorizer,
     req_ctx: &RequestCtx,
     default_ds_uid: Option<&str>,
     raw_targets: &[Value],
@@ -262,15 +295,15 @@ pub async fn execute_targets_and_expressions(
 
         // Check authorization on the datasource in the caller's organization (R9, §5.3 test 3)
         let ds_meta = state.store.get_datasource(req_ctx.org_id, &ds_uid).await?;
-        let driver = state.get_datasource_driver(req_ctx.org_id, &ds_uid);
+        let registered = state.get_datasource_driver(req_ctx.org_id, &ds_uid);
 
-        if ds_meta.is_none() && driver.is_none() {
+        if ds_meta.is_none() && registered.is_none() {
             return Err(CrError::NotFound(format!(
                 "Data source '{ds_uid}' not found"
             )));
         }
 
-        let decision = state.authorizer.check(
+        let decision = authorizer.check(
             req_ctx,
             Action::Read,
             &ObjectTarget::Datasource {
@@ -302,10 +335,15 @@ pub async fn execute_targets_and_expressions(
             continue;
         }
 
-        let Some(drv) = driver else {
-            return Err(CrError::NotFound(format!(
-                "Data source driver '{ds_uid}' not registered"
-            )));
+        // Built only after the read decision: building resolves the datasource's host.
+        let drv = match (registered, &ds_meta) {
+            (Some(driver), _) => driver,
+            (None, Some(record)) => state.driver_for_record(record).await?,
+            (None, None) => {
+                return Err(CrError::NotFound(format!(
+                    "Data source '{ds_uid}' not found"
+                )));
+            }
         };
 
         let sets = drv.query(&q_ctx, &[query]).await?;

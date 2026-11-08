@@ -769,9 +769,9 @@ fn unary_op(op: &str, a: f64) -> CrResult<f64> {
 }
 
 fn binary_op(op: &str, a: f64, b: f64) -> CrResult<f64> {
-    // Short-circuit logical operators before NaN check (`exp.go:391`)
+    // Short-circuit logical operators before NaN check (`exp.go:391`); NaN != 0 holds in Go.
     match op {
-        "||" if a != 0.0 && !a.is_nan() => return Ok(1.0),
+        "||" if a != 0.0 => return Ok(1.0),
         "&&" if a == 0.0 => return Ok(0.0),
         _ => {}
     }

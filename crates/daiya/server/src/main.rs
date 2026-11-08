@@ -6,36 +6,39 @@ use clap::{Parser, Subcommand};
 use daiya_import::{
     DashboardImportInput, DesiredBundle, ExitCode, PlanBundle, check_dashboards_offline,
 };
-use daiya_model::{CrError, DataSourceInfo, InputLimits, OrgId, RequestCtx, Subject};
-use daiya_server::{DaiyaState, ServerConfig, execute_cli_command, router};
-use daiya_store_memory::MemoryStore;
-use jc_router::Mount;
+use daiya_model::{CrError, DataSourceInfo, InputLimits};
+use daiya_server::config::{DaiyaConfig, build_state, cli_ctx, standalone_router};
+use daiya_server::execute_cli_command;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process;
-use std::sync::Arc;
 
 #[derive(Debug, Parser)]
 #[command(name = "daiya", about = "JoinedContext dashboard and panel server")]
 struct Cli {
+    /// Configuration file (JSON): store, API tokens file, secrets, provisioning, outbound
+    /// policy. Without it daiya runs on an empty in-memory store with no API tokens.
+    #[arg(long, global = true)]
+    config: Option<PathBuf>,
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Start the HTTP server.
+    /// Start the HTTP server (listen address and mount from the configuration, these flags
+    /// override them).
     Serve {
-        #[arg(long, default_value = "127.0.0.1:3000")]
-        listen: SocketAddr,
-        #[arg(long, default_value = "https")]
-        scheme: String,
-        #[arg(long, default_value = "localhost")]
-        host: String,
-        #[arg(long, default_value = "")]
-        path_prefix: String,
+        #[arg(long)]
+        listen: Option<SocketAddr>,
+        #[arg(long)]
+        scheme: Option<String>,
+        #[arg(long)]
+        host: Option<String>,
+        #[arg(long)]
+        path_prefix: Option<String>,
     },
     /// Offline validation and migration check of dashboard JSON files or directories (R2, §7.3).
     Check {
@@ -75,6 +78,17 @@ enum Commands {
         #[arg(long)]
         object: Option<String>,
     },
+}
+
+/// The exit code for a failed command (R2): a stale plan is 3; a store, I/O or quota failure
+/// is 4; anything the input itself caused (bad JSON, refused, not found, denied) is 1.
+fn exit_code_for(err: &CrError) -> i32 {
+    match err {
+        CrError::StalePlan(_) => ExitCode::StalePlan.code(),
+        CrError::QuotaExceeded { .. } => ExitCode::StoreOrIoError.code(),
+        e if e.status_code() >= 500 => ExitCode::StoreOrIoError.code(),
+        _ => ExitCode::Refused.code(),
+    }
 }
 
 async fn load_dashboard_inputs(path: &Path) -> Result<Vec<DashboardImportInput>, CrError> {
@@ -128,43 +142,91 @@ async fn load_dashboard_inputs(path: &Path) -> Result<Vec<DashboardImportInput>,
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    let org_id = OrgId::from_u128(1);
-    let store = Arc::new(MemoryStore::new());
-    let state = DaiyaState::for_standalone(store, org_id);
-    let ctx = RequestCtx::new(
-        state.installation_id,
-        org_id,
-        state.default_instance_id,
-        Subject::authenticated("admin", vec![org_id], vec!["platform-admin".into()]),
-    );
+    let mut cfg = match &cli.config {
+        Some(path) => match DaiyaConfig::from_file(path) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                eprintln!("{e}");
+                process::exit(ExitCode::Refused.code());
+            }
+        },
+        None => DaiyaConfig::default(),
+    };
+    if let Commands::Serve {
+        listen,
+        scheme,
+        host,
+        path_prefix,
+    } = &cli.command
+    {
+        if let Some(l) = listen {
+            cfg.listen = *l;
+        }
+        if let Some(s) = scheme {
+            cfg.mount.scheme.clone_from(s);
+        }
+        if let Some(h) = host {
+            cfg.mount.host.clone_from(h);
+        }
+        if let Some(p) = path_prefix {
+            cfg.mount.path_prefix.clone_from(p);
+        }
+    }
+    let built = match build_state(&cfg).await {
+        Ok(built) => built,
+        Err(e) => {
+            eprintln!("daiya cannot start: {e}");
+            process::exit(ExitCode::StoreOrIoError.code());
+        }
+    };
+    if let Some(report) = &built.provisioning {
+        eprintln!(
+            "provisioning: {} datasources, {} deleted, {} folders, {} dashboards",
+            report.datasources_upserted,
+            report.datasources_deleted,
+            report.folders,
+            report.dashboards
+        );
+    }
+    let state = built.state;
+    let ctx = cli_ctx(&state);
 
     let exit_code = match cli.command {
-        Commands::Serve {
-            listen,
-            scheme,
-            host,
-            path_prefix,
-        } => {
-            let cfg = ServerConfig {
-                listen_addr: listen,
-                ..ServerConfig::default()
-            };
-            let mount = match Mount::new("daiya", scheme, host, path_prefix) {
+        Commands::Serve { .. } => {
+            let mount = match cfg.mount() {
                 Ok(m) => m,
                 Err(e) => {
                     eprintln!("invalid mount configuration: {e}");
                     process::exit(ExitCode::Refused.code());
                 }
             };
-            let app = router(state, mount);
-            let listener = match tokio::net::TcpListener::bind(cfg.listen_addr).await {
+            if state.tokens.is_empty() {
+                eprintln!(
+                    "warning: no API tokens configured; every authenticated route answers 404"
+                );
+            }
+            let app = standalone_router(state, mount);
+            let listener = match tokio::net::TcpListener::bind(cfg.listen).await {
                 Ok(l) => l,
                 Err(e) => {
-                    eprintln!("failed to bind {}: {e}", cfg.listen_addr);
+                    eprintln!("failed to bind {}: {e}", cfg.listen);
                     process::exit(ExitCode::StoreOrIoError.code());
                 }
             };
-            if let Err(e) = axum::serve(listener, app).await {
+            match listener.local_addr() {
+                Ok(addr) => eprintln!("daiya listening on {addr}"),
+                Err(e) => eprintln!("daiya listening (address unknown: {e})"),
+            }
+            let shutdown = async {
+                let _ = tokio::signal::ctrl_c().await;
+            };
+            if let Err(e) = axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown)
+            .await
+            {
                 eprintln!("server error: {e}");
                 process::exit(ExitCode::StoreOrIoError.code());
             }
@@ -204,7 +266,7 @@ async fn main() {
             }
             Err(e) => {
                 eprintln!("{e}");
-                ExitCode::StoreOrIoError.code()
+                exit_code_for(&e)
             }
         },
         Commands::Import {
@@ -243,13 +305,13 @@ async fn main() {
                     }
                     Err(e) => {
                         eprintln!("import failed: {e}");
-                        ExitCode::Refused.code()
+                        exit_code_for(&e)
                     }
                 }
             }
             Err(e) => {
                 eprintln!("{e}");
-                ExitCode::StoreOrIoError.code()
+                exit_code_for(&e)
             }
         },
         Commands::Export { uid } => {
@@ -260,14 +322,21 @@ async fn main() {
                 }
                 Err(e) => {
                     eprintln!("export failed: {e}");
-                    ExitCode::StoreOrIoError.code()
+                    exit_code_for(&e)
                 }
             }
         }
         Commands::Plan { file } => match tokio::fs::read_to_string(&file).await {
             Ok(text) => {
-                let desired: DesiredBundle =
-                    serde_json::from_str(&text).unwrap_or_else(|_| DesiredBundle::default());
+                let desired: DesiredBundle = match serde_json::from_str(&text) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        // An unreadable bundle is refused, never planned as an empty one
+                        // that silently answers "no changes".
+                        eprintln!("invalid bundle file {}: {e}", file.display());
+                        process::exit(ExitCode::Refused.code());
+                    }
+                };
                 match execute_cli_command(&state, &ctx, "plan", json!({ "bundle": desired })).await
                 {
                     Ok(plan_val) => {
@@ -283,7 +352,7 @@ async fn main() {
                     }
                     Err(e) => {
                         eprintln!("plan failed: {e}");
-                        ExitCode::Refused.code()
+                        exit_code_for(&e)
                     }
                 }
             }
@@ -299,15 +368,15 @@ async fn main() {
                     {
                         Ok(rep) => {
                             println!("{}", serde_json::to_string_pretty(&rep).unwrap_or_default());
-                            ExitCode::Ok.code()
-                        }
-                        Err(CrError::StalePlan(msg)) => {
-                            eprintln!("stale plan: {msg}");
-                            ExitCode::StalePlan.code()
+                            // The applied import's own verdict: refused dashboards are 1.
+                            rep["exitCode"]
+                                .as_i64()
+                                .and_then(|c| i32::try_from(c).ok())
+                                .unwrap_or(ExitCode::Ok.code())
                         }
                         Err(e) => {
                             eprintln!("apply failed: {e}");
-                            ExitCode::StoreOrIoError.code()
+                            exit_code_for(&e)
                         }
                     }
                 }
@@ -340,7 +409,7 @@ async fn main() {
                 }
                 Err(e) => {
                     eprintln!("{e}");
-                    ExitCode::Refused.code()
+                    exit_code_for(&e)
                 }
             }
         }

@@ -20,7 +20,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, SemaphorePermit};
 
 /// Host limits for third-party WASM datasource plugins (§3.3, `wasm-host/src/limits.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -252,6 +252,24 @@ pub struct WasmPluginAdapter {
 }
 
 impl WasmPluginAdapter {
+    /// One call slot of the plugin and one of the organization (§3.3), for every export that
+    /// runs guest code; a full plugin or organization is refused at once, never queued.
+    fn permits(&self) -> Result<(SemaphorePermit<'_>, SemaphorePermit<'_>), DsError> {
+        let plugin = self.plugin_sem.try_acquire().map_err(|_| {
+            DsError::Wasm(format!(
+                "per-plugin concurrency limit ({}) reached",
+                self.host.limits.per_plugin_concurrency
+            ))
+        })?;
+        let org = self.org_sem.try_acquire().map_err(|_| {
+            DsError::Wasm(format!(
+                "per-organization WASM concurrency limit ({}) reached",
+                self.host.limits.per_org_concurrency
+            ))
+        })?;
+        Ok((plugin, org))
+    }
+
     fn check_limits(&self, req_len: usize) -> Result<(), DsError> {
         if req_len > self.host.limits.request_bytes {
             return Err(DsError::Wasm(format!(
@@ -288,13 +306,7 @@ impl Datasource for WasmPluginAdapter {
         queries: &'a [Query],
     ) -> DsFuture<'a, Result<Vec<FrameSet>, DsError>> {
         Box::pin(async move {
-            let _p_permit = self
-                .plugin_sem
-                .try_acquire()
-                .map_err(|_| DsError::Wasm("per-plugin concurrency limit (16) reached".into()))?;
-            let _o_permit = self.org_sem.try_acquire().map_err(|_| {
-                DsError::Wasm("per-organization WASM concurrency limit (64) reached".into())
-            })?;
+            let _permits = self.permits()?;
 
             let req_json =
                 serde_json::to_string(queries).map_err(|e| DsError::Wasm(e.to_string()))?;
@@ -336,6 +348,10 @@ impl Datasource for WasmPluginAdapter {
 
     fn health<'a>(&'a self, ctx: &'a QueryCtx) -> DsFuture<'a, Health> {
         Box::pin(async move {
+            let _permits = match self.permits() {
+                Ok(p) => p,
+                Err(e) => return Health::error(e.to_string()),
+            };
             let imports = WasmHostImports {
                 org_id: self.org_id,
                 guard: &self.guard,
@@ -359,7 +375,8 @@ impl Datasource for WasmPluginAdapter {
         Box::pin(async move {
             let params_json =
                 serde_json::to_string(&r.params).map_err(|e| DsError::Wasm(e.to_string()))?;
-            self.check_limits(params_json.len())?;
+            self.check_limits(params_json.len() + r.path.len())?;
+            let _permits = self.permits()?;
             let imports = WasmHostImports {
                 org_id: self.org_id,
                 guard: &self.guard,
@@ -396,7 +413,11 @@ impl Datasource for WasmPluginAdapter {
 
     fn import(&self, grafana_target: &Value) -> Result<ImportOutcome, DsError> {
         let s = serde_json::to_string(grafana_target).map_err(|e| DsError::Wasm(e.to_string()))?;
+        self.check_limits(s.len())?;
         let out = self.guest.export_import_target(&s).map_err(DsError::Wasm)?;
+        if out.len() > self.host.limits.response_bytes {
+            return Err(DsError::Wasm("WASM import response too large".into()));
+        }
         serde_json::from_str(&out).map_err(|e| DsError::Wasm(e.to_string()))
     }
 

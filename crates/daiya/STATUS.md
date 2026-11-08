@@ -1,96 +1,138 @@
 # daiya Status
 
-State on branch `daiya-argon-1` after the compile-and-verify pass (2026-11-07). The first
-version of this file, written with the generated code before it had ever compiled, marked
-R1–R12 as done. Several of those claims did not hold; they are corrected below. Verdicts:
-**done** (implemented and covered by a test that exercises the real code), **partial** (part
-implemented or tested, the gap is named), **not verified** (written but never run, for the
-reason given).
+This is the state on branch `tests-daiya-1` after the test-coverage pass of 2026-11-08. The
+pass started from `jc-one-binary-1`.
 
-Every package compiles, `cargo test` (59 tests), `clippy --all-targets -D warnings` and
-`fmt --check` are clean. No test runs against Postgres: the host has no Postgres server and
-Docker cannot start containers (overlay mount fails), so everything in `daiya-store-pg`
-that touches a database is **not verified**.
+Each item gets one of three verdicts:
+
+- **done**: implemented, and covered by a test that exercises the real code.
+- **partial**: some of it is implemented or tested; the gap is named.
+- **not verified**: written but never run, with the reason given.
+
+Every daiya package passes `cargo test`, `clippy --all-targets -D warnings` and `fmt --check`, and so does `cargo test -p jc`.
+
+The Postgres tests ran against a throwaway PostGIS 17 server through `DAIYA_TEST_DATABASE_URL`, and no test printed a SKIP line.
+
+- They run as a dedicated login role, `daiya_app_login`: a member of `daiya_app`, with NOSUPERUSER and NOBYPASSRLS. They do not run as the superuser.
+- Running as the superuser would make forced row-level security (RLS) meaningless, and the boot check refuses that role anyway.
 
 ## Contract Items (R1–R12)
 
-- **R1 Store format (Grafana classic JSON at schemaVersion 42, unknown fields kept, migrations 36..=42 + below-36 warning)**: done (`model/src/migration.rs::tests`, `import/tests/round_trip.rs::all_9_dashboards_match_inventory_and_import_export_import_is_fixed_point`).
-- **R2 Import / export / CI**: partial.
-  - Done in-process: import with `--dry-run`, export, `check`, `plan`/`apply` with stale-plan refusal and the exit codes, JSON and Markdown reports, and the 9-dashboard round trip as a fixed point (`import/tests/round_trip.rs`).
-  - Provisioning YAML is parsed and its paths are confined to the provisioning root (`import/src/provisioning.rs::tests`), but no code loads a provider's dashboards from disk.
-  - The `daiya` binary runs on an empty in-memory store for each command. `export`, `plan` and `apply` therefore act on nothing, and `serve` has no persistent store and no configuration.
-- **R3 Datasources**: partial.
-  - Drivers are written for Prometheus, NGSI-LD, OData 4.01 and Postgres, with the `-- Mixed --` datasource and the Loki slot.
-  - The outbound guard covers the allow-list, DNS pinning, no redirects, a size cap, no env proxy, and IPv4 embedded in IPv6 (`query/src/guard.rs::tests`).
-  - The Postgres guard is a token-level single-SELECT check run in a READ ONLY transaction with a row cap (`query/src/postgres.rs::tests`).
-  - The OData driver is tested against a local HTTP server (`query/src/odata.rs::tests`). The entity set must be a simple identifier; before this pass it was pasted into the URL path. Columns come out in response order (serde_json preserve_order, as in the jc binary).
+- **R1 Store format (Grafana classic JSON at schemaVersion 42, unknown fields kept, migrations 36..=42, below-36 warning)**: done.
+  - Tests: `model/tests/migration_registry.rs` and `import/tests/round_trip.rs`.
+  - The v38 step deleted a non-string table `displayMode`; it is now kept verbatim.
+- **R2 Import / export / CI**: done.
+  - **CLI.** `check`, `import --dry-run`, `export`, `plan` and `apply` are tested against the real binary, with JSON and Markdown reports (`server/tests/cli.rs`).
+    - Exit codes now follow the kind of error: 1 for invalid JSON, refused input or an unknown uid; 3 for a stale plan; 4 for store, I/O or quota errors. `apply` returns the applied report's own code.
+    - Before this pass, invalid JSON exited 4 and a refused apply exited 0.
+  - **Configuration.** The binary reads a JSON configuration file (`--config`, `server/src/config.rs`, `deny_unknown_fields` everywhere). It sets the store (memory or Postgres), the API tokens file, the secrets directory, the provisioning directory and the outbound policy.
+  - **CLI store.** The CLI subcommands act on the configured store. A Postgres store keeps data across restarts (`server/tests/binary.rs`).
+  - **Provisioning loader.** `import/src/loader.rs` loads `datasources/*.yaml` and `dashboards/*.yaml` from disk at boot (`import/tests/loader.rs`).
+    - It refuses: `orgId` other than 1 in every list, including `deleteDatasources`; `secureJsonData`; symlink escapes per file; trees deeper than 8 levels; more than 10 000 files.
+    - It reads every file and dry-runs every dashboard batch before it writes, so a refused dashboard leaves no dashboards or folders behind.
+  - **`compute_plan`.** It now reports unchanged dashboards as unchanged. It compares every datasource field.
   - Gaps:
-    - Nothing builds a driver from a stored datasource record. `DaiyaState::datasources` is filled only by tests, so a running server cannot query any datasource that was created through the API.
-    - There is no real token exchanger: the default `DenyTokenExchanger` refuses, and NGSI-LD calls that need the caller's token fail until the host supplies an exchanger.
-    - The guard refuses private addresses with no operator allowance, so an in-cluster Prometheus or broker cannot be reached.
-    - The Postgres driver has never run against a server.
-- **R4 Calculation step (`__expr__` math, reduce, resample, threshold, classic_conditions, `sql` warning; 13 transformations)**: done (`expr/src/*::tests`, `server/tests/e2e.rs::e2e_mixed_panel_with_math_and_reduce_expressions`).
-- **R5 WASM datasource plugins**: partial. `wasmtime` is not in the root `Cargo.lock`. The WIT file, the host adapter trait, the §3.3 limits and digest pinning are tested against the in-process sample (`query/src/sample_plugin.rs::tests`); no WASM is executed.
-- **R6 Query editor and API for the Portal (`EditorSchema`, `Query`, `Resource`, `RenderPanel`, server-side HTML table)**: partial. The routes are tested end to end with drivers registered by hand (`server/tests/e2e.rs`). In a running server they have no drivers (see R3).
-- **R6b `panel_view` in-process function + HTML table**: partial. It exists in `api/src/render.rs` and is reached through the e2e test, with the same driver gap.
-- **R7 Public dashboards**: done in memory (`server/tests/e2e.rs::e2e_public_dashboard_rules_of_r7`, `security_compat_routes_authorize_every_object`).
-  - Covered: opt-in off by default, a hashed 256-bit token, saved queries only, refusal of forged payloads, range and interval caps, rotation answering 404, and a per-IP rate limit with a bounded address table.
-  - The cache key now includes the interval and maxDataPoints.
-  - The token lookup under forced RLS on Postgres has a new `public_token_lookup` policy that is **not verified**.
-  - Public queries execute as an internal subject named `admin`, which works but is fragile.
-- **R8 Tenancy**: partial.
-  - Done on the memory store: all 8 isolation tests of §5.3 (`store-pg/tests/isolation_suite.rs::isolation_suite_passes_on_memory_store_and_verifies_boot_rls_refusal`). Tests 3, 5, 7 and 8 used to be vacuous; 5 and 8 now drive the real query cache and export.
-  - Not verified on Postgres: the forced RLS migrations, the `daiya_app` role, the boot check and the secret-file pool config. `isolation_suite_passes_on_postgres_store` passes only because it skips when no database URL is set.
-  - The memory store's boot RLS refusal is simulated, not a catalog check.
-- **R9 Authorization (`Authorizer`, Viewer/Editor/Admin per folder, cross-org 404)**: done (`server/tests/e2e.rs::e2e_cross_organization_404s_and_cve_regression_suite`, `security_*` tests). Before this pass:
-  - The caller's identity came from `x-daiya-subject` and `x-daiya-orgs` request headers, and an anonymous request was admin of the default org.
-  - Export, the org and folder compat routes, search and the public-dashboard config had no or partial checks.
-  - Identity now comes only from a host `SubjectResolver` or a hashed API token.
-- **R10a / R10 OData and registry (`/odata/v4`, CSDL `$metadata`, `$batch`, 8 entity sets, 12 operations, OData/MCP/CLI parity)**: done (`model/src/registry.rs::tests`, `server/tests/e2e.rs::e2e_odata_mcp_and_cli_parity_and_jc_router_mount`). `$batch` is now capped at 100 requests. MCP tools refuse a subject with no role, refuse writes by a viewer and by a read-only connector (`server/tests/e2e.rs::security_mcp_tools_authorize_like_odata`).
-- **R11 One binary (`router(state, mount)`, standalone binary, no globals in library crates)**: partial. The router and mount are tested. The binary has no store or configuration wiring and no way to configure API tokens, so `serve` answers every authenticated route with 404.
-- **R12 Security**: partial.
-  - Done: `forbid(unsafe_code)`, no unwrap or panic outside tests, RFC 9457 slugs, constant-time token compare, the §4.3 CVE regression tests, and the security tests added in this pass.
-  - Not true before this pass: "parameterized SQL / query-language isolation". The Postgres view guard was bypassable, and the template-variable cache key ignored the variables.
-  - PromQL variable escaping only covers `"` and `\`. This is not exploitable today, because authenticated callers may send raw PromQL and public variables are restricted to saved values.
+    - Grafana's `$VAR` expansion in provisioning files is not done. Library code reads no environment variables (R11).
+    - `disableDeletion` is not done.
+    - YAML block scalars, anchors and merge keys are refused, not parsed.
+- **R3 Datasources**: partial.
+  - **Driver factory.** `query/src/factory.rs` builds a driver from a stored datasource record: Prometheus, NGSI-LD, OData, Postgres, and the Loki slot. WASM kinds and unknown kinds answer 501.
+    - `DaiyaState::driver_for` caches each driver by record revision, and builds it only after the authorization decision (`api/tests/stored_drivers.rs`).
+  - **Outbound guard.** Operators can now open non-public networks (`outbound.allowedNetworks`). Cloud metadata addresses are always refused.
+  - **Postgres driver.** It runs against the real server under a dedicated reader role (`query/tests/factory.rs`). These are now decoded: int2/int4, numeric, timestamp, date, json and uuid columns, all of which used to come back null. Health runs `SELECT 1`, and a 50 000-row cut is noticed.
+  - **PromQL variables.** They are escaped for the literal they stand in. Interpolation is one pass, by whole name.
+  - **Prometheus.**
+    - Warnings and infos become frame notices.
+    - The min step is honoured.
+    - Grafana's `api/v1/*` resource paths are accepted.
+  - **NGSI-LD.** The projection keeps the geoproperty, and typed literals are read.
+  - Gaps:
+    - There is no real token exchanger. The default `DenyTokenExchanger` refuses, so NGSI-LD calls that need the caller's token fail until the host supplies an exchanger.
+    - The Postgres driver keeps its password in the pool's connect options for the pool's lifetime.
+    - The Postgres checker refuses the valid alias form `FROM v m (a, b)`.
+    - Postgres `format: time_series` has no long-to-wide conversion.
+    - The Prometheus safe step is not rounded the way Grafana rounds it, and heatmap format is treated as time_series.
+- **R4 Calculation step (`__expr__` math, reduce, resample, threshold, classic_conditions, `sql` warning; 13 transformations)**: done (`expr/tests/*`). Fixed to match Grafana:
+  - math `||` short-circuits on NaN as Go does;
+  - reduce of an already-numeric value warns on every value and applies only the output mapping;
+  - reducer and calculateField columns use Grafana's display names;
+  - calculateField `%` and `^` are real operators;
+  - renameByRegex is anchored, keeps its flags and translates `$1`;
+  - an outer joinByField sorts its keys.
+- **R5 WASM datasource plugins**: partial.
+  - `wasmtime` is not a dependency, so no WASM is executed.
+  - Tested against the in-process sample: the WIT file, the host adapter, the §3.3 limits (health and resource calls now take concurrency slots, import is size-capped) and digest pinning.
+- **R6 / R6b Query editor API, `panel_view`, HTML table**: done (`api/tests/state_and_render.rs`, `api/tests/odata_routes.rs`). Both run on drivers built from stored records.
+- **R7 Public dashboards**: done, on memory and on Postgres.
+  - Public queries now run as `Subject::public_dashboard(org, uid)` under `PublicDashboardAuthorizer`. That authorizer allows only Read of its own dashboard and of the datasources its saved panels name. They no longer run as an internal "admin" subject (`api/tests/public_subject.rs`).
+  - The `public_token_lookup` RLS policy is verified on Postgres: it shows exactly one row and allows no writes (`store-pg/tests/store_contract.rs`).
+  - `PATCH` checks the uid in its path.
+  - The standalone server rate-limits by the real peer address (`ClientAddr` from `ConnectInfo`).
+- **R8 Tenancy**: done, on Postgres.
+  - The store contract runs on both stores (`store-pg/tests/store_contract.rs`).
+  - Forced RLS hides other organizations from the application role's raw SQL.
+  - The boot check refuses a superuser login, a superuser that did `SET ROLE`, a BYPASSRLS role, an unforced table and a table with no policy.
+  - The migration runs under an advisory lock and is skipped when its recorded checksum matches. Re-running the DDL next to live transactions used to deadlock.
+  - The pool password comes from a file; a URL that carries a password is refused.
+  - Folder depth follows Grafana (`depth >= 4` refused), and cycles are refused.
+  - The §5.3 isolation suite passes on Postgres (`store-pg/tests/isolation_suite.rs`).
+- **R9 Authorization**: done (`model/tests/auth_errors_frames.rs`, `api/tests/*`). Fixed in this pass:
+  - Dashboard versions are checked against the dashboard's folder.
+  - The OData DashboardVersions, Folders, LibraryPanels and PublicDashboards sets filter per object.
+  - A `$batch` GET with an unparsable query answers 400 instead of the unfiltered set.
+  - The API can no longer set `readOnly`.
+- **R10a / R10 OData, MCP, CLI parity**: done (`model/tests/migration_registry.rs`, `api/tests/odata_routes.rs`, `mcp/tests/tools.rs`, `server/tests/router.rs`).
+  - MCP tools refuse a missing uid, path, accessToken or operation, and an out-of-range panelId, with 400. Before, these became an empty string, "read" or panel 1.
+  - Gap: `Dashboards('k')/$count` ignores the key.
+- **R11 One binary**: partial.
+  - The standalone `daiya` binary is done. It covers configuration, stored tokens (SHA-256 digests), provisioning, a Postgres store, graceful SIGINT shutdown that exits 0, and serve flags that override the mount.
+  - The `jc` binary (`bins/jc/src/modules/daiya.rs`) still mounts daiya on an in-memory store with no API tokens. It has not been wired to `config.rs` yet.
+- **R12 Security**: done for the tested classes.
+  - In place: `forbid(unsafe_code)`, RFC 9457 slugs with no internal detail in 500s, constant-time token compare, the §4.3 CVE regression tests, and the PromQL escaping above.
+  - Refused: `secureJsonData` at the compat routes and in provisioning, including YAML flow mappings.
+  - YAML errors give a line number and never quote the line.
+  - File secrets are one name under `<dir>/<org>/`.
 
-## §7.1 Compatibility Matrix Verdict Groups
+## §7.1 Compatibility Matrix
 
-- **Dashboard top-level fields, schemaVersion 39 → 42**: done (`import/tests/round_trip.rs`).
-- **`gridPos` validation, `timeseries`/`table`/`stat`**: done (`import/tests/round_trip.rs`).
-- **`bargauge`, `geomap` markers layer**: done (`import/tests/round_trip.rs`).
-- **Datasource `{type, uid}` resolution within the org, missing uid refused**: done (`store-pg/tests/isolation_suite.rs`, memory store).
-- **PromQL and NGSI-LD target fields**: done with hand-registered drivers (`server/tests/e2e.rs`). An explicit NGSI-LD `attributes` list is now a projection; before this pass, every attribute was returned.
-- **Query variables and `fieldConfig`**: done (`import/tests/round_trip.rs`). Data links in `fieldConfig` defaults and overrides are now checked for dangerous schemes, and `data:image/svg+xml` is refused (`model/src/validation.rs::tests`).
-- **The 13 transformations**: done (`expr/src/tx.rs::tests::all_13_transformations_execute_cleanly`).
-- **`-- Mixed --` and `__expr__`**: done (`server/tests/e2e.rs::e2e_mixed_panel_with_math_and_reduce_expressions`).
-- **Unsupported panel and datasource types refused with a pointer**: done (`model/src/validation.rs`).
-- **`v2beta1` → v1 at 42**: done (`model/src/migration.rs::tests::v2beta1_converts_to_v1_at_42`).
-- **Provisioning YAML (`secureJsonData` refused, `secretRef` required)**: partial. Parsing and the guards are done (`import/tests/round_trip.rs::plan_and_apply_refuse_stale_plan_and_provisioning_guards_work`); loading providers is not.
+The verdict groups of the previous status hold.
 
-## Coverage (cargo +nightly llvm-cov, lines)
+- Provisioning is done (see R2).
+- For the compat-route behaviour verified in this pass, see `COMPAT.md`.
+- Validation still skips missing-datasource checks for an organization with zero datasources: an empty list means "nothing known". Fixing it needs `import` to pass "no list" and "empty list" separately.
 
-Target 95 % lines; not reached. Only tests of real behaviour were added. `store-pg` needs a
-Postgres server to run its code, and `server` is mostly the CLI `main`, which no test starts.
+## Coverage (cargo +nightly llvm-cov, all 9 packages together, Postgres set)
 
-| Package | Lines | Missed | Line coverage |
-|---|---:|---:|---:|
-| daiya-model | 2959 | 620 | 79.0 % |
-| daiya-expr | 3341 | 1305 | 60.9 % |
-| daiya-query | 3963 | 1423 | 64.1 % |
-| daiya-store-memory | 560 | 223 | 60.2 % |
-| daiya-store-pg | 1372 | 1344 | 2.0 % |
-| daiya-import | 935 | 155 | 83.4 % |
-| daiya-api | 2907 | 1177 | 59.5 % |
-| daiya-mcp | 152 | 38 | 75.0 % |
-| daiya-server | 285 | 204 | 28.4 % |
-| all daiya | 16474 | 6489 | 60.6 % |
+Before is `jc-one-binary-1`; after is this branch. Each cell is lines / functions, in %.
 
-Files with no coverage at all: `query/src/loki.rs` (a trait slot), `server/src/main.rs` and
-`model/src/entities.rs`. `expr/src/pipeline.rs`, `expr/src/tx.rs`, `api/src/compat.rs` and
-`api/src/odata.rs` sit between 33 % and 45 %.
+| Package | Before | After |
+|---|---:|---:|
+| daiya-model | 79.1 / 69.1 | 99.5 / 99.0 |
+| daiya-expr | 60.9 / 56.5 | 99.2 / 100.0 |
+| daiya-query | 64.1 / 58.3 | 98.0 / 96.5 |
+| daiya-store-memory | 60.2 / 61.1 | 98.6 / 98.9 |
+| daiya-store-pg | 6.2 / 6.4 | 99.2 / 95.0 |
+| daiya-import | 83.3 / 67.1 | 98.5 / 97.6 |
+| daiya-api | 59.4 / 62.8 | 99.1 / 99.2 |
+| daiya-mcp | 75.0 / 60.0 | 98.1 / 100.0 |
+| daiya-server | 28.5 / 37.9 | 96.7 / 98.4 |
+| all daiya | 60.9 / 54.1 | 98.8 / 98.1 |
 
-## Out of Scope for This Run (Per Contract)
+Some files are below 95 % functions while their package is above it.
 
-- **Alerting engine (§2.4)**: not started. The tables `cr_alert_rule` and `cr_alert_state` exist in the migration (not verified on Postgres).
+| File | Functions | What is not covered |
+|---|---:|---|
+| `query/src/guard.rs` | 90.3 % | error closures for a missing host, an unknown port, empty DNS and client build |
+| `query/src/postgres.rs` | 92.7 % | a constant regex compile, `SET TRANSACTION` failing, numeric in text format |
+| `query/src/sample_plugin.rs` | 90.5 % | serde serialization errors |
+| `query/src/wasm.rs` | 92.7 % | serde serialization errors |
+| `import/src/loader.rs` | 94.4 % | a directory entry failing mid-listing |
+| `server/src/main.rs` | 92.9 % | quota exit, a failing `next_entry`, an `axum::serve` error |
+
+None of these can be triggered without reshaping the code, and no exclusions were added.
+
+## Out of Scope (Per Contract)
+
+- **Alerting engine (§2.4)**: not started. The tables `cr_alert_rule` and `cr_alert_state` exist in the migration.
 - **Remaining 31 browser transformations**: imported with a named warning and kept on export.
 - **Portal React components**: not in this repository.

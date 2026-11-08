@@ -1608,14 +1608,19 @@ dependencies = [
 name = "daiya-mcp"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "daiya-api",
  "daiya-import",
  "daiya-model",
  "daiya-query",
  "daiya-store-memory",
+ "http",
+ "http-body-util",
+ "jc-router",
  "serde",
  "serde_json",
  "tokio",
+ "tower",
 ]
 
 [[package]]
@@ -1686,9 +1691,11 @@ dependencies = [
  "ipnet",
  "jc-router",
  "parking_lot",
+ "percent-encoding",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sqlx",
  "tokio",
  "tower",
  "url",
@@ -1722,6 +1729,7 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.21",
  "tokio",
+ "url",
  "uuid",
  "zeroize",
 ]
