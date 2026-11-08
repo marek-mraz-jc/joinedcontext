@@ -6,6 +6,8 @@
 use kaisatsu_core::*;
 use kaisatsu_store_memory::MemoryStore;
 use kaisatsu_store_pg::MIGRATION_0001_SQL;
+
+mod common;
 use odata_table::QueryOptions;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -225,6 +227,10 @@ fn migration_ddl_enforces_rls_and_leakproof_indexes_on_every_table() {
         "revoked_token",
         "login_failure",
         "consent",
+        "auth_code",
+        "par_request",
+        "required_actions",
+        "email_outbox",
         "events",
         "admin_events",
         "branding_blocks",
@@ -250,21 +256,13 @@ fn migration_ddl_enforces_rls_and_leakproof_indexes_on_every_table() {
 }
 
 #[tokio::test]
-async fn pg_store_isolation_and_boot_checks() {
-    let Some(db_url) = std::env::var("KAISATSU_TEST_DATABASE_URL").ok() else {
-        println!("SKIP: KAISATSU_TEST_DATABASE_URL is unset; skipping live PostgreSQL test");
+async fn pg_store_passes_isolation_and_odata_secret_field_refusal() {
+    let Some(db) =
+        common::test_db("pg_store_passes_isolation_and_odata_secret_field_refusal").await
+    else {
         return;
     };
-    let migrate_pool = sqlx::PgPool::connect(&db_url)
-        .await
-        .expect("connect test db");
-    kaisatsu_store_pg::PgStore::run_migrations(&migrate_pool)
-        .await
-        .expect("migrations");
-    // A superuser/bypassrls connection must be refused by verify_boot_rls (W2)
-    let boot_err = kaisatsu_store_pg::verify_boot_rls(&migrate_pool).await;
-    assert!(
-        boot_err.is_err(),
-        "verify_boot_rls must refuse a migration/superuser role"
-    );
+    let store = Arc::new(db.store(kaisatsu_crypto::Kek::generate_for_tests()).await);
+    run_shared_isolation_suite(store).await;
+    db.drop_db().await;
 }

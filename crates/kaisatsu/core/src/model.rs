@@ -962,7 +962,11 @@ pub struct RefreshTokenFamily {
     pub amr: Vec<String>,
     pub auth_time: i64,
     pub rotation_counter: u32,
+    /// SHA-256 (hex) of the current opaque refresh handle; the handle itself is never stored.
     pub current_jti_hash: String,
+    /// SHA-256 of handles rotated away (newest last, bounded): presenting one is reuse.
+    #[serde(default)]
+    pub previous_hashes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dpop_jkt: Option<String>,
     pub offline: bool,

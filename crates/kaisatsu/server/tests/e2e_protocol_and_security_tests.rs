@@ -469,7 +469,6 @@ async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
     assert_eq!(st5, StatusCode::OK, "cimd token body: {tok_body}");
     let tok_resp: Value = serde_json::from_str(&tok_body).unwrap();
     let access_claims = decode_jwt_payload(tok_resp["access_token"].as_str().unwrap());
-    let refresh_claims = decode_jwt_payload(tok_resp["refresh_token"].as_str().unwrap());
 
     // Verify `connector:{id}` scope, `portal-connectors` and `portal-api` audiences, `jc_org`, `jc_groups`,
     // `fullScopeAllowed: false` (no `realm_access`), and `Offline` refresh token
@@ -489,7 +488,30 @@ async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
         json!(["/helsinki/members", "/helsinki/traffic-analysts"])
     );
     assert!(access_claims.get("realm_access").is_none());
-    assert_eq!(refresh_claims["typ"], "Offline");
+    // The refresh token is an opaque handle (contract: 256-bit random, only its SHA-256 stored);
+    // its `Offline` type is visible through introspection, not inside the token.
+    let refresh_token = tok_resp["refresh_token"].as_str().unwrap();
+    assert_eq!(
+        refresh_token.matches('.').count(),
+        1,
+        "opaque handle, not a JWT"
+    );
+    assert_eq!(tok_resp["refresh_expires_in"], 0);
+    let (st6, _, intro_body) = post_form(
+        &app,
+        "/realms/dev/protocol/openid-connect/token/introspect",
+        &[
+            ("client_id", "edge"),
+            ("client_secret", "edge-secret-123"),
+            ("token", refresh_token),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st6, StatusCode::OK, "{intro_body}");
+    let intro: Value = serde_json::from_str(&intro_body).unwrap();
+    assert_eq!(intro["active"], true, "{intro}");
+    assert_eq!(intro["typ"], "Offline");
 }
 
 #[tokio::test]

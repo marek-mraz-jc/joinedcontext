@@ -313,6 +313,11 @@ impl LocalAuthorizer {
         {
             return None;
         }
+        // `realm-apply` / `manage-realm` reach realm-level objects; the role checks below still
+        // decide what they may do there (the realm itself: read and apply only).
+        if ctx.active_org_id.is_none() && target_org.is_none() && ctx.principal.is_realm_applier() {
+            return None;
+        }
         let Some(target) = target_org else {
             return Some(Decision::deny_hidden(
                 "realm-level object hidden from org caller",

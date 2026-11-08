@@ -1341,9 +1341,6 @@ impl Store for MemoryStore {
                 if client.secret.is_none() {
                     client.secret = existing.secret;
                 }
-                if client.protocol_mappers.is_empty() && !existing.protocol_mappers.is_empty() {
-                    client.protocol_mappers = existing.protocol_mappers;
-                }
             } else if !client.public_client && client.secret.is_none() {
                 client.secret = Some(kaisatsu_crypto::random_handle_256());
             }
@@ -1917,6 +1914,28 @@ impl Store for MemoryStore {
                 .iter()
                 .find(|f| f.realm_id == realm_id && f.id == family_id)
                 .cloned())
+        })
+    }
+
+    fn rotate_refresh_family<'a>(
+        &'a self,
+        family: RefreshTokenFamily,
+        expected_hash: &'a str,
+    ) -> StoreFuture<'a, bool> {
+        Box::pin(async move {
+            let mut st = self.inner.write();
+            let Some(current) = st
+                .refresh_families
+                .iter_mut()
+                .find(|f| f.realm_id == family.realm_id && f.id == family.id)
+            else {
+                return Ok(false);
+            };
+            if current.revoked || current.current_jti_hash != expected_hash {
+                return Ok(false);
+            }
+            *current = family;
+            Ok(true)
         })
     }
 

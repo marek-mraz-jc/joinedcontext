@@ -93,42 +93,59 @@ pub struct ServerConfig {
     pub import_dir: Option<PathBuf>,
 }
 
+/// Reads one realm file: `.yaml` / `.yml` as YAML, everything else as JSON (W1b). Errors name
+/// the file and never echo its content (realm files hold secret references).
+fn read_realm_file(path: &std::path::Path) -> Result<(String, serde_json::Value)> {
+    let bad = |what: &str| {
+        kaisatsu_core::KaisatsuError::BadRequest(format!("{}: {what}", path.display()))
+    };
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("realm.json")
+        .to_owned();
+    let raw = std::fs::read_to_string(path).map_err(|e| bad(&e.to_string()))?;
+    let is_yaml = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("yaml") || e.eq_ignore_ascii_case("yml"));
+    let val: serde_json::Value = if is_yaml {
+        serde_norway::from_str(&raw).map_err(|e| bad(&format!("invalid YAML: {e}")))?
+    } else {
+        serde_json::from_str(&raw).map_err(|e| bad(&format!("invalid JSON: {e}")))?
+    };
+    if !val.is_object() {
+        return Err(bad("a realm file holds one realm object"));
+    }
+    Ok((name, val))
+}
+
+/// Loads a realm file, or every `.json` / `.yaml` / `.yml` file of a directory in file-name
+/// order (keycloak-config-cli merge order, W1b). A missing path is an error.
 pub fn load_realm_files_from_path(
     path: &std::path::Path,
 ) -> Result<Vec<(String, serde_json::Value)>> {
     let mut out = Vec::new();
     if path.is_file() {
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("realm.json")
-            .to_owned();
-        let raw = std::fs::read_to_string(path)
-            .map_err(|e| kaisatsu_core::KaisatsuError::BadRequest(e.to_string()))?;
-        let val: serde_json::Value = serde_json::from_str(&raw)
-            .map_err(|e| kaisatsu_core::KaisatsuError::BadRequest(e.to_string()))?;
-        out.push((name, val));
+        out.push(read_realm_file(path)?);
     } else if path.is_dir() {
-        let entries = std::fs::read_dir(path)
-            .map_err(|e| kaisatsu_core::KaisatsuError::BadRequest(e.to_string()))?;
+        let entries = std::fs::read_dir(path).map_err(|e| {
+            kaisatsu_core::KaisatsuError::BadRequest(format!("{}: {e}", path.display()))
+        })?;
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_file()
                 && let Some(ext) = p.extension().and_then(|e| e.to_str())
-                && matches!(ext, "json" | "yaml" | "yml")
+                && matches!(ext.to_ascii_lowercase().as_str(), "json" | "yaml" | "yml")
             {
-                let name = p
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("realm.json")
-                    .to_owned();
-                let raw = std::fs::read_to_string(&p)
-                    .map_err(|e| kaisatsu_core::KaisatsuError::BadRequest(e.to_string()))?;
-                let val: serde_json::Value = serde_json::from_str(&raw)
-                    .map_err(|e| kaisatsu_core::KaisatsuError::BadRequest(e.to_string()))?;
-                out.push((name, val));
+                out.push(read_realm_file(&p)?);
             }
         }
+    } else {
+        return Err(kaisatsu_core::KaisatsuError::BadRequest(format!(
+            "{}: no such realm file or directory",
+            path.display()
+        )));
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(out)

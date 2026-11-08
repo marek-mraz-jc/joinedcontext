@@ -622,7 +622,7 @@ async fn row_18_to_34_groups_roles_and_mappings() {
 
 #[tokio::test]
 async fn row_35_to_46_clients_secrets_mappers_and_scopes() {
-    let (app, _store, admin_token, _) = setup_app().await;
+    let (app, store, admin_token, _) = setup_app().await;
 
     // Row 45: POST /client-scopes
     let (st, shdrs, _) = send_req(
@@ -766,7 +766,26 @@ async fn row_35_to_46_clients_secrets_mappers_and_scopes() {
     .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
 
-    // Row 46: DELETE /attack-detection/brute-force/users/{user_id}
+    // Row 46: DELETE /attack-detection/brute-force/users/{user_id} (break-glass unlock of an
+    // existing person; an unknown id is 404 like Keycloak's AttackDetectionResource)
+    store
+        .create_user(UserRepresentation {
+            id: "u1".into(),
+            realm_id: "dev".into(),
+            username: "locked-out".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let (st, _, _) = send_req(
+        &app,
+        Method::DELETE,
+        "/admin/realms/dev/attack-detection/brute-force/users/nobody",
+        &admin_token,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
     let (st, _, _) = send_req(
         &app,
         Method::DELETE,

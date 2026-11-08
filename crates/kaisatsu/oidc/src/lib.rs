@@ -33,5 +33,5 @@ pub use cimd::{CimdMetadata, validate_and_build_cimd_client};
 pub use client_ip::ClientIp;
 pub use dpop::{DpopProof, verify_dpop_proof};
 pub use guard::{OutboundGuard, OutboundPolicy};
-pub use handlers::{OidcState, dispatch_backchannel_logout, oidc_router};
+pub use handlers::{OidcState, dispatch_backchannel_logout, oidc_router, redirect_with_params};
 pub use redirect::{validate_post_logout_redirect_uri, validate_redirect_uri};

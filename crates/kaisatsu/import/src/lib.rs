@@ -322,6 +322,22 @@ fn sha256_json(val: &Value) -> String {
     s
 }
 
+/// True when `raw` is a `$(NAME)` / `$(env:NAME)` reference to a variable that is set nowhere.
+fn secret_variable_unset(raw: &str, opts: &ApplyOptions) -> bool {
+    let Some(inner) = raw
+        .trim()
+        .strip_prefix("$(")
+        .and_then(|s| s.strip_suffix(')'))
+    else {
+        return false;
+    };
+    if inner.starts_with("file:") {
+        return false;
+    }
+    let name = inner.strip_prefix("env:").unwrap_or(inner).trim();
+    !opts.env_vars.contains_key(name) && std::env::var(name).is_err()
+}
+
 /// Resolves `$(env:NAME)`, `$(NAME)`, and `$(file:/path)` in a secret field (W1b).
 /// Refuses literal secrets unless `opts.allow_literal_secrets` is true, and refuses `$(file:...)`
 /// outside `opts.secrets_dir`.
@@ -362,8 +378,14 @@ fn resolve_secret_value(raw: &str, field_path: &str, opts: &ApplyOptions) -> Res
         {
             return Ok(v);
         }
-        // In dry-run or check mode without the env var set, return a deterministic placeholder
-        return Ok(format!("resolved:{var_name}"));
+        // A dry run (plan, check) may lack the variable and validates with a placeholder; a real
+        // apply never stores a guessable placeholder as a secret.
+        if opts.dry_run {
+            return Ok(format!("resolved:{var_name}"));
+        }
+        return Err(KaisatsuError::BadRequest(format!(
+            "{field_path}: secret variable {var_name} is not set"
+        )));
     }
     if !opts.allow_literal_secrets {
         return Err(KaisatsuError::BadRequest(format!(
@@ -441,6 +463,11 @@ pub fn merge_realm_files(files: &[(String, Value)]) -> Result<Value> {
 /// - Policy rules: no `implicitFlowEnabled: true`, no wildcard host in `redirectUris`, PKCE S256
 ///   on public clients, no literal secrets unless `allow_literal_secrets`.
 pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>> {
+    // The check validates references; whether a variable is set is decided by the apply.
+    let opts = &ApplyOptions {
+        dry_run: true,
+        ..opts.clone()
+    };
     check_no_secret_substitution_in_plain_fields(doc, "$")?;
 
     let obj = doc
@@ -778,6 +805,76 @@ pub async fn compute_realm_state_checksum(
     Ok(sha256_json(&exported))
 }
 
+/// Before a real apply writes anything: every secret variable the documents name is set, except
+/// where an existing client or SMTP configuration keeps its current secret (all or nothing).
+async fn refuse_unset_secret_variables(
+    store: &Arc<dyn Store>,
+    doc: &Value,
+    realm_id: &str,
+    existing_realm: Option<&RealmConfig>,
+    opts: &ApplyOptions,
+) -> Result<()> {
+    let unset = |raw: Option<&str>| raw.is_some_and(|r| secret_variable_unset(r, opts));
+    let refuse = |path: String| {
+        Err(KaisatsuError::BadRequest(format!(
+            "{path}: secret variable is not set"
+        )))
+    };
+    if unset(doc.pointer("/smtpServer/password").and_then(Value::as_str))
+        && existing_realm
+            .and_then(|r| r.smtp_server.as_ref())
+            .is_none_or(|s| s.password.is_empty())
+    {
+        return refuse("$.smtpServer.password".into());
+    }
+    for (i, c) in doc
+        .get("clients")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        if unset(c.get("secret").and_then(Value::as_str)) {
+            let client_id = c
+                .get("clientId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let has_secret = store
+                .get_client_by_client_id(realm_id, client_id)
+                .await?
+                .is_some_and(|p| p.secret.is_some());
+            if !has_secret {
+                return refuse(format!("$.clients[{i}].secret"));
+            }
+        }
+    }
+    for (i, u) in doc
+        .get("users")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        for (j, cred) in u
+            .get("credentials")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            let otp_value = cred
+                .get("secretData")
+                .and_then(Value::as_str)
+                .and_then(|sd| serde_json::from_str::<Value>(sd).ok())
+                .and_then(|sd| sd.get("value").and_then(Value::as_str).map(str::to_owned));
+            if unset(cred.get("value").and_then(Value::as_str)) || unset(otp_value.as_deref()) {
+                return refuse(format!("$.users[{i}].credentials[{j}]"));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Applies `files` (one or more JSON/YAML realm documents for one realm) to `store` (W1b).
 pub async fn apply_realm_files(
     store: &Arc<dyn Store>,
@@ -799,6 +896,10 @@ pub async fn apply_realm_files(
         .to_owned();
 
     let existing_realm = store.get_realm(&realm_id).await?;
+    if !opts.dry_run {
+        refuse_unset_secret_variables(store, &merged, &realm_id, existing_realm.as_ref(), opts)
+            .await?;
+    }
     let base_state_checksum = compute_realm_state_checksum(store, &realm_id).await?;
 
     let mut changes: Vec<ObjectChange> = Vec::new();
@@ -831,6 +932,20 @@ pub async fn apply_realm_files(
     realm_cfg.id = realm_id.clone();
     realm_cfg.realm = realm_name.clone();
     realm_cfg.apply_checksum = Some(file_checksum.clone());
+    if let Some(smtp) = realm_cfg.smtp_server.as_mut()
+        && !smtp.password.is_empty()
+    {
+        let raw_pw = std::mem::take(&mut smtp.password);
+        let kept = existing_realm
+            .as_ref()
+            .and_then(|r| r.smtp_server.as_ref())
+            .map(|s| s.password.clone())
+            .filter(|p| !p.is_empty());
+        smtp.password = match kept {
+            Some(kept) if secret_variable_unset(&raw_pw, opts) => kept,
+            _ => resolve_secret_value(&raw_pw, "$.smtpServer.password", opts)?,
+        };
+    }
 
     let realm_action = match &existing_realm {
         None => ChangeAction::Create,
@@ -1017,13 +1132,24 @@ pub async fn apply_realm_files(
             if client.managed_by.is_none() {
                 client.managed_by = Some("apply".into());
             }
-            if let Some(raw_sec) = client.secret.clone() {
-                client.secret = Some(resolve_secret_value(&raw_sec, "client.secret", opts)?);
-            }
             file_client_ids.insert(client.client_id.clone());
             let prev = existing_clients
                 .iter()
                 .find(|c| c.client_id == client.client_id);
+            // A file without protocol mappers keeps the stored ones (no-delete apply).
+            if client.protocol_mappers.is_empty()
+                && let Some(p) = prev
+            {
+                client.protocol_mappers = p.protocol_mappers.clone();
+            }
+            if let Some(raw_sec) = client.secret.clone() {
+                // An unset variable keeps the client's current secret (re-applying an export);
+                // a new client without its variable fails the apply.
+                client.secret = match prev.and_then(|p| p.secret.clone()) {
+                    Some(kept) if secret_variable_unset(&raw_sec, opts) => Some(kept),
+                    _ => Some(resolve_secret_value(&raw_sec, "client.secret", opts)?),
+                };
+            }
             let act = match prev {
                 None => ChangeAction::Create,
                 Some(p)
@@ -1178,19 +1304,17 @@ pub async fn apply_realm_files(
                                 .get("secretData")
                                 .and_then(Value::as_str)
                                 .unwrap_or_default();
-                            let secret_data = if let Ok(parsed_sd) =
-                                serde_json::from_str::<Value>(raw_sec_data)
-                            {
-                                if let Some(v) = parsed_sd.get("value").and_then(Value::as_str) {
-                                    let resolved =
-                                        resolve_secret_value(v, "otp.secretData.value", opts)?;
-                                    serde_json::json!({ "value": resolved }).to_string()
-                                } else {
-                                    raw_sec_data.to_owned()
-                                }
-                            } else {
-                                raw_sec_data.to_owned()
-                            };
+                            // The seed is a secret like any other: a `$(...)` reference, or a
+                            // literal only where literal secrets are allowed.
+                            let seed = serde_json::from_str::<Value>(raw_sec_data)
+                                .ok()
+                                .and_then(|sd| {
+                                    sd.get("value").and_then(Value::as_str).map(str::to_owned)
+                                })
+                                .unwrap_or_else(|| raw_sec_data.to_owned());
+                            let resolved =
+                                resolve_secret_value(&seed, "otp.secretData.value", opts)?;
+                            let secret_data = serde_json::json!({ "value": resolved }).to_string();
                             store
                                 .upsert_credential(CredentialRecord {
                                     id: cid,
