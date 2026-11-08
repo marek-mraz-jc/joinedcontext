@@ -8,7 +8,8 @@ import { useEffect, useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, reasonOf, unwrap } from "../../api/client";
+import { Link } from "@tanstack/react-router";
+import { api, ApiError, reasonOf, unwrap } from "../../api/client";
 import type { components } from "../../api/schema";
 import { Button, buttonClass, EmptyState, Field, Icon, PageFailed, PageHeader, PageLoading, Select, safeHref } from "../../components/ui";
 import { bodyHeight, DashboardGrid } from "../../components/panels/DashboardGrid";
@@ -159,9 +160,27 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
   );
   if (view.isPending) return <PageLoading label={t("dashboardView.title")} />;
   if (view.isError || !data) {
+    const bare = <PageHeader title={t("dashboardView.title")} description={t("dashboardView.lead")} />;
+    if (view.error instanceof ApiError && view.error.status === 404) {
+      return (
+        <div className="flex flex-col gap-section">
+          {bare}
+          <EmptyState
+            icon="dashboards"
+            title={t("dashboardView.missingTitle")}
+            description={t("dashboardView.missing")}
+            action={
+              <Link to="/projects/$project/grafana" params={{ project }} className={buttonClass("secondary", "sm")}>
+                {t("dashboardView.backToList")}
+              </Link>
+            }
+          />
+        </div>
+      );
+    }
     return (
       <div className="flex flex-col gap-section">
-        {header}
+        {bare}
         <PageFailed error={view.error} onRetry={() => void view.refetch()} />
       </div>
     );

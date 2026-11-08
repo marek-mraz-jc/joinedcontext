@@ -63,13 +63,16 @@ export function formatWith(value: unknown, key: string): string {
 const quoted = (text: string): string => `'${text.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 
 /** A y axis whose labels are in the field's unit. */
-function valueAxis(key: string, title?: string): Spec {
-  return { title: title ?? null, labelExpr: `jcFormat(datum.value, ${quoted(key)})`, tickCount: 5 };
+function valueAxis(key: string, title?: string, height = 200): Spec {
+  // A tick per 40 px at most: six labels on a 60 px bar chart could not be read.
+  return { title: title ?? null, labelExpr: `jcFormat(datum.value, ${quoted(key)})`, tickCount: Math.max(2, Math.min(5, Math.floor(height / 40))) };
 }
 
-/** A time axis over the asked range. */
-function timeAxis(): Spec {
-  return { title: null, labelOverlap: true, labelFlush: true, tickCount: 6, grid: false };
+/** A time axis over the asked range, in one clock: hours within a day, days within a week, dates beyond. */
+function timeAxis(from?: number, to?: number): Spec {
+  const span = from !== undefined && to !== undefined ? to - from : 0;
+  const format = span > 7 * 86_400_000 ? "%b %d" : span > 86_400_000 ? "%a %d" : "%H:%M";
+  return { title: null, labelOverlap: true, labelFlush: true, tickCount: 6, grid: false, format };
 }
 
 /** Rules at each threshold step, when the panel draws its thresholds (`custom.thresholdsStyle`). */
@@ -159,11 +162,11 @@ export function timeSeriesSpec(frames: Frame[], opts: TimeSeriesOptions): { spec
   const domain = shown.map((one) => one.name);
   const range = shown.map((one) => colors[series.indexOf(one)]);
   const color = { field: "s", type: "nominal", scale: { domain, range }, legend: null };
-  const x = { field: "t", type: "temporal", scale: { domain: [dateTimeOf(opts.from), dateTimeOf(opts.to)] }, axis: timeAxis() };
+  const x = { field: "t", type: "temporal", scale: { domain: [dateTimeOf(opts.from), dateTimeOf(opts.to)] }, axis: timeAxis(opts.from, opts.to) };
   const y: Spec = {
     field: "v",
     type: "quantitative",
-    axis: valueAxis(formatKey, typeof custom.axisLabel === "string" && custom.axisLabel ? custom.axisLabel : undefined),
+    axis: valueAxis(formatKey, typeof custom.axisLabel === "string" && custom.axisLabel ? custom.axisLabel : undefined, opts.height),
     scale: {
       zero: drawStyle === "bars" || fillOpacity > 0 || stacked,
       ...(first.min !== undefined ? { domainMin: first.min } : {}),
@@ -254,8 +257,8 @@ export function barChartSpec(frames: Frame[], opts: CategoryOptions): { spec: Sp
   const formatKey = formatterKey(settings.unit, settings.decimals, opts.locale);
   const colors = valueNames.map((_, index) => seriesColor(index));
   const horizontal = opts.options?.orientation === "horizontal";
-  const category = { field: "x", type: columns[names.indexOf(xField)]?.type === "time" ? "ordinal" : "nominal", sort: null, axis: { title: null, labelLimit: 120 } };
-  const value = { field: "v", type: "quantitative", axis: valueAxis(formatKey) };
+  const category = { field: "x", type: columns[names.indexOf(xField)]?.type === "time" ? "ordinal" : "nominal", sort: null, axis: { title: null, labelLimit: 120, labelAngle: 0 } };
+  const value = { field: "v", type: "quantitative", axis: valueAxis(formatKey, undefined, opts.height) };
   const offset = valueNames.length > 1 ? { field: "s" } : undefined;
   return {
     spec: {
@@ -287,6 +290,7 @@ export function pieChartSpec(frames: Frame[], opts: CategoryOptions): { spec: Sp
   const reduced = reducedOf(frames, reduceOptions.calcs?.[0], reduceOptions.values === true);
   const slices = reduced
     .filter((one) => one.value !== null && one.value > 0)
+    .sort((a, b) => (b.value as number) - (a.value as number))
     .map((one, index) => ({ name: one.name, value: one.value as number, color: seriesColor(index) }));
   const donut = opts.options?.pieType === "donut";
   const radius = Math.max(40, Math.floor(opts.height / 2) - 8);
@@ -347,9 +351,9 @@ export function heatmapSpec(frames: Frame[], opts: TimeOptions): { spec: Spec; b
       data: { values: values.filter((cell) => cell.v !== null) },
       mark: { type: "rect", tooltip: true },
       encoding: {
-        x: { field: "t", type: "temporal", scale: { domain: [dateTimeOf(opts.from), dateTimeOf(opts.to)] }, axis: timeAxis() },
+        x: { field: "t", type: "temporal", scale: { domain: [dateTimeOf(opts.from), dateTimeOf(opts.to)] }, axis: timeAxis(opts.from, opts.to) },
         x2: { field: "t2" },
-        y: { field: "b", type: "ordinal", sort: buckets.slice().reverse(), axis: { title: null } },
+        y: { field: "b", type: "ordinal", sort: buckets.slice().reverse(), axis: { title: null, labelExpr: "datum.value == '+Inf' ? '+∞' : datum.value" } },
         color: { field: "v", type: "quantitative", scale: { scheme }, legend: { disable: false, title: null, orient: "right", labelExpr: `jcFormat(datum.value, ${quoted(formatKey)})` } },
         tooltip: [
           { field: "t", type: "temporal", title: "time" },
@@ -403,7 +407,7 @@ export function stateTimelineSpec(frames: Frame[], opts: TimeOptions): { spec: S
       data: { values: rows },
       mark: { type: "bar", tooltip: true, height: { band: 0.8 } },
       encoding: {
-        x: { field: "t", type: "temporal", scale: { domain: [dateTimeOf(opts.from), dateTimeOf(opts.to)] }, axis: timeAxis() },
+        x: { field: "t", type: "temporal", scale: { domain: [dateTimeOf(opts.from), dateTimeOf(opts.to)] }, axis: timeAxis(opts.from, opts.to) },
         x2: { field: "t2" },
         y: { field: "row", type: "nominal", axis: { title: null, labelLimit: 140 } },
         color: { field: "color", type: "nominal", scale: null, legend: null },
@@ -435,7 +439,7 @@ export function histogramSpec(frames: Frame[], opts: CategoryOptions): Spec {
     mark: { type: "bar", color: seriesColor(0), tooltip: true },
     encoding: {
       x: { field: "v", bin: { maxbins: count }, type: "quantitative", axis: { title: null } },
-      y: { aggregate: "count", type: "quantitative", axis: { title: null } },
+      y: { aggregate: "count", type: "quantitative", scale: { nice: true }, axis: { title: null, tickCount: Math.max(2, Math.min(5, Math.floor(opts.height / 40))) } },
     },
     config: configOf(opts.theme),
   };

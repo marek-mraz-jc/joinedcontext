@@ -86,7 +86,7 @@ export function Legend({ series, colors, fieldConfig, legend, locale, hidden, on
   );
   if (legend.displayMode === "table" && calcs.length > 0) {
     return (
-      <Table caption={t("dashboardView.legend")} zebra={false} maxHeight={legend.placement === "right" ? "max-h-80" : "max-h-48"} className="text-caption [&_td]:py-1 [&_th]:py-1.5">
+      <Table caption={t("dashboardView.legend")} zebra={false} maxHeight={legend.placement === "right" ? "max-h-80" : "max-h-48"} className="text-caption [&_td]:py-1 [&_td]:align-middle [&_th]:py-1.5">
         <TableHead>
           <TableHeaderCell>{t("dashboardView.series")}</TableHeaderCell>
           {calcs.map((calc) => (

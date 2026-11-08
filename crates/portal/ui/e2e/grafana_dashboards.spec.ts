@@ -84,7 +84,7 @@ function filled(uid: string, id: number): Frame[] {
               { name: "Station", type: "string", values: ["Kaivopuisto", "Laivasillankatu", "Kapteeninpuistikko", "Viiskulma", "Sepänkatu"] },
               { name: "Bikes", type: "number", values: [12, 0, 7, 3, 9] },
               { name: "Free", type: "number", values: [8, 20, 9, 13, 5] },
-              { name: "Status", type: "string", values: ["working", "outOfService", "working", "working", "withIncidence"] },
+              { name: "Status", type: "string", values: ["working", "outOfService", "working", "working", "outOfService"] },
             ],
           },
         ];
@@ -330,7 +330,7 @@ for (const width of [1440, 400]) {
         } else if (state === "empty") {
           await expect(page.getByText("No data").first()).toBeVisible();
         } else {
-          await expect(page.getByRole("alert").first()).toContainText("connection refused");
+          await expect(page.getByRole("alert").first()).toContainText("data source did not answer");
         }
         await pageShot(page, `types-${state}`, width);
         for (const type of ["stat", "gauge", "bargauge", "barchart", "piechart", "heatmap", "state-timeline", "histogram"]) {
@@ -374,8 +374,10 @@ test("a time range, a variable and a refresh ask the panels again with them", as
 test("a dashboard that is not there says so", async ({ page }) => {
   await stubApi(page, { state: "filled", asked: [] });
   await page.goto("/projects/helsinki/grafana/dashboards/gone");
-  await expect(page.getByText("no dashboard gone")).toBeVisible();
+  await expect(page.getByText("This dashboard is not in the project")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Back to the dashboards" })).toBeVisible();
   await pageShot(page, "missing", 1440);
+  await pageShot(page, "missing", 400);
 });
 
 test("the dashboard page has no axe violations", async ({ page }) => {

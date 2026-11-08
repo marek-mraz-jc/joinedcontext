@@ -54,7 +54,8 @@ function renderAt(node: () => React.JSX.Element) {
   const root = createRootRoute({ component: Outlet });
   const page = createRoute({ getParentRoute: () => root, path: "/", component: node });
   const target = createRoute({ getParentRoute: () => root, path: "/projects/$project/grafana/dashboards/$uid", component: () => <p>the dashboard</p> });
-  const router = createRouter({ routeTree: root.addChildren([page, target]) });
+  const list = createRoute({ getParentRoute: () => root, path: "/projects/$project/grafana", component: () => <p>the list</p> });
+  const router = createRouter({ routeTree: root.addChildren([page, target, list]) });
   window.history.pushState({}, "", "/");
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -87,10 +88,17 @@ describe("the dashboard page", () => {
     await waitFor(() => expect(asked.length).toBeGreaterThan(before));
   });
 
-  it("says why a dashboard cannot be read, under its header", async () => {
+  it("says a dashboard that is not there is not in the project, with the way back", async () => {
     renderAt(() => <DashboardPage project="helsinki" uid="gone" />);
-    expect(await screen.findByText(/no such dashboard/)).toBeInTheDocument();
+    expect(await screen.findByText("This dashboard is not in the project")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to the dashboards" })).toHaveAttribute("href", "/projects/helsinki/grafana");
     expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
+  });
+
+  it("says why a dashboard cannot be read when the Portal fails", async () => {
+    answers[`${BASE}/k6`] = { status: 409, body: { status: 409, title: "Conflict", detail: "dashboards are not set up on this installation" } };
+    renderAt(() => <DashboardPage project="helsinki" uid="k6" />);
+    expect(await screen.findByText(/not set up on this installation/)).toBeInTheDocument();
   });
 
   it("says a dashboard without panels is empty", async () => {

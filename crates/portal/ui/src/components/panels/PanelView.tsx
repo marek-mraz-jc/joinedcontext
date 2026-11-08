@@ -81,6 +81,17 @@ function Body({ panel, data, from, to, locale, height }: Required<Pick<PanelView
   }
 }
 
+/** What the service said, folded: the operator's detail, not the person's next step. */
+function Reason({ text }: { text: string }): JSX.Element {
+  const { t } = useTranslation();
+  return (
+    <details className="max-w-full text-caption text-fg-muted">
+      <summary className="focus-ring cursor-pointer rounded-sm">{t("dashboardView.details")}</summary>
+      <p className="mt-1 [overflow-wrap:anywhere]">{text}</p>
+    </details>
+  );
+}
+
 export function PanelView({ panel, data, loading, failure, onRetry, from, to, locale, height, headingLevel = "h2" }: PanelViewProps): JSX.Element {
   const { t } = useTranslation();
   const Heading = headingLevel;
@@ -92,8 +103,9 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
     body = <p className="whitespace-pre-line text-body text-fg">{content.replace(/[#*_`>]/g, "").trim()}</p>;
   } else if (failure) {
     body = (
-      <div className="flex flex-col items-start gap-2">
-        <InlineError>{t("dashboardView.failed", { reason: failure })}</InlineError>
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+        <InlineError>{t("dashboardView.failed")}</InlineError>
+        <Reason text={failure} />
         {onRetry ? (
           <Button size="sm" variant="secondary" onClick={onRetry}>
             {t("dashboardView.retry")}
@@ -108,11 +120,12 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
       </div>
     );
   } else if (data.accessDenied) {
-    body = <EmptyState bare icon="lock" title={t("dashboardView.deniedTitle")} description={data.accessDenied} />;
+    body = <EmptyState bare icon="lock" title={t("dashboardView.deniedTitle")} description={`${data.accessDenied} ${t("dashboardView.askOwner")}`} />;
   } else if (data.error) {
     body = (
-      <div className="flex flex-col items-start gap-2">
-        <InlineError>{t("dashboardView.sourceFailed", { reason: data.error })}</InlineError>
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+        <InlineError>{t("dashboardView.sourceFailed")}</InlineError>
+        <Reason text={data.error} />
         {onRetry ? (
           <Button size="sm" variant="secondary" onClick={onRetry}>
             {t("dashboardView.retry")}
@@ -138,7 +151,7 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
       {panel.description ? (
         <p className="flex items-start gap-1 text-caption text-fg-muted">
           <Icon name="info" className="mt-0.5 size-3.5 shrink-0" />
-          <span className="line-clamp-2">{panel.description}</span>
+          <span>{panel.description}</span>
         </p>
       ) : null}
       <div className="min-h-0 min-w-0 flex-1">{body}</div>

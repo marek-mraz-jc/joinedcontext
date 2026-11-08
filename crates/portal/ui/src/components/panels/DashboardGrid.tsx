@@ -11,10 +11,10 @@ import type { PanelDefinition } from "./PanelView";
 
 /** Tailwind's `lg`. */
 const WIDE = "(min-width: 64rem)";
-/** Grafana's grid row, in px; a panel's `gridPos.h` counts these. */
-export const ROW_PX = 30;
-/** The panel's title and padding above its body, in px. */
-const CHROME_PX = 56;
+/** One grid row and the gap under it, in px: `lg:auto-rows-[minmax(24px,auto)]` and `gap-3`. A panel's `gridPos.h` counts rows. */
+export const ROW_PX = 36;
+/** The panel's title and padding above its body, and the last row's missing gap, in px. */
+const CHROME_PX = 68;
 
 function onWideChange(changed: () => void): () => void {
   const query = typeof window.matchMedia === "function" ? window.matchMedia(WIDE) : null;
@@ -28,7 +28,9 @@ function isWide(): boolean {
 
 /** The body height a panel gets: its rows less the card's own chrome, never under 120 px. */
 export function bodyHeight(panel: PanelDefinition): number {
-  return Math.max(120, (panel.gridPos?.h ?? 8) * ROW_PX - CHROME_PX);
+  // A description is a line or two under the title.
+  const described = panel.description ? 32 : 0;
+  return Math.max(120, (panel.gridPos?.h ?? 8) * ROW_PX - CHROME_PX - described);
 }
 
 /** The panels in reading order: by row, then by column, a folded row's own panels after it. */
@@ -54,14 +56,13 @@ export interface DashboardGridProps {
 function Cells({ panels, render, wide }: { panels: PanelDefinition[]; render: DashboardGridProps["render"]; wide: boolean }): JSX.Element {
   const top = Math.min(...panels.map((panel) => panel.gridPos?.y ?? 0));
   return (
-    <div className="grid grid-cols-1 gap-3 lg:grid-cols-24">
+    <div className="grid grid-cols-1 gap-3 lg:auto-rows-[minmax(24px,auto)] lg:grid-cols-24">
       {ordered(panels).map((panel) => {
         const pos = panel.gridPos ?? {};
         const h = pos.h ?? 8;
-        // A computed place on the 24-column grid; below `lg` the panel takes its natural height.
-        const place = wide
-          ? { gridColumn: `${(pos.x ?? 0) + 1} / span ${Math.min(24, pos.w ?? 12)}`, gridRow: `${(pos.y ?? 0) - top + 1} / span ${h}` }
-          : { minHeight: `${h * ROW_PX}px` };
+        // A computed place on the 24-column grid; below `lg` the panel takes its content's height,
+        // so an empty or failed panel stays short on a phone.
+        const place = wide ? { gridColumn: `${(pos.x ?? 0) + 1} / span ${Math.min(24, pos.w ?? 12)}`, gridRow: `${(pos.y ?? 0) - top + 1} / span ${h}` } : undefined;
         return (
           <div key={panel.id} className="min-w-0" style={place}>
             {render(panel)}

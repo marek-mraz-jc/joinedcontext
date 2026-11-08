@@ -175,7 +175,7 @@ describe("barchart and piechart", () => {
 
   it("draws one slice per route and keeps their values for the key", async () => {
     const built = pieChartSpec(frames.routes, { options: { reduceOptions: { values: true } }, locale: "en", theme, height: 200 });
-    expect(built.slices.map((slice) => slice.value)).toEqual([5120, 830, 2400]);
+    expect(built.slices.map((slice) => slice.value)).toEqual([5120, 2400, 830]);
     const svg = await svgOf(built.spec);
     expect(count(svg, /class="mark-arc/)).toBeGreaterThanOrEqual(1);
   });
@@ -257,7 +257,9 @@ describe("a panel card", () => {
     const user = userEvent.setup();
     let retried = 0;
     render(<PanelView panel={panel} data={{ frames: [], error: "prometheus answered 502" }} onRetry={() => (retried += 1)} {...common} />);
-    expect(screen.getByRole("alert")).toHaveTextContent("prometheus answered 502");
+    expect(screen.getByRole("alert")).toHaveTextContent("This panel's data source did not answer");
+    // The service's own words stay folded under Details: an operator's, not a next step.
+    expect(screen.getByText("prometheus answered 502").closest("details")).not.toHaveAttribute("open");
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(retried).toBe(1);
   });

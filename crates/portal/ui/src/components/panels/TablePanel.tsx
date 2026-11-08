@@ -18,6 +18,8 @@ import { Tinted } from "./paint";
 
 /** The type the in-memory rows carry, which no Endpoint has. */
 const ROW_TYPE = "PanelRow";
+/** The narrowest column the grid's head fits its name, kind mark and menu into, in px. */
+const MIN_WIDTH = 128;
 
 export interface TableColumn {
   attr: string;
@@ -100,7 +102,8 @@ export function TablePanel({ title, frames, fieldConfig, locale }: TablePanelPro
         columns: table.columns.map((column) => ({
           attr: column.attr,
           label: column.label,
-          ...(typeof column.settings.custom.width === "number" ? { width: column.settings.custom.width } : {}),
+          // Grafana's width holds the text alone; the grid's head adds its kind mark and menu.
+          ...(typeof column.settings.custom.width === "number" ? { width: Math.max(MIN_WIDTH, column.settings.custom.width) } : {}),
         })),
       }),
     [table],

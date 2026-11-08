@@ -236,6 +236,11 @@ const SI_PREFIX = ["", "k", "M", "G", "T", "P"];
 const BIN_PREFIX = ["", "Ki", "Mi", "Gi", "Ti", "Pi"];
 
 function digits(value: number, decimals: number | undefined, locale: string): string {
+  // Below one, two significant digits: fixed decimals printed 0.005 and 0.015 as 0.01 and 0.02,
+  // so an axis repeated its labels.
+  if (decimals === undefined && value !== 0 && Math.abs(value) < 1) {
+    return new Intl.NumberFormat(locale, { maximumSignificantDigits: 2 }).format(value);
+  }
   const auto = Math.abs(value) >= 100 ? 0 : Math.abs(value) >= 10 ? 1 : 2;
   const fraction = decimals ?? auto;
   return new Intl.NumberFormat(locale, {
@@ -246,6 +251,8 @@ function digits(value: number, decimals: number | undefined, locale: string): st
 
 function duration(ms: number, decimals: number | undefined, locale: string): string {
   const abs = Math.abs(ms);
+  // Zero in the unit a person reads durations in, not the smallest one.
+  if (abs === 0) return `${digits(0, decimals, locale)} s`;
   const steps: [number, string][] = [
     [86_400_000, " d"],
     [3_600_000, " h"],
