@@ -139,7 +139,46 @@ describe("the project's dashboards on the Grafana page", () => {
   it("links each dashboard to its page", async () => {
     renderAt(() => <ProjectDashboards project="helsinki" />);
     expect(await screen.findByRole("link", { name: "k6 load" })).toHaveAttribute("href", "/projects/helsinki/grafana/dashboards/k6");
-    expect(screen.getByText("load")).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Dashboards by folder" })).toHaveTextContent("load");
+  });
+
+  it("browses folders, searches, filters by tag and sorts, as Grafana's list does", async () => {
+    const user = userEvent.setup();
+    answers[BASE] = {
+      body: {
+        ready: true,
+        items: [
+          { uid: "air", title: "Air quality", tags: ["city"], folder: "Environment" },
+          { uid: "noise", title: "Noise", tags: [], folder: "Environment" },
+          { uid: "k6", title: "k6 load", tags: ["load"] },
+          { uid: "bus", title: "Buses", tags: ["city"], folder: "Transport" },
+        ],
+      },
+    };
+    renderAt(() => <ProjectDashboards project="helsinki" />);
+    const tree = await screen.findByRole("list", { name: "Dashboards by folder" });
+    // Folders first, closed, then General's dashboards.
+    const folders = screen.getAllByRole("button", { expanded: false });
+    expect(folders.map((button) => button.textContent)).toEqual(["Environment2 dashboards", "Transport1 dashboard"]);
+    expect(tree).toHaveTextContent("k6 load");
+    expect(screen.queryByRole("link", { name: "Air quality" })).toBeNull();
+    await user.click(folders[0]);
+    expect(screen.getByRole("link", { name: "Air quality" })).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Search dashboards"), "BU");
+    const results = screen.getByRole("list", { name: "Search results" });
+    expect(results).toHaveTextContent("Buses");
+    expect(results).toHaveTextContent("Transport");
+    expect(screen.queryByRole("link", { name: "Noise" })).toBeNull();
+    await user.clear(screen.getByLabelText("Search dashboards"));
+
+    await user.selectOptions(screen.getByLabelText("Tag"), "city");
+    await user.selectOptions(screen.getByLabelText("Sort"), "alpha-desc");
+    const links = screen.getAllByRole("link").map((link) => link.textContent);
+    expect(links).toEqual(["Buses", "Air quality"]);
+
+    await user.type(screen.getByLabelText("Search dashboards"), "nothing like it");
+    expect(screen.getByRole("status")).toHaveTextContent("No dashboard matches this search.");
   });
 
   it("says why there are none", async () => {

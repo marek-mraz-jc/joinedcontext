@@ -314,6 +314,22 @@ async fn the_portal_saves_and_removes_a_visualization_in_a_provisioned_project()
     let (status, csp, page) = grafana.page(&link, Some(&basic(USER, PASSWORD))).await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(csp.starts_with("default-src 'none'"), "{csp}");
+    // The page's own style is admitted by its hash; nothing else may load or run.
+    assert!(
+        csp.contains("style-src 'sha256-") && !csp.contains("unsafe") && !csp.contains("script"),
+        "{csp}"
+    );
+    let style = page
+        .split_once("<style>")
+        .and_then(|(_, rest)| rest.split_once("</style>"))
+        .map(|(style, _)| style)
+        .expect("a style element");
+    let hash = {
+        use base64::Engine as _;
+        use sha2::Digest as _;
+        base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(style))
+    };
+    assert!(csp.contains(&format!("style-src 'sha256-{hash}'")), "{csp}");
     assert!(page.contains("<h1>NO2 over time</h1>"), "{page}");
     assert!(page.contains("<section><h2>NO2 over time</h2>"), "{page}");
     assert!(!page.contains("<script"), "{page}");
@@ -328,6 +344,12 @@ async fn the_portal_saves_and_removes_a_visualization_in_a_provisioned_project()
         let (status, _, page) = grafana.page(&link, auth).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{auth:?}");
         assert!(!page.contains("NO2"), "{page}");
+        // A refusal says what to do next, and reads the same as a dashboard that is not there.
+        assert!(page.contains("open the dashboard again from its project"), "{page}");
+        let (_, _, missing) = grafana
+            .page("/d/no-such-board", Some(&basic(USER, PASSWORD)))
+            .await;
+        assert_eq!(page, missing);
     }
     let (status, _, _) = grafana
         .page(

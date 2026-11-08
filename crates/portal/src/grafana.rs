@@ -237,6 +237,29 @@ pub struct Client<'a> {
     config: &'a GrafanaConfig,
 }
 
+/// Why a panel could not be read, in daiya's words: Grafana's `message`, or daiya's OData error
+/// envelope (`error.message`). A message naming an address or carrying a token never reaches the
+/// page; the generic reason does.
+fn panel_reason(body: &Value) -> String {
+    const FALLBACK: &str = "the panel's datasource did not answer; try again in a minute, or ask \
+                            the dashboard's owner to check its datasource";
+    let message = body["message"]
+        .as_str()
+        .or_else(|| body["error"]["message"].as_str())
+        .map(str::trim)
+        .filter(|m| !m.is_empty());
+    let leaks = |m: &str| {
+        let lower = m.to_ascii_lowercase();
+        ["://", "bearer", "eyj", "token=", "password", "secret"]
+            .iter()
+            .any(|word| lower.contains(word))
+    };
+    match message {
+        Some(m) if !leaks(m) => m.chars().take(300).collect(),
+        _ => FALLBACK.to_owned(),
+    }
+}
+
 fn unreachable(what: &str, err: impl std::fmt::Display) -> ApiError {
     tracing::warn!(error = %err, what, "Grafana did not answer");
     ApiError::Unavailable(format!(
@@ -573,11 +596,7 @@ impl<'a> Client<'a> {
         }
         // A query the datasource refused or could not answer is the panel's error state, said in
         // daiya's words; the credentials never are in them.
-        let message = body["message"]
-            .as_str()
-            .unwrap_or("the panel's datasource did not answer")
-            .to_owned();
-        Ok(json!({ "error": message }))
+        Ok(json!({ "error": panel_reason(&body) }))
     }
 
     /// The values a query variable offers, asked of its datasource with the saved query.
@@ -875,6 +894,23 @@ mod tests {
     use wiremock::{Mock, ResponseTemplate};
 
     use super::*;
+
+    #[test]
+    fn a_panel_refusal_reads_daiyas_error_envelope_and_never_an_address_or_token() {
+        let daiya = json!({ "error": { "code": "bad-request", "message": "the query names no type" } });
+        assert_eq!(panel_reason(&daiya), "the query names no type");
+        assert_eq!(panel_reason(&json!({ "message": "datasource not found" })), "datasource not found");
+        for leaking in [
+            json!({ "error": { "message": "GET https://broker.internal/ngsi-ld/v1 failed" } }),
+            json!({ "message": "upstream said Bearer eyJhbGciOi.x.y" }),
+            json!({ "error": { "message": "retry with token=abc" } }),
+            json!({ "error": "plain" }),
+            Value::Null,
+        ] {
+            let reason = panel_reason(&leaking);
+            assert!(reason.starts_with("the panel's datasource did not answer"), "{reason}");
+        }
+    }
 
     fn row(kind: Kind) -> Visualization {
         Visualization {

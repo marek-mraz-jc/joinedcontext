@@ -47,6 +47,9 @@ pub struct DashboardSummary {
     pub uid: String,
     pub title: String,
     pub tags: Vec<String>,
+    /// The folder the dashboard sits in; none for Grafana's General.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
 }
 
 /// One dashboard: what the page lays out. Panel queries stay on the server.
@@ -54,6 +57,8 @@ pub struct DashboardSummary {
 #[serde(rename_all = "camelCase")]
 pub struct DashboardView {
     pub uid: String,
+    /// The number of the dashboards service organization that holds it (Grafana's `orgId`).
+    pub org_id: i64,
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -366,6 +371,10 @@ pub async fn list_dashboards(
                     .flatten()
                     .map(text)
                     .collect(),
+                folder: hit["folderTitle"]
+                    .as_str()
+                    .filter(|f| !f.is_empty())
+                    .map(str::to_owned),
             })
         })
         .collect();
@@ -405,6 +414,7 @@ pub async fn get_dashboard(
     let dashboard = dashboard_of(&client, org, &project, &uid).await?;
     Ok(Json(DashboardView {
         uid,
+        org_id: org,
         title: text(&dashboard["title"]),
         description: dashboard["description"]
             .as_str()
@@ -1003,7 +1013,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/api/search"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-                { "uid": "live", "title": "Helsinki live", "tags": ["project"] },
+                { "uid": "live", "title": "Helsinki live", "tags": ["project"], "folderUid": "city", "folderTitle": "City" },
                 { "uid": "air", "title": "Air", "tags": [] }
             ])))
             .mount(&server)
@@ -1267,6 +1277,8 @@ mod tests {
             .expect("a list");
         let titles: Vec<&str> = list.items.iter().map(|d| d.title.as_str()).collect();
         assert_eq!(titles, ["Air", "Helsinki live"]);
+        let folders: Vec<Option<&str>> = list.items.iter().map(|d| d.folder.as_deref()).collect();
+        assert_eq!(folders, [None, Some("City")]);
         let Json(view) = get_dashboard(
             admin(),
             State(state.clone()),
@@ -1278,6 +1290,8 @@ mod tests {
             (view.from.as_str(), view.refresh.as_deref()),
             ("now-7d", Some("5m"))
         );
+        // The page links the dashboards service in the organization that holds it.
+        assert_eq!(view.org_id, 7);
         let text = serde_json::to_string(&view.panels).unwrap();
         assert!(
             !text.contains("targets") && !text.contains("open-ds"),

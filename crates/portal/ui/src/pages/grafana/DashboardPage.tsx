@@ -223,7 +223,10 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
     }
     return { from, to, vars: picked };
   }, [data, from, to, vars]);
-  const fallback = safeHref(`/dashboards/d/${encodeURIComponent(uid)}`);
+  // The tables page lives in the dashboards service, in the organization that holds the dashboard.
+  const fallback = data
+    ? safeHref(`/dashboards/d/${encodeURIComponent(uid)}?${new URLSearchParams({ orgId: String(data.orgId), from, to })}`)
+    : undefined;
   const header = (
     <PageHeader
       title={data?.title || t("dashboardView.title")}

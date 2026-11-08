@@ -918,6 +918,16 @@ async fn compat_search(
     if params.search_type.as_deref() != Some("dash-folder")
         && let Ok(dashboards) = state.store.list_dashboards(ctx.org_id).await
     {
+        // Grafana names each hit's folder: only a folder the caller may read gives its title.
+        let folder_titles: BTreeMap<String, String> = state
+            .store
+            .list_folders(ctx.org_id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|f| can_read_folder(&state, &ctx, &f.uid))
+            .map(|f| (f.uid, f.title))
+            .collect();
         for d in dashboards {
             let readable = state
                 .authorizer
@@ -946,6 +956,7 @@ async fn compat_search(
                     "type": "dash-db",
                     "url": format!("/d/{}/{}", d.uid, d.slug),
                     "tags": d.tags,
+                    "folderTitle": d.folder_uid.as_ref().and_then(|f| folder_titles.get(f)),
                     "folderUid": d.folder_uid,
                 }));
             }

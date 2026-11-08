@@ -101,6 +101,20 @@ describe("timeseries", () => {
     await user.click(screen.getByRole("button", { name: /500/ }));
     expect(toggled).toEqual(["500"]);
   });
+
+  it("heads its calcs with Grafana's reducer names and sorts by the name Grafana saved", () => {
+    const built = timeSeriesSpec(frames.requestRate, { options: {}, locale: "en", theme, height: 200, from: frames.FROM, to: frames.TO });
+    const { unmount } = render(
+      <Legend series={built.series} colors={built.colors} legend={{ displayMode: "table", calcs: ["lastNotNull", "current", "p95", "delta"], sortBy: "Last *", sortDesc: true }} locale="en" hidden={new Set()} onToggle={() => undefined} />,
+    );
+    const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
+    expect(heads.slice(1)).toEqual(["Last *", "Last *", "95th %", "Delta"]);
+    const lasts = screen.getAllByRole("row").slice(1).map((row) => Number(within(row).getAllByRole("cell")[1].textContent?.replace(/[^\d.]/g, "")));
+    expect(lasts).toEqual([...lasts].sort((a, b) => b - a));
+    unmount();
+    render(<Legend series={built.series} colors={built.colors} legend={{ displayMode: "list", calcs: ["mean"] }} locale="en" hidden={new Set()} onToggle={() => undefined} />);
+    expect(screen.getAllByText(/^Mean: /).length).toBe(built.series.length);
+  });
 });
 
 describe("table", () => {
