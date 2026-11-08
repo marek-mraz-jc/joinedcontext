@@ -53,8 +53,11 @@ fn the_tool_definitions_a_model_reads_stay_under_their_byte_ratchet() {
 /// Four pipeline panels and six governance readings went in one tool each (`view`, `aspect`), and
 /// a connector lists only its segments' share; the assistant's own turn lists none of them
 /// (tools_registry.rs MCP_ONLY); 64,034 once `jc_kpi_compute` took `endpoint` (T-6484, 69 bytes): a
-/// KPI read from an Endpoint needed no rows carried through the client's model.
-const RATCHET: usize = 64_035;
+/// KPI read from an Endpoint needed no rows carried through the client's model; 66,446 with the
+/// four administration tools (owner order 2026-11-08, MCP-ADMIN.md): jc_organization_read 980
+/// (eight Administration-page readings in one tool, by `aspect`), jc_access_request_decide 722,
+/// jc_serviceaccount_access 411, jc_access_request_list 316. An agent run is offered none of them.
+const RATCHET: usize = 66_446;
 
 /// The cut never opens a schema: every MCP input stays closed, and `project` stays bounded.
 #[test]

@@ -18,7 +18,8 @@ pub mod validation;
 
 pub use auth::{
     Action, Authorizer, Decision, GrafanaRole, ObjectTarget, PUBLIC_DASHBOARD_ACTOR_PREFIX,
-    PolicyAuthorizer, PublicDashboardAuthorizer, RequestCtx, RoleBinding, Subject,
+    PolicyAuthorizer, PublicDashboardAuthorizer, RequestCtx, RoleBinding, SERVER_ADMIN_ACTOR,
+    ServerAdminAuthorizer, Subject,
 };
 pub use dashboard::{
     AnnotationContainer, AnnotationQuery, CanonicalJson, DashboardDocument, DashboardIndex,

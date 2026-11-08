@@ -345,7 +345,12 @@ pub(crate) async fn record_verdict(
     );
     // The build lane's check of its `status.build` is kept like anybody's, for the proposal
     // that follows it: its rule authorizes that write alone (AP-73, T-2636).
-    let may_propose = permissions.check(&draft.kind, Verb::Propose, None).is_ok()
+    // Checked against the manifest itself, as the proposal is: a grant narrowed to one space or
+    // to an Organization's own settings admits only a target it can read, so without one the
+    // check of every such proposer was dropped and its proposal refused as unchecked.
+    let may_propose = permissions
+        .check(&draft.kind, Verb::Propose, Some(manifest))
+        .is_ok()
         || (manifest.pointer("/status/build").is_some()
             && permissions.may_write_status_field(&draft.kind, "status.build"));
     // Only a verdict of a person who may propose counts, on an existing draft as on a new

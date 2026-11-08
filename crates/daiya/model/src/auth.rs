@@ -319,6 +319,33 @@ pub trait Authorizer: Send + Sync {
     fn check(&self, ctx: &RequestCtx, action: Action, object: &ObjectTarget) -> Decision;
 }
 
+/// Actor of Grafana's server administrator: the local admin `provision.sh` and the Portal
+/// (`JC_PORTAL_GRAFANA_USER`) sign in as. Only the host's server-admin credential yields it;
+/// a subject from anywhere else naming it is treated as anonymous.
+pub const SERVER_ADMIN_ACTOR: &str = "daiya:server-admin";
+
+/// Grafana's server administrator over every organization (Grafana makes the creator of an
+/// organization its Admin, and its local admin acts in any organization by
+/// `X-Grafana-Org-Id`): allows every action in the request's organization to a
+/// [`SERVER_ADMIN_ACTOR`] that is a member of it; every other caller is decided by `inner`.
+pub struct ServerAdminAuthorizer {
+    pub inner: std::sync::Arc<dyn Authorizer>,
+}
+
+impl Authorizer for ServerAdminAuthorizer {
+    fn check(&self, ctx: &RequestCtx, action: Action, object: &ObjectTarget) -> Decision {
+        let admin = ctx.subject.actor_id.as_deref() == Some(SERVER_ADMIN_ACTOR)
+            && !ctx.subject.read_only
+            && object.org_id() == ctx.org_id
+            && ctx.subject.is_member_of(ctx.org_id);
+        if admin {
+            Decision::allow("server administrator")
+        } else {
+            self.inner.check(ctx, action, object)
+        }
+    }
+}
+
 /// Actor id prefix of [`Subject::public_dashboard`].
 pub const PUBLIC_DASHBOARD_ACTOR_PREFIX: &str = "public-dashboard:";
 

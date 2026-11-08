@@ -26,9 +26,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use shako_core::{
     ARCHIVE_OPERATION_WEIGHT_BYTES, Action, BranchProtectionRule, CommitStatusRecord,
-    MERGE_OPERATION_WEIGHT_BYTES, MergePolicyInput, ObjectTarget, ProtectionRuleRecord,
+    MERGE_OPERATION_WEIGHT_BYTES, MergePolicyInput, ObjectTarget, OrgId, ProtectionRuleRecord,
     PullRequestRecord, PushMirrorRecord, RefPolicy, RefUpdate, RepoId, RepoRecord, ReviewRecord,
-    ReviewVerdict, ShakoError, WebhookId, WebhookRecord, check_repo_count_quota,
+    ReviewVerdict, ShakoError, ShakoResult, WebhookId, WebhookRecord, check_repo_count_quota,
     validate_branch_name, validate_repo_or_owner_name, validate_tree_path,
 };
 use shako_git::{
@@ -2388,6 +2388,27 @@ async fn compat_create_pull(
             Err(e) => return gitea_error_response(&state, &e),
         };
 
+    // Gitea keeps one open pull request per head and base: a second is a 409.
+    // ponytail: two concurrent creates can both pass this read; a store constraint closes it.
+    match state
+        .store()
+        .list_pull_requests(repo.instance_id, repo.org_id, Some(repo.id), Some("open"))
+        .await
+    {
+        Ok(open)
+            if open
+                .iter()
+                .any(|pr| pr.head_ref == req.head && pr.base_ref == req.base) =>
+        {
+            return gitea_error_response(
+                &state,
+                &ShakoError::Conflict("pull request already exists for these targets".into()),
+            );
+        }
+        Ok(_) => {}
+        Err(e) => return gitea_error_response(&state, &e),
+    }
+
     let head = req.head.clone();
     let base = req.base.clone();
     let disk_clone = disk_path.clone();
@@ -3082,17 +3103,101 @@ async fn compat_merge_pull(
 // Webhooks CRUD
 // =========================================================================
 
+/// A hook as `POST /repos/{owner}/{repo}/hooks` takes it: Gitea's own shape
+/// (`{type: "gitea", config: {url, content_type: "json", secret}, events, active}`), or the
+/// native one naming a secret already in the secret store (`{url, secret_ref}`).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateWebhookReq {
-    pub url: String,
-    pub secret_ref: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub secret_ref: Option<String>,
     #[serde(default)]
     pub previous_secret_ref: Option<String>,
+    #[serde(default, rename = "type")]
+    pub hook_type: Option<String>,
+    #[serde(default)]
+    pub config: Option<GiteaHookConfig>,
+    #[serde(default)]
+    pub branch_filter: Option<String>,
     #[serde(default)]
     pub events: Vec<String>,
     #[serde(default = "default_true")]
     pub active: bool,
+}
+
+/// Gitea's `CreateHookOptionConfig`: only a JSON body is delivered, so only `json` is taken.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GiteaHookConfig {
+    pub url: String,
+    #[serde(default)]
+    pub content_type: Option<String>,
+    #[serde(default)]
+    pub secret: Option<String>,
+    #[serde(default)]
+    pub http_method: Option<String>,
+}
+
+/// The hook's URL and the reference its secret is kept under, or why the request is refused.
+/// A Gitea-shaped hook's inline secret goes into the secret store under `webhook-{id}`; an
+/// unsigned hook is refused, because every receiver this forge serves checks the signature.
+fn webhook_target(
+    state: &ShakoState,
+    org_id: OrgId,
+    id: WebhookId,
+    req: &CreateWebhookReq,
+) -> ShakoResult<(String, String)> {
+    // Every push is delivered; a filter this forge would drop silently is refused instead.
+    if req
+        .branch_filter
+        .as_deref()
+        .is_some_and(|f| !f.is_empty() && f != "*")
+    {
+        return Err(ShakoError::Unprocessable(
+            "branch_filter is not served; leave it empty or *".into(),
+        ));
+    }
+    match (&req.config, &req.url, &req.secret_ref) {
+        (Some(config), None, None) => {
+            if req.hook_type.as_deref().is_some_and(|t| t != "gitea") {
+                return Err(ShakoError::Unprocessable(
+                    "only hooks of type gitea are served".into(),
+                ));
+            }
+            if config.content_type.as_deref().is_some_and(|t| t != "json") {
+                return Err(ShakoError::Unprocessable(
+                    "only content_type json is served".into(),
+                ));
+            }
+            if config
+                .http_method
+                .as_deref()
+                .is_some_and(|m| !m.eq_ignore_ascii_case("post"))
+            {
+                return Err(ShakoError::Unprocessable(
+                    "only http_method post is served".into(),
+                ));
+            }
+            let secret = config
+                .secret
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| {
+                    ShakoError::Unprocessable("a hook needs a secret to sign its deliveries".into())
+                })?;
+            let secret_ref = format!("webhook-{id}");
+            state.secret_store.put_secret(org_id, &secret_ref, secret);
+            Ok((config.url.clone(), secret_ref))
+        }
+        (None, Some(url), Some(secret_ref)) if req.hook_type.is_none() => {
+            Ok((url.clone(), secret_ref.clone()))
+        }
+        _ => Err(ShakoError::Unprocessable(
+            "a hook is either {type, config: {url, secret}} or {url, secret_ref}".into(),
+        )),
+    }
 }
 
 async fn compat_create_webhook(
@@ -3110,26 +3215,54 @@ async fn compat_create_webhook(
             Ok(r) => r,
             Err(e) => return gitea_error_response(&state, &e),
         };
-    if let Err(e) = state.outbound_guard.validate_url(&req.url, None) {
+    let hook_url = req
+        .config
+        .as_ref()
+        .map(|c| c.url.as_str())
+        .or(req.url.as_deref());
+    if let Err(e) = state
+        .outbound_guard
+        .validate_url(hook_url.unwrap_or_default(), None)
+    {
         return gitea_error_response(&state, &e);
     }
+    let id = WebhookId::new();
+    let (url, secret_ref) = match webhook_target(&state, repo.org_id, id, &req) {
+        Ok(t) => t,
+        Err(e) => return gitea_error_response(&state, &e),
+    };
+    let gitea_shape = req.config.is_some();
     let hook = WebhookRecord {
-        id: WebhookId::new(),
+        id,
         instance_id: repo.instance_id,
         org_id: repo.org_id,
         repo_id: repo.id,
-        url: req.url,
+        url,
         events: if req.events.is_empty() {
             vec!["push".into(), "pull_request".into()]
         } else {
             req.events
         },
         active: req.active,
-        secret_ref: req.secret_ref,
+        secret_ref,
         previous_secret_ref: req.previous_secret_ref,
         created_at: Utc::now(),
     };
     match state.store().create_webhook(hook).await {
+        Ok(saved) if gitea_shape => (
+            StatusCode::CREATED,
+            Json(json!({
+                "id": saved.id,
+                "type": "gitea",
+                "config": { "url": saved.url, "content_type": "json" },
+                "events": saved.events,
+                "active": saved.active,
+                "branch_filter": req.branch_filter.unwrap_or_default(),
+                "created_at": saved.created_at,
+                "updated_at": saved.created_at,
+            })),
+        )
+            .into_response(),
         Ok(saved) => (
             StatusCode::CREATED,
             Json(json!({
@@ -3308,6 +3441,12 @@ pub fn compat_and_native_rest_router() -> Router<ShakoState> {
         // Row 32: Archives & Bundles
         .route(
             "/api/v1/repos/{owner}/{repo}/archive/{*ref_and_ext}",
+            get(compat_get_archive),
+        )
+        // The page path Gitea serves the same archive at, which a SyncSource's git origin reads
+        // (`portal:src/sync/remote.rs` archive_url)
+        .route(
+            "/{owner}/{repo}/archive/{*ref_and_ext}",
             get(compat_get_archive),
         )
         // Row 33: Tags

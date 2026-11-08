@@ -15,7 +15,8 @@
 //!   "tokensFile": "/run/secrets/daiya-tokens.json",
 //!   "secretsDir": "/run/secrets/datasources",
 //!   "provisioningDir": "/etc/daiya/provisioning",
-//!   "outbound": { "allowHttp": true, "allowedNetworks": ["10.43.0.0/16"] }
+//!   "outbound": { "allowHttp": true, "allowedNetworks": ["10.43.0.0/16"] },
+//!   "serverAdmin": { "user": "admin", "passwordFile": "/run/secrets/daiya-admin" }
 //! }
 //! ```
 
@@ -71,6 +72,18 @@ pub struct DaiyaConfig {
     pub provisioning_dir: Option<PathBuf>,
     #[serde(default)]
     pub outbound: OutboundConfig,
+    /// Grafana's local administrator (`provision.sh`, the Portal's `JC_PORTAL_GRAFANA_USER`):
+    /// Basic auth, admin of every organization.
+    #[serde(default)]
+    pub server_admin: Option<ServerAdminConfig>,
+}
+
+/// The server administrator's name and the file holding its password (one line).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ServerAdminConfig {
+    pub user: String,
+    pub password_file: PathBuf,
 }
 
 impl Default for DaiyaConfig {
@@ -84,6 +97,7 @@ impl Default for DaiyaConfig {
             secrets_dir: None,
             provisioning_dir: None,
             outbound: OutboundConfig::default(),
+            server_admin: None,
         }
     }
 }
@@ -259,7 +273,10 @@ pub fn read_tokens_file(path: &Path) -> CrResult<Vec<TokenEntry>> {
                 entry.actor
             )));
         }
-        if entry.actor.trim().is_empty() || entry.actor == CLI_ACTOR {
+        if entry.actor.trim().is_empty()
+            || entry.actor == CLI_ACTOR
+            || entry.actor == daiya_model::SERVER_ADMIN_ACTOR
+        {
             return Err(config_err(format!(
                 "token actor '{}' is empty or reserved",
                 entry.actor
@@ -346,6 +363,16 @@ pub async fn build_state(cfg: &DaiyaConfig) -> CrResult<Built> {
         None => Arc::new(MapSecretResolver::new()),
     };
     state.outbound_policy = cfg.outbound_policy()?;
+    if let Some(admin) = &cfg.server_admin {
+        let password = std::fs::read_to_string(&admin.password_file).map_err(|e| {
+            config_err(format!(
+                "cannot read the server admin password file '{}': {}",
+                admin.password_file.display(),
+                e.kind()
+            ))
+        })?;
+        state = state.with_server_admin(&admin.user, password.trim_end_matches(['\r', '\n']))?;
+    }
     {
         let mut directory = state.org_registry.write();
         if cfg.organization.name != default_org_name() {

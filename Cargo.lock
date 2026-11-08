@@ -1589,6 +1589,7 @@ name = "daiya-api"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "daiya-expr",
@@ -1849,9 +1850,12 @@ dependencies = [
  "dataroom-store-memory",
  "dataroom-web",
  "http-body-util",
+ "jc-core",
+ "jcctl",
  "odata-csdl",
  "odata-table",
  "odata-url",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tokio",
@@ -5061,7 +5065,6 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "clap",
- "daiya-api",
  "daiya-model",
  "daiya-server",
  "daiya-store-memory",
@@ -9083,6 +9086,7 @@ dependencies = [
  "http-body-util",
  "ipnet",
  "jc-router",
+ "joinedcontext-portal",
  "p256 0.13.2",
  "parking_lot",
  "rand 0.9.5",
@@ -9105,6 +9109,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "zip",
 ]
 
 [[package]]

@@ -37,7 +37,6 @@ dataroom = [
 ]
 daiya = [
   "dep:daiya-server",
-  "dep:daiya-api",
   "dep:daiya-model",
   "dep:daiya-store-memory",
 ]
@@ -83,7 +82,6 @@ dataroom-core = { path = "../../crates/dataroom/core", optional = true }
 dataroom-store-memory = { path = "../../crates/dataroom/store-memory", optional = true }
 
 daiya-server = { path = "../../crates/daiya/server", optional = true }
-daiya-api = { path = "../../crates/daiya/api", optional = true }
 daiya-model = { path = "../../crates/daiya/model", optional = true }
 daiya-store-memory = { path = "../../crates/daiya/store-memory", optional = true }
 

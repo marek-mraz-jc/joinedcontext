@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 axum = { version = "0.8", features = ["json"] }
+base64 = "0.22"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 daiya-expr = { path = "../expr" }
@@ -33,6 +34,7 @@ url = "2.5"
 uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
 
 [dev-dependencies]
+base64 = "0.22"
 daiya-store-memory = { path = "../store-memory" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util"] }
 tower = { version = "0.5", features = ["util"] }
