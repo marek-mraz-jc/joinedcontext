@@ -3,6 +3,8 @@
 Every `/admin/realms/{realm}/...` call made by the Portal (`joinedcontext-portal`), deployment Jobs
 (`joinedcontext-deployment`), and `keycloak-config-cli`, with its caller `file:line`, status codes,
 query parameters, and test coverage in `crates/kaisatsu/admin/tests/compat_tests.rs`.
+[PORTAL-CALLS.md](PORTAL-CALLS.md) lists the Portal's calls (OIDC and admin) with the identity
+each uses and the answer it parses, replayed by `server/tests/portal_contract.rs`.
 
 | # | Method | Path | Query Parameters | Status | Caller `file:line` | Test in `compat_tests.rs` |
 |---|---|---|---|---|---|---|
@@ -50,5 +52,5 @@ query parameters, and test coverage in `crates/kaisatsu/admin/tests/compat_tests
 | 42 | `GET` | `/admin/realms/{realm}/clients/{uuid}/protocol-mappers/models` | — | `200` | `POR src/reconciler/app_clients.rs:463` | `row_35_to_46_clients_secrets_mappers_and_scopes` |
 | 43 | `POST` / `PUT` / `DELETE` | `/admin/realms/{realm}/clients/{uuid}/protocol-mappers/models[/{id}]` | — | `201`, `204` | `POR src/reconciler/app_clients.rs:479`, `:502`, `:520` | `row_35_to_46_clients_secrets_mappers_and_scopes` |
 | 44 | `GET` / `PUT` / `DELETE` | `/admin/realms/{realm}/clients/{uuid}/{default,optional}-client-scopes[/{scope_id}]` | — | `200`, `204` | `POR src/reconciler/app_clients.rs:431`, `workload_clients.rs:622`, `hub_scopes.rs:247`, `charts/admin-permissions/files/sync-admin-permissions.sh:151` | `row_35_to_46_clients_secrets_mappers_and_scopes` |
-| 45 | `GET` / `POST` / `PUT` / `DELETE` | `/admin/realms/{realm}/client-scopes[/{id}]` | — | `200`, `201`, `204` | `POR src/reconciler/hub_scopes.rs:146`, `:162`, `:198`, `:228`, `workload_clients.rs:648`, `charts/admin-permissions/files/sync-admin-permissions.sh:104` | `row_35_to_46_clients_secrets_mappers_and_scopes` |
+| 45 | `GET` / `POST` / `PUT` / `DELETE` | `/admin/realms/{realm}/client-scopes[/{id}]` | — | `200`, `201`, `204`, `409` (name in use) | `POR src/reconciler/hub_scopes.rs:146`, `:162`, `:198`, `:228`, `workload_clients.rs:648`, `charts/admin-permissions/files/sync-admin-permissions.sh:104` | `row_35_to_46_clients_secrets_mappers_and_scopes` |
 | 46 | `DELETE` | `/admin/realms/{realm}/attack-detection/brute-force/users/{user_id}` | — | `204` | `components/keycloak/README.md:54` (break-glass) | `row_35_to_46_clients_secrets_mappers_and_scopes` |

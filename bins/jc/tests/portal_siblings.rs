@@ -418,7 +418,7 @@ async fn kaisatsu_admin_token(jc: &Jc) -> String {
         .post(jc.url(&format!("/id/realms/{REALM}/protocol/openid-connect/token")))
         .form(&[
             ("grant_type", "client_credentials"),
-            ("client_id", "portal-admin"),
+            ("client_id", "portal-reconciler"),
             (
                 "client_secret",
                 jc.secret("portal-admin-client-secret").as_str(),
