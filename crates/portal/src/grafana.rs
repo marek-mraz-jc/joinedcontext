@@ -31,6 +31,9 @@ const MAX_UID: usize = 40;
 /// The longest Grafana answer read: an organization or one project's datasource list.
 const MAX_ANSWER: usize = 1 << 20;
 
+/// The longest panel answer read: frames of one panel, as the gateway caps a page.
+const MAX_PANEL_ANSWER: usize = 8 << 20;
+
 /// Outside calls stop here; redirects are refused so the credentials go nowhere else.
 static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
@@ -409,6 +412,275 @@ impl<'a> Client<'a> {
             _ => Ok(None),
         }
     }
+
+    /// Whether the dashboards service is daiya, which derives an organization's id from its
+    /// name. Only then may the Portal create organizations: Grafana numbers them in creation
+    /// order, and the deployment's `org_mapping` binds people to those numbers (`provision.sh`).
+    pub async fn derives_organizations(&self) -> bool {
+        let Ok(answer) = self
+            .request(reqwest::Method::GET, "/health", None)
+            .send()
+            .await
+        else {
+            return false;
+        };
+        let Ok(answer) = answer.error_for_status() else {
+            return false;
+        };
+        json_of::<Value>(answer, "reading the health answer")
+            .await
+            .is_ok_and(|health| health["commit"] == "daiya")
+    }
+
+    /// The organization of `project`, made with its folder `project-{project}` when there is
+    /// none: `provision.sh`'s per-project steps. Each step is safe to repeat.
+    pub async fn provision(&self, project: &str) -> Result<i64, ApiError> {
+        let what = "making the project's organization";
+        let org = match self.organization(project).await? {
+            Some(org) => org,
+            None => {
+                let answer = self
+                    .request(reqwest::Method::POST, "/orgs", None)
+                    .json(&json!({ "name": project }))
+                    .send()
+                    .await
+                    .map_err(|err| unreachable(what, err))?;
+                if answer.status() == reqwest::StatusCode::CONFLICT {
+                    self.organization(project)
+                        .await?
+                        .ok_or_else(|| unreachable(what, "an organization that is and is not"))?
+                } else {
+                    let answer = answer
+                        .error_for_status()
+                        .map_err(|err| unreachable(what, err))?;
+                    let made: Value = json_of(answer, what).await?;
+                    made["orgId"]
+                        .as_i64()
+                        .or_else(|| made["id"].as_i64())
+                        .ok_or_else(|| unreachable(what, "an organization without an id"))?
+                }
+            }
+        };
+        let answer = self
+            .request(reqwest::Method::POST, "/folders", Some(org))
+            .json(&json!({ "uid": format!("project-{project}"), "title": project }))
+            .send()
+            .await
+            .map_err(|err| unreachable("making the project's folder", err))?;
+        // An existing folder answers 409 or 412, depending on which of its uid and title matched.
+        let status = answer.status();
+        if !(status.is_success()
+            || status == reqwest::StatusCode::CONFLICT
+            || status == reqwest::StatusCode::PRECONDITION_FAILED)
+        {
+            return Err(unreachable("making the project's folder", status));
+        }
+        Ok(org)
+    }
+
+    /// Every datasource of the organization, with the Endpoint slug of those reading one.
+    pub async fn all_datasources(&self, org: i64) -> Result<Vec<HeldDatasource>, ApiError> {
+        let what = "listing the organization's datasources";
+        let answer = self
+            .request(reqwest::Method::GET, "/datasources", Some(org))
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|err| unreachable(what, err))?;
+        let listed: Vec<Value> = json_of(answer, what).await?;
+        Ok(listed
+            .iter()
+            .filter_map(|source| {
+                Some(HeldDatasource {
+                    uid: source["uid"].as_str()?.to_owned(),
+                    slug: source["url"].as_str().and_then(slug_of).map(str::to_owned),
+                })
+            })
+            .collect())
+    }
+
+    /// The dashboards of the organization, as Grafana's search lists them.
+    pub async fn dashboards(&self, org: i64) -> Result<Vec<Value>, ApiError> {
+        let what = "listing the dashboards";
+        let answer = self
+            .request(reqwest::Method::GET, "/search?type=dash-db", Some(org))
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|err| unreachable(what, err))?;
+        json_of(answer, what).await
+    }
+
+    /// The saved dashboard `uid`; `None` when the organization holds none of that uid.
+    pub async fn dashboard(&self, org: i64, uid: &str) -> Result<Option<Value>, ApiError> {
+        let what = "reading a dashboard";
+        let answer = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/dashboards/uid/{uid}"),
+                Some(org),
+            )
+            .send()
+            .await
+            .map_err(|err| unreachable(what, err))?;
+        if answer.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let answer = answer
+            .error_for_status()
+            .map_err(|err| unreachable(what, err))?;
+        let held: Value = json_of(answer, what).await?;
+        Ok(Some(held["dashboard"].clone()))
+    }
+
+    /// One panel of a saved dashboard run with its saved queries and transformations (daiya's
+    /// `GET /api/dashboards/{uid}/render`): its frames, or the reason it has none. `asked` holds
+    /// `from`, `to`, `maxDataPoints` and `var-<name>` pairs, already checked by the caller.
+    pub async fn panel(
+        &self,
+        org: i64,
+        uid: &str,
+        panel: u32,
+        asked: &[(String, String)],
+    ) -> Result<Value, ApiError> {
+        let what = "running a panel's queries";
+        let mut query = vec![("panel".to_owned(), panel.to_string())];
+        query.extend(asked.iter().cloned());
+        let answer = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/dashboards/{uid}/render"),
+                Some(org),
+            )
+            .query(&query)
+            .send()
+            .await
+            .map_err(|err| unreachable(what, err))?;
+        let status = answer.status();
+        let body = jc_core::outbound::read_capped(answer, MAX_PANEL_ANSWER)
+            .await
+            .map_err(|err| unreachable(what, err))?;
+        let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+        if status.is_success() {
+            return Ok(body);
+        }
+        // A query the datasource refused or could not answer is the panel's error state, said in
+        // daiya's words; the credentials never are in them.
+        let message = body["message"]
+            .as_str()
+            .unwrap_or("the panel's datasource did not answer")
+            .to_owned();
+        Ok(json!({ "error": message }))
+    }
+
+    /// The values a query variable offers, asked of its datasource with the saved query.
+    pub async fn variable_values(
+        &self,
+        org: i64,
+        datasource: &str,
+        query: &str,
+    ) -> Result<Vec<String>, ApiError> {
+        let what = "reading a variable's values";
+        let answer = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/datasources/uid/{datasource}/resources/variable"),
+                Some(org),
+            )
+            .query(&[("query", query)])
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(|err| unreachable(what, err))?;
+        let answer: Value = json_of(answer, what).await?;
+        // Prometheus answers `{status, data: [...]}`; daiya may hand it on as it is or unwrapped.
+        let values = answer["data"]
+            .as_array()
+            .or_else(|| answer["data"]["data"].as_array())
+            .or_else(|| answer.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok(values
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_owned))
+            .collect())
+    }
+}
+
+/// One datasource an organization holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldDatasource {
+    pub uid: String,
+    /// The Endpoint it reads, by slug; `None` for one that reads no Endpoint (Prometheus).
+    pub slug: Option<String>,
+}
+
+/// Every project gets its organization and folder in daiya (`provision.sh` does it for
+/// Grafana): the projects the mirror holds, each pass. The visualization sweep then puts the
+/// project's dashboards back.
+pub async fn provision_projects(state: &AppState, client: &Client<'_>) {
+    if !client.derives_organizations().await {
+        return;
+    }
+    let mut made = false;
+    for project in projects(state) {
+        match client.organization(&project).await {
+            Ok(Some(_)) => continue,
+            Ok(None) => {}
+            Err(_) => return,
+        }
+        if let Err(err) = client.provision(&project).await {
+            tracing::warn!(project = %project, error = %err, "the project's dashboards organization could not be made");
+            return;
+        }
+        tracing::info!(project = %project, "the project's dashboards organization and folder were made");
+        made = true;
+    }
+    if let (true, Some(pool)) = (made, state.db.as_ref()) {
+        sweep(state, pool, client).await;
+    }
+}
+
+/// The projects of the installation: each `Project` manifest and each namespace holding objects.
+pub fn projects(state: &AppState) -> Vec<String> {
+    let mut names: Vec<String> = state
+        .mirror
+        .list(
+            crate::permissions::ORG_NAMESPACE,
+            "Project",
+            &crate::store::ListOptions::default(),
+        )
+        .items
+        .into_iter()
+        .map(|project| project.metadata.name)
+        .chain(state.mirror.namespaces())
+        .filter(|name| {
+            crate::resource::is_dns1123(name) && name != crate::permissions::ORG_NAMESPACE
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// How often the projects are compared with daiya's organizations.
+const PROVISION: Duration = Duration::from_secs(15);
+
+/// Makes the organization of each project on the leader every [`PROVISION`], with no database.
+pub(crate) fn spawn_provisioning(state: AppState) {
+    let Some(config) = state.config.grafana.clone() else {
+        return;
+    };
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(PROVISION);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            if state.leads() {
+                provision_projects(&state, &Client::new(&config)).await;
+            }
+        }
+    });
 }
 
 /// The dashboard of one visualization: one panel, in the words of the plugin's own queries.
