@@ -5,6 +5,7 @@
 //! configuration, so `jc` keeps to `JCBIN_*` and the file.
 
 use crate::module::{Module, RoleError, parse_roles};
+use crate::pg::DatabaseSection;
 use clap::Parser;
 use ipnet::IpNet;
 use serde::Deserialize;
@@ -140,6 +141,8 @@ pub struct KaisatsuSection {
     pub database_url_file: Option<PathBuf>,
     pub db_password_file: Option<PathBuf>,
     pub db_max_connections: Option<u32>,
+    /// Postgres (the alternative to `database_url_file`; not both).
+    pub database: Option<DatabaseSection>,
 }
 
 /// `[ekiben]` section.
@@ -148,6 +151,8 @@ pub struct KaisatsuSection {
 pub struct EkibenSection {
     pub token_file: Option<PathBuf>,
     pub file_root: Option<PathBuf>,
+    /// Postgres for the stream definitions (else they live only in memory).
+    pub database: Option<DatabaseSection>,
 }
 
 /// `[antares]` section.
@@ -155,36 +160,35 @@ pub struct EkibenSection {
 #[serde(deny_unknown_fields)]
 pub struct AntaresSection {
     pub admin_token_file: Option<PathBuf>,
+    /// Postgres in place of `ANTARES_DATABASE_URL` (the broker migrates as this role itself).
+    pub database: Option<DatabaseSection>,
 }
 
 /// `[shako]` section.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShakoSection {
+    /// Bare Git repositories and package blobs (default `<state_dir>/shako`).
     pub repo_root: Option<PathBuf>,
     pub signing_key_file: Option<PathBuf>,
     pub token_file: Option<PathBuf>,
-    /// PostgreSQL; without it shako runs on its in-memory store.
-    pub database: Option<crate::pg::Database>,
+    pub database: Option<DatabaseSection>,
 }
 
 /// `[daiya]` section.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DaiyaSection {
-    /// PostgreSQL; without it daiya runs on its in-memory store.
-    pub database: Option<crate::pg::Database>,
+    pub database: Option<DatabaseSection>,
 }
 
-/// `[dataroom]` section.
+/// `[dataroom]` section (a key left out keeps its default).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct DataroomSection {
     pub org_id: String,
     pub catalogue_id: String,
-    /// PostgreSQL; without it dataroom runs on its in-memory store.
-    #[serde(default)]
-    pub database: Option<crate::pg::Database>,
+    pub database: Option<DatabaseSection>,
 }
 
 impl Default for DataroomSection {
@@ -227,6 +231,8 @@ pub struct FileConfig {
     pub antares: AntaresSection,
     #[serde(default)]
     pub shako: ShakoSection,
+    #[serde(default)]
+    pub daiya: DaiyaSection,
 }
 
 /// Errors while assembling the configuration.
@@ -249,6 +255,8 @@ pub enum ConfigError {
     BaseHost(String),
     #[error("the admin listener needs a token file (JCBIN_ADMIN_TOKEN_FILE or admin_token_file)")]
     AdminToken,
+    #[error("[{module}.database]: {message}")]
+    Database { module: Module, message: String },
 }
 
 /// The resolved configuration `jc` runs with.
@@ -272,6 +280,7 @@ pub struct Config {
     pub ekiben: EkibenSection,
     pub antares: AntaresSection,
     pub shako: ShakoSection,
+    pub daiya: DaiyaSection,
 }
 
 impl Config {
@@ -352,15 +361,24 @@ impl Config {
             db_max_connections: cli
                 .kaisatsu_db_max_connections
                 .or(file.kaisatsu.db_max_connections),
+            database: file.kaisatsu.database,
         };
+        if kaisatsu.database.is_some() && kaisatsu.database_url_file.is_some() {
+            return Err(ConfigError::Database {
+                module: Module::Kaisatsu,
+                message: "set either [kaisatsu.database] or database_url_file, not both".into(),
+            });
+        }
         let ekiben = EkibenSection {
             token_file: cli.ekiben_token_file.or(file.ekiben.token_file),
             file_root: cli.ekiben_file_root.or(file.ekiben.file_root),
+            database: file.ekiben.database,
         };
         let antares = AntaresSection {
             admin_token_file: cli
                 .antares_admin_token_file
                 .or(file.antares.admin_token_file),
+            database: file.antares.database,
         };
         let shako = ShakoSection {
             repo_root: cli.shako_repo_root.or(file.shako.repo_root),
@@ -368,6 +386,26 @@ impl Config {
             token_file: cli.shako_token_file.or(file.shako.token_file),
             database: file.shako.database,
         };
+        let daiya = file.daiya;
+        let dataroom = file.dataroom.unwrap_or_default();
+        for (module, db) in [
+            (Module::Kaisatsu, &kaisatsu.database),
+            (Module::Ekiben, &ekiben.database),
+            (Module::Antares, &antares.database),
+            (Module::Shako, &shako.database),
+            (Module::Daiya, &daiya.database),
+            (Module::Dataroom, &dataroom.database),
+        ] {
+            let Some(db) = db else { continue };
+            db.validate()
+                .map_err(|message| ConfigError::Database { module, message })?;
+            if module == Module::Antares && db.migrate_url.is_some() {
+                return Err(ConfigError::Database {
+                    module,
+                    message: "Antares migrates as its own role at start; set no migrate_url".into(),
+                });
+            }
+        }
         let admin_listen = cli.admin_listen.or(file.admin_listen);
         let admin_token_file = cli.admin_token_file.or(file.admin_token_file);
         if admin_listen.is_some() && admin_token_file.is_none() {
@@ -394,11 +432,11 @@ impl Config {
             portal_siblings: cli.portal_siblings.or(file.portal_siblings).unwrap_or(true),
             mounts,
             kaisatsu,
-            dataroom: file.dataroom.unwrap_or_default(),
-            daiya: file.daiya,
+            dataroom,
             ekiben,
             antares,
             shako,
+            daiya,
         })
     }
 }
@@ -713,5 +751,91 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
         .unwrap_err();
         assert!(matches!(err, ConfigError::Read { .. }), "{err}");
         assert!(err.to_string().contains("missing.toml"));
+    }
+
+    #[test]
+    fn database_sections_parse_and_bad_ones_are_refused() {
+        let text = r#"
+[shako.database]
+url = "postgres://shako_app@db:5432/jc"
+password_file = "/run/secrets/shako"
+max_connections = 4
+migrate_url = "postgres://shako_migrate@db:5432/jc"
+migrate_password_file = "/run/secrets/shako-migrate"
+
+[daiya.database]
+url = "postgres://daiya_app@db/jc"
+password_file = "/run/secrets/daiya"
+
+[dataroom.database]
+url = "postgres://dataroom_app@db/jc"
+password_file = "/run/secrets/dataroom"
+
+[ekiben.database]
+url = "postgres://ekiben_app@db/jc"
+password_file = "/run/secrets/ekiben"
+
+[antares.database]
+url = "postgres://antares_app@db/jc"
+password_file = "/run/secrets/antares"
+
+[kaisatsu.database]
+url = "postgres://kaisatsu_app@db/jc"
+password_file = "/run/secrets/kaisatsu"
+"#;
+        let cfg = Config::merge(
+            Cli::default(),
+            Config::parse_file(Path::new("jc.toml"), text).unwrap(),
+        )
+        .unwrap();
+        let shako = cfg.shako.database.as_ref().unwrap();
+        assert_eq!(shako.max_connections(), 4);
+        assert!(shako.migrate_url.is_some());
+        assert_eq!(cfg.daiya.database.as_ref().unwrap().max_connections(), 5);
+        for db in [
+            &cfg.dataroom.database,
+            &cfg.ekiben.database,
+            &cfg.antares.database,
+            &cfg.kaisatsu.database,
+        ] {
+            assert!(db.is_some());
+        }
+        assert_eq!(cfg.dataroom.org_id, DataroomSection::default().org_id);
+        // No section: every module stays on its memory store.
+        let bare = Config::merge(Cli::default(), FileConfig::default()).unwrap();
+        assert!(bare.shako.database.is_none() && bare.daiya.database.is_none());
+
+        let refused = |text: &str| {
+            Config::merge(
+                Cli::default(),
+                Config::parse_file(Path::new("jc.toml"), text).unwrap(),
+            )
+            .unwrap_err()
+            .to_string()
+        };
+        let err = refused(
+            "[daiya.database]\nurl = \"postgres://daiya_app:leaked@db/jc\"\npassword_file = \"/p\"\n",
+        );
+        assert!(
+            err.contains("[daiya.database]") && err.contains("password"),
+            "{err}"
+        );
+        assert!(!err.contains("leaked"), "{err}");
+        let err = refused(
+            "[antares.database]\nurl = \"postgres://a@db/jc\"\npassword_file = \"/p\"\nmigrate_url = \"postgres://m@db/jc\"\nmigrate_password_file = \"/m\"\n",
+        );
+        assert!(err.contains("Antares migrates"), "{err}");
+        let err = refused(
+            "[kaisatsu]\ndatabase_url_file = \"/u\"\n[kaisatsu.database]\nurl = \"postgres://k@db/jc\"\npassword_file = \"/p\"\n",
+        );
+        assert!(err.contains("not both"), "{err}");
+        // A password key in the section is no key at all.
+        assert!(
+            Config::parse_file(
+                Path::new("jc.toml"),
+                "[shako.database]\nurl = \"postgres://s@db/jc\"\npassword_file = \"/p\"\npassword = \"x\"\n"
+            )
+            .is_err()
+        );
     }
 }

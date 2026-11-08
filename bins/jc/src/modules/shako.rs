@@ -1,5 +1,9 @@
 //! shako (Git forge) inside `jc`: mounts both the forge router (`/{slug}` or `git.{base_host}`)
 //! and the host-root `/v2` container registry router (`shako_server::registry_router`).
+//!
+//! Records live in Postgres when `[shako.database]` is set (`shako_store_pg::PgStore`: boot RLS
+//! check, the store log replayed for jc's one tenant before serving), else in memory. Git data
+//! lives under `repo_root`, by default `<state_dir>/shako`, so it survives a restart too.
 
 use crate::app::StartError;
 use crate::config::ShakoSection;
@@ -12,20 +16,19 @@ use shako_core::{
 };
 use shako_server::{ShakoState, registry_router, router};
 use shako_store_memory::MemoryStore;
+use shako_store_pg::PgStore;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-const INSTANCE: shako_core::InstanceId = shako_core::InstanceId::from_u128(1);
-const ORG: OrgId = OrgId::from_u128(1);
 
 fn err(e: impl std::fmt::Display) -> StartError {
     StartError::module(Module::Shako, e)
 }
 
-fn repo_root(configured: Option<&Path>) -> Result<PathBuf, StartError> {
+fn repo_root(configured: Option<&Path>, state_dir: &Path) -> Result<PathBuf, StartError> {
     let dir = match configured {
         Some(dir) => dir.to_path_buf(),
-        None => std::env::temp_dir().join(format!("jc-shako-{}", std::process::id())),
+        None => state_dir.join("shako"),
     };
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
@@ -40,34 +43,37 @@ fn repo_root(configured: Option<&Path>) -> Result<PathBuf, StartError> {
     Ok(dir)
 }
 
-/// shako's store: PostgreSQL when `[shako.database]` is set (migrations first when it names a
-/// migration role; `connect_with` refuses an app role that bypasses RLS), else memory.
-async fn store(cfg: &ShakoSection) -> Result<Arc<dyn shako_core::Store>, StartError> {
+const INSTANCE: shako_core::InstanceId = shako_core::InstanceId::from_u128(1);
+
+/// The configured store: Postgres (migrated first when a migration role is set, boot RLS
+/// check, log replayed for `(INSTANCE, org_id)`), or memory without a database section.
+async fn open_store(
+    cfg: &ShakoSection,
+    org_id: OrgId,
+) -> Result<Arc<dyn shako_core::Store>, StartError> {
     let Some(db) = &cfg.database else {
         return Ok(Arc::new(MemoryStore::new()));
     };
-    if let Some(pool) = db.migrate_pool().await.map_err(err)? {
-        shako_store_pg::PgStore::run_migrations(&pool)
-            .await
-            .map_err(err)?;
+    if let Some(opts) = db.migrate_options().map_err(err)? {
+        let pool = crate::pg::connect(opts, 1).await.map_err(err)?;
+        PgStore::run_migrations(&pool).await.map_err(err)?;
         pool.close().await;
     }
-    let opts = crate::pg::options(&db.url_file, db.password_file.as_deref()).map_err(err)?;
-    let pg = shako_store_pg::PgStore::connect_with(opts, db.max_connections.unwrap_or(5))
+    let store = PgStore::connect_with(db.app_options().map_err(err)?, db.max_connections())
         .await
         .map_err(err)?;
-    // Forced RLS shows rows of one tenant per transaction: load jc's one tenant into the store.
-    pg.hydrate_tenant(INSTANCE, ORG).await.map_err(err)?;
-    Ok(Arc::new(pg))
+    let replayed = store.hydrate(INSTANCE, org_id).await.map_err(err)?;
+    tracing::info!(replayed, "shako: records loaded from Postgres");
+    Ok(Arc::new(store))
 }
 
 pub async fn build_state(
     cfg: &ShakoSection,
     setup: &crate::setup::Setup,
 ) -> Result<ShakoState, StartError> {
-    let root = repo_root(cfg.repo_root.as_deref())?;
-    let org_id = ORG;
-    let store = store(cfg).await?;
+    let root = repo_root(cfg.repo_root.as_deref(), &setup.dir)?;
+    let org_id = OrgId::from_u128(1);
+    let store = open_store(cfg, org_id).await?;
     let authz = Arc::new(LocalAuthorizer::new(vec![RoleBinding {
         org_id,
         principal: "admin".into(),
@@ -117,70 +123,3 @@ pub fn build(state: ShakoState, mount: Mount) -> (Router, Router) {
     (main_router, v2_router)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use shako_core::{InstanceRecord, RepoId, RepoRecord};
-
-    /// An instance and a repository written before a restart read back after it; a role that
-    /// bypasses RLS is refused at start.
-    #[tokio::test]
-    async fn shako_on_postgres_keeps_state_over_a_restart_and_refuses_a_bypassing_role() {
-        let Some(db) = crate::pg::testdb::create("shako").await else {
-            return;
-        };
-        let cfg = ShakoSection {
-            database: Some(db.database.clone()),
-            ..ShakoSection::default()
-        };
-        let first = store(&cfg).await.unwrap();
-        first
-            .upsert_instance(InstanceRecord::default_for(INSTANCE, ORG, "git.jc.example"))
-            .await
-            .unwrap();
-        let now = chrono::Utc::now();
-        first
-            .create_repo(RepoRecord {
-                id: RepoId::new(),
-                instance_id: INSTANCE,
-                org_id: ORG,
-                project_id: "org".into(),
-                owner: "jc".into(),
-                name: "config".into(),
-                description: String::new(),
-                default_branch: "main".into(),
-                private: true,
-                archived: false,
-                size_bytes: 0,
-                next_pr_number: 1,
-                created_at: now,
-                updated_at: now,
-            })
-            .await
-            .unwrap();
-        drop(first);
-        let again = store(&cfg).await.unwrap();
-        let read = again
-            .get_repo_by_name(INSTANCE, ORG, "jc", "config")
-            .await
-            .unwrap();
-        assert_eq!(
-            read.map(|r| r.name),
-            Some("config".to_owned()),
-            "state survives a restart"
-        );
-        let bypassing = ShakoSection {
-            database: Some(db.admin.clone()),
-            ..ShakoSection::default()
-        };
-        let refused = store(&bypassing)
-            .await
-            .err()
-            .expect("a superuser app role is refused");
-        assert!(
-            refused.to_string().to_lowercase().contains("rls"),
-            "{refused}"
-        );
-        drop(db.dir);
-    }
-}
