@@ -132,3 +132,127 @@ failed, all 12 at `tests/common/apps_db.rs:16` (`JC_APPS_DB_TEST_URL` unset); `c
 --all-targets -D warnings`, `cargo fmt --all --check`: green (2 deprecation warnings in vendored `jcctl`, upstream,
 unchanged). Root `cargo test -p jc` (lib 20, binary 4, one_binary 11), `cargo clippy -p jc --all-targets -D
 warnings`, `cargo fmt --all --check`: green.
+
+## Stage 5: end-to-end tests (done)
+
+`bins/jc/tests/one_binary.rs` (in-process, ephemeral ports, one `jc` at a time because of Antares' statics) and
+`bins/jc/tests/binary.rs` (the built binary as a child process):
+
+- `--role all` starts every module; a health or discovery route of each answers in slug mode
+  (`slug_mode_reaches_every_module_and_404s_unknown_slugs`) and in host mode through a trusted proxy's
+  `X-Forwarded-Host` (`host_mode_reaches_every_module_and_404s_unknown_hosts`), plus mixed explicit mounts.
+- Unknown slug, unknown host, `..` and `%2e%2e` paths: 404. A forwarded host from an untrusted peer is ignored.
+- Overlap is refused at start; a bad prefix, a bad module setting, a bad `ANTARES_*` value, a taken port, and an admin
+  listener without a readable token are refused.
+- Another module's secret is not readable through ekiben: not by `${VAR}` or `env()` (in-process), not by a `file`
+  input of `/proc/self/environ` (child process, the secret in the initial environment).
+- Antares `/q` needs its token inside `jc`; the admin listener's `/metrics` needs the admin token and `/metrics` is
+  404 on the public listener; SIGTERM stops the binary cleanly; a refused config exits 2, a start failure 1.
+
+Result: `cargo test -p jc`: lib 22, binary 4, one_binary 12, all green.
+
+## Stage 6: coverage (done)
+
+`cargo +nightly llvm-cov`, line coverage, real tests only (no exclusions, nothing ignored):
+
+| Crate | Lines | Measured with |
+|---|---|---|
+| `bins/jc` | **96.77 %** (898/928) | `-p jc -p jc-router` (unit, in-process e2e, child-process binary tests) |
+| `crates/shared/jc-router` | **97.87 %** (460/470) | same run |
+| `ekiben-server` | 72.21 % (1894/2623) | ekiben workspace, its own tests |
+| `ekiben-core` | 54.37 % (1399/2573) | same |
+| `ekiben-bloblang` | 72.03 % (7151/9928) | same |
+| `antares-broker` | 66.61 % (1578/2369) | Antares workspace, its own tests (Postgres/NATS/MQTT ones skip without their env) |
+| `joinedcontext-portal` | 90.10 % (162536/180395) | Portal workspace, its own tests; the 12 Postgres tests fail without `JC_APPS_DB_TEST_URL` |
+| `wardkeep-server` | 15.02 % (35/233) | root, its own tests (thin binary crate; the logic is in the other wardkeep crates) |
+| `dataroom-server` | 56.32 % (254/451) | root, its own tests |
+| `controlroom-server` | 28.42 % (81/285) | root, its own tests |
+
+These are the floors. Uncovered in `bins/jc`: the fallback arm for a module not compiled in (`modules/mod.rs:49-52`,
+unreachable with default features), `RoleError::NotCompiled` (`module.rs:118`), the runtime-build failure in
+`main.rs:42-43`, the `ANTARES_METRICS_PORT` warning (`modules/antares.rs:29-32`), and single error branches.
+Note: a stale `llvm-cov-target` from stage 1 first gave 67 % (old `jc` objects merged into the report); after
+removing the stale objects the run above is clean.
+
+## Release binary
+
+`cargo build --release -p jc` (default release profile, no LTO, all default features incl. the Portal's embedded UI):
+196,455,176 bytes, 151,883,704 bytes stripped. Built in 9 min.
+
+## Dependency checks (once, root lockfile = everything `jc` links)
+
+- `cargo audit`: 4 vulnerabilities, none introduced by `jc` code, none ignored:
+  - `quick-xml 0.37.5`: RUSTSEC-2026-0194 and -0195. It comes through `oxrdfxml 0.1.7` from `dataroom-rdf`, which was
+    already in the base. The fix needs quick-xml 0.41, i.e. a newer oxrdfxml.
+  - `crypto-bigint 0.5.5` (RUSTSEC-2026-0387, through `age` -> `jcctl`/Portal): the fix is 0.7.6, a different
+    major version used by elliptic-curve 0.13.
+  - `rsa 0.9.10` (RUSTSEC-2023-0071, through `openidconnect` -> Portal): no fixed version exists.
+  - Warnings for unmaintained crates: `atomic-polyfill`, `basic-toml`, `paste`.
+- `cargo deny check`: the root has no `deny.toml`; with `crates/portal/deny.toml` the result is licenses ok,
+  advisories FAILED (the vulnerabilities above plus `paste`), bans FAILED (wildcard path dependencies in every
+  monorepo crate, e.g. `controlroom-api`, `jc`), sources FAILED (`odata-*` from an Antares git rev in
+  `crates/controlroom/model/Cargo.toml:11`, already in the base). No root policy was added to make it pass.
+
+## Security review of the diff
+
+Read once over `controlroom-argon-1..HEAD`, excluding the squashed imports and `vendor/`:
+
+- Fixed while reviewing: the admin listener's `/metrics` was open, but it carries Antares' series, which the broker
+  serves only behind its admin token. `--admin-listen` now needs `--admin-token-file` (`JCBIN_ADMIN_TOKEN_FILE`),
+  and the bearer is compared in constant time (`app.rs` `admin_router`, `runtime::secret_eq`). Red proof: with the
+  check bypassed, `slug_mode_...` got 200 where it expects 401.
+- Each module keeps its own state, store, and auth. `jc-router` hands a request only to the router of the mount it
+  matched; the modules share no state (only the process-wide recorder, subscriber, and crypto provider).
+  - wardkeep: KEK from a file, `LocalAuthorizer`, as standalone.
+  - dataroom: `PolicyAuthorizer::default()`, as its standalone `serve`.
+  - controlroom: `for_standalone`, as standalone.
+  - ekiben: `require_auth` plus allow-listed env plus a file root (stage 2).
+  - Antares: admin token mandatory.
+  - Portal: its own `JC_*` config, unchanged.
+- Standalone behaviour is unchanged:
+  - ekiben's `main.rs` passes `true`, i.e. `EnvAccess::Process`, and `require_auth: false`, as before.
+  - Antares' `run()` takes the same steps.
+  - Portal `serve()` spawns the same tasks.
+  - dataroom's `run_cli` uses the extracted function.
+- No secret is logged. Token files are read trimmed and errors name only the path. The TOML config holds paths, not
+  secrets, and parse errors carry only the message.
+- New defaults:
+  - listener `127.0.0.1:8080` (loopback)
+  - scheme `https`
+  - ekiben file root: a 0700 temp directory
+  - Portal public URL: the mount base (standalone: `http://localhost:8080`)
+  - dataroom org and catalogue ids: the same as its standalone defaults
+- Every new requirement narrows access: tokens for ekiben, the Antares `/q` surface, and admin `/metrics`.
+
+## Not verified
+
+- Postgres paths of every module: no Postgres here (dind is broken). `jc` wires memory stores only; the Portal
+  connects to whatever `JC_*` names, untested.
+- A realm between modules (the Portal or Antares verifying wardkeep tokens), and the Portal UI under `/portal/`.
+- Antares under the ETSI suite while hosted (axum writer, no own connection cap or drain); `nest_service` is replaced
+  by `fallback_service` (axum 0.8 refuses `nest_service("/")`).
+- The Portal's gateway on Antares `b683bfc3`'s ngsild instead of `v0.3.0`, beyond the jc tests.
+- The release binary was built but not run beyond `--version`.
+
+## Open problems
+
+- Slug mode puts every module on one origin (`app.rs:75`). The Portal's `__Host-` cookies are `Path=/`
+  (`crates/portal/src/auth/session.rs:227`), so they ride along to every module on that host, and an XSS in any
+  module could drive the Portal API same-origin. wardkeep scopes its cookies to its mount. Host mode avoids this;
+  production should use host mode at least for the Portal and wardkeep.
+- Module background work is not on `jc`'s `TaskTracker`: the tracker is passed but unused (`modules/mod.rs:34`).
+  Antares (`crates/antares/crates/antares-broker/src/lib.rs:1323`) and the Portal (`crates/portal/src/server.rs:292`)
+  `tokio::spawn` on their own and stop with the runtime, not with the token.
+- One Antares per process (statics). `jc::start` is not `Send` because of Antares' `build_state` (`app.rs:235`).
+- Portal metrics lose their custom histogram buckets inside `jc`, and the Portal's own `/metrics` is empty
+  (`crates/portal/src/telemetry.rs:148`).
+- Standalone ekiben still serves with `Process` env access and without auth when no token is given
+  (`crates/ekiben/crates/ekiben-server/src/main.rs:204`).
+- `zip` requirement relaxed to `^9.2` for the cooldown (`crates/ekiben/Cargo.toml:64`); back to `^9.3` from
+  2026-11-09.
+- The vulnerable dependencies and `cargo deny` findings above.
+- gitleaks over the branch reports 73 findings, all in upstream test fixtures and docs of the imported trees and
+  `vendor/` (JWT/PEM test vectors, sample keys), none in `bins/jc`. These repositories have their own allow-lists
+  upstream.
+- 2 deprecation warnings in vendored `jcctl` (`vendor/joinedcontext-platform/crates/jcctl/src/secrets/sops.rs:635`),
+  upstream code.
