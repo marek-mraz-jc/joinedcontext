@@ -683,3 +683,246 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
         .unwrap_or_else(|e| panic!("auth/oidc.rs:1069 refuses the logout token: {e}"));
     assert_eq!(verified.subject().as_str(), ana.id);
 }
+
+// ------------------------------------------------------------------------------------------
+// Bearer callers, connectors and the Endpoint token exchange (auth/bearer.rs, mcp/connector.rs,
+// auth/oidc.rs:364)
+// ------------------------------------------------------------------------------------------
+
+/// A token of the public client `mcp-local` for `scope`, through the browser and PKCE, as a
+/// connector or `jcctl` gets one.
+async fn public_client_token(app: &Router, scope: &str) -> Value {
+    let (pkce, verifier) = PkceCodeChallenge::new_random_sha256();
+    let challenge = pkce.as_str();
+    let verifier = verifier.secret();
+    let redirect = "http://localhost/callback";
+    let authorize = format!(
+        "/realms/jc/protocol/openid-connect/auth?client_id=mcp-local&redirect_uri={}\
+         &response_type=code&scope={}&state=s1&code_challenge={challenge}\
+         &code_challenge_method=S256",
+        url::form_urlencoded::byte_serialize(redirect.as_bytes()).collect::<String>(),
+        url::form_urlencoded::byte_serialize(scope.as_bytes()).collect::<String>(),
+    );
+    let (back, _) = sign_in(app, &authorize).await;
+    let code = param(&back, "code").unwrap_or_else(|| panic!("no code: {back}"));
+    let answer = post_form(
+        app,
+        TOKEN,
+        &[
+            ("grant_type", "authorization_code"),
+            ("code", &code),
+            ("redirect_uri", redirect),
+            ("code_verifier", verifier),
+            ("client_id", "mcp-local"),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    answer.json()
+}
+
+/// A realm administrator's token, standing in for the deployment Job that links an Endpoint's
+/// scope to `portal-api` (deployment components/admin-permissions; hub_scopes.rs:269 reads the
+/// links and never writes them).
+async fn realm_admin(realm: &Realm) -> String {
+    let key = realm
+        .store
+        .list_signing_keys("jc")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|k| k.status == "ACTIVE")
+        .unwrap();
+    let now = chrono::Utc::now().timestamp();
+    sign_jwt(
+        &key,
+        &realm.kek,
+        Some("JWT"),
+        &json!({ "iss": ISSUER, "sub": "operator", "azp": "admin-cli", "typ": "Bearer",
+                 "iat": now, "exp": now + 600, "realm_access": { "roles": ["realm-admin"] } }),
+    )
+    .unwrap()
+}
+
+/// The exchange of auth/oidc.rs:364 as `portal-api` asks it.
+async fn exchange(app: &Router, subject: &str, slug: &str) -> Answer {
+    let scope = format!("gateway-hub endpoint:{slug}");
+    post_form(
+        app,
+        TOKEN,
+        &[
+            ("grant_type", "urn:ietf:params:oauth:grant-type:token-exchange"),
+            ("subject_token", subject),
+            ("subject_token_type", "urn:ietf:params:oauth:token-type:access_token"),
+            ("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
+            ("audience", "mcp-hub"),
+            ("scope", &scope),
+            ("client_id", "portal-api"),
+            ("client_secret", PORTAL_API_SECRET),
+        ],
+        None,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn bearer_and_connector_tokens_verify_and_exchange_for_one_endpoint() {
+    let realm = realm().await;
+    let app = &realm.app;
+    let bearer = Bearer::of(app).await;
+    let ana = realm
+        .store
+        .get_user_by_username_or_email("jc", None, ANA)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // A bearer caller of the Portal API (`mcp:portal`): auth/session.rs:385 `verify_with_client`
+    // with the Portal's client id as audience (state.rs:207), typ Bearer, azp the caller.
+    let mcp = public_client_token(app, "openid mcp:portal").await;
+    let access = mcp["access_token"].as_str().unwrap();
+    let claims = bearer
+        .verify(access, "portal-api", "Bearer")
+        .unwrap_or_else(|e| panic!("auth/bearer.rs:266 refuses an mcp:portal token: {e}"));
+    assert_eq!(claims["sub"], json!(ana.id));
+    assert_eq!(claims["azp"], json!("mcp-local"));
+    assert_eq!(claims["groups"], json!(["/helsinki/members"]), "{claims}");
+    // bearer.rs:203: a Portal API token holds no `connector:` scope.
+    assert!(
+        !claims["scope"]
+            .as_str()
+            .unwrap_or_default()
+            .split_whitespace()
+            .any(|s| s.starts_with("connector:")),
+        "{claims}"
+    );
+
+    // A connector token (mcp/connector.rs:121): audience `portal-connectors`, exactly one
+    // `connector:{id}` scope (bearer.rs:212 `verify_for_scope`), and `portal-api`, which
+    // exchanges it for Endpoint reads.
+    let connector = public_client_token(app, &format!("openid connector:{CONNECTOR}")).await;
+    let subject = connector["access_token"].as_str().unwrap();
+    let claims = bearer
+        .verify(subject, "portal-connectors", "Bearer")
+        .unwrap_or_else(|e| panic!("mcp/connector.rs:121 refuses the connector token: {e}"));
+    let scoped: Vec<&str> = claims["scope"]
+        .as_str()
+        .unwrap_or_default()
+        .split_whitespace()
+        .filter(|s| s.starts_with("connector:"))
+        .collect();
+    assert_eq!(scoped, [format!("connector:{CONNECTOR}")], "{claims}");
+    bearer
+        .verify(subject, "portal-api", "Bearer")
+        .expect("the connector token also names portal-api");
+    assert_eq!(claims["jc_org"], json!(["helsinki"]), "{claims}");
+
+    // The Endpoint's scope as the hub wave makes it (hub_scopes.rs:172), linked to portal-api as
+    // the deployment's Job does.
+    let api = portal_api(app).await;
+    let made = admin(
+        app,
+        &api,
+        Method::POST,
+        "/client-scopes",
+        Some(hub_scope(SLUG)),
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
+    let scopes = admin(app, &api, Method::GET, "/client-scopes", None).await.json();
+    let scope_id = scopes
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == format!("endpoint:{SLUG}"))
+        .map(id_of)
+        .expect("the new scope is listed");
+    let operator = realm_admin(&realm).await;
+    let portal = find_client(app, &operator, "portal-api").await.unwrap();
+    let linked = admin(
+        app,
+        &operator,
+        Method::PUT,
+        &format!("/clients/{}/optional-client-scopes/{scope_id}", id_of(&portal)),
+        None,
+    )
+    .await;
+    assert_eq!(linked.status, StatusCode::NO_CONTENT, "{}", linked.text);
+
+    // auth/oidc.rs:364: audience mcp-hub, scope `gateway-hub endpoint:{slug}`.
+    let answer = exchange(app, subject, SLUG).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let exchanged: CoreTokenResponse = serde_json::from_str(&answer.text).expect("token response");
+    let token = exchanged.access_token().secret();
+    let claims = bearer
+        .verify(token, "mcp-hub", "Bearer")
+        .unwrap_or_else(|e| panic!("the gateway's hub audience is missing: {e}"));
+    assert_eq!(claims["sub"], json!(ana.id));
+    assert!(
+        claims["scope"]
+            .as_str()
+            .unwrap_or_default()
+            .split_whitespace()
+            .any(|s| s == format!("endpoint:{SLUG}")),
+        "{claims}"
+    );
+
+    // auth/oidc.rs:125: an Endpoint whose scope is not linked yet answers `invalid_scope`.
+    let refused = exchange(app, subject, "otherslugotherslugother234").await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+    assert_eq!(refused.json()["error"], json!("invalid_scope"), "{}", refused.text);
+
+    // auth/oidc.rs:114: once the person's sessions end, the subject token is refused as
+    // `invalid_token` (or Keycloak's `invalid_request` "Invalid token").
+    let reconciler = reconciler(app).await;
+    let out = admin(
+        app,
+        &reconciler,
+        Method::POST,
+        &format!("/users/{}/logout", ana.id),
+        None,
+    )
+    .await;
+    assert_eq!(out.status, StatusCode::NO_CONTENT, "{}", out.text);
+    let ended = exchange(app, subject, SLUG).await;
+    assert_eq!(ended.status, StatusCode::BAD_REQUEST, "{}", ended.text);
+    let body = ended.json();
+    assert!(
+        body["error"] == "invalid_token"
+            || (body["error"] == "invalid_request" && body["error_description"] == "Invalid token"),
+        "auth/oidc.rs:114 reads this as an ended session: {body}"
+    );
+
+    // auth/oidc.rs:336 the Portal's own client-credentials token, read as a token response.
+    let answer = post_form(
+        app,
+        TOKEN,
+        &[
+            ("grant_type", "client_credentials"),
+            ("client_id", "portal-api"),
+            ("client_secret", PORTAL_API_SECRET),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let own: CoreTokenResponse = serde_json::from_str(&answer.text).expect("token response");
+    assert!(own.expires_in().is_some(), "auth/oidc.rs:350 holds it until expiry");
+}
+
+/// reconciler/hub_scopes.rs:61 `desired`.
+fn hub_scope(slug: &str) -> Value {
+    json!({
+        "name": format!("endpoint:{slug}"),
+        "description": "Reach the Endpoint helsinki/counters through the MCP hub",
+        "protocol": "openid-connect",
+        "attributes": {
+            "include.in.token.scope": "true",
+            "display.on.consent.screen": "true",
+            "consent.screen.text": "Endpoint helsinki/counters",
+            MANAGED.0: MANAGED.1,
+            "joinedcontext.endpoint": "helsinki/counters",
+        },
+    })
+}

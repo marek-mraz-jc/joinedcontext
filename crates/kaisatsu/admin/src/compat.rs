@@ -2774,6 +2774,38 @@ async fn compat_unlink_client_optional_scope(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// The `managed-by` mark a scope's write is judged on: only a scope without protocol mappers
+/// keeps it, so the `view-clients` grant on marked scopes never reaches a token claim.
+fn scope_mark(scope: &ClientScopeRepresentation) -> Option<String> {
+    if scope.protocol_mappers.is_empty() {
+        scope.attributes.get("managed-by").cloned()
+    } else {
+        None
+    }
+}
+
+/// 409 when another scope of the realm (not `except`) holds `name`.
+async fn scope_name_free(
+    state: &AdminState,
+    realm: &str,
+    name: &str,
+    except: Option<&str>,
+) -> Result<()> {
+    let taken = state
+        .oidc
+        .store
+        .list_client_scopes(realm)
+        .await?
+        .into_iter()
+        .any(|s| s.name == name && Some(s.id.as_str()) != except);
+    if taken {
+        return Err(KaisatsuError::Conflict(format!(
+            "Client Scope {name} already exists"
+        )));
+    }
+    Ok(())
+}
+
 async fn compat_list_client_scopes(
     State(state): State<AdminState>,
     Path(realm): Path<String>,
@@ -2789,6 +2821,7 @@ async fn compat_list_client_scopes(
             realm_id: realm.clone(),
             org_id: ctx.active_org_id.clone(),
             scope_id: "*".into(),
+            managed_by: None,
         },
     ))?;
     let scopes = state.oidc.store.list_client_scopes(&realm).await?;
@@ -2807,6 +2840,7 @@ async fn compat_create_client_scope(
     if scope.org_id.is_none() {
         scope.org_id = ctx.active_org_id.clone();
     }
+    scope.managed_by = scope.attributes.get("managed-by").cloned();
     // Authorized on the organization the scope is stored under (none = realm-wide).
     check_decision(state.authorizer.check(
         &ctx,
@@ -2815,8 +2849,11 @@ async fn compat_create_client_scope(
             realm_id: realm.clone(),
             org_id: scope.org_id.clone(),
             scope_id: "*".into(),
+            managed_by: scope_mark(&scope),
         },
     ))?;
+    // Keycloak answers 409 for a name in use; the store would replace that scope instead.
+    scope_name_free(&state, &realm, &scope.name, None).await?;
     scope.realm_id = realm.clone();
     let created = state.oidc.store.upsert_client_scope(scope).await?;
     let location = format!(
@@ -2857,6 +2894,7 @@ async fn compat_get_client_scope(
             realm_id: realm,
             org_id: scope.org_id.clone(),
             scope_id: scope.id.clone(),
+            managed_by: None,
         },
     ))?;
     Ok(Json(scope))
@@ -2886,8 +2924,23 @@ async fn compat_update_client_scope(
             realm_id: realm.clone(),
             org_id: existing.org_id.clone(),
             scope_id: existing.id.clone(),
+            managed_by: scope_mark(&existing),
         },
     ))?;
+    // The new representation is judged too: a caller may not drop the mark or add a mapper to
+    // a scope it may write only because it is a bare marked scope.
+    scope.managed_by = scope.attributes.get("managed-by").cloned();
+    check_decision(state.authorizer.check(
+        &ctx,
+        Action::Update,
+        &ObjectTarget::ClientScope {
+            realm_id: realm.clone(),
+            org_id: existing.org_id.clone(),
+            scope_id: existing.id.clone(),
+            managed_by: scope_mark(&scope),
+        },
+    ))?;
+    scope_name_free(&state, &realm, &scope.name, Some(&existing.id)).await?;
     scope.id = id.clone();
     scope.realm_id = realm;
     if scope.org_id.is_none() || !ctx.principal.is_realm_admin() {
@@ -2925,6 +2978,7 @@ async fn compat_delete_client_scope(
         Action::Delete,
         &ObjectTarget::ClientScope {
             realm_id: realm.clone(),
+            managed_by: scope_mark(&existing),
             org_id: existing.org_id,
             scope_id: existing.id,
         },
