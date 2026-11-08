@@ -8,7 +8,7 @@ import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
 import { ToolbarPopover } from "../entities/GridToolbar";
-import { Button, Field, Input, Select } from "../ui";
+import { Button, Field, Icon, Input } from "../ui";
 import { absoluteWords, quickRange, QUICK_RANGES, REFRESHES, resolveTime, spanParts } from "./timeRange";
 
 type T = (key: string, options?: Record<string, unknown>) => string;
@@ -58,12 +58,11 @@ export function TimePicker({ from, to, now, onChange }: TimePickerProps): JSX.El
   const [start, setStart] = useState(() => shown(from, false));
   const [end, setEnd] = useState(() => shown(to, true));
   const [wrong, setWrong] = useState<{ from?: boolean; to?: boolean }>({});
-  const close = (target: EventTarget) => {
-    const details = (target as HTMLElement).closest("details");
-    if (details) details.open = false;
-  };
+  const [search, setSearch] = useState("");
+  const quick = QUICK_RANGES.filter((range) => t(`dashboardView.quick.${range.key}`).toLowerCase().includes(search.trim().toLowerCase()));
   return (
-    <ToolbarPopover label={rangeWords(from, to, now, t)} outlined wide anchored closeLabel={t("dashboardView.timePicker.close")}>
+    // At the toolbar's right end, as Grafana's: the panel opens leftwards and stays on the screen.
+    <ToolbarPopover label={rangeWords(from, to, now, t)} outlined wide end tall closeLabel={t("dashboardView.timePicker.close")}>
       <div className="flex flex-col gap-4 sm:flex-row">
         <form
           className="flex min-w-56 flex-col gap-3"
@@ -89,9 +88,11 @@ export function TimePicker({ from, to, now, onChange }: TimePickerProps): JSX.El
             {t("dashboardView.timePicker.apply")}
           </Button>
         </form>
-        <nav aria-label={t("dashboardView.timePicker.quick")} className="min-w-48 sm:border-l sm:border-border sm:pl-4">
-          <ul className="flex max-h-80 flex-col overflow-y-auto">
-            {QUICK_RANGES.map((range) => {
+        <nav aria-label={t("dashboardView.timePicker.quick")} className="order-first flex min-w-48 flex-col gap-2 sm:order-none sm:border-l sm:border-border sm:pl-4">
+          <Input type="search" aria-label={t("dashboardView.timePicker.search")} placeholder={t("dashboardView.timePicker.search")} value={search} onChange={(event) => setSearch(event.target.value)} />
+          {quick.length === 0 ? <p className="text-caption text-fg-muted">{t("dashboardView.timePicker.noQuick")}</p> : null}
+          <ul className="flex max-h-60 flex-col overflow-y-auto sm:max-h-80">
+            {quick.map((range) => {
               const current = range.from === from && range.to === to;
               return (
                 <li key={range.key}>
@@ -119,19 +120,50 @@ export function TimePicker({ from, to, now, onChange }: TimePickerProps): JSX.El
   );
 }
 
-/** Grafana's refresh intervals: Off, Auto, then the intervals as Grafana writes them. */
-export function RefreshPicker({ value, onChange }: { value: string; onChange: (value: string) => void }): JSX.Element {
+/** The popover around `target` closes, as a picked menu item closes Grafana's. */
+function close(target: EventTarget): void {
+  const details = (target as HTMLElement).closest("details");
+  if (details) {
+    details.open = false;
+    details.querySelector("summary")?.focus();
+  }
+}
+
+/**
+ * Grafana's refresh picker: a Refresh now button joined to a menu of its intervals (Off, Auto,
+ * then the intervals as Grafana writes them), the picked interval named on the menu's button.
+ */
+export function RefreshPicker({ value, onChange, onRefresh }: { value: string; onChange: (value: string) => void; onRefresh: () => void }): JSX.Element {
   const { t } = useTranslation();
   const choices: string[] = (REFRESHES as readonly string[]).includes(value) ? [...REFRESHES] : [...REFRESHES, value];
+  const words = (every: string) => (every === "" ? t("dashboardView.refreshOff") : every === "auto" ? t("dashboardView.refreshAuto") : every);
   return (
-    <Field id="dashboard-refresh" label={t("dashboardView.refreshLabel")}>
-      <Select id="dashboard-refresh" value={value} onChange={(event) => onChange(event.target.value)}>
-        {choices.map((every) => (
-          <option key={every} value={every}>
-            {every === "" ? t("dashboardView.refreshOff") : every === "auto" ? t("dashboardView.refreshAuto") : every}
-          </option>
-        ))}
-      </Select>
-    </Field>
+    <div role="group" aria-label={t("dashboardView.refreshLabel")} className="flex items-start gap-1">
+      <Button variant="secondary" onClick={onRefresh}>
+        <Icon name="refresh" className="size-4" />
+        {t("dashboardView.refreshNow")}
+      </Button>
+      <ToolbarPopover label={words(value)} outlined end closeLabel={t("dashboardView.timePicker.close")}>
+        <ul role="menu" aria-label={t("dashboardView.refreshEvery")} className="flex flex-col">
+          {choices.map((every) => (
+            <li key={every} role="none">
+              <Button
+                role="menuitemradio"
+                aria-checked={every === value}
+                variant="ghost"
+                size="sm"
+                className={clsx("w-full justify-start", every === value ? "bg-primary-soft text-primary-soft-fg" : undefined)}
+                onClick={(event) => {
+                  onChange(every);
+                  close(event.currentTarget);
+                }}
+              >
+                {words(every)}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      </ToolbarPopover>
+    </div>
   );
 }

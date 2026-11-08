@@ -3,15 +3,15 @@
  * generated Apps use), over the panel's frames held in memory: its sort, paging and column
  * widths, with each cell in its field's unit, mapping and threshold colour (`custom.cellOptions`).
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { EntityGrid, fixtureSource, parseGridConfig } from "@joinedcontext/sdk/grid";
 import type { EntityGridProps } from "@joinedcontext/sdk/grid";
 import { gridLabels } from "../entities/PortalEntityGrid";
-import { InlineError } from "../ui";
+import { InlineError, Select } from "../ui";
 import type { Frame } from "./frames";
-import { rowsOf } from "./frames";
+import { frameName, rowsOf } from "./frames";
 import type { FieldConfigSource, FieldSettings } from "./fieldConfig";
 import { colorOf, displayValue, settingsFor, stepFor } from "./fieldConfig";
 import { Tinted } from "./paint";
@@ -96,7 +96,11 @@ export interface TablePanelProps {
 
 export function TablePanel({ title, frames, fieldConfig, locale }: TablePanelProps): JSX.Element {
   const { t } = useTranslation();
-  const table = useMemo(() => tableOf(frames, fieldConfig), [frames, fieldConfig]);
+  // Several frames are one table each, picked below the grid, as Grafana's table panel does.
+  const [picked, setPicked] = useState(0);
+  const at = picked < frames.length ? picked : 0;
+  const shown = useMemo(() => (frames.length > 1 ? [frames[at]] : frames), [frames, at]);
+  const table = useMemo(() => tableOf(shown, fieldConfig), [shown, fieldConfig]);
   const parsed = useMemo(
     () =>
       parseGridConfig({
@@ -131,7 +135,16 @@ export function TablePanel({ title, frames, fieldConfig, locale }: TablePanelPro
   }
   return (
     <div aria-label={title} className="min-w-0">
-      <EntityGrid config={parsed.config} source={source} labels={labels} renderers={renderers} hidden={["id", "entity:type"]} locale={locale} filterRow={false} queryBox={false} />
+      <EntityGrid key={at} config={parsed.config} source={source} labels={labels} renderers={renderers} hidden={["id", "entity:type"]} locale={locale} filterRow={false} queryBox={false} />
+      {frames.length > 1 && (
+        <Select className="mt-2 w-full" aria-label={t("dashboardView.frame", { title })} value={String(at)} onChange={(event) => setPicked(Number(event.target.value))}>
+          {frames.map((frame, index) => (
+            <option key={index} value={index}>
+              {frameName(frame, index)}
+            </option>
+          ))}
+        </Select>
+      )}
     </div>
   );
 }

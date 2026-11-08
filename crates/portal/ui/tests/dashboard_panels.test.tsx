@@ -17,7 +17,7 @@ import type { PanelDefinition } from "../src/components/panels/PanelView";
 import { BarGaugePanel, shownValues, StatPanel } from "../src/components/panels/ValuePanels";
 import { tableOf, TablePanel } from "../src/components/panels/TablePanel";
 import { Legend } from "../src/components/panels/TimeSeriesPanel";
-import { formatUnit, settingsFor } from "../src/components/panels/fieldConfig";
+import { displayValue, formatDate, formatUnit, settingsFor } from "../src/components/panels/fieldConfig";
 import { ordered, sections } from "../src/components/panels/DashboardGrid";
 import { ColourKey } from "../src/components/panels/ChartPanels";
 import { Fill, Swatch } from "../src/components/panels/paint";
@@ -137,6 +137,19 @@ describe("table", () => {
     expect(table.columns.map((column) => column.label)).toEqual(["name", "pm25", "Level", "dateObserved"]);
     expect(table.entities).toHaveLength(3);
     expect(table.columns[1].settings.custom.width).toBe(120);
+  });
+
+  it("draws each frame as its own table, picked below the grid as Grafana's frame select does", async () => {
+    const user = userEvent.setup();
+    const host = (name: string, refId: string, value: number) => ({ refId, fields: [{ name: "host", type: "string" as const, values: [name] }, { name: "Value", type: "number" as const, values: [value] }] });
+    render(<TablePanel title="Days left" frames={[host("dev", "A", 7), host("api", "B", 8)]} locale="en" />);
+    expect(await screen.findByText("dev", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.queryByText("api")).toBeNull();
+    const select = screen.getByRole("combobox", { name: "Data frame of Days left" });
+    expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual(["A", "B"]);
+    await user.selectOptions(select, "1");
+    expect(await screen.findByText("api", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.queryByText("dev")).toBeNull();
   });
 
   it("draws the helsinki stations in the SDK grid, each cell in its unit and mapping", async () => {
@@ -297,6 +310,17 @@ describe("a panel card", () => {
     expect(widened).toBe(1);
   });
 
+  it("says every reading lies outside the range and zooms to the data, as Grafana's time series does", async () => {
+    const user = userEvent.setup();
+    const zoomed: number[][] = [];
+    const series: PanelDefinition = { id: 3, type: "timeseries", title: "Rate" };
+    const before = [{ fields: [{ name: "Time", type: "time" as const, values: [frames.FROM - 7_200_000, frames.FROM - 3_600_000] }, { name: "Value", type: "number" as const, values: [1, 2] }] }];
+    render(<PanelView panel={series} data={{ frames: before }} onZoom={(from, to) => zoomed.push([from, to])} {...common} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Data outside time range");
+    await user.click(screen.getByRole("button", { name: "Zoom to data" }));
+    expect(zoomed).toEqual([[frames.FROM - 7_200_000, frames.FROM - 3_600_000]]);
+  });
+
   it("keeps a failed panel to one line when the page already sums up the failures", () => {
     render(<PanelView panel={panel} data={{ frames: [], error: "prometheus answered 502" }} onRetry={() => undefined} quiet {...common} />);
     expect(screen.getByRole("alert")).toHaveTextContent("Not read: see the notice above the panels.");
@@ -344,6 +368,23 @@ describe("the dashboard around the panels", () => {
     expect(resolveTime("now-6h", now)).toBe(now - 6 * 3_600_000);
     expect(resolveTime("1700000000000", now)).toBe(1_700_000_000_000);
     expect(resolveTime("yesterday", now)).toBeNull();
+  });
+
+  it("shows a time field as a date whatever unit the panel set, with milliseconds inside a minute, as Grafana does", () => {
+    const at = new Date(2026, 10, 8, 7, 0, 0).getTime();
+    const one = settingsFor({ defaults: { unit: "percentunit" } }, { name: "Time", type: "time", values: [at, at] });
+    expect(one.unit).toBe("dateTimeAsSystem");
+    expect(displayValue(one, at).text).toBe("2026-11-08 07:00:00.000");
+    const hourly = settingsFor({ defaults: { unit: "d" } }, { name: "Time", type: "time", values: [at, at + 3_600_000] });
+    expect(displayValue(hourly, at).text).toBe("2026-11-08 07:00:00");
+    // A date unit the panel names stays, and a number in it reads as a date.
+    const iso = settingsFor({ defaults: { unit: "dateTimeAsIso" } }, { name: "observedAt", type: "number", values: [at] });
+    expect(displayValue(iso, at).text).toBe("2026-11-08 07:00:00");
+    expect(displayValue(iso, new Date(at).toISOString()).text).toBe("2026-11-08 07:00:00");
+    expect(formatDate(at, "dateTimeAsUS")).toBe("11/08/2026 7:00:00 am");
+    expect(formatDate(at, "dateTimeAsIsoNoDateIfToday", false, "en", at + 60_000)).toBe("07:00:00");
+    expect(formatDate(at, "time:YYYY/MM/DD")).toBe("2026/11/08");
+    expect(formatDate(at - 3 * 3_600_000, "dateTimeFromNow", false, "en", at)).toBe("3 hours ago");
   });
 
   it("keeps an override's unit for its field only", () => {

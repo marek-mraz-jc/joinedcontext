@@ -52,13 +52,14 @@ interface LivePanelProps {
   /** The range and variables in words, for an empty panel. */
   words: { range: string; vars?: string };
   onWiden?: () => void;
+  onZoom?: (from: number, to: number) => void;
   /** Tells the page whether this panel failed, so several failures make one notice. */
   onFailed: (id: number, failed: boolean) => void;
   quiet: boolean;
 }
 
 /** One panel and its own read, refetched on the refresh tick. */
-function LivePanel({ project, uid, panel, asked, tick, locale, at, words, onWiden, onFailed, quiet }: LivePanelProps): JSX.Element {
+function LivePanel({ project, uid, panel, asked, tick, locale, at, words, onWiden, onZoom, onFailed, quiet }: LivePanelProps): JSX.Element {
   const queryClient = useQueryClient();
   const range = panelRange(panel, asked, at);
   const key = ["projects", project, "grafana", "dashboards", uid, "panel", panel.id, asked, tick];
@@ -93,6 +94,7 @@ function LivePanel({ project, uid, panel, asked, tick, locale, at, words, onWide
       height={bodyHeight(panel)}
       asked={words}
       onWiden={onWiden}
+      onZoom={onZoom}
       quiet={quiet && failed}
       timeInfo={panel.hideTimeOverride ? undefined : overrideWords(range, t)}
     />
@@ -299,8 +301,7 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
         ))}
         {data.timePickerHidden ? null : (
           <>
-            <div className="flex flex-col gap-1 sm:ml-auto">
-              <span className="text-body font-medium text-fg">{t("dashboardView.rangeLabel")}</span>
+            <div role="group" aria-label={t("dashboardView.rangeLabel")} className="flex flex-wrap items-start gap-1 sm:ml-auto">
               <TimePicker
                 key={`${from}|${to}`}
                 from={from}
@@ -312,11 +313,7 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
                 }}
               />
             </div>
-            <RefreshPicker value={refresh} onChange={(next) => link({ refresh: next || undefined })} />
-            <Button variant="secondary" onClick={refreshNow}>
-              <Icon name="refresh" className="size-4" />
-              {t("dashboardView.refreshNow")}
-            </Button>
+            <RefreshPicker value={refresh} onChange={(next) => link({ refresh: next || undefined })} onRefresh={refreshNow} />
           </>
         )}
       </div>
@@ -357,6 +354,7 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
                     }
                   : undefined
               }
+              onZoom={(from, to) => link({ from: String(from), to: String(to) })}
               onFailed={onFailed}
               quiet={failed > 1}
             />

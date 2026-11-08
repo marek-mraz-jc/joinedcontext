@@ -36,6 +36,8 @@ export interface FieldSettings {
   thresholds?: Thresholds;
   color?: { mode?: string; fixedColor?: string };
   custom: Record<string, unknown>;
+  /** A time field spanning less than a minute shows milliseconds, as Grafana's display processor does. */
+  showMs?: boolean;
 }
 
 export interface FieldConfigSource {
@@ -126,7 +128,81 @@ export function settingsFor(config: FieldConfigSource | undefined, field: FrameF
       if (property.id) apply(settings, property.id, property.value);
     }
   }
+  // Grafana draws a time field as a date whatever unit the panel set for its numbers.
+  if (field.type === "time" && !isDateUnit(settings.unit)) {
+    settings.unit = "dateTimeAsSystem";
+    const first = instantOf(field.values[0]);
+    const last = instantOf(field.values[field.values.length - 1]);
+    settings.showMs = field.values.length > 1 && first !== undefined && last !== undefined && Math.abs(last - first) < 60_000;
+  }
   return settings;
+}
+
+/** The units Grafana formats as a date (`time:<format>` is its custom one). */
+const DATE_UNITS = new Set(["dateTimeAsIso", "dateTimeAsIsoNoDateIfToday", "dateTimeAsUS", "dateTimeAsUSNoDateIfToday", "dateTimeAsLocal", "dateTimeAsLocalNoDateIfToday", "dateTimeAsSystem", "dateTimeFromNow"]);
+
+export function isDateUnit(unit: string | undefined): boolean {
+  return unit !== undefined && (DATE_UNITS.has(unit) || unit.startsWith("time:"));
+}
+
+/** Epoch milliseconds of a number or an ISO text. */
+function instantOf(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? undefined : ms;
+  }
+  return undefined;
+}
+
+const pad = (n: number, width = 2): string => String(n).padStart(width, "0");
+
+/** A moment.js format Grafana writes (`YYYY-MM-DD HH:mm:ss.SSS`, `MM/DD/YYYY h:mm:ss a`) in local time. */
+function momentFormat(date: Date, format: string): string {
+  const hours = date.getHours();
+  const tokens: Record<string, string> = {
+    YYYY: String(date.getFullYear()),
+    MM: pad(date.getMonth() + 1),
+    DD: pad(date.getDate()),
+    HH: pad(hours),
+    hh: pad(hours % 12 || 12),
+    h: String(hours % 12 || 12),
+    mm: pad(date.getMinutes()),
+    ss: pad(date.getSeconds()),
+    SSS: pad(date.getMilliseconds(), 3),
+    a: hours < 12 ? "am" : "pm",
+    A: hours < 12 ? "AM" : "PM",
+  };
+  return format.replace(/YYYY|MM|DD|HH|hh|h|mm|ss|SSS|a|A/g, (token) => tokens[token]);
+}
+
+/** An instant in one of Grafana's date units, `now` for the units that read it relative to today. */
+export function formatDate(ms: number, unit: string, showMs = false, locale = "en", now = Date.now()): string {
+  const date = new Date(ms);
+  const today = new Date(now).toDateString() === date.toDateString();
+  switch (unit) {
+    case "dateTimeAsIso":
+      return momentFormat(date, "YYYY-MM-DD HH:mm:ss");
+    case "dateTimeAsIsoNoDateIfToday":
+      return momentFormat(date, today ? "HH:mm:ss" : "YYYY-MM-DD HH:mm:ss");
+    case "dateTimeAsUS":
+      return momentFormat(date, "MM/DD/YYYY h:mm:ss a");
+    case "dateTimeAsUSNoDateIfToday":
+      return momentFormat(date, today ? "h:mm:ss a" : "MM/DD/YYYY h:mm:ss a");
+    case "dateTimeAsLocal":
+      return date.toLocaleString(locale);
+    case "dateTimeAsLocalNoDateIfToday":
+      return today ? date.toLocaleTimeString(locale) : date.toLocaleString(locale);
+    case "dateTimeFromNow": {
+      const seconds = Math.round((ms - now) / 1000);
+      const steps: [Intl.RelativeTimeFormatUnit, number][] = [["year", 31_536_000], ["month", 2_592_000], ["day", 86_400], ["hour", 3_600], ["minute", 60], ["second", 1]];
+      const [name, size] = steps.find(([, size]) => Math.abs(seconds) >= size) ?? ["second", 1];
+      return new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(Math.round(seconds / size), name);
+    }
+    default:
+      if (unit.startsWith("time:")) return momentFormat(date, unit.slice("time:".length));
+      return momentFormat(date, showMs ? "YYYY-MM-DD HH:mm:ss.SSS" : "YYYY-MM-DD HH:mm:ss");
+  }
 }
 
 /** The threshold step `value` falls in: the last whose value is at most it, the base step below all. */
@@ -309,6 +385,10 @@ export function displayValue(settings: FieldSettings, value: unknown, locale = "
   if (mapped?.text !== undefined) return { text: mapped.text, color: mapped.color ? colorOf(mapped.color) : undefined };
   if (value === null || value === undefined || value === "") {
     return { text: settings.noValue ?? "–", color: mapped?.color ? colorOf(mapped.color) : undefined };
+  }
+  if (isDateUnit(settings.unit)) {
+    const ms = instantOf(value);
+    if (ms !== undefined) return { text: formatDate(ms, settings.unit!, settings.showMs, locale), color: mapped?.color ? colorOf(mapped.color) : undefined };
   }
   if (typeof value === "number") {
     return { text: formatUnit(value, settings.unit, settings.decimals, locale), color: mapped?.color ? colorOf(mapped.color) : undefined };

@@ -11775,6 +11775,10 @@
     "empty": "Für diesen Zeitraum und diese Werte gibt es nichts anzuzeigen.",
     "noPanelsTitle": "Dieses Dashboard hat keine Panels",
     "noPanels": "Fügen Sie dem Dashboard in seinem Ordner Panels hinzu und kommen Sie zurück.",
+    "outsideTitle": "Daten außerhalb des Zeitraums",
+    "outside": "Alle Werte dieses Panels liegen außerhalb des Zeitraums des Dashboards.",
+    "zoomToData": "Auf Daten zoomen",
+    "frame": "Datenrahmen von {title}",
     "noRows": "Keine Zeilen in diesem Zeitraum",
     "legend": "Legende",
     "series": "Reihe",
@@ -11854,7 +11858,10 @@
       "thisFiscalYearSoFar": "Dieses Geschäftsjahr bisher",
       "thisFiscalYear": "Dieses Geschäftsjahr"
     },
+    "refreshEvery": "Aktualisieren alle",
     "timePicker": {
+      "search": "Schnellbereiche suchen",
+      "noQuick": "Kein Schnellbereich passt.",
       "between": "{from} bis {to}",
       "rangeShifted": "{range} + Zeitverschiebung -{shift}",
       "shifted": "Zeitverschiebung -{shift}",

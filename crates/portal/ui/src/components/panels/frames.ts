@@ -63,6 +63,11 @@ export function displayNameOf(field: FrameField, frame?: Frame): string {
   return field.name;
 }
 
+/** A frame's name in a picker, Grafana's way: its name, else its query's refId, else `Series (n)`. */
+export function frameName(frame: Frame, index: number): string {
+  return frame.name || frame.refId || `Series (${index})`;
+}
+
 /** Every numeric field of every frame against that frame's time field, as series. */
 export function seriesOf(frames: Frame[]): Series[] {
   const out: Series[] = [];
@@ -174,6 +179,24 @@ export function reducedOf(frames: Frame[], reducer = "lastNotNull", allValues = 
 }
 
 /** Whether the frames hold anything to draw: one value in any field. */
+/**
+ * The span of a panel's readings when every one lies outside [from, to], as Grafana's time series
+ * says "Data outside time range"; undefined when one falls inside or there is none.
+ */
+export function outsideRange(frames: Frame[], from: number, to: number): { from: number; to: number } | undefined {
+  let first = Infinity;
+  let last = -Infinity;
+  for (const series of seriesOf(frames)) {
+    for (const point of series.points) {
+      if (point.v === null) continue;
+      if (point.t >= from && point.t <= to) return undefined;
+      first = Math.min(first, point.t);
+      last = Math.max(last, point.t);
+    }
+  }
+  return first <= last ? { from: first, to: last } : undefined;
+}
+
 export function hasData(frames: Frame[]): boolean {
   return frames.some((frame) => frame.fields.some((field) => field.values.some((value) => value !== null && value !== undefined)));
 }

@@ -10,7 +10,7 @@ import { clsx } from "clsx";
 import { Button, Card, Icon, InlineError, Skeleton } from "../ui";
 import type { IconName } from "../ui";
 import type { Frame } from "./frames";
-import { hasData } from "./frames";
+import { hasData, outsideRange } from "./frames";
 import type { FieldConfigSource } from "./fieldConfig";
 import { BarChartPanel, HeatmapPanel, HistogramPanel, PieChartPanel, StateTimelinePanel } from "./ChartPanels";
 import { TablePanel } from "./TablePanel";
@@ -64,6 +64,8 @@ export interface PanelViewProps {
   asked?: { range: string; vars?: string };
   /** Ask a longer range: an empty panel's next step. */
   onWiden?: () => void;
+  /** Move the dashboard to the span the data covers: Grafana's "Zoom to data". */
+  onZoom?: (from: number, to: number) => void;
   /** The page already says several panels failed: a failed panel shows its title line only. */
   quiet?: boolean;
   /** The panel's own range in Grafana's words (`Last 1 hour + timeshift -1d`), beside its title. */
@@ -135,7 +137,7 @@ function sentence(text: string): string {
   return /[.!?…]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
-export function PanelView({ panel, data, loading, failure, onRetry, from, to, locale, height, headingLevel = "h2", asked, onWiden, quiet, timeInfo }: PanelViewProps): JSX.Element {
+export function PanelView({ panel, data, loading, failure, onRetry, from, to, locale, height, headingLevel = "h2", asked, onWiden, onZoom, quiet, timeInfo }: PanelViewProps): JSX.Element {
   const { t } = useTranslation();
   const Heading = headingLevel;
   const title = panel.title || t("dashboardView.untitled");
@@ -175,6 +177,17 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
         {onWiden ? (
           <Button size="sm" variant="secondary" onClick={onWiden}>
             {t("dashboardView.widen")}
+          </Button>
+        ) : null}
+      </PanelState>
+    );
+  } else if (panel.type === "timeseries" && outsideRange(data.frames, from, to)) {
+    const span = outsideRange(data.frames, from, to)!;
+    body = (
+      <PanelState icon="clock" title={t("dashboardView.outsideTitle")} description={t("dashboardView.outside")}>
+        {onZoom ? (
+          <Button size="sm" variant="secondary" onClick={() => onZoom(span.from, span.to)}>
+            {t("dashboardView.zoomToData")}
           </Button>
         ) : null}
       </PanelState>

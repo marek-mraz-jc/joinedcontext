@@ -5,7 +5,7 @@
  * range (timeFrom only under a relative range, then timeShift), and a multi-value pick.
  */
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../src/i18n";
 import { panelQuery, toggled } from "../src/pages/grafana/DashboardPage";
@@ -26,20 +26,45 @@ describe("Grafana's pickers", () => {
   });
 
   it("offers Grafana's refresh intervals", () => {
-    render(<RefreshPicker value="" onChange={() => undefined} />);
-    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(refreshPicker.intervals);
+    render(<RefreshPicker value="" onChange={() => undefined} onRefresh={() => undefined} />);
+    expect(screen.getAllByRole("menuitemradio").map((option) => option.textContent)).toEqual(refreshPicker.intervals);
     expect(REFRESHES).toHaveLength(refreshPicker.intervals.length);
   });
 
   it("keeps a saved refresh that is not on the list", () => {
-    render(<RefreshPicker value="2m" onChange={() => undefined} />);
-    expect(screen.getByRole("combobox")).toHaveValue("2m");
+    render(<RefreshPicker value="2m" onChange={() => undefined} onRefresh={() => undefined} />);
+    expect(screen.getByRole("menuitemradio", { checked: true })).toHaveTextContent("2m");
+    expect(screen.getByRole("group", { name: "Refresh" }).querySelector("summary")).toHaveTextContent("2m");
+  });
+
+  it("picks an interval from the menu, closes it, and refreshes now on its button, as Grafana's picker does", async () => {
+    const user = userEvent.setup();
+    const picked: string[] = [];
+    let now = 0;
+    render(<RefreshPicker value="" onChange={(value) => picked.push(value)} onRefresh={() => (now += 1)} />);
+    const summary = screen.getByRole("group", { name: "Refresh" }).querySelector("summary")!;
+    await user.click(summary);
+    await user.click(screen.getByRole("menuitemradio", { name: "1m" }));
+    expect(picked).toEqual(["1m"]);
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    await user.click(screen.getByRole("button", { name: "Refresh now" }));
+    expect(now).toBe(1);
   });
 
   it("names a quick range by its name and an absolute one by both ends", () => {
     expect(rangeWords("now-6h", "now", NOW, t)).toBe("Last 6 hours");
     expect(rangeWords("now/w", "now/w", NOW, t)).toBe("This week");
     expect(rangeWords(String(local(2026, 10, 7, 6)), String(local(2026, 10, 8, 6)), NOW, t)).toBe("2026-11-07 06:00:00 to 2026-11-08 06:00:00");
+  });
+
+  it("narrows the quick ranges to the words searched, as Grafana's quick range search does", async () => {
+    const user = userEvent.setup();
+    render(<TimePicker from="now-6h" to="now" now={NOW} onChange={() => undefined} />);
+    await user.type(screen.getByRole("searchbox", { name: "Search quick ranges" }), "year");
+    const quick = screen.getByRole("navigation", { name: /quick/i });
+    expect(within(quick).getAllByRole("button").map((button) => button.textContent)).toEqual(timePicker.quickRanges.filter((words: string) => words.toLowerCase().includes("year")));
+    await user.type(screen.getByRole("searchbox", { name: "Search quick ranges" }), "zzz");
+    expect(within(quick).getByText("No quick range matches.")).toBeInTheDocument();
   });
 
   it("applies a quick range and an absolute one typed in, and refuses a word Grafana does not read", async () => {

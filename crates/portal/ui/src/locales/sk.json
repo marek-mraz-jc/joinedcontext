@@ -11775,6 +11775,10 @@
     "empty": "Pre tento časový rozsah a tieto hodnoty nie je čo zobraziť.",
     "noPanelsTitle": "Tento dashboard nemá panely",
     "noPanels": "Pridajte panely do dashboardu v jeho priečinku a vráťte sa.",
+    "outsideTitle": "Údaje mimo časového rozsahu",
+    "outside": "Všetky hodnoty tohto panela ležia mimo časového rozsahu nástenky.",
+    "zoomToData": "Priblížiť na údaje",
+    "frame": "Dátový rámec panela {title}",
     "noRows": "V tomto časovom rozsahu nie sú riadky",
     "legend": "Legenda",
     "series": "Rad",
@@ -11854,7 +11858,10 @@
       "thisFiscalYearSoFar": "Tento fiškálny rok doteraz",
       "thisFiscalYear": "Tento fiškálny rok"
     },
+    "refreshEvery": "Obnovovať každých",
     "timePicker": {
+      "search": "Hľadať rýchle rozsahy",
+      "noQuick": "Žiadny rýchly rozsah sa nezhoduje.",
       "between": "{from} až {to}",
       "rangeShifted": "{range} + posun -{shift}",
       "shifted": "Posun -{shift}",

@@ -11775,6 +11775,10 @@
     "empty": "Nothing to show for this time range and these values.",
     "noPanelsTitle": "This dashboard has no panels",
     "noPanels": "Add panels to the dashboard in its folder, then come back.",
+    "outsideTitle": "Data outside time range",
+    "outside": "Every reading of this panel lies outside the dashboard's time range.",
+    "zoomToData": "Zoom to data",
+    "frame": "Data frame of {title}",
     "noRows": "No rows in this time range",
     "legend": "Legend",
     "series": "Series",
@@ -11854,7 +11858,10 @@
       "thisFiscalYearSoFar": "This fiscal year so far",
       "thisFiscalYear": "This fiscal year"
     },
+    "refreshEvery": "Refresh every",
     "timePicker": {
+      "search": "Search quick ranges",
+      "noQuick": "No quick range matches.",
       "between": "{from} to {to}",
       "rangeShifted": "{range} + timeshift -{shift}",
       "shifted": "Timeshift -{shift}",
