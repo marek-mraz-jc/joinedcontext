@@ -8,6 +8,7 @@ pub mod bento_inputs;
 pub mod bento_processors;
 pub mod blueprint;
 pub mod catalog;
+pub mod catalog_datasets;
 pub mod ckan;
 pub mod context_broker;
 pub mod csr;

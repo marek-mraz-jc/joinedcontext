@@ -20,6 +20,7 @@ pub mod profile;
 
 use jc_core::classification::classify;
 use jc_core::kinds::catalog::spatial_iri;
+use jc_core::kinds::catalog_datasets::CatalogDataset;
 use jc_core::kinds::{
     feed_links, ical_links, Audience, Catalog, ContactPoint, Duty, FeedOutput, IcalOutput,
     ProjectCatalog, Representation,
@@ -842,6 +843,134 @@ pub fn dataset(endpoint: &Subject<'_>, index: &Value, base: &str) -> Value {
         "@type": "spdx:ChecksumAlgorithm",
     }));
     record["@included"] = Value::Array(included);
+    record
+}
+
+/// The catalogue block a dataset of `spec.catalog.datasets` is described by: the Endpoint's,
+/// with the entry's keywords and licence in place of its own when the entry names them, and no
+/// list of datasets (EP-176).
+pub fn slice_catalog(catalog: Option<&Catalog>, slice: &CatalogDataset) -> Catalog {
+    let mut catalog = catalog.cloned().unwrap_or_default();
+    if !slice.keywords.is_empty() {
+        catalog.keywords = slice.keywords.clone();
+    }
+    if slice.license.is_some() {
+        catalog.license = slice.license;
+    }
+    catalog.datasets.clear();
+    catalog
+}
+
+/// The DCAT-AP record of one dataset of an Endpoint's `spec.catalog.datasets` (EP-176): a
+/// `dcat:Dataset` of its own at `{endpoint}/datasets/{name}`, identified by its name, with the
+/// entry's texts, keywords and licence, and the Endpoint's distributions narrowed to the entry:
+/// the NGSI-LD query and the CSV by `type` and `q`, the OGC items of each type when it has no
+/// `q`, the schema artifacts as they are. Every other surface answers the whole Endpoint, which
+/// each distribution names as its `dcat:DataService`; the service serves this dataset.
+pub fn dataset_slice(
+    endpoint: &Subject<'_>,
+    slice: &CatalogDataset,
+    index: &Value,
+    base: &str,
+) -> Value {
+    let catalog = slice_catalog(endpoint.catalog, slice);
+    let classes: Vec<&str> = slice.types.iter().map(String::as_str).collect();
+    let subject = Subject {
+        title: &slice.title,
+        description: &slice.description,
+        catalog: Some(&catalog),
+        classes: &classes,
+        feeds: &[],
+        calendars: &[],
+        ..*endpoint
+    };
+    let mut record = dataset(&subject, index, base);
+    let iri = iri(endpoint, base);
+    let own = format!("{iri}/datasets/{}", slice.name);
+    record["@id"] = json!(own);
+    record["dct:identifier"] = json!(slice.name);
+    record["dct:title"] = localized(&slice.title, &slice.name);
+    record["dct:description"] = localized(&slice.description, &slice.name);
+
+    let query = slice.query();
+    let mut narrowed = Vec::new();
+    let mut addresses = Vec::new();
+    for distribution in record["dcat:distribution"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+    {
+        let url = distribution
+            .get("dcat:accessURL")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let Some(path) = url.strip_prefix(&format!("{iri}/")) else {
+            continue;
+        };
+        let mut at = |mut distribution: Value, address: String| {
+            distribution["@id"] = json!(address);
+            distribution["dcat:accessURL"] = json!(address);
+            addresses.push(address);
+            narrowed.push(distribution);
+        };
+        match path {
+            "ngsi-ld/v1/" => at(distribution, format!("{iri}/ngsi-ld/v1/entities?{query}")),
+            "file.csv" => at(distribution, format!("{iri}/file.csv?{query}")),
+            "ogc/features/" if slice.q.is_none() => {
+                for kind in &slice.types {
+                    let mut items = distribution.clone();
+                    items["dct:title"] = json!(format!("OGC API - Features: {kind}"));
+                    at(
+                        items,
+                        format!("{iri}/ogc/features/collections/{kind}/items"),
+                    );
+                }
+            }
+            // The model's artifacts describe every row of the Endpoint, a slice's too (EP-68):
+            // each dataset holds a distribution of its own for them, licensed as the dataset
+            // is, so the datasets of one Endpoint merge into a feed without two licences on one
+            // node.
+            _ if path.starts_with("schema/") => {
+                let mut distribution = distribution;
+                distribution["@id"] = json!(format!("{own}#{path}"));
+                narrowed.push(distribution);
+            }
+            // MCP, WebSocket, OData, SensorThings, feeds and calendars answer the whole
+            // Endpoint: its data service, not this dataset.
+            _ => {}
+        }
+    }
+    record["dcat:distribution"] = Value::Array(narrowed);
+    // The service is the Endpoint, as its own record describes it (title, licence), so the
+    // nodes of its datasets merge into one service in a feed.
+    let is_service =
+        |node: &Value| node.get("@type").and_then(Value::as_str) == Some("dcat:DataService");
+    let whole = dataset(endpoint, index, base)["@included"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let service = whole.iter().find(|node| is_service(node)).cloned();
+    if let Some(included) = record["@included"].as_array_mut() {
+        for node in included.iter_mut().filter(|node| is_service(node)) {
+            if let Some(service) = &service {
+                *node = service.clone();
+            }
+            node["dcat:servesDataset"] = json!(own);
+        }
+        // The service's licence, when the entry names another, is typed in this record too.
+        for licence in whole
+            .iter()
+            .filter(|node| node.get("@type").and_then(Value::as_str) == Some("dct:LicenseDocument"))
+        {
+            if !included.iter().any(|node| node["@id"] == licence["@id"]) {
+                included.push(licence.clone());
+            }
+        }
+        for address in addresses {
+            included.push(json!({ "@id": address, "@type": "rdfs:Resource" }));
+        }
+    }
     record
 }
 

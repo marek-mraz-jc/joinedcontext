@@ -72,6 +72,11 @@ pub struct Catalog {
     /// same data twice. Unset is `true`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harvest: Option<bool>,
+    /// The catalogue datasets of this Endpoint, each a slice narrowed by its types and query
+    /// (ADR-N-068, EP-175). Listed, they replace the Endpoint's single dataset; empty is one
+    /// dataset of the whole Endpoint.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub datasets: Vec<crate::kinds::catalog_datasets::CatalogDataset>,
 }
 
 /// The publisher's statement about personal data in a dataset (API/08 section 5).
@@ -656,6 +661,16 @@ impl Catalog {
         }
         for law in &self.applicable_legislation {
             iri("spec.catalog.applicableLegislation", law)?;
+        }
+        crate::kinds::catalog_datasets::validate(&self.datasets)?;
+        // EP-139, EP-177: a list the feeds leave out would be datasets in CKAN alone.
+        if !self.harvested() && !self.datasets.is_empty() {
+            return Err(Error::Name {
+                field: "spec.catalog.harvest",
+                value: "false".to_owned(),
+                reason: "a door the feeds leave out has no catalogue datasets: drop \
+                         spec.catalog.datasets, or drop harvest: false (EP-139)",
+            });
         }
         Ok(())
     }

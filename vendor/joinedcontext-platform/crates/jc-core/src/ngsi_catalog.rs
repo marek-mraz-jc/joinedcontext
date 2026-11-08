@@ -209,43 +209,74 @@ pub fn entities(
         .filter(|node| node.get("@type").and_then(Value::as_str) == Some("dcat:DataService"))
         .filter_map(|node| Some((node.get("@id")?.as_str()?, node)))
         .collect();
-    let records: BTreeMap<&str, &Value> = nodes
+    // Each Endpoint's records: its one dataset, identified by its slug, or the datasets of its
+    // `spec.catalog.datasets`, each at `{endpoint}/datasets/{name}` (EP-176).
+    let mut records: BTreeMap<&str, Vec<(Option<&str>, &Value)>> = BTreeMap::new();
+    for node in nodes
         .iter()
         .filter(|node| node.get("@type").and_then(Value::as_str) == Some("dcat:Dataset"))
-        .filter_map(|node| Some((node.get("dct:identifier")?.as_str()?, node)))
-        .filter(|(slug, _)| places.contains_key(*slug))
-        .collect();
+    {
+        let Some((slug, name)) = owner(node) else {
+            continue;
+        };
+        if places.contains_key(slug) {
+            records.entry(slug).or_default().push((name, node));
+        }
+    }
 
     let mut out = BTreeMap::new();
-    for (slug, record) in &records {
+    for (slug, list) in &records {
         let place = &places[*slug];
-        let service = record
+        let Some(&(first_name, first)) = list.first() else {
+            continue;
+        };
+        let service = first
             .get("@id")
             .and_then(Value::as_str)
+            .map(|id| endpoint_iri(id, first_name))
             .and_then(|id| services.get(format!("{id}#service").as_str()).copied());
-        let (id, entity) = data_service(slug, record, service, place);
+        // The service is the Endpoint, titled as the Endpoint, whichever dataset names it.
+        let mut described = first.clone();
+        if first_name.is_some() {
+            if let Some(title) = service.and_then(|s| s.get("dct:title")) {
+                described["dct:title"] = title.clone();
+            }
+            if let Some(record) = described.as_object_mut() {
+                record.remove("dct:description");
+            }
+        }
+        let (id, entity) = data_service(slug, &described, service, place);
         out.insert(id, entity);
         // Until a CKAN dataset names the Endpoint, it is a dataset of its own; [`link`] drops
-        // this one once one does.
-        out.insert(
-            format!("urn:ngsi-ld:Dataset:{slug}"),
-            own_dataset(slug, record, place),
-        );
+        // this one once one does. Each dataset of a list is one of its own by its name.
+        for (name, record) in list {
+            let id = name.unwrap_or(slug);
+            out.insert(
+                format!("urn:ngsi-ld:Dataset:{id}"),
+                own_dataset(slug, id, record, place),
+            );
+        }
     }
     if let Some(ckan) = ckan {
         for package in ckan.packages {
             let Some(place) = places.get(&package.slug).filter(|place| place.is_public()) else {
                 continue;
             };
-            if !records.contains_key(package.slug.as_str()) {
+            let Some(list) = records.get(package.slug.as_str()) else {
                 continue;
-            }
-            let record = records[package.slug.as_str()];
+            };
+            // The dataset of a list a CKAN dataset publishes by its name, else the Endpoint's.
+            let slice = list
+                .iter()
+                .find(|(name, _)| *name == Some(package.name.as_str()));
+            let Some(&(_, record)) = slice.or_else(|| list.first()) else {
+                continue;
+            };
             // A CKAN name equal to another Endpoint's slug replaces that Endpoint's own Dataset:
             // the published dataset wins, and [`link`] clears the DataService's `refDataset`.
             out.insert(
                 format!("urn:ngsi-ld:Dataset:{}", package.name),
-                ckan_dataset(package, record, place, ckan.site),
+                ckan_dataset(package, record, slice.is_some(), place, ckan.site),
             );
             if let Some(org) = &package.organization {
                 out.insert(
@@ -372,9 +403,34 @@ fn describe(dataset: &mut Map<String, Value>, record: &Value, place: &Place) -> 
 }
 
 /// The Dataset of an Endpoint no CKAN dataset names, from its record alone.
-fn own_dataset(slug: &str, record: &Value, place: &Place) -> Value {
+/// The Endpoint slug a feed record belongs to and, for one of its `spec.catalog.datasets`, the
+/// dataset's name (EP-176): that record sits at `{endpoint}/datasets/{name}`, the Endpoint's one
+/// dataset is identified by its slug.
+fn owner(record: &Value) -> Option<(&str, Option<&str>)> {
+    let id = record.get("@id").and_then(Value::as_str)?;
+    match id.rsplit_once("/datasets/") {
+        Some((endpoint, name)) if !name.is_empty() && !name.contains('/') => {
+            let slug = endpoint.trim_end_matches('/').rsplit('/').next()?;
+            Some((slug, Some(name)))
+        }
+        _ => Some((record.get("dct:identifier")?.as_str()?, None)),
+    }
+}
+
+/// The Endpoint's IRI of a record at `id`: the record's own for its one dataset.
+fn endpoint_iri<'a>(id: &'a str, name: Option<&str>) -> &'a str {
+    match name {
+        Some(name) => id
+            .strip_suffix(name)
+            .and_then(|rest| rest.strip_suffix("/datasets/"))
+            .unwrap_or(id),
+        None => id,
+    }
+}
+
+fn own_dataset(slug: &str, id: &str, record: &Value, place: &Place) -> Value {
     let mut dataset = Map::new();
-    dataset.insert("id".into(), json!(format!("urn:ngsi-ld:Dataset:{slug}")));
+    dataset.insert("id".into(), json!(format!("urn:ngsi-ld:Dataset:{id}")));
     dataset.insert("type".into(), json!("Dataset"));
     languages(&mut dataset, "title", record.get("dct:title"));
     languages(&mut dataset, "description", record.get("dct:description"));
@@ -414,7 +470,9 @@ fn own_dataset(slug: &str, record: &Value, place: &Place) -> Value {
 }
 
 /// A public CKAN dataset as the catalogue's Dataset.
-fn ckan_dataset(package: &Package, record: &Value, place: &Place, site: &str) -> Value {
+/// `own` says the record is the very dataset CKAN publishes, one of an Endpoint's list by its
+/// name (EP-176); the Endpoint's one dataset is told by its `identifier` extra.
+fn ckan_dataset(package: &Package, record: &Value, own: bool, place: &Place, site: &str) -> Value {
     let mut dataset = Map::new();
     dataset.insert(
         "id".into(),
@@ -432,7 +490,7 @@ fn ckan_dataset(package: &Package, record: &Value, place: &Place, site: &str) ->
     ];
     // The Endpoint's own dataset carries the record's titles per language; a harvested one
     // over a shared Endpoint does not, since the record names the Endpoint, not it.
-    let own = package.extras.get("identifier") == Some(&package.slug);
+    let own = own || package.extras.get("identifier") == Some(&package.slug);
     if own {
         languages(&mut dataset, "title", record.get("dct:title"));
         if let Some(map) = language_map(record.get("dct:title")) {
@@ -1136,6 +1194,55 @@ mod tests {
             ]
         );
         assert_linked(&narrow);
+    }
+
+    /// EP-140, EP-176: an Endpoint listing two datasets is one DataService titled as the
+    /// Endpoint and one Dataset per dataset; the one CKAN publishes carries CKAN's page and the
+    /// record's titles, the other stays a dataset of its own, and nothing dangles.
+    #[test]
+    fn an_endpoint_listing_datasets_is_one_dataset_each() {
+        let [_, service] = record("air", ("Air quality", "Ovzdušie"));
+        let slice = |name: &str, title: (&str, &str)| {
+            let [mut node, _] = record("air", title);
+            node["@id"] = json!(format!("{HOST}/api/endpoint/air/datasets/{name}"));
+            node["dct:identifier"] = json!(name);
+            node
+        };
+        let mut service = service;
+        service["dct:title"] = tagged("Air quality", "Ovzdušie");
+        let feed = vec![
+            slice("bb-pm", ("Particulates", "Prachové častice")),
+            slice("bb-zle", ("Bad air", "Zlé ovzdušie")),
+            service,
+        ];
+        let mut pm = published();
+        pm["name"] = json!("bb-pm");
+        pm["extras"] = json!([{ "key": "identifier", "value": "bb-pm" }]);
+        pm["resources"] = json!([
+            { "url": format!("{HOST}/api/endpoint/air/ngsi-ld/v1/entities?type=AirQualityObserved") },
+        ]);
+        let ckan = packages(&[pm]);
+        let built = entities(
+            &feed,
+            &places(),
+            Some(Ckan {
+                site: SITE,
+                packages: &ckan,
+            }),
+        );
+        let service = &built["urn:ngsi-ld:DataService:air"];
+        assert_eq!(service["title"]["languageMap"]["en"], "Air quality");
+        let pm = &built["urn:ngsi-ld:Dataset:bb-pm"];
+        assert_eq!(pm["url"]["value"], format!("{SITE}/dataset/bb-pm"));
+        assert_eq!(pm["title"]["languageMap"]["sk"], "Prachové častice");
+        let zle = &built["urn:ngsi-ld:Dataset:bb-zle"];
+        assert_eq!(zle["title"]["languageMap"]["en"], "Bad air");
+        assert_eq!(
+            zle["refDataService"]["object"],
+            "urn:ngsi-ld:DataService:air"
+        );
+        assert!(!built.contains_key("urn:ngsi-ld:Dataset:air"), "{built:?}");
+        assert_linked(&built);
     }
 
     #[test]

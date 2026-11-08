@@ -406,6 +406,15 @@ fn check(repo_dir: &Path, repo: Repository, organization: bool) -> Report {
         });
     }
 
+    for (location, message) in catalogue_datasets_refused(repo_dir, &repo) {
+        report.findings.push(Finding {
+            path: location.0,
+            document: location.1,
+            line: location.2,
+            message,
+        });
+    }
+
     for (location, message) in displays_off_the_projection(repo_dir, &repo) {
         report.findings.push(Finding {
             path: location.0,
@@ -2326,6 +2335,105 @@ fn displays_off_the_projection(repo_dir: &Path, repo: &Repository) -> Vec<(Locat
                     id.namespace.as_deref().unwrap_or_default(),
                     id.name
                 ),
+            ));
+        }
+    }
+    refused
+}
+
+/// The catalogue datasets the repository would publish and cannot (EP-177): a slice naming a type
+/// its Endpoint does not serve (the space's model as its `projectionRef` narrows it), and a
+/// dataset name another Endpoint's dataset claims in the same catalogue, named as
+/// `{project}/{endpoint}` (T-6079).
+fn catalogue_datasets_refused(repo_dir: &Path, repo: &Repository) -> Vec<(Location, String)> {
+    let mut refused = Vec::new();
+    let mut located: BTreeMap<(String, String), Location> = BTreeMap::new();
+    for (id, resource) in repo.iter() {
+        if id.kind != "Endpoint" {
+            continue;
+        }
+        let project = id.namespace.clone().unwrap_or_default();
+        let location = (resource.path.clone(), resource.document, resource.line);
+        located.insert((project.clone(), id.name.clone()), location.clone());
+        let Ok(spec) = serde_json::from_value::<EndpointSpec>(resource.manifest.spec.clone())
+        else {
+            continue;
+        };
+        if spec.catalog.as_ref().is_none_or(|c| c.datasets.is_empty()) {
+            continue;
+        }
+        let space = spec.context_space_ref.name();
+        let classes = match space_linkml(repo_dir, repo, id.namespace.as_deref(), space) {
+            None => Err(format!(
+                "space {space} has no data model, so no type is served"
+            )),
+            Some(linkml) => {
+                linkml.and_then(|text| jc_core::kinds::model_projection::linkml_classes(&text))
+            }
+        };
+        let projection = spec.projection_ref.as_ref().and_then(|wanted| {
+            repo.iter()
+                .find(|(p, _)| {
+                    p.kind == "ModelProjection"
+                        && p.namespace == id.namespace
+                        && p.name == wanted.name
+                })
+                .and_then(|(_, p)| {
+                    serde_json::from_value::<ModelProjectionSpec>(p.manifest.spec.clone()).ok()
+                })
+        });
+        let served: BTreeSet<String> = match classes {
+            Err(err) => {
+                refused.push((
+                    location,
+                    format!(
+                        "Endpoint {project}/{}: spec.catalog.datasets: {err} (EP-177)",
+                        id.name
+                    ),
+                ));
+                continue;
+            }
+            Ok(classes) => classes
+                .into_keys()
+                .filter(|class| {
+                    projection
+                        .as_ref()
+                        .is_none_or(|p| p.attributes_of(class).is_some())
+                })
+                .collect(),
+        };
+        for (dataset, kind) in crate::catalogue::unserved_types(&spec, &served) {
+            refused.push((
+                location.clone(),
+                format!(
+                    "Endpoint {project}/{}: spec.catalog.datasets `{dataset}` names type {kind}, \
+                     which the Endpoint does not serve: name a type of its space's model{} \
+                     (EP-177)",
+                    id.name,
+                    if projection.is_some() {
+                        " its projectionRef keeps"
+                    } else {
+                        ""
+                    },
+                ),
+            ));
+        }
+    }
+    let (planned, _) = crate::catalogue::of_repository(repo, None);
+    for (index, reason) in crate::catalogue::claimed_twice(&planned) {
+        let dataset = &planned[index];
+        // Two Endpoints that are datasets only by their own names (EP-174) are left to the
+        // publisher's report: refusing them here would stop every change to a repository whose
+        // public Endpoints share a name with another project's on one CKAN. A name an author
+        // wrote is refused where it is written.
+        if dataset.slice.is_none() && dataset.publication.name.is_none() {
+            continue;
+        }
+        let key = (dataset.project.clone(), dataset.endpoint.clone());
+        if let Some(location) = located.get(&key) {
+            refused.push((
+                location.clone(),
+                format!("Endpoint {}/{}: {reason} (EP-177)", key.0, key.1),
             ));
         }
     }

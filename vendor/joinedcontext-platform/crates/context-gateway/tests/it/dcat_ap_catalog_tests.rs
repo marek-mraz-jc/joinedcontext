@@ -521,3 +521,110 @@ fn the_theme_and_keywords_come_from_the_types_unless_set_by_hand() {
     let unknown = record(&holding(&["Vehicle"], None));
     assert!(unknown.get("dcat:theme").is_none() && unknown.get("dcat:keyword").is_none());
 }
+
+/// Two datasets of one Endpoint (EP-175, EP-176): the second narrowed by `q`.
+const SLICES: &str = "license: CC_BY_4_0\n\
+datasets:\n\
+  - { name: city-concerts, title: { en: Concerts }, description: { en: The city's concerts }, types: [Event], keywords: { en: [music] } }\n\
+  - { name: city-free-events, title: { en: Free events }, description: { en: Events without a fee }, types: [Event], q: 'isAccessibleForFree==true', license: CC0 }\n";
+
+fn slices() -> (Endpoint, Vec<Value>) {
+    let endpoint = holding(&["Event"], Some(catalog(SLICES)));
+    let block = endpoint.catalog.clone().expect("a catalogue block");
+    let records = block
+        .datasets
+        .iter()
+        .map(|slice| {
+            context_gateway::handlers::endpoint_surface::dataset_slice(
+                &endpoint,
+                None,
+                slice,
+                &index(),
+                BASE,
+            )
+        })
+        .collect();
+    (endpoint, records)
+}
+
+/// Each dataset of the list and the feed of both, for the SEMIC check, as the variants above.
+#[test]
+fn every_dataset_of_an_endpoint_is_written_for_the_semic_check() {
+    let directory = std::env::var("DCAT_RECORDS_DIR")
+        .unwrap_or_else(|_| format!("{}/dcat-records", env!("CARGO_TARGET_TMPDIR")));
+    std::fs::create_dir_all(&directory).expect("the records directory");
+    let (_, records) = slices();
+    for (i, record) in records.iter().enumerate() {
+        let json = serde_json::to_string_pretty(record).expect("json");
+        std::fs::write(format!("{directory}/slice-{i}.jsonld"), json).expect("jsonld written");
+        std::fs::write(
+            format!("{directory}/slice-{i}.ttl"),
+            jc_dcat::turtle(record),
+        )
+        .expect("turtle written");
+    }
+    let feed = feed(records, BASE, "city.example.org");
+    assert_eq!(feed["dcat:dataset"].as_array().map(Vec::len), Some(2));
+    let json = serde_json::to_string_pretty(&feed).expect("json");
+    std::fs::write(format!("{directory}/feed-slices.jsonld"), json).expect("jsonld written");
+    std::fs::write(format!("{directory}/feed-slices.ttl"), feed_turtle(&feed))
+        .expect("turtle written");
+}
+
+#[test]
+fn a_dataset_of_the_list_is_a_record_of_its_own_narrowed_to_its_slice() {
+    let (_, records) = slices();
+    let endpoint_iri = format!("{BASE}/api/endpoint/{SLUG}");
+    let concerts = &records[0];
+    assert_eq!(
+        concerts["@id"],
+        format!("{endpoint_iri}/datasets/city-concerts")
+    );
+    assert_eq!(concerts["dct:identifier"], "city-concerts");
+    assert!(
+        concerts["dct:title"].to_string().contains("Concerts"),
+        "{concerts}"
+    );
+    let urls = |record: &Value| -> Vec<String> {
+        distributions(record)
+            .iter()
+            .filter_map(|d| d["dcat:accessURL"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let concert_urls = urls(concerts);
+    assert!(concert_urls.contains(&format!("{endpoint_iri}/ngsi-ld/v1/entities?type=Event")));
+    assert!(concert_urls.contains(&format!("{endpoint_iri}/file.csv?type=Event")));
+    assert!(concert_urls.contains(&format!(
+        "{endpoint_iri}/ogc/features/collections/Event/items"
+    )));
+    // MCP and SensorThings answer the whole Endpoint: its service, never this dataset.
+    assert!(
+        concert_urls
+            .iter()
+            .all(|u| !u.contains("/mcp") && !u.contains("/sta/")),
+        "{concert_urls:?}"
+    );
+    let service = concerts["@included"]
+        .as_array()
+        .expect("included")
+        .iter()
+        .find(|node| node["@type"] == "dcat:DataService")
+        .expect("the Endpoint's service");
+    assert_eq!(
+        service["dcat:servesDataset"],
+        format!("{endpoint_iri}/datasets/city-concerts")
+    );
+    assert!(concerts.to_string().contains("\"music\""), "{concerts}");
+
+    // A `q` narrows the query and the CSV, and no OGC collection answers it.
+    let free = urls(&records[1]);
+    assert!(free.contains(&format!(
+        "{endpoint_iri}/ngsi-ld/v1/entities?type=Event&q=isAccessibleForFree%3D%3Dtrue"
+    )));
+    assert!(free.iter().all(|u| !u.contains("/ogc/")), "{free:?}");
+    assert!(
+        records[1].to_string().contains("licence/CC0"),
+        "the entry's licence replaces the Endpoint's: {}",
+        records[1]
+    );
+}

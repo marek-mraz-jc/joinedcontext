@@ -159,7 +159,7 @@ impl Publication {
 
 /// A CKAN organization or dataset slug: lowercase, digits, `-` and `_`, at least two
 /// characters, which is what CKAN's own name validator accepts.
-fn validate_slug(field: &'static str, value: &str) -> Result<()> {
+pub(crate) fn validate_slug(field: &'static str, value: &str) -> Result<()> {
     let ok = value.len() >= 2
         && value.len() <= 100
         && value
