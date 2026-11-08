@@ -539,25 +539,59 @@ def test_import_sh_stops_the_allow_all_jc_when_the_import_fails(tmp_path):
 
 def test_people_come_with_ids_groups_and_roles_and_never_a_credential():
     lines = [
-        {"id": "u-1", "username": "demo.steward@hel.fi", "email": "demo.steward@hel.fi", "enabled": True,
+        {"id": "de300000-0000-4000-8000-000000000001", "username": "demo.steward@hel.fi",
+         "email": "demo.steward@hel.fi", "firstName": "Demo", "enabled": True,
          "attributes": {"jc_org": ["hel"], "x": ["$(env:SECRET)"], "$(file:/etc/shadow)": ["y"]},
          "groups": ["/helsinki/stewards"], "realmRoles": ["portal-approver"], "totp": True,
          "requiredActions": ["VERIFY_EMAIL"],
          "credentials": [{"type": "password", "secretData": "{\"value\":\"hash\"}"}],
          "federatedIdentities": [{"identityProvider": "x"}], "access": {"manage": True}},
         {"id": "u-2", "username": "service-account-c", "serviceAccountClientId": "c"},
-        {"id": "u-3", "username": "plain", "enabled": True},
+        {"id": "u-3", "username": "jane.roe@example.org", "email": "jane.roe@example.org",
+         "firstName": "Jane", "lastName": "Roe", "emailVerified": True, "enabled": True,
+         "groups": ["/bbsk"]},
     ]
-    realm, n = rh.add_people({"realm": "dev", "users": [{"username": "service-account-c"}]}, lines)
-    assert n == 2 and [u["username"] for u in realm["users"]] == ["service-account-c", "demo.steward@hel.fi", "plain"]
-    steward, plain = realm["users"][1], realm["users"][2]
-    assert steward["id"] == "u-1" and steward["groups"] == ["/helsinki/stewards"]
+    known = {"demo.steward", "de300000-0000-4000-8000-000000000001"}
+    realm, counts = rh.add_people({"realm": "dev", "users": [{"username": "service-account-c"}]}, lines, known)
+    assert counts == {"people": 2, "personas": 1, "pseudonymous": 1, "credentials": 0}
+    assert [u["username"] for u in realm["users"]] == ["service-account-c", "demo.steward@hel.fi", "person-u-3"]
+    steward, other = realm["users"][1], realm["users"][2]
+    assert steward["email"] == "demo.steward@hel.fi" and steward["groups"] == ["/helsinki/stewards"]
     assert steward["realmRoles"] == ["portal-approver"] and steward["attributes"] == {"jc_org": ["hel"], "x": []}
     assert steward["requiredActions"] == ["VERIFY_EMAIL", "UPDATE_PASSWORD", "CONFIGURE_TOTP"]
-    assert plain["requiredActions"] == ["UPDATE_PASSWORD"]
+    assert other == {"id": "u-3", "username": "person-u-3", "enabled": True, "groups": ["/bbsk"],
+                     "attributes": {}, "requiredActions": ["UPDATE_PASSWORD"]}
     text = json.dumps(realm)
-    for leak in ("credentials", "secretData", "hash", "federatedIdentities", "totp", "access", "$("):
+    for leak in ("credentials", "secretData", "hash", "federatedIdentities", "totp", "access", "$(",
+                 "jane", "Roe", "example.org"):
         assert leak not in text, leak
+
+
+def test_personas_are_the_demo_users_of_the_deployment(tmp_path):
+    f = tmp_path / "demo-users.yaml"
+    f.write_text("---\ndemo.steward:\n  id: de300000-0000-4000-8000-000000000001\n  firstName: Demo\n")
+    assert rh.personas(f) == {"demo.steward", "de300000-0000-4000-8000-000000000001"}
+    assert rh.personas(None) == set()
+
+
+def test_people_stay_in_a_private_dir_and_a_private_file(tmp_path):
+    export = tmp_path / "export"
+    (export / "keycloak").mkdir(parents=True)
+    (export / "keycloak" / "realm-dev.json").write_text(json.dumps({"realm": "dev"}))
+    people = tmp_path / "people"
+    people.mkdir(mode=0o755)
+    (people / "users-dev.jsonl").write_text(json.dumps({"id": "u-3", "username": "jane.roe@example.org"}) + "\n")
+    out = tmp_path / "state" / "realms"
+    argv = ["realms", "--export", str(export), "--out", str(out), "--people", str(people)]
+    os.chmod(people, 0o755)
+    with pytest.raises(SystemExit):
+        rh.main(argv)
+    os.chmod(people, 0o700)
+    rh.main(argv)
+    assert (out / "dev.json").stat().st_mode & 0o777 == 0o600 and out.stat().st_mode & 0o777 == 0o700
+    assert "person-u-3" in (out / "dev.json").read_text()
+    assert json.loads((out.parent / "realm-dev-people.json").read_text())["people"] == 1
+
 
 
 def test_datasources_are_provisioned_on_the_exact_own_address_in_org_1(tmp_path):

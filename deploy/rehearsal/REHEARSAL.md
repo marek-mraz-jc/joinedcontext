@@ -25,7 +25,7 @@ python3 -I rehearsal.py synth  --render <render>/dev --env dev --out $REHEARSAL_
 export REHEARSAL_HOME=~/rehearsal JC_BIN=<target>/debug/jc
 ./import.sh dev 42101 55441 /workspace/evidence/jc-rehearsal/export/dev
 python3 -I rehearsal.py smoke  --base http://localhost:42101 --state $REHEARSAL_HOME/dev/state \
-  --export <export> --report $REHEARSAL_HOME/dev/smoke.json --realms $REHEARSAL_HOME/dev/import/realms \
+  --export <export> --report $REHEARSAL_HOME/dev/smoke.json --realms $REHEARSAL_HOME/dev/state/realms \
   --pg-port 55441 --antares-password-file $REHEARSAL_HOME/dev/secrets/antares-pw
 python3 shots.py --base http://localhost:42101 --state $REHEARSAL_HOME/dev/state --out <shots>/dev
 ```
@@ -73,7 +73,14 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   publishes into the source environment's catalogue.
 - `realms` leaves out only what a live Keycloak export carries that kaisatsu refuses and nothing
   uses (unknown built-in mappers, unbound built-in flows, client-flow alternatives no client uses),
-  each named in `import/realm-<name>-left-out.json`; anything else kaisatsu refuses stops the start.
+  each named in `state/realm-<name>-left-out.json`; anything else kaisatsu refuses stops the start.
+- People (dev only, supervisor G14): the deployer's read-only `users-<realm>.jsonl` goes into
+  `$REHEARSAL_HOME/people/dev/` (0700, never evidence/ or a note); `realms` refuses a directory
+  others can read. Each person keeps id, attributes, groups and realm roles, gets no credential
+  and must set a password (and OTP where they had one). Dev signs people in by e-mail, so only the
+  personas of `demo-users.yaml` (`$REHEARSAL_HOME/demo-users.yaml`) keep e-mail and names; anyone
+  else becomes `person-<id>`. The realm file is 0600 in `state/realms`; the counts are in
+  `state/realm-<name>-people.json`. Prod gets no people.
 - Test persons: `smoke` and `shots.py` create their own (`rehearsal-*`, random passwords kept in
   memory) in realm `jc`; the imported realm gets `rehearsal-tester`.
 

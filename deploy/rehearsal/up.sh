@@ -19,7 +19,8 @@ jc_bin=${JC_BIN:-${CARGO_TARGET_DIR:-$here/../../target}/debug/jc}
 export_dir=${REHEARSAL_EXPORT:-$home/export}
 bind=${REHEARSAL_BIND:-127.0.0.1}
 
-mkdir -p "$home"/secrets "$home"/state "$home"/import/realms "$home"/repos "$home"/files
+mkdir -p "$home"/secrets "$home"/state/realms "$home"/import "$home"/repos "$home"/files
+chmod 700 "$home/state" "$home/state/realms"
 chmod 700 "$home" "$home"/secrets "$home"/state
 
 secret() { # secret <name>: a random secret file, made once
@@ -97,14 +98,22 @@ kaisatsu_bin=$(dirname "$jc_bin")/kaisatsu
   --db-password-file "$(secret kaisatsu-migrate-pw)"
 printf 'postgres://kaisatsu_app@127.0.0.1:%s/kaisatsu\n' "$pg_port" > "$home/secrets/kaisatsu-db-url"
 
-# The realm config of the export (no users), applied at start next to jc's own Portal realm.
+# The realm config of the export (no users), applied at start next to jc's own Portal realm. It
+# sits in the 0700 state dir: on dev it also holds people (REHEARSAL_PEOPLE, default
+# <rehearsal home>/people/<env>, the deployer's users-<realm>.jsonl; never on prod), without any
+# credential. Only the personas of REHEARSAL_DEMO_USERS (demo-users.yaml) keep e-mail and names.
+people=${REHEARSAL_PEOPLE:-$(dirname "$home")/people/$env_name}
+demo_users=${REHEARSAL_DEMO_USERS:-$(dirname "$home")/demo-users.yaml}
+people_args=()
+[ -d "$people" ] && people_args+=(--people "$people")
+[ -f "$demo_users" ] && people_args+=(--demo-users "$demo_users")
 if [ -d "$export_dir/keycloak" ]; then
-  python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/import/realms" \
-    --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu"
+  python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/state/realms" \
+    --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" "${people_args[@]}"
   # Each secret the realm config names gets a fresh value of the rehearsal (never the old one).
   while read -r name; do
     [ -n "$name" ] && export "$name=$(cat "$(secret "realm-$name")")"
-  done < "$home/import/realm-vars.txt"
+  done < "$home/state/realm-vars.txt"
 fi
 
 url() { printf 'postgres://%s:%s@127.0.0.1:%s/%s' "$1" "$(cat "$(secret "$1-pw")")" "$pg_port" "$2"; }
@@ -161,7 +170,7 @@ fi
 printf '[mounts.portal]\npath_prefix = ""\n%s\n' "$db_config" > "$home/jc.toml"
 nohup "$jc_bin" --role all --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
-  --kaisatsu-import-dir "$home/import/realms" \
+  --kaisatsu-import-dir "$home/state/realms" \
   --kaisatsu-database-url-file "$home/secrets/kaisatsu-db-url" \
   --kaisatsu-db-password-file "$(secret kaisatsu-app-pw)" \
   --shako-repo-root "$home/repos" --ekiben-file-root "$home/files" \

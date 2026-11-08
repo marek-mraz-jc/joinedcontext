@@ -355,19 +355,38 @@ def strip_people(realm: dict) -> dict:
     return out
 
 
-# A person from the deployer's users-<realm>.jsonl (supervisor G14, owner may override): ids,
-# attributes, groups and realm roles, never a credential. Every other member is dropped.
+# A person from the deployer's users-<realm>.jsonl (supervisor G14, dev only, owner may
+# override): ids, attributes, groups and realm roles, never a credential.
 PERSON_FIELDS = ("id", "username", "email", "firstName", "lastName", "enabled", "emailVerified",
                  "createdTimestamp", "attributes", "requiredActions", "groups", "realmRoles")
+# What only a demo or test persona keeps: dev signs people in by e-mail (registrationEmailAsUsername),
+# so for anyone else the username is a pseudonym and the e-mail and names stay out.
+PERSONA_ONLY = ("email", "firstName", "lastName", "emailVerified")
 
 
-def person(u: dict) -> dict | None:
+def personas(demo_users: Path | None) -> set[str]:
+    """The demo personas of the deployment's demo-users.yaml: their names (`demo.steward`) and ids."""
+    if not demo_users:
+        return set()
+    import yaml  # the CI venv's PyYAML
+    doc = yaml.safe_load(demo_users.read_text()) or {}
+    return {str(k) for k in doc} | {str(v["id"]) for v in doc.values() if isinstance(v, dict) and v.get("id")}
+
+
+def is_persona(u: dict, known: set[str]) -> bool:
+    return str(u.get("id")) in known or str(u.get("username", "")).split("@", 1)[0] in known
+
+
+def person(u: dict, known: set[str] = frozenset()) -> dict | None:
     """The person as kaisatsu imports it: allow-listed fields only, no credential, and the
     required actions that make them set a password (and OTP where they had one) at first sign-in.
     A service account is the realm file's, not a person: None."""
-    if u.get("serviceAccountClientId") or not u.get("username"):
+    if u.get("serviceAccountClientId") or not u.get("username") or not u.get("id"):
         return None
     out = {k: u[k] for k in PERSON_FIELDS if k in u}
+    if not is_persona(u, known):
+        out = {k: v for k, v in out.items() if k not in PERSONA_ONLY}
+        out["username"] = f"person-{u['id']}"
     # kaisatsu resolves $(env:...) and $(file:...) in imported text: no person's text may name one.
     out["attributes"] = {k: [v for v in vs if "$(" not in str(v)]
                          for k, vs in (u.get("attributes") or {}).items() if "$(" not in k}
@@ -376,12 +395,22 @@ def person(u: dict) -> dict | None:
     return out
 
 
-def add_people(realm: dict, lines) -> tuple[dict, int]:
-    """`realm` with the people of a users file added beside its service accounts."""
-    people = [p for p in map(person, lines) if p]
+def add_people(realm: dict, lines, known: set[str] = frozenset()) -> tuple[dict, dict]:
+    """`realm` with the people of a users file added beside its service accounts, and the counts."""
+    people = [p for p in (person(u, known) for u in lines) if p]
     out = dict(realm)
     out["users"] = list(realm.get("users") or []) + people
-    return out, len(people)
+    n_persona = sum(1 for p in people if not p["username"].startswith("person-"))
+    return out, {"people": len(people), "personas": n_persona, "pseudonymous": len(people) - n_persona,
+                 "credentials": 0}
+
+
+def write_private(path: Path, text: str) -> None:
+    """A file only this user reads (0600), whatever the umask."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.chmod(path, 0o600)
 
 
 def add_tester(realm: dict) -> dict:
@@ -482,6 +511,9 @@ def kaisatsu_check(kaisatsu_bin: str, tmp: Path):
 def cmd_realms(a):
     src, dst = Path(a.export) / "keycloak", Path(a.out)
     dst.mkdir(parents=True, exist_ok=True)
+    os.chmod(dst, 0o700)  # the realm files may hold people
+    if a.people and Path(a.people).exists() and Path(a.people).stat().st_mode & 0o077:
+        raise SystemExit(f"{a.people}: people are read only from a directory no one else can read (0700)")
     taken = []
     for f in sorted(src.glob("realm-*.json")):
         realm = json.loads(f.read_text())
@@ -489,11 +521,11 @@ def cmd_realms(a):
         if name in SKIPPED_REALMS:
             continue
         clean = strip_people(realm)
-        people_file = src / f"users-{name}.jsonl"
-        if people_file.exists():
-            clean, n = add_people(clean, _jsonl(people_file))
-            (dst.parent / f"realm-{name}-people.json").write_text(json.dumps({"people": n, "credentials": 0}))
-            print(f"realm {name}: {n} people, no credentials (UPDATE_PASSWORD set)")
+        people_file = Path(a.people) / f"users-{name}.jsonl" if a.people else None
+        if people_file and people_file.exists():
+            clean, counts = add_people(clean, _jsonl(people_file), personas(Path(a.demo_users) if a.demo_users else None))
+            (dst.parent / f"realm-{name}-people.json").write_text(json.dumps(counts))
+            print(f"realm {name}: {counts}")
         clean = add_tester(clean)
         if a.kaisatsu_bin:
             tmp = dst.parent / f".check-{name}.json"
@@ -503,7 +535,7 @@ def cmd_realms(a):
             if dropped:
                 print(f"realm {name}: {len(dropped)} parts kaisatsu refuses left out "
                       f"(realm-{name}-left-out.json): {sorted({d['kind'] for d in dropped})}")
-        (dst / f"{name}.json").write_text(json.dumps(clean, indent=1))
+        write_private(dst / f"{name}.json", json.dumps(clean, indent=1))
         taken.append(name)
         # The secret variables the realm names ($(env:NAME)): up.sh makes a value for each.
         names = sorted(set(re.findall(r"\$\((?:env:)?([A-Z][A-Z0-9_]*)\)", json.dumps(clean))))
@@ -1516,6 +1548,8 @@ def main(argv=None):
     s.add_argument("--env", required=True); s.add_argument("--out", required=True)
     s = sub.add_parser("realms"); s.add_argument("--export", required=True); s.add_argument("--out", required=True)
     s.add_argument("--kaisatsu-bin", help="leave out the mappers this kaisatsu refuses (named in the report)")
+    s.add_argument("--people", help="a 0700 dir holding users-<realm>.jsonl (dev only): people without credentials")
+    s.add_argument("--demo-users", help="the deployment's demo-users.yaml: the personas that keep e-mail and names")
     s = sub.add_parser("import"); s.add_argument("--export", required=True); s.add_argument("--base", required=True)
     s.add_argument("--state", required=True); s.add_argument("--report", required=True)
     s.add_argument("--now"); s.add_argument("--only"); s.add_argument("--daiya-bin")
