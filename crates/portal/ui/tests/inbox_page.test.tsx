@@ -126,6 +126,13 @@ describe("the inbox (T-3273)", () => {
     expect(within(events).queryByText(/mentioned you/)).toBeNull();
   });
 
+  it("holds the access asked of the project's spaces, and says when nobody waits", async () => {
+    show({ writes: [] });
+    const section = (await screen.findByRole("heading", { name: en.pipelines.access.inbox })).closest("section") as HTMLElement;
+    expect(within(section).getByText(en.inbox.accessLead.replace("{project}", "helsinki"))).toBeInTheDocument();
+    expect(await within(section).findByText(en.pipelines.access.inboxEmptyProject)).toBeInTheDocument();
+  });
+
   it("approves a change with its diff open, without leaving the page", async () => {
     const seen: Seen = { writes: [] };
     show(seen);

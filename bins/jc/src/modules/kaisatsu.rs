@@ -82,12 +82,12 @@ async fn apply_portal_realm(store: &Arc<dyn Store>, ctx: BuildCtx<'_>) -> Result
     ) else {
         return Ok(());
     };
-    let realm = setup::portal_realm(&base);
+    let files = setup::portal_realm_files(&base).map_err(|e| err(&e))?;
     let options = ApplyOptions {
         env_vars: setup::realm_env(ctx.setup),
         ..ApplyOptions::default()
     };
-    let report = apply_realm_files(store, &[("jc-portal.json".to_owned(), realm)], &options)
+    let report = apply_realm_files(store, &files, &options)
         .await
         .map_err(|e| err(&e))?;
     tracing::info!(

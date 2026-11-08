@@ -290,4 +290,63 @@ describe("access requests on the pages (PL-90, PL-91, PL-93)", () => {
     await waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0]).toEqual({ path: "/api/v1/projects/helsinki/access-requests/ar-0a1b2c3d4e5f/revoke", body: { reason: "the index moved" } });
   });
+
+  it("lists every space's requests in the project-wide inbox, each naming its space (jc_access_request_list)", async () => {
+    serve([request("pending"), { ...request("approved"), id: "ar-111111111111", space: "traffic", account: "x/pl-y" }]);
+    wrap(<AccessRequestInbox project="helsinki" />);
+    const first = (await screen.findByText("city-kpis/pl-air-index")).closest("li") as HTMLElement;
+    const second = screen.getByText("x/pl-y").closest("li") as HTMLElement;
+    expect(within(first).getByText("· in space air")).toBeInTheDocument();
+    expect(within(second).getByText("· in space traffic")).toBeInTheDocument();
+    // The reason field carries its hint with an example (owner rule 2026-10-21).
+    expect(within(first).getByLabelText(L.decisionReason)).toHaveAccessibleDescription(L.decision.reasonHelp);
+    await userEvent.click(within(first).getByRole("button", { name: "Approve access for city-kpis/pl-air-index" }));
+    await waitFor(() => expect(sent.map((s) => s.path)).toEqual(["/api/v1/projects/helsinki/access-requests/ar-0a1b2c3d4e5f/approve"]));
+  });
+
+  it("says so when nobody waits in the project, and says the server's refusal of the list", async () => {
+    serve([]);
+    const empty = wrap(<AccessRequestInbox project="helsinki" />);
+    expect(await screen.findByText(L.inboxEmptyProject)).toBeInTheDocument();
+    empty.unmount();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ title: "Forbidden", status: 403, detail: "you decide no space of helsinki" }), {
+          status: 403,
+          headers: { "Content-Type": "application/problem+json" },
+        }),
+      ),
+    );
+    wrap(<AccessRequestInbox project="helsinki" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("No access request of this project is yours to decide: you decide no space of helsinki");
+  });
+
+  it("says a failure of the list as one, apart from a refusal", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ title: "Service Unavailable", status: 503, detail: "the store did not answer" }), {
+          status: 503,
+          headers: { "Content-Type": "application/problem+json" },
+        }),
+      ),
+    );
+    wrap(<AccessRequestInbox project="helsinki" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The access requests did not load: the store did not answer");
+  });
+
+  it("names the change an approved request's grant waits in", async () => {
+    serve([{ ...request("approved"), change: "chg-00000042" }]);
+    wrap(<AccessRequestInbox project="helsinki" />);
+    expect(await screen.findByText("Its grant is change chg-00000042; access starts once another person approves it.")).toBeInTheDocument();
+  });
+
+  it("stays quiet on an Endpoint's page when the list is refused", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 403, headers: { "Content-Type": "application/json" } })));
+    const { container } = wrap(<AccessRequestInbox project="helsinki" space="air" />);
+    await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
 });

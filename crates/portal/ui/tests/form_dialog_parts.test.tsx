@@ -61,6 +61,23 @@ describe("ResourceFormFooter", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it("says_why_propose_waits_as_a_next_step_before_any_check_and_as_an_error_after_one", () => {
+    const footer = (state: "none" | "stale") => (
+      <ResourceFormFooter
+        onCancel={vi.fn()}
+        stoppedMessage={null}
+        verdict={{ verdict: state === "none" ? null : VERDICT, state, refused: false }}
+        proposeReason={en.drafts.proposeReason.stale}
+        lax={false}
+        error={null}
+      />
+    );
+    const { rerender } = render(footer("none"), { wrapper });
+    expect(screen.getByTestId("propose-reason")).toHaveClass("text-fg-muted");
+    rerender(footer("stale"));
+    expect(screen.getByTestId("propose-reason")).toHaveClass("text-danger");
+  });
+
   it("reads_a_verdict_against_the_digest_it_judged", () => {
     expect(verdictStateOf(null, "d1")).toBe("none");
     expect(verdictStateOf(VERDICT, "d1")).toBe("green");
