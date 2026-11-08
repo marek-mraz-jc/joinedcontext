@@ -10,8 +10,7 @@ finding carries one of three verdicts:
 - **documented**: not fixed here; the row names the fix and where it goes.
 - **latent**: not reachable in `jc` today; the row names what would make it reachable.
 
-No `unsafe` was found in any reviewed crate. Every high finding is fixed except J-1, which lives in
-the deployment repository.
+No `unsafe` was found in any reviewed crate. Every high finding is fixed (J-1 in the deployment repository).
 
 ## 1. Fixed
 
@@ -35,15 +34,10 @@ the deployment repository.
 | Y-1 | high | SQL checker skipped quoted function names and `TABLE rel` | a quoted name followed by `(` and any `TABLE` statement are refused | daiya-query `postgres::the_checker_refuses_malformed_and_foreign_sql_with_a_reason` |
 | Y-2 | high | an Editor created or repointed datasources (url, secrets, allowed views) | datasource create and update need Admin on the Organization | daiya-api `compat_routes::datasource_crud_answers_as_grafana` (editor POST/PUT 403) |
 | Y-4 | medium | public-dashboard range cap bypassed by i64 overflow | saturating range and interval arithmetic | daiya-api `public_routes::an_overflowing_public_range_is_still_capped` |
+| J-1 | high | the deployed `jc.toml` had no `trusted_proxies`: every caller was the APISIX pod, so per-address sign-in locks and rate limits were one bucket | deployment `jc-ship` 92fcc9b4e: `trusted_proxies` from the environment's `jc.server.trustedProxies` (addons: 10.42.0.0/16); the render refuses an empty list and any /0 | deployment `tests/test_jc_component.py` |
 | Y-10 | low | `intervalFactor` multiplied the step unchecked | `saturating_mul` | daiya-query `prometheus::steps_round_like_grafana` |
 
-## 2. Documented: high
-
-| Id | Where the fix goes | Fix |
-|---|---|---|
-| J-1 | deployment `components/jc/values/server/base-values.yaml.gotmpl` (`jc.toml`) | add `trusted_proxies` with the APISIX pod CIDR (the cluster pod network, `10.42.0.0/16` on k3s), so `jc-router` takes the client address from `X-Forwarded-For`; until then kaisatsu's per-address sign-in lock and daiya's public rate limit are one bucket for everybody. Not changed here: jc-rest pushes only the monorepo branch, and the cutover (`CUTOVER.md` step 0) is the place for the deployment change |
-
-## 3. Documented: medium
+## 2. Documented: medium
 
 | Id | Fix |
 |---|---|
@@ -70,7 +64,7 @@ the deployment repository.
 | J-3 | siblings reach each other through jc's own listener (`127.0.0.1:<port>`) in host mode too (`siblings.rs` builds the internal URL from jc's listen address, not the public mount) |
 | J-4 | host mode (one host per module) is the cutover layout (`CUTOVER.md` section 4); slug mode stays for a single-tenant install only |
 
-## 4. Documented: low and latent
+## 3. Documented: low and latent
 
 | Id | Verdict | Fix |
 |---|---|---|
