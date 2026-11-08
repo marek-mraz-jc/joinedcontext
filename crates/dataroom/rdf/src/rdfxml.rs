@@ -531,7 +531,10 @@ mod tests {
         let [triple] = graph.triples.iter().collect::<Vec<_>>()[..] else {
             panic!("one triple expected: {:?}", graph.triples);
         };
-        assert_eq!(triple.subject, SubjectNode::Named("https://e.org/ds?a=1&b=2".into()));
+        assert_eq!(
+            triple.subject,
+            SubjectNode::Named("https://e.org/ds?a=1&b=2".into())
+        );
         let Term::Literal(literal) = &triple.object else {
             panic!("a literal expected: {:?}", triple.object);
         };
