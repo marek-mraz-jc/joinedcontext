@@ -177,11 +177,11 @@ def test_the_importer_writes_only_to_a_loopback_jc():
 def test_a_catalogue_instance_publishes_only_into_the_rehearsal():
     ckan = (b"apiVersion: joinedcontext.com/v1alpha1\nkind: CkanInstance\nmetadata:\n  name: zilina\n"
             b"spec:\n  url: https://opendata.dev.joinedcontext.com\n  organizationDefault: zilina\n")
-    fenced = rh.fence_writes(ckan, "http://localhost:42101/")
+    fenced = rh.fence_writes(ckan)
     assert b"dev.joinedcontext.com" not in fenced
-    assert b"  url: http://localhost:42101/opendata\n" in fenced
+    assert b"  url: https://catalogue.rehearsal.invalid\n" in fenced
     endpoint = b"kind: Endpoint\nspec:\n  catalog:\n    publisher:\n      url: https://dev.joinedcontext.com/\n"
-    assert rh.fence_writes(endpoint, "http://localhost:1") == endpoint
+    assert rh.fence_writes(endpoint) == endpoint
 
 
 def test_entity_batches_keep_their_tenant_and_stay_under_the_caps():
@@ -218,15 +218,21 @@ def test_the_import_never_sends_an_instance_older_than_the_window(tmp_path):
     (export / "antares" / "temporal.jsonl").write_text("".join(json.dumps(instance(d)) + "\n" for d in (25, 23, 1)))
     (export / "manifest.json").write_text(json.dumps({"env": "unit", "exportedAt": rh.iso(NOW)}))  # written last
     report = tmp_path / "report.json"
-    rh.main(["import", "--export", str(export), "--base", f"http://127.0.0.1:{server.server_port}",
-             "--state", str(tmp_path), "--report", str(report), "--only", "antares", "--now", rh.iso(later)])
-    server.shutdown()
-    r = json.loads(report.read_text())
+    def run(now):
+        seen.clear()
+        rh.main(["import", "--export", str(export), "--base", f"http://127.0.0.1:{server.server_port}",
+                 "--state", str(tmp_path), "--report", str(report), "--only", "antares", "--now", rh.iso(now)])
+        return json.loads(report.read_text()), sorted(
+            i["value"] for path, _, body in seen if "temporal" in path for i in body["v"])
+    r, sent = run(NOW)
     assert r["cutoff"] == "2026-11-07T12:00:00Z"
     assert r["antares"]["temporal"] == 2 and len(r["antares"]["temporalRefused"]) == 1
-    sent = [i["value"] for path, _, body in seen if "temporal" in path for i in body["v"]]
-    assert sorted(sent) == [1, 23]
+    assert sent == [1, 23]
     assert all(tenant == "t" for _, tenant, _ in seen)
+    # Imported 5 h after the export: the 23 h instance is 28 h old now and stays out.
+    r, sent = run(later)
+    assert r["cutoff"] == "2026-11-07T17:00:00Z" and sent == [1]
+    server.shutdown()
 
 
 # ------------------------------------------------------------------------------------------------

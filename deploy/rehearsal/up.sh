@@ -4,8 +4,8 @@
 #   deploy/rehearsal/up.sh <env> <public port> <postgres port>
 #
 # Every secret is a 0600 file under $REHEARSAL_HOME/<env>/secrets (generated once, never printed).
-# kaisatsu, Antares and the Portal keep their state in PostgreSQL; shako, daiya, dataroom and
-# ekiben have no Postgres path in jc yet and start empty, so import.sh runs after every start.
+# kaisatsu, Antares, the Portal, shako, daiya and dataroom keep their state in PostgreSQL; ekiben
+# has no Postgres path in jc and starts empty.
 # The 24 h rule (owner 2026-11-08): `rehearsal.py retain` deletes Antares temporal instances older
 # than 24 h at start and hourly; Antares' own retention (whole days, whole weekly partitions) runs
 # beside it with ANTARES_TEMPORAL_RETENTION_DAYS=1. Current entity state is never deleted.
@@ -66,6 +66,27 @@ database portal portal
 database antares antares
 sql -d antares -c "CREATE EXTENSION IF NOT EXISTS postgis"
 
+# shako, daiya and dataroom: each migration runs as <m>_rh_migrate (owner of its database, member of
+# <m>_migrate) and grants its tables to <m>_app, which the login role <m>_rh holds (NOBYPASSRLS).
+module_db() { # module_db <module>
+  local m=$1
+  sql >/dev/null <<SQL
+SELECT format('CREATE ROLE %I NOLOGIN NOBYPASSRLS', r) FROM unnest(ARRAY['${m}_app', '${m}_migrate']) r
+ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) \gexec
+SQL
+  role "${m}_rh" "$(secret "${m}-pw")" >/dev/null
+  role "${m}_rh_migrate" "$(secret "${m}-migrate-pw")" >/dev/null
+  sql -c "GRANT ${m}_app TO ${m}_rh" -c "GRANT ${m}_migrate TO ${m}_rh_migrate" >/dev/null
+  database "$m" "${m}_rh_migrate" >/dev/null
+  printf 'postgres://%s_rh@127.0.0.1:%s/%s\n' "$m" "$pg_port" "$m" > "$home/secrets/$m-db-url"
+  printf 'postgres://%s_rh_migrate@127.0.0.1:%s/%s\n' "$m" "$pg_port" "$m" > "$home/secrets/$m-db-migrate-url"
+  # A [dataroom] section must name its organization and catalogue: jc's defaults.
+  [ "$m" = dataroom ] && printf '\n[dataroom]\norg_id = "00000000-0000-7000-8000-000000000001"\ncatalogue_id = "00000000-0000-7000-8000-000000000010"\n'
+  printf '\n[%s.database]\nurl_file = "%s"\npassword_file = "%s"\nmigrate_url_file = "%s"\nmigrate_password_file = "%s"\n' \
+    "$m" "$home/secrets/$m-db-url" "$(secret "${m}-pw")" "$home/secrets/$m-db-migrate-url" "$(secret "${m}-migrate-pw")"
+}
+db_config=$(for m in shako daiya dataroom; do module_db "$m"; done)
+
 kaisatsu_bin=$(dirname "$jc_bin")/kaisatsu
 "$kaisatsu_bin" migrate --database-url "postgres://kaisatsu_migrate@127.0.0.1:$pg_port/kaisatsu" \
   --db-password-file "$(secret kaisatsu-migrate-pw)"
@@ -82,13 +103,25 @@ if [ -d "$export_dir/keycloak" ]; then
 fi
 
 url() { printf 'postgres://%s:%s@127.0.0.1:%s/%s' "$1" "$(cat "$(secret "$1-pw")")" "$pg_port" "$2"; }
-export JC_PORTAL_DATABASE_URL=$(url portal portal)
-export ANTARES_STORE=postgres ANTARES_DATABASE_URL=$(url antares antares)
+JC_PORTAL_DATABASE_URL=$(url portal portal); export JC_PORTAL_DATABASE_URL
+ANTARES_DATABASE_URL=$(url antares antares); export ANTARES_STORE=postgres ANTARES_DATABASE_URL
 export ANTARES_TEMPORAL_RETENTION_DAYS=1 ANTARES_SWEEP_SECS=${REHEARSAL_SWEEP_SECS:-3600}
 export ANTARES_HISTORY_BACKFILL=on
 # jc is one process: the local notification bus cannot double-fire.
 export ANTARES_ALLOW_SHARED_LOCAL=1
 export JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false JC_PORTAL_SYNC_INTERVAL=10
+# The catalogue over plain http, for this one-machine rehearsal only (jc and the Portal warn).
+export JC_PORTAL_CKAN_ALLOW_HTTP=true
+# Every imported CkanInstance names this catalogue (rehearsal.py fence_writes); the Portal calls it
+# at the rehearsal's own dataroom.
+export JC_PORTAL_CKAN_URL=https://catalogue.rehearsal.invalid JC_PORTAL_CKAN_API_URL=http://127.0.0.1:$port/opendata
+# The CkanInstances name apiTokenRef.envVar CKAN_API_TOKEN: here it is jc's own dataroom publisher
+# token (Read and Propose on the rehearsal's default catalogue), made before jc's first start,
+# which keeps an existing file.
+if [ ! -s "$home/state/catalogue-token" ]; then
+  (umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$home/state/catalogue-token")
+fi
+CKAN_API_TOKEN=$(cat "$home/state/catalogue-token"); export CKAN_API_TOKEN
 # The Portal's internal listener (/metrics, run callbacks) on loopback, one port per environment.
 export JC_INTERNAL_BIND=127.0.0.1:$((pg_port + 100))
 export RUST_LOG=${RUST_LOG:-info,sqlx=warn}
@@ -99,7 +132,7 @@ export JC_GITEA_OWNER=${REHEARSAL_CONFIG_OWNER:-joinedcontext} JC_GITEA_REPO=${R
 if [ -s "$home/jc.pid" ] && kill "$(cat "$home/jc.pid")" 2>/dev/null; then
   for _ in $(seq 20); do kill -0 "$(cat "$home/jc.pid")" 2>/dev/null || break; sleep 0.5; done
 fi
-printf '[mounts.portal]\npath_prefix = ""\n' > "$home/jc.toml"
+printf '[mounts.portal]\npath_prefix = ""\n%s\n' "$db_config" > "$home/jc.toml"
 nohup "$jc_bin" --role all --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
   --kaisatsu-import-dir "$home/import/realms" \

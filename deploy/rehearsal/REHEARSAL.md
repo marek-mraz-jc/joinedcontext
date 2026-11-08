@@ -39,17 +39,22 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   migrations, writes the export's realm without people into the kaisatsu import dir, and starts
   `jc`. Each `$(env:NAME)` secret of the realm gets a fresh random value. It restarts a running
   `jc` of the same environment.
-- shako, daiya, dataroom and ekiben keep memory stores in `jc`: run `import` after every `up.sh`.
-  The import is idempotent (a rerun reports `unchanged`).
-- `import` writes only to a loopback base. It turns each CkanInstance `spec.url` to the
-  rehearsal's own `/opendata` (report: `fenced`), so the Portal never publishes into the source
-  environment's catalogue.
+- kaisatsu, the Portal, Antares, shako, daiya and dataroom keep their state in PostgreSQL (one
+  database each, app roles without BYPASSRLS); ekiben keeps memory only. The import is idempotent
+  (a rerun reports `unchanged`).
+- `import` writes only to a loopback base and only from a settled bundle (no data file newer than
+  `manifest.json`). It turns each CkanInstance `spec.url` to `https://catalogue.rehearsal.invalid`
+  (report: `fenced`), which up.sh routes to the rehearsal's own dataroom, so the Portal never
+  publishes into the source environment's catalogue.
+- `realms` leaves out only what a live Keycloak export carries that kaisatsu refuses and nothing
+  uses (unknown built-in mappers, unbound built-in flows, client-flow alternatives no client uses),
+  each named in `import/realm-<name>-left-out.json`; anything else kaisatsu refuses stops the start.
 - Test persons: `smoke` and `shots.py` create their own (`rehearsal-*`, random passwords kept in
   memory) in realm `jc`; the imported realm gets `rehearsal-tester`.
 
 ## 3. The 24-hour rule (Antares history only)
 
-- Import: a temporal instance observed before `exportedAt - 24 h` is refused; the report holds the
+- Import: a temporal instance observed before the later of `exportedAt - 24 h` and `now - 24 h` is refused; the report holds the
   cut-off (`cutoff`) and every refused instance. Config, files, current entity state and dashboards
   have no age cut.
 - Rolling: `rehearsal.py retain` (started by up.sh, at start and every `REHEARSAL_RETAIN_SECS`,

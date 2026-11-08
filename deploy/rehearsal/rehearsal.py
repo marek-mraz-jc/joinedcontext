@@ -48,6 +48,8 @@ SKIPPED_REALMS = {"master"}
 PEOPLE_KEYS = ("users", "federatedUsers")
 MAX_BATCH_BYTES = 900_000  # below Antares' 4 MiB body cap and shako's request limit
 MAX_BATCH_ENTITIES = 500
+# jc's client that administers people in realm jc (bins/jc/src/setup.rs PORTAL_ADMIN_CLIENT).
+PORTAL_ADMIN_CLIENT = "portal-reconciler"
 IMPORT_WORKERS = 4  # parallel batch writes into the local broker
 MAX_REPORTED = 200  # refused calls kept in the report; the rest are only counted
 
@@ -471,15 +473,19 @@ def git_blob_sha(data: bytes) -> str:
 
 
 CKAN_URL = re.compile(rb"^(\s+url:\s*)\S+", re.M)
+# The catalogue name every CkanInstance gets in a rehearsal. jc-core wants an https URL (EP-67);
+# up.sh routes this name to the rehearsal's own dataroom (JC_PORTAL_CKAN_URL -> _API_URL), and
+# `.invalid` never resolves should anything call it directly.
+REHEARSAL_CATALOGUE = b"https://catalogue.rehearsal.invalid"
 
 
-def fence_writes(data: bytes, base: str) -> bytes:
+def fence_writes(data: bytes) -> bytes:
     """A CkanInstance is the one manifest the Portal writes to an outside host with (its API
-    token publishes datasets there): its `spec.url` is turned to the rehearsal's own dataroom, so
-    a rehearsal never publishes into the catalogue of the environment it was copied from."""
+    token publishes datasets there): its `spec.url` is turned to the rehearsal's catalogue name,
+    so a rehearsal never publishes into the catalogue of the environment it was copied from."""
     if not re.search(rb"^kind:\s*CkanInstance\s*$", data, re.M):
         return data
-    return CKAN_URL.sub(lambda m: m.group(1) + base.rstrip("/").encode() + b"/opendata", data)
+    return CKAN_URL.sub(lambda m: m.group(1) + REHEARSAL_CATALOGUE, data)
 
 
 def import_shako(h: Http, token: str, export: Path, report: dict):
@@ -493,7 +499,7 @@ def import_shako(h: Http, token: str, export: Path, report: dict):
         for p in sorted(root.rglob("*")):
             if p.is_file() and not p.is_symlink():
                 data = p.read_bytes()
-                files[p.relative_to(root).as_posix()] = fenced = fence_writes(data, h.base)
+                files[p.relative_to(root).as_posix()] = fenced = fence_writes(data)
                 if fenced != data:
                     report.setdefault("fenced", []).append(f"{owner}/{name}/{p.relative_to(root).as_posix()}")
         row = {"repo": f"{owner}/{name}", "files": len(files)}
@@ -768,11 +774,13 @@ def cmd_import(a):
         raise SystemExit(f"the bundle is not settled ({why}): import after the exporter finishes")
     now = parse_time(a.now) if a.now else utcnow()
     manifest = json.loads((export / "manifest.json").read_text())
-    # The window ends at the export: an instance observed more than 24 h before it is refused.
-    cutoff = cutoff_for(parse_time(manifest["exportedAt"]) if manifest.get("exportedAt") else now)
+    # Only the last day: observed at most 24 h before the export, and at most 24 h before now (the
+    # rehearsal's rolling retention would delete it at once).
+    exported = parse_time(manifest["exportedAt"]) if manifest.get("exportedAt") else now
+    cutoff = max(cutoff_for(exported), cutoff_for(now))
     report = {"env": manifest.get("env"), "export": str(export), "exportedAt": manifest.get("exportedAt"),
               "synthetic": manifest.get("synthetic", False), "importedAt": iso(now), "cutoff": iso(cutoff),
-              "rule": f"no temporal instance observed before {iso(cutoff)} (export time - 24 h) is imported; "
+              "rule": f"no temporal instance observed before {iso(cutoff)} (the later of export time and now, - 24 h) is imported; "
                       "config, files, current entity state and dashboards are copied whole"}
     h = Http(a.base)
     steps = a.only.split(",") if a.only else ["shako", "antares", "daiya"]
@@ -884,10 +892,10 @@ def sign_in(h: Http, username: str, password: str):
 
 def admin_token(h: Http, state: Path) -> str:
     st, body = h.json("POST", "/id/realms/jc/protocol/openid-connect/token", form={
-        "grant_type": "client_credentials", "client_id": "portal-admin",
+        "grant_type": "client_credentials", "client_id": PORTAL_ADMIN_CLIENT,
         "client_secret": read_secret(state, "portal-admin-client-secret")})
     if st != 200:
-        raise RuntimeError(f"portal-admin token: {st} {body}")
+        raise RuntimeError(f"{PORTAL_ADMIN_CLIENT} token: {st} {body}")
     return body["access_token"]
 
 
