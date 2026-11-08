@@ -8,7 +8,7 @@ Branch `jc-one-binary-1` (from `controlroom-argon-1`), local only, never pushed.
 - `bins/jc`: lib (`app`, `config`, `module`, `modules/*`, `runtime`) and a thin `main.rs`.
 - One tokio runtime (built in `main.rs`), one tracing subscriber (`runtime::init_tracing`, `try_init`, idempotent),
   one Prometheus recorder for the `metrics` facade (`runtime::metrics_handle`, installed once, served only on the
-  optional internal admin listener `/metrics`), one allocator (jemalloc, feature `jemalloc`, `main.rs`), one rustls
+  optional internal admin listener `/metrics`, behind its bearer token since the review), one allocator (jemalloc, feature `jemalloc`, `main.rs`), one rustls
   crypto provider (ring, `runtime::install_crypto_provider`, skipped when one is installed), one
   `CancellationToken` and one `TaskTracker` for shutdown (SIGTERM/Ctrl-C in `main.rs`).
 - Mounting through `crates/shared/jc-router`: `--mode slug` (any host, `/<slug>`: `/id`, `/opendata`, `/dashboards`,
