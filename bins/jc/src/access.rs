@@ -223,7 +223,10 @@ mod tests {
             );
         }
         for module in RECORDS_ITS_OWN {
-            assert!(!text.contains(&format!("{module}_http_")), "{module}: {text}");
+            assert!(
+                !text.contains(&format!("{module}_http_")),
+                "{module}: {text}"
+            );
         }
     }
 
