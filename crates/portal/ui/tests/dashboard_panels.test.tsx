@@ -19,6 +19,8 @@ import { tableOf, TablePanel } from "../src/components/panels/TablePanel";
 import { Legend } from "../src/components/panels/TimeSeriesPanel";
 import { formatUnit, settingsFor } from "../src/components/panels/fieldConfig";
 import { ordered, sections } from "../src/components/panels/DashboardGrid";
+import { ColourKey } from "../src/components/panels/ChartPanels";
+import { Fill, Swatch } from "../src/components/panels/paint";
 import { panelQuery } from "../src/pages/grafana/DashboardPage";
 import { resolveTime } from "../src/components/panels/timeRange";
 import * as frames from "./fixtures/panel_frames";
@@ -54,6 +56,16 @@ describe("timeseries", () => {
     const svg = await svgOf(built.spec);
     expect(count(svg, /class="mark-line/)).toBeGreaterThanOrEqual(1);
     expect(svg).toMatch(/\d+(\.\d)? req\/s/);
+  });
+
+  it("spans the asked time range on its x axis, not years", async () => {
+    const built = timeSeriesSpec(frames.requestRate, { options: {}, locale: "en", theme, height: 200, from: frames.FROM, to: frames.TO });
+    const [vega, vegaLite, interpreter] = await loadVega();
+    const compiled = vegaLite.compile({ ...built.spec, width: 600 } as unknown as TopLevelSpec).spec;
+    const view = new vega.View(vega.parse(compiled, undefined, { ast: true }), { expr: interpreter.expressionInterpreter, renderer: "none" });
+    await view.runAsync();
+    expect((view.scale("x").domain() as Date[]).map((at) => at.getTime())).toEqual([frames.FROM, frames.TO]);
+    view.finalize();
   });
 
   it("draws the helsinki pm25 history with a threshold line and a table legend of its calcs", async () => {
@@ -166,6 +178,31 @@ describe("barchart and piechart", () => {
     expect(built.slices.map((slice) => slice.value)).toEqual([5120, 830, 2400]);
     const svg = await svgOf(built.spec);
     expect(count(svg, /class="mark-arc/)).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("colour keys", () => {
+  it("names each colour of a chart beside its swatch, a share after it", () => {
+    render(<ColourKey label="Legend" items={[{ name: "entities", color: "#0f766e", detail: "59.1%" }, { name: "health", color: "#d97706" }]} />);
+    const key = screen.getByRole("list", { name: "Legend" });
+    expect(within(key).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["entities59.1%", "health"]);
+  });
+
+  it("paints a swatch and a bar fill in the dashboard's colour, the fill as long as its share", () => {
+    const { container } = render(
+      <div>
+        <Swatch color="#dc2626" />
+        <Fill share={0.25} color="#15803d" />
+      </div>,
+    );
+    const [swatch, fill] = [...container.querySelectorAll("span")];
+    expect(swatch).toHaveStyle({ backgroundColor: "#dc2626" });
+    expect(fill).toHaveStyle({ width: "25%" });
+  });
+
+  it("draws nothing for a chart with no colours to name", () => {
+    const { container } = render(<ColourKey label="Legend" items={[]} />);
+    expect(container).toBeEmptyDOMElement();
   });
 });
 

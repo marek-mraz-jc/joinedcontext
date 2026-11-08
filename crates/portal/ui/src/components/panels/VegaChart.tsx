@@ -42,6 +42,8 @@ export function loadVega(): Promise<VegaModules> {
 export interface HoverAt {
   x: number;
   y: number;
+  /** The chart's width when the pointer moved, so the tooltip opens away from the nearer edge. */
+  width: number;
   datum: Record<string, unknown>;
 }
 
@@ -86,7 +88,7 @@ export function VegaChart({ spec, label, height, tooltip, className }: VegaChart
             return;
           }
           const box = element.getBoundingClientRect();
-          setHover({ x: event.clientX - box.left, y: event.clientY - box.top, datum: item.datum });
+          setHover({ x: event.clientX - box.left, y: event.clientY - box.top, width: box.width, datum: item.datum });
         });
         view = made;
         return made.runAsync();
@@ -102,10 +104,12 @@ export function VegaChart({ spec, label, height, tooltip, className }: VegaChart
     };
   }, [spec]);
 
-  const width = host.current?.clientWidth ?? 0;
   return (
     <div className={clsx("relative w-full", className)}>
-      <div ref={host} role="img" aria-label={label} className="w-full" style={{ height }} onPointerLeave={() => setHover(null)} />
+      {/* Vega writes its own role and label onto its container, so the chart's label sits a level up. */}
+      <div role="img" aria-label={label}>
+        <div ref={host} className="w-full" style={{ height }} onPointerLeave={() => setHover(null)} />
+      </div>
       {failed ? <p className="text-caption text-danger">{failed}</p> : null}
       {hover && tooltip ? (
         <div
@@ -113,7 +117,7 @@ export function VegaChart({ spec, label, height, tooltip, className }: VegaChart
           className="pointer-events-none absolute z-20 max-w-72 rounded-md border border-border bg-surface p-2 text-caption text-fg shadow-2"
           style={{
             top: Math.max(0, hover.y + 12),
-            ...(hover.x > width / 2 ? { right: Math.max(0, width - hover.x + 12) } : { left: hover.x + 12 }),
+            ...(hover.x > hover.width / 2 ? { right: Math.max(0, hover.width - hover.x + 12) } : { left: hover.x + 12 }),
           }}
         >
           {tooltip(hover.datum)}

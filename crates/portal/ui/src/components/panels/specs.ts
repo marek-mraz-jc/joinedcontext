@@ -89,6 +89,24 @@ function thresholdLayers(thresholds: Thresholds | undefined, mode: unknown): Spe
     }));
 }
 
+/**
+ * An instant as a Vega-Lite DateTime. A plain number in a temporal domain compiles to Vega's
+ * `datetime(ms)`, which reads the number as a year: every line then sat at the left edge.
+ */
+export function dateTimeOf(ms: number): Spec {
+  const at = new Date(ms);
+  return {
+    utc: true,
+    year: at.getUTCFullYear(),
+    month: at.getUTCMonth() + 1,
+    date: at.getUTCDate(),
+    hours: at.getUTCHours(),
+    minutes: at.getUTCMinutes(),
+    seconds: at.getUTCSeconds(),
+    milliseconds: at.getUTCMilliseconds(),
+  };
+}
+
 export interface TimeSeriesOptions {
   fieldConfig?: FieldConfigSource;
   options?: Record<string, unknown>;
@@ -141,7 +159,7 @@ export function timeSeriesSpec(frames: Frame[], opts: TimeSeriesOptions): { spec
   const domain = shown.map((one) => one.name);
   const range = shown.map((one) => colors[series.indexOf(one)]);
   const color = { field: "s", type: "nominal", scale: { domain, range }, legend: null };
-  const x = { field: "t", type: "temporal", scale: { domain: [opts.from, opts.to] }, axis: timeAxis() };
+  const x = { field: "t", type: "temporal", scale: { domain: [dateTimeOf(opts.from), dateTimeOf(opts.to)] }, axis: timeAxis() };
   const y: Spec = {
     field: "v",
     type: "quantitative",
@@ -329,7 +347,7 @@ export function heatmapSpec(frames: Frame[], opts: TimeOptions): { spec: Spec; b
       data: { values: values.filter((cell) => cell.v !== null) },
       mark: { type: "rect", tooltip: true },
       encoding: {
-        x: { field: "t", type: "temporal", scale: { domain: [opts.from, opts.to] }, axis: timeAxis() },
+        x: { field: "t", type: "temporal", scale: { domain: [dateTimeOf(opts.from), dateTimeOf(opts.to)] }, axis: timeAxis() },
         x2: { field: "t2" },
         y: { field: "b", type: "ordinal", sort: buckets.slice().reverse(), axis: { title: null } },
         color: { field: "v", type: "quantitative", scale: { scheme }, legend: { disable: false, title: null, orient: "right", labelExpr: `jcFormat(datum.value, ${quoted(formatKey)})` } },
@@ -385,7 +403,7 @@ export function stateTimelineSpec(frames: Frame[], opts: TimeOptions): { spec: S
       data: { values: rows },
       mark: { type: "bar", tooltip: true, height: { band: 0.8 } },
       encoding: {
-        x: { field: "t", type: "temporal", scale: { domain: [opts.from, opts.to] }, axis: timeAxis() },
+        x: { field: "t", type: "temporal", scale: { domain: [dateTimeOf(opts.from), dateTimeOf(opts.to)] }, axis: timeAxis() },
         x2: { field: "t2" },
         y: { field: "row", type: "nominal", axis: { title: null, labelLimit: 140 } },
         color: { field: "color", type: "nominal", scale: null, legend: null },

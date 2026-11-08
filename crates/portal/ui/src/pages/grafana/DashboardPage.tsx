@@ -98,7 +98,7 @@ function VariablePicker({ project, uid, variable, value, onChange }: { project: 
   const id = `dashboard-var-${variable.name}`;
   return (
     <Field id={id} label={variable.label || variable.name} help={read.isError ? reasonOf(read.error) : undefined}>
-      <Select id={id} value={value} onChange={(event) => onChange(event.target.value)} disabled={read.isPending && variable.kind === "query"}>
+      <Select id={id} value={value} onChange={(event) => onChange(event.target.value)} disabled={read.isPending && variable.kind === "query"} title={read.isPending && variable.kind === "query" ? t("dashboardView.readingValues") : undefined}>
         {variable.includeAll ? <option value="$__all">{t("dashboardView.all")}</option> : null}
         {options.map((option) => (
           <option key={option.value} value={option.value}>

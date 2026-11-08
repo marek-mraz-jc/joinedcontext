@@ -25,18 +25,32 @@ export interface TableColumn {
   settings: FieldSettings;
 }
 
-/** The frames as grid entities (`c0`, `c1` ... in column order) and the columns that name them. */
+/**
+ * A column's attribute name in the grid: its field name as a `q` term (`PM2.5` is `PM2_5`), so the
+ * grid's filter and its example read the column a person sees; `c<index>` when nothing is left.
+ */
+export function attrOf(name: string, index: number, taken: Set<string>): string {
+  let attr = name.normalize("NFKD").replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "");
+  if (!/^[A-Za-z_]/.test(attr)) attr = attr ? `c_${attr}` : `c${index}`;
+  // The grid keeps `id` and `type` for the entity itself.
+  if (attr === "id" || attr === "type" || taken.has(attr)) attr = `${attr}_${index}`;
+  taken.add(attr);
+  return attr;
+}
+
+/** The frames as grid entities, one attribute per column, and the columns that name them. */
 export function tableOf(frames: Frame[], fieldConfig: FieldConfigSource | undefined): { columns: TableColumn[]; entities: Record<string, unknown>[] } {
   const { columns: fields, names, rows } = rowsOf(frames);
+  const taken = new Set<string>();
   const columns = names.map((name, index) => {
     const settings = settingsFor(fieldConfig, fields[index]);
-    return { attr: `c${index}`, label: settings.displayName ?? name, settings, hidden: settings.custom.hidden === true };
+    return { attr: attrOf(name, index, taken), label: settings.displayName ?? name, settings, hidden: settings.custom.hidden === true };
   });
   const entities = rows.map((row, at) => {
     const entity: Record<string, unknown> = { id: `urn:ngsi-ld:${ROW_TYPE}:${at + 1}`, type: ROW_TYPE };
     names.forEach((name, index) => {
       const value = row[name];
-      if (value !== null && value !== undefined) entity[`c${index}`] = { type: "Property", value };
+      if (value !== null && value !== undefined) entity[columns[index].attr] = { type: "Property", value };
     });
     return entity;
   });
@@ -109,7 +123,7 @@ export function TablePanel({ title, frames, fieldConfig, locale }: TablePanelPro
   }
   return (
     <div aria-label={title} className="min-w-0">
-      <EntityGrid config={parsed.config} source={source} labels={labels} renderers={renderers} hidden={["id", "entity:type"]} locale={locale} />
+      <EntityGrid config={parsed.config} source={source} labels={labels} renderers={renderers} hidden={["id", "entity:type"]} locale={locale} filterRow={false} queryBox={false} />
     </div>
   );
 }
