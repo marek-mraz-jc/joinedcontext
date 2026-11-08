@@ -2115,6 +2115,52 @@ async fn action_token_post(
             .unwrap_or(&realm.default_locale),
     );
 
+    // Every check runs before the first write: a wrong code must not leave the new password
+    // stored, or the retry is refused as a reused password and the link can never finish.
+    let totp_credential = if auth_session
+        .scope
+        .split_whitespace()
+        .any(|a| a == "CONFIGURE_TOTP")
+    {
+        let secret = auth_session
+            .pending_totp_secret
+            .as_deref()
+            .ok_or_else(|| KaisatsuError::BadRequest("missing pending TOTP secret".into()))?;
+        let otp_code = form.get("otp").map(String::as_str).unwrap_or_default();
+        let cred = CredentialRecord {
+            id: uuid::Uuid::now_v7().to_string(),
+            realm_id: realm.id.clone(),
+            user_id: user.id.clone(),
+            credential_type: "otp".into(),
+            user_label: Some("Authenticator".into()),
+            created_date: Utc::now().timestamp_millis(),
+            secret_data: serde_json::json!({ "value": secret }).to_string(),
+            credential_data: serde_json::json!({
+                "subType": "totp",
+                "digits": realm.otp_policy_digits,
+                "period": realm.otp_policy_period,
+                "algorithm": realm.otp_policy_algorithm,
+                "secretEncoding": "BASE32",
+            })
+            .to_string(),
+            temporary: false,
+        };
+        let now_secs = u64::try_from(Utc::now().timestamp()).unwrap_or_default();
+        if verify_totp_code(
+            &cred,
+            otp_code,
+            realm.otp_policy_look_ahead_window,
+            now_secs,
+        )?
+        .is_none()
+        {
+            return Err(KaisatsuError::BadRequest("invalid TOTP code".into()));
+        }
+        Some(cred)
+    } else {
+        None
+    };
+
     if auth_session
         .scope
         .split_whitespace()
@@ -2155,45 +2201,7 @@ async fn action_token_post(
         user.required_actions.retain(|a| a != "UPDATE_PASSWORD");
     }
 
-    if auth_session
-        .scope
-        .split_whitespace()
-        .any(|a| a == "CONFIGURE_TOTP")
-    {
-        let secret = auth_session
-            .pending_totp_secret
-            .as_deref()
-            .ok_or_else(|| KaisatsuError::BadRequest("missing pending TOTP secret".into()))?;
-        let otp_code = form.get("otp").map(String::as_str).unwrap_or_default();
-        let cred = CredentialRecord {
-            id: uuid::Uuid::now_v7().to_string(),
-            realm_id: realm.id.clone(),
-            user_id: user.id.clone(),
-            credential_type: "otp".into(),
-            user_label: Some("Authenticator".into()),
-            created_date: Utc::now().timestamp_millis(),
-            secret_data: serde_json::json!({ "value": secret }).to_string(),
-            credential_data: serde_json::json!({
-                "subType": "totp",
-                "digits": realm.otp_policy_digits,
-                "period": realm.otp_policy_period,
-                "algorithm": realm.otp_policy_algorithm,
-                "secretEncoding": "BASE32",
-            })
-            .to_string(),
-            temporary: false,
-        };
-        let now_secs = u64::try_from(Utc::now().timestamp()).unwrap_or_default();
-        if verify_totp_code(
-            &cred,
-            otp_code,
-            realm.otp_policy_look_ahead_window,
-            now_secs,
-        )?
-        .is_none()
-        {
-            return Err(KaisatsuError::BadRequest("invalid TOTP code".into()));
-        }
+    if let Some(cred) = totp_credential {
         state.store.upsert_credential(cred).await?;
         user.required_actions.retain(|a| a != "CONFIGURE_TOTP");
     }
