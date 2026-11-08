@@ -96,8 +96,8 @@ as the server answers that person:
 - P: Administration settings, "New project" (POST `/projects`), then space, endpoint and
   pipeline in `helsinki`, each a checked proposal.
 - O: its own Organization's settings, space, endpoint and pipeline in `ovzdusie`; refused an
-  installation section (`/organization/brokers`, "This page is for organization
-  administrators."), "New project" disabled with the server's reason, and a project of another
+  installation section (`/organization/brokers`, "Ask the installation's administrators", with
+  the installation's contacts and a link to its own sections), "New project" disabled with the server's reason, and a project of another
   Organization answers 404 under the page's own header; no write reaches that project.
 - A: space, endpoint and pipeline in `helsinki`, an access request decided from the Inbox;
   refused `/organization/settings` and another project; no write reaches `org`.
