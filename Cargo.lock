@@ -5699,7 +5699,6 @@ dependencies = [
  "kaisatsu-store-memory",
  "kaisatsu-store-pg",
  "odata-table",
- "openidconnect",
  "pbkdf2 0.13.0",
  "serde",
  "serde_json",

@@ -3,9 +3,10 @@
 //!
 //! The realm is the shipped `import/realms/jc-portal.json` plus a test person. Each call is sent
 //! the way the Portal sends it (`crates/portal/src`, file:line in the comments), and its answer
-//! is read the way the Portal reads it: discovery, the ID token and the logout token through the
-//! Portal's own `openidconnect` 4, bearer tokens through `jsonwebtoken` 9 with the checks of
-//! `auth/bearer.rs`, admin answers through the fields the Portal deserializes.
+//! is read the way the Portal reads it: discovery, the ID token and the logout token with the rules
+//! of the Portal's `openidconnect` 4.1 (copied: that crate pulls the banned `rsa`), bearer tokens
+//! through `jsonwebtoken` 9 with the checks of `auth/bearer.rs`, admin answers through the fields
+//! the Portal deserializes.
 
 use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
@@ -18,17 +19,7 @@ use kaisatsu_import::{ApplyMode, ApplyOptions, apply_realm_files};
 use kaisatsu_oidc::OutboundGuard;
 use kaisatsu_server::{KaisatsuState, router};
 use kaisatsu_store_memory::MemoryStore;
-use openidconnect::core::{
-    CoreAuthDisplay, CoreAuthenticationFlow, CoreClaimName, CoreClaimType, CoreClient,
-    CoreClientAuthMethod, CoreGrantType, CoreIdToken, CoreJsonWebKey,
-    CoreJweContentEncryptionAlgorithm, CoreJweKeyManagementAlgorithm, CoreResponseMode,
-    CoreResponseType, CoreSubjectIdentifierType, CoreTokenResponse,
-};
-use openidconnect::{
-    AdditionalProviderMetadata, ClientId, CsrfToken, IssuerUrl, Nonce, OAuth2TokenResponse,
-    PkceCodeChallenge, ProviderMetadata, RedirectUrl, Scope, TokenResponse,
-};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -343,64 +334,85 @@ async fn portal_api(app: &Router) -> String {
 // The Portal's own readers
 // ------------------------------------------------------------------------------------------
 
-/// auth/oidc.rs:34 `LogoutMetadata`.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct LogoutMetadata {
+/// What the Portal's discovery reads (auth/oidc.rs:34 `LogoutMetadata`, :220): openidconnect
+/// requires these members and an issuer equal to the one it asked.
+#[derive(Debug, Deserialize)]
+struct Discovery {
+    issuer: String,
+    authorization_endpoint: String,
+    token_endpoint: String,
+    jwks_uri: String,
     #[serde(default)]
     end_session_endpoint: Option<String>,
 }
 
-impl AdditionalProviderMetadata for LogoutMetadata {}
+async fn discover(app: &Router) -> Discovery {
+    let answer = get_page(
+        app,
+        &format!("{ISSUER}/.well-known/openid-configuration"),
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let found: Discovery = serde_json::from_str(&answer.text).unwrap_or_else(|e| {
+        panic!(
+            "auth/oidc.rs:220 refuses the discovery ({e}): {}",
+            answer.text
+        )
+    });
+    assert_eq!(found.issuer, ISSUER, "openidconnect compares the issuer");
+    found
+}
 
-/// auth/oidc.rs:42 `PortalProviderMetadata`.
-type PortalProviderMetadata = ProviderMetadata<
-    LogoutMetadata,
-    CoreAuthDisplay,
-    CoreClientAuthMethod,
-    CoreClaimName,
-    CoreClaimType,
-    CoreGrantType,
-    CoreJweContentEncryptionAlgorithm,
-    CoreJweKeyManagementAlgorithm,
-    CoreJsonWebKey,
-    CoreResponseMode,
-    CoreResponseType,
-    CoreSubjectIdentifierType,
->;
+/// openidconnect's `CoreTokenResponse`: `token_type` bearer (any case), the rest optional.
+#[derive(Debug, Deserialize)]
+struct Tokens {
+    access_token: String,
+    token_type: String,
+    #[serde(default)]
+    expires_in: Option<u64>,
+    #[serde(default)]
+    refresh_token: Option<String>,
+    #[serde(default)]
+    id_token: Option<String>,
+}
 
-/// The Portal's discovery (auth/oidc.rs:220) over the router instead of the network.
-async fn discover(app: &Router) -> PortalProviderMetadata {
-    let app = app.clone();
-    let http = move |request: openidconnect::HttpRequest| {
-        let app = app.clone();
-        async move {
-            let (parts, body) = request.into_parts();
-            let mut b = Request::builder()
-                .method(parts.method)
-                .uri(local(&parts.uri.to_string()))
-                .header(header::HOST, HOST);
-            for (name, value) in &parts.headers {
-                b = b.header(name, value);
-            }
-            let response = app
-                .oneshot(b.body(Body::from(body)).unwrap())
-                .await
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
-            let (parts, body) = response.into_parts();
-            let bytes = body
-                .collect()
-                .await
-                .map_err(|e| std::io::Error::other(e.to_string()))?
-                .to_bytes();
-            Ok::<_, std::io::Error>(openidconnect::HttpResponse::from_parts(
-                parts,
-                bytes.to_vec(),
-            ))
-        }
-    };
-    PortalProviderMetadata::discover_async(IssuerUrl::new(ISSUER.into()).unwrap(), &http)
-        .await
-        .expect("the Portal's discovery accepts the realm")
+fn tokens(answer: &Answer) -> Tokens {
+    let parsed: Tokens = serde_json::from_str(&answer.text).unwrap_or_else(|e| {
+        panic!(
+            "auth/oidc.rs:327 refuses the token response ({e}): {}",
+            answer.text
+        )
+    });
+    assert!(
+        parsed.token_type.eq_ignore_ascii_case("bearer"),
+        "{}",
+        answer.text
+    );
+    parsed
+}
+
+/// A PKCE S256 pair (challenge, verifier), as openidconnect's `new_random_sha256`.
+fn pkce() -> (String, String) {
+    use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
+    use sha2::Digest;
+    let verifier = URL_SAFE_NO_PAD.encode(random_bytes());
+    let challenge = URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(verifier.as_bytes()));
+    (challenge, verifier)
+}
+
+fn random_bytes() -> [u8; 32] {
+    use aws_lc_rs::rand::SecureRandom;
+    let mut bytes = [0u8; 32];
+    aws_lc_rs::rand::SystemRandom::new()
+        .fill(&mut bytes)
+        .unwrap();
+    bytes
+}
+
+fn random_text() -> String {
+    use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
+    URL_SAFE_NO_PAD.encode(random_bytes())
 }
 
 /// `auth/bearer.rs` `BearerVerifier`: the realm's JWKS as jsonwebtoken 9 reads it, ES256 and
@@ -435,6 +447,59 @@ impl Bearer {
             .collect();
         assert!(!keys.is_empty(), "no ES256 or RS256 key the Portal can use");
         Self { keys }
+    }
+
+    /// `Ok(claims)` when the Portal's `client.id_token_verifier()` (openidconnect 4.1
+    /// `JwtClaimsVerifier::new`, auth/oidc.rs:768, :410, :1069) takes `token` for client
+    /// `portal-api`: RS256 alone; a header `typ`, when present, `application/jwt` or
+    /// `application/jose` once a bare type gets the `application/` prefix; the issuer; `aud`
+    /// holding `portal-api` and no other (other audiences are untrusted); `exp`; and `nonce`
+    /// equal to `nonce` when one was sent.
+    fn verify_id_token(
+        &self,
+        token: &str,
+        nonce: Option<&str>,
+    ) -> std::result::Result<Value, String> {
+        use jsonwebtoken9::{Algorithm, Validation, decode, decode_header};
+        let header = decode_header(token).map_err(|e| e.to_string())?;
+        if header.alg != Algorithm::RS256 {
+            return Err(format!("unsupported algorithm {:?}", header.alg));
+        }
+        if let Some(typ) = header.typ.as_deref() {
+            let lower = typ.to_lowercase();
+            let normalized = if lower.contains('/') {
+                lower
+            } else {
+                format!("application/{lower}")
+            };
+            if !["application/jwt", "application/jose"].contains(&normalized.as_str()) {
+                return Err(format!("unexpected or unsupported JWT type `{typ}`"));
+            }
+        }
+        let kid = header.kid.ok_or("no kid")?;
+        let key = self.keys.get(&kid).ok_or("unknown kid")?;
+        let mut validation = Validation::new(Algorithm::RS256);
+        validation.set_issuer(&[ISSUER]);
+        validation.set_audience(&["portal-api"]);
+        validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
+        validation.leeway = 0;
+        let claims = decode::<Value>(token, key, &validation)
+            .map_err(|e| e.to_string())?
+            .claims;
+        let audiences: Vec<&str> = match &claims["aud"] {
+            Value::String(one) => vec![one.as_str()],
+            Value::Array(many) => many.iter().filter_map(Value::as_str).collect(),
+            _ => Vec::new(),
+        };
+        if audiences.iter().any(|a| *a != "portal-api") {
+            return Err(format!("untrusted audiences {audiences:?}"));
+        }
+        if let Some(sent) = nonce {
+            if claims["nonce"].as_str() != Some(sent) {
+                return Err(format!("nonce {:?} != {sent}", claims["nonce"]));
+            }
+        }
+        Ok(claims)
     }
 
     /// `Ok(claims)` when the Portal takes `token` as a `typ` token for `audience`.
@@ -524,38 +589,40 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
     // auth/oidc.rs:220 discovery, :223 end_session_endpoint, :229 token endpoint.
     let metadata = discover(app).await;
     let end_session = metadata
-        .additional_metadata()
         .end_session_endpoint
         .clone()
         .expect("end_session_endpoint (auth/oidc.rs:223)");
+    assert_eq!(
+        metadata.token_endpoint,
+        format!("https://{HOST}{TOKEN}"),
+        "auth/oidc.rs:229"
+    );
     assert!(
-        metadata.token_endpoint().is_some(),
-        "token endpoint (auth/oidc.rs:229)"
+        metadata.jwks_uri.starts_with(ISSUER),
+        "{}",
+        metadata.jwks_uri
     );
     let redirect = format!("{PORTAL}/api/v1/auth/callback");
-    let client =
-        CoreClient::from_provider_metadata(metadata, ClientId::new("portal-api".into()), None)
-            .set_redirect_uri(RedirectUrl::new(redirect.clone()).unwrap());
+    let readers = Bearer::of(app).await;
 
     // auth/oidc.rs:596 login: profile and email, PKCE, nonce, state, ui_locales.
-    let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-    let (authorize, state, nonce) = client
-        .authorize_url(
-            CoreAuthenticationFlow::AuthorizationCode,
-            CsrfToken::new_random,
-            Nonce::new_random,
-        )
-        .add_scope(Scope::new("profile".into()))
-        .add_scope(Scope::new("email".into()))
-        .set_pkce_challenge(challenge)
-        .add_extra_param("ui_locales", "sk")
-        .url();
+    let (challenge, verifier) = pkce();
+    let (state, nonce) = (random_text(), random_text());
+    let mut authorize = url::Url::parse(&metadata.authorization_endpoint).unwrap();
+    authorize
+        .query_pairs_mut()
+        .append_pair("response_type", "code")
+        .append_pair("client_id", "portal-api")
+        .append_pair("state", &state)
+        .append_pair("code_challenge", &challenge)
+        .append_pair("code_challenge_method", "S256")
+        .append_pair("redirect_uri", &redirect)
+        .append_pair("scope", "openid profile email")
+        .append_pair("nonce", &nonce)
+        .append_pair("ui_locales", "sk");
     let (back, sso) = sign_in(app, authorize.as_str()).await;
     assert!(back.starts_with(&redirect), "{back}");
-    assert_eq!(
-        param(&back, "state").as_deref(),
-        Some(state.secret().as_str())
-    );
+    assert_eq!(param(&back, "state").as_deref(), Some(state.as_str()));
     let code = param(&back, "code").expect("code");
 
     // auth/oidc.rs:760 the code exchange through `token_request` (auth/oidc.rs:289).
@@ -566,7 +633,7 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
             ("grant_type", "authorization_code"),
             ("code", &code),
             ("redirect_uri", &redirect),
-            ("code_verifier", verifier.secret()),
+            ("code_verifier", &verifier),
             ("client_id", "portal-api"),
             ("client_secret", PORTAL_API_SECRET),
         ],
@@ -574,16 +641,11 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
     )
     .await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
-    let tokens: CoreTokenResponse = serde_json::from_str(&answer.text).unwrap_or_else(|e| {
-        panic!(
-            "auth/oidc.rs:327 refuses the token response ({e}): {}",
-            answer.text
-        )
-    });
-    let id_token = tokens.id_token().expect("an ID token").clone();
+    let signed_in = tokens(&answer);
+    let id_token = signed_in.id_token.clone().expect("an ID token");
     // auth/oidc.rs:768: signature (RS256 alone, openidconnect's default), issuer, audience, nonce.
-    let claims = id_token
-        .claims(&client.id_token_verifier(), &nonce)
+    let claims = readers
+        .verify_id_token(&id_token, Some(&nonce))
         .unwrap_or_else(|e| panic!("auth/oidc.rs:769 refuses the ID token: {e}"));
     let ana = realm
         .store
@@ -591,25 +653,22 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(claims.subject().as_str(), ana.id);
+    assert_eq!(claims["sub"], json!(ana.id));
     assert_eq!(
-        claims.preferred_username().map(|u| u.as_str()),
-        Some(ANA),
+        claims["preferred_username"],
+        json!(ANA),
         "auth/oidc.rs:779 username"
     );
-    assert_eq!(claims.email().map(|e| e.as_str()), Some(ANA));
+    assert_eq!(claims["email"], json!(ANA));
     assert_eq!(
-        claims.email_verified(),
-        Some(true),
+        claims["email_verified"],
+        json!(true),
         "auth/session.rs verified_email"
     );
-    assert_eq!(
-        claims.name().and_then(|n| n.get(None)).map(|n| n.as_str()),
-        Some("Ana Virtanen")
-    );
+    assert_eq!(claims["name"], json!("Ana Virtanen"));
     // auth/oidc.rs:831 groups (full path, one leading `/` cut by the Portal), :859 realm roles
     // from the ID token (`realm-roles-in-id-token`), :848 acr and amr.
-    let id_claims = payload(&id_token.to_string());
+    let id_claims = payload(&id_token);
     assert_eq!(
         id_claims["groups"],
         json!(["/helsinki/members"]),
@@ -626,11 +685,10 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
         json!(["/helsinki/members"]),
         "{id_claims}"
     );
-    let refresh = tokens
-        .refresh_token()
-        .expect("a refresh token (auth/oidc.rs:449)")
-        .secret()
-        .clone();
+    let refresh = signed_in
+        .refresh_token
+        .clone()
+        .expect("a refresh token (auth/oidc.rs:449)");
 
     // auth/oidc.rs:390 refresh: a new ID token verified without a nonce (:410).
     let answer = post_form(
@@ -646,15 +704,14 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
     )
     .await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
-    let fresh: CoreTokenResponse = serde_json::from_str(&answer.text).expect("token response");
-    let fresh_id = fresh.id_token().expect("a refreshed ID token");
-    fresh_id
-        .claims(&client.id_token_verifier(), |_: Option<&Nonce>| Ok(()))
+    let fresh_id = tokens(&answer).id_token.expect("a refreshed ID token");
+    readers
+        .verify_id_token(&fresh_id, None)
         .unwrap_or_else(|e| panic!("auth/oidc.rs:410 refuses the refreshed ID token: {e}"));
 
     // auth/oidc.rs:265 the silent check: `portal-ui`, prompt=none, response_mode=fragment, a
     // redirect to /api/v1/auth/sso-check/done. With the SSO cookie the realm hands a code back.
-    let (sso_challenge, _) = PkceCodeChallenge::new_random_sha256();
+    let (sso_challenge, _) = pkce();
     let check = |cookie: Option<String>| {
         let uri = format!(
             "/realms/jc/protocol/openid-connect/auth?client_id=portal-ui&redirect_uri={}\
@@ -664,7 +721,7 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
                 format!("{PORTAL}/api/v1/auth/sso-check/done").as_bytes()
             )
             .collect::<String>(),
-            sso_challenge.as_str(),
+            sso_challenge,
         );
         async move { get_page(app, &uri, cookie.as_deref()).await }
     };
@@ -695,7 +752,7 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
     logout
         .query_pairs_mut()
         .append_pair("post_logout_redirect_uri", &format!("{PORTAL}/"))
-        .append_pair("id_token_hint", &fresh_id.to_string())
+        .append_pair("id_token_hint", &fresh_id)
         .append_pair("client_id", "portal-api");
     let out = get_page(app, logout.as_str(), Some(&sso)).await;
     assert_eq!(out.status, StatusCode::SEE_OTHER, "{}", out.text);
@@ -717,11 +774,10 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
         "{logout_claims}"
     );
     // auth/oidc.rs:1069: parsed as an ID token and verified with the ID token verifier.
-    let parsed: CoreIdToken = logout_token.parse().expect("auth/oidc.rs:1068 a JWT");
-    let verified = parsed
-        .claims(&client.id_token_verifier(), |_: Option<&Nonce>| Ok(()))
+    let verified = readers
+        .verify_id_token(&logout_token, None)
         .unwrap_or_else(|e| panic!("auth/oidc.rs:1069 refuses the logout token: {e}"));
-    assert_eq!(verified.subject().as_str(), ana.id);
+    assert_eq!(verified["sub"], json!(ana.id));
 }
 
 // ------------------------------------------------------------------------------------------
@@ -732,9 +788,8 @@ async fn the_portal_signs_a_person_in_refreshes_and_signs_them_out() {
 /// A token of the public client `mcp-local` for `scope`, through the browser and PKCE, as a
 /// connector or `jcctl` gets one.
 async fn public_client_token(app: &Router, scope: &str) -> Value {
-    let (pkce, verifier) = PkceCodeChallenge::new_random_sha256();
-    let challenge = pkce.as_str();
-    let verifier = verifier.secret();
+    let (challenge, verifier) = pkce();
+    let verifier = verifier.as_str();
     let redirect = "http://localhost/callback";
     let authorize = format!(
         "/realms/jc/protocol/openid-connect/auth?client_id=mcp-local&redirect_uri={}\
@@ -907,8 +962,8 @@ async fn bearer_and_connector_tokens_verify_and_exchange_for_one_endpoint() {
     // auth/oidc.rs:364: audience mcp-hub, scope `gateway-hub endpoint:{slug}`.
     let answer = exchange(app, subject, SLUG).await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
-    let exchanged: CoreTokenResponse = serde_json::from_str(&answer.text).expect("token response");
-    let token = exchanged.access_token().secret();
+    let exchanged = tokens(&answer);
+    let token = &exchanged.access_token;
     let claims = bearer
         .verify(token, "mcp-hub", "Bearer")
         .unwrap_or_else(|e| panic!("the gateway's hub audience is missing: {e}"));
@@ -966,9 +1021,9 @@ async fn bearer_and_connector_tokens_verify_and_exchange_for_one_endpoint() {
     )
     .await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
-    let own: CoreTokenResponse = serde_json::from_str(&answer.text).expect("token response");
+    let own = tokens(&answer);
     assert!(
-        own.expires_in().is_some(),
+        own.expires_in.is_some(),
         "auth/oidc.rs:350 holds it until expiry"
     );
 }
@@ -1666,13 +1721,13 @@ async fn app_sign_in(app: &Router, api: &str, uuid: &str) -> Value {
     .await
     .json();
     let secret = secret["value"].as_str().unwrap().to_owned();
-    let (pkce, verifier) = PkceCodeChallenge::new_random_sha256();
+    let (challenge, verifier) = pkce();
     let back = "https://bikes.apps.jc.localhost/oauth2/callback";
     let authorize = format!(
         "/realms/jc/protocol/openid-connect/auth?client_id=app-bikes&redirect_uri={}\
          &response_type=code&scope=openid&state=s2&code_challenge={}&code_challenge_method=S256",
         url::form_urlencoded::byte_serialize(back.as_bytes()).collect::<String>(),
-        pkce.as_str(),
+        challenge,
     );
     let (landed, _) = sign_in(app, &authorize).await;
     let code = param(&landed, "code").unwrap_or_else(|| panic!("no code: {landed}"));
@@ -1683,7 +1738,7 @@ async fn app_sign_in(app: &Router, api: &str, uuid: &str) -> Value {
             ("grant_type", "authorization_code"),
             ("code", &code),
             ("redirect_uri", back),
-            ("code_verifier", verifier.secret()),
+            ("code_verifier", &verifier),
             ("client_id", "app-bikes"),
             ("client_secret", &secret),
         ],
