@@ -2,8 +2,11 @@
 //! `daiya-import`: Import, export, offline `check`, `plan`, and `apply` with stale-plan
 //! refusal, exit codes `0/1/2/3/4`, provisioning YAML support, and JSON / Markdown reports (R2, §7).
 
+pub mod loader;
 pub mod provisioning;
 pub mod yaml;
+
+pub use loader::{ProvisioningLoadReport, ProvisioningTarget, load_provisioning_dir};
 
 pub use provisioning::{
     DashboardProviderConfig, DatasourceProvisioningOutcome, parse_dashboard_providers_yaml,

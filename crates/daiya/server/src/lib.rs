@@ -21,6 +21,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::net::SocketAddr;
 
+pub mod config;
+
 /// Server configuration passed as a struct (R11: no env reads in library code).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
