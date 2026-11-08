@@ -54,11 +54,15 @@ impl Drop for Jc {
 }
 
 impl Jc {
+    /// A secret the test gave jc as a file, else jc's state file.
     fn secret(&self, name: &str) -> String {
-        std::fs::read_to_string(self.state.join(name))
-            .unwrap()
-            .trim()
-            .to_owned()
+        let given = self._dir.path().join("given").join(name);
+        let path = if given.exists() {
+            given
+        } else {
+            self.state.join(name)
+        };
+        std::fs::read_to_string(path).unwrap().trim().to_owned()
     }
 
     fn log_has(&self, needle: &str) -> bool {
@@ -90,8 +94,16 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// The test's people and clients, imported into realm `jc` before the Portal's own files.
-fn realm_file(dir: &Path) {
+/// The test's people and clients, imported into realm `jc` before the Portal's own files. Their
+/// secrets are `$(file:...)` under `secrets` (`--kaisatsu-import-secrets-dir`).
+fn realm_file(dir: &Path, secrets: &Path) {
+    std::fs::create_dir_all(secrets).unwrap();
+    let client_secret = secrets.join("e2e-client-secret");
+    let person_password = secrets.join("e2e-person-password");
+    std::fs::write(&client_secret, READER_SECRET).unwrap();
+    std::fs::write(&person_password, PERSON_PASSWORD).unwrap();
+    let client_secret = format!("$(file:{})", client_secret.display());
+    let person_password = format!("$(file:{})", person_password.display());
     let audience = |name: &str, slug: &str| {
         json!({
             "name": name,
@@ -124,7 +136,7 @@ fn realm_file(dir: &Path) {
             "protocol": "openid-connect",
             "publicClient": false,
             "clientAuthenticatorType": "client-secret",
-            "secret": "$(env:E2E_CLIENT_SECRET)",
+            "secret": client_secret,
             "standardFlowEnabled": false,
             "directAccessGrantsEnabled": true,
             "serviceAccountsEnabled": false,
@@ -153,7 +165,7 @@ fn realm_file(dir: &Path) {
             "groups": [format!("/{PROJECT}-readers"), format!("/{PROJECT}-writers")],
             "credentials": [{
                 "type": "password",
-                "value": "$(env:E2E_PERSON_PASSWORD)",
+                "value": person_password,
                 "temporary": false
             }]
         }]
@@ -166,12 +178,24 @@ async fn start() -> Jc {
     let dir = tempfile::tempdir().unwrap();
     let state = dir.path().join("state");
     let realms = dir.path().join("realms");
-    realm_file(&realms);
+    let realm_secrets = dir.path().join("realm-secrets");
+    realm_file(&realms, &realm_secrets);
     let port = free_port();
     let base_host = format!("localhost:{port}");
     let config = dir.path().join("jc.toml");
     std::fs::write(&config, "[mounts.portal]\npath_prefix = \"\"\n").unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_jc"));
+    // The service tokens between modules live in jc's memory only; the test acts as the Portal
+    // with a shako token it gives jc as a file.
+    let given = dir.path().join("given");
+    std::fs::create_dir(&given).unwrap();
+    let shako = given.join("shako-token");
+    std::fs::write(
+        &shako,
+        format!("test-shako-token-{:032x}", std::process::id()),
+    )
+    .unwrap();
+    cmd.arg("--shako-token-file").arg(&shako);
     for (key, _) in std::env::vars() {
         if key.starts_with("JCBIN_") || key.starts_with("JC_") || key.starts_with("ANTARES_") {
             cmd.env_remove(key);
@@ -186,8 +210,8 @@ async fn start() -> Jc {
         .arg(&state)
         .arg("--kaisatsu-import-dir")
         .arg(&realms)
-        .env("E2E_CLIENT_SECRET", READER_SECRET)
-        .env("E2E_PERSON_PASSWORD", PERSON_PASSWORD)
+        .arg("--kaisatsu-import-secrets-dir")
+        .arg(&realm_secrets)
         .env("JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR", "false")
         .env("JC_PORTAL_SYNC_INTERVAL", "3")
         .env("RUST_LOG", "info,sqlx=warn")

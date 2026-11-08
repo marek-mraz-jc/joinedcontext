@@ -90,7 +90,7 @@ async fn hop_guard(secret: Arc<str>, mut req: Request, next: Next) -> Response {
     let admitted = req
         .headers()
         .get(crate::modules::GATEWAY_HOP_HEADER)
-        .is_some_and(|v| crate::runtime::secret_eq(v.as_bytes(), secret.as_bytes()));
+        .is_some_and(|v| jc_secret::constant_time_eq(v.as_bytes(), secret.as_bytes()));
     if !admitted {
         return StatusCode::FORBIDDEN.into_response();
     }

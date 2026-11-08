@@ -225,6 +225,15 @@ mod tests {
     }
 
     #[test]
+    fn constant_time_eq_compares_whole_and_exact() {
+        assert!(constant_time_eq(b"token", b"token"));
+        assert!(!constant_time_eq(b"token", b"tokeN"));
+        assert!(!constant_time_eq(b"token", b"token2"));
+        assert!(!constant_time_eq(b"token", b""));
+        assert!(constant_time_eq(b"", b""));
+    }
+
+    #[test]
     fn generated_secrets_are_hex_and_differ() {
         let a = Secret::generate(32).unwrap();
         let b = Secret::generate(32).unwrap();
