@@ -387,6 +387,15 @@ async fn render_state_page(
                     String::new(),
                 )
             }
+            LoginState::TermsAndConditions { .. } => (
+                "terms".to_owned(),
+                bundle.get("termsTitle").to_owned(),
+                bundle.get("termsInstruction").to_owned(),
+                Vec::new(),
+                bundle.get("proceedWithAction").to_owned(),
+                String::new(),
+                String::new(),
+            ),
             LoginState::Consent { .. } => (
                 "consent".to_owned(),
                 bundle.get("consentTitle").to_owned(),
@@ -835,6 +844,100 @@ async fn authenticate_page_post(
 
         let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
         let next = transition(current_state, LoginInput::VerifyOtpOk, &ctx)
+            .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        return advance_or_render(
+            &state,
+            &mount,
+            &realm,
+            auth_session,
+            next,
+            &headers,
+            &client_ip,
+        )
+        .await;
+    }
+
+    // UPDATE_PASSWORD (a temporary password, or the required action): the new password must
+    // pass the realm policy and history; it replaces the old one, which becomes history.
+    if let LoginState::UpdatePassword { ref user_id, .. } = current_state {
+        let mut user = state
+            .store
+            .get_user_by_id(&realm.id, None, user_id)
+            .await?
+            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        let new_password = form
+            .get("new_password")
+            .map(String::as_str)
+            .unwrap_or_default();
+        let history: Vec<CredentialRecord> = state
+            .store
+            .list_credentials(&realm.id, &user.id)
+            .await?
+            .into_iter()
+            .filter(|c| c.credential_type.starts_with("password"))
+            .collect();
+        if let Err(e) = check_password_policy(
+            &realm.password_policy,
+            new_password,
+            &user.username,
+            user.email.as_deref(),
+            &history,
+        ) {
+            return render_state_page(
+                &state,
+                &mount,
+                &realm,
+                &auth_session,
+                &current_state,
+                &headers,
+                &e.public_detail(),
+            )
+            .await;
+        }
+        state
+            .store
+            .upsert_credential(CredentialRecord {
+                id: uuid::Uuid::now_v7().to_string(),
+                realm_id: realm.id.clone(),
+                user_id: user.id.clone(),
+                credential_type: "password".into(),
+                user_label: Some("Password".into()),
+                created_date: Utc::now().timestamp_millis(),
+                secret_data: hash_password(new_password)?,
+                credential_data: String::new(),
+                temporary: false,
+            })
+            .await?;
+        if user.required_actions.iter().any(|a| a == "UPDATE_PASSWORD") {
+            user.required_actions.retain(|a| a != "UPDATE_PASSWORD");
+            user = state.store.update_user(user).await?;
+        }
+        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let next = transition(current_state, LoginInput::CompleteUpdatePasswordOk, &ctx)
+            .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+        return advance_or_render(
+            &state,
+            &mount,
+            &realm,
+            auth_session,
+            next,
+            &headers,
+            &client_ip,
+        )
+        .await;
+    }
+
+    if let LoginState::TermsAndConditions { ref user_id, .. } = current_state {
+        let mut user = state
+            .store
+            .get_user_by_id(&realm.id, None, user_id)
+            .await?
+            .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
+        user.required_actions
+            .retain(|a| a != "TERMS_AND_CONDITIONS");
+        let user = state.store.update_user(user).await?;
+        let ctx = build_policy_context(&state.store, &realm, &auth_session, &user).await?;
+        let next = transition(current_state, LoginInput::AcceptTermsOk, &ctx)
             .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
         return advance_or_render(
             &state,
