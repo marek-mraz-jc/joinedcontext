@@ -147,7 +147,82 @@ pub struct ShapesGraph {
     pub property_shapes: BTreeMap<SubjectNode, PropertyShape>,
 }
 
+/// Deepest chain of `sh:node`, `sh:or`, `sh:and` and `sh:not` references a validation follows.
+pub const MAX_SHAPE_DEPTH: usize = 32;
+
+fn constraint_refs(c: &ShapeConstraints) -> impl Iterator<Item = &SubjectNode> {
+    c.node_refs
+        .iter()
+        .chain(c.or_shapes.iter().flatten())
+        .chain(c.and_shapes.iter().flatten())
+        .chain(c.not_shapes.iter())
+}
+
 impl ShapesGraph {
+    /// The shapes `id` hands a value to: its own references and those of its property shapes.
+    fn references(&self, id: &SubjectNode) -> Vec<&SubjectNode> {
+        if let Some(n) = self.node_shapes.get(id) {
+            constraint_refs(&n.constraints)
+                .chain(
+                    n.properties
+                        .iter()
+                        .flat_map(|p| constraint_refs(&p.constraints)),
+                )
+                .collect()
+        } else if let Some(p) = self.property_shapes.get(id) {
+            constraint_refs(&p.constraints).collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Refuses a recursive shapes graph (SHACL leaves recursion undefined) and reference chains
+    /// deeper than [`MAX_SHAPE_DEPTH`]: validation follows references by recursion, so either
+    /// would exhaust the stack. The walk itself keeps its own stack.
+    ///
+    /// # Errors
+    /// The first shape found in a cycle or at the end of a too deep chain.
+    pub fn check_references(&self) -> std::result::Result<(), String> {
+        let mut height: BTreeMap<&SubjectNode, usize> = BTreeMap::new();
+        let mut on_path: BTreeSet<&SubjectNode> = BTreeSet::new();
+        for root in self.node_shapes.keys().chain(self.property_shapes.keys()) {
+            if height.contains_key(root) {
+                continue;
+            }
+            let mut stack: Vec<(&SubjectNode, Vec<&SubjectNode>, usize)> =
+                vec![(root, self.references(root), 0)];
+            on_path.insert(root);
+            while let Some((id, refs, next)) = stack.last_mut() {
+                if let Some(child) = refs.get(*next).copied() {
+                    *next += 1;
+                    if on_path.contains(child) {
+                        return Err(format!("shape {child} refers back to itself"));
+                    }
+                    if !height.contains_key(child) {
+                        on_path.insert(child);
+                        stack.push((child, self.references(child), 0));
+                    }
+                    continue;
+                }
+                let h = 1 + refs
+                    .iter()
+                    .filter_map(|r| height.get(r).copied())
+                    .max()
+                    .unwrap_or(0);
+                if h > MAX_SHAPE_DEPTH {
+                    return Err(format!(
+                        "shape {id} starts a chain of more than {MAX_SHAPE_DEPTH} shape references"
+                    ));
+                }
+                let id = *id;
+                height.insert(id, h);
+                on_path.remove(id);
+                stack.pop();
+            }
+        }
+        Ok(())
+    }
+
     /// Merges another `ShapesGraph` into `self` (for stacked profiles, C17).
     pub fn merge(&mut self, other: &ShapesGraph) {
         for (k, p) in &other.property_shapes {
@@ -259,10 +334,14 @@ pub fn compile_shapes_from_rdf(g: &RdfGraph) -> Result<ShapesGraph> {
         );
     }
 
-    Ok(ShapesGraph {
+    let graph = ShapesGraph {
         node_shapes,
         property_shapes,
-    })
+    };
+    graph
+        .check_references()
+        .map_err(|why| DataroomError::field_error("shapesTurtle", why))?;
+    Ok(graph)
 }
 
 fn parse_property_shape(g: &RdfGraph, subj: &SubjectNode) -> Option<PropertyShape> {
@@ -466,7 +545,23 @@ pub fn validate_graph_against_shapes(
 ) -> ShaclValidationReport {
     let mut findings = Vec::new();
 
-    for shape in shapes.node_shapes.values() {
+    // A merged graph (stacked profiles) can close a cycle no single profile had.
+    let usable = shapes.check_references();
+    if let Err(why) = &usable {
+        findings.push(ShaclFinding {
+            focus_node: dataset_id.to_owned(),
+            result_path: None,
+            value: None,
+            source_constraint_component: sh("NodeConstraintComponent"),
+            source_shape: String::new(),
+            severity: ShaclSeverity::Violation,
+            message: BTreeMap::from([(
+                "en".into(),
+                format!("the shapes graph cannot be used: {why}"),
+            )]),
+        });
+    }
+    for shape in shapes.node_shapes.values().filter(|_| usable.is_ok()) {
         let mut focus_nodes: Vec<Term> = Vec::new();
         for class_iri in &shape.target_classes {
             for s in find_instances_with_subclasses(data, class_iri) {
@@ -1208,6 +1303,55 @@ mod tests {
             Ok(_) => panic!("shapes must be refused:\n{body}"),
             Err(e) => e.to_string(),
         }
+    }
+
+    /// A shape reaching itself through `sh:node`, `sh:or`, `sh:and`, `sh:not` or a property's
+    /// `sh:node` is refused, as is a chain deeper than `MAX_SHAPE_DEPTH`; validation follows
+    /// references by recursion and would otherwise exhaust the stack and abort the process.
+    #[test]
+    fn recursive_or_too_deep_shapes_are_refused_before_validation() {
+        for body in [
+            "ex:S a sh:NodeShape ; sh:targetClass ex:C ; sh:node ex:S .",
+            "ex:A a sh:NodeShape ; sh:targetClass ex:C ; sh:or ( ex:B ) .
+             ex:B a sh:NodeShape ; sh:not ex:A .",
+            "ex:A a sh:NodeShape ; sh:targetClass ex:C ; sh:and ( ex:A ) .",
+            "ex:A a sh:NodeShape ; sh:targetClass ex:C ;
+               sh:property [ sh:path ex:p ; sh:node ex:A ] .",
+        ] {
+            assert!(refusal(body).contains("refers back to itself"), "{body}");
+        }
+        let chain = |n: usize| {
+            (0..n)
+                .map(|i| format!("ex:S{i} a sh:NodeShape ; sh:node ex:S{} .\n", i + 1))
+                .collect::<String>()
+                + &format!("ex:S{n} a sh:NodeShape .\n")
+        };
+        assert!(refusal(&chain(MAX_SHAPE_DEPTH + 5)).contains("chain of more than"));
+        shapes(&chain(MAX_SHAPE_DEPTH - 1)).expect("a chain inside the bound compiles");
+
+        // Two graphs that compile alone can close a cycle once merged (stacked profiles):
+        // validation reports it and runs no shape.
+        let mut merged =
+            shapes("ex:A a sh:NodeShape ; sh:targetClass ex:Item ; sh:node ex:B .").unwrap();
+        merged.merge(&shapes("ex:B a sh:NodeShape ; sh:node ex:A .").unwrap());
+        let data = parse_rdf_graph(
+            &format!("{PREFIXES}ex:i a ex:Item ."),
+            RdfFormat::Turtle,
+            &RdfLimits::default(),
+        )
+        .unwrap();
+        let rep = validate_graph_against_shapes(
+            &data,
+            &merged,
+            OrgId::from_uuid(Uuid::from_u128(1)),
+            CatalogueId::from_uuid(Uuid::from_u128(10)),
+            "ds",
+            "test",
+            "1",
+        );
+        assert!(!rep.conforms);
+        assert_eq!(rep.findings.len(), 1);
+        assert!(rep.findings[0].message["en"].contains("refers back to itself"));
     }
 
     #[test]
