@@ -366,6 +366,18 @@ def git_blob_sha(data: bytes) -> str:
     return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
+CKAN_URL = re.compile(rb"^(\s+url:\s*)\S+", re.M)
+
+
+def fence_writes(data: bytes, base: str) -> bytes:
+    """A CkanInstance is the one manifest the Portal writes to an outside host with (its API
+    token publishes datasets there): its `spec.url` is turned to the rehearsal's own dataroom, so
+    a rehearsal never publishes into the catalogue of the environment it was copied from."""
+    if not re.search(rb"^kind:\s*CkanInstance\s*$", data, re.M):
+        return data
+    return CKAN_URL.sub(lambda m: m.group(1) + base.rstrip("/").encode() + b"/opendata", data)
+
+
 def import_shako(h: Http, token: str, export: Path, report: dict):
     auth = {"Authorization": f"token {token}"}
     listing = json.loads((export / "gitea" / "repos.json").read_text())
@@ -376,7 +388,10 @@ def import_shako(h: Http, token: str, export: Path, report: dict):
         files = {}
         for p in sorted(root.rglob("*")):
             if p.is_file() and not p.is_symlink():
-                files[p.relative_to(root).as_posix()] = p.read_bytes()
+                data = p.read_bytes()
+                files[p.relative_to(root).as_posix()] = fenced = fence_writes(data, h.base)
+                if fenced != data:
+                    report.setdefault("fenced", []).append(f"{owner}/{name}/{p.relative_to(root).as_posix()}")
         row = {"repo": f"{owner}/{name}", "files": len(files)}
         st, _ = h.json("GET", f"/git/api/v1/projects/{owner}/repositories/{name}", headers=auth)
         if st == 404:
@@ -829,7 +844,12 @@ def cmd_smoke(a):
     check(f"shako: {len(listing)} repositories", not missing, "; ".join(missing[:10]),
           "GET /git/api/v1/projects/{owner}/repositories/{repo}")
     # 5. pipelines render and run on ekiben: the Portal's view of its pipelines
-    st, projects = h.json("GET", "/api/v1/projects")
+    # The reconciler's first sync takes ~40 s over ~3400 manifests: wait for it, up to 3 min.
+    for _ in range(36):
+        st, projects = h.json("GET", "/api/v1/projects")
+        if projects:
+            break
+        time.sleep(5)
     names = [p.get("name") or p.get("metadata", {}).get("name") for p in (projects or [])] \
         if isinstance(projects, list) else [p.get("name") for p in (projects or {}).get("items", [])] \
         if isinstance(projects, dict) else []

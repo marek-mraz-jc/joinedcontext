@@ -94,6 +94,16 @@ def test_the_importer_writes_only_to_a_loopback_jc():
             rh.loopback_only(base)
 
 
+def test_a_catalogue_instance_publishes_only_into_the_rehearsal():
+    ckan = (b"apiVersion: joinedcontext.com/v1alpha1\nkind: CkanInstance\nmetadata:\n  name: zilina\n"
+            b"spec:\n  url: https://opendata.dev.joinedcontext.com\n  organizationDefault: zilina\n")
+    fenced = rh.fence_writes(ckan, "http://localhost:42101/")
+    assert b"dev.joinedcontext.com" not in fenced
+    assert b"  url: http://localhost:42101/opendata\n" in fenced
+    endpoint = b"kind: Endpoint\nspec:\n  catalog:\n    publisher:\n      url: https://dev.joinedcontext.com/\n"
+    assert rh.fence_writes(endpoint, "http://localhost:1") == endpoint
+
+
 def test_the_import_never_sends_an_instance_older_than_the_window(tmp_path):
     """The real importer against a stub broker: the 8-day instance is refused in the report and
     never reaches the broker; the report names the cut-off."""
