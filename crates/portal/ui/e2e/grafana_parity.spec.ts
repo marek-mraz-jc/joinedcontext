@@ -59,7 +59,8 @@ function view(board: Board) {
       multi: v.multi === true,
       includeAll: v.includeAll === true,
       options: ((v.options as { text: string; value: string }[] | undefined) ?? []).map((o) => ({ text: o.text, value: o.value })),
-      current: current === undefined ? [] : Array.isArray(current) ? current : [current],
+      // Nothing saved: All where the variable offers it, as the server's view picks (Grafana's pick).
+      current: current === undefined ? (v.includeAll === true ? ["$__all"] : []) : Array.isArray(current) ? current : [current],
     };
   });
   return {
@@ -137,7 +138,7 @@ for (const width of [1440, 400]) {
       const { board } = BOARDS.get("jc-context-broker")!;
       await open(page, board, []);
       await page.getByText("2026-11-08 01:00:00 to 2026-11-08 07:00:00", { exact: true }).first().click();
-      await expect(page.getByRole("button", { name: "This fiscal year" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "This fiscal year", exact: true })).toBeVisible();
       await shot(page, "context-broker-timepicker", width);
       await page.keyboard.press("Escape");
       await page.getByLabel("Refresh", { exact: true }).focus();

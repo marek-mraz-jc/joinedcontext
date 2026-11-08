@@ -268,6 +268,17 @@ fn variable_view(variable: &Value) -> VariableView {
         _ => Vec::new(),
     };
     let name = text(&variable["name"]);
+    let include_all = variable["includeAll"] == true;
+    // Nothing saved: Grafana selects All where the variable offers it, else the first value
+    // (a query variable's first value comes from its own route; until then it sends nothing).
+    let mut current = current_of(variable);
+    if current.iter().all(String::is_empty) {
+        current = if include_all {
+            vec!["$__all".to_owned()]
+        } else {
+            options.first().map(|o| o.value.clone()).into_iter().collect()
+        };
+    }
     VariableView {
         label: variable["label"]
             .as_str()
@@ -276,9 +287,9 @@ fn variable_view(variable: &Value) -> VariableView {
         name,
         kind,
         multi: variable["multi"] == true,
-        include_all: variable["includeAll"] == true,
+        include_all,
         options,
-        current: current_of(variable),
+        current,
     }
 }
 
@@ -938,7 +949,10 @@ mod tests {
                 { "name": "station", "type": "custom", "multi": true, "includeAll": true,
                   "query": "Kallio,Mannerheimintie", "current": { "value": ["Kallio"] } },
                 { "name": "run", "label": "Run", "type": "query", "datasource": { "uid": "prom" },
-                  "query": { "query": "label_values(k6_http_reqs_total, testid)" } }
+                  "query": { "query": "label_values(k6_http_reqs_total, testid)" } },
+                { "name": "testid", "type": "query", "multi": true, "includeAll": true, "current": {},
+                  "datasource": { "uid": "prom" }, "query": "label_values(testid)" },
+                { "name": "zone", "type": "custom", "query": "north,south", "current": {} }
             ]},
             "panels": [
                 { "id": 1, "type": "timeseries", "title": "Air", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
@@ -1286,6 +1300,11 @@ mod tests {
         assert_eq!(station.options.len(), 2);
         assert_eq!(station.current, ["Kallio"]);
         assert_eq!(view.variables[1].label, "Run");
+        // Nothing saved and no All to fall back on: a query variable waits for its values.
+        assert!(view.variables[1].current.is_empty());
+        // Grafana's own pick when nothing is saved: All, else the first value.
+        assert_eq!(view.variables[2].current, ["$__all"]);
+        assert_eq!(view.variables[3].current, ["north"]);
         assert!(matches!(
             get_dashboard(admin(), State(state), Path((PROJECT.into(), "gone".into()))).await,
             Err(ApiError::NotFound(_))

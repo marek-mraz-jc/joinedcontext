@@ -501,6 +501,7 @@ async fn delete_datasources_removes_a_provisioned_read_only_datasource() {
             installation_id: built.state.installation_id,
             org_id: org,
             instance_id: built.state.default_instance_id,
+            organizations: Default::default(),
         },
         &scratch.0.join("prov"),
         &built.state.limits,
@@ -695,4 +696,79 @@ fn provisioning_variables_come_only_from_the_daiya_var_prefix() {
     ]);
     assert_eq!(vars.len(), 1);
     assert_eq!(vars["HOST"], "prom");
+}
+
+#[tokio::test]
+async fn declared_organizations_are_provisioned_by_org_id_and_never_see_each_other() {
+    let scratch = Scratch::new("orgs");
+    let file = scratch.write("secrets/admin", "server-admin-password-0123\n");
+    scratch.write(
+        "prov/datasources/ds.yaml",
+        "apiVersion: 1\ndatasources:\n  - name: BBSK broker\n    uid: bbsk-broker\n    type: prometheus\n    url: https://bbsk.example\n    orgId: 4\n",
+    );
+    scratch.write(
+        "prov/dashboards/p.yaml",
+        "apiVersion: 1\nproviders:\n  - name: helsinki\n    orgId: 6\n    options:\n      path: b\n",
+    );
+    scratch.write(
+        "prov/b/h.json",
+        &json!({ "uid": "h", "title": "Helsinki", "schemaVersion": 39, "panels": [] }).to_string(),
+    );
+    let cfg = config(json!({
+        "serverAdmin": { "user": "admin", "passwordFile": file },
+        "organizations": [{ "id": 4, "name": "bbsk" }, { "id": 6, "name": "helsinki" }],
+        "provisioningDir": scratch.0.join("prov"),
+    }))
+    .unwrap();
+    let state = build_state(&cfg).await.unwrap().state;
+    let app = standalone_router(state, cfg.mount().unwrap());
+    let read = |uri: &str, org: &str| {
+        Request::get(uri)
+            .header(
+                "authorization",
+                "Basic YWRtaW46c2VydmVyLWFkbWluLXBhc3N3b3JkLTAxMjM=",
+            )
+            .header("x-grafana-org-id", org)
+            .body(Body::empty())
+            .unwrap()
+    };
+    let names = |body: &Value| -> Vec<String> {
+        body.as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|d| d["uid"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let (status, body) = send(&app, read("/api/datasources", "4")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(names(&body), ["bbsk-broker"]);
+    // A datasource provisioned for organization 4 is not visible from organization 6, nor 1.
+    let (_, body) = send(&app, read("/api/datasources", "6")).await;
+    assert!(names(&body).is_empty(), "{body}");
+    let (status, _) = send(&app, read("/api/datasources/uid/bbsk-broker", "6")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, body) = send(&app, read("/api/datasources", "1")).await;
+    assert!(names(&body).is_empty(), "{body}");
+    let (status, _) = send(&app, read("/api/dashboards/uid/h", "6")).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send(&app, read("/api/dashboards/uid/h", "4")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // The Portal finds a declared organization by its name, under its number.
+    let (status, body) = send(&app, read("/api/orgs/name/helsinki", "1")).await;
+    assert_eq!(
+        (status, body["id"].clone()),
+        (StatusCode::OK, json!(6)),
+        "{body}"
+    );
+
+    // A number held twice, the main organization's 1, or a name held twice is refused at start.
+    for orgs in [
+        json!([{ "id": 4, "name": "a" }, { "id": 4, "name": "b" }]),
+        json!([{ "id": 1, "name": "a" }]),
+        json!([{ "id": 4, "name": "a" }, { "id": 5, "name": "a" }]),
+        json!([{ "id": 4, "name": "Main Org." }]),
+    ] {
+        let cfg = config(json!({ "organizations": orgs })).unwrap();
+        assert!(build_state(&cfg).await.is_err(), "{orgs}");
+    }
 }

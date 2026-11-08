@@ -11,7 +11,8 @@ use crate::setup::{DASHBOARDS_USER, Secret, Setup};
 use axum::Router;
 use daiya_model::OrgId;
 use daiya_server::config::{
-    MigrateConfig, StoreConfig, open_store, provision, provisioning_vars_from,
+    MigrateConfig, StoreConfig, declare_organizations, open_store, provision,
+    provisioning_vars_from,
 };
 use daiya_server::{DaiyaState, router};
 use jc_router::Mount;
@@ -59,6 +60,7 @@ pub async fn build(
     mount: Mount,
 ) -> Result<Router, String> {
     let mut state = state(cfg, setup).await?;
+    declare_organizations(&state, &cfg.organizations).map_err(|e| e.to_string())?;
     if let Some(dir) = &cfg.provisioning_dir {
         state.own_addresses = vec![own];
         let vars = provisioning_vars_from(std::env::vars());

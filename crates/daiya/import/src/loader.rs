@@ -14,8 +14,10 @@
 //! - String values of the YAML files expand `$NAME` and `${NAME}` (`$$` is a literal `$`) from
 //!   the variables the caller hands in, never from the process environment: the binary passes
 //!   only `DAIYA_VAR_*` variables. An unset name is refused, not replaced by an empty string.
-//! - Only organization 1 (the organization the loader is given) is provisioned; a provider or
-//!   datasource file for another `orgId` is refused, never written to the wrong organization.
+//! - Each datasource, `deleteDatasources` entry and dashboard provider goes to the organization
+//!   its `orgId` names (Grafana's default 1), as Grafana provisions per organization. An `orgId`
+//!   the daiya does not hold, or one that is not a whole number (a quoted "2"), is refused before
+//!   anything is written: nothing lands in, or is deleted from, another organization.
 
 use crate::provisioning::{
     DashboardProviderConfig, parse_dashboard_providers_doc, parse_datasources_doc,
@@ -38,11 +40,26 @@ pub const MAX_PROVISIONED_FILES: usize = 10_000;
 const MAX_DEPTH: usize = 8;
 
 /// Where provisioning writes to.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ProvisioningTarget {
     pub installation_id: InstallationId,
+    /// Organization 1, where an entry without `orgId` goes.
     pub org_id: OrgId,
     pub instance_id: InstanceId,
+    /// The other organizations by their Grafana number (`orgId: 4`).
+    pub organizations: BTreeMap<i64, OrgId>,
+}
+
+impl ProvisioningTarget {
+    /// The organization `orgId` names: 1 is [`Self::org_id`], another number one of
+    /// [`Self::organizations`].
+    fn organization(&self, num: i64) -> Option<OrgId> {
+        if num == 1 {
+            Some(self.org_id)
+        } else {
+            self.organizations.get(&num).copied()
+        }
+    }
 }
 
 /// What one provisioning run wrote.
@@ -88,18 +105,46 @@ fn yaml_files(dir: &Path) -> CrResult<Vec<PathBuf>> {
     Ok(out)
 }
 
-/// The `orgId` / `org_id` values the entries of `list_key` name, as written.
-fn org_ids(doc: &Value, list_key: &str) -> Vec<Value> {
-    doc.get(list_key)
-        .and_then(Value::as_array)
-        .or_else(|| doc.as_array())
-        .map(|list| {
-            list.iter()
-                .filter_map(|item| item.get("orgId").or_else(|| item.get("org_id")))
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_default()
+/// The entries of a datasources file split by the organization their `orgId` names, each part a
+/// document of its own (`datasources`, `deleteDatasources`).
+fn by_organization(
+    doc: &Value,
+    file: &Path,
+    target: &ProvisioningTarget,
+) -> CrResult<BTreeMap<OrgId, Value>> {
+    let mut out: BTreeMap<OrgId, Value> = BTreeMap::new();
+    for (key, into) in [
+        ("datasources", "datasources"),
+        ("deleteDatasources", "deleteDatasources"),
+        ("delete_datasources", "deleteDatasources"),
+    ] {
+        for item in doc.get(key).and_then(Value::as_array).into_iter().flatten() {
+            let named = item.get("orgId").or_else(|| item.get("org_id"));
+            let org = match named {
+                None => Some(target.org_id),
+                Some(n) => n.as_i64().and_then(|n| target.organization(n)),
+            }
+            .ok_or_else(|| {
+                CrError::BadRequest(format!(
+                    "provisioning: '{}' names orgId {}, which is not an organization of this daiya",
+                    file.display(),
+                    named.map_or_else(String::new, Value::to_string)
+                ))
+            })?;
+            let part = out.entry(org).or_insert_with(
+                || serde_json::json!({ "datasources": [], "deleteDatasources": [] }),
+            );
+            if let Some(list) = part[into].as_array_mut() {
+                list.push(item.clone());
+            }
+        }
+    }
+    if doc.as_object().is_none() {
+        return Err(CrError::BadRequest(
+            "datasource provisioning YAML must be a mapping".into(),
+        ));
+    }
+    Ok(out)
 }
 
 /// Expands `$NAME`, `${NAME}` and `$$` in every string value of `doc` from `vars`.
@@ -167,6 +212,7 @@ fn expand_text(text: &str, vars: &BTreeMap<String, String>) -> CrResult<String> 
 
 /// One provider's dashboards for one target folder, read and parsed but not yet written.
 struct FolderBatch {
+    org_id: OrgId,
     provider: String,
     folder: Option<(String, String)>,
     inputs: Vec<DashboardImportInput>,
@@ -189,67 +235,60 @@ pub async fn load_provisioning_dir(
     let mut ds_outcomes = Vec::new();
     for file in yaml_files(&root.join("datasources"))? {
         let text = std::fs::read_to_string(&file).map_err(|e| io_err(&file, &e))?;
-        // A `deleteDatasources` entry for another organization must not delete in this one.
-        // Anything but the number 1 is refused, a quoted "2" included.
+        // A `deleteDatasources` entry for one organization must not delete in another.
         let mut doc = crate::yaml::parse_yaml_to_json(&text)?;
         expand_variables(&mut doc, vars)?;
-        if let Some(org) = ["datasources", "deleteDatasources", "delete_datasources"]
-            .into_iter()
-            .flat_map(|key| org_ids(&doc, key))
-            .find(|o| o.as_i64() != Some(1))
-        {
-            return Err(CrError::BadRequest(format!(
-                "provisioning: '{}' names orgId {org}; only orgId 1 is provisioned",
-                file.display()
-            )));
+        for (org, part) in by_organization(&doc, &file, &target)? {
+            let outcome =
+                parse_datasources_doc(&part, target.installation_id, org, target.instance_id)?;
+            if let Some(refusal) = outcome
+                .findings
+                .iter()
+                .find(|f| f.verdict == Verdict::Refuses)
+            {
+                return Err(CrError::BadRequest(format!(
+                    "provisioning: '{}': {}",
+                    file.display(),
+                    refusal.message
+                )));
+            }
+            ds_outcomes.push((org, outcome));
         }
-        let outcome = parse_datasources_doc(
-            &doc,
-            target.installation_id,
-            target.org_id,
-            target.instance_id,
-        )?;
-        if let Some(refusal) = outcome
-            .findings
-            .iter()
-            .find(|f| f.verdict == Verdict::Refuses)
-        {
-            return Err(CrError::BadRequest(format!(
-                "provisioning: '{}': {}",
-                file.display(),
-                refusal.message
-            )));
-        }
-        ds_outcomes.push(outcome);
     }
 
     let mut batches = Vec::new();
     // Paths (below the root) of the providers that delete what their files no longer hold.
-    let mut pruned: Vec<PathBuf> = Vec::new();
+    let mut pruned: Vec<(OrgId, PathBuf)> = Vec::new();
     for file in yaml_files(&root.join("dashboards"))? {
         let text = std::fs::read_to_string(&file).map_err(|e| io_err(&file, &e))?;
         let mut doc = crate::yaml::parse_yaml_to_json(&text)?;
         expand_variables(&mut doc, vars)?;
         for provider in parse_dashboard_providers_doc(&doc, Some(&root))? {
-            batches.extend(read_provider(&root, &provider)?);
+            let org = target.organization(provider.org_id).ok_or_else(|| {
+                CrError::BadRequest(format!(
+                    "provisioning: provider '{}' names orgId {}, which is not an organization of this daiya",
+                    provider.name, provider.org_id
+                ))
+            })?;
+            batches.extend(read_provider(&root, &provider, org)?);
             if !provider.disable_deletion {
                 let base = Path::new(&provider.path);
                 let base = base.canonicalize().map_err(|e| io_err(base, &e))?;
                 if let Ok(prefix) = base.strip_prefix(&root) {
-                    pruned.push(prefix.to_path_buf());
+                    pruned.push((org, prefix.to_path_buf()));
                 }
             }
         }
     }
 
-    for outcome in ds_outcomes {
+    for (org, outcome) in ds_outcomes {
         for name in &outcome.delete_names {
-            if let Some(ds) = store.get_datasource_by_name(target.org_id, name).await? {
+            if let Some(ds) = store.get_datasource_by_name(org, name).await? {
                 // A provisioned datasource is read-only to the UI, not to provisioning.
                 let mut writable = ds.clone();
                 writable.read_only = false;
                 store.upsert_datasource(writable).await?;
-                if store.delete_datasource(target.org_id, &ds.uid).await? {
+                if store.delete_datasource(org, &ds.uid).await? {
                     report.datasources_deleted += 1;
                 }
             }
@@ -266,7 +305,7 @@ pub async fn load_provisioning_dir(
         let checked = import_dashboards(
             store,
             target.installation_id,
-            target.org_id,
+            batch.org_id,
             target.instance_id,
             "provisioning",
             &batch.inputs,
@@ -294,19 +333,23 @@ pub async fn load_provisioning_dir(
         }
     }
 
-    let seen: BTreeSet<String> = batches
+    let seen: BTreeSet<(OrgId, String)> = batches
         .iter()
-        .flat_map(|b| b.inputs.iter().filter_map(|i| i.external_id.clone()))
+        .flat_map(|b| {
+            b.inputs
+                .iter()
+                .filter_map(|i| i.external_id.clone().map(|ext| (b.org_id, ext)))
+        })
         .collect();
     for batch in batches {
         if let Some((uid, title)) = &batch.folder
-            && store.get_folder(target.org_id, uid).await?.is_none()
+            && store.get_folder(batch.org_id, uid).await?.is_none()
         {
             let now = Utc::now();
             store
                 .upsert_folder(FolderRecord {
                     installation_id: target.installation_id,
-                    org_id: target.org_id,
+                    org_id: batch.org_id,
                     instance_id: target.instance_id,
                     project_id: None,
                     uid: uid.clone(),
@@ -325,7 +368,7 @@ pub async fn load_provisioning_dir(
         let imported = import_dashboards(
             store,
             target.installation_id,
-            target.org_id,
+            batch.org_id,
             target.instance_id,
             "provisioning",
             &batch.inputs,
@@ -336,13 +379,17 @@ pub async fn load_provisioning_dir(
         report.dashboards += imported.dashboards.len();
         report.reports.push(imported);
     }
-    if !pruned.is_empty() {
-        for d in store.list_dashboards(target.org_id).await? {
+    let orgs: BTreeSet<OrgId> = pruned.iter().map(|(org, _)| *org).collect();
+    for org in orgs {
+        for d in store.list_dashboards(org).await? {
             let gone = d.is_provisioned
                 && d.provisioned_external_id.as_ref().is_some_and(|ext| {
-                    !seen.contains(ext) && pruned.iter().any(|p| Path::new(ext).starts_with(p))
+                    !seen.contains(&(org, ext.clone()))
+                        && pruned
+                            .iter()
+                            .any(|(o, p)| *o == org && Path::new(ext).starts_with(p))
                 });
-            if gone && store.delete_dashboard(target.org_id, &d.uid).await? {
+            if gone && store.delete_dashboard(org, &d.uid).await? {
                 report.dashboards_deleted += 1;
             }
         }
@@ -351,13 +398,11 @@ pub async fn load_provisioning_dir(
 }
 
 /// Reads one file provider's dashboards, grouped by target folder.
-fn read_provider(root: &Path, provider: &DashboardProviderConfig) -> CrResult<Vec<FolderBatch>> {
-    if provider.org_id != 1 {
-        return Err(CrError::BadRequest(format!(
-            "provisioning: provider '{}' names orgId {}; only orgId 1 is provisioned",
-            provider.name, provider.org_id
-        )));
-    }
+fn read_provider(
+    root: &Path,
+    provider: &DashboardProviderConfig,
+    org_id: OrgId,
+) -> CrResult<Vec<FolderBatch>> {
     let base = PathBuf::from(&provider.path);
     let mut files = Vec::new();
     collect_json_files(root, &base, &base, 0, &mut files)?;
@@ -411,6 +456,7 @@ fn read_provider(root: &Path, provider: &DashboardProviderConfig) -> CrResult<Ve
     Ok(by_folder
         .into_iter()
         .map(|(folder, inputs)| FolderBatch {
+            org_id,
             provider: provider.name.clone(),
             folder,
             inputs,

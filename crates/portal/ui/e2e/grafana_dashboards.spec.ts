@@ -296,7 +296,8 @@ for (const width of [1440, 400]) {
       await expect(page.locator('section[data-panel-type="timeseries"]')).toHaveCount(7);
       await expect(page.getByRole("img", { name: /Transactions per second by status class: chart of 3 series/ })).toBeVisible();
       await expect(page.locator("canvas")).toHaveCount(7);
-      expect(world.asked.every((search) => /from=now-6h&to=now&maxDataPoints=\d+$/.test(search))).toBe(true);
+      // Each panel asks the dashboard's six hours as epochs, as Grafana asks its datasources.
+      expect(world.asked.every((search) => { const query = new URLSearchParams(search); return Number(query.get("to")) - Number(query.get("from")) === 6 * HOUR && [...query.keys()].join() === "from,to,maxDataPoints"; })).toBe(true);
       await pageShot(page, "context-broker-filled", width);
       await panelShot(card(page, "timeseries"), "timeseries-filled", width);
       expect(await page.evaluate(pageFindings, { namespaces: NAMESPACES, layout: true })).toEqual([]);

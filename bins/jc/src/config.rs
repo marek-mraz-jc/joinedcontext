@@ -184,6 +184,10 @@ pub struct DaiyaSection {
     /// `DAIYA_VAR_*` for its `$NAME` values. Its datasources alone may reach `jc`'s own
     /// listener, named by its exact address (`http://127.0.0.1:<port>/...`).
     pub provisioning_dir: Option<PathBuf>,
+    /// Organizations held from the start under their Grafana numbers (`{ id = 4, name =
+    /// "bbsk" }`), so the provisioning files can name each by `orgId`.
+    #[serde(default)]
+    pub organizations: Vec<daiya_server::config::NumberedOrganization>,
 }
 
 /// `[dataroom]` section (a key left out keeps its default).
