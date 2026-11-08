@@ -233,9 +233,29 @@ pub fn built_in_profiles() -> Vec<ProfileRecord> {
     ]
 }
 
+type ProfileMap = BTreeMap<(String, String), (ProfileRecord, ShapesGraph)>;
+
+/// The record an unpinned reference to `id` means: the built-in profile when one exists, else
+/// the latest uploaded version. The registry serves every catalogue, so "latest" alone let one
+/// catalogue's upload of a new version of a built-in id (any editor may upload) change what every
+/// other catalogue validates against.
+fn unpinned<'a>(map: &'a ProfileMap, id: &str) -> Option<&'a (ProfileRecord, ShapesGraph)> {
+    let of_id: Vec<_> = map
+        .iter()
+        .filter(|((pid, _), _)| pid == id)
+        .map(|(_, v)| v)
+        .collect();
+    of_id
+        .iter()
+        .rev()
+        .find(|(rec, _)| rec.built_in)
+        .or(of_id.last())
+        .copied()
+}
+
 /// Thread-safe registry of built-in and uploaded DCAT-AP profiles (C17).
 pub struct ProfileRegistry {
-    profiles: RwLock<BTreeMap<(String, String), (ProfileRecord, ShapesGraph)>>,
+    profiles: RwLock<ProfileMap>,
 }
 
 impl Default for ProfileRegistry {
@@ -275,10 +295,7 @@ impl ProfileRegistry {
                 return Some(rec.clone());
             }
         }
-        guard
-            .iter()
-            .rfind(|((pid, _), _)| pid == id)
-            .map(|(_, (rec, _))| rec.clone())
+        unpinned(&guard, id).map(|(rec, _)| rec.clone())
     }
 
     /// Resolves the stacked [`ShapesGraph`] for `(id, version)` including its `base_profile` chain (C17).
@@ -291,18 +308,10 @@ impl ProfileRegistry {
         let (target_rec, target_sg) = if let Some(v) = version {
             guard
                 .get(&(id.to_owned(), v.to_owned()))
+                .or_else(|| unpinned(&guard, id))
                 .cloned()
-                .or_else(|| {
-                    guard
-                        .iter()
-                        .rfind(|((pid, _), _)| pid == id)
-                        .map(|(_, pair)| pair.clone())
-                })
         } else {
-            guard
-                .iter()
-                .rfind(|((pid, _), _)| pid == id)
-                .map(|(_, pair)| pair.clone())
+            unpinned(&guard, id).cloned()
         }
         .ok_or_else(|| DataroomError::NotFound(format!("profile '{id}' not found")))?;
 
@@ -313,10 +322,8 @@ impl ProfileRegistry {
             let Some(ref base_id) = curr_base else {
                 break;
             };
-            let found = guard
-                .iter()
-                .rfind(|((pid, _), _)| pid == base_id)
-                .map(|(_, (r, sg))| (r.base_profile.clone(), sg.clone()));
+            let found =
+                unpinned(&guard, base_id).map(|(r, sg)| (r.base_profile.clone(), sg.clone()));
             if let Some((next_base, sg)) = found {
                 chain.push(sg);
                 curr_base = next_base;
@@ -1166,5 +1173,193 @@ mod tests {
                 "missing expected SHACL violation component {expected} in {components:?}"
             );
         }
+    }
+
+    fn small_catalogue(main_profile: &str) -> Catalogue {
+        let (org_id, catalogue_id) = test_ids();
+        serde_json::from_value(json!({
+            "orgId": org_id, "id": catalogue_id, "name": "city", "host": "data.city.example",
+            "title": {"en": "City"}, "description": {"en": "Desc"},
+            "defaultLanguage": "en", "languages": ["en"],
+            "mainProfile": main_profile, "activeProfiles": [],
+            "modified": "2026-11-01T10:00:00Z"
+        }))
+        .expect("catalogue fixture")
+    }
+
+    fn small_dataset(name: &str, description: bool) -> Dataset {
+        serde_json::from_value(json!({
+            "orgId": test_ids().0, "catalogueId": test_ids().1, "id": format!("pkg-{name}"),
+            "name": name, "title": {"en": "T"},
+            "description": if description { json!({"en": "D"}) } else { json!({}) },
+            "publisherId": "city", "visibility": "public", "state": "active",
+            "issued": "2026-11-01T10:00:00Z", "modified": "2026-11-02T10:00:00Z"
+        }))
+        .expect("dataset fixture")
+    }
+
+    fn profile(id: &str, version: &str, base: Option<&str>, shapes: &str) -> ProfileRecord {
+        serde_json::from_value(json!({
+            "id": id, "version": version, "uri": format!("https://e.org/profile/{id}"),
+            "title": {"en": id}, "baseProfile": base, "shapesTurtle": shapes, "builtIn": true
+        }))
+        .expect("profile fixture")
+    }
+
+    const NEEDS_KEYWORD: &str = r#"
+        @prefix sh: <http://www.w3.org/ns/shacl#> .
+        @prefix dcat: <http://www.w3.org/ns/dcat#> .
+        <https://e.org/shape> a sh:NodeShape ; sh:targetClass dcat:Dataset ;
+          sh:property [ sh:path dcat:keyword ; sh:minCount 1 ; sh:name "Keyword"@en ] .
+    "#;
+
+    #[test]
+    fn an_upload_of_a_built_in_id_never_changes_what_other_catalogues_validate_against() {
+        let registry = ProfileRegistry::new();
+        let cat = small_catalogue("dcat-ap-3.0.1");
+        let bad = small_dataset("no-description", false);
+        let before = registry.validate_dataset(&cat, &bad, None).unwrap();
+        assert!(
+            !before[0].conforms,
+            "the built-in EU profile needs dct:description"
+        );
+
+        // Another catalogue uploads an empty "new version" of the EU profile.
+        let empty = profile(
+            "dcat-ap-3.0.1",
+            "9.9",
+            None,
+            "@prefix sh: <http://www.w3.org/ns/shacl#> .",
+        );
+        let (saved, _) = registry
+            .upload_and_dry_run(empty, &small_catalogue("other"), &[], &BTreeMap::new())
+            .unwrap();
+        assert!(!saved.built_in, "an upload is never built in");
+        let after = registry.validate_dataset(&cat, &bad, None).unwrap();
+        assert_eq!(
+            after[0].profile_version, before[0].profile_version,
+            "unpinned means built-in"
+        );
+        assert!(
+            !after[0].conforms,
+            "an empty upload must not wave the dataset through"
+        );
+        assert_eq!(
+            registry.get("dcat-ap-3.0.1", None).map(|p| p.built_in),
+            Some(true)
+        );
+        // A catalogue that pins the uploaded version gets it.
+        let pinned = registry.get("dcat-ap-3.0.1", Some("9.9")).unwrap();
+        assert_eq!(pinned.version, "9.9");
+        let mut pinning = small_catalogue("dcat-ap-3.0.1");
+        pinning.active_profiles = vec![ProfilePin {
+            profile_id: "dcat-ap-3.0.1".into(),
+            version: "9.9".into(),
+        }];
+        let reports = registry.validate_dataset(&pinning, &bad, None).unwrap();
+        assert_eq!(reports.len(), 1, "the main profile pin is not added twice");
+        assert!(reports[0].conforms && reports[0].profile_version == "9.9");
+    }
+
+    #[test]
+    fn custom_profiles_stack_on_their_base_and_report() {
+        let registry = ProfileRegistry::new();
+        assert!(registry.list().len() >= 7);
+        assert!(registry.get("nope", None).is_none());
+        assert!(matches!(
+            registry.stacked_shapes("nope", None),
+            Err(DataroomError::NotFound(_))
+        ));
+        assert!(matches!(
+            registry.stacked_shapes("nope", Some("1")),
+            Err(DataroomError::NotFound(_))
+        ));
+        assert!(registry
+            .dry_run("nope", "1", &small_catalogue("x"), &[], &BTreeMap::new())
+            .is_err());
+
+        // A city profile stacked on the EU profile adds a keyword requirement.
+        let city = profile("city-ext", "1", Some("dcat-ap-3.0.1"), NEEDS_KEYWORD);
+        let cat = small_catalogue("city-ext");
+        let datasets = [small_dataset("ok", true)];
+        let (saved, dry) = registry
+            .upload_and_dry_run(city, &cat, &datasets, &BTreeMap::new())
+            .unwrap();
+        assert!(saved
+            .form_fields
+            .iter()
+            .any(|f| f.path.ends_with("#keyword") && f.required));
+        assert!(
+            saved
+                .form_fields
+                .iter()
+                .any(|f| f.path.ends_with("description")),
+            "base shapes stack in"
+        );
+        assert_eq!((dry.total_datasets, dry.failing_datasets), (1, 1));
+        assert_eq!(dry.newly_failing_datasets, ["ok"]);
+        assert_eq!(
+            registry.get("city-ext", Some("missing")).map(|p| p.version),
+            Some("1".into()),
+            "an unknown version falls back"
+        );
+
+        let reports = registry.validate_dataset(&cat, &datasets[0], None).unwrap();
+        assert!(!reports[0].conforms);
+        let feed = registry
+            .check_catalogue_feed(&cat, &datasets, &BTreeMap::new(), None)
+            .unwrap();
+        assert_eq!(feed["profile"], "city-ext");
+        assert_eq!(feed["conforms"], false);
+        assert_eq!(feed["hiddenDatasets"][0]["dataset"], "ok");
+        let eu = registry
+            .check_catalogue_feed(&cat, &datasets, &BTreeMap::new(), Some("dcat-ap-3.0.1"))
+            .unwrap();
+        assert_eq!(eu["datasetsChecked"], 1);
+        assert!(registry
+            .check_catalogue_feed(&cat, &[], &BTreeMap::new(), Some("nope"))
+            .is_err());
+
+        // Shapes over the upload limits or with owl:imports are refused, as is a broken file.
+        let imports = profile(
+            "evil",
+            "1",
+            None,
+            "<https://e.org/s> <http://www.w3.org/2002/07/owl#imports> <https://evil.example/x> .",
+        );
+        assert!(registry
+            .upload_and_dry_run(imports, &cat, &[], &BTreeMap::new())
+            .is_err());
+        let broken = profile("broken", "1", None, "this is not turtle");
+        assert!(registry
+            .upload_and_dry_run(broken, &cat, &[], &BTreeMap::new())
+            .is_err());
+        assert!(
+            registry.get("broken", None).is_none(),
+            "a refused upload is not registered"
+        );
+    }
+
+    #[test]
+    fn custom_sample_validation() {
+        let registry = ProfileRegistry::default();
+        let (org, cat) = test_ids();
+        let ok = r#"<https://e.org/d> a <http://www.w3.org/ns/dcat#Dataset> ; <http://www.w3.org/ns/dcat#keyword> "k" ."#;
+        let report = registry
+            .validate_custom_sample(NEEDS_KEYWORD, ok, org, cat, "pkg")
+            .unwrap();
+        assert!(report.conforms);
+        let missing = r#"<https://e.org/d> a <http://www.w3.org/ns/dcat#Dataset> ."#;
+        let report = registry
+            .validate_custom_sample(NEEDS_KEYWORD, missing, org, cat, "pkg")
+            .unwrap();
+        assert_eq!(report.violation_count, 1);
+        assert_eq!(report.profile_id, "custom-sample");
+        assert!(registry
+            .validate_custom_sample("not shapes", ok, org, cat, "pkg")
+            .is_err());
+        assert!(registry
+            .validate_custom_sample(NEEDS_KEYWORD, "not turtle", org, cat, "pkg")
+            .is_err());
     }
 }

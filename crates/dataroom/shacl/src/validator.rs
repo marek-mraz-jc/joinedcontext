@@ -7,7 +7,8 @@
 
 use chrono::Utc;
 use dataroom_core::{
-    CatalogueId, OrgId, Result, ShaclFinding, ShaclSeverity, ShaclValidationReport, Texts,
+    CatalogueId, DataroomError, OrgId, Result, ShaclFinding, ShaclSeverity, ShaclValidationReport,
+    Texts,
 };
 use dataroom_rdf::turtle::parse_turtle_checked;
 use dataroom_rdf::{ns, RdfGraph, RdfLimits, SubjectNode, Term};
@@ -181,10 +182,31 @@ pub fn compile_shapes_from_rdf(g: &RdfGraph) -> Result<ShapesGraph> {
         }
     }
 
+    // A constraint this validator cannot evaluate is refused, never skipped: a skipped path or
+    // pattern made an uploaded profile accept everything it was meant to check.
+    let refuse = |what: String| Err(DataroomError::field_error("shapesTurtle", what));
     let mut property_shapes = BTreeMap::new();
     for p_subj in prop_subjects {
-        if let Some(ps) = parse_property_shape(g, &p_subj) {
-            property_shapes.insert(p_subj, ps);
+        match parse_property_shape(g, &p_subj) {
+            Some(ps) => {
+                property_shapes.insert(p_subj, ps);
+            }
+            // The upstream DCAT-AP file names some property shapes it never defines; those
+            // carry no constraint. A defined path this validator cannot read is refused.
+            None if g.first_object(&p_subj, &sh("path")).is_some() => {
+                return refuse(format!(
+                    "property shape {p_subj} has an unsupported sh:path"
+                ));
+            }
+            None => {}
+        }
+    }
+    for t in g.triples.iter().filter(|t| t.predicate == sh("pattern")) {
+        let flags = g
+            .first_object(&t.subject, &sh("flags"))
+            .map(|f| f.string_value().to_owned());
+        if let Err(e) = compile_pattern(t.object.string_value(), flags.as_deref()) {
+            return refuse(format!("sh:pattern on {}: {e}", t.subject));
         }
     }
 
@@ -834,13 +856,7 @@ fn check_value_constraints(
 
     // 5. pattern
     if let Some((ref pat, ref flags)) = c.pattern {
-        let mut builder = RegexBuilder::new(pat);
-        if let Some(fl) = flags {
-            if fl.contains('i') {
-                builder.case_insensitive(true);
-            }
-        }
-        if let Ok(re) = builder.build() {
+        if let Ok(re) = compile_pattern(pat, flags.as_deref()) {
             if !re.is_match(val.string_value()) {
                 findings.push(ShaclFinding {
                     focus_node: focus.string_value().to_owned(),
@@ -1001,6 +1017,43 @@ fn conforms_to_shape_ref(
         .any(|f| f.severity == ShaclSeverity::Violation)
 }
 
+/// Compiles an `sh:pattern` with its `sh:flags` (XPath `i`, `s`, `m`, `x`, `q`); an unknown flag
+/// or a pattern the regex engine refuses (back-references, look-around) is an error.
+fn compile_pattern(
+    pattern: &str,
+    flags: Option<&str>,
+) -> std::result::Result<regex::Regex, String> {
+    let flags = flags.unwrap_or("");
+    let literal = flags.contains('q');
+    let source = if literal {
+        regex::escape(pattern)
+    } else {
+        pattern.to_owned()
+    };
+    let mut builder = RegexBuilder::new(&source);
+    for flag in flags.chars() {
+        match flag {
+            'i' => builder.case_insensitive(true),
+            's' => builder.dot_matches_new_line(true),
+            'm' => builder.multi_line(true),
+            'x' => builder.ignore_whitespace(true),
+            'q' => &mut builder,
+            other => return Err(format!("unsupported sh:flags character '{other}'")),
+        };
+    }
+    builder.build().map_err(|e| e.to_string())
+}
+
+/// An xsd timezone suffix: nothing, `Z`, or `+hh:mm` / `-hh:mm`.
+fn is_xsd_timezone(tz: &str) -> bool {
+    let b = tz.as_bytes();
+    match b {
+        [] | [b'Z'] => true,
+        [b'+' | b'-', h1, h2, b':', m1, m2] => [h1, h2, m1, m2].iter().all(|c| c.is_ascii_digit()),
+        _ => false,
+    }
+}
+
 fn datatype_matches(lit: &dataroom_rdf::LiteralValue, expected_dt: &str) -> bool {
     if expected_dt == ns::RDF_LANG_STRING {
         return lit.language.as_ref().is_some_and(|l| !l.is_empty());
@@ -1013,10 +1066,10 @@ fn datatype_matches(lit: &dataroom_rdf::LiteralValue, expected_dt: &str) -> bool
         ns::XSD_NON_NEGATIVE_INTEGER => lit.value.parse::<u128>().is_ok(),
         ns::XSD_DECIMAL | ns::XSD_DOUBLE => lit.value.parse::<f64>().is_ok(),
         ns::XSD_BOOLEAN => matches!(lit.value.as_str(), "true" | "false" | "1" | "0"),
-        ns::XSD_DATE => lit
-            .value
-            .get(..10)
-            .is_some_and(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok()),
+        ns::XSD_DATE => lit.value.get(..10).is_some_and(|date| {
+            chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok()
+                && is_xsd_timezone(&lit.value[10..])
+        }),
         ns::XSD_HEX_BINARY => {
             lit.value.len().is_multiple_of(2) && lit.value.bytes().all(|b| b.is_ascii_hexdigit())
         }
@@ -1103,5 +1156,227 @@ fn default_msg(msg: &Texts, fallback: String) -> Texts {
         BTreeMap::from([("en".into(), fallback)])
     } else {
         msg.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dataroom_rdf::{parse_rdf_graph, RdfFormat};
+    use uuid::Uuid;
+
+    const PREFIXES: &str = "@prefix ex: <https://example.org/> .\n\
+        @prefix sh: <http://www.w3.org/ns/shacl#> .\n\
+        @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n";
+
+    fn shapes(body: &str) -> Result<ShapesGraph> {
+        parse_shapes_graph(&format!("{PREFIXES}{body}"), &RdfLimits::default())
+    }
+
+    fn report(shapes_body: &str, data_body: &str) -> ShaclValidationReport {
+        let sg = shapes(shapes_body).expect("shapes compile");
+        let data = parse_rdf_graph(
+            &format!("{PREFIXES}{data_body}"),
+            RdfFormat::Turtle,
+            &RdfLimits::default(),
+        )
+        .expect("data parses");
+        validate_graph_against_shapes(
+            &data,
+            &sg,
+            OrgId::from_uuid(Uuid::from_u128(1)),
+            CatalogueId::from_uuid(Uuid::from_u128(10)),
+            "ds",
+            "test",
+            "1",
+        )
+    }
+
+    fn components(rep: &ShaclValidationReport) -> Vec<String> {
+        rep.findings
+            .iter()
+            .map(|f| {
+                f.source_constraint_component
+                    .trim_start_matches("http://www.w3.org/ns/shacl#")
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    fn refusal(body: &str) -> String {
+        match shapes(body) {
+            Ok(_) => panic!("shapes must be refused:\n{body}"),
+            Err(e) => e.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_constraint_the_validator_cannot_read_is_refused_not_skipped() {
+        let path = refusal(
+            "ex:S a sh:NodeShape ; sh:targetClass ex:Item ;
+               sh:property [ sh:path [ sh:zeroOrMorePath ex:p ] ; sh:minCount 1 ] .",
+        );
+        assert!(path.contains("unsupported sh:path"), "{path}");
+
+        let pattern = refusal(
+            "ex:S a sh:NodeShape ; sh:targetClass ex:Item ;
+               sh:property [ sh:path ex:p ; sh:pattern \"(a\" ] .",
+        );
+        assert!(pattern.contains("sh:pattern"), "{pattern}");
+
+        let backref = refusal(
+            "ex:S a sh:NodeShape ; sh:targetClass ex:Item ;
+               sh:property [ sh:path ex:p ; sh:pattern \"(a)\\\\1\" ] .",
+        );
+        assert!(backref.contains("sh:pattern"), "{backref}");
+
+        let flags = refusal(
+            "ex:S a sh:NodeShape ; sh:targetClass ex:Item ;
+               sh:property [ sh:path ex:p ; sh:pattern \"a\" ; sh:flags \"z\" ] .",
+        );
+        assert!(
+            flags.contains("unsupported sh:flags character 'z'"),
+            "{flags}"
+        );
+
+        // A property shape only named, never defined, carries no constraint and stays allowed.
+        let dangling =
+            shapes("ex:S a sh:NodeShape ; sh:targetClass ex:Item ; sh:property ex:Undefined .");
+        assert!(dangling.is_ok(), "{dangling:?}");
+    }
+
+    #[test]
+    fn pattern_flags_follow_xpath() {
+        let check = |flags: &str, pattern: &str, value: &str| {
+            let rep = report(
+                &format!(
+                    "ex:S a sh:NodeShape ; sh:targetClass ex:Item ;
+                       sh:property [ sh:path ex:p ; sh:pattern \"{pattern}\" ; sh:flags \"{flags}\" ] ."
+                ),
+                &format!("ex:a a ex:Item ; ex:p \"\"\"{value}\"\"\" ."),
+            );
+            rep.conforms
+        };
+        assert!(check("i", "^abc$", "ABC"));
+        assert!(!check("", "^abc$", "ABC"));
+        assert!(check("s", "^a.b$", "a\nb"));
+        assert!(!check("", "^a.b$", "a\nb"));
+        assert!(check("m", "^b$", "a\nb"));
+        assert!(!check("", "^b$", "a\nb"));
+        assert!(check("x", "^a b c$", "abc"));
+        assert!(check("q", "a.c", "xa.cx"));
+        assert!(!check("q", "a.c", "abc"));
+        assert!(check("iq", "A.C", "a.c"));
+    }
+
+    #[test]
+    fn xsd_date_takes_only_a_timezone_after_the_date() {
+        let conforms = |value: &str| {
+            report(
+                "ex:S a sh:NodeShape ; sh:targetClass ex:Item ;
+                   sh:property [ sh:path ex:d ; sh:datatype xsd:date ] .",
+                &format!("ex:a a ex:Item ; ex:d \"{value}\"^^xsd:date ."),
+            )
+            .conforms
+        };
+        for ok in [
+            "2026-01-01",
+            "2026-01-01Z",
+            "2026-01-01+01:00",
+            "2026-01-01-12:30",
+        ] {
+            assert!(conforms(ok), "{ok} is a valid xsd:date");
+        }
+        for bad in [
+            "2026-01-01xyz",
+            "2026-01-01T10:00:00",
+            "2026-01-01+1:00",
+            "2026-01-01+aa:00",
+            "2026-13-01",
+            "2026-1-1",
+            "2026",
+        ] {
+            assert!(!conforms(bad), "{bad} is not an xsd:date");
+        }
+    }
+
+    #[test]
+    fn paths_evaluate_and_display_in_shacl_syntax() {
+        let sg = shapes(
+            "ex:S a sh:NodeShape ; sh:targetClass ex:Item ;
+               sh:property [ sh:path ( ex:a ex:b ) ; sh:minCount 1 ] ;
+               sh:property [ sh:path [ sh:alternativePath ( ex:x ex:y ) ] ; sh:minCount 2 ] ;
+               sh:property [ sh:path [ sh:inversePath ex:owns ] ; sh:minCount 1 ] ;
+               sh:property [ sh:path [ sh:inversePath ( ex:a ex:b ) ] ; sh:maxCount 0 ] .",
+        )
+        .unwrap();
+        let mut shown: Vec<String> = sg
+            .property_shapes
+            .values()
+            .map(|ps| ps.path.display_iri())
+            .collect();
+        shown.sort();
+        assert_eq!(
+            shown,
+            [
+                "^https://example.org/a/https://example.org/b",
+                "^https://example.org/owns",
+                "https://example.org/a/https://example.org/b",
+                "https://example.org/x|https://example.org/y",
+            ]
+        );
+
+        let shapes_body = "ex:S a sh:NodeShape ; sh:targetClass ex:Item ;
+               sh:property [ sh:path ( ex:a ex:b ) ; sh:minCount 1 ] ;
+               sh:property [ sh:path [ sh:alternativePath ( ex:x ex:y ) ] ; sh:minCount 2 ] ;
+               sh:property [ sh:path [ sh:inversePath ex:owns ] ; sh:minCount 1 ] .";
+        let ok = report(
+            shapes_body,
+            "ex:i a ex:Item ; ex:a ex:mid ; ex:x 1 ; ex:y 2 . ex:mid ex:b 3 . ex:o ex:owns ex:i .",
+        );
+        assert!(ok.conforms, "{:?}", ok.findings);
+        let bad = report(shapes_body, "ex:i a ex:Item ; ex:a ex:mid ; ex:x 1 .");
+        let mut seen = components(&bad);
+        seen.sort();
+        assert_eq!(
+            seen, ["MinCountConstraintComponent"; 3],
+            "{:?}",
+            bad.findings
+        );
+    }
+
+    #[test]
+    fn node_kind_and_value_components() {
+        let shapes_body = "ex:S a sh:NodeShape ; sh:targetClass ex:Item ;
+               sh:property [ sh:path ex:iri ; sh:nodeKind sh:IRI ] ;
+               sh:property [ sh:path ex:lit ; sh:nodeKind sh:Literal ] ;
+               sh:property [ sh:path ex:bn ; sh:nodeKind sh:BlankNode ] ;
+               sh:property [ sh:path ex:bni ; sh:nodeKind sh:BlankNodeOrIRI ] ;
+               sh:property [ sh:path ex:il ; sh:nodeKind sh:IRIOrLiteral ] ;
+               sh:property [ sh:path ex:bl ; sh:nodeKind sh:BlankNodeOrLiteral ] ;
+               sh:property [ sh:path ex:fixed ; sh:hasValue ex:One ] ;
+               sh:property [ sh:path ex:state ; sh:in ( \"open\" \"closed\" ) ] ;
+               sh:property [ sh:path ex:label ; sh:languageIn ( \"sk\" \"en\" ) ; sh:uniqueLang true ] .";
+        let ok = report(
+            shapes_body,
+            "ex:i a ex:Item ; ex:iri ex:x ; ex:lit \"v\" ; ex:bn [ ex:q 1 ] ; ex:bni ex:x, [ ex:q 1 ] ;
+                ex:il ex:x, \"v\" ; ex:bl [ ex:q 1 ], \"v\" ; ex:fixed ex:One ; ex:state \"open\" ;
+                ex:label \"a\"@sk, \"b\"@en .",
+        );
+        assert!(ok.conforms, "{:?}", ok.findings);
+
+        let bad = report(
+            shapes_body,
+            "ex:i a ex:Item ; ex:iri \"v\" ; ex:lit ex:x ; ex:bn ex:x ; ex:bni \"v\" ;
+                ex:il [ ex:q 1 ] ; ex:bl ex:x ; ex:fixed ex:Two ; ex:state \"lost\" ;
+                ex:label \"a\"@sk, \"b\"@sk, \"c\"@de .",
+        );
+        let seen = components(&bad);
+        let count = |c: &str| seen.iter().filter(|s| *s == c).count();
+        assert_eq!(count("NodeKindConstraintComponent"), 6, "{seen:?}");
+        assert_eq!(count("HasValueConstraintComponent"), 1, "{seen:?}");
+        assert_eq!(count("InConstraintComponent"), 1, "{seen:?}");
+        assert_eq!(count("LanguageInConstraintComponent"), 1, "{seen:?}");
+        assert_eq!(count("UniqueLangConstraintComponent"), 1, "{seen:?}");
     }
 }
