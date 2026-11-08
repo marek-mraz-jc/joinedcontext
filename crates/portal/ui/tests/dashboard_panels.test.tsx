@@ -15,7 +15,7 @@ import { FALLBACK } from "../src/components/panels/palette";
 import { PanelView } from "../src/components/panels/PanelView";
 import type { PanelDefinition } from "../src/components/panels/PanelView";
 import { barGradient, BarGaugePanel, DEFAULT_THRESHOLDS, globalRange, shownValues, StatPanel } from "../src/components/panels/ValuePanels";
-import { tableOf, TablePanel } from "../src/components/panels/TablePanel";
+import { TableCellValue, tableOf, TablePanel } from "../src/components/panels/TablePanel";
 import { Legend } from "../src/components/panels/TimeSeriesPanel";
 import type { LegendOptions } from "../src/components/panels/TimeSeriesPanel";
 import { colorOf, displayValue, formatDate, formatUnit, settingsFor } from "../src/components/panels/fieldConfig";
@@ -194,6 +194,15 @@ describe("table", () => {
     await user.selectOptions(select, "1");
     expect(await screen.findByText("api", {}, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.queryByText("dev")).toBeNull();
+  });
+
+  it("puts a number at the cell's right edge and text at the left, unless custom.align says", () => {
+    const { container, rerender } = render(<TableCellValue settings={settingsFor(undefined, { name: "n", type: "number", values: [] })} value={12} locale="en" />);
+    expect(container.firstElementChild).toHaveClass("text-right");
+    rerender(<TableCellValue settings={settingsFor(undefined, { name: "s", type: "string", values: [] })} value="Kallio" locale="en" />);
+    expect(container.firstElementChild).not.toHaveClass("text-right");
+    rerender(<TableCellValue settings={settingsFor({ defaults: { custom: { align: "center" } } }, { name: "n", type: "number", values: [] })} value={12} locale="en" />);
+    expect(container.firstElementChild).toHaveClass("text-center");
   });
 
   it("draws the helsinki stations in the SDK grid, each cell in its unit and mapping", async () => {

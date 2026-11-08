@@ -6,6 +6,7 @@
 import { useMemo, useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { clsx } from "clsx";
 import { EntityGrid, fixtureSource, parseGridConfig } from "@joinedcontext/sdk/grid";
 import type { EntityGridProps } from "@joinedcontext/sdk/grid";
 import { gridLabels } from "../entities/PortalEntityGrid";
@@ -86,6 +87,10 @@ export function TableCellValue({ settings, value, locale }: { settings: FieldSet
   const cellType = (settings.custom.cellOptions as { type?: string } | undefined)?.type ?? (settings.custom.displayMode as string | undefined);
   const step = typeof value === "number" ? stepFor(settings.thresholds, value, settings.min, settings.max) : undefined;
   const color = shown.color ?? (step ? colorOf(step.color) : undefined);
+  // Grafana's `custom.align`: auto puts a number at the right edge, text at the left.
+  const asked = settings.custom.align;
+  const align = asked === "left" || asked === "center" || asked === "right" ? asked : typeof value === "number" ? "right" : "left";
+  const aligned = align === "right" ? "text-right" : align === "center" ? "text-center" : undefined;
   if (color && (cellType === "color-background" || cellType === "color-background-solid")) {
     return (
       <Tinted color={color} background className="inline-block max-w-full truncate rounded-sm px-1.5 align-middle">
@@ -95,14 +100,14 @@ export function TableCellValue({ settings, value, locale }: { settings: FieldSet
   }
   if (color && (cellType === "color-text" || shown.color)) {
     return (
-      <Tinted color={color} className="block truncate font-medium">
+      <Tinted color={color} className={clsx("block truncate font-medium", aligned)}>
         {shown.text}
       </Tinted>
     );
   }
   // A long name stays in its own column: cut with an ellipsis, whole in the title.
   return (
-    <span className="block truncate" title={shown.text}>
+    <span className={clsx("block truncate", aligned)} title={shown.text}>
       {shown.text}
     </span>
   );

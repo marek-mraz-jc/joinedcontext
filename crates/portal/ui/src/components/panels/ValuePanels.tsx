@@ -126,8 +126,7 @@ export function StatPanel({ title, frames, fieldConfig, options, height, locale 
             className="flex h-full min-w-0 flex-col items-center justify-center rounded-md p-3 text-center"
           >
             {showName ? <span className={clsx("max-w-full truncate text-caption", !background && "text-fg-muted")}>{one.reduced.name}</span> : null}
-            {/* Grafana centres the value in the panel, in its largest text. */}
-            <span className="max-w-full truncate text-display font-semibold tabular-nums">{textMode === "name" ? one.reduced.name : one.text}</span>
+            <StatValue text={textMode === "name" ? one.reduced.name : one.text} />
             {graph && one.reduced.trend.length > 1 ? (
               <Sparkline points={one.reduced.trend} color="currentColor" label={t("dashboardView.trend", { name: one.reduced.name })} height={Math.max(24, Math.min(64, height / 4))} />
             ) : null}
@@ -135,6 +134,22 @@ export function StatPanel({ title, frames, fieldConfig, options, height, locale 
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * A stat's value as large as the panel lets it be, as Grafana sizes it: SVG text in a box as wide
+ * as the text, scaled to the space the card leaves.
+ */
+export function StatValue({ text }: { text: string }): JSX.Element {
+  // ~0.6 em per character of the 32-unit font, and a little air on either side.
+  const width = Math.max(32, Math.ceil(text.length * 19 + 8));
+  return (
+    <svg viewBox={`0 0 ${width} 40`} className="max-h-28 min-h-10 w-full flex-1 font-semibold tabular-nums">
+      <text x={width / 2} y="21" textAnchor="middle" dominantBaseline="central" fontSize="32" fill="currentColor">
+        {text}
+      </text>
+    </svg>
   );
 }
 
