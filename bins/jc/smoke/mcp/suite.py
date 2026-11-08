@@ -106,8 +106,27 @@ class Expect:
         out, _ = ex.expected_types(e, e.public_grants(), self.tenant_types(e))
         return out
 
+    def temporal_types(self, e: ex.Endpoint) -> dict:
+        """The types the public (or the Endpoint's own caller role) temporal grants open."""
+        grants = [g for g in e.grants if (g.public() or e.own_role(g)) and g.temporal()]
+        return ex.expected_types(e, grants, self.tenant_types(e))[0] if grants else {}
+
+    def temporal_ops(self, e: ex.Endpoint) -> set:
+        out = set()
+        for g in e.grants:
+            if (g.public() or e.own_role(g)) and g.temporal():
+                out |= g.operations
+        return out
+
+    def pick(self, e: ex.Endpoint, types) -> str:
+        """The type a data check reads: the largest that does not expire (an expiring type's
+        rows may be gone by the time the rehearsal answers), else the largest."""
+        tt = self.tenant_types(e)
+        return max(types, key=lambda k: (not tt[k].get("expires"), tt[k]["count"]))
+
     def temporal(self, e: ex.Endpoint, types) -> tuple[str, dict] | None:
-        """The (type, slot) of the granted type with the newest exported instance."""
+        """The (type, slot) of the temporally granted type with the newest exported instance."""
+        types = [t for t in types if t in self.temporal_types(e)]
         per = self.index["temporal"].get(e.tenant, {})
         best = None
         for t in types:
@@ -215,8 +234,16 @@ class Suite:
             self.r.skip("hub.query", t, "tools/call query_entities", "rows of the granted types",
                         f"the export holds no row of a type the public Policies of {e.slug} open")
             return
-        typ = max(types, key=lambda k: tt[k]["count"])
+        typ = self.x.pick(e, types)
         slot = tt[typ]
+        if slot.get("expires"):
+            a = self.hub.call("query_entities", {"endpoint": e.slug, "type": [typ], "count": True, "limit": 1})
+            if a.ok and total_of(a.data) == 0:
+                self.r.skip("hub.query.page", t, f"query_entities endpoint={e.slug} type={typ}", "rows",
+                            f"every granted type expires (expiresAt) and none of its {slot['count']} exported "
+                            "rows is current any more: the broker answered total 0")
+                self.hub_temporal(e, t, types)
+                return
         a = self.hub.call("query_entities", {"endpoint": e.slug, "type": [typ], "limit": 5})
         got = entities_of(a.data)
         wrong = [x.get("id") for x in got if ex.short_type(str(x.get("type"))) != typ]
@@ -228,7 +255,7 @@ class Suite:
             or slot["sample"]
         a = self.hub.call("query_entities", {"endpoint": e.slug, "id": [sample], "type": [typ]})
         self.check("hub.query.by-id", t, f"query_entities endpoint={e.slug} id={sample}",
-                   "the exported entity", a.brief(120), a.ok and sample in ids_in(a.data))
+                   "the exported entity", a.brief(400), a.ok and sample in ids_in(a.data))
         want = types[typ]
         a = self.hub.call("query_entities", {"endpoint": e.slug, "type": [typ], "count": True, "limit": 1})
         total = total_of(a.data)
@@ -254,30 +281,38 @@ class Suite:
         found = self.x.temporal(e, types)
         if not found:
             self.r.skip(f"{label}.temporal.24h", t, "query_temporal", "the exported instances",
-                        "the export holds no instance of a granted type of this tenant in its 24 h window")
+                        "no public temporal grant opens a type the export holds instances of in its 24 h window")
             return
         typ, s = found
+        ops = self.x.temporal_ops(e)
+        # A grant of retrieveTemporal alone answers one Entity's history, never a query.
+        tool = "query_temporal" if ops & {"queryTemporal", "retrieveOps"} else "retrieve_temporal"
+        attr = ex.short_type(s["attr"])
         newest = ex.parse_time(s["newest"])
-        args = {"type": [typ], "id": [s["id"]], "attrs": [s["attr"]], "timerel": "between",
+        # No attrs: a grant may list the attributes it shows (propertyNames), and every
+        # attribute's history counts for both windows.
+        args = {"timerel": "between",
                 "timeAt": iso(self.window), "endTimeAt": iso(self.now + dt.timedelta(minutes=5))}
+        args.update({"type": [typ], "id": [s["id"]]} if tool == "query_temporal" else {"id": s["id"]})
         if door is self.hub:
             args["endpoint"] = e.slug
         if newest < self.window:
-            self.r.skip(f"{label}.temporal.24h", t, f"query_temporal id={s['id']}", "the exported instance",
+            self.r.skip(f"{label}.temporal.24h", t, f"{tool} id={s['id']}", "the exported instance",
                         f"its newest instance ({s['newest']}) aged out of the rolling 24 h window")
         else:
-            a = door.call("query_temporal", args)
+            a = door.call(tool, args)
             n = instances(a.data)
             self.check(f"{label}.temporal.24h", t,
-                       f"query_temporal id={s['id']} attrs={s['attr']} timerel=between {args['timeAt']}..now",
-                       f">= 1 instance (newest exported {s['newest']})", f"{n} instances; {a.brief(80)}",
+                       f"{tool} id={s['id']} (newest exported attribute {attr}) timerel=between {args['timeAt']}..now",
+                       f">= 1 instance (newest exported {s['newest']})", f"{n} instances; {a.brief(120)}",
                        a.ok and n >= 1 and s["id"] in json.dumps(a.data))
         old = dict(args, timeAt=iso(self.stale - dt.timedelta(days=30)), endTimeAt=iso(self.stale))
-        a = door.call("query_temporal", old)
+        a = door.call(tool, old)
         n = instances(a.data)
-        self.check(f"{label}.temporal.older", t, f"query_temporal id={s['id']} between {old['timeAt']}..{old['endTimeAt']}",
-                   "no instance older than 24 h (the rehearsal keeps one day)", f"{n} instances; {a.brief(80)}",
-                   a.ok and n == 0)
+        # A temporalQ window in the grant may refuse the older window outright: also nothing.
+        self.check(f"{label}.temporal.older", t, f"{tool} id={s['id']} between {old['timeAt']}..{old['endTimeAt']}",
+                   "no instance older than 24 h (the rehearsal keeps one day)", f"{n} instances; {a.brief(120)}",
+                   (a.ok or a.refused) and n == 0)
 
     def hub_write(self, e: ex.Endpoint, door: Mcp | None = None, label: str = "hub"):
         door = door or self.hub
@@ -300,7 +335,7 @@ class Suite:
         types = self.x.granted(e)
         if not types:
             return
-        typ = max(types, key=lambda k: self.x.tenant_types(e)[k]["count"])
+        typ = self.x.pick(e, types)
         t = f"hub {e.project}/{e.name} ({self.x.klass(e)})"
         a = self.hub.call("search", {"query": typ})
         text = json.dumps(a.result or {})
@@ -329,11 +364,11 @@ class Suite:
         types = self.x.granted(e)
         if types:
             tt = self.x.tenant_types(e)
-            typ = max(types, key=lambda k: tt[k]["count"])
+            typ = self.x.pick(e, types)
             sample = tt[typ]["sample"]
             a = door.call("query_entities", {"type": [typ], "id": [sample]})
             self.check("endpoint.query.by-id", t, f"query_entities type={typ} id={sample}", "the exported entity",
-                       a.brief(120), a.ok and sample in ids_in(a.data))
+                       a.brief(400), a.ok and sample in ids_in(a.data))
             self.hub_temporal(e, t, types, door=door, label="endpoint")
         else:
             self.r.skip("endpoint.query.by-id", t, "query_entities", "the exported entity",
@@ -488,13 +523,13 @@ class Suite:
             self.r.skip(id, target, "jc_data_query", "the exported entity", "no exported row of a granted type")
             return None
         tt = self.x.tenant_types(e)
-        typ = max(types, key=lambda k: tt[k]["count"])
+        typ = self.x.pick(e, types)
         sample = tt[typ]["sample"]
         args = {"project": project, "endpoint": e.name, "type": typ, "id": sample, **(args_extra or {})}
         a = door.call("jc_data_query", args)
         if expect:
             self.check(id, target, f"jc_data_query endpoint={e.name} type={typ} id={sample}", "the exported entity",
-                       a.brief(120), a.ok and sample in ids_in(a.data))
+                       a.brief(400), a.ok and sample in ids_in(a.data))
         else:
             self.check(id, target, f"jc_data_query endpoint={e.name} id={sample}", "refused, no data",
                        a.brief(120), a.refused and sample not in json.dumps(a.result or {}))
