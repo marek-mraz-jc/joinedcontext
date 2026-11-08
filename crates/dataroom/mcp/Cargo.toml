@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "EUPL-1.2"
 description = "Model Context Protocol (MCP) server and tool dispatcher generated from the dataroom operation registry"
+publish = false
 
 [dependencies]
 dataroom-core = { path = "../core" }
