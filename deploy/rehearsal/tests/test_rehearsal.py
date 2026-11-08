@@ -193,9 +193,10 @@ def test_entity_batches_keep_their_tenant_and_stay_under_the_caps():
     assert [(t, len(b)) for t, b in batches] == [("a", 500), ("a", 500), ("a", 203), ("b", 1), ("a", 1)]
 
 
-def test_the_import_never_sends_an_instance_older_than_the_window(tmp_path):
+def test_the_import_never_sends_an_instance_older_than_the_window(tmp_path, monkeypatch):
     """The real importer against a stub broker: the 25 h instance is refused in the report and
     never reaches the broker; the window ends at the export time, not at the import."""
+    monkeypatch.setattr(rh, "DISK_RESERVE", 0)  # this test is about the window, not the host disk
     seen = []
 
     class Broker(http.server.BaseHTTPRequestHandler):
