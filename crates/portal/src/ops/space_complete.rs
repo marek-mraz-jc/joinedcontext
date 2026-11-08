@@ -973,7 +973,7 @@ pub async fn run(
     // One at a time per space: a retry waits for the proposal it repeats, then finds it open.
     let forge = state.forge_for(project);
     let _one_proposal = match forge.as_ref().filter(|_| input.propose) {
-        Some(gitea) => Some(crate::api::mutate::turn(gitea, &change_branch(&space_name)).await),
+        Some(shako) => Some(crate::api::mutate::turn(shako, &change_branch(&space_name)).await),
         None => None,
     };
     let standing = standing_of(
@@ -1070,19 +1070,19 @@ async fn standing_of(
     (model, upload): (Option<&str>, bool),
     (lane, files, propose): (Lane, usize, bool),
 ) -> Result<Standing, OpError> {
-    let (Some(model), Some(gitea)) = (model, state.forge_for(project)) else {
+    let (Some(model), Some(shako)) = (model, state.forge_for(project)) else {
         return Ok(Standing::Nothing);
     };
     let path = format!("projects/{project}/spaces/{space}/datamodels/{space}.linkml.yaml");
-    let holds = |file: Option<crate::git::RepoFile>| file.is_some_and(|f| f.content == model);
-    let open = gitea
+    let holds = |file: Option<crate::forge::RepoFile>| file.is_some_and(|f| f.content == model);
+    let open = shako
         .list_pull_requests("open")
         .await
         .map_err(ApiError::from)?
         .into_iter()
         .find(|pull| creates_space(&pull.head_branch, space));
     if let Some(pull) = open {
-        let held = gitea
+        let held = shako
             .get_file(&path, &pull.head_branch)
             .await
             .map_err(ApiError::from)?;
@@ -1090,7 +1090,7 @@ async fn standing_of(
             return Ok(Standing::Open(Box::new(
                 crate::api::import::waiting_change(
                     state,
-                    &gitea,
+                    &shako,
                     project,
                     lane,
                     crate::change::PlanSummary::new(files, 0, 0),
@@ -1115,8 +1115,8 @@ async fn standing_of(
     if !serves {
         return Ok(Standing::Nothing);
     }
-    let main = gitea.default_branch().await.map_err(ApiError::from)?;
-    let held = gitea.get_file(&path, &main).await.map_err(ApiError::from)?;
+    let main = shako.default_branch().await.map_err(ApiError::from)?;
+    let held = shako.get_file(&path, &main).await.map_err(ApiError::from)?;
     Ok(if holds(held) {
         Standing::Live
     } else {

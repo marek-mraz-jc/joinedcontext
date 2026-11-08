@@ -19,7 +19,7 @@ pub use shako_api::ShakoState;
 use shako_api::{api_router, authenticate_request, exec_odata_operation, odata_error_response};
 use shako_core::{
     BranchProtectionRule, InstanceRecord, OrgId, ProtectionRuleRecord, PushMirrorRecord, RepoId,
-    RepoRecord, RequestCtx, ShakoError, ShakoResult, WebhookId, WebhookRecord,
+    RepoRecord, RequestCtx, ShakoError, ShakoResult, WebhookFormat, WebhookId, WebhookRecord,
     validate_branch_name, validate_repo_or_owner_name,
 };
 use shako_git::{compact_repository, fsck_repository, init_bare_repo};
@@ -345,6 +345,7 @@ pub async fn apply_manifest_bundle(
                         active: true,
                         secret_ref: w.secret_ref.clone(),
                         previous_secret_ref: None,
+                        format: WebhookFormat::Shako,
                         created_at: now,
                     })
                     .await?;

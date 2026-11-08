@@ -17,15 +17,15 @@ use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const HEAD: &str = "2c245c6bb1efa7a20938c5b11b70379be6838eec";
 const APP_HEAD: &str = "b47f8079d2df9e7986d2babf4539cec802f4e68e";
 const TAGGED: &str = "3a386a2d5ff9fc1e18d3032677ae5bbf2ea5d4e7";
-const SOURCE: &str = "/api/v1/repos/test-owner/ovzdusie_air-map";
-const TARGET: &str = "/api/v1/repos/test-owner/doprava";
-const LANDED: &str = "/api/v1/repos/test-owner/doprava_mapa";
+const SOURCE: &str = "/odata/Repositories(Owner='test-owner',Name='ovzdusie_air-map')";
+const TARGET: &str = "/odata/Repositories(Owner='test-owner',Name='doprava')";
+const LANDED: &str = "/odata/Repositories(Owner='test-owner',Name='doprava_mapa')";
 
 /// The App as the project's repository holds it: a status and a built digest, which no export
 /// carries (MF-17, AP-13a).
@@ -56,51 +56,70 @@ fn at(verb: &str, route: String, status: u16, body: Value) -> Mock {
 async fn world(bundled: &str, landed: &str) -> (MockServer, AppState) {
     let server = forge().await;
     // The source project's repository, its App manifest at HEAD.
-    mount_repository(&server, "/api/v1/repos/test-owner/ovzdusie").await;
-    at(
-        "GET",
-        "/api/v1/repos/test-owner/ovzdusie/branches/main".into(),
-        200,
-        json!({ "name": "main", "commit": { "id": HEAD } }),
+    mount_repository(
+        &server,
+        "/odata/Repositories(Owner='test-owner',Name='ovzdusie')",
     )
-    .mount(&server)
     .await;
     at(
         "GET",
-        "/api/v1/repos/test-owner/ovzdusie/contents/apps/air-map/app.yaml".into(),
+        "/odata/Repositories(Owner='test-owner',Name='ovzdusie')/Branches('main')".into(),
         200,
-        json!({ "sha": "blob-app", "content": STANDARD.encode(APP) }),
+        json!({ "Name": "main", "HeadSha": HEAD }),
     )
-    .with_priority(1)
     .mount(&server)
     .await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='ovzdusie')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param("@p", "'apps/air-map/app.yaml'"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "Sha": "blob-app", "Content": STANDARD.encode(APP) })),
+        )
+        .with_priority(1)
+        .mount(&server)
+        .await;
     // The App's repository.
     at(
         "GET",
         SOURCE.into(),
         200,
-        json!({ "default_branch": "main" }),
+        json!({ "DefaultBranch": "main" }),
     )
     .mount(&server)
     .await;
     at(
         "GET",
-        format!("{SOURCE}/branches/main"),
+        format!("{SOURCE}/Branches('main')"),
         200,
-        json!({ "name": "main", "commit": { "id": APP_HEAD } }),
+        json!({ "Name": "main", "HeadSha": APP_HEAD }),
     )
     .mount(&server)
     .await;
+    // `Shako.BundleLink` names the bundle's download, which the client fetches from the base it
+    // dials.
+    let download = "/api/v1/repos/test-owner/ovzdusie_air-map/archive/main.bundle";
     Mock::given(method("GET"))
-        .and(path(format!("{SOURCE}/archive/main.bundle")))
+        .and(path(format!("{SOURCE}/Shako.BundleLink(Ref=@r)")))
+        .and(query_param("@r", "'main'"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "value": format!("https://forge.example{download}") })),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(download))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(bundle(bundled)))
         .mount(&server)
         .await;
     at(
         "GET",
-        format!("{SOURCE}/tags"),
+        format!("{SOURCE}/Tags"),
         200,
-        json!([{ "name": "v1.0.0", "commit": { "sha": TAGGED } }]),
+        json!({ "value": [{ "Name": "v1.0.0", "TargetSha": TAGGED }] }),
     )
     .mount(&server)
     .await;
@@ -111,7 +130,7 @@ async fn world(bundled: &str, landed: &str) -> (MockServer, AppState) {
         .await;
     at(
         "POST",
-        "/api/v1/orgs/test-owner/repos".into(),
+        "/odata/CreateRepository".into(),
         201,
         json!({ "name": "created" }),
     )
@@ -127,14 +146,14 @@ async fn world(bundled: &str, landed: &str) -> (MockServer, AppState) {
         .await;
     at(
         "GET",
-        format!("{LANDED}/branches/main"),
+        format!("{LANDED}/Branches('main')"),
         200,
-        json!({ "name": "main", "commit": { "id": landed } }),
+        json!({ "Name": "main", "HeadSha": landed }),
     )
     .mount(&server)
     .await;
     for (verb, route) in [
-        ("POST", format!("{LANDED}/branch_protections")),
+        ("POST", format!("{LANDED}/Shako.Protect")),
         ("DELETE", LANDED.to_owned()),
     ] {
         at(verb, route, 201, json!({})).mount(&server).await;
@@ -344,7 +363,7 @@ async fn sent(server: &MockServer, verb: &str, route: &str) -> Vec<Vec<u8>> {
 }
 
 async fn nothing_created(server: &MockServer) {
-    assert!(sent(server, "POST", "/api/v1/orgs/test-owner/repos")
+    assert!(sent(server, "POST", "/odata/CreateRepository")
         .await
         .is_empty());
 }
@@ -460,15 +479,15 @@ async fn an_exported_app_imports_into_another_project_under_a_new_name() {
     let change: Value = serde_json::from_str(&answer.text).expect("json");
     assert_eq!(change["status"]["lane"], "red", "{change}");
 
-    let created: Vec<Value> = sent(&server, "POST", "/api/v1/orgs/test-owner/repos")
+    let created: Vec<Value> = sent(&server, "POST", "/odata/CreateRepository")
         .await
         .iter()
         .map(|body| serde_json::from_slice(body).expect("json"))
         .collect();
     assert_eq!(created.len(), 1);
-    assert_eq!(created[0]["name"], "doprava_mapa");
-    assert_eq!(created[0]["private"], true);
-    assert_eq!(created[0]["auto_init"], false);
+    assert_eq!(created[0]["Name"], "doprava_mapa");
+    assert_eq!(created[0]["Private"], true);
+    assert_eq!(created[0]["AutoInit"], false);
 
     let pushed = sent(
         &server,
@@ -487,7 +506,7 @@ async fn an_exported_app_imports_into_another_project_under_a_new_name() {
         "{push}"
     );
     assert_eq!(
-        sent(&server, "POST", &format!("{LANDED}/branch_protections"))
+        sent(&server, "POST", &format!("{LANDED}/Shako.Protect"))
             .await
             .len(),
         1
@@ -632,9 +651,9 @@ async fn a_name_that_is_taken_is_not_adopted() {
 
     at(
         "GET",
-        "/api/v1/repos/test-owner/doprava_air-map".into(),
+        "/odata/Repositories(Owner='test-owner',Name='doprava_air-map')".into(),
         200,
-        json!({ "default_branch": "main" }),
+        json!({ "DefaultBranch": "main" }),
     )
     .mount(&server)
     .await;
@@ -645,7 +664,7 @@ async fn a_name_that_is_taken_is_not_adopted() {
     assert!(sent(
         &server,
         "DELETE",
-        "/api/v1/repos/test-owner/doprava_air-map"
+        "/odata/Repositories(Owner='test-owner',Name='doprava_air-map')"
     )
     .await
     .is_empty());
@@ -661,7 +680,9 @@ async fn a_head_that_is_not_the_bundles_removes_the_new_repository() {
     assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
     assert!(answer.text.contains("MF-46"), "{}", answer.text);
     assert_eq!(sent(&server, "DELETE", LANDED).await.len(), 1);
-    assert!(sent(&server, "POST", &format!("{TARGET}/pulls"))
-        .await
-        .is_empty());
+    assert!(
+        sent(&server, "POST", &format!("{TARGET}/Shako.OpenPullRequest"))
+            .await
+            .is_empty()
+    );
 }

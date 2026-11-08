@@ -200,8 +200,8 @@
     - proves: expect
       call: jc_change_apply
       args: { planId: '{planId}' }
-      contains: ['changeRequests', '"url":"https://portal.test/projects/{project}/approvals/chg-0000004d"', '"mergeRequest":"https://gitea.example.sk/pulls/77"']
-      absent: ['"merged"', '"url":"https://gitea']
+      contains: ['changeRequests', '"url":"https://portal.test/projects/{project}/approvals/chg-0000004d"', '"mergeRequest":"https://shako.example.sk/pulls/77"']
+      absent: ['"merged"', '"url":"https://shako']
     - proves: deny
       call: jc_change_apply
       args: { planId: '{planId}' }
@@ -256,7 +256,7 @@
     - proves: expect
       call: jc_change_apply
       args: { planId: '{planId}' }
-      contains: ['changeRequests', 'https://gitea.example.sk/pulls/77']
+      contains: ['changeRequests', 'https://shako.example.sk/pulls/77']
       absent: ['"merged"']
     - proves: deny
       call: jc_change_plan

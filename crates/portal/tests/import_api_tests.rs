@@ -18,7 +18,7 @@ use http_body_util::BodyExt;
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
@@ -165,32 +165,37 @@ fn multipart(file: &[u8], fields: &[(&str, &str)]) -> (String, Vec<u8>) {
 async fn forge() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/bb/org"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path("/odata/Repositories(Owner='bb',Name='org')"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/bb/org/branches"))
-        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "name": "portal/import" })))
+        .and(path(
+            "/odata/Repositories(Owner='bb',Name='org')/Shako.CreateBranch",
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Name": "portal/import" })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/bb/org/contents"))
+        .and(path(
+            "/odata/Repositories(Owner='bb',Name='org')/Shako.CommitFiles",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "content": { "sha": "b1ob" },
-            "commit": { "sha": "c0mm1t" }
+            "Sha": "c0mm1t"
         })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/bb/org/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='bb',Name='org')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 412,
-            "html_url": "https://git.example.sk/bb/org/pulls/412",
-            "title": "import",
-            "state": "open",
-            "head": { "ref": "portal/import" },
-            "base": { "ref": "main" }
+            "Number": 412,
+            "HtmlUrl": "https://git.example.sk/bb/org/pulls/412",
+            "Title": "import",
+            "State": "open",
+            "Head": "portal/import",
+            "Base": "main"
         })))
         .mount(&server)
         .await;
@@ -264,14 +269,14 @@ fn state_with(
     org: Vec<Value>,
 ) -> (AppState, String) {
     let cookie = cookies(&config, groups);
-    let gitea = Arc::new(
-        GiteaClient::new(
+    let shako = Arc::new(
+        ShakoClient::new(
             server.uri().parse().expect("forge url"),
             "bb",
             "org",
             "token",
         )
-        .expect("gitea client"),
+        .expect("shako client"),
     );
     let mirror = Arc::new(Mirror::new());
     for yaml in existing {
@@ -294,7 +299,7 @@ fn state_with(
         mirror.upsert(serde_json::from_value(manifest).expect("organization manifest"));
     }
     let state = AppState::new(config, None)
-        .with_gitea(gitea)
+        .with_shako(shako)
         .with_mirror(mirror);
     (state, cookie)
 }
@@ -362,7 +367,7 @@ async fn upload(
 }
 
 async fn written(server: &MockServer) -> Vec<String> {
-    common::committed_files(server, "/api/v1/repos/bb/org")
+    common::committed_files(server, "/odata/Repositories(Owner='bb',Name='org')")
         .await
         .into_iter()
         .map(|(path, _)| path)
@@ -370,7 +375,7 @@ async fn written(server: &MockServer) -> Vec<String> {
 }
 
 async fn put_bodies(server: &MockServer) -> Vec<String> {
-    common::committed_files(server, "/api/v1/repos/bb/org")
+    common::committed_files(server, "/odata/Repositories(Owner='bb',Name='org')")
         .await
         .into_iter()
         .map(|(_, text)| text)
@@ -425,22 +430,23 @@ async fn a_bundle_lands_as_one_commit() {
     let requests = server.received_requests().await.unwrap_or_default();
     let to_contents: Vec<&MockRequest> = requests
         .iter()
-        .filter(|r| r.url.path().contains("/contents"))
+        .filter(|r| r.url.path().contains("/Shako.CommitFiles"))
         .collect();
     assert_eq!(to_contents.len(), 1, "{to_contents:?}");
     assert_eq!(to_contents[0].method.as_str(), "POST");
     let commit: Value = serde_json::from_slice(&to_contents[0].body).expect("json");
     assert!(
-        commit["files"].as_array().is_some_and(|f| f.len() > 1),
+        commit["Files"].as_array().is_some_and(|f| f.len() > 1),
         "{commit}"
     );
     assert!(
-        commit["message"]
+        commit["Message"]
             .as_str()
             .is_some_and(|m| m.starts_with("import ")),
         "{commit}"
     );
-    assert_eq!(commit["author"]["name"], commit["committer"]["name"]);
+    assert!(commit["Author"]["Name"].is_string(), "{commit}");
+    assert_eq!(commit["Author"]["Name"], commit["Committer"]["Name"]);
 }
 
 /// All or nothing: a commit the forge refuses leaves no Change behind, and nobody approves half
@@ -449,7 +455,9 @@ async fn a_bundle_lands_as_one_commit() {
 async fn a_commit_the_forge_refuses_opens_no_merge_request() {
     let server = forge().await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/bb/org/contents"))
+        .and(path(
+            "/odata/Repositories(Owner='bb',Name='org')/Shako.CommitFiles",
+        ))
         .respond_with(ResponseTemplate::new(500))
         .with_priority(1)
         .mount(&server)
@@ -459,7 +467,9 @@ async fn a_commit_the_forge_refuses_opens_no_merge_request() {
     assert!(status.is_server_error(), "{status}: {body}");
     let requests = server.received_requests().await.unwrap_or_default();
     assert!(
-        !requests.iter().any(|r| r.url.path().ends_with("/pulls")),
+        !requests
+            .iter()
+            .any(|r| r.url.path().ends_with("/Shako.OpenPullRequest")),
         "{requests:?}"
     );
 }
@@ -630,10 +640,13 @@ async fn an_imported_policy_is_signed_by_this_organisation_and_the_plan_says_so(
         .await
         .unwrap_or_default()
         .into_iter()
-        .find(|request| request.method.as_str() == "POST" && request.url.path().ends_with("/pulls"))
+        .find(|request| {
+            request.method.as_str() == "POST"
+                && request.url.path().ends_with("/Shako.OpenPullRequest")
+        })
         .expect("a merge request");
     let pull: Value = serde_json::from_slice(&pull.body).expect("json");
-    let body = pull["body"].as_str().unwrap_or_default();
+    let body = pull["Body"].as_str().unwrap_or_default();
     assert!(
         body.contains("Policy/public-air: assigner did:web:hel.fi is now did:web:{orgDomain}"),
         "{body}"

@@ -1,7 +1,9 @@
-//! Gitea webhook receiver endpoint (CC-03, CC-08, CC-18).
+//! The forge's webhook receiver (CC-03, CC-08, CC-18).
 //!
-//! Authenticates server-to-server callbacks from Gitea via HMAC-SHA256 signatures,
-//! exempt from session cookies and CSRF double-submit tokens.
+//! shako calls `POST /api/v1/webhooks/shako` with its native event body, signed with
+//! HMAC-SHA256 in `X-Shako-Signature` (`crates/shako/PORTAL-ODATA.md` section 8). The call is
+//! server-to-server, authenticated by that signature alone, and exempt from session cookies and
+//! CSRF double-submit tokens.
 
 use axum::body::Bytes;
 use axum::extract::State;
@@ -16,8 +18,11 @@ use crate::state::AppState;
 
 type HmacSha256 = Hmac<Sha256>;
 
-pub const SIGNATURE_HEADER: &str = "x-gitea-signature";
-pub const EVENT_HEADER: &str = "x-gitea-event";
+/// The signature of the body with the hook's secret.
+pub const SIGNATURE_HEADER: &str = "x-shako-signature";
+/// The signature with the hook's previous secret, sent while the forge side rotates.
+pub const PREVIOUS_SIGNATURE_HEADER: &str = "x-shako-signature-previous";
+pub const EVENT_HEADER: &str = "x-shako-event";
 
 fn decode_hex(hex: &str) -> Option<Vec<u8>> {
     if hex.is_empty() || !hex.len().is_multiple_of(2) {
@@ -51,7 +56,7 @@ pub fn verify_signature(secret: &str, body: &[u8], presented_hex: &str) -> bool 
 fn is_pr_closed_merged(payload: &Value) -> bool {
     let action_closed = payload.get("action").and_then(Value::as_str) == Some("closed");
     let pr_merged = payload
-        .get("pull_request")
+        .get("pullRequest")
         .and_then(|pr| pr.get("merged"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
@@ -69,53 +74,51 @@ fn is_default_branch_push(payload: &Value) -> bool {
 
     let default_branch = payload
         .get("repository")
-        .and_then(|r| r.get("default_branch"))
+        .and_then(|r| r.get("defaultBranch"))
         .and_then(Value::as_str)
         .unwrap_or("main");
 
     branch == default_branch
 }
 
+/// Whether the event moves what the mirror holds: a merged pull request, or a push to the
+/// default branch. The event is the header's, else the body's own `event`.
 fn should_sync(headers: &HeaderMap, payload: &Value) -> bool {
     let event = headers
         .get(EVENT_HEADER)
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_ascii_lowercase());
+        .or_else(|| payload.get("event").and_then(Value::as_str))
+        .map(str::to_ascii_lowercase);
 
     match event.as_deref() {
         Some("pull_request") => is_pr_closed_merged(payload),
         Some("push") => is_default_branch_push(payload),
-        Some(_) => false,
-        None => {
-            if payload.get("pull_request").is_some() {
-                is_pr_closed_merged(payload)
-            } else if payload.get("ref").is_some() {
-                is_default_branch_push(payload)
-            } else {
-                false
-            }
-        }
+        _ => false,
     }
 }
 
 #[utoipa::path(
     post,
-    path = "/api/v1/webhooks/gitea",
+    path = "/api/v1/webhooks/shako",
     summary = "Forge Webhook",
     description = "Called by the forge on a push: a signed payload makes the mirror synchronize. An unsigned or wrongly signed call is refused with 401.",
     tag = "system",
     params(
-        ("x-gitea-signature" = String, Header, description = "HMAC-SHA256 signature of request body"),
-        ("x-gitea-event" = Option<String>, Header, description = "Gitea event type (e.g. push, pull_request)"),
+        ("x-shako-signature" = String, Header, description = "HMAC-SHA256 signature of request body"),
+        ("x-shako-signature-previous" = Option<String>, Header, description = "HMAC-SHA256 signature with the hook's previous secret, while the forge rotates it"),
+        ("x-shako-event" = Option<String>, Header, description = "Forge event type (push, pull_request)"),
     ),
     request_body(
         content = Object,
-        description = "Gitea webhook event payload",
+        description = "The forge's native event body",
         content_type = "application/json",
         example = json!({
+            "event": "push",
             "ref": "refs/heads/main",
+            "before": "",
             "after": "4f2a9c1d0e8b7a6f5e4d3c2b1a0f9e8d7c6b5a49",
-            "repository": { "full_name": "hel/config" }
+            "repository": { "owner": "hel", "name": "config", "defaultBranch": "main", "private": true },
+            "sender": "jc-portal"
         }),
     ),
     responses(
@@ -126,7 +129,7 @@ fn should_sync(headers: &HeaderMap, payload: &Value) -> bool {
         (status = 503, description = "Webhook secret not configured", body = ProblemDetails),
     )
 )]
-pub async fn gitea_webhook(
+pub async fn shako_webhook(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Bytes,
@@ -135,31 +138,37 @@ pub async fn gitea_webhook(
     //    two are configured and both are accepted, because the forge's own hook changes in a
     //    separate step and a window where every push is refused is why nobody rotates (T-0982).
     let secrets: Vec<&str> = [
-        state.config.gitea_webhook_secret.as_deref(),
-        state.config.gitea_webhook_secret_previous.as_deref(),
+        state.config.shako_webhook_secret.as_deref(),
+        state.config.shako_webhook_secret_previous.as_deref(),
     ]
     .into_iter()
     .flatten()
+    .filter(|secret| !secret.is_empty())
     .collect();
     if secrets.is_empty() {
         return Err(ApiError::Unavailable(
-            "gitea webhook secret is not configured".into(),
+            "the forge webhook secret is not configured".into(),
         ));
     }
 
     // 2. Validate HMAC-SHA256 signature before deserializing payload body.
     // Order matters: missing or invalid signature returns 401 without parsing JSON.
-    let presented_sig = headers
-        .get(SIGNATURE_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .ok_or(ApiError::Unauthorized)?;
+    let presented: Vec<&str> = [SIGNATURE_HEADER, PREVIOUS_SIGNATURE_HEADER]
+        .into_iter()
+        .filter_map(|name| headers.get(name).and_then(|v| v.to_str().ok()))
+        .collect();
+    if presented.is_empty() {
+        return Err(ApiError::Unauthorized);
+    }
 
-    // Every configured secret is tried, and each comparison is the constant-time one: a
-    // signature made with the secret being retired verifies until it is removed.
-    if !secrets
-        .iter()
-        .any(|secret| verify_signature(secret, &body, presented_sig))
-    {
+    // Every presented signature against every configured secret, each comparison the
+    // constant-time one: whichever side rotated first, the secret the two still share verifies,
+    // and a secret retired on both sides verifies nothing.
+    if !presented.iter().any(|signature| {
+        secrets
+            .iter()
+            .any(|secret| verify_signature(secret, &body, signature))
+    }) {
         return Err(ApiError::Unauthorized);
     }
 
@@ -182,7 +191,7 @@ pub async fn gitea_webhook(
 }
 
 pub fn router() -> axum::Router<AppState> {
-    axum::Router::new().route("/webhooks/gitea", axum::routing::post(gitea_webhook))
+    axum::Router::new().route("/webhooks/shako", axum::routing::post(shako_webhook))
 }
 
 #[cfg(test)]
@@ -198,7 +207,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use crate::config::Config;
-    use crate::git::GiteaClient;
+    use crate::forge::ShakoClient;
     use crate::reconciler::Syncer;
     use crate::server;
     use crate::store::Mirror;
@@ -216,7 +225,7 @@ mod tests {
     #[test]
     fn verify_signature_scenarios() {
         let secret = "correct-horse-battery-staple";
-        let body = b"hello from gitea webhook";
+        let body = b"hello from shako webhook";
         let valid_sig = compute_signature(secret, body);
 
         // 1. Correct signature passes
@@ -268,7 +277,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/v1/webhooks/gitea")
+                    .uri("/api/v1/webhooks/shako")
                     .header(SIGNATURE_HEADER, "dummy-sig")
                     .body(Body::from("{}"))
                     .unwrap(),
@@ -286,14 +295,14 @@ mod tests {
     #[tokio::test]
     async fn webhook_without_signature_header_returns_401() {
         let mut config = Config::for_tests();
-        config.gitea_webhook_secret = Some("secret123".into());
+        config.shako_webhook_secret = Some("secret123".into());
         let app = server::app(AppState::new(config, None));
 
         let response = app
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/v1/webhooks/gitea")
+                    .uri("/api/v1/webhooks/shako")
                     .body(Body::from("{}"))
                     .unwrap(),
             )
@@ -306,7 +315,7 @@ mod tests {
     #[tokio::test]
     async fn webhook_with_wrong_signature_returns_401_without_parsing_body() {
         let mut config = Config::for_tests();
-        config.gitea_webhook_secret = Some("secret123".into());
+        config.shako_webhook_secret = Some("secret123".into());
         let app = server::app(AppState::new(config, None));
 
         // Notice: body is completely invalid JSON. If it deserialized first, it would be 400.
@@ -315,7 +324,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/v1/webhooks/gitea")
+                    .uri("/api/v1/webhooks/shako")
                     .header(SIGNATURE_HEADER, "deadbeef1234")
                     .body(Body::from("this is not json at all {{{{"))
                     .unwrap(),
@@ -330,7 +339,7 @@ mod tests {
     async fn webhook_with_valid_signature_invalid_json_returns_400() {
         let secret = "secret123";
         let mut config = Config::for_tests();
-        config.gitea_webhook_secret = Some(secret.into());
+        config.shako_webhook_secret = Some(secret.into());
         let app = server::app(AppState::new(config, None));
 
         let body_bytes = b"not json at all {{{{";
@@ -340,7 +349,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/v1/webhooks/gitea")
+                    .uri("/api/v1/webhooks/shako")
                     .header(SIGNATURE_HEADER, sig)
                     .body(Body::from(&body_bytes[..]))
                     .unwrap(),
@@ -356,7 +365,7 @@ mod tests {
     /// removed afterwards — after which its signature is refused like any other.
     #[tokio::test]
     async fn a_rotation_accepts_the_retiring_secret_until_it_is_removed() {
-        let old_secret = "the-one-gitea-still-has";
+        let old_secret = "the-one-shako-still-has";
         let new_secret = "the-one-written-today";
         let payload = json!({ "action": "opened" });
         let body = serde_json::to_vec(&payload).unwrap();
@@ -366,7 +375,7 @@ mod tests {
                 .oneshot(
                     Request::builder()
                         .method("POST")
-                        .uri("/api/v1/webhooks/gitea")
+                        .uri("/api/v1/webhooks/shako")
                         .header(SIGNATURE_HEADER, signature)
                         .header(EVENT_HEADER, "pull_request")
                         .header(axum::http::header::CONTENT_TYPE, "application/json")
@@ -380,8 +389,8 @@ mod tests {
 
         let rotating = || {
             let mut config = Config::for_tests();
-            config.gitea_webhook_secret = Some(new_secret.into());
-            config.gitea_webhook_secret_previous = Some(old_secret.into());
+            config.shako_webhook_secret = Some(new_secret.into());
+            config.shako_webhook_secret_previous = Some(old_secret.into());
             config
         };
 
@@ -418,7 +427,7 @@ mod tests {
 
         // Once the rotation is finished the retired secret is a stranger's.
         let mut finished = Config::for_tests();
-        finished.gitea_webhook_secret = Some(new_secret.into());
+        finished.shako_webhook_secret = Some(new_secret.into());
         assert_eq!(
             post(finished, compute_signature(old_secret, &body), body.clone()).await,
             StatusCode::UNAUTHORIZED
@@ -434,7 +443,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/v1/webhooks/gitea")
+                    .uri("/api/v1/webhooks/shako")
                     .header(SIGNATURE_HEADER, compute_signature("anything", &body))
                     .header(EVENT_HEADER, "pull_request")
                     .body(Body::from(body))
@@ -449,7 +458,7 @@ mod tests {
     async fn webhook_csrf_exemption_allows_post_without_csrf_tokens() {
         let secret = "secret123";
         let mut config = Config::for_tests();
-        config.gitea_webhook_secret = Some(secret.into());
+        config.shako_webhook_secret = Some(secret.into());
         let app = server::app(AppState::new(config, None));
 
         let payload = json!({ "action": "opened" });
@@ -461,7 +470,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/v1/webhooks/gitea")
+                    .uri("/api/v1/webhooks/shako")
                     .header(SIGNATURE_HEADER, sig)
                     .header(EVENT_HEADER, "pull_request")
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
@@ -479,13 +488,14 @@ mod tests {
     async fn webhook_ignored_events_return_204() {
         let secret = "secret123";
         let mut config = Config::for_tests();
-        config.gitea_webhook_secret = Some(secret.into());
+        config.shako_webhook_secret = Some(secret.into());
         let app = server::app(AppState::new(config, None));
 
         // 1. PR closed but not merged
         let pr_unmerged = json!({
+            "event": "pull_request",
             "action": "closed",
-            "pull_request": { "merged": false }
+            "pullRequest": { "merged": false }
         });
         let body1 = serde_json::to_vec(&pr_unmerged).unwrap();
         let sig1 = compute_signature(secret, &body1);
@@ -494,7 +504,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/v1/webhooks/gitea")
+                    .uri("/api/v1/webhooks/shako")
                     .header(SIGNATURE_HEADER, sig1)
                     .header(EVENT_HEADER, "pull_request")
                     .body(Body::from(body1))
@@ -507,7 +517,7 @@ mod tests {
         // 2. Push to non-default branch
         let push_feat = json!({
             "ref": "refs/heads/feature-abc",
-            "repository": { "default_branch": "main" }
+            "repository": { "defaultBranch": "main" }
         });
         let body2 = serde_json::to_vec(&push_feat).unwrap();
         let sig2 = compute_signature(secret, &body2);
@@ -516,7 +526,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/v1/webhooks/gitea")
+                    .uri("/api/v1/webhooks/shako")
                     .header(SIGNATURE_HEADER, sig2)
                     .header(EVENT_HEADER, "push")
                     .body(Body::from(body2))
@@ -529,7 +539,7 @@ mod tests {
         // 3. Tag push
         let push_tag = json!({
             "ref": "refs/tags/v1.0.0",
-            "repository": { "default_branch": "main" }
+            "repository": { "defaultBranch": "main" }
         });
         let body3 = serde_json::to_vec(&push_tag).unwrap();
         let sig3 = compute_signature(secret, &body3);
@@ -538,7 +548,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/v1/webhooks/gitea")
+                    .uri("/api/v1/webhooks/shako")
                     .header(SIGNATURE_HEADER, sig3)
                     .header(EVENT_HEADER, "push")
                     .body(Body::from(body3))
@@ -556,7 +566,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/v1/webhooks/gitea")
+                    .uri("/api/v1/webhooks/shako")
                     .header(SIGNATURE_HEADER, sig4)
                     .header(EVENT_HEADER, "issues")
                     .body(Body::from(body4))
@@ -572,49 +582,51 @@ mod tests {
         let server = MockServer::start().await;
         let base_url = server.uri().parse().unwrap();
         let client =
-            Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+            Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
         let mirror = Arc::new(Mirror::new());
         let syncer = Arc::new(Syncer::new(Arc::clone(&client), Arc::clone(&mirror)));
 
         let secret = "secret123";
         let mut config = Config::for_tests();
-        config.gitea_webhook_secret = Some(secret.into());
+        config.shako_webhook_secret = Some(secret.into());
 
         let state = AppState::new(config, None)
-            .with_gitea(client)
+            .with_shako(client)
             .with_syncer(Arc::clone(&syncer));
         let app = server::app(state);
 
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "default_branch": "main"
-            })))
-            .mount(&server)
-            .await;
-
-        Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo/branches/main"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "name": "main",
-                "commit": { "id": "rev-pr-merge" }
+                "DefaultBranch": "main"
             })))
             .mount(&server)
             .await;
 
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/test-owner/test-repo/git/trees/rev-pr-merge",
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
             ))
-            .and(query_param("recursive", "true"))
-            .and(query_param("per_page", "1000"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "tree-sha-1",
-                "truncated": false,
-                "tree": [
+                "Name": "main",
+                "HeadSha": "rev-pr-merge"
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            )).and(query_param("@r", "'rev-pr-merge'"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "tree-sha-1",
+                "Truncated": false,
+                "Tree": [
                     {
-                        "path": "projects/ovzdusie/spaces/mobility/space.yaml",
-                        "type": "blob"
+                        "Path": "projects/ovzdusie/spaces/mobility/space.yaml",
+                        "Type": "blob"
                     }
                 ]
             })))
@@ -629,19 +641,20 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
-            ))
-            .and(query_param("ref", "rev-pr-merge"))
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+            )).and(query_param("@p", "'projects/ovzdusie/spaces/mobility/space.yaml'"))
+            .and(query_param("@r", "'rev-pr-merge'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "blob-1",
-                "content": b64
+                "Sha": "blob-1",
+                "Content": b64
             })))
             .mount(&server)
             .await;
 
         let pr_merged = json!({
+            "event": "pull_request",
             "action": "closed",
-            "pull_request": {
+            "pullRequest": {
                 "merged": true
             }
         });
@@ -652,7 +665,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/v1/webhooks/gitea")
+                    .uri("/api/v1/webhooks/shako")
                     .header(SIGNATURE_HEADER, sig)
                     .header(EVENT_HEADER, "pull_request")
                     .body(Body::from(body))
@@ -677,25 +690,27 @@ mod tests {
         let server = MockServer::start().await;
         let base_url = server.uri().parse().unwrap();
         let client =
-            Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+            Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
         let mirror = Arc::new(Mirror::new());
         let syncer = Arc::new(Syncer::new(Arc::clone(&client), Arc::clone(&mirror)));
 
         let secret = "secret123";
         let mut config = Config::for_tests();
-        config.gitea_webhook_secret = Some(secret.into());
+        config.shako_webhook_secret = Some(secret.into());
 
         let state = AppState::new(config, None)
-            .with_gitea(client)
+            .with_shako(client)
             .with_syncer(Arc::clone(&syncer));
         let app = server::app(state);
 
         // Forge returns 500, slower than the forge waits for a delivery.
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+            ))
             .respond_with(
                 ResponseTemplate::new(500)
-                    .set_body_string("gitea db down")
+                    .set_body_string("shako db down")
                     .set_delay(std::time::Duration::from_secs(2)),
             )
             .mount(&server)
@@ -703,7 +718,7 @@ mod tests {
 
         let push_main = json!({
             "ref": "refs/heads/main",
-            "repository": { "default_branch": "main" }
+            "repository": { "defaultBranch": "main" }
         });
         let body = serde_json::to_vec(&push_main).unwrap();
         let sig = compute_signature(secret, &body);
@@ -713,7 +728,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/v1/webhooks/gitea")
+                    .uri("/api/v1/webhooks/shako")
                     .header(SIGNATURE_HEADER, sig)
                     .header(EVENT_HEADER, "push")
                     .body(Body::from(body))
@@ -722,7 +737,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Crucial requirement: must return 202 so Gitea does not retry merge webhook!
+        // Crucial requirement: must return 202 so the forge does not retry the merge webhook.
         assert_eq!(response.status(), StatusCode::ACCEPTED);
         // F-R2POR3-017: the answer does not wait for the sync.
         assert!(
@@ -733,6 +748,85 @@ mod tests {
 
         // Error is recorded in syncer status
         settled(&syncer, |status| status.last_error.is_some()).await;
+    }
+
+    /// A configured secret that is empty is no secret: an HMAC over an empty key is one anybody
+    /// computes, so the Portal treats it as unset and refuses everything.
+    #[tokio::test]
+    async fn an_empty_configured_secret_is_no_secret() {
+        let body = serde_json::to_vec(&json!({
+            "event": "push",
+            "ref": "refs/heads/main",
+            "repository": { "defaultBranch": "main" }
+        }))
+        .unwrap();
+        let mut config = Config::for_tests();
+        config.shako_webhook_secret = Some(String::new());
+        config.shako_webhook_secret_previous = Some(String::new());
+        let response = server::app(AppState::new(config, None))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/webhooks/shako")
+                    .header(SIGNATURE_HEADER, compute_signature("", &body))
+                    .header(EVENT_HEADER, "push")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// While the forge side rotates a hook's secret, shako signs with the new one in
+    /// `X-Shako-Signature` and with the old one in `X-Shako-Signature-Previous`: a Portal still
+    /// on the old secret accepts the delivery, and a stranger's two signatures are refused.
+    #[tokio::test]
+    async fn the_previous_signature_header_carries_a_forge_side_rotation() {
+        let portal_secret = "the-one-the-portal-has";
+        let body = serde_json::to_vec(&json!({
+            "event": "push",
+            "ref": "refs/heads/main",
+            "repository": { "defaultBranch": "main" }
+        }))
+        .unwrap();
+        let post = |current: String, previous: String| {
+            let body = body.clone();
+            async move {
+                let mut config = Config::for_tests();
+                config.shako_webhook_secret = Some(portal_secret.into());
+                server::app(AppState::new(config, None))
+                    .oneshot(
+                        Request::builder()
+                            .method("POST")
+                            .uri("/api/v1/webhooks/shako")
+                            .header(SIGNATURE_HEADER, current)
+                            .header(PREVIOUS_SIGNATURE_HEADER, previous)
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+                    .status()
+            }
+        };
+        // The event comes from the body's own `event` here: no X-Shako-Event header is sent.
+        assert_eq!(
+            post(
+                compute_signature("the-one-the-forge-moved-to", &body),
+                compute_signature(portal_secret, &body)
+            )
+            .await,
+            StatusCode::ACCEPTED
+        );
+        assert_eq!(
+            post(
+                compute_signature("a-stranger", &body),
+                compute_signature("another-stranger", &body)
+            )
+            .await,
+            StatusCode::UNAUTHORIZED
+        );
     }
 
     /// Waits up to ten seconds for the sync the webhook started to reach `done`.

@@ -10,7 +10,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use url::Url;
 
-use super::gitea::{GitError, GiteaClient};
+use super::shako::{GitError, ShakoClient};
 
 const DEFAULT_API: &str = "https://api.github.com";
 const DEFAULT_WEB: &str = "https://github.com";
@@ -151,7 +151,7 @@ impl GithubMirror {
     /// and the forge pushes to it on every commit (AP-79).
     pub async fn mirror(
         &self,
-        forge: &GiteaClient,
+        forge: &ShakoClient,
         description: &str,
     ) -> Result<Mirrored, GitError> {
         self.ensure_repository(&forge.repo, description).await?;
@@ -294,7 +294,7 @@ async fn check(res: reqwest::Response) -> Result<reqwest::Response, GitError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{body_partial_json, header, method, path};
+    use wiremock::matchers::{body_partial_json, body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const TOKEN: &str = "ghp_test-token-never-printed";
@@ -318,8 +318,8 @@ mod tests {
         .expect("client")
     }
 
-    fn forge(server: &MockServer) -> GiteaClient {
-        GiteaClient::new(
+    fn forge(server: &MockServer) -> ShakoClient {
+        ShakoClient::new(
             Url::parse(&server.uri()).expect("url"),
             "joinedcontext",
             "helsinki_bikes",
@@ -388,7 +388,7 @@ mod tests {
     async fn a_new_repository_is_created_private_in_the_organization_and_mirrored_without_the_token_in_its_address(
     ) {
         let github = MockServer::start().await;
-        let gitea = MockServer::start().await;
+        let shako = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/repos/hel-apps/helsinki_bikes"))
             .respond_with(ResponseTemplate::new(404))
@@ -406,35 +406,37 @@ mod tests {
             .await;
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/joinedcontext/helsinki_bikes/push_mirrors",
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/PushMirrors",
             ))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-            .mount(&gitea)
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [] })),
+            )
+            .mount(&shako)
             .await;
         Mock::given(method("POST"))
             .and(path(
-                "/api/v1/repos/joinedcontext/helsinki_bikes/push_mirrors",
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/Shako.AddPushMirror",
             ))
             .and(body_partial_json(serde_json::json!({
-                "remote_address": "https://github.com/hel-apps/helsinki_bikes.git",
-                "remote_password": TOKEN,
-                "sync_on_commit": true,
+                "RemoteAddress": "https://github.com/hel-apps/helsinki_bikes.git",
+                "Credential": TOKEN,
+                "SyncOnCommit": true
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
-            .mount(&gitea)
+            .mount(&shako)
             .await;
         Mock::given(method("POST"))
             .and(path(
-                "/api/v1/repos/joinedcontext/helsinki_bikes/push_mirrors-sync",
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/Shako.SyncPushMirrors",
             ))
             .respond_with(ResponseTemplate::new(200))
             .expect(1)
-            .mount(&gitea)
+            .mount(&shako)
             .await;
 
         let outcome = mirror(&github, "hel-apps")
-            .mirror(&forge(&gitea), "Application bikes")
+            .mirror(&forge(&shako), "Application bikes")
             .await
             .expect("mirrored");
         assert_eq!(outcome, Mirrored::Added);
@@ -443,7 +445,7 @@ mod tests {
     #[tokio::test]
     async fn a_mirror_already_in_place_is_left_alone() {
         let github = MockServer::start().await;
-        let gitea = MockServer::start().await;
+        let shako = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/repos/hel-apps/helsinki_bikes"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
@@ -451,25 +453,27 @@ mod tests {
             .await;
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/joinedcontext/helsinki_bikes/push_mirrors",
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/PushMirrors",
             ))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!([{
-                    "remote_name": "remote_mirror_x",
-                    "remote_address": "https://github.com/hel-apps/helsinki_bikes.git",
-                    "last_error": ""
-                }])),
-            )
-            .mount(&gitea)
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "value": [
+                    {
+                        "Name": "remote_mirror_x",
+                        "RemoteAddress": "https://github.com/hel-apps/helsinki_bikes.git",
+                        "LastError": ""
+                    }
+                ]
+            })))
+            .mount(&shako)
             .await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(500))
             .expect(0)
-            .mount(&gitea)
+            .mount(&shako)
             .await;
 
         let outcome = mirror(&github, "hel-apps")
-            .mirror(&forge(&gitea), "Application bikes")
+            .mirror(&forge(&shako), "Application bikes")
             .await
             .expect("mirrored");
         assert_eq!(outcome, Mirrored::Current);
@@ -478,7 +482,7 @@ mod tests {
     #[tokio::test]
     async fn a_mirror_whose_sync_fails_is_set_up_again_and_says_what_failed() {
         let github = MockServer::start().await;
-        let gitea = MockServer::start().await;
+        let shako = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/repos/hel-apps/helsinki_bikes"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
@@ -486,44 +490,46 @@ mod tests {
             .await;
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/joinedcontext/helsinki_bikes/push_mirrors",
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/PushMirrors",
             ))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!([{
-                    "remote_name": "remote_mirror_x",
-                    "remote_address": "https://github.com/hel-apps/helsinki_bikes.git",
-                    "last_error": "authentication failed"
-                }])),
-            )
-            .mount(&gitea)
-            .await;
-        Mock::given(method("DELETE"))
-            .and(path(
-                "/api/v1/repos/joinedcontext/helsinki_bikes/push_mirrors/remote_mirror_x",
-            ))
-            .respond_with(ResponseTemplate::new(204))
-            .expect(1)
-            .mount(&gitea)
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "value": [
+                    {
+                        "Name": "remote_mirror_x",
+                        "RemoteAddress": "https://github.com/hel-apps/helsinki_bikes.git",
+                        "LastError": "authentication failed"
+                    }
+                ]
+            })))
+            .mount(&shako)
             .await;
         Mock::given(method("POST"))
             .and(path(
-                "/api/v1/repos/joinedcontext/helsinki_bikes/push_mirrors",
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/Shako.RemovePushMirror",
+            )).and(body_string_contains(r#""Name":"remote_mirror_x""#))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&shako)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/Shako.AddPushMirror",
             ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
-            .mount(&gitea)
+            .mount(&shako)
             .await;
         Mock::given(method("POST"))
             .and(path(
-                "/api/v1/repos/joinedcontext/helsinki_bikes/push_mirrors-sync",
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/Shako.SyncPushMirrors",
             ))
             .respond_with(ResponseTemplate::new(200))
             .expect(1)
-            .mount(&gitea)
+            .mount(&shako)
             .await;
 
         let outcome = mirror(&github, "hel-apps")
-            .mirror(&forge(&gitea), "Application bikes")
+            .mirror(&forge(&shako), "Application bikes")
             .await
             .expect("mirrored");
         assert_eq!(

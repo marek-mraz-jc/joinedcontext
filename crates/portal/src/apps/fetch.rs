@@ -14,7 +14,7 @@ use std::path::{Component, Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use crate::apps::built::{package, version, MAX_BUNDLE_BYTES};
-use crate::git::{GitError, GiteaClient};
+use crate::forge::{GitError, ShakoClient};
 use crate::store::Mirror;
 
 /// The most an unpacked bundle may hold, so a small archive cannot fill the disk.
@@ -46,7 +46,7 @@ pub fn build_dir(cache: &Path, name: &str, digest: &str) -> Option<PathBuf> {
 
 /// Fetches every build the mirror's Apps name and this replica does not hold yet. One App that
 /// fails is logged and retried on the next sync; it never stops the others.
-pub async fn fetch_missing(gitea: &GiteaClient, cache: &Path, mirror: &Mirror) {
+pub async fn fetch_missing(shako: &ShakoClient, cache: &Path, mirror: &Mirror) {
     for envelope in mirror.matching(|env| env.kind == "App") {
         let Some(build) = envelope.status.as_ref().and_then(|s| s.build.as_ref()) else {
             continue;
@@ -58,7 +58,7 @@ pub async fn fetch_missing(gitea: &GiteaClient, cache: &Path, mirror: &Mirror) {
         if dir.is_dir() {
             continue;
         }
-        match fetch(gitea, &dir, name, &build.commit, &build.digest).await {
+        match fetch(shako, &dir, name, &build.commit, &build.digest).await {
             Ok(()) => tracing::info!(app = %name, digest = %build.digest, "build fetched"),
             Err(err) => tracing::warn!(app = %name, error = %err, "build not fetched"),
         }
@@ -66,7 +66,7 @@ pub async fn fetch_missing(gitea: &GiteaClient, cache: &Path, mirror: &Mirror) {
 }
 
 async fn fetch(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     dir: &Path,
     name: &str,
     commit: &str,
@@ -77,10 +77,10 @@ async fn fetch(
     // then, the configuration's, since the registry has no transfer: the same package and
     // version is read there, and the digest check below still decides, so a move never
     // unserves an App and nothing but the build `status.build` names is served (T-3026).
-    let applications = gitea.applications();
+    let applications = shako.applications();
     let bytes = match read_bundle(&applications, name, commit, digest).await {
-        Err(GitError::NotFound) if applications.owner != gitea.owner => {
-            read_bundle(gitea, name, commit, digest).await?
+        Err(GitError::NotFound) if applications.owner != shako.owner => {
+            read_bundle(shako, name, commit, digest).await?
         }
         other => other?,
     };
@@ -100,7 +100,7 @@ async fn fetch(
 /// `bundle.tar.gz` of the build of `commit` with `digest`, from `owner`'s registry. A build
 /// published before T-2671 sits under the bare commit.
 async fn read_bundle(
-    owner: &GiteaClient,
+    owner: &ShakoClient,
     name: &str,
     commit: &str,
     digest: &str,

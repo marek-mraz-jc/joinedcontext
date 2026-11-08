@@ -54,34 +54,37 @@ fn endpoint() -> Value {
 
 fn pull(number: u64, branch: &str, state: &str, merged: bool, body: &str) -> Value {
     json!({
-        "number": number,
-        "html_url": format!("https://gitea.example/pulls/{number}"),
-        "state": state,
-        "title": format!("pull {number}"),
-        "body": body,
-        "head": { "ref": branch },
-        "base": { "ref": "main" },
-        "created_at": "2026-09-25T09:00:00Z",
-        "user": { "login": "author", "full_name": "Author", "email": "author@hel.fi" },
-        "mergeable": true,
-        "merged": merged
+        "Number": number,
+        "HtmlUrl": format!("https://shako.example/pulls/{number}"),
+        "State": state,
+        "Title": format!("pull {number}"),
+        "Body": body,
+        "Head": branch,
+        "Base": "main",
+        "CreatedAt": "2026-09-25T09:00:00Z",
+        "Author": "author",
+        "AuthorName": "Author",
+        "AuthorEmail": "author@hel.fi",
+        "Mergeable": true,
+        "Merged": merged
     })
 }
 
 /// A forge with change #7 open, proposing the context space `air`.
 async fn forge_creating_air() -> (MockServer, AppState) {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     let branch = branch_name(PROJECT, "ContextSpace", "air", Operation::Create);
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls")))
-        .and(query_param("state", "open"))
+        .and(path(format!("{REPO}/PullRequests")))
+        .and(query_param("$filter", "State eq 'open'"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!([pull(7, &branch, "open", false, "")])),
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "value": [pull(7, &branch, "open", false, "")] })),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = common::state_on(&gitea);
-    (gitea, state)
+    let state = common::state_on(&shako);
+    (shako, state)
 }
 
 async fn check(state: &AppState, manifest: Value) -> Value {
@@ -101,7 +104,7 @@ async fn check(state: &AppState, manifest: Value) -> Value {
 /// proposal records the change in its merge request.
 #[tokio::test]
 async fn a_reference_to_a_resource_in_an_open_change_is_allowed_and_says_why() {
-    let (gitea, state) = forge_creating_air().await;
+    let (shako, state) = forge_creating_air().await;
     let checked = check(&state, endpoint()).await;
     assert_eq!(checked["valid"], true, "{checked}");
     let verdict = &checked["verdict"];
@@ -126,14 +129,16 @@ async fn a_reference_to_a_resource_in_an_open_change_is_allowed_and_says_why() {
     )
     .await;
     assert_eq!(proposed.status, StatusCode::ACCEPTED, "{}", proposed.text);
-    let requests = gitea.received_requests().await.expect("recorded");
+    let requests = shako.received_requests().await.expect("recorded");
     let opened = requests
         .iter()
-        .find(|r| r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/pulls"))
+        .find(|r| {
+            r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/Shako.OpenPullRequest")
+        })
         .expect("a merge request was opened");
     let body: Value = serde_json::from_slice(&opened.body).expect("json");
     assert!(
-        body["body"]
+        body["Body"]
             .as_str()
             .unwrap_or_default()
             .contains("Waits-On: #7 (chg-00000007)"),
@@ -145,7 +150,7 @@ async fn a_reference_to_a_resource_in_an_open_change_is_allowed_and_says_why() {
 /// naming the field.
 #[tokio::test]
 async fn a_reference_nothing_creates_is_refused_naming_the_field() {
-    let (_gitea, state) = forge_creating_air().await;
+    let (_forge, state) = forge_creating_air().await;
     let mut other = endpoint();
     other["spec"]["contextSpaceRef"] = json!("water");
     let checked = check(&state, other).await;
@@ -164,11 +169,11 @@ async fn a_reference_nothing_creates_is_refused_naming_the_field() {
 /// the same manifest is refused like any reference to nothing, and nothing reaches the forge.
 #[tokio::test]
 async fn the_strict_gate_refuses_a_proposal_whose_awaited_change_was_rejected() {
-    let (gitea, state) = forge_creating_air().await;
+    let (shako, state) = forge_creating_air().await;
     assert_eq!(check(&state, endpoint()).await["verdict"]["ok"], true);
 
-    gitea.reset().await;
-    common::mount_repository(&gitea, REPO).await;
+    shako.reset().await;
+    common::mount_repository(&shako, REPO).await;
     let proposed = common::send(
         &state,
         steward(),
@@ -188,7 +193,7 @@ async fn the_strict_gate_refuses_a_proposal_whose_awaited_change_was_rejected() 
         "{}",
         proposed.text
     );
-    let requests = gitea.received_requests().await.expect("recorded");
+    let requests = shako.received_requests().await.expect("recorded");
     assert!(
         !requests.iter().any(|r| r.method.as_str() == "POST"),
         "nothing was written"
@@ -198,27 +203,27 @@ async fn the_strict_gate_refuses_a_proposal_whose_awaited_change_was_rejected() 
 /// Change #3 proposes the space `air` and waits on #7, the model it names, which is in
 /// `awaited_state`.
 async fn waiting_change(awaited_state: &str, merged: bool) -> (MockServer, AppState) {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     let branch = branch_name(PROJECT, "ContextSpace", "air", Operation::Create);
     let body = "Proposed create of ContextSpace `air`.\n\nWaits-On: #7 (chg-00000007)";
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/3")))
+        .and(path(format!("{REPO}/PullRequests(3)")))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(pull(3, &branch, "open", false, body)),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls")))
-        .and(query_param("state", "open"))
+        .and(path(format!("{REPO}/PullRequests")))
+        .and(query_param("$filter", "State eq 'open'"))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!([pull(3, &branch, "open", false, body)])),
+                .set_body_json(json!({ "value": [pull(3, &branch, "open", false, body)] })),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/7")))
+        .and(path(format!("{REPO}/PullRequests(7)")))
         .respond_with(ResponseTemplate::new(200).set_body_json(pull(
             7,
             "portal/create-datamodel-air-00000000",
@@ -226,7 +231,7 @@ async fn waiting_change(awaited_state: &str, merged: bool) -> (MockServer, AppSt
             merged,
             "",
         )))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     let space = json!({
         "apiVersion": API_VERSION,
@@ -236,32 +241,38 @@ async fn waiting_change(awaited_state: &str, merged: bool) -> (MockServer, AppSt
     });
     let manifest = serde_norway::to_string(&space).expect("yaml");
     Mock::given(method("GET"))
-        .and(path(format!(
-            "{REPO}/contents/projects/{PROJECT}/spaces/air/space.yaml"
-        )))
-        .and(query_param("ref", branch.as_str()))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param(
+            "@p",
+            format!("'projects/{PROJECT}/spaces/air/space.yaml'"),
+        ))
+        .and(query_param("@r", format!("'{}'", branch.as_str())))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": STANDARD.encode(manifest.as_bytes())
+            "Sha": "blob-1",
+            "Content": STANDARD.encode(manifest.as_bytes())
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/3/files")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-            "filename": format!("projects/{PROJECT}/spaces/air/space.yaml"),
-            "status": "added"
-        }])))
-        .mount(&gitea)
+        .and(path(format!("{REPO}/PullRequests(3)/Files")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Filename": format!("projects/{PROJECT}/spaces/air/space.yaml"),
+                    "Status": "added"
+                }
+            ]
+        })))
+        .mount(&shako)
         .await;
-    let state = common::state_on(&gitea);
+    let state = common::state_on(&shako);
     // The mirror holds the model once #7 merged, and not while it is open or rejected.
     if merged {
         state
             .mirror
             .upsert(envelope("DataModel", "air", PROJECT, json!({})));
     }
-    (gitea, state)
+    (shako, state)
 }
 
 async fn approve(state: &AppState) -> common::Answer {
@@ -285,13 +296,13 @@ async fn approve(state: &AppState) -> common::Answer {
     .await
 }
 
-async fn merged(gitea: &MockServer) -> bool {
-    gitea
+async fn merged(shako: &MockServer) -> bool {
+    shako
         .received_requests()
         .await
         .expect("recorded")
         .iter()
-        .any(|r| r.url.path() == format!("{REPO}/pulls/3/merge"))
+        .any(|r| r.url.path() == format!("{REPO}/PullRequests(3)/Shako.Merge"))
 }
 
 async fn detail(state: &AppState) -> Value {
@@ -310,7 +321,7 @@ async fn detail(state: &AppState) -> Value {
 /// MF-48: while #7 is open, #3 lists it as pending and its approval is refused naming #7.
 #[tokio::test]
 async fn a_change_that_waits_on_an_open_change_cannot_merge_before_it() {
-    let (gitea, state) = waiting_change("open", false).await;
+    let (shako, state) = waiting_change("open", false).await;
     assert_eq!(
         detail(&state).await["waitsOn"],
         json!([{ "name": "chg-00000007", "phase": "PendingApproval" }])
@@ -322,7 +333,7 @@ async fn a_change_that_waits_on_an_open_change_cannot_merge_before_it() {
         "{}",
         answer.text
     );
-    assert!(!merged(&gitea).await);
+    assert!(!merged(&shako).await);
 
     let listed = common::send(
         &state,
@@ -339,20 +350,20 @@ async fn a_change_that_waits_on_an_open_change_cannot_merge_before_it() {
 /// MF-48: #7 rejected flags #3, whose approval stays refused and says so.
 #[tokio::test]
 async fn a_change_whose_awaited_change_was_rejected_is_flagged_and_not_approved() {
-    let (gitea, state) = waiting_change("closed", false).await;
+    let (shako, state) = waiting_change("closed", false).await;
     assert_eq!(detail(&state).await["waitsOn"][0]["phase"], "Rejected");
     let answer = approve(&state).await;
     assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
     assert!(answer.text.contains("was rejected"), "{}", answer.text);
-    assert!(!merged(&gitea).await);
+    assert!(!merged(&shako).await);
 }
 
 /// MF-48: once #7 merged, #3 is approved like any other change.
 #[tokio::test]
 async fn a_change_whose_awaited_change_merged_is_approved() {
-    let (gitea, state) = waiting_change("closed", true).await;
+    let (shako, state) = waiting_change("closed", true).await;
     assert_eq!(detail(&state).await["waitsOn"][0]["phase"], "Merged");
     let answer = approve(&state).await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
-    assert!(merged(&gitea).await);
+    assert!(merged(&shako).await);
 }

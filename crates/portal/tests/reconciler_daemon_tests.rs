@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::reconciler::{Leadership, SyncError, Syncer};
 use joinedcontext_portal::store::Mirror;
 use serde_json::json;
@@ -24,46 +24,44 @@ async fn forge(files: &[(&str, &str)]) -> MockServer {
     let server = MockServer::start().await;
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"default_branch": "main"})))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches/main"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
+        ))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!({"name": "main", "commit": {"id": REVISION}})),
+                .set_body_json(json!({ "Name": "main", "HeadSha": REVISION })),
         )
         .mount(&server)
         .await;
 
     let tree: Vec<serde_json::Value> = files
         .iter()
-        .map(|(p, _)| json!({"path": p, "type": "blob"}))
+        .map(|(p, _)| json!({ "Path": p, "Type": "blob" }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!(
-            "/api/v1/repos/test-owner/test-repo/git/trees/{REVISION}"
-        )))
-        .and(query_param("recursive", "true"))
-        .and(query_param("per_page", "1000"))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")).and(query_param("@r", format!("'{REVISION}'")))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!({"sha": "tree-sha", "truncated": false, "tree": tree})),
+                .set_body_json(json!({ "Sha": "tree-sha", "Truncated": false, "Tree": tree })),
         )
         .mount(&server)
         .await;
 
     for (file_path, content) in files {
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/api/v1/repos/test-owner/test-repo/contents/{file_path}"
-            )))
-            .and(query_param("ref", REVISION))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{file_path}'")))
+            .and(query_param("@r", format!("'{}'", REVISION)))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "blob-sha",
-                "content": STANDARD.encode(content.as_bytes()),
+                "Sha": "blob-sha",
+                "Content": STANDARD.encode(content.as_bytes())
             })))
             .mount(&server)
             .await;
@@ -72,15 +70,15 @@ async fn forge(files: &[(&str, &str)]) -> MockServer {
     server
 }
 
-fn client(server: &MockServer) -> Arc<GiteaClient> {
+fn client(server: &MockServer) -> Arc<ShakoClient> {
     Arc::new(
-        GiteaClient::new(
+        ShakoClient::new(
             server.uri().parse().expect("forge url"),
             "test-owner",
             "test-repo",
             "token-xyz",
         )
-        .expect("gitea client"),
+        .expect("shako client"),
     )
 }
 
@@ -206,7 +204,7 @@ async fn the_ready_route_answers_503_until_the_first_sync_and_200_after() {
     let syncer = Arc::new(Syncer::new(client(&server), Arc::clone(&mirror)));
     let app = server::app(
         AppState::new(Config::for_tests(), None)
-            .with_gitea(client(&server))
+            .with_shako(client(&server))
             .with_syncer(Arc::clone(&syncer)),
     );
     let get = |uri: &'static str| {
@@ -327,27 +325,23 @@ async fn a_second_run_reads_only_the_files_whose_blob_it_has_not_read() {
     ];
     let tree: Vec<serde_json::Value> = files
         .iter()
-        .map(|(p, _, sha)| json!({"path": p, "type": "blob", "sha": sha}))
+        .map(|(p, _, sha)| json!({ "Path": p, "Type": "blob", "Sha": sha }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!(
-            "/api/v1/repos/test-owner/test-repo/git/trees/{REVISION}"
-        )))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")).and(query_param("@r", format!("'{REVISION}'")))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!({"sha": "tree-sha", "truncated": false, "tree": tree})),
+                .set_body_json(json!({ "Sha": "tree-sha", "Truncated": false, "Tree": tree })),
         )
         .with_priority(1)
         .mount(&server)
         .await;
     for (file_path, content, _) in &files {
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/api/v1/repos/test-owner/test-repo/contents/{file_path}"
-            )))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{file_path}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "blob-sha",
-                "content": STANDARD.encode(content.as_bytes()),
+                "Sha": "blob-sha",
+                "Content": STANDARD.encode(content.as_bytes())
             })))
             .mount(&server)
             .await;
@@ -360,7 +354,13 @@ async fn a_second_run_reads_only_the_files_whose_blob_it_has_not_read() {
                 .await
                 .unwrap_or_default()
                 .iter()
-                .filter(|r| r.url.path().ends_with(name))
+                // The file a read names is its `@p` parameter, a quoted OData literal.
+                .filter(|r| {
+                    r.url.path().ends_with("/Shako.File(Path=@p,Ref=@r)")
+                        && r.url
+                            .query_pairs()
+                            .any(|(k, v)| k == "@p" && v.trim_end_matches('\'').ends_with(name))
+                })
                 .count()
         }
     };

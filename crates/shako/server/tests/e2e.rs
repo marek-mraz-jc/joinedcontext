@@ -59,7 +59,7 @@ struct TestWorld {
     last_webhook_sig: LastWebhook,
 }
 
-/// The last webhook delivery the mock receiver saw: `(X-Gitea-Signature, body)`.
+/// The last webhook delivery the mock receiver saw: `(X-Shako-Signature, body)`.
 type LastWebhook = Arc<parking_lot::Mutex<Option<(String, Vec<u8>)>>>;
 
 fn setup_world() -> TestWorld {
@@ -140,11 +140,11 @@ fn setup_world() -> TestWorld {
         allowed_hosts: Some(vec!["github.com".into(), "portal.city.example".into()]),
         allow_loopback_for_tests: false,
         mock_handler: Some(Arc::new(move |method, url, headers, body| {
-            if url == "https://portal.city.example/api/v1/webhooks/gitea" {
+            if url == "https://portal.city.example/api/v1/webhooks/shako" {
                 wh_hits.fetch_add(1, Ordering::SeqCst);
                 let sig = headers
                     .iter()
-                    .find(|(k, _)| k.eq_ignore_ascii_case("x-gitea-signature"))
+                    .find(|(k, _)| k.eq_ignore_ascii_case("x-shako-signature"))
                     .map(|(_, v)| v.clone())
                     .unwrap_or_default();
                 *wh_sig.lock() = Some((sig, body.to_vec()));
@@ -593,7 +593,7 @@ async fn s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup() 
         "/api/v1/repos/joinedcontext/helsinki/hooks",
         Some("portal-token"),
         Some(json!({
-            "url": "https://portal.city.example/api/v1/webhooks/gitea",
+            "url": "https://portal.city.example/api/v1/webhooks/shako",
             "secret_ref": "portal-webhook-secret"
         })),
     )

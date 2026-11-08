@@ -15,7 +15,7 @@ use http_body_util::BodyExt;
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
@@ -55,32 +55,37 @@ spec:
 async fn forge() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/bb/org"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path("/odata/Repositories(Owner='bb',Name='org')"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/bb/org/branches"))
-        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "name": "portal/rename" })))
+        .and(path(
+            "/odata/Repositories(Owner='bb',Name='org')/Shako.CreateBranch",
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Name": "portal/rename" })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/bb/org/contents"))
+        .and(path(
+            "/odata/Repositories(Owner='bb',Name='org')/Shako.CommitFiles",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "content": { "sha": "b1ob" },
-            "commit": { "sha": "c0mm1t" }
+            "Sha": "c0mm1t"
         })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/bb/org/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='bb',Name='org')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 413,
-            "html_url": "https://git.example.sk/bb/org/pulls/413",
-            "title": "rename",
-            "state": "open",
-            "head": { "ref": "portal/rename-app-shapes" },
-            "base": { "ref": "main" }
+            "Number": 413,
+            "HtmlUrl": "https://git.example.sk/bb/org/pulls/413",
+            "Title": "rename",
+            "State": "open",
+            "Head": "portal/rename-app-shapes",
+            "Base": "main"
         })))
         .mount(&server)
         .await;
@@ -132,14 +137,14 @@ fn state(
 ) -> (AppState, String) {
     let config = Config::for_tests();
     let cookie = cookie(&config, groups);
-    let gitea = Arc::new(
-        GiteaClient::new(
+    let shako = Arc::new(
+        ShakoClient::new(
             server.uri().parse().expect("forge url"),
             "bb",
             "org",
             "token",
         )
-        .expect("gitea client"),
+        .expect("shako client"),
     );
     let mirror = Arc::new(Mirror::new());
     for yaml in apps {
@@ -158,7 +163,7 @@ fn state(
     }
     (
         AppState::new(config, None)
-            .with_gitea(gitea)
+            .with_shako(shako)
             .with_mirror(mirror),
         cookie,
     )
@@ -188,7 +193,7 @@ async fn rename(state: AppState, cookie: &str, project: &str) -> (StatusCode, Va
 
 /// The files the forge was asked to write, as `(path, decoded YAML)`.
 async fn written(server: &MockServer) -> Vec<(String, String)> {
-    common::committed_files(server, "/api/v1/repos/bb/org").await
+    common::committed_files(server, "/odata/Repositories(Owner='bb',Name='org')").await
 }
 
 #[tokio::test]
@@ -233,16 +238,16 @@ async fn one_click_proposes_one_change_renaming_every_old_shape_and_nothing_else
     let requests = server.received_requests().await.unwrap_or_default();
     let pulls: Vec<Value> = requests
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/pulls"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.OpenPullRequest"))
         .map(|r| serde_json::from_slice(&r.body).expect("json"))
         .collect();
     assert_eq!(pulls.len(), 1, "one Change for the project");
     assert_eq!(
-        pulls[0]["title"],
+        pulls[0]["Title"],
         format!("rename the App shapes of {PROJECT} (AP-124)")
     );
     assert!(
-        pulls[0]["head"]
+        pulls[0]["Head"]
             .as_str()
             .is_some_and(|h| h.starts_with(&format!("portal/rename-app-shapes-{PROJECT}-"))),
         "{}",
@@ -250,11 +255,11 @@ async fn one_click_proposes_one_change_renaming_every_old_shape_and_nothing_else
     );
     let branches: Vec<Value> = requests
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/branches"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.CreateBranch"))
         .map(|r| serde_json::from_slice(&r.body).expect("json"))
         .collect();
     assert!(
-        branches.iter().all(|b| b["new_branch_name"]
+        branches.iter().all(|b| b["NewBranchName"]
             .as_str()
             .is_some_and(|n| n.starts_with("portal/rename-app-shapes-"))),
         "{branches:?}"

@@ -40189,17 +40189,17 @@
         }
       }
     },
-    "/api/v1/webhooks/gitea": {
+    "/api/v1/webhooks/shako": {
       "post": {
         "tags": [
           "system"
         ],
         "summary": "Forge Webhook",
         "description": "Called by the forge on a push: a signed payload makes the mirror synchronize. An unsigned or wrongly signed call is refused with 401.",
-        "operationId": "gitea_webhook",
+        "operationId": "shako_webhook",
         "parameters": [
           {
-            "name": "x-gitea-signature",
+            "name": "x-shako-signature",
             "in": "header",
             "description": "HMAC-SHA256 signature of request body",
             "required": true,
@@ -40208,9 +40208,21 @@
             }
           },
           {
-            "name": "x-gitea-event",
+            "name": "x-shako-signature-previous",
             "in": "header",
-            "description": "Gitea event type (e.g. push, pull_request)",
+            "description": "HMAC-SHA256 signature with the hook's previous secret, while the forge rotates it",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-shako-event",
+            "in": "header",
+            "description": "Forge event type (push, pull_request)",
             "required": false,
             "schema": {
               "type": [
@@ -40221,7 +40233,7 @@
           }
         ],
         "requestBody": {
-          "description": "Gitea webhook event payload",
+          "description": "The forge's native event body",
           "content": {
             "application/json": {
               "schema": {
@@ -40229,10 +40241,16 @@
               },
               "example": {
                 "after": "4f2a9c1d0e8b7a6f5e4d3c2b1a0f9e8d7c6b5a49",
+                "before": "",
+                "event": "push",
                 "ref": "refs/heads/main",
                 "repository": {
-                  "full_name": "hel/config"
-                }
+                  "defaultBranch": "main",
+                  "name": "config",
+                  "owner": "hel",
+                  "private": true
+                },
+                "sender": "jc-portal"
               }
             }
           },
@@ -40306,12 +40324,27 @@
             }
           },
           {
+            "name": "x-shako-signature",
+            "in": "header",
+            "description": "HMAC-SHA256 of the request body, from a shako origin",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "name": "x-gitea-signature",
             "in": "header",
-            "description": "HMAC-SHA256 of the request body",
-            "required": true,
+            "description": "HMAC-SHA256 of the request body, from an outside Gitea origin",
+            "required": false,
             "schema": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],

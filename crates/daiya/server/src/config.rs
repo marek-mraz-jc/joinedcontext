@@ -403,26 +403,36 @@ pub async fn build_state(cfg: &DaiyaConfig) -> CrResult<Built> {
         }
     }
     let provisioning = match &cfg.provisioning_dir {
-        Some(dir) => Some(
-            load_provisioning_dir(
-                state.store.as_ref(),
-                ProvisioningTarget {
-                    installation_id: state.installation_id,
-                    org_id: org,
-                    instance_id: state.default_instance_id,
-                },
-                dir,
-                &state.limits,
-                &cfg.provisioning_vars,
-            )
-            .await?,
-        ),
+        Some(dir) => Some(provision(&state, dir, &cfg.provisioning_vars).await?),
         None => None,
     };
     Ok(Built {
         state,
         provisioning,
     })
+}
+
+/// Loads the provisioning directory `dir` into the default organization of `state` and lets
+/// the datasources it wrote reach [`DaiyaState::own_addresses`] (`DaiyaState::trust_provisioned`).
+pub async fn provision(
+    state: &DaiyaState,
+    dir: &Path,
+    vars: &BTreeMap<String, String>,
+) -> CrResult<ProvisioningLoadReport> {
+    let report = load_provisioning_dir(
+        state.store.as_ref(),
+        ProvisioningTarget {
+            installation_id: state.installation_id,
+            org_id: state.default_org_id,
+            instance_id: state.default_instance_id,
+        },
+        dir,
+        &state.limits,
+        vars,
+    )
+    .await?;
+    state.trust_provisioned(&report.datasources);
+    Ok(report)
 }
 
 /// The request context of the CLI subcommands: the operator, admin of the organization.

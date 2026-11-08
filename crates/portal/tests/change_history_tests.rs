@@ -16,24 +16,27 @@ const APPROVER: &str = "eva.approver@banskabystrica.sk";
 
 fn closed(number: u64, branch: &str, merged: bool, sha: &str) -> Value {
     json!({
-        "number": number,
-        "html_url": format!("https://gitea.example.sk/pulls/{number}"),
-        "state": "closed",
-        "title": branch,
-        "head": { "ref": branch, "sha": format!("head-{number}") },
-        "base": { "ref": "main" },
-        "created_at": format!("2026-10-0{number}T09:00:00Z"),
-        "closed_at": format!("2026-10-0{number}T10:00:00Z"),
-        "user": { "login": "jana", "full_name": "Jana Kováčová", "email": "jana@banskabystrica.sk" },
-        "merged": merged,
-        "merge_commit_sha": sha,
+        "Number": number,
+        "HtmlUrl": format!("https://shako.example.sk/pulls/{number}"),
+        "State": "closed",
+        "Title": branch,
+        "Head": branch,
+        "HeadSha": format!("head-{number}"),
+        "Base": "main",
+        "CreatedAt": format!("2026-10-0{number}T09:00:00Z"),
+        "ClosedAt": format!("2026-10-0{number}T10:00:00Z"),
+        "Author": "jana",
+        "AuthorName": "Jana Kováčová",
+        "AuthorEmail": "jana@banskabystrica.sk",
+        "Merged": merged,
+        "MergeCommitSha": sha
     })
 }
 
 async fn files(forge: &MockServer, number: u64, listed: Value) {
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/{number}/files")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(listed))
+        .and(path(format!("{REPO}/PullRequests({number})/Files")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": listed })))
         .mount(forge)
         .await;
 }
@@ -43,51 +46,55 @@ async fn files(forge: &MockServer, number: u64, listed: Value) {
 async fn world() -> (MockServer, AppState) {
     let forge = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls")))
-        .and(query_param("state", "closed"))
-        .and(query_param("page", "1"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            closed(
+        .and(path(format!("{REPO}/PullRequests")))
+        .and(query_param("$filter", "State eq 'closed'"))
+        .and(query_param("$skip", "0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                closed(
                 4,
                 "portal/create-contextspace-elsewhere-44444444",
                 true,
                 "merge-4"
             ),
-            closed(3, "mirror/bb-peer", true, "merge-3"),
-            closed(2, "portal/update-endpoint-public-air-22222222", false, ""),
-            closed(
+                closed(3, "mirror/bb-peer", true, "merge-3"),
+                closed(2, "portal/update-endpoint-public-air-22222222", false, ""),
+                closed(
                 1,
                 "portal/create-contextspace-mobility-11111111",
                 true,
                 "merge-1"
-            ),
-        ])))
+            )
+            ]
+        })))
         .mount(&forge)
         .await;
-    files(&forge, 1, json!([{ "filename": format!("projects/{PROJECT}/spaces/mobility/space.yaml"), "status": "added" }])).await;
-    files(&forge, 2, json!([{ "filename": format!("projects/{PROJECT}/spaces/air/endpoints/public-air.yaml"), "status": "modified" }])).await;
+    files(&forge, 1, json!([{ "Filename": format!("projects/{PROJECT}/spaces/mobility/space.yaml"), "Status": "added" }])).await;
+    files(&forge, 2, json!([{ "Filename": format!("projects/{PROJECT}/spaces/air/endpoints/public-air.yaml"), "Status": "modified" }])).await;
     files(
         &forge,
         4,
-        json!([{ "filename": "projects/doprava/spaces/elsewhere/space.yaml", "status": "added" }]),
+        json!([{ "Filename": "projects/doprava/spaces/elsewhere/space.yaml", "Status": "added" }]),
     )
     .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/git/commits/merge-1")))
+        .and(path(format!("{REPO}/Commits('merge-1')")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "merge-1",
-            "commit": { "message": format!(
+            "Sha": "merge-1",
+            "Message": format!(
                 "Merge change proposal chg-00000001: create ContextSpace mobility\n\nApproved in the Portal by {APPROVER}"
-            ) }
+            )
         })))
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/2/reviews")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            { "body": "looks fine to me" },
-            { "body": format!("Change proposal rejected in the Portal by {APPROVER}: the URL is the old one") }
-        ])))
+        .and(path(format!("{REPO}/PullRequests(2)/Reviews")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                { "Body": "looks fine to me" },
+                { "Body": format!("Change proposal rejected in the Portal by {APPROVER}: the URL is the old one") }
+            ]
+        })))
         .mount(&forge)
         .await;
 
@@ -247,10 +254,10 @@ async fn a_full_forge_page_points_at_the_next_one() {
         .map(|n| closed(n, "mirror/bb-peer", true, ""))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls")))
-        .and(query_param("page", "1"))
-        .and(query_param("limit", "20"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(page))
+        .and(path(format!("{REPO}/PullRequests")))
+        .and(query_param("$skip", "0"))
+        .and(query_param("$top", "20"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": page })))
         .mount(&forge)
         .await;
     let state = state_on(&forge);
@@ -330,8 +337,8 @@ async fn the_export_is_the_history_as_csv_with_names_and_reasons() {
         lines,
         vec![
             "closedAt,change,outcome,kind,name,operation,proposedBy,decidedBy,reason,mergeRequest",
-            &format!("2026-10-02T10:00:00Z,chg-00000002,Rejected,Endpoint,public-air,update,Jana Kováčová,{APPROVER},the URL is the old one,https://gitea.example.sk/pulls/2"),
-            &format!("2026-10-01T10:00:00Z,chg-00000001,Merged,ContextSpace,mobility,create,Jana Kováčová,{APPROVER},,https://gitea.example.sk/pulls/1"),
+            &format!("2026-10-02T10:00:00Z,chg-00000002,Rejected,Endpoint,public-air,update,Jana Kováčová,{APPROVER},the URL is the old one,https://shako.example.sk/pulls/2"),
+            &format!("2026-10-01T10:00:00Z,chg-00000001,Merged,ContextSpace,mobility,create,Jana Kováčová,{APPROVER},,https://shako.example.sk/pulls/1"),
         ],
         "{}",
         answer.text
@@ -375,9 +382,9 @@ async fn a_long_history_exports_ten_pages_and_names_the_next() {
         .map(|n| closed(n, "mirror/bb-peer", true, ""))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls")))
-        .and(query_param("limit", "20"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(page))
+        .and(path(format!("{REPO}/PullRequests")))
+        .and(query_param("$top", "20"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": page })))
         .mount(&forge)
         .await;
     let state = state_on(&forge);
@@ -399,7 +406,7 @@ async fn a_long_history_exports_ten_pages_and_names_the_next() {
     let asked = forge.received_requests().await.unwrap_or_default();
     let pulls = asked
         .iter()
-        .filter(|request| request.url.path().ends_with("/pulls"))
+        .filter(|request| request.url.path().ends_with("/PullRequests"))
         .count();
     assert_eq!(pulls, 10);
 }

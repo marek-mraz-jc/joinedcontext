@@ -13,13 +13,13 @@ use base64::Engine;
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const CSRF: &str = "test-csrf-token-12345";
@@ -100,57 +100,61 @@ fn spec() -> Value {
 /// Proposes `metadata` over the stored source through the REST route and answers the manifest
 /// the forge was asked to commit.
 async fn committed(metadata: Value) -> Value {
-    let gitea = MockServer::start().await;
-    let client = GiteaClient::new(
-        gitea.uri().parse().expect("url"),
+    let shako = MockServer::start().await;
+    let client = ShakoClient::new(
+        shako.uri().parse().expect("url"),
         "test-owner",
         "test-repo",
         "t",
     )
     .expect("client");
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
-        .mount(&gitea)
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
+        .mount(&shako)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let contents = format!("/api/v1/repos/test-owner/test-repo/contents/{MANIFEST_PATH}");
     Mock::given(method("GET"))
-        .and(path(contents.clone()))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param("@p", format!("'{MANIFEST_PATH}'")))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
-        .mount(&gitea)
-        .await;
-    Mock::given(method("PUT"))
-        .and(path(contents.clone()))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
-        )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("POST"))
-        .and(path(contents.clone()))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
-        )
-        .mount(&gitea)
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
+        .mount(&shako)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 7, "html_url": "https://gitea.example.sk/pulls/7",
-            "state": "open", "mergeable": true, "merged": false
+            "Number": 7,
+            "HtmlUrl": "https://shako.example.sk/pulls/7",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
 
     let config = Config::for_tests();
     let state = AppState::new(config.clone(), None)
         .with_mirror(mirror())
-        .with_gitea(Arc::new(client));
+        .with_shako(Arc::new(client));
     let response = server::app(state)
         .oneshot_checked(
             Request::builder()
@@ -173,16 +177,22 @@ async fn committed(metadata: Value) -> Value {
         .await
         .expect("response");
     assert_eq!(response.status(), StatusCode::ACCEPTED);
-    let written = gitea
+    let written = shako
         .received_requests()
         .await
         .expect("recorded")
         .into_iter()
-        .find(|r| r.url.path() == contents && r.method.as_str() != "GET")
+        .filter(|r| {
+            r.method.as_str() == "POST"
+                && r.url.path()
+                    == "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles"
+        })
+        .filter_map(|r| serde_json::from_slice::<Value>(&r.body).ok())
+        .flat_map(|body| body["Files"].as_array().cloned().unwrap_or_default())
+        .find(|file| file["path"] == MANIFEST_PATH)
         .expect("the manifest was committed");
-    let body: Value = serde_json::from_slice(&written.body).expect("contents body");
     let yaml = base64::engine::general_purpose::STANDARD
-        .decode(body["content"].as_str().expect("content"))
+        .decode(written["content"].as_str().expect("content"))
         .expect("base64");
     serde_norway::from_slice(&yaml).expect("yaml")
 }

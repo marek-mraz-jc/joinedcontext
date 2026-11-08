@@ -402,14 +402,14 @@ async fn mirror_at(
             "revision is a commit id: 7 to 40 lowercase hex digits".into(),
         ));
     }
-    let gitea = state
+    let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("no repository is configured".into()))?;
-    let gitea: &crate::git::GiteaClient = &gitea;
-    let paths = match gitea.list_tree(revision).await {
+    let shako: &crate::forge::ShakoClient = &shako;
+    let paths = match shako.list_tree(revision).await {
         Ok(paths) => paths,
-        Err(crate::git::GitError::NotFound) => return Err(not_found()),
-        Err(crate::git::GitError::Api { status, .. }) if (400..500).contains(&status) => {
+        Err(crate::forge::GitError::NotFound) => return Err(not_found()),
+        Err(crate::forge::GitError::Api { status, .. }) if (400..500).contains(&status) => {
             return Err(not_found())
         }
         Err(err) => return Err(err.into()),
@@ -420,7 +420,7 @@ async fn mirror_at(
         if !path.starts_with(&prefix) || !(path.ends_with(".yaml") || path.ends_with(".yml")) {
             continue;
         }
-        let Some(file) = gitea.get_file(&path, revision).await? else {
+        let Some(file) = shako.get_file(&path, revision).await? else {
             continue;
         };
         let Some(mut envelope) = crate::store::envelope_of(&file.content) else {

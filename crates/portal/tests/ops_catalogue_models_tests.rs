@@ -17,7 +17,7 @@ use axum::http::StatusCode;
 use common::doors::{self, mcp, run, session, steward, stranger, viewer, PROJECT};
 use common::{envelope, forge, REPO};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
@@ -56,7 +56,7 @@ async fn world() -> World {
         })))
         .mount(&tools)
         .await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         forge.uri().parse().expect("mock url"),
         "test-owner",
         "test-repo",
@@ -67,7 +67,7 @@ async fn world() -> World {
         model_tools_url: Some(tools.uri()),
         ..Config::for_tests()
     };
-    let state = doors::state_with(AppState::new(config, None).with_gitea(Arc::new(client)));
+    let state = doors::state_with(AppState::new(config, None).with_shako(Arc::new(client)));
 
     // The steward also reads the catalogue instances; the viewer does not.
     state.mirror.upsert(envelope(

@@ -263,7 +263,7 @@ fn routes_equals_what_the_sources_mount() {
     assert_eq!(
         adders,
         BTreeSet::from([
-            "crates/antares-broker/src/main.rs".to_owned(),
+            "crates/antares-broker/src/lib.rs".to_owned(),
             "crates/antares-icsr/src/lib.rs".to_owned(),
             "crates/antares-ops/src/lib.rs".to_owned(),
             "crates/antares-ops/src/views.rs".to_owned(),

@@ -17,7 +17,7 @@ use utoipa::ToSchema;
 use crate::agents::repository;
 use crate::auth::CurrentUser;
 use crate::error::{ApiError, ProblemDetails};
-use crate::git::{Author, GitError, GiteaClient, WorkflowRun};
+use crate::forge::{Author, GitError, ShakoClient, WorkflowRun};
 use crate::permissions::ORG_NAMESPACE;
 use crate::state::AppState;
 
@@ -68,7 +68,7 @@ pub(crate) fn app_of(
     user: &CurrentUser,
     project: &str,
     name: &str,
-) -> Result<(serde_json::Value, Option<GiteaClient>), ApiError> {
+) -> Result<(serde_json::Value, Option<ShakoClient>), ApiError> {
     let not_found = || ApiError::NotFound(format!("app '{name}' not found"));
     let app = state
         .mirror
@@ -80,8 +80,8 @@ pub(crate) fn app_of(
     {
         return Err(not_found());
     }
-    let gitea = state
-        .gitea
+    let shako = state
+        .shako
         .as_deref()
         .ok_or_else(|| ApiError::Unavailable("no forge is configured".into()))?;
     let on_forge = app
@@ -89,7 +89,7 @@ pub(crate) fn app_of(
         .is_some_and(|git| !git.is_null());
     Ok((
         app,
-        on_forge.then(|| gitea.for_application(repository::name(project, name))),
+        on_forge.then(|| shako.for_application(repository::name(project, name))),
     ))
 }
 
@@ -300,7 +300,7 @@ pub struct Restored {
 }
 
 /// The successful runs of the repository, one per commit, newest first.
-async fn successful_builds(repo: &GiteaClient, current: Option<&str>) -> Vec<BuildEntry> {
+async fn successful_builds(repo: &ShakoClient, current: Option<&str>) -> Vec<BuildEntry> {
     let runs = match repo.latest_runs(BUILDS_READ).await {
         Ok(runs) => runs,
         Err(GitError::NotFound) => Vec::new(),

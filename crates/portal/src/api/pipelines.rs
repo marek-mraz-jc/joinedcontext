@@ -425,11 +425,11 @@ pub(crate) async fn read_bento(
         Some((folder, _)) => format!("{folder}/bento.yaml"),
         None => "bento.yaml".to_owned(),
     };
-    let gitea = state
+    let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let branch = gitea.default_branch().await?;
-    let file = gitea.get_file(&path, &branch).await?.ok_or_else(|| {
+    let branch = shako.default_branch().await?;
+    let file = shako.get_file(&path, &branch).await?.ok_or_else(|| {
         let name = &pipeline.metadata.name;
         ApiError::NotFound(format!(
             "pipeline '{name}' has no bento.yaml beside its manifest"

@@ -21,11 +21,11 @@ use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
 use tower::ServiceExt;
-use wiremock::matchers::{method, path, path_regex};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, Request as Seen, ResponseTemplate};
 
 const CSRF: &str = "secret-form-csrf";
-const REPO: &str = "/api/v1/repos/test-owner/test-repo";
+const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
 const TYPED: &str = "typed-in-the-form-0123456789";
 
 fn person(email: &str) -> Identity {
@@ -88,25 +88,17 @@ async fn forge(held: &str) -> (MockServer, Arc<Mutex<Vec<Value>>>) {
     let server = MockServer::start().await;
     let b64 = |text: &str| base64::engine::general_purpose::STANDARD.encode(text);
     for (route, body) in [
-        (REPO.to_owned(), json!({ "default_branch": "main" })),
-        (format!("{REPO}/pulls"), json!([])),
+        (REPO.to_owned(), json!({ "DefaultBranch": "main" })),
+        (format!("{REPO}/PullRequests"), json!({ "value": [] })),
         (
-            format!("{REPO}/git/trees/main"),
-            json!({ "sha": "tree-1", "truncated": false, "tree": [
-                { "path": "projects/ovzdusie/secrets/feed.enc.yaml", "type": "blob", "sha": "b1" },
-                { "path": "projects/ovzdusie/spaces/air/space.yaml", "type": "blob", "sha": "b2" },
+            format!("{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"),
+            json!({ "Sha": "tree-1", "Truncated": false, "Tree": [
+                { "Path": "projects/ovzdusie/secrets/feed.enc.yaml", "Type": "blob", "Sha": "b1" },
+                { "Path": "projects/ovzdusie/spaces/air/space.yaml", "Type": "blob", "Sha": "b2" },
                 // Another project of the same repository (layout 1), declaring the same name: its
                 // file is neither listed nor a reason to refuse `feed` here (F-R2POR3-002).
-                { "path": "projects/other/secrets/feed.enc.yaml", "type": "blob", "sha": "b3" }
+                { "Path": "projects/other/secrets/feed.enc.yaml", "Type": "blob", "Sha": "b3" }
             ] }),
-        ),
-        (
-            format!("{REPO}/contents/projects/other/secrets/feed.enc.yaml"),
-            json!({ "sha": "b3", "content": b64(held) }),
-        ),
-        (
-            format!("{REPO}/contents/projects/ovzdusie/secrets/feed.enc.yaml"),
-            json!({ "sha": "b1", "content": b64(held) }),
         ),
     ] {
         Mock::given(method("GET"))
@@ -115,36 +107,53 @@ async fn forge(held: &str) -> (MockServer, Arc<Mutex<Vec<Value>>>) {
             .mount(&server)
             .await;
     }
+    for (file, sha) in [
+        ("projects/other/secrets/feed.enc.yaml", "b3"),
+        ("projects/ovzdusie/secrets/feed.enc.yaml", "b1"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{file}'")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "Sha": sha, "Content": b64(held) })),
+            )
+            .mount(&server)
+            .await;
+    }
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{REPO}/contents/.*")))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .with_priority(9)
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!("{REPO}/branches")))
+        .and(path(format!("{REPO}/Shako.CreateBranch")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&server)
         .await;
     let writes = Arc::new(Mutex::new(Vec::new()));
-    for verb in ["POST", "PUT"] {
-        let seen = Arc::clone(&writes);
-        Mock::given(path_regex(format!("^{REPO}/contents/.*")))
-            .and(method(verb))
-            .respond_with(move |request: &Seen| {
-                seen.lock()
-                    .expect("lock")
-                    .push(serde_json::from_slice::<Value>(&request.body).expect("json body"));
-                ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } }))
-            })
-            .mount(&server)
-            .await;
-    }
+    // Every write is one `Shako.CommitFiles` call; each file of it is recorded.
+    let seen = Arc::clone(&writes);
+    Mock::given(path(format!("{REPO}/Shako.CommitFiles")))
+        .and(method("POST"))
+        .respond_with(move |request: &Seen| {
+            let commit = serde_json::from_slice::<Value>(&request.body).expect("json body");
+            seen.lock()
+                .expect("lock")
+                .extend(commit["Files"].as_array().cloned().unwrap_or_default());
+            ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" }))
+        })
+        .mount(&server)
+        .await;
     Mock::given(method("POST"))
-        .and(path(format!("{REPO}/pulls")))
+        .and(path(format!("{REPO}/Shako.OpenPullRequest")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 7, "html_url": "https://gitea.example.sk/pulls/7", "state": "open",
-            "mergeable": true, "merged": false
+            "Number": 7,
+            "HtmlUrl": "https://shako.example.sk/pulls/7",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -191,14 +200,14 @@ async fn world() -> World {
     config.pipeline_secrets = Some(joinedcontext_portal::pipeline_secrets::Backend::Sops {
         age_key_file: key_file,
     });
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(
-        joinedcontext_portal::git::GiteaClient::new(
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(
+        joinedcontext_portal::forge::ShakoClient::new(
             forge.uri().parse().expect("url"),
             "test-owner",
             "test-repo",
             "token-secret-form",
         )
-        .expect("gitea"),
+        .expect("shako"),
     ));
     state.mirror.upsert(envelope(
         "Role",

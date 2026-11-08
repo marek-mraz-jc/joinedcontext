@@ -42,8 +42,8 @@ fn source(spec_extra: Value, schedule: Value) -> Value {
 /// accepts, and the merge request it opens carries the reference, never a value.
 #[tokio::test]
 async fn a_webhook_source_naming_its_secret_is_accepted() {
-    let gitea = forge().await;
-    let state = state_on(&gitea);
+    let shako = forge().await;
+    let state = state_on(&shako);
     let manifest = source(
         json!({ "webhook": {
             "secretRef": { "name": "regional-hook", "key": "secret" },
@@ -68,8 +68,8 @@ async fn a_webhook_source_naming_its_secret_is_accepted() {
 /// where it is written, and the refusal names the field the author has to add.
 #[tokio::test]
 async fn a_webhook_schedule_without_its_secret_is_refused_with_the_field_named() {
-    let gitea = forge().await;
-    let state = state_on(&gitea);
+    let shako = forge().await;
+    let state = state_on(&shako);
 
     let answer = checked_send(
         &state,

@@ -741,7 +741,7 @@ async fn the_portal_runs_on_its_sibling_modules() {
             format!("token {}", jc.secret("shako-token")),
         )
         .json(&json!({
-            "url": jc.url("/api/v1/webhooks/gitea"),
+            "url": jc.url("/api/v1/webhooks/shako"),
             "events": ["push"],
             "active": true
         }))

@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 
 use crate::agents::repository;
 use crate::error::ApiError;
-use crate::git::{Artifact, GitError, GiteaClient};
+use crate::forge::{Artifact, GitError, ShakoClient};
 
 /// The largest bundle the Portal downloads and publishes.
 /// ponytail: one fixed bound for every application; a setting when one needs more.
@@ -149,7 +149,7 @@ fn sha256(bytes: &[u8]) -> String {
 /// Checks the `build` an App's lane proposes (`status.build`) and publishes it, or says which
 /// check failed; nothing is published before every check has passed (AP-104).
 pub async fn check_and_publish(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     wasm: Option<&crate::apps::wasm_apps::WasmApps>,
     project: &str,
     name: &str,
@@ -164,7 +164,7 @@ pub async fn check_and_publish(
              forge, and it names no spec.source.git (AP-100, AP-104)"
         )));
     }
-    let repo = gitea.for_application(repository::name(project, name));
+    let repo = shako.for_application(repository::name(project, name));
     let at = format!("{}/{}", repo.owner, repo.repo);
     let forge = |err: GitError| {
         ApiError::Unavailable(format!(
@@ -301,7 +301,7 @@ pub async fn check_and_publish(
 /// The App's migration files at the built commit: the `.sql` files directly in the folder its
 /// `spec.storage.sql.migrations` names, in name order; none without that field.
 async fn migrations_at(
-    repo: &GiteaClient,
+    repo: &ShakoClient,
     spec: &Value,
     commit: &str,
 ) -> Result<Vec<crate::apps::apps_db::Migration>, GitError> {
@@ -327,7 +327,7 @@ async fn migrations_at(
 
 /// The newest artifact `name` a run of `commit` uploaded, from run `run` when one is named.
 async fn newest_of(
-    repo: &GiteaClient,
+    repo: &ShakoClient,
     name: &str,
     commit: &str,
     run: Option<u64>,
@@ -344,7 +344,7 @@ async fn newest_of(
 /// there with the same bytes is the same build published again, and one with other bytes is
 /// refused (AP-101); the digest in the version keeps a rebuild on a newer release apart.
 async fn publish_once(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     package: &str,
     version: &str,
     file: &str,
@@ -352,9 +352,9 @@ async fn publish_once(
 ) -> Result<(), GitError> {
     let limit = bytes.len() as u64;
     let expected = sha256(&bytes);
-    match gitea.put_generic_file(package, version, file, bytes).await {
+    match shako.put_generic_file(package, version, file, bytes).await {
         Err(GitError::Conflict(_)) => {
-            let held = gitea
+            let held = shako
                 .get_generic_file(package, version, file, limit)
                 .await
                 .map(|held| sha256(&held));

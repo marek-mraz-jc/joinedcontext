@@ -59,6 +59,11 @@ pub struct DerivedGroup {
     pub jc_groups: Option<String>,
 }
 
+/// The two groups of a project: who reads it and who writes it.
+fn teams_of(slug: &str) -> [String; 2] {
+    [format!("{slug}-readers"), format!("{slug}-writers")]
+}
+
 /// Every registered project's derived groups, and the group of each of their Organizations, as
 /// `mirror` holds its bindings at `now`: a binding taken away or run out empties its person from
 /// them, and only a binding that reaches the project counts, so none of another Organization
@@ -71,7 +76,7 @@ pub fn derived_groups(
     let of_projects = projects.keys().flat_map(|slug| {
         let members = project_members(mirror, slug, now);
         let organization = organization_of(mirror, slug);
-        let [(readers, _), (writers, _)] = super::project_teams::teams_of(slug);
+        let [readers, writers] = teams_of(slug);
         [(readers, members.readers), (writers, members.writers)].map(|(name, members)| {
             let jc_groups = organization.as_ref().map(|org| format!("/{org}/{name}"));
             DerivedGroup {

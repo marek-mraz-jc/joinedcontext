@@ -12,7 +12,7 @@ use joinedcontext_portal::ops::{self, Caller, OpError, Via};
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{body_string_contains, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT: &str = "ovzdusie";
@@ -45,32 +45,28 @@ fn space(locale: &str, ttl: u32) -> String {
 async fn tree(server: &MockServer, git_ref: &str, entries: &[(&str, &str)]) {
     let tree: Vec<_> = entries
         .iter()
-        .map(|(p, sha)| json!({ "path": p, "type": "blob", "sha": sha }))
+        .map(|(p, sha)| json!({ "Path": p, "Type": "blob", "Sha": sha }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/git/trees/{git_ref}")))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", format!("'{git_ref}'")))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "tree": tree, "truncated": false })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Tree": tree, "Truncated": false })),
         )
-        .mount(server)
-        .await;
-}
-
-/// The head commit of a branch, as `GET /branches/{branch}` answers it.
-async fn branch(server: &MockServer, name: &str, head: &str) {
-    Mock::given(method("GET"))
-        .and(path(format!("{REPO}/branches/{name}")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": head } })))
         .mount(server)
         .await;
 }
 
 async fn file(server: &MockServer, git_ref: &str, content: &str) {
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/{AIR}")))
-        .and(query_param("ref", git_ref))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{AIR}'")))
+        .and(query_param("@r", format!("'{}'", git_ref)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "path": AIR, "sha": "x", "encoding": "base64", "content": encode(content)
+            "Sha": "x",
+            "Content": encode(content)
         })))
         .mount(server)
         .await;
@@ -80,14 +76,13 @@ async fn file(server: &MockServer, git_ref: &str, content: &str) {
 async fn world() -> (MockServer, AppState) {
     let server = forge().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/branches/main")))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": "base1" } })),
-        )
+        .and(path(format!("{REPO}/Branches('main')")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "base1" })))
         .mount(&server)
         .await;
-    Mock::given(method("DELETE"))
-        .and(path(format!("{REPO}/branches/workspace/air-v2")))
+    Mock::given(method("POST"))
+        .and(path(format!("{REPO}/Shako.DeleteBranch")))
+        .and(body_string_contains(r#""Branch":"workspace/air-v2""#))
         .respond_with(ResponseTemplate::new(204))
         .mount(&server)
         .await;
@@ -132,10 +127,9 @@ async fn opened(state: &AppState) {
 
 /// The workspace changed `air`'s ttlDays to 20; main is `main_air`.
 async fn changed(server: &MockServer, main_air: &str, main_sha: &str) {
-    // The copy's branch is read as real Gitea serves a slashed ref: the head commit from
-    // `branches/{branch}`, then the tree by that sha (T-2266).
-    branch(server, "workspace/air-v2", "ws1").await;
-    tree(server, "ws1", &[(AIR, "s-ours")]).await;
+    // The copy's slashed branch is read directly: shako takes the ref as a parameter value, so
+    // no branch lookup comes first (T-2266).
+    tree(server, "workspace/air-v2", &[(AIR, "s-ours")]).await;
     tree(server, "base1", &[(AIR, "s-base")]).await;
     tree(server, "main", &[(AIR, main_sha)]).await;
     file(server, "workspace/air-v2", &space("en", 12)).await;
@@ -190,8 +184,8 @@ async fn opening_records_the_workspace_and_cuts_its_branch_from_main() {
     assert_eq!(view["baseRevision"], "base1");
     assert_eq!(view["owner"], "jana@hel.fi");
     assert_eq!(view["scope"], json!({ "kind": "project" }));
-    let branches = calls(&server, "POST", "/branches").await;
-    assert_eq!(branches[0]["new_branch_name"], "workspace/air-v2");
+    let branches = calls(&server, "POST", "/Shako.CreateBranch").await;
+    assert_eq!(branches[0]["NewBranchName"], "workspace/air-v2");
     let listed = send(&state, viewer(), "GET", WS, None).await;
     assert_eq!(listed.status, StatusCode::OK);
     assert_eq!(body(&listed.text)["items"][0]["name"], "air-v2");
@@ -348,7 +342,9 @@ async fn update_from_main_refuses_an_unanswered_conflict_and_merges_an_answered_
     assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.text);
     assert!(refused.text.contains("spec.ttlDays"), "{}", refused.text);
     assert!(
-        calls(&server, "POST", "/contents").await.is_empty(),
+        calls(&server, "POST", "/Shako.CommitFiles")
+            .await
+            .is_empty(),
         "nothing written"
     );
 
@@ -362,12 +358,12 @@ async fn update_from_main_refuses_an_unanswered_conflict_and_merges_an_answered_
     .await;
     assert_eq!(resolved.status, StatusCode::OK, "{}", resolved.text);
     assert_eq!(body(&resolved.text)["merged"], json!([AIR]));
-    let commit = &calls(&server, "POST", "/contents").await[0];
-    assert_eq!(commit["branch"], "workspace/air-v2");
+    let commit = &calls(&server, "POST", "/Shako.CommitFiles").await[0];
+    assert_eq!(commit["Branch"], "workspace/air-v2");
     let merged = String::from_utf8(
         base64::Engine::decode(
             &base64::engine::general_purpose::STANDARD,
-            commit["files"][0]["content"].as_str().unwrap(),
+            commit["Files"][0]["content"].as_str().unwrap(),
         )
         .unwrap(),
     )
@@ -408,7 +404,9 @@ async fn only_the_owner_updates_brings_back_or_discards() {
         );
         assert!(answer.text.contains("jana@hel.fi"), "{}", answer.text);
     }
-    assert!(calls(&server, "POST", "/pulls").await.is_empty());
+    assert!(calls(&server, "POST", "/Shako.OpenPullRequest")
+        .await
+        .is_empty());
     assert!(state.workspaces.get("air-v2").await.unwrap().is_some());
 }
 
@@ -431,10 +429,10 @@ async fn bringing_back_opens_one_change_in_the_lane_of_its_files() {
         change["status"]["lane"], "green",
         "a sandbox space is the whole change"
     );
-    let pulls = calls(&server, "POST", "/pulls").await;
+    let pulls = calls(&server, "POST", "/Shako.OpenPullRequest").await;
     assert_eq!(pulls.len(), 1);
-    assert_eq!(pulls[0]["head"], "workspace/air-v2");
-    assert!(pulls[0]["body"].as_str().unwrap().contains("jana@hel.fi"));
+    assert_eq!(pulls[0]["Head"], "workspace/air-v2");
+    assert!(pulls[0]["Body"].as_str().unwrap().contains("jana@hel.fi"));
 }
 
 #[tokio::test]
@@ -454,8 +452,7 @@ async fn bringing_back_is_refused_with_a_conflict_or_nothing_changed() {
 
     let (server, state) = world().await;
     opened(&state).await;
-    branch(&server, "workspace/air-v2", "ws1").await;
-    tree(&server, "ws1", &[(AIR, "s-base")]).await;
+    tree(&server, "workspace/air-v2", &[(AIR, "s-base")]).await;
     tree(&server, "base1", &[(AIR, "s-base")]).await;
     tree(&server, "main", &[(AIR, "s-base")]).await;
     let answer = send(
@@ -468,7 +465,9 @@ async fn bringing_back_is_refused_with_a_conflict_or_nothing_changed() {
     .await;
     assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
     assert!(answer.text.contains("changes nothing"), "{}", answer.text);
-    assert!(calls(&server, "POST", "/pulls").await.is_empty());
+    assert!(calls(&server, "POST", "/Shako.OpenPullRequest")
+        .await
+        .is_empty());
 }
 
 #[tokio::test]
@@ -484,7 +483,9 @@ async fn an_agent_or_an_mcp_client_never_brings_a_workspace_back() {
             .unwrap_err();
         assert!(format!("{err:?}").contains("AG-82"), "{err:?}");
     }
-    assert!(calls(&server, "POST", "/pulls").await.is_empty());
+    assert!(calls(&server, "POST", "/Shako.OpenPullRequest")
+        .await
+        .is_empty());
     // It may still compare, which is what it presents to the person (AG-82).
     let compare = ops::find("jc_workspace_compare").unwrap();
     let cmp = ops::call(
@@ -521,9 +522,10 @@ async fn an_agent_or_an_mcp_client_never_throws_a_workspace_away() {
         assert!(format!("{err:?}").contains("AG-82"), "{err:?}");
     }
     assert!(
-        calls(&server, "DELETE", "/branches/workspace/air-v2")
+        calls(&server, "POST", "/Shako.DeleteBranch")
             .await
-            .is_empty(),
+            .iter()
+            .all(|deleted| deleted["Branch"] != "workspace/air-v2"),
         "the branch was deleted anyway"
     );
     assert!(
@@ -573,9 +575,11 @@ async fn discarding_removes_the_branch_and_the_record() {
     let answer = send(&state, steward(), "DELETE", &format!("{WS}/air-v2"), None).await;
     assert_eq!(answer.status, StatusCode::NO_CONTENT, "{}", answer.text);
     assert_eq!(
-        calls(&server, "DELETE", "/branches/workspace/air-v2")
+        calls(&server, "POST", "/Shako.DeleteBranch")
             .await
-            .len(),
+            .iter()
+            .filter(|deleted| deleted["Branch"] == "workspace/air-v2")
+            .count(),
         1
     );
     assert!(state.workspaces.get("air-v2").await.unwrap().is_none());

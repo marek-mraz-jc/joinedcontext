@@ -306,11 +306,11 @@ pub fn spawn_background(state: &AppState) {
         // The foreign-model mirror runs beside it, on the same replica (DM-48, DM-49). A
         // Portal whose peers cannot be reached still serves; the mirror says so in its log and
         // the reference stands with whatever the repository already pinned.
-        if let Some(gitea) = state.gitea.as_ref() {
+        if let Some(shako) = state.shako.as_ref() {
             match crate::sync::schema_api::PeerSchemaApi::new() {
                 Ok(peers) => {
                     crate::sync::mirror::spawn_periodic(
-                        gitea.clone(),
+                        shako.clone(),
                         syncer.clone(),
                         state.config.public_base_url.to_string(),
                         std::sync::Arc::new(peers),
@@ -324,13 +324,13 @@ pub fn spawn_background(state: &AppState) {
     }
 
     // A build pod per queued App build (AP-130), on the replica that holds the lease.
-    if let (Some(syncer), Some(gitea), Some(settings)) = (
+    if let (Some(syncer), Some(shako), Some(settings)) = (
         state.syncer.as_ref(),
-        state.gitea.as_ref(),
+        state.shako.as_ref(),
         state.config.build_pods.clone(),
     ) {
         crate::apps::build_pods::spawn_periodic(
-            gitea.clone(),
+            shako.clone(),
             syncer.clone(),
             state.mirror.clone(),
             settings,

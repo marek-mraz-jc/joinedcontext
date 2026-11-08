@@ -21,7 +21,7 @@ use crate::api::datamodels::{
 };
 use crate::auth::session::Identity;
 use crate::error::ApiError;
-use crate::git::GiteaClient;
+use crate::forge::ShakoClient;
 use crate::permissions::ORG_NAMESPACE;
 use crate::resource::ResourceEnvelope;
 use crate::state::AppState;
@@ -287,7 +287,7 @@ pub(crate) fn rewrite_imports(text: &str, landed: &[(String, u32)]) -> String {
 /// own with its origin kept, and every model source of the project that imports it pointing at
 /// it. A model the project holds a model of that name already refuses the import (MF-50).
 pub(crate) async fn land(
-    mounted: &GiteaClient,
+    mounted: &ShakoClient,
     identity: &Identity,
     project: &str,
     index: &Bundle,
@@ -434,7 +434,7 @@ pub(crate) async fn land(
                 "Land the organization models {} as models of {project} (MF-50)",
                 names.join(", ")
             ),
-            crate::git::Author {
+            crate::forge::Author {
                 name: &author_name,
                 email: &author_email,
             },

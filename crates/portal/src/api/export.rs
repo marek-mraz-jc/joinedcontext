@@ -24,7 +24,7 @@ use utoipa::ToSchema;
 use crate::api::mutate::SECRET_KEYS;
 use crate::auth::CurrentUser;
 use crate::error::{ApiError, ProblemDetails};
-use crate::git::GiteaClient;
+use crate::forge::ShakoClient;
 use crate::resource::{self, ResourceEnvelope, API_VERSION};
 use crate::state::AppState;
 
@@ -98,7 +98,7 @@ pub(crate) fn strip_secret_values(value: &mut Value) {
 
 /// The repository that holds `project`: its own in layout 2, the organization's otherwise
 /// (CC-87). Paths stay render paths either way.
-fn gitea(state: &AppState, project: &str) -> Result<std::sync::Arc<GiteaClient>, ApiError> {
+fn shako(state: &AppState, project: &str) -> Result<std::sync::Arc<ShakoClient>, ApiError> {
     state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("no repository is configured".into()))
@@ -202,13 +202,13 @@ fn reference_by_name(spec: &mut Value, endpoints: &HashMap<String, (String, Stri
 }
 
 async fn read_project(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     project: &str,
     revision: &str,
     endpoints: &HashMap<String, (String, String)>,
 ) -> Result<(Vec<Exported>, usize), ApiError> {
     let prefix = format!("projects/{project}/");
-    let paths: Vec<String> = gitea
+    let paths: Vec<String> = shako
         .list_tree(revision)
         .await?
         .into_iter()
@@ -218,7 +218,7 @@ async fn read_project(
     let mut files = Vec::new();
     let mut omitted = 0usize;
     for path in paths {
-        let file = match gitea.get_file(&path, revision).await {
+        let file = match shako.get_file(&path, revision).await {
             Ok(Some(file)) => file,
             Ok(None) => {
                 omitted += 1;
@@ -804,10 +804,10 @@ pub async fn export(
             "exporting a whole project",
         )?;
     }
-    let forge = gitea(&state, &project)?;
-    let gitea: &GiteaClient = &forge;
+    let forge = shako(&state, &project)?;
+    let shako: &ShakoClient = &forge;
     if format == "git" {
-        if !gitea.is_project_repository() {
+        if !shako.is_project_repository() {
             return Err(ApiError::Conflict(
                 "format=git exports a project that lives in a repository of its own (layout 2); \
                  this one is a folder of the organization repository, so export it as zip (MF-45)"
@@ -833,8 +833,8 @@ pub async fn export(
             revision.to_string()
         }
         None => {
-            let branch = gitea.default_branch().await?;
-            gitea.branch_head(&branch).await?
+            let branch = shako.default_branch().await?;
+            shako.branch_head(&branch).await?
         }
     };
 
@@ -843,11 +843,11 @@ pub async fn export(
     let commit = if is_commit(&revision) {
         revision.clone()
     } else {
-        gitea.branch_head(&revision).await?
+        shako.branch_head(&revision).await?
     };
 
     let (files, unreadable) =
-        read_project(gitea, &project, &revision, &endpoints_by_slug(&state)).await?;
+        read_project(shako, &project, &revision, &endpoints_by_slug(&state)).await?;
     // A manifest the caller may not read is counted, never named (MF-18, R20). The question is
     // the manifest's, not the kind's: a grant bound to one context space reads that space's
     // manifests and no other, which is what the resource lists already ask (PF-60, T-0986).
@@ -899,7 +899,7 @@ pub async fn export(
             )));
         }
         let archive =
-            crate::api::export_git::archive(&state, gitea, &project, &user.0.identity.username)
+            crate::api::export_git::archive(&state, shako, &project, &user.0.identity.username)
                 .await?;
         return Ok(attachment(
             archive.bytes,
@@ -1131,9 +1131,9 @@ pub async fn revisions(
             "limit must be between 1 and {MAX_REVISIONS}"
         )));
     }
-    let gitea = gitea(&state, &project)?;
-    let branch = gitea.default_branch().await?;
-    let commits = gitea
+    let shako = shako(&state, &project)?;
+    let branch = shako.default_branch().await?;
+    let commits = shako
         .list_commits(&branch, &format!("projects/{project}"), limit)
         .await?;
     Ok(Json(RevisionList {

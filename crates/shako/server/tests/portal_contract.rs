@@ -1,11 +1,13 @@
 #![forbid(unsafe_code)]
-//! The Portal's forge contract: every call `crates/shako/PORTAL-CALLS.md` lists, made by the
-//! Portal's own `GiteaClient` over TCP against shako mounted at `/git` the way `jc` mounts it,
-//! with real git repositories on disk. Each answer goes through the Portal's own parsing, so a
-//! field shako drops or misnames fails here, not on dev.
+//! The Portal's forge contract: every call `crates/shako/PORTAL-ODATA.md` lists, made by the
+//! Portal's own `ShakoClient` over OData and TCP against shako mounted at `/git` the way `jc`
+//! mounts it, with real git repositories on disk. Each answer goes through the Portal's own
+//! parsing, so a field shako drops or misnames fails here, not on dev.
 //!
-//! Webhooks are delivered to the Portal's real `/api/v1/webhooks/gitea` route, which checks the
-//! `X-Gitea-Signature` HMAC with the Portal's own code; the test records what it answered.
+//! Webhooks are delivered to the Portal's real `/api/v1/webhooks/shako` route, which checks the
+//! `X-Shako-Signature` HMAC with the Portal's own code; the test records what it answered. The
+//! Gitea-compatible REST surface outside clients use is tested on its own in `e2e.rs`; this file
+//! reads it only to look at state the Portal has no call for.
 
 use axum::Router;
 use axum::body::Body;
@@ -13,9 +15,9 @@ use axum::http::Request;
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use jc_router::{JcRouterBuilder, Mount, MountSpec};
-use joinedcontext_portal::git::gitea::committed_text;
-use joinedcontext_portal::git::{
-    Author, FileDelete, FileWrite, GitError, GiteaClient, MergeStyle, ReviewEvent,
+use joinedcontext_portal::forge::shako::committed_text;
+use joinedcontext_portal::forge::{
+    Author, FileDelete, FileWrite, GitError, MergeStyle, ReviewEvent, ShakoClient,
 };
 use serde_json::{Value, json};
 use sha2::Digest as _;
@@ -32,7 +34,6 @@ const OWNER: &str = "joinedcontext";
 const APPS_OWNER: &str = "joinedcontext-apps";
 const PORTAL_TOKEN: &str = "portal-token-0123456789";
 const APPS_TOKEN: &str = "apps-token-0123456789";
-const READER: &str = "gateway-reader";
 const WEBHOOK_SECRET: &str = "portal-webhook-secret-value";
 
 const AUTHOR: Author<'static> = Author {
@@ -46,7 +47,7 @@ type Deliveries = Arc<parking_lot::Mutex<Vec<(String, u16)>>>;
 struct World {
     _tmp: tempfile::TempDir,
     state: ShakoState,
-    /// `http://127.0.0.1:{port}/git/`, what `JC_GITEA_URL` names in `jc`.
+    /// `http://127.0.0.1:{port}/git/`, what `JC_SHAKO_URL` names in `jc`.
     base: String,
     portal_hook: String,
     deliveries: Deliveries,
@@ -123,11 +124,14 @@ impl World {
         state
             .secret_store
             .put_secret(org, "portal-webhook", WEBHOOK_SECRET);
+        state
+            .secret_store
+            .put_secret(org, "another-webhook", "not-the-portal-secret");
 
         // The Portal itself, holding only the webhook secret, behind a recorder of its verdicts.
         let deliveries: Deliveries = Arc::default();
         let mut config = joinedcontext_portal::config::Config::for_tests();
-        config.gitea_webhook_secret = Some(WEBHOOK_SECRET.into());
+        config.shako_webhook_secret = Some(WEBHOOK_SECRET.into());
         let seen = deliveries.clone();
         let portal = joinedcontext_portal::server::app(joinedcontext_portal::state::AppState::new(
             config, None,
@@ -138,11 +142,11 @@ impl World {
                 async move {
                     let event = req
                         .headers()
-                        .get("x-gitea-event")
+                        .get("x-shako-event")
                         .and_then(|v| v.to_str().ok())
                         .unwrap_or_default()
                         .to_owned();
-                    let hook = req.uri().path() == "/api/v1/webhooks/gitea";
+                    let hook = req.uri().path() == "/api/v1/webhooks/shako";
                     let res: Response = next.run(req).await;
                     if hook {
                         seen.lock().push((event, res.status().as_u16()));
@@ -185,23 +189,22 @@ impl World {
             _tmp: tmp,
             state,
             base: format!("http://{host}/git/"),
-            portal_hook: format!("http://{portal_addr}/api/v1/webhooks/gitea"),
+            portal_hook: format!("http://{portal_addr}/api/v1/webhooks/shako"),
             deliveries,
         }
     }
 
-    /// The Portal's client as `jc` configures it from the environment (`JC_GITEA_*`).
-    fn client(&self, repo: &str) -> GiteaClient {
+    /// The Portal's client as `jc` configures it from the environment (`JC_SHAKO_*`).
+    fn client(&self, repo: &str) -> ShakoClient {
         let base = self.base.clone();
         let repo = repo.to_owned();
-        GiteaClient::from_env(move |key| match key {
-            "JC_GITEA_URL" => Some(base.clone()),
-            "JC_GITEA_OWNER" => Some(OWNER.into()),
-            "JC_GITEA_REPO" => Some(repo.clone()),
-            "JC_GITEA_TOKEN" => Some(PORTAL_TOKEN.into()),
-            "JC_GITEA_APPS_OWNER" => Some(APPS_OWNER.into()),
-            "JC_GITEA_APPS_TOKEN" => Some(APPS_TOKEN.into()),
-            "JC_GITEA_READER" => Some(READER.into()),
+        ShakoClient::from_env(move |key| match key {
+            "JC_SHAKO_URL" => Some(base.clone()),
+            "JC_SHAKO_OWNER" => Some(OWNER.into()),
+            "JC_SHAKO_REPO" => Some(repo.clone()),
+            "JC_SHAKO_TOKEN" => Some(PORTAL_TOKEN.into()),
+            "JC_SHAKO_APPS_OWNER" => Some(APPS_OWNER.into()),
+            "JC_SHAKO_APPS_TOKEN" => Some(APPS_TOKEN.into()),
             _ => None,
         })
         .expect("config")
@@ -242,7 +245,7 @@ fn manifest(name: &str) -> String {
 }
 
 /// Repository lifecycle, branches, contents, history and protection: what the reconciler's
-/// staging and every proposal write read and write (PORTAL-CALLS rows 1-3, 15, 18-28, 33, 35).
+/// staging and every proposal write read and write (PORTAL-ODATA.md sections 2 and 3).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn repository_branches_contents_and_history() {
     let w = World::start().await;
@@ -438,8 +441,7 @@ async fn repository_branches_contents_and_history() {
         Err(GitError::NotFound)
     ));
 
-    // let_the_reader_in, archive and delete.
-    forge.let_the_reader_in().await.unwrap();
+    // Archive and delete.
     forge.archive_repository().await.unwrap();
     let (st, repo) = w
         .raw("GET", "api/v1/repos/joinedcontext/config", None)
@@ -455,7 +457,7 @@ async fn repository_branches_contents_and_history() {
 }
 
 /// The change lane: open, read, review, update, merge and close merge requests, with the
-/// webhooks the Portal's sync waits for (rows 29-31, 34, 36-39 and the webhook row).
+/// webhooks the Portal's sync waits for (PORTAL-ODATA.md sections 4 and 8).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn merge_requests_reviews_merge_and_webhooks() {
     let w = World::start().await;
@@ -465,12 +467,9 @@ async fn merge_requests_reviews_merge_and_webhooks() {
         .raw(
             "POST",
             "api/v1/repos/joinedcontext/config/hooks",
-            Some(json!({
-                "type": "gitea",
-                "config": { "url": w.portal_hook, "content_type": "json", "secret": WEBHOOK_SECRET },
-                "events": ["push", "pull_request"],
-                "active": true,
-            })),
+            // A hook naming a stored secret delivers shako's native body, signed in
+            // X-Shako-Signature: what `jc` registers for the Portal.
+            Some(json!({ "url": w.portal_hook, "secret_ref": "portal-webhook" })),
         )
         .await;
     assert_eq!(st, 201, "{hook}");
@@ -666,7 +665,9 @@ async fn merge_requests_reviews_merge_and_webhooks() {
     assert_eq!(merges, 2, "{seen:?}");
 }
 
-/// A delivery signed with any other secret is refused by the Portal (red proof of the HMAC).
+/// A delivery signed with any other secret is refused by the Portal (red proof of the HMAC), and
+/// so is a Gitea-format delivery signed with the right one: the Portal reads `X-Shako-Signature`
+/// alone, never `X-Gitea-Signature`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_webhook_signed_with_another_secret_is_refused_by_the_portal() {
     let w = World::start().await;
@@ -676,9 +677,17 @@ async fn a_webhook_signed_with_another_secret_is_refused_by_the_portal() {
         .raw(
             "POST",
             "api/v1/repos/joinedcontext/config/hooks",
+            Some(json!({ "url": w.portal_hook, "secret_ref": "another-webhook" })),
+        )
+        .await;
+    assert_eq!(st, 201);
+    let (st, _) = w
+        .raw(
+            "POST",
+            "api/v1/repos/joinedcontext/config/hooks",
             Some(json!({
                 "type": "gitea",
-                "config": { "url": w.portal_hook, "content_type": "json", "secret": "not-the-portal-secret" },
+                "config": { "url": w.portal_hook, "content_type": "json", "secret": WEBHOOK_SECRET },
                 "events": ["push", "pull_request"],
                 "active": true,
             })),
@@ -694,9 +703,11 @@ async fn a_webhook_signed_with_another_secret_is_refused_by_the_portal() {
         )
         .await
         .unwrap();
-    // One push, one delivery: a refusal is not retried.
-    let seen = w.deliveries.lock().clone();
-    assert_eq!(seen, vec![("push".to_owned(), 401)]);
+    // One push, one delivery per hook: a refusal is not retried. The Gitea-format delivery
+    // carries no X-Shako-Event, so it is recorded with no event.
+    let mut seen = w.deliveries.lock().clone();
+    seen.sort();
+    assert_eq!(seen, vec![(String::new(), 401), ("push".to_owned(), 401)]);
 }
 
 /// A hook without a secret is refused at creation, and a hook whose stored secret is gone is
@@ -744,7 +755,7 @@ async fn an_unsigned_hook_is_refused_and_a_lost_secret_delivers_nothing() {
 }
 
 /// Copies and transfers: bundle out, empty repository, push_bundle in, tags, migrate
-/// (rows 2-4, 32, 33).
+/// (PORTAL-ODATA.md section 5).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bundle_push_bundle_tags_and_migrate() {
     let w = World::start().await;
@@ -808,10 +819,10 @@ async fn bundle_push_bundle_tags_and_migrate() {
     assert_eq!(migrated.branch_head("main").await.unwrap(), head);
 }
 
-/// Push mirrors (AP-79) and the transition team and permission calls of layout 2 (rows 5,
-/// 16, 17).
+/// Push mirrors (AP-79), whose credential the forge keeps and never echoes. The Portal makes no
+/// team or permission call: access follows RoleBindings (PORTAL-ODATA.md section 7).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn push_mirrors_teams_and_permissions() {
+async fn push_mirrors_and_their_credential() {
     let w = World::start().await;
     let app = w.client("helsinki_bikes").for_application("helsinki_bikes");
     assert!(app.ensure_repository("App").await.unwrap());
@@ -843,35 +854,10 @@ async fn push_mirrors_teams_and_permissions() {
         .await
         .unwrap();
     assert!(app.push_mirrors().await.unwrap().is_empty());
-
-    // Teams: the Portal reads ownership, lists, creates, links, unlinks and removes.
-    let forge = w.client("config");
-    assert!(forge.ensure_repository("Configuration").await.unwrap());
-    // Access follows RoleBindings, not forge teams: the Portal reads "not an owner" and leaves
-    // the teams alone (project_teams.rs converge, LeftToTheBootstrap). The team calls still
-    // answer in the shapes the Portal parses, as no-ops.
-    assert!(!forge.owns_organization().await.unwrap());
-    let team = forge
-        .create_team("project-air-write", "Air writers", "write")
-        .await
-        .unwrap();
-    assert_eq!(team.name, "project-air-write");
-    forge.org_teams().await.unwrap();
-    forge
-        .set_team_repository(team.id, "config", true)
-        .await
-        .unwrap();
-    forge.team_repositories(team.id).await.unwrap();
-    forge
-        .set_team_repository(team.id, "config", false)
-        .await
-        .unwrap();
-    forge.delete_team(team.id).await.unwrap();
-    forge.delete_team(team.id).await.unwrap();
 }
 
 /// The applications' organization: generic packages and the container registry the App
-/// build publishes to (rows 12-14).
+/// build publishes to (PORTAL-ODATA.md section 6).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn generic_packages_and_container_images() {
     let w = World::start().await;
@@ -946,7 +932,7 @@ async fn generic_packages_and_container_images() {
 /// What a SyncSource reads from a git origin (`sync/remote.rs`): the upload-pack advertisement
 /// and the archive at the repository's page path. shako serves both, but only to a signed-in
 /// caller: deny by default holds for `private: false` repositories too, so the Portal's
-/// credential-free fetch of a shako origin is refused (a listed gap, PORTAL-CALLS.md).
+/// credential-free fetch of a shako origin is refused (a listed gap, PORTAL-ODATA.md).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_sync_source_origin_serves_the_advertisement_and_the_page_archive() {
     let w = World::start().await;
@@ -1015,8 +1001,8 @@ async fn a_sync_source_origin_serves_the_advertisement_and_the_page_archive() {
     }
 }
 
-/// Actions (App builds) are not served yet: every Portal call gets the forge's "not found",
-/// which the Portal reports as no runs instead of failing to parse (rows 6-11).
+/// Actions (App builds) are not served yet: every Portal OData call gets the forge's "not found",
+/// which the Portal reports as no runs instead of failing to parse (PORTAL-ODATA.md section 10).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn actions_calls_answer_not_found_until_runners_land() {
     let w = World::start().await;

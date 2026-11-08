@@ -641,14 +641,14 @@ async fn jc_project_create_follows_the_organizations_own_setting() {
     use wiremock::matchers::{method as http_method, path as url_path, query_param};
     use wiremock::{Mock, ResponseTemplate};
 
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     Mock::given(http_method("GET"))
-        .and(url_path(format!("{}/pulls", common::REPO)))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
-        .mount(&gitea)
+        .and(url_path(format!("{}/PullRequests", common::REPO)))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
+        .mount(&shako)
         .await;
-    let state = common::state_on(&gitea);
+    let state = common::state_on(&shako);
     let organization = |creation: &str| {
         state.mirror.upsert(common::envelope(
             "Organization",
@@ -699,8 +699,8 @@ async fn jc_project_create_follows_the_organizations_own_setting() {
 /// they may not, why — so the control is rendered disabled with the reason, never hidden.
 #[tokio::test]
 async fn permissions_me_says_whether_a_project_may_be_opened_and_why_not() {
-    let gitea = common::forge().await;
-    let state = common::state_on(&gitea);
+    let shako = common::forge().await;
+    let state = common::state_on(&shako);
     state.mirror.upsert(common::envelope(
         "ContextSpace",
         "ovzdusie",

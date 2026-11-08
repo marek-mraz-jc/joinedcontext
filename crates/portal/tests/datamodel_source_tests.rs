@@ -14,13 +14,13 @@ use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::{Change, ChangePhase, Lane};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use serde_json::json;
 use tower::ServiceExt;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const TEST_CSRF_TOKEN: &str = "csrf-token-12345";
@@ -113,30 +113,34 @@ fn seed_datamodel(state: &AppState, project: &str, name: &str, linkml_path: &str
 async fn get_source_answers_file_content_and_yaml_content_type() {
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/owner/repo"))
+        .and(path("/odata/Repositories(Owner='owner',Name='repo')"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
+            "DefaultBranch": "main"
         })))
         .mount(&forge)
         .await;
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/owner/repo/contents/projects/ovzdusie/spaces/mobility/datamodels/air-quality.linkml.yaml",
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/datamodels/air-quality.linkml.yaml'",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-linkml-1",
-            "content": STANDARD.encode(PUBLISHED_LINKML)
+            "Sha": "sha-linkml-1",
+            "Content": STANDARD.encode(PUBLISHED_LINKML)
         })))
         .mount(&forge)
         .await;
 
     let config = Config::for_tests();
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_datamodel(
         &state,
         "ovzdusie",
@@ -175,25 +179,29 @@ async fn a_model_source_that_is_valid_base64_is_returned_as_written() {
     const WRITTEN: &str = "aGVsbG8=";
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/owner/repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path("/odata/Repositories(Owner='owner',Name='repo')"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/owner/repo/contents/projects/ovzdusie/spaces/mobility/datamodels/air-quality.linkml.yaml",
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/datamodels/air-quality.linkml.yaml'",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-linkml-1",
-            "content": STANDARD.encode(WRITTEN)
+            "Sha": "sha-linkml-1",
+            "Content": STANDARD.encode(WRITTEN)
         })))
         .mount(&forge)
         .await;
     let config = Config::for_tests();
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_datamodel(
         &state,
         "ovzdusie",
@@ -225,11 +233,11 @@ async fn a_model_source_that_is_valid_base64_is_returned_as_written() {
 async fn path_traversal_and_absolute_paths_are_400_and_forge_is_not_called() {
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
 
     let config = Config::for_tests();
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
 
     seed_datamodel(
         &state,
@@ -329,30 +337,34 @@ async fn anonymous_request_returns_401() {
 async fn put_breaking_change_under_same_major_is_400_naming_removed_slot() {
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/owner/repo"))
+        .and(path("/odata/Repositories(Owner='owner',Name='repo')"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
+            "DefaultBranch": "main"
         })))
         .mount(&forge)
         .await;
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/owner/repo/contents/projects/ovzdusie/spaces/mobility/datamodels/air-quality.linkml.yaml",
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/datamodels/air-quality.linkml.yaml'",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-linkml-1",
-            "content": STANDARD.encode(PUBLISHED_LINKML)
+            "Sha": "sha-linkml-1",
+            "Content": STANDARD.encode(PUBLISHED_LINKML)
         })))
         .mount(&forge)
         .await;
 
     let config = Config::for_tests();
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_datamodel(
         &state,
         "ovzdusie",
@@ -406,23 +418,27 @@ slots:
 async fn put_source_that_does_not_compile_is_400_with_tool_messages() {
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/owner/repo"))
+        .and(path("/odata/Repositories(Owner='owner',Name='repo')"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
+            "DefaultBranch": "main"
         })))
         .mount(&forge)
         .await;
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/owner/repo/contents/projects/ovzdusie/spaces/mobility/datamodels/air-quality.linkml.yaml",
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/datamodels/air-quality.linkml.yaml'",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-linkml-1",
-            "content": STANDARD.encode(PUBLISHED_LINKML)
+            "Sha": "sha-linkml-1",
+            "Content": STANDARD.encode(PUBLISHED_LINKML)
         })))
         .mount(&forge)
         .await;
@@ -442,7 +458,7 @@ async fn put_source_that_does_not_compile_is_400_with_tool_messages() {
         ..Config::for_tests()
     };
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_datamodel(
         &state,
         "ovzdusie",
@@ -494,23 +510,27 @@ slots:
 async fn put_dry_run_all_returns_200_and_proposes_nothing() {
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/owner/repo"))
+        .and(path("/odata/Repositories(Owner='owner',Name='repo')"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
+            "DefaultBranch": "main"
         })))
         .mount(&forge)
         .await;
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/owner/repo/contents/projects/ovzdusie/spaces/mobility/datamodels/air-quality.linkml.yaml",
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/datamodels/air-quality.linkml.yaml'",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-linkml-1",
-            "content": STANDARD.encode(PUBLISHED_LINKML)
+            "Sha": "sha-linkml-1",
+            "Content": STANDARD.encode(PUBLISHED_LINKML)
         })))
         .mount(&forge)
         .await;
@@ -529,7 +549,7 @@ async fn put_dry_run_all_returns_200_and_proposes_nothing() {
         ..Config::for_tests()
     };
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_datamodel(
         &state,
         "ovzdusie",
@@ -588,75 +608,81 @@ slots:
     let forge_reqs = forge.received_requests().await.unwrap();
     assert!(!forge_reqs
         .iter()
-        .any(|r| r.method.as_str() == "POST" && r.url.path().contains("/pulls")));
+        .any(|r| r.method.as_str() == "POST" && r.url.path().contains("/Shako.OpenPullRequest")));
 }
 
 #[tokio::test]
 async fn put_creates_change_and_writes_manifest_source_and_four_artifacts() {
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/owner/repo"))
+        .and(path("/odata/Repositories(Owner='owner',Name='repo')"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
+            "DefaultBranch": "main"
         })))
         .mount(&forge)
         .await;
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/owner/repo/contents/projects/ovzdusie/spaces/mobility/datamodels/air-quality.linkml.yaml",
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/datamodels/air-quality.linkml.yaml'",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-linkml-1",
-            "content": STANDARD.encode(PUBLISHED_LINKML)
+            "Sha": "sha-linkml-1",
+            "Content": STANDARD.encode(PUBLISHED_LINKML)
         })))
         .mount(&forge)
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/owner/repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&forge)
         .await;
 
     // Handle GET content and PUT content for files
     Mock::given(method("GET"))
-        .and(wiremock::matchers::path_regex(
-            r"^/api/v1/repos/owner/repo/contents/.*",
+        .and(wiremock::matchers::path(
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.File(Path=@p,Ref=@r)",
         ))
         .respond_with(ResponseTemplate::new(404))
         .mount(&forge)
         .await;
 
-    Mock::given(method("PUT"))
-        .and(wiremock::matchers::path_regex(
-            r"^/api/v1/repos/owner/repo/contents/.*",
+    Mock::given(method("POST"))
+        .and(wiremock::matchers::path(
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.CommitFiles",
         ))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
-        )
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
         .mount(&forge)
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/owner/repo/contents"))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
-        )
+        .and(path(
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.CommitFiles",
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
         .mount(&forge)
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/owner/repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 88,
-            "html_url": "https://forge.example.sk/pulls/88",
-            "state": "open",
-            "mergeable": true,
-            "merged": false
+            "Number": 88,
+            "HtmlUrl": "https://forge.example.sk/pulls/88",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&forge)
         .await;
@@ -675,7 +701,7 @@ async fn put_creates_change_and_writes_manifest_source_and_four_artifacts() {
         ..Config::for_tests()
     };
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_datamodel(
         &state,
         "ovzdusie",
@@ -735,11 +761,13 @@ slots:
     let put_paths: Vec<String> = requests
         .iter()
         .filter(|r| {
-            r.method.as_str() == "POST" && r.url.path() == "/api/v1/repos/owner/repo/contents"
+            r.method.as_str() == "POST"
+                && r.url.path()
+                    == "/odata/Repositories(Owner='owner',Name='repo')/Shako.CommitFiles"
         })
         .flat_map(|r| {
             let body: serde_json::Value = serde_json::from_slice(&r.body).unwrap_or_default();
-            body["files"]
+            body["Files"]
                 .as_array()
                 .into_iter()
                 .flatten()
@@ -799,51 +827,53 @@ slots:
 async fn create_bikes_through(uri: &str) -> Vec<String> {
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/owner/repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path("/odata/Repositories(Owner='owner',Name='repo')"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&forge)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/owner/repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&forge)
         .await;
     // Nothing of this model is in the repository yet.
     Mock::given(method("GET"))
-        .and(wiremock::matchers::path_regex(
-            r"^/api/v1/repos/owner/repo/contents/.*",
+        .and(wiremock::matchers::path(
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.File(Path=@p,Ref=@r)",
         ))
         .respond_with(ResponseTemplate::new(404))
         .mount(&forge)
         .await;
-    Mock::given(method("PUT"))
-        .and(wiremock::matchers::path_regex(
-            r"^/api/v1/repos/owner/repo/contents/.*",
+    Mock::given(method("POST"))
+        .and(wiremock::matchers::path(
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.CommitFiles",
         ))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
-        )
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
         .mount(&forge)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/owner/repo/contents"))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
-        )
+        .and(path(
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.CommitFiles",
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
         .mount(&forge)
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/owner/repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 91,
-            "html_url": "https://forge.example.sk/pulls/91",
-            "state": "open",
-            "mergeable": true,
-            "merged": false
+            "Number": 91,
+            "HtmlUrl": "https://forge.example.sk/pulls/91",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&forge)
         .await;
@@ -862,7 +892,7 @@ async fn create_bikes_through(uri: &str) -> Vec<String> {
         ..Config::for_tests()
     };
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_space(&state, "ovzdusie", "mobility");
 
     let response = server::app(state)
@@ -891,11 +921,13 @@ async fn create_bikes_through(uri: &str) -> Vec<String> {
     let put_paths: Vec<String> = requests
         .iter()
         .filter(|r| {
-            r.method.as_str() == "POST" && r.url.path() == "/api/v1/repos/owner/repo/contents"
+            r.method.as_str() == "POST"
+                && r.url.path()
+                    == "/odata/Repositories(Owner='owner',Name='repo')/Shako.CommitFiles"
         })
         .flat_map(|r| {
             let body: serde_json::Value = serde_json::from_slice(&r.body).unwrap_or_default();
-            body["files"]
+            body["Files"]
                 .as_array()
                 .into_iter()
                 .flatten()
@@ -950,11 +982,11 @@ async fn put_for_an_unknown_model_without_a_space_creates_a_project_model() {
 async fn put_of_a_source_past_the_limit_is_refused_and_the_forge_is_not_called() {
     let forge = MockServer::start().await;
     let forge_url = forge.uri().parse().expect("valid forge url");
-    let gitea = GiteaClient::new(forge_url, "owner", "repo", "token").expect("client");
+    let shako = ShakoClient::new(forge_url, "owner", "repo", "token").expect("client");
 
     let config = Config::for_tests();
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_space(&state, "ovzdusie", "mobility");
 
     // One byte over: the refusal is the size, not the content.
@@ -1033,9 +1065,9 @@ async fn get_source_without_read_on_datamodel_is_404_and_the_forge_is_not_asked(
     let forge = MockServer::start().await;
     Mock::given(method("GET"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main",
-            "sha": "sha-linkml-1",
-            "content": STANDARD.encode(PUBLISHED_LINKML)
+            "DefaultBranch": "main",
+            "Sha": "sha-linkml-1",
+            "Content": STANDARD.encode(PUBLISHED_LINKML)
         })))
         .expect(0)
         .mount(&forge)
@@ -1085,17 +1117,23 @@ async fn get_source_without_read_on_datamodel_is_404_and_the_forge_is_not_asked(
 async fn get_source_with_read_on_datamodel_answers_the_source() {
     let forge = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/datamodels/air-quality.linkml.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/datamodels/air-quality.linkml.yaml'",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-linkml-1",
-            "content": STANDARD.encode(PUBLISHED_LINKML)
+            "Sha": "sha-linkml-1",
+            "Content": STANDARD.encode(PUBLISHED_LINKML)
         })))
         .mount(&forge)
         .await;
@@ -1147,11 +1185,11 @@ fn seed_spaceless(state: &AppState, namespace: &str, name: &str, version: &str, 
 /// Tools that compiles anything; one repository serves both, as `forge_for("org")` does here.
 async fn importing_world() -> (MockServer, MockServer, AppState, String) {
     let forge = MockServer::start().await;
-    let gitea = GiteaClient::new(forge.uri().parse().expect("url"), "owner", "repo", "token")
+    let shako = ShakoClient::new(forge.uri().parse().expect("url"), "owner", "repo", "token")
         .expect("client");
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/owner/repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path("/odata/Repositories(Owner='owner',Name='repo')"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&forge)
         .await;
     for (file, text) in [
@@ -1162,9 +1200,13 @@ async fn importing_world() -> (MockServer, MockServer, AppState, String) {
         ("datamodels/stations/stations.linkml.yaml", STATIONS_LINKML),
     ] {
         Mock::given(method("GET"))
-            .and(path(format!("/api/v1/repos/owner/repo/contents/{file}")))
+            .and(path(
+                "/odata/Repositories(Owner='owner',Name='repo')/Shako.File(Path=@p,Ref=@r)",
+            ))
+            .and(query_param("@p", format!("'{file}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "sha-1", "content": STANDARD.encode(text)
+                "Sha": "sha-1",
+                "Content": STANDARD.encode(text)
             })))
             .mount(&forge)
             .await;
@@ -1182,7 +1224,7 @@ async fn importing_world() -> (MockServer, MockServer, AppState, String) {
         ..Config::for_tests()
     };
     let cookie = session_cookie(&config);
-    let state = AppState::new(config, None).with_gitea(Arc::new(gitea));
+    let state = AppState::new(config, None).with_shako(Arc::new(shako));
     seed_datamodel(
         &state,
         "ovzdusie",
@@ -1292,16 +1334,21 @@ async fn deleting_an_imported_organization_model_is_refused_naming_its_importers
         PUBLISHED_LINKML.replace("  - linkml:types", "  - linkml:types\n  - org.stations.v1");
     forge.reset().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/owner/repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path("/odata/Repositories(Owner='owner',Name='repo')"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/owner/repo/contents/projects/ovzdusie/spaces/mobility/datamodels/air-quality.linkml.yaml",
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/datamodels/air-quality.linkml.yaml'",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-1", "content": STANDARD.encode(importing)
+            "Sha": "sha-1",
+            "Content": STANDARD.encode(importing)
         })))
         .mount(&forge)
         .await;

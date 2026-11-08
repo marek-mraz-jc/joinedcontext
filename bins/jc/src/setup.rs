@@ -31,6 +31,39 @@ pub const FORGE_OWNER: &str = "jc";
 pub const FORGE_APPS_OWNER: &str = "jc-apps";
 /// The organization repository the Portal writes manifests to.
 pub const FORGE_REPO: &str = "config";
+
+/// The organization repository in shako, as the Portal, first-start provisioning and the
+/// gateway all name it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForgeRepo {
+    pub owner: String,
+    pub repo: String,
+}
+
+/// The one reading of [`ForgeRepo`]: the Portal's own `JC_SHAKO_OWNER` and `JC_SHAKO_REPO` when
+/// `env` sets them, else [`FORGE_OWNER`]/[`FORGE_REPO`], which `jc` fills for the Portal
+/// (`siblings::portal_vars`). A name outside `[A-Za-z0-9._-]` is refused: it goes into URL paths.
+pub fn forge_repo(env: impl Fn(&str) -> Option<String>) -> Result<ForgeRepo, String> {
+    let name = |key: &str, default: &str| {
+        let value = env(key)
+            .map(|v| v.trim().to_owned())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| default.to_owned());
+        let safe = !value.starts_with('.')
+            && value
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+        if safe {
+            Ok(value)
+        } else {
+            Err(format!("{key} is not a repository name"))
+        }
+    };
+    Ok(ForgeRepo {
+        owner: name("JC_SHAKO_OWNER", FORGE_OWNER)?,
+        repo: name("JC_SHAKO_REPO", FORGE_REPO)?,
+    })
+}
 /// The daiya user the Portal signs in with (HTTP Basic, as to Grafana).
 pub const DASHBOARDS_USER: &str = "portal";
 
@@ -354,6 +387,41 @@ pub fn gateway_realm_file() -> (String, Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_forge_repo_is_the_portals_keys_or_jcs_default() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| (*v).to_owned())
+            }
+        };
+        let default = ForgeRepo {
+            owner: FORGE_OWNER.into(),
+            repo: FORGE_REPO.into(),
+        };
+        assert_eq!(forge_repo(env(&[])).unwrap(), default);
+        assert_eq!(
+            forge_repo(env(&[("JC_SHAKO_OWNER", " "), ("JC_SHAKO_REPO", "")])).unwrap(),
+            default
+        );
+        let named = forge_repo(env(&[
+            ("JC_SHAKO_OWNER", "joinedcontext"),
+            ("JC_SHAKO_REPO", "configuration"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            (named.owner.as_str(), named.repo.as_str()),
+            ("joinedcontext", "configuration")
+        );
+        for bad in ["../x", "a/b", ".git", "a b", "a?b"] {
+            let refused =
+                forge_repo(move |key: &str| (key == "JC_SHAKO_REPO").then(|| bad.to_owned()));
+            assert!(refused.unwrap_err().contains("JC_SHAKO_REPO"), "{bad}");
+        }
+    }
 
     #[cfg(unix)]
     fn mode(path: &Path) -> u32 {
