@@ -12181,6 +12181,285 @@
         }
       }
     },
+    "/api/v1/projects/{project}/grafana/dashboards": {
+      "get": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "List Project Dashboards",
+        "description": "The dashboards of the project's organization in the dashboards service, to draw in the Portal. Changes no data.",
+        "operationId": "list_dashboards",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The dashboards",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project the caller has a part in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/grafana/dashboards/{uid}": {
+      "get": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "Get Project Dashboard",
+        "description": "One dashboard's layout, panels and variables, without its queries. Changes no data.",
+        "operationId": "get_dashboard",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "Dashboard uid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The dashboard",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project or dashboard",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No dashboards service or organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/grafana/dashboards/{uid}/panels/{panel}": {
+      "get": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "Get Dashboard Panel Data",
+        "description": "Runs one panel's saved queries and transformations for the time range and variables asked (`from`, `to`, `maxDataPoints`, `var-<name>`) and answers its frames. Changes no data.",
+        "operationId": "panel_data",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "Dashboard uid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "panel",
+            "in": "path",
+            "description": "Panel id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The panel's frames, or why it has none",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PanelData"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project, dashboard or panel",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A time or variable the dashboard does not take",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/grafana/dashboards/{uid}/variables/{name}": {
+      "get": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "Get Dashboard Variable Values",
+        "description": "The values a variable offers now: a custom variable's own, a query variable's asked of its datasource with the saved query. Changes no data.",
+        "operationId": "variable_values",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "Dashboard uid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Variable name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VariableValues"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project, dashboard or variable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/grafana/options": {
       "get": {
         "tags": [
@@ -45119,6 +45398,32 @@
         },
         "additionalProperties": false
       },
+      "DashboardList": {
+        "type": "object",
+        "description": "The dashboards of a project.",
+        "required": [
+          "ready",
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardSummary"
+            }
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "The dashboards service answers and holds this project's organization."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "DashboardProposal": {
         "type": "object",
         "description": "What an edit proposes: the file before and after, and the Change once it is proposed.",
@@ -45150,6 +45455,82 @@
               "null"
             ],
             "description": "The App repository's merge request the approval merges; absent on a dry run."
+          }
+        }
+      },
+      "DashboardSummary": {
+        "type": "object",
+        "description": "One dashboard in the list.",
+        "required": [
+          "uid",
+          "title",
+          "tags"
+        ],
+        "properties": {
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "title": {
+            "type": "string"
+          },
+          "uid": {
+            "type": "string"
+          }
+        }
+      },
+      "DashboardView": {
+        "type": "object",
+        "description": "One dashboard: what the page lays out. Panel queries stay on the server.",
+        "required": [
+          "uid",
+          "title",
+          "from",
+          "to",
+          "variables",
+          "panels"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "from": {
+            "type": "string",
+            "description": "The saved time range, Grafana's words (`now-6h`, `now`)."
+          },
+          "panels": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Each panel's `id`, `type`, `title`, `description`, `gridPos`, `fieldConfig`, `options`,\nand for a row `collapsed` and its `panels`."
+          },
+          "refresh": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The saved refresh interval (`30s`, `5m`), if any."
+          },
+          "title": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "uid": {
+            "type": "string"
+          },
+          "variables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VariableView"
+            }
           }
         }
       },
@@ -49477,6 +49858,36 @@
             "type": "string",
             "format": "date-time",
             "description": "When the pairing ends with the session, unless the person disconnects before."
+          }
+        }
+      },
+      "PanelData": {
+        "type": "object",
+        "description": "One panel's data.",
+        "required": [
+          "frames"
+        ],
+        "properties": {
+          "accessDenied": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the caller sees no data: a source they may not read."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the panel has no data: its datasource refused or did not answer."
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "daiya's frames, each with its `refId`: `{name, refId, fields: [{name, type, unit,\ndisplayName, labels, values}], meta}`."
           }
         }
       },
@@ -54488,6 +54899,82 @@
             "items": {
               "$ref": "#/components/schemas/CheckHealth"
             }
+          }
+        }
+      },
+      "VariableOption": {
+        "type": "object",
+        "description": "One value a variable offers.",
+        "required": [
+          "text",
+          "value"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "VariableValues": {
+        "type": "object",
+        "description": "The values a variable offers now.",
+        "required": [
+          "options"
+        ],
+        "properties": {
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VariableOption"
+            }
+          }
+        }
+      },
+      "VariableView": {
+        "type": "object",
+        "description": "One template variable.",
+        "required": [
+          "name",
+          "label",
+          "kind",
+          "multi",
+          "includeAll",
+          "options",
+          "current"
+        ],
+        "properties": {
+          "current": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The saved selection."
+          },
+          "includeAll": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`custom`, `query`, `textbox`, `constant` or `interval`."
+          },
+          "label": {
+            "type": "string"
+          },
+          "multi": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VariableOption"
+            },
+            "description": "The values a `custom` or `interval` variable offers; a `query` variable's come from its\nown route."
           }
         }
       },
