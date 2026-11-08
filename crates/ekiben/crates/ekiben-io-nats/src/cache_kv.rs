@@ -22,7 +22,11 @@ pub struct NatsKvCache {
 
 impl NatsKvCache {
     pub fn from_config(conf: &ComponentConfig, ctx: &StreamContext) -> Result<Self, CoreError> {
-        let conn_details = NatsConnectionDetails::from_json(&conf.config)?;
+        let conn_details = NatsConnectionDetails::from_json(
+            &conf.config,
+            ctx.org.clone(),
+            ctx.file_root.as_deref(),
+        )?;
         let bucket = conf
             .config
             .get("bucket")

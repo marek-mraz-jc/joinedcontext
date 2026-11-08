@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use ekiben_core::{CoreError, SecretString};
+use ekiben_core::{CoreError, OrgContext, SecretString};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NatsAuthConfig {
@@ -30,12 +30,38 @@ pub struct NatsTlsConfig {
     pub client_certs: Vec<NatsClientCert>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct NatsConnectionDetails {
     pub urls: Vec<String>,
     pub auth: NatsAuthConfig,
     pub tls_enabled: bool,
     pub tls: NatsTlsConfig,
+    /// The organization whose outbound rule every server address must pass.
+    pub org: Arc<OrgContext>,
+}
+
+impl std::fmt::Debug for NatsConnectionDetails {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NatsConnectionDetails")
+            .field("urls", &self.urls)
+            .field("auth", &self.auth)
+            .field("tls", &self.tls)
+            .field("org", &self.org.org_id)
+            .finish()
+    }
+}
+
+/// Confines a `*_file` option under `file_root` when the host set one (a hosted stream may not read
+/// another module's key file).
+fn confine(
+    path: Option<String>,
+    file_root: Option<&std::path::Path>,
+) -> Result<Option<String>, CoreError> {
+    match (path, file_root) {
+        (Some(p), Some(_)) => ekiben_io_file::path_guard::sanitize_file_path(&p, file_root)
+            .map(|safe| Some(safe.to_string_lossy().into_owned())),
+        (p, _) => Ok(p),
+    }
 }
 
 fn opt_str(obj: &serde_json::Map<String, JsonValue>, key: &str) -> Option<String> {
@@ -170,7 +196,13 @@ impl NatsTlsConfig {
 }
 
 impl NatsConnectionDetails {
-    pub fn from_json(conf: &JsonValue) -> Result<Self, CoreError> {
+    /// Parses the connection block of a NATS component for `org`; every `*_file` option is
+    /// confined under `file_root` when one is set.
+    pub fn from_json(
+        conf: &JsonValue,
+        org: Arc<OrgContext>,
+        file_root: Option<&std::path::Path>,
+    ) -> Result<Self, CoreError> {
         let obj = conf
             .as_object()
             .ok_or_else(|| CoreError::config("nats config must be an object"))?;
@@ -240,13 +272,21 @@ impl NatsConnectionDetails {
             }
         }
 
-        let tls = parse_tls(obj.get("tls"))?;
+        auth.nkey_file = confine(auth.nkey_file, file_root)?;
+        auth.user_credentials_file = confine(auth.user_credentials_file, file_root)?;
+        let mut tls = parse_tls(obj.get("tls"))?;
+        tls.root_cas_file = confine(tls.root_cas_file, file_root)?;
+        for cc in &mut tls.client_certs {
+            cc.cert_file = confine(cc.cert_file.take(), file_root)?;
+            cc.key_file = confine(cc.key_file.take(), file_root)?;
+        }
 
         Ok(Self {
             urls,
             auth,
             tls_enabled: tls.enabled,
             tls,
+            org,
         })
     }
 
@@ -261,6 +301,48 @@ impl NatsConnectionDetails {
             .first()
             .cloned()
             .unwrap_or_else(|| "nats://memory".to_string())
+    }
+
+    /// The server addresses to dial, each passed through the organization's outbound rule. Without
+    /// TLS the dial goes to the checked IP; with TLS it keeps the name for certificate checks.
+    // ponytail: a TLS name is resolved twice (here and by async-nats), a DNS rebinding window
+    // remains for TLS servers; close it with a custom connector once async-nats takes one.
+    pub async fn checked_server_addrs(&self) -> Result<Vec<String>, CoreError> {
+        let mut out = Vec::new();
+        for raw in &self.urls {
+            let with_scheme = if raw.contains("://") {
+                raw.clone()
+            } else {
+                format!("nats://{raw}")
+            };
+            let mut url = url::Url::parse(&with_scheme)
+                .map_err(|e| CoreError::config(format!("invalid NATS URL: {e}")))?;
+            if !matches!(url.scheme(), "nats" | "tls") {
+                return Err(CoreError::config(format!(
+                    "refused NATS URL scheme '{}': only nats and tls are allowed",
+                    url.scheme()
+                )));
+            }
+            let host = url
+                .host_str()
+                .ok_or_else(|| CoreError::config("NATS URL has no host"))?
+                .to_string();
+            let port = url.port().unwrap_or(4222);
+            let addrs =
+                ekiben_io_http::outbound::resolve_host_checked(&host, port, &self.org).await?;
+            if self.tls.enabled || url.scheme() == "tls" {
+                out.push(with_scheme);
+                continue;
+            }
+            for a in addrs {
+                url.set_ip_host(a.ip())
+                    .map_err(|()| CoreError::config("NATS URL cannot take an IP host"))?;
+                url.set_port(Some(a.port()))
+                    .map_err(|()| CoreError::config("NATS URL cannot take a port"))?;
+                out.push(url.to_string());
+            }
+        }
+        Ok(out)
     }
 
     pub async fn connect_live(&self, label: &str) -> Result<async_nats::Client, CoreError> {
@@ -292,7 +374,9 @@ impl NatsConnectionDetails {
                 .tls_client_config(self.tls.client_config()?);
         }
 
-        let server_addrs: Vec<&str> = self.urls.iter().map(String::as_str).collect();
+        let server_addrs = self.checked_server_addrs().await?;
+        // A server's INFO may advertise other addresses (connect_urls): those never passed the check.
+        opts = opts.ignore_discovered_servers();
         async_nats::connect_with_options(server_addrs.as_slice(), opts)
             .await
             .map_err(|e| CoreError::other(format!("failed to connect to NATS: {e}")))
@@ -325,9 +409,18 @@ pub fn subject_matches(pattern: &str, subject: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ekiben_core::{OrgId, OrgQuotas};
+
+    fn org() -> Arc<OrgContext> {
+        OrgContext::new(OrgId::new("t"), OrgQuotas::default())
+    }
 
     fn tls(v: serde_json::Value) -> Result<NatsConnectionDetails, CoreError> {
-        NatsConnectionDetails::from_json(&serde_json::json!({"urls": ["nats://h:4222"], "tls": v}))
+        NatsConnectionDetails::from_json(
+            &serde_json::json!({"urls": ["nats://h:4222"], "tls": v}),
+            org(),
+            None,
+        )
     }
 
     #[test]
@@ -362,5 +455,69 @@ mod tests {
                 .client_config()
                 .is_err()
         );
+    }
+
+    fn conn(v: serde_json::Value, root: Option<&std::path::Path>) -> NatsConnectionDetails {
+        NatsConnectionDetails::from_json(&v, org(), root).unwrap()
+    }
+
+    #[tokio::test]
+    async fn server_addresses_pass_the_outbound_rule() {
+        for refused in [
+            "nats://127.0.0.1:4222",
+            "nats://10.43.0.10:4222",
+            "169.254.169.254",
+            "nats://localhost:4222",
+            "tls://[::1]:4222",
+            "http://8.8.8.8:4222",
+        ] {
+            let c = conn(serde_json::json!({"urls": [refused]}), None);
+            assert!(
+                c.checked_server_addrs().await.is_err(),
+                "{refused} must be refused"
+            );
+        }
+        let c = conn(serde_json::json!({"urls": ["nats://u:p@8.8.8.8"]}), None);
+        assert_eq!(
+            c.checked_server_addrs().await.unwrap(),
+            ["nats://u:p@8.8.8.8:4222"]
+        );
+    }
+
+    #[test]
+    fn file_options_stay_under_the_file_root() {
+        let root = std::path::Path::new("/srv/ekiben-root");
+        let c = conn(
+            serde_json::json!({"urls": ["nats://8.8.8.8"],
+                "auth": {"user_credentials_file": "/run/secrets/portal.creds", "nkey_file": "k.nk"},
+                "tls": {"root_cas_file": "/etc/ssl/ca.pem",
+                    "client_certs": [{"cert_file": "/c.pem", "key_file": "/k.pem"}]}}),
+            Some(root),
+        );
+        assert_eq!(
+            c.auth.user_credentials_file.as_deref(),
+            Some("/srv/ekiben-root/run/secrets/portal.creds")
+        );
+        assert_eq!(c.auth.nkey_file.as_deref(), Some("/srv/ekiben-root/k.nk"));
+        assert_eq!(
+            c.tls.root_cas_file.as_deref(),
+            Some("/srv/ekiben-root/etc/ssl/ca.pem")
+        );
+        assert_eq!(
+            c.tls.client_certs[0].key_file.as_deref(),
+            Some("/srv/ekiben-root/k.pem")
+        );
+        assert!(NatsConnectionDetails::from_json(
+            &serde_json::json!({"urls": ["nats://8.8.8.8"], "auth": {"nkey_file": "../../proc/self/environ"}}),
+            org(),
+            Some(root),
+        )
+        .is_err());
+        // Without a root (the standalone binary) the path is the operator's own.
+        let free = conn(
+            serde_json::json!({"urls": ["nats://8.8.8.8"], "auth": {"nkey_file": "/run/k.nk"}}),
+            None,
+        );
+        assert_eq!(free.auth.nkey_file.as_deref(), Some("/run/k.nk"));
     }
 }

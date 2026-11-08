@@ -7,6 +7,9 @@ license.workspace = true
 [dependencies]
 ekiben-bloblang = { workspace = true }
 ekiben-core = { workspace = true }
+ekiben-io-file = { workspace = true }
+ekiben-io-http = { workspace = true }
+url = { workspace = true }
 tokio = { workspace = true }
 async-nats = { workspace = true }
 nkeys = { workspace = true }

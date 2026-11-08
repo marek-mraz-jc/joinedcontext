@@ -1161,6 +1161,8 @@ dependencies = [
  "chrono",
  "ekiben-bloblang",
  "ekiben-core",
+ "ekiben-io-file",
+ "ekiben-io-http",
  "ekiben-processors",
  "futures",
  "nkeys",
@@ -1171,6 +1173,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
