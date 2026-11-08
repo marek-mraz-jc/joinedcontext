@@ -494,10 +494,10 @@ impl Bearer {
         if audiences.iter().any(|a| *a != "portal-api") {
             return Err(format!("untrusted audiences {audiences:?}"));
         }
-        if let Some(sent) = nonce {
-            if claims["nonce"].as_str() != Some(sent) {
-                return Err(format!("nonce {:?} != {sent}", claims["nonce"]));
-            }
+        if let Some(sent) = nonce
+            && claims["nonce"].as_str() != Some(sent)
+        {
+            return Err(format!("nonce {:?} != {sent}", claims["nonce"]));
         }
         Ok(claims)
     }
