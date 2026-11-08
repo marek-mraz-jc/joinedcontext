@@ -139,6 +139,7 @@ nohup "$jc_bin" --role all --scheme http --log-format text --config "$home/jc.to
   --kaisatsu-database-url-file "$home/secrets/kaisatsu-db-url" \
   --kaisatsu-db-password-file "$(secret kaisatsu-app-pw)" \
   --shako-repo-root "$home/repos" --ekiben-file-root "$home/files" \
+  --admin-listen "127.0.0.1:$((pg_port+200))" --admin-token-file "$(secret metrics-token)" \
   > "$home/jc.log" 2>&1 &
 echo $! > "$home/jc.pid"
 for _ in $(seq 180); do
