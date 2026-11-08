@@ -1318,11 +1318,14 @@ impl FromRef<AppState> for Key {
 
 /// The host the catalogue publisher reads each Endpoint's record and schemas on.
 fn catalogue_host(config: &Config) -> String {
-    config
-        .api_base_url()
-        .host_str()
-        .unwrap_or("localhost")
-        .to_owned()
+    let base = config.api_base_url();
+    let host = base.host_str().unwrap_or("localhost");
+    // Only `https` on its default port is a bare host; anything else (a one-machine jc on
+    // `http://localhost:8080`) keeps its origin, or every Endpoint read went to port 443.
+    if base.scheme() == "https" && base.port().is_none() {
+        return host.to_owned();
+    }
+    base.origin().ascii_serialization()
 }
 
 /// One call held by `AppState::mcp_enter`; dropping it frees its slots.
@@ -1484,6 +1487,10 @@ mod tests {
         assert_eq!(catalogue_host(&config), "api.dev.example.org");
         config.public_base_url = "https://data.example.org".parse().expect("url");
         assert_eq!(catalogue_host(&config), "data.example.org");
+        config.public_base_url = "http://localhost:42301".parse().expect("url");
+        assert_eq!(catalogue_host(&config), "http://localhost:42301");
+        config.public_base_url = "https://portal.example.org:8443".parse().expect("url");
+        assert_eq!(catalogue_host(&config), "https://api.example.org:8443");
     }
 
     /// T-4470: the parts `from_config` was cut into, each on a bare configuration.
