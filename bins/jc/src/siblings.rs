@@ -238,13 +238,14 @@ pub fn portal_vars(
     }
     // The Portal's own secret backend (SOPS + age, its identity a setup file) unless the
     // environment names a backend.
-    if unset("JC_PORTAL_SOPS_AGE_KEY_FILE") && unset("JC_PORTAL_OPENBAO_ADDR") {
-        if let Some(path) = setup.path(Secret::PortalAgeKey) {
-            out.insert(
-                "JC_PORTAL_SOPS_AGE_KEY_FILE".to_owned(),
-                path.display().to_string(),
-            );
-        }
+    if unset("JC_PORTAL_SOPS_AGE_KEY_FILE")
+        && unset("JC_PORTAL_OPENBAO_ADDR")
+        && let Some(path) = setup.path(Secret::PortalAgeKey)
+    {
+        out.insert(
+            "JC_PORTAL_SOPS_AGE_KEY_FILE".to_owned(),
+            path.display().to_string(),
+        );
     }
     out
 }
