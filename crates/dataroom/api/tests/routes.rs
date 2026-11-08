@@ -3323,3 +3323,106 @@ async fn links_follow_the_configured_public_url() {
         ttl.body
     );
 }
+
+/// Anonymous listings show only what `package_show` shows an anonymous caller: no draft, no
+/// withdrawn record or publisher (whatever `include_drafts` / `include_private` say), no dataset
+/// the publish gate hid (`dataset.search`), and no hidden-dataset list or outbound allow-list in
+/// the catalogue record. Editors keep what they may propose.
+#[tokio::test]
+async fn anonymous_listings_hold_no_draft_hidden_or_withdrawn_dataset() {
+    let w = world().await;
+    let app = &w.app;
+    let mut draft = dataset("draft-one", "city", "public", 30);
+    draft.state = dataroom_core::RecordState::Draft;
+    w.store.upsert_dataset(&w.admin_ctx(), draft).await.unwrap();
+    let mut cat = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
+    cat.allowed_outbound_hosts = vec!["harvest.internal".into()];
+    w.store.upsert_catalogue(cat).await.unwrap();
+    let never = [
+        "draft-one",
+        "retired",
+        "orphan",
+        "inner",
+        "secret",
+        "veiled",
+    ];
+
+    for flags in [
+        "include_drafts=true",
+        "include_private=true",
+        "include_drafts=true&include_private=true",
+    ] {
+        let a = get(
+            app,
+            &format!("/api/3/action/package_search?rows=50&{flags}"),
+            None,
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+        let names: Vec<String> = a.json()["result"]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap().to_owned())
+            .collect();
+        for name in never {
+            assert!(
+                !names.iter().any(|n| n == name),
+                "{flags}: {name} in {names:?}"
+            );
+        }
+    }
+
+    let a = post(app, "/api/v1/ops/dataset.search", None, json!({})).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert!(!a.body.contains("veiled"), "{}", a.body);
+    let a = post(
+        app,
+        "/api/v1/ops/dataset.search",
+        Some("tok-editor"),
+        json!({}),
+    )
+    .await;
+    assert!(a.body.contains("veiled"), "the editor keeps it: {}", a.body);
+
+    for op in ["catalogue.get", "catalogue.list"] {
+        let a = post(app, &format!("/api/v1/ops/{op}"), None, json!({})).await;
+        assert_eq!(a.status, StatusCode::OK, "{op}: {}", a.body);
+        assert!(
+            !a.body.contains("quality check pending") && !a.body.contains("harvest.internal"),
+            "{op}: {}",
+            a.body
+        );
+        let a = post(
+            app,
+            &format!("/api/v1/ops/{op}"),
+            Some("tok-proposer"),
+            json!({}),
+        )
+        .await;
+        assert!(
+            a.body.contains("quality check pending") && a.body.contains("harvest.internal"),
+            "{op} for a proposer: {}",
+            a.body
+        );
+    }
+}
+
+/// The tag or publisher id in a feed address is escaped wherever the feed writes it, and feeds
+/// carry `nosniff` and a CSP that runs nothing.
+#[tokio::test]
+async fn feed_addresses_are_escaped_and_feeds_run_no_script() {
+    let w = world().await;
+    let tag = "%22%2F%3E%3Cx%3Ascript%20xmlns%3Ax%3D%22http%3A%2F%2Fwww.w3.org%2F1999%2Fxhtml%22%3Ealert(1)%3C%2Fx%3Ascript%3E";
+    for path in [
+        format!("/feeds/tag/{tag}.atom"),
+        format!("/feeds/organization/{tag}.atom"),
+    ] {
+        let a = get(&w.app, &path, None).await;
+        assert_eq!(a.status, StatusCode::OK, "{path}: {}", a.body);
+        assert!(!a.body.contains("<x:script"), "{path}: {}", a.body);
+        assert!(a.body.contains("&lt;x:script"), "{path}: {}", a.body);
+        assert_eq!(a.header("x-content-type-options"), "nosniff");
+        assert_eq!(a.header("content-security-policy"), "default-src 'none'");
+    }
+}
