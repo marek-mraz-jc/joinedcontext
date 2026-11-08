@@ -65,7 +65,8 @@ def test_every_form_of_a_secret_is_found_and_names_only_its_file(tmp_path):
 
 
 def test_credential_shapes_and_personal_data():
-    jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlLXZhbHVl"
+    part = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("=")  # noqa: E731
+    jwt = ".".join([part({"alg": "none"}), part({"sub": "not-a-person"}), part({"sig": "not-a-signature"})])
     assert ls.credential_shapes(f"token {jwt}") == ["jwt"]
     assert ls.credential_shapes("Authorization: Bearer abcdefghijklmnop1234") == ["bearer"]
     assert ls.credential_shapes('password="hunter2hunter2"') == ["password-field"]
