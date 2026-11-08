@@ -747,6 +747,7 @@ mod tests {
             allowed_outbound_hosts: Vec::new(),
             applicable_legislation: Vec::new(),
             modified: chrono::Utc::now(),
+            public_base: None,
         };
 
         let ds_with_landing = Dataset {

@@ -105,6 +105,49 @@ fn mapper_applies_to(mapper: &ProtocolMapperRepresentation, kind: TokenKind) -> 
 }
 
 /// Inserts a value at a dotted claim path (`realm_access.roles` -> `{"realm_access":{"roles":...}}`).
+/// Claims no protocol mapper writes: the token's identity, validity and binding.
+const PROTECTED_CLAIMS: [&str; 17] = [
+    "iss",
+    "sub",
+    "aud",
+    "azp",
+    "typ",
+    "jti",
+    "exp",
+    "iat",
+    "nbf",
+    "cnf",
+    "sid",
+    "act",
+    "auth_time",
+    "scope",
+    "nonce",
+    "acr",
+    "amr",
+];
+/// Claims that carry authority (roles, organization membership): only the mapper that reads
+/// that authority from the store writes them, at its own path.
+const AUTHORITY_CLAIMS: [&str; 4] = ["realm_access", "resource_access", "jc_org", "jc_groups"];
+
+/// Whether a mapper may write `claim_name`, given the path its kind fills from the store
+/// (`native`; empty for a mapper whose value comes from its configuration). The admin API and
+/// every relying party read roles and organizations from these claims, so a hardcoded or
+/// property mapper writing `realm_access.roles` would mint authority nobody granted.
+fn mapper_may_write(claim_name: &str, native: &str) -> bool {
+    let first = claim_name.split('.').find(|s| !s.is_empty()).unwrap_or("");
+    if PROTECTED_CLAIMS.contains(&first) {
+        return false;
+    }
+    !AUTHORITY_CLAIMS.contains(&first) || claim_name == native
+}
+
+/// [`insert_at_claim_path`] for a mapper's value, dropped when [`mapper_may_write`] refuses.
+fn insert_mapped(target: &mut Map<String, Value>, claim_name: &str, native: &str, value: Value) {
+    if mapper_may_write(claim_name, native) {
+        insert_at_claim_path(target, claim_name, value);
+    }
+}
+
 fn insert_at_claim_path(target: &mut Map<String, Value>, path: &str, value: Value) {
     let parts: Vec<&str> = path.split('.').filter(|s| !s.is_empty()).collect();
     if parts.is_empty() {
@@ -355,7 +398,7 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                 }
                 groups.sort();
                 groups.dedup();
-                insert_at_claim_path(&mut claims, claim_name, json!(groups));
+                insert_mapped(&mut claims, claim_name, "groups", json!(groups));
             }
             "oidc-usermodel-attribute-mapper" => {
                 let attr_name = mapper
@@ -428,7 +471,13 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                     } else {
                         json!(vals[0])
                     };
-                    insert_at_claim_path(&mut claims, &claim_name, val);
+                    // Only the membership attributes fill their own authority claim.
+                    let native = if matches!(attr_name.as_str(), "jc_org" | "jc_groups") {
+                        attr_name.as_str()
+                    } else {
+                        ""
+                    };
+                    insert_mapped(&mut claims, &claim_name, native, val);
                 }
             }
             "oidc-amr-mapper" => {
@@ -447,7 +496,12 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                     .config
                     .get("claim.name")
                     .map_or("realm_access.roles", String::as_str);
-                insert_at_claim_path(&mut claims, claim_name, json!(effective_realm_roles));
+                insert_mapped(
+                    &mut claims,
+                    claim_name,
+                    "realm_access.roles",
+                    json!(effective_realm_roles),
+                );
             }
             "oidc-usermodel-client-role-mapper" => {
                 let target_client = mapper
@@ -466,7 +520,12 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                     .cloned()
                     .unwrap_or_default();
                 if !roles.is_empty() {
-                    insert_at_claim_path(&mut claims, &claim_name, json!(roles));
+                    insert_mapped(
+                        &mut claims,
+                        &claim_name,
+                        &format!("resource_access.{target_client}.roles"),
+                        json!(roles),
+                    );
                 }
             }
             "oidc-usermodel-property-mapper" => {
@@ -484,7 +543,7 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                     _ => None,
                 };
                 if let Some(v) = val {
-                    insert_at_claim_path(&mut claims, claim_name, Value::String(v));
+                    insert_mapped(&mut claims, claim_name, "", Value::String(v));
                 }
             }
             "oidc-hardcoded-claim-mapper" => {
@@ -505,7 +564,7 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                             .unwrap_or_else(|_| Value::String(claim_val.clone())),
                         _ => Value::String(claim_val.clone()),
                     };
-                    insert_at_claim_path(&mut claims, claim_name, val);
+                    insert_mapped(&mut claims, claim_name, "", val);
                 }
             }
             "oidc-full-name-mapper" => {
@@ -658,6 +717,118 @@ pub fn compute_subject_for_client(
 mod tests {
     use super::*;
     use std::collections::{BTreeMap, HashMap};
+
+    /// A mapper writes no claim the token's identity rests on, and an authority claim
+    /// (roles, organizations) only at the path its kind fills from the store.
+    #[test]
+    fn mappers_cannot_write_reserved_or_authority_claims() {
+        for (claim, native, ok) in [
+            ("realm_access.roles", "", false),
+            ("realm_access.roles", "realm_access.roles", true),
+            ("realm_access", "realm_access.roles", false),
+            (
+                "resource_access.realm-management.roles",
+                "resource_access.app.roles",
+                false,
+            ),
+            (
+                "resource_access.app.roles",
+                "resource_access.app.roles",
+                true,
+            ),
+            ("jc_org", "", false),
+            ("jc_org", "jc_org", true),
+            ("jc_groups", "jc_org", false),
+            ("sub", "sub", false),
+            (".iss", "", false),
+            ("azp", "", false),
+            ("department", "", true),
+            ("custom.nested", "", true),
+        ] {
+            assert_eq!(
+                super::mapper_may_write(claim, native),
+                ok,
+                "{claim} via {native:?}"
+            );
+        }
+    }
+
+    /// End to end through `evaluate_mappers`: an application's hardcoded, property and attribute
+    /// mappers aimed at authority claims are dropped; the token keeps the store's roles only.
+    #[test]
+    fn a_client_mapper_mints_no_role_organization_or_subject() {
+        let realm = RealmConfig::default();
+        let hard = |name: &str, claim: &str, value: &str| ProtocolMapperRepresentation {
+            name: name.into(),
+            protocol_mapper: "oidc-hardcoded-claim-mapper".into(),
+            config: BTreeMap::from([
+                ("claim.name".into(), claim.into()),
+                ("claim.value".into(), value.into()),
+                ("jsonType.label".into(), "JSON".into()),
+                ("access.token.claim".into(), "true".into()),
+            ]),
+            ..Default::default()
+        };
+        let client = ClientRepresentation {
+            client_id: "app".into(),
+            protocol_mappers: vec![
+                hard("roles", "realm_access.roles", r#"["realm-admin"]"#),
+                hard(
+                    "mgmt",
+                    "resource_access.realm-management.roles",
+                    r#"["realm-admin"]"#,
+                ),
+                hard("org", "jc_org", r#"["other-city"]"#),
+                hard("who", "sub", r#""someone-else""#),
+                hard("dept", "department", r#""roads""#),
+                ProtocolMapperRepresentation {
+                    name: "attr".into(),
+                    protocol_mapper: "oidc-usermodel-attribute-mapper".into(),
+                    config: BTreeMap::from([
+                        ("user.attribute".into(), "realm_access.roles".into()),
+                        ("claim.name".into(), "realm_access.roles".into()),
+                        ("multivalued".into(), "true".into()),
+                        ("access.token.claim".into(), "true".into()),
+                    ]),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let user = UserRepresentation {
+            id: "u1".into(),
+            username: "u1".into(),
+            attributes: HashMap::from([("realm_access.roles".into(), vec!["realm-admin".into()])]),
+            ..Default::default()
+        };
+        let ctx = MapperContext {
+            realm: &realm,
+            issuer: "https://idm.example.test/realms/dev",
+            client: &client,
+            user: &user,
+            user_groups: &[],
+            all_realm_roles: &[],
+            active_scopes: &[],
+            granted_scope_string: "openid",
+            acr: "",
+            amr: &[],
+            session_id: None,
+            nonce: None,
+            jti: "j1",
+            iat: 1000,
+            exp: 1300,
+            auth_time: None,
+            dpop_jkt: None,
+            act: None,
+            active_org: None,
+        };
+        let claims = evaluate_mappers(&ctx, TokenKind::AccessToken).expect("claims");
+        assert_eq!(claims.get("realm_access"), None, "{claims:?}");
+        assert_eq!(claims.get("resource_access"), None, "{claims:?}");
+        assert_eq!(claims.get("jc_org"), None, "{claims:?}");
+        assert_eq!(claims.get("sub"), Some(&json!("u1")));
+        assert_eq!(claims.get("department"), Some(&json!("roads")));
+    }
 
     #[test]
     fn evaluates_groups_jc_org_jc_groups_and_audience_mappers_in_ri_order() {

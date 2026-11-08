@@ -458,29 +458,29 @@ fn render_atom_xml(
         .map(|d| d.modified.to_rfc3339())
         .unwrap_or_else(|| cat.modified.to_rfc3339());
 
+    // The feed path carries the tag or publisher id from the request: escaped like every text.
+    let feed = escape_xml(&format!("{base}{feed_path}"));
     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
     xml.push_str("<feed xmlns=\"http://www.w3.org/2005/Atom\">\n");
     xml.push_str(&format!("  <title>{}</title>\n", escape_xml(feed_title)));
-    xml.push_str(&format!("  <id>{base}{feed_path}</id>\n"));
+    xml.push_str(&format!("  <id>{feed}</id>\n"));
     xml.push_str(&format!("  <updated>{updated}</updated>\n"));
     xml.push_str(&format!(
-        "  <link rel=\"self\" href=\"{base}{feed_path}?page={page}\"/>\n"
+        "  <link rel=\"self\" href=\"{feed}?page={page}\"/>\n"
     ));
+    xml.push_str(&format!("  <link rel=\"first\" href=\"{feed}?page=1\"/>\n"));
     xml.push_str(&format!(
-        "  <link rel=\"first\" href=\"{base}{feed_path}?page=1\"/>\n"
-    ));
-    xml.push_str(&format!(
-        "  <link rel=\"last\" href=\"{base}{feed_path}?page={last_page}\"/>\n"
+        "  <link rel=\"last\" href=\"{feed}?page={last_page}\"/>\n"
     ));
     if page < last_page {
         xml.push_str(&format!(
-            "  <link rel=\"next\" href=\"{base}{feed_path}?page={}\"/>\n",
+            "  <link rel=\"next\" href=\"{feed}?page={}\"/>\n",
             page + 1
         ));
     }
     if page > 1 {
         xml.push_str(&format!(
-            "  <link rel=\"previous\" href=\"{base}{feed_path}?page={}\"/>\n",
+            "  <link rel=\"previous\" href=\"{feed}?page={}\"/>\n",
             page - 1
         ));
     }
@@ -488,7 +488,7 @@ fn render_atom_xml(
     for ds in slice {
         let ds_title = text_in_lang(&ds.title, Some(&cat.default_language)).unwrap_or(&ds.name);
         let ds_desc = text_in_lang(&ds.description, Some(&cat.default_language)).unwrap_or("");
-        let ds_url = format!("{base}/dataset/{}", ds.name);
+        let ds_url = escape_xml(&format!("{base}/dataset/{}", ds.name));
         xml.push_str("  <entry>\n");
         xml.push_str(&format!("    <title>{}</title>\n", escape_xml(ds_title)));
         xml.push_str(&format!("    <id>{ds_url}</id>\n"));
@@ -508,7 +508,11 @@ fn render_atom_xml(
     xml.push_str("</feed>\n");
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/atom+xml; charset=utf-8")],
+        [
+            (header::CONTENT_TYPE, "application/atom+xml; charset=utf-8"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::CONTENT_SECURITY_POLICY, "default-src 'none'"),
+        ],
         xml,
     )
         .into_response()

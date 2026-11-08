@@ -2137,3 +2137,179 @@ impl Authorizer for NoGroupWrites {
         LocalAuthorizer.check(ctx, action, object)
     }
 }
+
+/// A create or update cannot land on another object through the stores' upsert (by id, path or
+/// clientId), carry role grants or sub-groups in a group body, or let an organization admin set
+/// the group attributes the token mappers read as organization membership.
+#[tokio::test]
+async fn writes_cannot_take_over_other_objects_or_grant_through_group_bodies() {
+    let f = fixture().await;
+    let (a, h) = (Some(f.admin.as_str()), Some(f.hel_admin.as_str()));
+
+    // Group create: the body's id, path, roles and sub-groups are not written.
+    let body = json!({
+        "id": "esp-group", "name": "taken", "path": "/espoo/members",
+        "realmRoles": ["realm-admin"], "clientRoles": { "realm-management": ["realm-admin"] },
+        "subGroups": [{ "name": "inner", "path": "/espoo/members/inner" }]
+    });
+    let (st, hdr, _) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/groups"),
+        h,
+        Some(&body),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let id = hdr["location"]
+        .to_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_owned();
+    assert_ne!(id, "esp-group");
+    let made = f.store.get_group("dev", None, &id).await.unwrap().unwrap();
+    assert_eq!(made.path, "/taken");
+    assert!(
+        made.realm_roles.is_empty() && made.client_roles.is_empty(),
+        "{made:?}"
+    );
+    let esp = f
+        .store
+        .get_group("dev", None, "esp-group")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (esp.path.as_str(), esp.org_id.as_deref()),
+        ("/espoo/members", Some("espoo"))
+    );
+    assert!(
+        f.store
+            .get_group_by_path("dev", None, "/espoo/members/inner")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // A taken top-level name is 409, as Keycloak.
+    let (st, _, _) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/groups"),
+        h,
+        Some(&json!({ "name": "taken" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+
+    // Membership attributes: an organization admin cannot set or change them, a realm admin can.
+    let foreign = json!({ "name": "squat", "attributes": { "jc_org": ["espoo"] } });
+    let (st, _, _) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/groups"),
+        h,
+        Some(&foreign),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _, _) = call(
+        &f.app,
+        &Method::PUT,
+        &format!("{R}/groups/hel-group"),
+        h,
+        Some(&json!({ "name": "members", "attributes": { "jc_groups": ["/espoo/members"] } })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _, _) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/groups"),
+        a,
+        Some(&foreign),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    // Role fields in an update keep the stored grants.
+    let (st, _, _) = call(
+        &f.app,
+        &Method::PUT,
+        &format!("{R}/groups/hel-group"),
+        h,
+        Some(&json!({ "name": "members", "realmRoles": ["realm-admin"] })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let hel = f
+        .store
+        .get_group("dev", None, "hel-group")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(hel.realm_roles.is_empty(), "{hel:?}");
+    assert_eq!(hel.path, "/helsinki/members");
+
+    // Clients: a taken clientId or id is 409 and the stored client keeps its organization and
+    // secret; an update cannot rename onto another client's clientId.
+    for body in [
+        json!({ "clientId": "esp-app" }),
+        json!({ "clientId": "fresh", "id": "c-rm" }),
+    ] {
+        let (st, _, _) = call(
+            &f.app,
+            &Method::POST,
+            &format!("{R}/clients"),
+            h,
+            Some(&body),
+        )
+        .await;
+        assert_eq!(st, StatusCode::CONFLICT, "{body}");
+    }
+    let esp = f
+        .store
+        .get_client_by_client_id("dev", "esp-app")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(esp.org_id.as_deref(), Some("espoo"));
+    assert_eq!(esp.secret.as_deref(), Some("esp-app-secret"));
+    let rm = f
+        .store
+        .get_client_by_uuid("dev", None, "c-rm")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rm.client_id, "realm-management");
+    let (st, _, _) = call(
+        &f.app,
+        &Method::PUT,
+        &format!("{R}/clients/c-hel"),
+        h,
+        Some(&json!({ "clientId": "realm-management" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+
+    // Client scopes: another scope's id is 409, the stored scope stays.
+    let (st, _, _) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/client-scopes"),
+        a,
+        Some(&json!({ "id": "sc-hel", "name": "other", "protocol": "openid-connect" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    let sc = f
+        .store
+        .get_client_scope("dev", "sc-hel")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (sc.name.as_str(), sc.org_id.as_deref()),
+        ("hel-scope", Some("helsinki"))
+    );
+}

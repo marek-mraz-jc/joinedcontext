@@ -10,13 +10,24 @@ use std::time::Duration;
 
 const REALM: &str = "jc";
 
-/// A browser-like cookie jar: name -> (value, path). Secure cookies are kept on
+/// A browser-like cookie jar: (host, name) -> (value, path), host-only cookies as jc sets them
+/// (no `Domain`), so a cookie of one host never goes to another. Secure cookies are kept on
 /// `http://localhost`, as browsers do for localhost.
 #[derive(Default)]
-pub struct Jar(BTreeMap<String, (String, String)>);
+pub struct Jar(BTreeMap<(String, String), (String, String)>);
+
+/// The host (with port) and path of `url`.
+fn host_and_path(url: &str) -> (String, String) {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    match rest.find('/') {
+        Some(i) => (rest[..i].to_owned(), rest[i..].to_owned()),
+        None => (rest.to_owned(), "/".to_owned()),
+    }
+}
 
 impl Jar {
-    fn store(&mut self, headers: &header::HeaderMap) {
+    fn store(&mut self, url: &str, headers: &header::HeaderMap) {
+        let (host, _) = host_and_path(url);
         for raw in headers.get_all(header::SET_COOKIE) {
             let raw = raw.to_str().unwrap_or_default();
             let mut parts = raw.split(';').map(str::trim);
@@ -30,39 +41,54 @@ impl Jar {
                 if let Some(p) = lower.strip_prefix("path=") {
                     path = attr[5..5 + p.len()].to_owned();
                 }
+                assert!(
+                    !lower.starts_with("domain="),
+                    "jc sets host-only cookies: {raw}"
+                );
                 if lower == "max-age=0" {
                     expired = true;
                 }
             }
+            let key = (host.clone(), name.to_owned());
             if expired || value.is_empty() {
-                self.0.remove(name);
+                self.0.remove(&key);
             } else {
-                self.0.insert(name.to_owned(), (value.to_owned(), path));
+                self.0.insert(key, (value.to_owned(), path));
             }
         }
     }
 
     fn header_for(&self, url: &str) -> String {
-        let path = url
-            .split_once("://")
-            .and_then(|(_, rest)| rest.find('/').map(|i| &rest[i..]))
-            .unwrap_or("/");
+        let (host, path) = host_and_path(url);
         self.0
             .iter()
-            .filter(|(_, (_, p))| path.starts_with(p.as_str()))
-            .map(|(n, (v, _))| format!("{n}={v}"))
+            .filter(|((h, _), (_, p))| *h == host && path.starts_with(p.as_str()))
+            .map(|((_, n), (v, _))| format!("{n}={v}"))
             .collect::<Vec<_>>()
             .join("; ")
     }
 
-    fn get(&self, name: &str) -> Option<&str> {
-        self.0.get(name).map(|(v, _)| v.as_str())
+    pub fn get(&self, url: &str, name: &str) -> Option<&str> {
+        let (host, _) = host_and_path(url);
+        self.0
+            .get(&(host, name.to_owned()))
+            .map(|(v, _)| v.as_str())
+    }
+
+    /// The names of the cookies held for `url`'s host.
+    pub fn names_for(&self, url: &str) -> Vec<String> {
+        let (host, _) = host_and_path(url);
+        self.0
+            .keys()
+            .filter(|(h, _)| *h == host)
+            .map(|(_, n)| n.clone())
+            .collect()
     }
 }
 
 pub struct Browser {
     client: Client,
-    jar: Jar,
+    pub jar: Jar,
 }
 
 pub struct Answer {
@@ -110,7 +136,7 @@ impl Browser {
         if !cookies.is_empty() {
             req = req.header(header::COOKIE, cookies);
         }
-        if csrf && let Some(token) = self.jar.get("__Host-jc_csrf") {
+        if csrf && let Some(token) = self.jar.get(url, "__Host-jc_csrf") {
             req = req.header("x-csrf-token", token);
         }
         req = match body {
@@ -121,7 +147,7 @@ impl Browser {
         let resp = req.send().await.unwrap_or_else(|e| panic!("{url}: {e}"));
         let status = resp.status();
         let headers = resp.headers().clone();
-        self.jar.store(&headers);
+        self.jar.store(url, &headers);
         Answer {
             status,
             headers,
@@ -180,8 +206,13 @@ fn hidden(html: &str, name: &str) -> String {
 
 /// Signs `username` in to the Portal through kaisatsu: the Portal's login redirect, kaisatsu's
 /// authorization endpoint (code + PKCE), its login form, back to the Portal's callback.
-pub async fn sign_in(base: &str, browser: &mut Browser, username: &str, password: &str) {
-    let url = |path: &str| format!("{base}{path}");
+/// `url` maps a path of the one-domain layout to the address jc serves it at.
+pub async fn sign_in(
+    url: &dyn Fn(&str) -> String,
+    browser: &mut Browser,
+    username: &str,
+    password: &str,
+) {
     let (login_url, page) = browser.follow(url("/api/v1/auth/login"), |_| false).await;
     assert_eq!(page.status, StatusCode::OK, "{login_url}: {}", page.text);
     assert!(

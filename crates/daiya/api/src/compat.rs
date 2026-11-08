@@ -370,11 +370,13 @@ async fn add_datasource(
     ctx: &RequestCtx,
     req: UpsertDatasourceReq,
 ) -> CrResult<Value> {
+    // A datasource names a URL and the secrets sent to it: as Grafana's `datasources:write`,
+    // only an organization Admin writes one, or an Editor could send a stored secret anywhere.
     state
         .authorizer
         .check(
             ctx,
-            Action::Propose,
+            Action::Admin,
             &ObjectTarget::Organization { org_id: ctx.org_id },
         )
         .into_result("Organization not found")?;
@@ -439,6 +441,14 @@ async fn update_datasource(
                 org_id: ctx.org_id,
                 datasource_uid: uid.clone(),
             },
+        )
+        .into_result("Data source not found")?;
+    state
+        .authorizer
+        .check(
+            ctx,
+            Action::Admin,
+            &ObjectTarget::Organization { org_id: ctx.org_id },
         )
         .into_result("Data source not found")?;
     refuse_raw_secrets(req.secure_json_data.as_ref())?;

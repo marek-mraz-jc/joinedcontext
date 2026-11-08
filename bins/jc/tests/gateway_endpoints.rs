@@ -576,7 +576,7 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     assert_eq!(status, StatusCode::OK, "before the revocation: {body}");
     let mut admin = Browser::new();
     sign_in(
-        &jc.base,
+        &|p| jc.url(p),
         &mut admin,
         "admin",
         &jc.secret("first-admin-password"),

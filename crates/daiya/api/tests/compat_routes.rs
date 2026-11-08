@@ -182,6 +182,33 @@ async fn datasource_crud_answers_as_grafana() {
         )
         .await;
     assert_eq!(st, StatusCode::FORBIDDEN);
+    // An Editor writes no datasource (Grafana `datasources:write` is Admin): it could point
+    // one at its own host with a stored secret's name and receive the secret.
+    let (st, _) = w
+        .call(
+            "POST",
+            "/api/datasources",
+            Some("editor"),
+            Some(json!({
+                "name": "E", "type": "prometheus", "url": "https://elsewhere.example",
+                "secretRefs": { "token": "prom-pass" }
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _) = w
+        .call(
+            "PUT",
+            "/api/datasources/uid/prom",
+            Some("editor"),
+            Some(
+                json!({ "name": "Prom", "type": "prometheus", "url": "https://elsewhere.example" }),
+            ),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let got = w.ok("GET", "/api/datasources/uid/prom", None).await;
+    assert_eq!(got["url"], url.as_str());
 
     // Delete.
     let (st, _) = w
