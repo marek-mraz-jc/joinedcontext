@@ -44,12 +44,27 @@ jc's pools (deployment `components/jc`):
 |---|---|
 | `jc_portal` | 5, compiled |
 | `jc_antares` | 8 (`antaresPool`) |
-| `kaisatsu_app` | 4 (`kaisatsuPool`) |
+| `kaisatsu_app` | 4 (`kaisatsuPool`) + 1 change listener |
 | `kaisatsu_migrate` | 1 (init container) |
 
-Total 18. dataroom, daiya and shako add the pool maxima jc-pg writes into STATUS, called D, Y
-and S below. jc-pg's branch was not pushed when this was written: fill them in before the first
-apply, and rerun the budget test on the render.
+Total 19. dataroom, daiya and shako add the pool maxima jc-pg writes into STATUS, called D, Y
+and S below. jc-pg (branch `jc-pg` 5ffda4b5, `bins/jc/STATUS.md` "Postgres connection budget")
+sets each to its `max_connections`, default 5; kaisatsu takes one more for its change listener, so
+`kaisatsuPool` 4 holds 5 connections.
+
+With D = Y = S = 5 and kaisatsu at 5 + 1 migrate, the sums and needs per step are:
+
+| After step | stage / prod sum | need | dev sum | need |
+|---|---|---|---|---|
+| 1 | 53 | 67 | 48 | 61 |
+| 2 | 50 | 63 | 45 | 57 |
+| 3 | 52 | 66 | 47 | 60 |
+| 4 | 54 | 68 | 49 | 62 |
+| 5 | 49 | 62 | 44 | 56 |
+
+Every step outgrows today's `max_connections` (61, 55). Raise it once, before step 1: 70 on stage
+and prod (largest need 68, 80 % line 56 above the largest sum 54), 64 on dev (need 62, line 51.2
+above 49). The memory check below holds for both. Rerun the budget test on each step's render.
 
 No environment has room for jc beside everything it replaces. So:
 
@@ -57,20 +72,11 @@ No environment has room for jc beside everything it replaces. So:
 - The databases stay. The old component's database is kept untouched until the soak of that
   step ends.
 
-| After step | stage / prod sum | stage / prod need (max 61) | dev sum | dev need (max 55) |
-|---|---|---|---|---|
-| 1 daiya | 48 + Y | 61 + ceil(1.2 Y) | 43 + Y | 55 + ceil(1.2 Y) |
-| 2 dataroom | 40 + Y + D | 51 + ceil(1.2 (Y + D)) | 35 + Y + D | 45 + ceil(1.2 (Y + D)) |
-| 3 kaisatsu | 41 + Y + D | 53 + ... | 36 + Y + D | 47 + ... |
-| 4 Portal + shako | 38 + Y + D + S | 49 + ... | 33 + Y + D + S | 43 + ... |
-| 5 Antares | 33 + Y + D + S | 43 + ... | 28 + Y + D + S | 37 + ... |
+Step 1 adds Y. Step 2 frees `ckan` 8 and adds D. Step 3 frees `keycloak` 4 and adds kaisatsu's
+5 + 1. Step 4 frees `portal` 5 and `gitea` 3 and adds `jc_portal` 5 + S. Step 5 frees `antares` 13
+and adds `jc_antares` 8. The table above holds the results.
 
-Step 3 frees `keycloak` 4 and adds kaisatsu's 4 + 1. Step 4 frees `portal` 5 and `gitea` 3 and
-adds `jc_portal` 5 + S. Step 5 frees `antares` 13 and adds `jc_antares` 8. "need" is the value with
-Y = D = S = 0; every sum stays under the 80 % alert line (48.8 of 61, 44 of 55).
-
-- Step 1 fits only with Y = 0, which means daiya on its memory store. With daiya on Postgres,
-  raise `max_connections` first.
+- The `max_connections` raise (daiya on its memory store, Y = 0, would fit step 1 without it):
   - stage and prod: memory `128 + max x 19` MiB of 2560 Mi (`test_postgres_memory_budget.py`).
     max 70 needs 1458 MiB, 57 % of the limit.
   - dev: 2 Gi; max 64 needs 1344 MiB.
@@ -180,7 +186,8 @@ the prod soak, once the backup of section 6 exists.
 1. A signed `jc` digest from `image.yml` on monorepo `main`, pinned in `components/jc/images.yaml`.
 2. `ghcr.io/marek-mraz-jc/jc` is pullable: either the package is public or namespace `jc` has an
    image pull secret.
-3. jc-pg merged: dataroom, daiya and shako on Postgres. Fill in D, Y and S in section 2.
+3. jc-pg merged: dataroom, daiya and shako on Postgres (D, Y and S in section 2 assume its default
+   of 5 each; recompute if a `max_connections` changes).
 4. jc-migrate's exports tried on stage's data: CKAN catalogue, Keycloak realm with credentials,
    Gitea repositories.
 5. `jc-identity` route: jc stops no longer on a failed discovery read (jc-rest item 1), so this
