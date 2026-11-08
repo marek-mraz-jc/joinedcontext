@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""bins/jc/smoke/run <suite> --base-url <url> [--admin-token-file f] [--person-token-file f] --out <dir> [suite options]
+
+Each suite is bins/jc/smoke/<suite>/suite.py with a main(argv) that writes <out>/results.json and
+<out>/REPORT.md and answers 0 only when no check failed. `run --list` names the suites."""
+import importlib.util
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+
+
+def suites():
+    return sorted(p.parent.name for p in HERE.glob("*/suite.py"))
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "--list"):
+        print(__doc__)
+        print("suites:", " ".join(suites()))
+        return 0 if argv else 2
+    name, rest = argv[0], argv[1:]
+    if name not in suites():
+        print(f"unknown suite {name!r}; suites: {' '.join(suites())}", file=sys.stderr)
+        return 2
+    sys.path.insert(0, str(HERE))
+    spec = importlib.util.spec_from_file_location(f"smoke_{name}", HERE / name / "suite.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.main(rest)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
