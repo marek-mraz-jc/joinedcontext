@@ -687,3 +687,109 @@ async fn store_failures_are_errors_in_every_set_and_action() {
     assert_eq!(st, StatusCode::OK);
     assert_eq!(answer["responses"][0]["status"], 500);
 }
+
+#[tokio::test]
+async fn paging_keys_cache_stats_and_refused_exports() {
+    let w = seeded().await;
+    // More rows than one page: a nextLink with a skiptoken the service accepts back.
+    {
+        use daiya_model::DaiyaStore;
+        let now = chrono::Utc::now();
+        for i in 0..501 {
+            w.store
+                .inner
+                .upsert_folder(daiya_model::FolderRecord {
+                    installation_id: daiya_model::InstallationId::from_u128(1),
+                    org_id: ORG,
+                    instance_id: daiya_model::InstanceId::from_u128(1),
+                    project_id: None,
+                    uid: format!("f{i:03}"),
+                    parent_uid: None,
+                    title: format!("F{i}"),
+                    version: 1,
+                    managed_by: None,
+                    created_by: "t".into(),
+                    updated_by: "t".into(),
+                    created_at: now,
+                    updated_at: now,
+                })
+                .await
+                .unwrap();
+        }
+    }
+    let first = w.ok("GET", "/odata/v4/Folders", None).await;
+    assert_eq!(first["value"].as_array().unwrap().len(), 500);
+    let next = first["@odata.nextLink"].as_str().unwrap();
+    let rest = w.ok("GET", &format!("/odata/v4/{next}"), None).await;
+    assert_eq!(rest["value"].as_array().unwrap().len(), 2, "501 + ops");
+
+    // A skiptoken this service did not write is refused at every door.
+    for uri in [
+        "/odata/v4/Folders?$skiptoken=garbage",
+        "/odata/v4/Folders/$count?$skiptoken=garbage",
+        "/odata/v4/Folders/$export?$skiptoken=garbage",
+    ] {
+        let (st, _) = w.call("GET", uri, Some("admin"), None).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{uri}");
+    }
+    let batch = w
+        .ok(
+            "POST",
+            "/odata/v4/$batch",
+            Some(json!({ "requests": [{ "id": "1", "method": "GET", "url": "Folders?$skiptoken=garbage" }] })),
+        )
+        .await;
+    assert_eq!(batch["responses"][0]["status"], 400);
+
+    // Key forms: `('k')` and `(uid='k')`; function arguments without a value are ignored.
+    let by_name = w.ok("GET", "/odata/v4/Dashboards(uid='edge')", None).await;
+    assert_eq!(by_name["uid"], "edge");
+    let allowed = w.ok("GET", "/odata/v4/Allowed(junk)", None).await;
+    assert_eq!(allowed["allowed"], true);
+
+    // An export the caller may not read is the same 404 as an unknown dashboard.
+    let (st, _) = w
+        .call(
+            "GET",
+            "/odata/v4/Dashboards('loose')/Export",
+            Some("ops-viewer"),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // Query cache statistics: live entries of this organization and stored ones.
+    w.ok(
+        "POST",
+        "/api/ds/query",
+        Some(json!({
+            "from": "1700000000000", "to": "1700000600000",
+            "queries": [{ "refId": "A", "datasource": { "uid": "prom" }, "expr": "up" }]
+        })),
+    )
+    .await;
+    {
+        use daiya_model::DaiyaStore;
+        w.store
+            .inner
+            .upsert_query_cache_stat(daiya_model::QueryCacheStatRecord {
+                id: "stored-1".into(),
+                org_id: ORG,
+                instance_id: daiya_model::InstanceId::from_u128(1),
+                datasource_uid: "prom".into(),
+                hits: 3,
+                misses: 1,
+                entries: 1,
+                bytes_used: 10,
+            })
+            .await
+            .unwrap();
+    }
+    let stats = w.ok("GET", "/odata/v4/QueryCacheStats", None).await;
+    let rows = stats["value"].as_array().unwrap();
+    assert!(rows.iter().any(|r| r["id"] == "stored-1"), "{stats}");
+    assert!(
+        rows.len() >= 2,
+        "a live entry beside the stored one: {stats}"
+    );
+}
