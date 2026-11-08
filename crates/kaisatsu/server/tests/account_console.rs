@@ -44,7 +44,13 @@ fn mount() -> Mount {
 /// The dev realm plus the `account-console` client jc provisions: public, PKCE, its redirect
 /// under the account path, its origin from the redirect (`+`), audience `account`.
 async fn app() -> (Router, Arc<MemoryStore>) {
-    let (state, store, _) = setup_dev_realm_state().await;
+    let (app, store, _) = app_and_kek().await;
+    (app, store)
+}
+
+/// [`app`] plus the key-encryption key, for tests that sign their own tokens.
+async fn app_and_kek() -> (Router, Arc<MemoryStore>, Kek) {
+    let (state, store, kek) = setup_dev_realm_state().await;
     store
         .upsert_client(ClientRepresentation {
             id: "account-console-id".into(),
@@ -76,7 +82,7 @@ async fn app() -> (Router, Arc<MemoryStore>) {
         })
         .await
         .unwrap();
-    (router(state, mount()).layer(Extension(mount())), store)
+    (router(state, mount()).layer(Extension(mount())), store, kek)
 }
 
 async fn call(
@@ -387,6 +393,62 @@ async fn the_rest_takes_only_live_audience_account_tokens_of_this_realm() {
     store.delete_sso_session("dev", &me.sid).await.unwrap();
     let (st, _) = rest(&app, Method::GET, "/", &me.token, None).await;
     assert_eq!(st, StatusCode::UNAUTHORIZED);
+}
+
+/// Each token check stands alone: a token signed with the realm's own key that breaks exactly
+/// one property (audience, issuer, typ, session holder, enabled person, no service account)
+/// is refused, while the unchanged copy is accepted.
+#[tokio::test]
+async fn every_token_check_refuses_a_token_that_breaks_only_it() {
+    let (app, store, kek) = app_and_kek().await;
+    let me = sign_in(&app, &store, MEMBER, MEMBER_PW).await;
+    let steward = sign_in(&app, &store, STEWARD, STEWARD_PW).await;
+    let kid = jsonwebtoken::decode_header(&me.token).unwrap().kid.unwrap();
+    let key = store
+        .list_signing_keys("dev")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|k| k.kid == kid)
+        .unwrap();
+    let base = decode_jwt_payload(&me.token);
+    let forge = |edit: &dyn Fn(&mut Value)| {
+        let mut claims = base.clone();
+        claims["jti"] = json!(uuid::Uuid::new_v4().to_string());
+        edit(&mut claims);
+        sign_jwt(&key, &kek, Some("JWT"), &claims).unwrap()
+    };
+    let (st, _) = rest(&app, Method::GET, "/", &forge(&|_| {}), None).await;
+    assert_eq!(st, StatusCode::OK, "the unchanged copy is accepted");
+
+    let cases: [(&str, &dyn Fn(&mut Value)); 4] = [
+        ("audience", &|c| c["aud"] = json!(["broker"])),
+        ("issuer", &|c| {
+            c["iss"] = json!(format!("{ISSUER_ORIGIN}/realms/other"));
+        }),
+        ("typ", &|c| c["typ"] = json!("ID")),
+        ("session holder", &|c| c["sid"] = json!(steward.sid)),
+    ];
+    for (what, edit) in cases {
+        let (st, _) = rest(&app, Method::GET, "/", &forge(edit), None).await;
+        assert_eq!(st, StatusCode::UNAUTHORIZED, "{what}");
+    }
+
+    let token = forge(&|_| {});
+    let before = user(&store, MEMBER).await;
+    let mut disabled = before.clone();
+    disabled.enabled = false;
+    store.update_user(disabled).await.unwrap();
+    let (st, _) = rest(&app, Method::GET, "/", &token, None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED, "disabled person");
+    let mut robot = before.clone();
+    robot.service_account_client_id = Some("edge".into());
+    store.update_user(robot).await.unwrap();
+    let (st, _) = rest(&app, Method::GET, "/", &token, None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED, "service account");
+    store.update_user(before).await.unwrap();
+    let (st, _) = rest(&app, Method::GET, "/", &token, None).await;
+    assert_eq!(st, StatusCode::OK);
 }
 
 /// An access token of the confidential `edge` client (no `account` audience).
