@@ -184,7 +184,7 @@ function view(uid: string) {
     multi: v.multi === true,
     includeAll: v.includeAll === true,
     options: ((v.options as { text: string; value: string }[] | undefined) ?? []).map((o) => ({ text: o.text, value: o.value })),
-    current: (v.current as { value?: string } | undefined)?.value ?? null,
+    current: [(v.current as { value?: string } | undefined)?.value].filter((value) => value !== undefined),
   }));
   return {
     uid,
@@ -370,8 +370,9 @@ test("a time range, a variable and a refresh ask the panels again with them", as
   await page.goto("/projects/helsinki/grafana/dashboards/panel-types");
   await settle(page);
   world.asked.length = 0;
-  await page.getByLabel("Time range", { exact: true }).selectOption("now-24h");
-  await expect.poll(() => world.asked.some((search) => search.includes("from=now-24h"))).toBe(true);
+  await page.getByText("Last 1 hour", { exact: true }).first().click();
+  await page.getByRole("button", { name: "Last 24 hours" }).click();
+  await expect.poll(() => world.asked.some((search) => { const query = new URLSearchParams(search); return Number(query.get("to")) - Number(query.get("from")) === 24 * HOUR; })).toBe(true);
   await page.getByLabel("Station").selectOption("$__all");
   await expect.poll(() => world.asked.some((search) => search.includes("var-station=%24__all"))).toBe(true);
   const before = world.asked.length;
