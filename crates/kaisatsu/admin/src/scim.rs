@@ -678,6 +678,7 @@ async fn scim_put_user(
         ));
     }
 
+    let email_before = existing.email.clone();
     existing.username = payload.user_name.trim().to_ascii_lowercase();
     existing.first_name = payload.name.as_ref().and_then(|n| n.given_name.clone());
     existing.last_name = payload.name.as_ref().and_then(|n| n.family_name.clone());
@@ -702,6 +703,11 @@ async fn scim_put_user(
     }
     if let Some(nick) = payload.nick_name {
         existing.attributes.insert("nickName".into(), vec![nick]);
+    }
+    // SCIM carries no proof of an address (see create): a changed address is unverified, or a
+    // verified address account linking trusts could be pointed at someone else's mailbox.
+    if existing.email != email_before {
+        existing.email_verified = false;
     }
 
     let updated = state.oidc.store.update_user(existing).await?;
@@ -770,10 +776,14 @@ async fn scim_patch_user(
         ));
     }
 
+    let email_before = user.email.clone();
     for op in &patch.operations {
         if let Err(resp) = apply_user_patch_op(&mut user, op) {
             return Ok(resp);
         }
+    }
+    if user.email != email_before {
+        user.email_verified = false;
     }
 
     let updated = state.oidc.store.update_user(user).await?;
@@ -1428,6 +1438,13 @@ async fn scim_patch_group(
     let mut member_ids: Vec<String> = cur_members.iter().map(|u| u.id.clone()).collect();
     for op in &patch.operations {
         let op_kind = op.op.to_ascii_lowercase();
+        if !matches!(op_kind.as_str(), "add" | "remove" | "replace") {
+            return Ok(scim_error_response(
+                StatusCode::BAD_REQUEST,
+                Some("invalidValue"),
+                "unsupported PATCH op",
+            ));
+        }
         let path_str = op.path.as_deref().map(str::trim).unwrap_or("");
         if op_kind == "remove" && path_str.is_empty() {
             return Ok(scim_error_response(
