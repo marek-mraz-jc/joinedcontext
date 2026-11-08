@@ -980,7 +980,7 @@ fn render_range(params: Vec<(String, String)>) -> (u32, PanelTimeRange) {
             "maxDataPoints" => range.max_data_points = value.parse().ok(),
             other => {
                 if let Some(name) = other.strip_prefix("var-") {
-                    range.variables.insert(name.to_owned(), value);
+                    range.picked.entry(name.to_owned()).or_default().push(value);
                 }
             }
         }

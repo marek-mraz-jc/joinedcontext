@@ -912,6 +912,7 @@ async fn handle_odata_two_segment_get(
                     interval_ms: args.remove("intervalMs").and_then(|s| s.parse().ok()),
                     max_data_points: args.remove("maxDataPoints").and_then(|s| s.parse().ok()),
                     variables: args,
+                    picked: std::collections::BTreeMap::new(),
                 };
                 return match panel_view(&state, &ctx.subject, ctx.org_id, &uid, panel_id, range)
                     .await

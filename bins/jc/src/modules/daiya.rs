@@ -38,8 +38,11 @@ pub(crate) async fn state(cfg: &DaiyaSection, setup: &Setup) -> Result<DaiyaStat
     let Some(password) = setup.value(Secret::DashboardsPassword) else {
         return Ok(DaiyaState::for_standalone(store, org));
     };
+    // The Portal reads members-only Endpoints with the person's token, exchanged for the one
+    // Endpoint a panel reads and handed over beside its credential.
     DaiyaState::for_standalone(store, org)
         .with_server_admin(DASHBOARDS_USER, password)
+        .map(DaiyaState::with_person_tokens)
         .map_err(|e| e.to_string())
 }
 

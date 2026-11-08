@@ -36,7 +36,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
-use zeroize::Zeroizing;
+pub use zeroize::Zeroizing;
 
 /// Datasource execution error (never carries raw secret values, R3).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

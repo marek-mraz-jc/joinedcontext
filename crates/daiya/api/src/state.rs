@@ -11,8 +11,8 @@ use daiya_model::{
 };
 use daiya_model::{CrResult, DatasourceRecord};
 use daiya_query::{
-    Datasource, DenyTokenExchanger, DriverDeps, MapSecretResolver, OutboundPolicy, QueryCache,
-    SecretResolver, TokenExchanger, WasmPluginHost, build_driver,
+    Datasource, DenyTokenExchanger, DriverDeps, DsError, MapSecretResolver, OutboundPolicy,
+    QueryCache, SecretResolver, TokenExchanger, WasmPluginHost, Zeroizing, build_driver,
 };
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
@@ -149,6 +149,14 @@ impl DaiyaState {
             built_drivers: Arc::new(RwLock::new(BTreeMap::new())),
             server_admin: Vec::new(),
         }
+    }
+
+    /// Reads NGSI-LD and OData Endpoints with the person's token the Portal hands over in
+    /// [`PERSON_TOKEN_HEADER`] (see [`PersonTokenExchanger`]).
+    #[must_use]
+    pub fn with_person_tokens(mut self) -> Self {
+        self.token_exchanger = Arc::new(PersonTokenExchanger);
+        self
     }
 
     /// Grafana's local administrator: `Authorization: Basic base64(user:password)`, as
@@ -353,6 +361,81 @@ fn basic_matches(headers: &HeaderMap, expected: &str) -> bool {
         && constant_time_eq(expected, &sha256_hex(credential.trim().as_bytes()))
 }
 
+/// The header in which the Portal hands over a person's token, already exchanged for the one
+/// Endpoint the panel reads, beside its server-administrator credential. Accepted only with that
+/// credential; on any other request it is ignored.
+pub const PERSON_TOKEN_HEADER: &str = "x-daiya-person-token";
+
+/// The server administrator reading for the person whose token is in [`PERSON_TOKEN_HEADER`]:
+/// the token becomes the subject's bearer for the datasource call, and its `sub` (or, without
+/// one, a digest of the token) the person the cache keys on.
+fn on_behalf_of(mut admin: Subject, headers: &HeaderMap) -> Subject {
+    let Some(token) = headers
+        .get(PERSON_TOKEN_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    else {
+        return admin;
+    };
+    let person =
+        token_sub(token).unwrap_or_else(|| format!("token:{}", sha256_hex(token.as_bytes())));
+    admin.on_behalf_of = Some(person);
+    admin.bearer_token = Some(token.to_owned());
+    admin
+}
+
+/// The claims of a JWT, read without verifying it: they only key the cache and pick the
+/// Endpoint the token goes to; the gateway verifies the token itself.
+fn claims_of(token: &str) -> Option<serde_json::Value> {
+    use base64::Engine as _;
+    let payload = token.split('.').nth(1)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload.trim_end_matches('='))
+        .ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// The `sub` claim of a JWT (see [`claims_of`]).
+#[must_use]
+pub fn token_sub(token: &str) -> Option<String> {
+    claims_of(token)?["sub"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+}
+
+/// The exchanger of a host whose Portal exchanges the person's token itself, for one Endpoint
+/// (scope `endpoint:{slug}`), and hands it over in [`PERSON_TOKEN_HEADER`]: the token goes on
+/// unchanged to the datasource of that Endpoint only. A token without that scope, or none, is
+/// refused, so a person's token never reaches another Endpoint.
+#[derive(Debug, Clone, Default)]
+pub struct PersonTokenExchanger;
+
+impl TokenExchanger for PersonTokenExchanger {
+    fn exchange_for_audience(
+        &self,
+        caller_token: &str,
+        audience: &str,
+    ) -> Result<Zeroizing<String>, DsError> {
+        let wanted = format!("endpoint:{audience}");
+        let scoped = !audience.is_empty()
+            && claims_of(caller_token).is_some_and(|claims| {
+                claims["scope"]
+                    .as_str()
+                    .is_some_and(|scope| scope.split_whitespace().any(|s| s == wanted))
+            });
+        if scoped {
+            Ok(Zeroizing::new(caller_token.to_owned()))
+        } else {
+            Err(DsError::TokenExchange {
+                audience: audience.to_owned(),
+                reason: "no token of the person for this Endpoint".into(),
+            })
+        }
+    }
+}
+
 /// Builds the [`RequestCtx`] of a request. The subject comes only from verified sources: the
 /// mounting host's [`SubjectResolver`], then an API credential in `Authorization` (hashed,
 /// constant-time). Anything else is anonymous: no organization, no role. Client headers never
@@ -361,20 +444,23 @@ fn basic_matches(headers: &HeaderMap, expected: &str) -> bool {
 /// `X-Daiya-Readonly: true` can only narrow the caller.
 #[must_use]
 pub fn resolve_request_ctx(state: &DaiyaState, headers: &HeaderMap) -> RequestCtx {
-    let mut subject = state.server_admin_for(headers).unwrap_or_else(|| {
-        let subject = state
-            .subject_resolver
-            .as_ref()
-            .and_then(|resolve| resolve(headers))
-            .or_else(|| state.subject_for_credential(headers))
-            .unwrap_or_else(Subject::anonymous);
-        // Only the server-admin credential makes a server administrator.
-        if subject.actor_id.as_deref() == Some(SERVER_ADMIN_ACTOR) {
-            Subject::anonymous()
-        } else {
-            subject
-        }
-    });
+    let mut subject = state
+        .server_admin_for(headers)
+        .map(|admin| on_behalf_of(admin, headers))
+        .unwrap_or_else(|| {
+            let subject = state
+                .subject_resolver
+                .as_ref()
+                .and_then(|resolve| resolve(headers))
+                .or_else(|| state.subject_for_credential(headers))
+                .unwrap_or_else(Subject::anonymous);
+            // Only the server-admin credential makes a server administrator.
+            if subject.actor_id.as_deref() == Some(SERVER_ADMIN_ACTOR) {
+                Subject::anonymous()
+            } else {
+                subject
+            }
+        });
 
     let requested_org = headers
         .get("x-daiya-org-id")

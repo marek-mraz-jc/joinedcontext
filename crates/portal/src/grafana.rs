@@ -25,6 +25,11 @@ const PLUGIN: &str = "ngsild-grafana-datasource";
 /// How often the rows are compared with what Grafana holds.
 const SWEEP: Duration = Duration::from_secs(300);
 
+/// The header that carries the person's token, exchanged for one Endpoint, beside the server
+/// administrator's credential on a panel read: daiya reads the Endpoint with it, and accepts it
+/// only with that credential.
+pub const PERSON_TOKEN_HEADER: &str = "x-daiya-person-token";
+
 /// A datasource uid Grafana accepts at most.
 const MAX_UID: usize = 40;
 
@@ -542,20 +547,22 @@ impl<'a> Client<'a> {
         uid: &str,
         panel: u32,
         asked: &[(String, String)],
+        person: Option<&str>,
     ) -> Result<Value, ApiError> {
         let what = "running a panel's queries";
         let mut query = vec![("panel".to_owned(), panel.to_string())];
         query.extend(asked.iter().cloned());
-        let answer = self
+        let mut request = self
             .request(
                 reqwest::Method::GET,
                 &format!("/dashboards/{uid}/render"),
                 Some(org),
             )
-            .query(&query)
-            .send()
-            .await
-            .map_err(|err| unreachable(what, err))?;
+            .query(&query);
+        if let Some(token) = person {
+            request = request.header(PERSON_TOKEN_HEADER, token);
+        }
+        let answer = request.send().await.map_err(|err| unreachable(what, err))?;
         let status = answer.status();
         let body = jc_core::outbound::read_capped(answer, MAX_PANEL_ANSWER)
             .await
