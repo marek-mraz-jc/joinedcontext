@@ -1181,10 +1181,10 @@ pub(crate) async fn with_group_roles(
                 &mapping.role_name,
             );
         }
-        if let Some(parent) = group.parent_id.as_deref() {
-            if !seen.contains(parent) {
-                pending.extend(store.get_group(realm_id, None, parent).await?);
-            }
+        if let Some(parent) = group.parent_id.as_deref()
+            && !seen.contains(parent)
+        {
+            pending.extend(store.get_group(realm_id, None, parent).await?);
         }
     }
     Ok(merged)
