@@ -68,6 +68,8 @@ pub fn build(cfg: &EkibenSection) -> Result<Router, StartError> {
             admin_bearer_token: Some(token),
             org_tokens: Vec::new(),
             require_auth: true,
+            guard_probes: true,
+            ..Default::default()
         },
     );
     Ok(build_router(state))
