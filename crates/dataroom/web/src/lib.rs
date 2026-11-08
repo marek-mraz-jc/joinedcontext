@@ -67,7 +67,7 @@ pub const JC_SCRIPTS: &[(&str, &str)] = &[
 ];
 
 /// Default joinedcontext lockup SVG (`/jc-logo.svg`, paths only, no script, no external href).
-pub const JC_LOGO_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="171" height="36" viewBox="0 0 171 36" fill="none"><rect width="36" height="36" rx="8" fill="#0000bf"/><text x="18" y="24" text-anchor="middle" fill="#ffffff" font-family="system-ui, sans-serif" font-size="18" font-weight="700">jc</text><text x="46" y="24" fill="currentColor" font-family="system-ui, sans-serif" font-size="18" font-weight="700">joinedcontext</text></svg>"##;
+pub const JC_LOGO_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="171" height="36" viewBox="0 0 171 36" fill="none"><rect width="36" height="36" rx="8" fill="#0000bf"/><text x="18" y="24" text-anchor="middle" fill="#ffffff" font-family="system-ui, sans-serif" font-size="18" font-weight="700">jc</text><text x="46" y="24" textLength="121" lengthAdjust="spacingAndGlyphs" fill="currentColor" font-family="system-ui, sans-serif" font-size="18" font-weight="700">joinedcontext</text></svg>"##;
 
 ///Localized UI strings struct for templates (C3).
 #[derive(Debug, Clone)]

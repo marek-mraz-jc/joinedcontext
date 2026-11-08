@@ -95,3 +95,18 @@ fn the_base_layout_comes_before_the_theme_so_the_theme_wins() {
         assert!(css.contains(rule), "{rule}");
     }
 }
+
+#[test]
+fn the_default_logo_text_fits_its_box() {
+    // At 18 px bold "joinedcontext" is wider than the 125 px left of the mark: the parity shots
+    // showed "joinedconte" cut, so the word is held to its box.
+    let svg = dataroom_web::JC_LOGO_SVG;
+    let text = svg.split("<text x=\"46\"").nth(1).expect("the word");
+    let len: f32 = text
+        .split("textLength=\"")
+        .nth(1)
+        .and_then(|t| t.split('"').next())
+        .and_then(|t| t.parse().ok())
+        .expect("textLength on the word");
+    assert!(46.0 + len <= 171.0, "{len}");
+}
