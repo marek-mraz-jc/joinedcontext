@@ -10,6 +10,7 @@ from urllib.parse import quote
 DOMAIN = "dev.joinedcontext.com"
 OLD = {
     "ckan": f"https://opendata.{DOMAIN}",
+    "assistant": f"https://opendata.{DOMAIN}",
     "grafana": f"https://{DOMAIN}",
     "gitea": f"https://{DOMAIN}",
     "keycloak": f"https://idm.{DOMAIN}",
@@ -17,6 +18,8 @@ OLD = {
     "portal": f"https://portal.{DOMAIN}",
 }
 OLD_KEYCLOAK = OLD["keycloak"]
+# Production, the reference for the catalogue and the assistant: public pages only, no sign-in.
+PROD = {"ckan": "https://opendata.smartcity.joinedcontext.com", "assistant": "https://opendata.smartcity.joinedcontext.com"}
 PROJECT = "bbsk"
 DATASET = "bbsk-podujatia"
 
@@ -27,6 +30,8 @@ OLD_GITEA_LOCAL = os.environ.get("PARITY_OLD_GITEA")
 
 
 def base_of(pair: str, side: str, base: str) -> str:
+    if side == "prod":
+        return PROD[pair]
     if side == "old" and pair == "gitea" and OLD_GITEA_LOCAL:
         return OLD_GITEA_LOCAL
     return OLD[pair] if side == "old" else base
@@ -40,8 +45,37 @@ def portal_base(side: str, base: str) -> str:
     return OLD["portal"] if side == "old" else base
 
 
-def F(name, sel=None, old=None, new=None, texts=False):
-    return {"name": name, "sel": sel, "old": old, "new": new, "texts": texts}
+def F(name, sel=None, old=None, new=None, texts=False, js=None, what=None):
+    return {"name": name, "sel": sel, "old": old, "new": new, "texts": texts, "js": js, "what": what}
+
+
+def J(name, js, what):
+    """A content or layout check: a JS expression true in the page or one of its frames."""
+    return F(name, js=js, what=what)
+
+
+# What the images showed missing (supervisor 2026-11-08): content and layout, not only presence.
+LAYOUT = [
+    J("header nav in one row, no bullets", "(()=>{const l=[...document.querySelectorAll('.masthead .navbar-nav > li')];"
+      "if(l.length<2) return false; const t=l.map(e=>Math.round(e.getBoundingClientRect().top));"
+      "return t.every(x=>Math.abs(x-t[0])<4) && getComputedStyle(l[0]).listStyleType==='none'})()", "masthead nav items share one row"),
+    J("skip link hidden until focused", "(()=>{const a=[...document.querySelectorAll('a')].find(e=>/Skip to|Preskočiť/.test(e.textContent));"
+      "if(!a) return true; const r=a.getBoundingClientRect(); return r.width<=1||r.height<=1})()", "skip link has no visible box"),
+    J("logo text not cut", "(()=>{const e=document.querySelector('.masthead .logo, .masthead .jc-brand');"
+      "return !!e && e.scrollWidth<=e.clientWidth+1})()", "brand scrollWidth <= clientWidth"),
+    J("footer in columns", "(()=>{const c=[...document.querySelectorAll('footer .row > *')];"
+      "return c.length>=2 && Math.abs(c[0].getBoundingClientRect().top-c[1].getBoundingClientRect().top)<4})()", "footer columns side by side"),
+    F("assistant launcher button", "#jc-assistant button, button:has-text('Opýtajte sa asistenta'), a:has-text('Opýtajte sa asistenta')"),
+    J("AI chips Claude / ChatGPT / Copilot", "['Claude','ChatGPT','Copilot'].every(w=>document.body.innerText.includes(w))", "all three names on the page"),
+]
+DATASET_CONTENT = [
+    J("Živé dáta grid with filters and paging", "!!document.querySelector('table, [role=grid]') && /Filter/.test(document.body.innerText)"
+      " && /Strana|Nasledujúca|Next|Page /.test(document.body.innerText)", "a table, a Filter control and paging in one frame"),
+    J("map drawn", "[...document.querySelectorAll('canvas')].some(c=>c.width>50&&c.height>50)", "a canvas of 50+ px"),
+    J("Dátové API and Vložiť na web buttons", "/Dátové API/.test(document.body.innerText) && /Vložiť na web/.test(document.body.innerText)", "both button labels"),
+    J("Živé dáta (API) curl box", "!!document.querySelector('#jc-live-title') && /curl -H/.test(document.body.innerText)", "#jc-live-title and a curl line"),
+    F("Pripojte AI asistenta (MCP)", "#jc-mcp-title"),
+]
 
 
 def _visit(page, url):
@@ -52,8 +86,8 @@ def _visit(page, url):
         print(f"visit {url}: {str(e)[:120]}")
 
 
-def _get(page, url):
-    r = page.request.get(url, timeout=30000)
+def _get(page, url, headers=None):
+    r = page.request.get(url, timeout=30000, headers=headers or {})
     return json.loads(r.text()) if r.ok else None
 
 
@@ -101,7 +135,7 @@ CKAN_RESOURCE = [
 ]
 CKAN_API = [F("JSON body", "pre, body")]
 
-CKAN_PAGES = [
+CKAN_PAGES_ = [
     {"id": "home", "old": "/", "new": "/opendata/", "features": CKAN_HOME},
     {"id": "organizations", "old": "/organization/", "new": "/opendata/organization/",
      "features": [F("organization cards", "a[href*='/organization/']"), F("search box", "input[name=q]")]},
@@ -120,6 +154,35 @@ CKAN_PAGES = [
      "features": CKAN_API},
     {"id": "api-package-show", "old": "/api/3/action/package_show?id={dataset}", "new": "/opendata/api/3/action/package_show?id={dataset}",
      "features": CKAN_API},
+]
+
+CKAN_PAGES = []
+for _p in CKAN_PAGES_:
+    _p = dict(_p, prod=_p["old"].replace("{resource_old}", "{resource_prod}"))  # production shows the same paths
+    if not _p["id"].startswith(("api-", "dcat", "atom")):
+        _p["features"] = _p["features"] + LAYOUT + (DATASET_CONTENT if _p["id"] == "dataset" else [])
+    CKAN_PAGES.append(_p)
+
+# --- AI assistant (production's assistant and the launcher on the catalogue pages) -----------------
+ASSIST_LAUNCH = [F("launcher button", "#jc-assistant button, button:has-text('Opýtajte sa asistenta')"),
+                 J("AI chips Claude / ChatGPT / Copilot", "['Claude','ChatGPT','Copilot'].every(w=>document.body.innerText.includes(w))", "all three names"),
+                 F("assistant dock frame", "iframe[src*='assistant'], iframe[src*='/widget']"),
+                 J("question box in the dock", "!!document.querySelector('textarea, input[type=text]') && location.href.includes('widget')", "a text box inside the widget frame")]
+ASSIST_PAGE = [F("question box", "textarea, input[type=text]"), F("send button", "button[type=submit], button:has-text('Odosla'), button:has-text('Send')"),
+               J("example questions / intro", "document.body.innerText.length > 200", "an intro text"), F("sources / about link", "a[href]")]
+ASSIST_PAGES = [
+    {"id": "launcher-home", "prod": "/", "old": f"https://opendata.{DOMAIN}/", "new": "/opendata/", "features": ASSIST_LAUNCH},
+    {"id": "launcher-open", "prod": "/", "old": f"https://opendata.{DOMAIN}/", "new": "/opendata/", "settle": 6000,
+     "then": [{"click": "#jc-assistant button, button:has-text('Opýtajte sa asistenta')"}], "features": ASSIST_LAUNCH},
+    {"id": "launcher-dataset", "prod": f"/dataset/{DATASET}", "old": f"https://opendata.{DOMAIN}/dataset/{DATASET}",
+     "new": f"/opendata/dataset/{DATASET}", "features": ASSIST_LAUNCH},
+    {"id": "assistants-guide", "prod": "/assistants", "old": f"https://opendata.{DOMAIN}/assistants", "new": "/opendata/assistants",
+     "features": [F("client list", "h2, h3"), J("Claude / ChatGPT / Copilot", "['Claude','ChatGPT','Copilot'].every(w=>document.body.innerText.includes(w))", "all three names")]},
+    {"id": "assistant-page", "prod": "https://assistant.smartcity.joinedcontext.com/d/data", "old": f"https://assistant.{DOMAIN}/d/data",
+     "new": None, "why": "jc serves no assistant module: no public assistant page (assistant.<domain>/d/<deployment>)", "features": ASSIST_PAGE, "settle": 5000},
+    {"id": "assistant-widget", "prod": "https://assistant.smartcity.joinedcontext.com/d/data/widget?embed=1&scheme=light",
+     "old": f"https://assistant.{DOMAIN}/d/data/widget?embed=1&scheme=light", "new": None,
+     "why": "jc serves no assistant module: no widget the catalogue launcher can open", "features": ASSIST_PAGE, "settle": 5000},
 ]
 
 # --- Grafana vs daiya ----------------------------------------------------------------------------
@@ -169,7 +232,8 @@ GITEA_PAGES = [
     {"id": "commits", "old": "/git/{repo}/commits/branch/{branch}", "new": R + "?tab=commits",
      "features": [F("commit rows", old="#commits-table tbody tr, .commit-list a.sha", new="a[href*='commit=']"),
                   F("author", old=".author-wrapper, .commit-author", new="text=/@|[Aa]uthor|[Aa]utor/")], "settle": 4000},
-    {"id": "commit-diff", "old": "/git/{repo}/commit/{sha}", "new": R + "?tab=commits&commit={sha}",
+    {"id": "commit-diff", "old": "/git/{repo}/commit/{sha}", "new": R + "?tab=commits",
+     "then": [{"click": "a[href*='commit=']"}],
      "features": [F("diff file headers", old=".diff-file-header", new="h3, h4, summary"),
                   F("added/removed lines", old=".add-code, .del-code", new="[class*=success], [class*=danger], ins, del")], "settle": 4000},
     {"id": "branches", "old": "/git/{repo}/branches", "new": R + "?tab=branches", "features": [F("branch rows", old="#branch-table tr, .branch-name", new="table tr, li")], "settle": 4000},
@@ -254,6 +318,7 @@ PORTAL_PAGES = [{"id": i, "old": p, "new": p, "features": PORTAL_COMMON + extra,
 
 PAIRS = {
     "ckan": {"title": "CKAN (jc_theme) vs dataroom", "pages": CKAN_PAGES},
+    "assistant": {"title": "AI assistant (production's assistant and the catalogue launcher) vs jc", "pages": ASSIST_PAGES},
     "grafana": {"title": "Grafana vs daiya", "pages": GRAFANA_PAGES},
     "gitea": {"title": "Gitea vs shako", "pages": GITEA_PAGES},
     "keycloak": {"title": "Keycloak vs kaisatsu", "pages": KC_PAGES},
@@ -274,7 +339,7 @@ def resolve(pair: str, side: str, base: str, page) -> dict:
     b = base_of(pair, side, base)
     v = {"project": PROJECT, "dataset": DATASET, "org": PROJECT}
     if pair == "ckan":
-        pre = "" if side == "old" else "/opendata"
+        pre = "/opendata" if side == "new" else ""
         d = _get(page, f"{b}{pre}/api/3/action/package_show?id={DATASET}")
         res = (d or {}).get("result", {}).get("resources", [])
         csv = next((r for r in res if r.get("format") == "CSV"), res[0] if res else None)
@@ -299,6 +364,7 @@ def resolve(pair: str, side: str, base: str, page) -> dict:
         pass  # the Portal's repository pages take the names the old side resolved (shako's API wants a token)
     elif pair == "gitea":
         pre = "/git"
+        auth = None
         if OLD_GITEA_LOCAL:
             pre = ""
             user, password = Path(os.environ["PARITY_OLD_GITEA_PERSON"]).read_text().split()[:2]
@@ -307,23 +373,26 @@ def resolve(pair: str, side: str, base: str, page) -> dict:
             page.fill("#password", password)
             page.locator("#password").press("Enter")
             page.wait_for_timeout(2000)
+            # Gitea's API takes no session cookie: the stand-in's own person by basic auth.
+            import base64
+            auth = {"Authorization": "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()}
         else:  # Gitea signs in through Keycloak only on this click; the session is already there
             _visit(page, f"{b}/git/user/oauth2/keycloak")
-        found = _get(page, f"{b}{pre}/api/v1/repos/search?limit=50&q={PROJECT}") or {}
+        found = _get(page, f"{b}{pre}/api/v1/repos/search?limit=50&q={PROJECT}", auth) or {}
         repos = found.get("data", []) if isinstance(found, dict) else found
         repo = next((r for r in repos if r.get("full_name", "").endswith(f"/{PROJECT}")), repos[0] if repos else None)
         if repo:
             full = repo["full_name"]
             v["repo"] = full
             v["branch"] = repo.get("default_branch", "main")
-            commits = _get(page, f"{b}{pre}/api/v1/repos/{full}/commits?limit=1") or []
+            commits = _get(page, f"{b}{pre}/api/v1/repos/{full}/commits?limit=1", auth) or []
             if commits:
                 v["sha"] = commits[0]["sha"]
-            tree = _get(page, f"{b}{pre}/api/v1/repos/{full}/contents?ref={v['branch']}") or []
+            tree = _get(page, f"{b}{pre}/api/v1/repos/{full}/contents?ref={v['branch']}", auth) or []
             f = next((t["path"] for t in tree if t.get("type") == "file"), None)
             if f:
                 v["file"] = quote(f)
-            pulls = _get(page, f"{b}{pre}/api/v1/repos/{full}/pulls?state=all&limit=1") or []
+            pulls = _get(page, f"{b}{pre}/api/v1/repos/{full}/pulls?state=all&limit=1", auth) or []
             if pulls:
                 v["pull"] = pulls[0]["number"]
             v["prepo"] = full.split("/")[-1]
@@ -344,6 +413,9 @@ def resolve(pair: str, side: str, base: str, page) -> dict:
 def act(page, action: dict, side: str):
     if "click_tab" in action:
         page.get_by_role("tab", name=__import__("re").compile(action["click_tab"].strip("/"))).first.click(timeout=5000)
+    elif "click" in action:
+        page.locator(action["click"]).first.click(timeout=10000)
+        page.wait_for_load_state("networkidle")
     elif action.get("bad_login"):
         page.fill("input[name=username]", "parity-nobody")
         page.fill("input[name=password]", "wrong-password-1")

@@ -32,6 +32,17 @@ def fingerprint(page, features: list[dict], side: str) -> dict:
         "h1,h2,h3", "els=>els.filter(e=>e.offsetParent!==null).map(e=>e.tagName+' '+e.innerText.trim().slice(0,80))")
     rows = []
     for f in features:
+        if f.get("js"):
+            n = 0
+            for fr in page.frames:
+                if not fr.url.startswith("http"):
+                    continue
+                try:
+                    n += bool(fr.evaluate(f["js"]))
+                except Exception:  # noqa: BLE001 - a frame that went away counts as not holding it
+                    pass
+            rows.append({"feature": f["name"], "present": n > 0, "count": n, "element": "js: " + f.get("what", "content check")})
+            continue
         sel = f.get(side) or f.get("sel")
         if not sel:
             rows.append({"feature": f["name"], "present": None, "element": "-"})
@@ -57,6 +68,21 @@ def guard_old(route, request, keycloak_host: str):
     if urlparse(request.url).hostname in ("localhost", "127.0.0.1"):  # the local Gitea stand-in, never dev
         return route.continue_()
     return route.abort()
+
+
+_last = [0.0]
+
+
+def throttle_prod(route, request):
+    """Production is read with GETs only, no sign-in, at most one request a second."""
+    import time
+    if request.method not in ("GET", "HEAD"):
+        return route.abort()
+    wait = _last[0] + 1.0 - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+    _last[0] = time.monotonic()
+    return route.continue_()
 
 
 def sign_in(page, side: str, base: str, person: tuple[str, str]):
@@ -89,8 +115,10 @@ def capture(a):
                 ctx.route("**/*", lambda route, req: (blocked.append(f"{req.method} {req.url[:120]}")
                                                        if req.method not in ("GET", "HEAD", "OPTIONS") else None)
                           or guard_old(route, req, kc))
+            if side == "prod":
+                ctx.route("**/*", throttle_prod)
             page = ctx.new_page()
-            if person:
+            if person and side != "prod":
                 sign_in(page, side, P.portal_base(side, a.base), person)
             for pair in pairs:
                 spec = P.PAIRS[pair]
@@ -103,9 +131,11 @@ def capture(a):
                 varfile.parent.mkdir(parents=True, exist_ok=True)
                 varfile.write_text(json.dumps(ctxvars, indent=1))
                 if side == "new" and (out / pair / "vars-old.json").exists():
-                    # Same objects on both sides: the old side's names, the new side's own where it found one.
-                    ctxvars = {**json.loads((out / pair / "vars-old.json").read_text()), **ctxvars}
+                    # Same objects on both sides: the old side's names win; side-specific ones carry a _old/_new suffix.
+                    ctxvars = {**ctxvars, **json.loads((out / pair / "vars-old.json").read_text())}
                 for pg in spec["pages"]:
+                    if side not in pg and side == "prod":
+                        continue  # production is the reference only where a page names it
                     path = pg[side]
                     if path is None:
                         _write(out, pair, side, pg["id"], width, {"status": None, "skip": pg.get("why", "no such page")})
@@ -123,11 +153,17 @@ def capture(a):
                         anon = browser.new_context(viewport={"width": width, "height": height}, locale="sk-SK")
                         if side == "old":
                             anon.route("**/*", lambda route, req: guard_old(route, req, ""))
+                        elif side == "prod":
+                            anon.route("**/*", throttle_prod)
                         tab = anon.new_page()
                     tab.on("response", hook)
                     try:
-                        resp = tab.goto(url, wait_until="networkidle", timeout=60000)
+                        resp = tab.goto(url, wait_until="load", timeout=60000)
                         status = resp.status if resp else None
+                        try:  # a page holding a long poll (Gitea's events) never goes idle: load is enough then
+                            tab.wait_for_load_state("networkidle", timeout=20000)
+                        except Exception:  # noqa: BLE001
+                            pass
                     except Exception as e:
                         status = f"error: {str(e)[:100]}"
                     for act in pg.get("then", []):
@@ -170,10 +206,11 @@ def _load(out: Path, pair, side, pid, width):
     return json.loads(f.read_text()) if f.exists() else None
 
 
-def side_by_side(old: Path, new: Path, dest: Path, label: str):
-    """old | new, each cut at MAX_HEIGHT, with a label bar over each half."""
+def side_by_side(old: Path, new: Path, dest: Path, label: str, prod: Path | None = None):
+    """[prod |] old | new, each cut at MAX_HEIGHT, with a label bar over each column."""
     args = ["magick"]
-    for img, name in ((old, "OLD (dev)"), (new, "NEW (jc rehearsal)")):
+    cols = ([(prod, "PROD (smartcity)")] if prod else []) + [(old, "DEV (old)"), (new, "NEW (jc rehearsal)")]
+    for img, name in cols:
         if img.exists():
             args += ["(", str(img), "-crop", f"x{MAX_HEIGHT}+0+0", "+repage"]
         else:
@@ -202,15 +239,20 @@ def compose(a):
         spec = P.PAIRS[pair]
         lines = [f"# {spec['title']}: feature table", "",
                  "Generated by bins/jc/smoke/parity/parity.py compose. `present` means the element is on the page at 1440 px.", "",
-                 "| page | feature | old | new | result | element (old / new) |", "|---|---|---|---|---|---|"]
+                 "Element presence only: whether a page looks the same is the UI judge's score (VERDICTS.md); a `js:` row checks content or layout.", "",
+                 "| page | feature | prod | old | new | element present on both | element (old / new) |", "|---|---|---|---|---|---|---|"]
         heads = ["", "## Headings on old missing on new (1440)", ""]
         for pg in spec["pages"]:
             for width, _ in WIDTHS:
                 o = out / pair / "raw" / "old" / f"{pg['id']}-{width}.png"
                 n = out / pair / "raw" / "new" / f"{pg['id']}-{width}.png"
+                pr = out / pair / "raw" / "prod" / f"{pg['id']}-{width}.png"
                 if o.exists() or n.exists():
-                    side_by_side(o, n, out / pair / f"{pg['id']}-{width}.png", f"{pg['id']} @{width}")
+                    side_by_side(o, n, out / pair / f"{pg['id']}-{width}.png", f"{pg['id']} @{width}",
+                                 pr if "prod" in pg else None)
             jo, jn = _load(out, pair, "old", pg["id"], 1440), _load(out, pair, "new", pg["id"], 1440)
+            jp = _load(out, pair, "prod", pg["id"], 1440)
+            fp = {r["feature"]: r for r in (jp or {}).get("features", [])}
             fo = {r["feature"]: r for r in (jo or {}).get("features", [])}
             fn = {r["feature"]: r for r in (jn or {}).get("features", [])}
             for feat in pg.get("features", []):
@@ -219,7 +261,7 @@ def compose(a):
                 res = verdict_row(po, pn, ro, rn)
                 if jn and jn.get("skip"):
                     res = "missing"
-                lines.append(f"| {pg['id']} | {feat['name']} | {_yn(po, jo)} | {_yn(pn, jn)} | {res} | "
+                lines.append(f"| {pg['id']} | {feat['name']} | {_yn(fp.get(feat['name'], {}).get('present'), jp) if 'prod' in pg else 'n/a'} | {_yn(po, jo)} | {_yn(pn, jn)} | {res} | "
                              f"`{ro.get('element', '-')}` / `{rn.get('element', '-')}` |")
             if jo and jn:
                 norm = lambda h: re.sub(r"\s+\d[\d\s.,]*$", "", h.lower())
@@ -294,7 +336,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("capture")
-    c.add_argument("--side", choices=("old", "new"), required=True)
+    c.add_argument("--side", choices=("old", "new", "prod"), required=True)
     c.add_argument("--base", required=True, help="old: dev's primary host; new: the rehearsal's jc listener")
     c.add_argument("--pairs")
     c.add_argument("--person-file", help="file holding '<user> <password>'; never printed")
