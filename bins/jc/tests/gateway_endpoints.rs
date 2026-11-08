@@ -27,6 +27,8 @@ const CLOSED: &str = "e2eclosedendpointaaaaaaaaa";
 const ELSEWHERE: &str = "e2eotherendpointaaaaaaaaaa";
 const PERSON: &str = "e2e.person";
 const PERSON_PASSWORD: &str = "e2e-person-password-not-secret";
+/// A person in none of the project's groups: no Policy of the space names them.
+const STRANGER: &str = "e2e.stranger";
 const READER_SECRET: &str = "e2e-reader-client-secret-not-secret";
 
 struct Jc {
@@ -154,8 +156,27 @@ fn realm_file(dir: &Path, secrets: &Path) {
             { "name": format!("{PROJECT}-readers") },
             { "name": format!("{PROJECT}-writers") }
         ],
-        "clients": [client("e2e-reader", CLOSED), client("e2e-elsewhere", ELSEWHERE)],
+        // `e2e-mcp` stands in for an MCP client: its person tokens name the Portal's client, which
+        // `/api/v1/mcp` takes and exchanges for one Endpoint (`endpoint:{slug}`).
+        "clients": [
+            client("e2e-reader", CLOSED),
+            client("e2e-elsewhere", ELSEWHERE),
+            client("e2e-mcp", "portal-api"),
+        ],
         "users": [{
+            "username": STRANGER,
+            "enabled": true,
+            "email": "e2e.stranger@jc.invalid",
+            "emailVerified": true,
+            "firstName": "No",
+            "lastName": "Grant",
+            "groups": [],
+            "credentials": [{
+                "type": "password",
+                "value": person_password.clone(),
+                "temporary": false
+            }]
+        }, {
             "username": PERSON,
             "enabled": true,
             "email": "e2e.person@jc.invalid",
@@ -364,13 +385,17 @@ where
 
 /// A person's token from `client` by the password grant.
 async fn token(jc: &Jc, client: &str) -> String {
+    token_of(jc, client, PERSON).await
+}
+
+async fn token_of(jc: &Jc, client: &str, username: &str) -> String {
     let resp = Client::new()
         .post(jc.url("/id/realms/jc/protocol/openid-connect/token"))
         .form(&[
             ("grant_type", "password"),
             ("client_id", client),
             ("client_secret", READER_SECRET),
-            ("username", PERSON),
+            ("username", username),
             ("password", PERSON_PASSWORD),
         ])
         .send()
@@ -533,6 +558,63 @@ async fn endpoints_answer_inside_jc_as_on_dev() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+
+    // `jc_data_query` through the Portal's MCP: the Portal exchanges the person's token for
+    // `endpoint:{slug}` (the scope jc's kaisatsu links to portal-api, as the deployment's
+    // admin-permissions Job does on dev) and reads as them through the gateway.
+    let data_query = |id: u32| {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {
+                "name": "jc_data_query",
+                "arguments": { "project": PROJECT, "endpoint": "closed", "type": "Thing" }
+            }
+        })
+    };
+    let member = token(&jc, "e2e-mcp").await;
+    let body = eventually(
+        "a member's jc_data_query reads the closed Endpoint",
+        &jc,
+        60,
+        || async {
+            let (status, body) = call(
+                &jc,
+                post.clone(),
+                "/api/v1/mcp",
+                Some(&member),
+                Some(&data_query(3)),
+            )
+            .await;
+            (status == StatusCode::OK && body.contains("urn:ngsi-ld:Thing:one"))
+                .then_some(body.clone())
+                .ok_or(format!("{status} {body}"))
+        },
+    )
+    .await;
+    assert!(!body.contains("not open to data reads"), "{body}");
+    // A person with no grant on the Endpoint gets a token exchanged the same way, and the
+    // gateway's Policy still refuses them: the scope names the Endpoint, never a right to it.
+    let stranger = token_of(&jc, "e2e-mcp", STRANGER).await;
+    let (status, body) = call(
+        &jc,
+        post.clone(),
+        "/api/v1/mcp",
+        Some(&stranger),
+        Some(&data_query(4)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        !body.contains("urn:ngsi-ld:Thing:one"),
+        "a person without a grant read the closed Endpoint: {body}"
+    );
+    assert!(
+        jc.log_has("the gateway refused a shared Endpoint read"),
+        "the stranger's read never reached the gateway's refusal:\n{}",
+        jc.tail()
+    );
 
     // A caller who claims the gateway's mesh identity or a subject on the public broker mount
     // is nobody but itself: the claim reaches no rule, and the admin token is still asked for.

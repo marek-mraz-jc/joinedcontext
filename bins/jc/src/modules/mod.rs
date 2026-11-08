@@ -79,7 +79,7 @@ pub async fn build(
     let _ = (shutdown, tasks, &ctx);
     match module {
         #[cfg(feature = "kaisatsu")]
-        Module::Kaisatsu => kaisatsu::build(&cfg.kaisatsu, ctx, mount).await,
+        Module::Kaisatsu => kaisatsu::build(&cfg.kaisatsu, ctx, mount, shutdown, tasks).await,
         #[cfg(feature = "dataroom")]
         Module::Dataroom => dataroom::build(&cfg.dataroom, ctx.setup, mount).await,
         #[cfg(feature = "daiya")]
