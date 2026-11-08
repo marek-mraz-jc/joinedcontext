@@ -87,10 +87,12 @@ fn world() -> AppState {
             "ServiceAccount",
             &format!("{project}-cam"),
             project,
-            json!({ "description": "a camera" }),
+            json!({ "owner": { "user": "proj@example.org" }, "purpose": "a camera posting counts", "roles": [], "credentials": [{ "kind": "oauth-client", "name": "main" }] }),
         ));
     }
-    let every = json!({ "rules": [{ "kinds": ["*"], "verbs": ["read", "propose", "approve", "delete"] }] });
+    // A rule names its kinds one by one (jc-core `Rule::grants`): every kind the Portal has.
+    let kinds: Vec<&str> = joinedcontext_portal::resource::kinds().map(|info| info.kind).collect();
+    let every = json!({ "rules": [{ "kinds": kinds, "verbs": ["read", "propose", "approve", "delete"] }] });
     m.upsert(envelope("Role", "org-admin", ORG_NAMESPACE, every.clone()));
     m.upsert(envelope("Role", "steward", ORG_NAMESPACE, every));
     m.upsert(binding("platform", "plat", "org-admin", json!({ "organization": "hel" })));
@@ -130,6 +132,9 @@ async fn each_persona_is_listed_exactly_its_administration_tools() {
     for (who, project, expected) in [
         (platform(), ORG_NAMESPACE, &all),
         (platform(), HEL_PROJECT, &all),
+        // Another Organization's project is that Organization's own, deny by default (ADR-N-058
+        // §2.4): the installation's administrator governs the installation, not its data.
+        (platform(), ESP_PROJECT, &none),
         (organization_admin(), ESP_PROJECT, &all),
         // The installation's own namespace and projects are not `esp`'s (ADR-N-058 §2.4).
         (organization_admin(), HEL_PROJECT, &none),
@@ -197,12 +202,8 @@ async fn the_project_list_never_names_another_organizations_project() {
             .await
         }
     };
-    let answer = read(platform(), ORG_NAMESPACE).await;
-    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
-    let seen = project_names(&answer.body);
-    assert!(seen.contains(HEL_PROJECT) && seen.contains(ESP_PROJECT), "{seen:?}");
-
     for (who, own, foreign) in [
+        (platform(), HEL_PROJECT, ESP_PROJECT),
         (organization_admin(), ESP_PROJECT, HEL_PROJECT),
         (project_admin(), ESP_PROJECT, HEL_PROJECT),
         (other_project_admin(), HEL_PROJECT, ESP_PROJECT),

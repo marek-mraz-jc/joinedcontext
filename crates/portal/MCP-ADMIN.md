@@ -11,7 +11,7 @@ permission model: the personas are RoleBindings of the existing `Role`s.
 
 | Persona | What makes it | Where its grants reach |
 |---|---|---|
-| Platform administrator (P) | `org-admin` bound with `scope: {organization: <installation Organization>}` (or the bootstrap group `JC_PORTAL_BOOTSTRAP_ADMINS`) | Every project of the installation Organization and the organization namespace `org` (bindings, groups, brokers, every `Organization`). `Effective::administers_organization()` holds. |
+| Platform administrator (P) | `org-admin` bound with `scope: {organization: <installation Organization>}` (or the bootstrap group `JC_PORTAL_BOOTSTRAP_ADMINS`) | Every project of the installation Organization and the organization namespace `org` (bindings, groups, brokers, every `Organization`). `Effective::administers_organization()` holds. A project of another Organization is that Organization's own: P reads it as not there (404, ADR-N-058 §2.4); only the bootstrap group reaches everything, for the first start. |
 | Organization administrator (O) | `org-admin` bound with `scope: {organization: <another Organization>}` (ADR-N-058 §2.4, ADR-N-067) | The projects whose `Project.spec.organizationRef` names that Organization, and its own `Organization` settings, bindings and groups at `org` (narrowed). Never the installation-wide manifests, never another Organization. |
 | Project administrator (A) | `steward` (read, propose, approve, delete on the project's kinds) bound with `scope: {project: <p>}` | That one project. A project it is not bound in answers 404 (PF-59, R20). |
 
