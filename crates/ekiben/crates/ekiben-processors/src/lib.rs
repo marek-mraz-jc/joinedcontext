@@ -4,6 +4,7 @@
 pub mod archive;
 pub mod branch;
 pub mod flow;
+pub mod json_schema;
 pub mod mapping;
 pub mod resources;
 pub mod switch;
@@ -19,6 +20,7 @@ pub fn register_all(registry: &Registry) {
     workflow::register(registry);
     switch::register(registry);
     flow::register(registry);
+    json_schema::register(registry);
     archive::register(registry);
     utility::register(registry);
     resources::register(registry);

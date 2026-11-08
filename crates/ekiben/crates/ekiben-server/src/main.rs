@@ -268,6 +268,16 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
                 tokio::spawn(vars.watch(resources.clone()));
             }
 
+            // Bento's `-r`: each file's caches, rate limits and processors are shared by every
+            // stream of the default organization (the one an admin token posts into).
+            for path in &resource_files {
+                let raw = std::fs::read_to_string(path)
+                    .map_err(|e| format!("failed to read '{}': {e}", path.display()))?;
+                manager
+                    .register_resources(&OrgId::default(), &raw)
+                    .map_err(|e| format!("{}: {e}", path.display()))?;
+            }
+
             if let Some(addr) = ingest_addr {
                 let listener = TcpListener::bind(&addr)
                     .await
