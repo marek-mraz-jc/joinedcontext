@@ -1,0 +1,135 @@
+/**
+ * The dashboard's time words and pickers against Grafana 12.4.14: its quick range and refresh
+ * lists as the reference instance draws them (tests/fixtures/grafana-reference), its calendar
+ * rounding (weeks from Sunday, a `to` rounded to the unit's last millisecond), a panel's own
+ * range (timeFrom only under a relative range, then timeShift), and a multi-value pick.
+ */
+import { describe, expect, it } from "vitest";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import "../src/i18n";
+import { panelQuery, toggled } from "../src/pages/grafana/DashboardPage";
+import { overrideWords, RefreshPicker, rangeWords, TimePicker } from "../src/components/panels/TimePicker";
+import { absoluteWords, panelRange, QUICK_RANGES, REFRESHES, refreshMs, resolveTime, roundInterval } from "../src/components/panels/timeRange";
+import timePicker from "./fixtures/grafana-reference/time-picker.json";
+import refreshPicker from "./fixtures/grafana-reference/refresh-picker.json";
+import i18n from "../src/i18n";
+
+const t = i18n.t.bind(i18n) as (key: string, options?: Record<string, unknown>) => string;
+// Sunday 8 November 2026, 14:30:15 local time, the day the reference was read.
+const NOW = new Date(2026, 10, 8, 14, 30, 15).getTime();
+const local = (...parts: [number, number, number, number?, number?, number?, number?]) => new Date(...(parts as [number, number, number, number, number, number, number])).getTime();
+
+describe("Grafana's pickers", () => {
+  it("offers Grafana's quick ranges, in its order and words", () => {
+    expect(QUICK_RANGES.map((range) => t(`dashboardView.quick.${range.key}`))).toEqual(timePicker.quickRanges);
+  });
+
+  it("offers Grafana's refresh intervals", () => {
+    render(<RefreshPicker value="" onChange={() => undefined} />);
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(refreshPicker.intervals);
+    expect(REFRESHES).toHaveLength(refreshPicker.intervals.length);
+  });
+
+  it("keeps a saved refresh that is not on the list", () => {
+    render(<RefreshPicker value="2m" onChange={() => undefined} />);
+    expect(screen.getByRole("combobox")).toHaveValue("2m");
+  });
+
+  it("names a quick range by its name and an absolute one by both ends", () => {
+    expect(rangeWords("now-6h", "now", NOW, t)).toBe("Last 6 hours");
+    expect(rangeWords("now/w", "now/w", NOW, t)).toBe("This week");
+    expect(rangeWords(String(local(2026, 10, 7, 6)), String(local(2026, 10, 8, 6)), NOW, t)).toBe("2026-11-07 06:00:00 to 2026-11-08 06:00:00");
+  });
+
+  it("applies a quick range and an absolute one typed in, and refuses a word Grafana does not read", async () => {
+    const user = userEvent.setup();
+    const picked: [string, string][] = [];
+    render(<TimePicker from="now-6h" to="now" now={NOW} onChange={(from, to) => picked.push([from, to])} />);
+    await user.click(screen.getAllByText("Last 6 hours")[0]);
+    await user.click(screen.getByRole("button", { name: "Yesterday" }));
+    expect(picked.at(-1)).toEqual(["now-1d/d", "now-1d/d"]);
+    const from = screen.getByRole("textbox", { name: "From" });
+    await user.clear(from);
+    await user.type(from, "2026-11-07 06:00:00");
+    const to = screen.getByRole("textbox", { name: "To" });
+    await user.clear(to);
+    await user.type(to, "yesterday");
+    await user.click(screen.getByRole("button", { name: "Apply time range" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Write a time such as now-6h");
+    expect(picked).toHaveLength(1);
+    await user.clear(to);
+    await user.type(to, "now");
+    await user.click(screen.getByRole("button", { name: "Apply time range" }));
+    expect(picked.at(-1)).toEqual([String(local(2026, 10, 7, 6)), "now"]);
+  });
+});
+
+describe("Grafana's time words", () => {
+  it("rounds to the unit's start, and a `to` to its last millisecond", () => {
+    expect(resolveTime("now/d", NOW)).toBe(local(2026, 10, 8));
+    expect(resolveTime("now/d", NOW, true)).toBe(local(2026, 10, 9) - 1);
+    // Grafana reads weeks from Sunday: on Sunday 8 November this week is 8 to 14 November.
+    expect([resolveTime("now/w", NOW), resolveTime("now/w", NOW, true)]).toEqual([local(2026, 10, 8), local(2026, 10, 15) - 1]);
+    expect([resolveTime("now-1M/M", NOW), resolveTime("now-1M/M", NOW, true)]).toEqual([local(2026, 9, 1), local(2026, 10, 1) - 1]);
+    expect([resolveTime("now/fQ", NOW), resolveTime("now/fQ", NOW, true)]).toEqual([local(2026, 9, 1), local(2027, 0, 1) - 1]);
+    expect(resolveTime("now-1y/fy", NOW)).toBe(local(2025, 0, 1));
+  });
+
+  it("steps days and months on the calendar, a month keeping its day as far as it can", () => {
+    expect(resolveTime("now-6M", NOW)).toBe(local(2026, 4, 8, 14, 30, 15));
+    expect(resolveTime("now-1M", local(2026, 2, 31, 12))).toBe(local(2026, 1, 28, 12));
+    expect(resolveTime("now-1d", local(2026, 2, 29, 12))).toBe(local(2026, 2, 28, 12));
+    expect(resolveTime("now-90m", NOW)).toBe(NOW - 90 * 60_000);
+  });
+
+  it("reads epochs, ISO times and the picker's local words, and nothing else", () => {
+    expect(resolveTime("1700000000000", NOW)).toBe(1_700_000_000_000);
+    expect(resolveTime("2026-11-07T06:00:00Z", NOW)).toBe(Date.UTC(2026, 10, 7, 6));
+    expect(resolveTime("2026-11-07 06:00:00", NOW)).toBe(local(2026, 10, 7, 6));
+    expect(absoluteWords(local(2026, 10, 7, 6))).toBe("2026-11-07 06:00:00");
+    for (const wrong of ["yesterday", "now-", "now-6x", "now/d/x", "now-6h junk", ""]) expect(resolveTime(wrong, NOW), wrong).toBeNull();
+  });
+
+  it("sets Auto refresh as Grafana does: the range over the width, rounded, at least 5 s", () => {
+    expect(roundInterval(11_000)).toBe(10_000);
+    expect(refreshMs("auto", 6 * 3_600_000, 1440)).toBe(15_000);
+    expect(refreshMs("auto", 7 * 86_400_000, 1440)).toBe(300_000);
+    expect(refreshMs("auto", 5 * 60_000, 1440)).toBe(5000);
+    expect([refreshMs("1d"), refreshMs("30s"), refreshMs(""), refreshMs("soon")]).toEqual([86_400_000, 30_000, 0, 0]);
+  });
+});
+
+describe("a panel's own range", () => {
+  const relative = { from: "now-6h", to: "now" };
+  const absolute = { from: String(local(2026, 10, 7, 6)), to: String(local(2026, 10, 8, 6)) };
+
+  it("reads timeFrom under a relative range and shifts back by timeShift, in Grafana's words", () => {
+    const own = panelRange({ timeFrom: "1h", timeShift: "1d" }, relative, NOW);
+    expect([own.from, own.to]).toEqual([local(2026, 10, 7, 13, 30, 15), local(2026, 10, 7, 14, 30, 15)]);
+    expect(overrideWords(own, t)).toBe("Last 1 hour + timeshift -1d");
+    expect(overrideWords(panelRange({ timeFrom: "1h" }, relative, NOW), t)).toBe("Last 1 hour");
+  });
+
+  it("keeps the dashboard's absolute range and applies only the shift, as Grafana 12.4 does", () => {
+    const own = panelRange({ timeFrom: "1h", timeShift: "1d" }, absolute, NOW);
+    expect([own.from, own.to]).toEqual([local(2026, 10, 6, 6), local(2026, 10, 7, 6)]);
+    expect(overrideWords(own, t)).toBe("Timeshift -1d");
+    expect(overrideWords(panelRange({ timeFrom: "1h" }, absolute, NOW), t)).toBeUndefined();
+  });
+
+  it("asks the panel's datasource with the panel's own range as epochs", () => {
+    const own = panelRange({ timeShift: "1d" }, absolute, NOW);
+    expect(panelQuery(own, { testid: ["k6-a", "k6-b"] }, 100)).toBe(`from=${local(2026, 10, 6, 6)}&to=${local(2026, 10, 7, 6)}&maxDataPoints=100&var-testid=k6-a&var-testid=k6-b`);
+  });
+});
+
+describe("a multi-value pick", () => {
+  it("keeps All alone, replaces it by a value and falls back to it when nothing is left", () => {
+    expect(toggled(["$__all"], "a", true)).toEqual(["a"]);
+    expect(toggled(["a"], "b", true)).toEqual(["a", "b"]);
+    expect(toggled(["a", "b"], "$__all", true)).toEqual(["$__all"]);
+    expect(toggled(["a"], "a", true)).toEqual(["$__all"]);
+    expect(toggled(["a"], "a", false)).toEqual([]);
+  });
+});

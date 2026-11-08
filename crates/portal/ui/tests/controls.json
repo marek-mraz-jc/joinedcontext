@@ -1418,11 +1418,13 @@
     },
     "src/pages/grafana/DashboardPage.tsx": {
       "controls": {
-        "Button": 2
+        "Button": 2,
+        "Checkbox": 1
       },
       "tests": [
         "dashboard_page.test.tsx",
-        "dashboard_panels.test.tsx"
+        "dashboard_panels.test.tsx",
+        "dashboard_time.test.tsx"
       ]
     },
     "src/components/panels/DashboardGrid.tsx": {
@@ -1439,6 +1441,14 @@
       },
       "tests": [
         "dashboard_panels.test.tsx"
+      ]
+    },
+    "src/components/panels/TimePicker.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "dashboard_time.test.tsx"
       ]
     },
     "src/components/panels/TimeSeriesPanel.tsx": {

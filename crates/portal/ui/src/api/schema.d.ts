@@ -9011,11 +9011,16 @@ export interface components {
             from: string;
             /**
              * @description Each panel's `id`, `type`, `title`, `description`, `gridPos`, `fieldConfig`, `options`,
-             *     and for a row `collapsed` and its `panels`.
+             *     `maxDataPoints`, its own range (`timeFrom`, `timeShift`, `hideTimeOverride`), and for a
+             *     row `collapsed` and its `panels`.
              */
             panels: Record<string, never>[];
             /** @description The saved refresh interval (`30s`, `5m`), if any. */
             refresh?: string | null;
+            /** @description Whether the dashboard hides its time and refresh pickers (`timepicker.hidden`). */
+            timePickerHidden: boolean;
+            /** @description The saved time zone (`browser`, `utc` or an IANA name), if any. */
+            timezone?: string | null;
             title: string;
             to: string;
             uid: string;

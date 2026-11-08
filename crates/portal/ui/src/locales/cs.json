@@ -4813,10 +4813,18 @@
     },
     "findType": "Najít typ",
     "className": "Název typu",
-    "typeName": { "hint": "Přejmenování upraví každé pole a typ, který ho uvádí, například Parking." },
-    "fieldName": { "hint": "Přejmenování upraví každý typ, který pole uvádí, například airQualityIndex." },
-    "enumName": { "hint": "Přejmenování upraví každé pole, které ho používá, například Level." },
-    "enumValue": { "hint": "To, co entity obsahují. Import přejmenujte před uložením, například moderate." },
+    "typeName": {
+      "hint": "Přejmenování upraví každé pole a typ, který ho uvádí, například Parking."
+    },
+    "fieldName": {
+      "hint": "Přejmenování upraví každý typ, který pole uvádí, například airQualityIndex."
+    },
+    "enumName": {
+      "hint": "Přejmenování upraví každé pole, které ho používá, například Level."
+    },
+    "enumValue": {
+      "hint": "To, co entity obsahují. Import přejmenujte před uložením, například moderate."
+    },
     "enumValues": {
       "name": "Název",
       "storedOf": "Uložená hodnota {value}",
@@ -11275,7 +11283,11 @@
     "home": "Zpět na portál"
   },
   "aiConnectors": {
-    "autonomous": { "label": "Schvalovat jeho změny hned, mým jménem", "hint": "Například datový model, prostor nebo pipeline, které Claude vytvoří, platí bez kliknutí. Změny přístupů a mazání stále čekají na schvalovatele. Vyžaduje právo schvalovat v projektech, do kterých zapisuje.", "needsWrite": "Nejprve dejte konektoru přístup k zápisu do projektu." },
+    "autonomous": {
+      "label": "Schvalovat jeho změny hned, mým jménem",
+      "hint": "Například datový model, prostor nebo pipeline, které Claude vytvoří, platí bez kliknutí. Změny přístupů a mazání stále čekají na schvalovatele. Vyžaduje právo schvalovat v projektech, do kterých zapisuje.",
+      "needsWrite": "Nejprve dejte konektoru přístup k zápisu do projektu."
+    },
     "title": "Moje AI konektory",
     "lead": "Adresy pro Claude, ChatGPT nebo VS Code, které sahají jen na to, co zde zaškrtnete, a nikdy na víc, než smíte vy sami. Každý AI klient vás přihlásí sám; tato stránka neukazuje žádný token.",
     "new": "Nový AI konektor",
@@ -11723,7 +11735,6 @@
     "rangeLabel": "Časový rozsah",
     "refreshLabel": "Obnovení",
     "refreshOff": "Vypnuto",
-    "every": "Každých {every}",
     "refreshNow": "Obnovit nyní",
     "all": "Vše",
     "loading": "Načítá se {title}",
@@ -11774,19 +11785,59 @@
       "range": "Rozpětí",
       "delta": "Změna"
     },
-    "ranges": {
-      "5m": "Posledních 5 minut",
-      "15m": "Posledních 15 minut",
-      "1h": "Poslední hodina",
-      "3h": "Poslední 3 hodiny",
-      "6h": "Posledních 6 hodin",
-      "12h": "Posledních 12 hodin",
-      "24h": "Posledních 24 hodin",
-      "2d": "Poslední 2 dny",
-      "7d": "Posledních 7 dní",
-      "30d": "Posledních 30 dní",
-      "90d": "Posledních 90 dní",
-      "1y": "Poslední rok"
-    }
+    "quick": {
+      "last5m": "Posledních 5 minut",
+      "last15m": "Posledních 15 minut",
+      "last30m": "Posledních 30 minut",
+      "last1h": "Poslední 1 hodina",
+      "last3h": "Poslední 3 hodiny",
+      "last6h": "Posledních 6 hodin",
+      "last12h": "Posledních 12 hodin",
+      "last24h": "Posledních 24 hodin",
+      "last2d": "Poslední 2 dny",
+      "last7d": "Posledních 7 dní",
+      "last30d": "Posledních 30 dní",
+      "last90d": "Posledních 90 dní",
+      "last6M": "Posledních 6 měsíců",
+      "last1y": "Poslední 1 rok",
+      "last2y": "Poslední 2 roky",
+      "last5y": "Posledních 5 let",
+      "yesterday": "Včera",
+      "dayBeforeYesterday": "Předevčírem",
+      "thisDayLastWeek": "Tento den minulý týden",
+      "previousWeek": "Předchozí týden",
+      "previousMonth": "Předchozí měsíc",
+      "previousFiscalQuarter": "Předchozí fiskální čtvrtletí",
+      "previousYear": "Předchozí rok",
+      "previousFiscalYear": "Předchozí fiskální rok",
+      "today": "Dnes",
+      "todaySoFar": "Dnes dosud",
+      "thisWeek": "Tento týden",
+      "thisWeekSoFar": "Tento týden dosud",
+      "thisMonth": "Tento měsíc",
+      "thisMonthSoFar": "Tento měsíc dosud",
+      "thisYear": "Tento rok",
+      "thisYearSoFar": "Tento rok dosud",
+      "thisFiscalQuarterSoFar": "Toto fiskální čtvrtletí dosud",
+      "thisFiscalQuarter": "Toto fiskální čtvrtletí",
+      "thisFiscalYearSoFar": "Tento fiskální rok dosud",
+      "thisFiscalYear": "Tento fiskální rok"
+    },
+    "timePicker": {
+      "between": "{from} až {to}",
+      "rangeShifted": "{range} + posun -{shift}",
+      "shifted": "Posun -{shift}",
+      "close": "Zavřít",
+      "absolute": "Absolutní časový rozsah",
+      "from": "Od",
+      "to": "Do",
+      "hint": "Čas, například now-6h, now/d nebo 2026-11-08 06:00:00.",
+      "hintTo": "Čas jako now, now/d nebo 2026-11-08 18:00:00.",
+      "invalid": "Napište čas ve tvaru now-6h, now/d nebo 2026-11-08 06:00:00.",
+      "apply": "Použít časový rozsah",
+      "quick": "Rychlé rozsahy"
+    },
+    "refreshAuto": "Automaticky",
+    "none": "Žádná"
   }
 }

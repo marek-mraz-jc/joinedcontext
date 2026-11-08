@@ -63,9 +63,15 @@ pub struct DashboardView {
     /// The saved refresh interval (`30s`, `5m`), if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh: Option<String>,
+    /// Whether the dashboard hides its time and refresh pickers (`timepicker.hidden`).
+    pub time_picker_hidden: bool,
+    /// The saved time zone (`browser`, `utc` or an IANA name), if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
     pub variables: Vec<VariableView>,
     /// Each panel's `id`, `type`, `title`, `description`, `gridPos`, `fieldConfig`, `options`,
-    /// and for a row `collapsed` and its `panels`.
+    /// `maxDataPoints`, its own range (`timeFrom`, `timeShift`, `hideTimeOverride`), and for a
+    /// row `collapsed` and its `panels`.
     #[schema(value_type = Vec<Object>)]
     pub panels: Vec<Value>,
 }
@@ -185,6 +191,9 @@ fn panel_view(panel: &Value) -> Value {
         "options",
         "collapsed",
         "maxDataPoints",
+        "timeFrom",
+        "timeShift",
+        "hideTimeOverride",
     ] {
         if let Some(value) = panel.get(key) {
             kept.insert(key.to_owned(), value.clone());
@@ -398,6 +407,11 @@ pub async fn get_dashboard(
         refresh: dashboard["refresh"]
             .as_str()
             .filter(|r| !r.is_empty())
+            .map(str::to_owned),
+        time_picker_hidden: dashboard["timepicker"]["hidden"] == true,
+        timezone: dashboard["timezone"]
+            .as_str()
+            .filter(|z| !z.is_empty())
             .map(str::to_owned),
         variables: variables_of(&dashboard)
             .into_iter()
@@ -919,7 +933,7 @@ mod tests {
     fn board() -> Value {
         json!({
             "uid": "live", "title": "Helsinki live", "time": { "from": "now-7d", "to": "now" },
-            "refresh": "5m",
+            "refresh": "5m", "timezone": "browser", "timepicker": { "hidden": true },
             "templating": { "list": [
                 { "name": "station", "type": "custom", "multi": true, "includeAll": true,
                   "query": "Kallio,Mannerheimintie", "current": { "value": ["Kallio"] } },
@@ -928,6 +942,7 @@ mod tests {
             ]},
             "panels": [
                 { "id": 1, "type": "timeseries", "title": "Air", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+                  "timeFrom": "1h", "timeShift": "1d", "hideTimeOverride": true,
                   "datasource": { "uid": "open-ds" },
                   "targets": [{ "refId": "A", "datasource": { "uid": "open-ds" }, "entityType": "AirQualityObserved" }] },
                 { "id": 2, "type": "row", "title": "Closed", "collapsed": true, "panels": [
@@ -1253,6 +1268,18 @@ mod tests {
         assert!(
             !text.contains("targets") && !text.contains("open-ds"),
             "{text}"
+        );
+        assert_eq!(
+            (view.time_picker_hidden, view.timezone.as_deref()),
+            (true, Some("browser"))
+        );
+        assert_eq!(
+            (
+                &view.panels[0]["timeFrom"],
+                &view.panels[0]["timeShift"],
+                &view.panels[0]["hideTimeOverride"]
+            ),
+            (&json!("1h"), &json!("1d"), &json!(true))
         );
         assert_eq!(view.panels[1]["panels"][0]["title"], "Secret");
         let station = &view.variables[0];

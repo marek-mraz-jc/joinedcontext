@@ -257,9 +257,11 @@ const span = (text) => {
 };
 
 /** The range a panel reads: the dashboard's, or `now-timeFrom` to now, both ends `timeShift` back. */
+// The shots open every dashboard on an absolute range (?from=&to=), and Grafana 12.4 applies a
+// panel's timeFrom only under a relative dashboard range: here only timeShift moves the panel.
 export function panelRange(dashboard, panel) {
   const range = rangeOf(dashboard);
-  const from = panel.timeFrom ? range.to - span(panel.timeFrom) : range.from;
+  const from = range.from;
   const shift = span(panel.timeShift);
   return { from: from - shift, to: range.to - shift };
 }

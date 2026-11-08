@@ -322,7 +322,7 @@ describe("the dashboard around the panels", () => {
   });
 
   it("asks a panel for the range and each variable, and nothing else", () => {
-    expect(panelQuery({ from: "now-6h", to: "now", vars: { station: "Kallio", testid: "$__all" } }, 500)).toBe("from=now-6h&to=now&maxDataPoints=500&var-station=Kallio&var-testid=%24__all");
+    expect(panelQuery({ from: 1000, to: 2000 }, { station: ["Kallio"], testid: ["$__all"] }, 500)).toBe("from=1000&to=2000&maxDataPoints=500&var-station=Kallio&var-testid=%24__all");
   });
 
   it("reads Grafana's time words", () => {

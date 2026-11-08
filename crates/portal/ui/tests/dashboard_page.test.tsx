@@ -20,7 +20,7 @@ const VIEW = {
   from: "now-6h",
   to: "now",
   refresh: null,
-  variables: [{ name: "testid", label: "Test run", kind: "query", multi: true, includeAll: true, options: [], current: "$__all" }],
+  variables: [{ name: "testid", label: "Test run", kind: "query", multi: true, includeAll: true, options: [], current: ["$__all"] }],
   panels: [{ id: 3, type: "stat", title: "Checks passed", gridPos: { x: 0, y: 0, w: 6, h: 4 }, fieldConfig: { defaults: { unit: "percent" }, overrides: [] } }],
 };
 
@@ -69,20 +69,33 @@ describe("the dashboard page", () => {
     renderAt(() => <DashboardPage project="helsinki" uid="k6" />);
     expect(await screen.findByRole("heading", { level: 1, name: "k6 load" })).toBeInTheDocument();
     expect(await screen.findByText("99.1%")).toBeInTheDocument();
-    expect(asked[0]).toBe("?from=now-6h&to=now&maxDataPoints=1000&var-testid=%24__all");
-    const picker = screen.getByLabelText("Test run");
-    await waitFor(() => expect(picker).toBeEnabled());
-    expect([...(picker as HTMLSelectElement).options].map((option) => option.value)).toEqual(["$__all", "run-41", "run-42"]);
-    await userEvent.setup().selectOptions(picker, "run-42");
-    await waitFor(() => expect(asked.at(-1)).toContain("var-testid=run-42"));
+    // Grafana asks a datasource with the range as epochs: six hours back from now.
+    const first = new URLSearchParams(asked[0]);
+    expect([...first.keys()]).toEqual(["from", "to", "maxDataPoints", "var-testid"]);
+    expect(Number(first.get("to")) - Number(first.get("from"))).toBe(6 * 3_600_000);
+    expect(first.getAll("var-testid")).toEqual(["$__all"]);
+    const user = userEvent.setup();
+    await user.click(screen.getByText("All", { selector: "summary" }));
+    const picker = screen.getByRole("group", { name: "Test run" });
+    await waitFor(() => expect(picker).toHaveTextContent("run-42"));
+    expect([...picker.querySelectorAll("label")].map((label) => label.textContent)).toEqual(["All", "run-41", "run-42"]);
+    await user.click(screen.getByRole("checkbox", { name: "run-41" }));
+    await user.click(screen.getByRole("checkbox", { name: "run-42" }));
+    // A multi-value variable sends one var- per value, as Grafana's frontend does.
+    await waitFor(() => expect(new URLSearchParams(asked.at(-1)).getAll("var-testid")).toEqual(["run-41", "run-42"]));
   });
 
   it("asks again over a new range and on Refresh now", async () => {
     const user = userEvent.setup();
     renderAt(() => <DashboardPage project="helsinki" uid="k6" />);
     await screen.findByText("99.1%");
-    await user.selectOptions(screen.getByLabelText("Time range", { selector: "select" }), "now-24h");
-    await waitFor(() => expect(asked.at(-1)).toContain("from=now-24h"));
+    await user.click(screen.getAllByText("Last 6 hours")[0]);
+    await user.click(screen.getByRole("button", { name: "Last 24 hours" }));
+    await waitFor(() => {
+      const last = new URLSearchParams(asked.at(-1));
+      expect(Number(last.get("to")) - Number(last.get("from"))).toBe(24 * 3_600_000);
+    });
+    expect(window.location.search).toBe("?from=now-24h&to=now");
     const before = asked.length;
     await user.click(screen.getByRole("button", { name: "Refresh now" }));
     await waitFor(() => expect(asked.length).toBeGreaterThan(before));

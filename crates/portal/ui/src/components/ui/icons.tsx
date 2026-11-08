@@ -39,6 +39,7 @@ const PATHS = {
   error: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM9 9l6 6M15 9l-6 6",
   search: "M10 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12zM20 20l-5.5-5.5",
   refresh: "M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5",
+  clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2",
   inbox: "M3 13h5l2 3h4l2-3h5M3 13V6h18v7M3 13v5h18v-5",
   // An arrow into a tray: a bundle read into the project (T-0217).
   import: "M12 3v10M8 9l4 4 4-4M4 15v4h16v-4",

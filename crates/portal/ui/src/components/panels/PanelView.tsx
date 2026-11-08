@@ -29,6 +29,12 @@ export interface PanelDefinition {
   collapsed?: boolean;
   panels?: PanelDefinition[];
   maxDataPoints?: number;
+  /** The panel's own range (`1h`), read only under a relative dashboard range, as Grafana does. */
+  timeFrom?: string;
+  /** How far back the panel's range moves (`1d`). */
+  timeShift?: string;
+  /** Hides the words of the panel's own range from its header. */
+  hideTimeOverride?: boolean;
 }
 
 /** A panel's data as the Portal's panel route answers it. */
@@ -60,6 +66,8 @@ export interface PanelViewProps {
   onWiden?: () => void;
   /** The page already says several panels failed: a failed panel shows its title line only. */
   quiet?: boolean;
+  /** The panel's own range in Grafana's words (`Last 1 hour + timeshift -1d`), beside its title. */
+  timeInfo?: string;
 }
 
 function Body({ panel, data, from, to, locale, height }: Required<Pick<PanelViewProps, "panel" | "from" | "to" | "locale" | "height">> & { data: PanelData }): ReactNode {
@@ -127,7 +135,7 @@ function sentence(text: string): string {
   return /[.!?…]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
-export function PanelView({ panel, data, loading, failure, onRetry, from, to, locale, height, headingLevel = "h2", asked, onWiden, quiet }: PanelViewProps): JSX.Element {
+export function PanelView({ panel, data, loading, failure, onRetry, from, to, locale, height, headingLevel = "h2", asked, onWiden, quiet, timeInfo }: PanelViewProps): JSX.Element {
   const { t } = useTranslation();
   const Heading = headingLevel;
   const title = panel.title || t("dashboardView.untitled");
@@ -180,6 +188,12 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
         <Heading className="min-w-0 flex-1 truncate text-body font-semibold text-fg" title={title}>
           {title}
         </Heading>
+        {timeInfo ? (
+          <span className="inline-flex shrink-0 items-center gap-1 text-caption text-primary-soft-fg" data-time-info="">
+            <Icon name="clock" className="size-3.5" />
+            {timeInfo}
+          </span>
+        ) : null}
         {!(DRAWN as readonly string[]).includes(panel.type) ? (
           <span className="shrink-0 text-caption text-fg-muted">{t("dashboardView.asTable", { type: panel.type })}</span>
         ) : null}
