@@ -1651,4 +1651,63 @@ mod tests {
         assert!(simple.get("nonsense").is_none());
         assert_eq!(detailed["owner_org"]["title"], "owner_org");
     }
+    #[test]
+    fn equal_sort_keys_fall_back_to_the_name_and_tags_count_once() {
+        let (org_id, catalogue_id) = test_ids();
+        let ctx = RequestCtx::anonymous(org_id, catalogue_id);
+        let authz = PolicyAuthorizer::default();
+        let when = Utc::now() - chrono::Duration::days(1);
+        let twin = |name: &str| {
+            let mut d = make_dataset(name, "pub-a", "Rovnaký", &[], &[], Visibility::Public);
+            d.modified = when;
+            d
+        };
+        let mut b = twin("b-twin");
+        b.tags = vec!["voda".into(), "voda".into(), "les".into()];
+        b.keywords.insert("sk".into(), vec!["voda".into()]);
+        let all = vec![b, twin("c-twin"), twin("a-twin")];
+        let pubs = vec![publisher(
+            "pub-a",
+            "a-slug",
+            "Vydavateľ A",
+            RecordState::Active,
+        )];
+        let names = |sort: Option<&str>| {
+            let mut f = DatasetFilter::public_default();
+            f.sort = sort.map(str::to_owned);
+            search_datasets(&ctx, &authz, &all, &pubs, &f, "sk")
+                .expect("search")
+                .datasets
+                .into_iter()
+                .map(|d| d.name)
+                .collect::<Vec<_>>()
+        };
+        let by_name = ["a-twin", "b-twin", "c-twin"];
+        for sort in [
+            Some("title asc"),
+            Some("title_string desc"),
+            Some("metadata_modified desc"),
+            None,
+        ] {
+            assert_eq!(names(sort), by_name, "ties under {sort:?} order by name");
+        }
+
+        let mut f = DatasetFilter::public_default();
+        f.tags = vec!["voda".into()];
+        let res = search_datasets(&ctx, &authz, &all, &pubs, &f, "sk").expect("search");
+        assert_eq!(res.total, 1);
+        let count = |v: &str| {
+            res.facets
+                .keyword
+                .iter()
+                .find(|k| k.value == v)
+                .map(|k| k.count)
+        };
+        assert_eq!(
+            count("voda"),
+            Some(1),
+            "a repeated tag counts its dataset once"
+        );
+        assert_eq!(count("les"), Some(1));
+    }
 }

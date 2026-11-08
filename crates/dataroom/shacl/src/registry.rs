@@ -1362,4 +1362,49 @@ mod tests {
             .validate_custom_sample(NEEDS_KEYWORD, "not turtle", org, cat, "pkg")
             .is_err());
     }
+    #[test]
+    fn a_poisoned_lock_and_a_missing_pinned_version_keep_the_registry_serving() {
+        let registry = std::sync::Arc::new(ProfileRegistry::new());
+        let poisoner = std::sync::Arc::clone(&registry);
+        let crashed = std::thread::spawn(move || {
+            let _guard = poisoner.profiles.write().unwrap();
+            panic!("a writer crashed while holding the profile lock");
+        })
+        .join();
+        assert!(crashed.is_err());
+        assert!(registry.profiles.is_poisoned());
+
+        assert!(registry.list().iter().any(|p| p.id == "dcat-ap-3.0.1"));
+        assert!(registry.get("dcat-ap-3.0.1", None).is_some());
+
+        let states = r#"
+            @prefix sh: <http://www.w3.org/ns/shacl#> .
+            @prefix dcat: <http://www.w3.org/ns/dcat#> .
+            @prefix ex: <https://e.org/> .
+            <https://e.org/shape> a sh:NodeShape ; sh:targetClass dcat:Dataset ;
+              sh:property [ sh:path ex:state ; sh:in ( "open" "closed" ) ] .
+        "#;
+        let (stored, _) = registry
+            .upload_and_dry_run(
+                profile("states", "1", None, states),
+                &small_catalogue("states"),
+                &[],
+                &BTreeMap::new(),
+            )
+            .expect("upload works after the lock was poisoned");
+        let field = stored
+            .form_fields
+            .iter()
+            .find(|f| f.path == "https://e.org/state")
+            .expect("sh:in field in the form layout");
+        assert_eq!(field.allowed_values, ["open", "closed"]);
+
+        // A catalogue pinned to a version that is gone validates against the unpinned record.
+        let (rec, _) = registry.stacked_shapes("states", Some("9")).unwrap();
+        assert_eq!(rec.version, "1");
+        assert!(matches!(
+            registry.stacked_shapes("nobody", Some("1")),
+            Err(DataroomError::NotFound(_))
+        ));
+    }
 }

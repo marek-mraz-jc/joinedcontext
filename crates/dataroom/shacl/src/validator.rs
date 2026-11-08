@@ -1379,4 +1379,24 @@ mod tests {
         assert_eq!(count("LanguageInConstraintComponent"), 1, "{seen:?}");
         assert_eq!(count("UniqueLangConstraintComponent"), 1, "{seen:?}");
     }
+    #[test]
+    fn hex_binary_and_untagged_names() {
+        let shapes_body = "ex:S a sh:NodeShape ; sh:targetClass ex:Item ;
+               sh:property [ sh:path ex:h ; sh:datatype xsd:hexBinary ; sh:name \"Checksum\" ] .";
+        let sg = shapes(shapes_body).unwrap();
+        let ps = sg.property_shapes.values().next().unwrap();
+        assert_eq!(ps.name.get("en").map(String::as_str), Some("Checksum"));
+
+        let conforms = |v: &str| {
+            report(
+                shapes_body,
+                &format!("ex:a a ex:Item ; ex:h \"{v}\"^^xsd:hexBinary ."),
+            )
+            .conforms
+        };
+        assert!(conforms("0A1f"));
+        assert!(conforms(""));
+        assert!(!conforms("0G"));
+        assert!(!conforms("ABC"));
+    }
 }
