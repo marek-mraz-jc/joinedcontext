@@ -15,8 +15,20 @@ pub const MAX_XML_ATTRIBUTES_PER_TAG: usize = 128;
 /// each without a bound (RUSTSEC-2026-0195).
 pub const MAX_XML_NAMESPACE_DECLARATIONS: usize = 1024;
 
-/// Checks XML element nesting depth, attributes per tag and namespace declarations before
-/// parsing, so a document that would exhaust the parser is refused (A1).
+fn limit(kind: &str, message: String) -> DataroomError {
+    DataroomError::RdfLimitExceeded {
+        kind: kind.into(),
+        message,
+    }
+}
+
+/// Checks XML element nesting depth, attributes per tag, namespace declarations and entity
+/// declarations before parsing, so a document that would exhaust the parser is refused (A1).
+///
+/// The scan follows XML's lexical structure: comments, CDATA sections and processing
+/// instructions are skipped to their own terminators, and inside a tag quoted attribute values
+/// are skipped whole (a `>` inside a value does not end the tag). Every `=` outside a value is
+/// one attribute, whatever whitespace surrounds it.
 fn check_xml_nesting_depth(bytes: &[u8], max_depth: usize) -> Result<()> {
     let text = std::str::from_utf8(bytes)
         .map_err(|e| DataroomError::Rdf(format!("invalid UTF-8 in RDF/XML: {e}")))?;
@@ -25,56 +37,130 @@ fn check_xml_nesting_depth(bytes: &[u8], max_depth: usize) -> Result<()> {
     let mut rest = text;
     while let Some(lt) = rest.find('<') {
         rest = &rest[lt + 1..];
+        let skip_to = |rest: &str, end: &str| rest.find(end).map(|i| i + end.len());
         if rest.starts_with("!--") {
-            if let Some(end) = rest.find("-->") {
-                rest = &rest[end + 3..];
+            match skip_to(rest, "-->") {
+                Some(i) => rest = &rest[i..],
+                None => break,
+            }
+            continue;
+        }
+        if rest.starts_with("![CDATA[") {
+            match skip_to(rest, "]]>") {
+                Some(i) => rest = &rest[i..],
+                None => break,
+            }
+            continue;
+        }
+        if rest.starts_with('?') {
+            match skip_to(rest, "?>") {
+                Some(i) => rest = &rest[i..],
+                None => break,
+            }
+            continue;
+        }
+        if rest.starts_with('!') {
+            // `<!DOCTYPE ...>`, maybe with an internal subset `[ ... ]>`. oxrdfxml expands the
+            // entities declared there, nested ones included (an entity bomb allocates
+            // gigabytes), and a DCAT feed has no use for them: entity declarations are refused.
+            let Some(gt) = rest.find('>') else {
+                break;
+            };
+            let end = if rest[..gt].contains('[') {
+                match skip_to(rest, "]>") {
+                    Some(i) => i,
+                    None => break,
+                }
+            } else {
+                gt + 1
+            };
+            if rest[..end].contains("<!ENTITY") {
+                return Err(limit(
+                    "entities",
+                    "RDF/XML entity declarations are refused (entity expansion guard)".into(),
+                ));
+            }
+            rest = &rest[end..];
+            continue;
+        }
+
+        // A start, end or empty-element tag: walk it, skipping quoted values. `token` is the
+        // name being read, `last` the one read before the next `=`.
+        let mut attributes = 0usize;
+        let mut token: Option<usize> = None;
+        let mut last = "";
+        let mut quote: Option<char> = None;
+        let mut end = None;
+        for (i, c) in rest.char_indices() {
+            if let Some(q) = quote {
+                if c == q {
+                    quote = None;
+                }
                 continue;
             }
-            break;
-        }
-        if rest.starts_with('?') || rest.starts_with('!') {
-            if let Some(gt) = rest.find('>') {
-                rest = &rest[gt + 1..];
-                continue;
+            match c {
+                '"' | '\'' => {
+                    token = None;
+                    quote = Some(c);
+                }
+                '>' => {
+                    end = Some(i);
+                    break;
+                }
+                '=' => {
+                    if let Some(start) = token.take() {
+                        last = &rest[start..i];
+                    }
+                    attributes += 1;
+                    if attributes > MAX_XML_ATTRIBUTES_PER_TAG {
+                        return Err(limit(
+                            "attributes",
+                            format!(
+                                "RDF/XML tag with more than {MAX_XML_ATTRIBUTES_PER_TAG} attributes exceeds the maximum"
+                            ),
+                        ));
+                    }
+                    if last == "xmlns" || last.starts_with("xmlns:") {
+                        namespace_declarations += 1;
+                        if namespace_declarations > MAX_XML_NAMESPACE_DECLARATIONS {
+                            return Err(limit(
+                                "namespaces",
+                                format!(
+                                    "RDF/XML declares more than {MAX_XML_NAMESPACE_DECLARATIONS} namespaces"
+                                ),
+                            ));
+                        }
+                    }
+                    last = "";
+                }
+                c if c.is_whitespace() => {
+                    if let Some(start) = token.take() {
+                        last = &rest[start..i];
+                    }
+                }
+                _ => {
+                    if token.is_none() {
+                        token = Some(i);
+                    }
+                }
             }
-            break;
         }
-        let Some(gt) = rest.find('>') else {
+        let Some(end) = end else {
             break;
         };
-        let tag_body = rest[..gt].trim();
-        let attributes = tag_body.matches("=\"").count() + tag_body.matches("='").count();
-        if attributes > MAX_XML_ATTRIBUTES_PER_TAG {
-            return Err(DataroomError::RdfLimitExceeded {
-                kind: "attributes".into(),
-                message: format!(
-                    "RDF/XML tag with {attributes} attributes exceeds maximum of {MAX_XML_ATTRIBUTES_PER_TAG}"
-                ),
-            });
-        }
-        namespace_declarations += tag_body.matches("xmlns").count();
-        if namespace_declarations > MAX_XML_NAMESPACE_DECLARATIONS {
-            return Err(DataroomError::RdfLimitExceeded {
-                kind: "namespaces".into(),
-                message: format!(
-                    "RDF/XML declares more than {MAX_XML_NAMESPACE_DECLARATIONS} namespaces"
-                ),
-            });
-        }
+        let tag_body = rest[..end].trim();
         if tag_body.starts_with('/') {
             depth = depth.saturating_sub(1);
         } else if !tag_body.ends_with('/') {
             depth += 1;
             if depth > max_depth {
-                return Err(DataroomError::RdfLimitExceeded {
-                    kind: "nesting-depth".into(),
-                    message: format!(
-                        "RDF/XML element nesting depth {depth} exceeds maximum of {max_depth}"
-                    ),
-                });
+                return Err(limit(
+                    "nesting-depth",
+                    format!("RDF/XML element nesting depth {depth} exceeds maximum of {max_depth}"),
+                ));
             }
         }
-        rest = &rest[gt + 1..];
+        rest = &rest[end + 1..];
     }
     Ok(())
 }
@@ -253,5 +339,259 @@ mod tests {
         let ok = r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dct="http://purl.org/dc/terms/"><rdf:Description rdf:about="https://example.org/ds"><dct:title>A</dct:title></rdf:Description></rdf:RDF>"#;
         let graph = parse_rdfxml_bytes(ok.as_bytes(), &RdfLimits::default()).unwrap();
         assert!(!graph.is_empty());
+    }
+
+    const RDF_NS: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+
+    fn refused_kind(doc: &str) -> Option<String> {
+        match parse_rdfxml_bytes(doc.as_bytes(), &RdfLimits::default()) {
+            Err(DataroomError::RdfLimitExceeded { kind, .. }) => Some(kind),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a1_attribute_flood_with_spaces_around_equals_is_refused() {
+        let attrs: String = (0..2000).map(|i| format!(" a{i} = \"x\"")).collect();
+        let doc = format!("<rdf:RDF xmlns:rdf=\"{RDF_NS}\"><rdf:Description{attrs}/></rdf:RDF>");
+        assert_eq!(refused_kind(&doc).as_deref(), Some("attributes"));
+    }
+
+    #[test]
+    fn a1_attribute_flood_split_across_lines_is_refused() {
+        let attrs: String = (0..2000).map(|i| format!("\n\ta{i}\n=\n'x'")).collect();
+        let doc = format!("<rdf:RDF xmlns:rdf=\"{RDF_NS}\"><rdf:Description{attrs}/></rdf:RDF>");
+        assert_eq!(refused_kind(&doc).as_deref(), Some("attributes"));
+    }
+
+    #[test]
+    fn a1_attribute_flood_behind_a_gt_inside_a_value_is_refused() {
+        // `>` is legal inside an attribute value; the attributes after it still count.
+        let attrs: String = (0..2000).map(|i| format!(" a{i}=\"x\"")).collect();
+        let doc = format!(
+            "<rdf:RDF xmlns:rdf=\"{RDF_NS}\"><rdf:Description rdf:about=\"https://e.org/>\"{attrs}/></rdf:RDF>"
+        );
+        assert_eq!(refused_kind(&doc).as_deref(), Some("attributes"));
+    }
+
+    #[test]
+    fn a1_duplicate_attribute_names_flood_is_refused() {
+        let attrs: String = (0..5000).map(|_| " a=\"x\"").collect();
+        let doc = format!("<rdf:RDF xmlns:rdf=\"{RDF_NS}\"><rdf:Description{attrs}/></rdf:RDF>");
+        assert_eq!(refused_kind(&doc).as_deref(), Some("attributes"));
+    }
+
+    #[test]
+    fn a1_namespace_flood_on_one_tag_and_nested_tags_is_refused() {
+        // Below the per-tag attribute cap on every tag, but over the document namespace cap.
+        let mut doc = format!("<rdf:RDF xmlns:rdf=\"{RDF_NS}\">");
+        for i in 0..20 {
+            let decls: String = (0..100)
+                .map(|j| format!(" xmlns:n{i}x{j}=\"http://example.org/{i}/{j}#\""))
+                .collect();
+            doc.push_str(&format!("<rdf:Description{decls}>"));
+        }
+        for _ in 0..20 {
+            doc.push_str("</rdf:Description>");
+        }
+        doc.push_str("</rdf:RDF>");
+        assert_eq!(refused_kind(&doc).as_deref(), Some("namespaces"));
+
+        // Default-namespace declarations (`xmlns=`) count as well.
+        let decls: String = (0..=MAX_XML_NAMESPACE_DECLARATIONS)
+            .map(|i| format!("<e{i} xmlns = \"http://example.org/{i}#\"/>"))
+            .collect();
+        let doc = format!("<rdf:RDF xmlns:rdf=\"{RDF_NS}\">{decls}</rdf:RDF>");
+        assert_eq!(refused_kind(&doc).as_deref(), Some("namespaces"));
+    }
+
+    #[test]
+    fn a1_cdata_and_comments_neither_hide_nor_invent_tags() {
+        // Text that looks like an attribute flood inside a CDATA section or a comment is text.
+        let fake: String = (0..2000).map(|i| format!(" a{i}=\"x\"")).collect();
+        let doc = format!(
+            "<rdf:RDF xmlns:rdf=\"{RDF_NS}\" xmlns:dct=\"http://purl.org/dc/terms/\">\
+             <!-- <x{fake}> -->\
+             <rdf:Description rdf:about=\"https://e.org/ds\">\
+             <dct:title><![CDATA[ > <y{fake}/> ]]></dct:title>\
+             </rdf:Description></rdf:RDF>"
+        );
+        let g = parse_rdfxml_bytes(doc.as_bytes(), &RdfLimits::default()).expect("valid document");
+        assert_eq!(g.len(), 1);
+        assert!(g
+            .triples
+            .iter()
+            .next()
+            .unwrap()
+            .object
+            .string_value()
+            .contains("<y a0="));
+
+        // A comment or CDATA section does not hide a real flood after it.
+        let attrs: String = (0..2000).map(|i| format!(" a{i}=\"x\"")).collect();
+        let doc = format!(
+            "<rdf:RDF xmlns:rdf=\"{RDF_NS}\"><!-- > --><![CDATA[ > ]]><rdf:Description{attrs}/></rdf:RDF>"
+        );
+        assert_eq!(refused_kind(&doc).as_deref(), Some("attributes"));
+    }
+
+    #[test]
+    fn a1_nesting_depth_and_size_caps() {
+        let open: String = (0..100).map(|_| "<rdf:Description><rdf:value>").collect();
+        let doc = format!("<rdf:RDF xmlns:rdf=\"{RDF_NS}\">{open}");
+        assert_eq!(refused_kind(&doc).as_deref(), Some("nesting-depth"));
+
+        let small = RdfLimits {
+            max_bytes: 10,
+            ..RdfLimits::default()
+        };
+        assert!(matches!(
+            parse_rdfxml(&format!("<rdf:RDF xmlns:rdf=\"{RDF_NS}\"/>"), &small),
+            Err(DataroomError::RdfLimitExceeded { kind, .. }) if kind == "bytes"
+        ));
+    }
+
+    #[test]
+    fn a1_entity_expansion_bomb_is_refused() {
+        let mut dtd = String::from("<!DOCTYPE rdf:RDF [<!ENTITY l0 \"lol\">");
+        for i in 1..12 {
+            let refs: String = (0..10).map(|_| format!("&l{};", i - 1)).collect();
+            dtd.push_str(&format!("<!ENTITY l{i} \"{refs}\">"));
+        }
+        dtd.push(']');
+        dtd.push('>');
+        let doc = format!(
+            "{dtd}<rdf:RDF xmlns:rdf=\"{RDF_NS}\" xmlns:dct=\"http://purl.org/dc/terms/\">\
+             <rdf:Description rdf:about=\"https://e.org/ds\"><dct:title>&l11;</dct:title>\
+             </rdf:Description></rdf:RDF>"
+        );
+        assert_eq!(refused_kind(&doc).as_deref(), Some("entities"));
+
+        // A doctype without an internal subset, or with one but no entities, is accepted.
+        for doctype in [
+            "<!DOCTYPE rdf:RDF>".to_owned(),
+            "<!DOCTYPE rdf:RDF [<!-- nothing declared -->]>".to_owned(),
+        ] {
+            let doc = format!(
+                "<?xml version=\"1.0\"?>{doctype}<rdf:RDF xmlns:rdf=\"{RDF_NS}\" xmlns:dct=\"http://purl.org/dc/terms/\">\
+                 <rdf:Description rdf:about=\"https://e.org/ds\"><dct:title>A</dct:title>\
+                 </rdf:Description></rdf:RDF>"
+            );
+            let g = parse_rdfxml(&doc, &RdfLimits::default()).expect(&doctype);
+            assert_eq!(g.len(), 1);
+        }
+    }
+
+    #[test]
+    fn unterminated_markup_reaches_the_parser_as_a_syntax_error() {
+        for tail in [
+            "<!-- open comment",
+            "<![CDATA[ open",
+            "<?pi open",
+            "<!DOCTYPE x [ <!-- open",
+            "<!DOCTYPE x",
+            "<rdf:Description rdf:about=\"x",
+        ] {
+            let doc = format!("<rdf:RDF xmlns:rdf=\"{RDF_NS}\">{tail}");
+            assert!(
+                matches!(
+                    parse_rdfxml(&doc, &RdfLimits::default()),
+                    Err(DataroomError::Rdf(_))
+                ),
+                "{tail}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_utf8_and_syntax_errors_are_rdf_errors() {
+        assert!(matches!(
+            parse_rdfxml_bytes(b"<rdf:RDF \xff\xfe>", &RdfLimits::default()),
+            Err(DataroomError::Rdf(m)) if m.contains("UTF-8")
+        ));
+        assert!(matches!(
+            parse_rdfxml(&format!("<rdf:RDF xmlns:rdf=\"{RDF_NS}\"><rdf:Description></rdf:RDF>"), &RdfLimits::default()),
+            Err(DataroomError::Rdf(m)) if m.contains("RDF/XML syntax error")
+        ));
+        // A limit on triples applies to RDF/XML too.
+        let one = RdfLimits {
+            max_triples: 1,
+            ..RdfLimits::default()
+        };
+        let doc = format!(
+            "<rdf:RDF xmlns:rdf=\"{RDF_NS}\" xmlns:dct=\"http://purl.org/dc/terms/\">\
+             <rdf:Description rdf:about=\"https://e.org/ds\"><dct:title>A</dct:title><dct:title>B</dct:title>\
+             </rdf:Description></rdf:RDF>"
+        );
+        assert!(matches!(
+            parse_rdfxml(&doc, &one),
+            Err(DataroomError::RdfLimitExceeded { kind, .. }) if kind == "triples"
+        ));
+    }
+
+    #[test]
+    fn serialize_round_trips_every_term_kind() {
+        let mut g = RdfGraph::new();
+        let ds = SubjectNode::Named("https://e.org/ds?a=1&b=2".into());
+        let b = SubjectNode::Blank("b1".into());
+        g.insert(
+            ds.clone(),
+            ns::RDF_TYPE,
+            Term::Iri(format!("{}Dataset", ns::DCAT)),
+        );
+        g.insert(
+            ds.clone(),
+            format!("{}title", ns::DCT),
+            Term::Literal(crate::graph::LiteralValue::lang("Ovzdušie \"&\" <x>", "sk")),
+        );
+        g.insert(
+            ds.clone(),
+            format!("{}description", ns::DCT),
+            Term::Literal(crate::graph::LiteralValue::plain("it's")),
+        );
+        g.insert(
+            ds.clone(),
+            format!("{}issued", ns::DCT),
+            Term::Literal(crate::graph::LiteralValue::typed(
+                "2026-01-01",
+                ns::XSD_DATE,
+            )),
+        );
+        g.insert(ds.clone(), format!("{}contactPoint", ns::DCAT), b.to_term());
+        g.insert(
+            b.clone(),
+            "https://other.example/vocab#prop",
+            Term::Literal(crate::graph::LiteralValue::plain("x")),
+        );
+        g.insert(
+            b.clone(),
+            "https://other.example/vocab/",
+            Term::Iri("https://e.org/o".into()),
+        );
+        g.insert(b.clone(), "urn:nolocal", Term::Blank("b2".into()));
+        let xml = serialize_rdfxml(&g);
+        assert!(xml.contains("rdf:nodeID=\"b1\""));
+        assert!(xml.contains("xmlns:ns0=\"https://other.example/vocab#\""));
+        assert!(xml.contains("<rdf:value"), "{xml}");
+        let back = parse_rdfxml(&xml, &RdfLimits::default()).expect("serialized RDF/XML parses");
+        let titles: Vec<_> = back
+            .triples
+            .iter()
+            .filter(|t| t.predicate == format!("{}title", ns::DCT))
+            .collect();
+        assert_eq!(titles[0].object.string_value(), "Ovzdušie \"&\" <x>");
+        assert!(back
+            .triples
+            .iter()
+            .any(|t| t.subject.as_iri() == Some("https://e.org/ds?a=1&b=2")));
+        assert!(back.triples.iter().any(|t| t.object
+            == Term::Literal(crate::graph::LiteralValue::typed(
+                "2026-01-01",
+                ns::XSD_DATE
+            ))));
+        assert!(back
+            .triples
+            .iter()
+            .any(|t| t.object.string_value() == "it's"));
     }
 }
