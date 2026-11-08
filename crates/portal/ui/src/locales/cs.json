@@ -121,7 +121,8 @@
     "mappings": "Mapování",
     "layers": "Mapové vrstvy",
     "csrs": "Kontextové zdroje",
-    "health": "Zdraví"
+    "health": "Zdraví",
+    "repositories": "Repozitáře"
   },
   "auth": {
     "lead": "Přihlaste se účtem své organizace a spravujte tuto platformu.",
@@ -6926,6 +6927,9 @@
         "capture": {
           "deleted": "Záznam MQTT smazán"
         }
+      },
+      "repository": {
+        "read": "Čtení repozitáře"
       }
     },
     "sources": {
@@ -11787,6 +11791,182 @@
       "30d": "Posledních 30 dní",
       "90d": "Posledních 90 dní",
       "1y": "Poslední rok"
+    }
+  },
+  "repositories": {
+    "title": "Repozitáře",
+    "intro": "Repozitáře projektu na forge: jeho konfigurace, jeho vlastní a repozitáře jeho aplikací.",
+    "loading": "Načítá se z forge",
+    "filter": {
+      "label": "Filtrovat podle názvu",
+      "help": "Část názvu nebo popisu, například config nebo dash."
+    },
+    "empty": {
+      "title": "Zatím žádné repozitáře",
+      "description": "Repozitář se zde objeví, jakmile vznikne konfigurace projektu nebo aplikace.",
+      "filtered": "Žádný repozitář neodpovídá",
+      "filteredHint": "Zkuste kratší část názvu, například config."
+    },
+    "column": {
+      "name": "Název",
+      "role": "Role",
+      "branch": "Výchozí větev",
+      "size": "Velikost"
+    },
+    "role": {
+      "configuration": "Konfigurace",
+      "project": "Projekt",
+      "application": "Aplikace"
+    },
+    "archived": "Archivovaný",
+    "pager": {
+      "label": "Stránky",
+      "previous": "Předchozí",
+      "next": "Další",
+      "position": "{from}–{to} z {total}",
+      "firstPage": "Toto je první stránka.",
+      "lastPage": "Toto je poslední stránka."
+    },
+    "back": "Všechny repozitáře",
+    "page": {
+      "intro": "Repozitář projektu na forge.",
+      "views": "Pohledy na repozitář"
+    },
+    "tab": {
+      "files": "Soubory",
+      "commits": "Commity",
+      "branches": "Větve a značky",
+      "pulls": "Pull requesty",
+      "settings": "Nastavení"
+    },
+    "clone": {
+      "label": "Klonovat",
+      "copy": "Kopírovat adresu pro klonování",
+      "copied": "Zkopírováno",
+      "copyShort": "Kopírovat"
+    },
+    "files": {
+      "breadcrumb": "Cesta ke složce",
+      "atRef": "Na {ref}",
+      "emptyFolder": "Tato složka je prázdná",
+      "caption": "Soubory v {path}",
+      "name": "Název",
+      "size": "Velikost",
+      "up": "O složku výš",
+      "truncated": "Složka obsahuje více položek, než se zobrazuje; otevřete podsložku a uvidíte zbytek.",
+      "history": "Historie tohoto souboru",
+      "emptyRepository": "Tento repozitář zatím nemá commity",
+      "emptyRepositoryHint": "Soubory se objeví, jakmile se první změna schválí a sloučí.",
+      "emptyFolderHint": "Složka bude obsahovat soubory, jakmile je změna přidá."
+    },
+    "file": {
+      "tooLarge": "Tento soubor je příliš velký na zobrazení",
+      "binary": "Tento soubor je binární",
+      "notShown": "Jeho {size} se zde nezobrazují; ke čtení si repozitář naklonujte."
+    },
+    "commits": {
+      "ofPath": "Commity, které změnily {path} na {ref}",
+      "atRef": "Commity na {ref}",
+      "empty": "Na této větvi nejsou commity",
+      "noMessage": "(bez zprávy)",
+      "by": "{author} · {date}",
+      "all": "Všechny commity",
+      "sha": "Revize",
+      "parent": "Rodič",
+      "files": "{count, plural, one {# změněný soubor} few {# změněné soubory} other {# změněných souborů}}",
+      "truncated": "Tento commit mění více, než lze zobrazit; zbytek je vynechán.",
+      "emptyHint": "Commity se objeví, jakmile se do této větve sloučí změna."
+    },
+    "status": {
+      "added": "Přidán",
+      "deleted": "Smazán",
+      "renamed": "Přejmenován",
+      "modified": "Změněn"
+    },
+    "diff": {
+      "binary": "Binární soubor, textová změna se nezobrazuje.",
+      "notShown": "Změna je příliš velká na zobrazení.",
+      "noChange": "Změnil se jen režim nebo název souboru.",
+      "label": "Změny v {path}",
+      "added": "přidáno",
+      "removed": "odebráno"
+    },
+    "branches": {
+      "title": "Větve",
+      "empty": "Žádné větve",
+      "default": "Výchozí",
+      "protected": "Chráněná",
+      "emptyHint": "Větev se objeví, jakmile se navrhne změna, například portal/edit-air."
+    },
+    "tags": {
+      "title": "Značky",
+      "empty": "Žádné značky",
+      "emptyHint": "Značka označuje vydání, například v1.2.0."
+    },
+    "pulls": {
+      "filter": {
+        "label": "Stav",
+        "help": "Které pull requesty zobrazit, například Otevřené.",
+        "open": "Otevřené",
+        "closed": "Zavřené",
+        "all": "Všechny"
+      },
+      "emptyHint": "Změna navržená v Portálu zde otevře pull request.",
+      "line": "#{number} od {author} · {date} · {head} do {base}",
+      "all": "Všechny pull requesty",
+      "state": {
+        "open": "Otevřený",
+        "closed": "Zavřený",
+        "merged": "Sloučený"
+      },
+      "change": "Tento pull request je změna v Portálu.",
+      "openChange": "Otevřít změnu",
+      "noBody": "Bez popisu.",
+      "files": "{count, plural, one {# soubor} few {# soubory} other {# souborů}}",
+      "noFiles": "Žádné změněné soubory.",
+      "reviews": "Posouzení",
+      "noReviews": "Zatím žádná posouzení.",
+      "verdict": {
+        "APPROVED": "Schváleno",
+        "REQUEST_CHANGES": "Žádá změny",
+        "COMMENT": "Komentář"
+      },
+      "emptyState": {
+        "open": "Žádné otevřené pull requesty",
+        "closed": "Žádné zavřené pull requesty",
+        "all": "Žádné pull requesty"
+      },
+      "showAll": "Zobrazit všechny stavy"
+    },
+    "settings": {
+      "intro": "Co forge drží pro tento repozitář, zde jen ke čtení.",
+      "protection": "Ochrana větví",
+      "noProtection": "Žádná větev není chráněná.",
+      "pattern": "Větev",
+      "push": "Přímý push",
+      "forcePush": "Vynucený push",
+      "approvals": "Potřebná schválení",
+      "webhooks": "Webhooky",
+      "webhooksHint": "Každá adresa se zobrazuje bez tajemství, které se nikdy nečte zpět.",
+      "noWebhooks": "Žádné webhooky.",
+      "active": "Aktivní",
+      "inactive": "Neaktivní",
+      "collaborators": "Kdo má přístup",
+      "noCollaborators": "Žádná skupina nemá vlastní přístup.",
+      "packages": "Balíčky a obrazy",
+      "noPackages": "Z tohoto repozitáře se nic nepublikovalo.",
+      "version": "Balíček",
+      "kind": "Druh",
+      "digest": "Otisk a velikost",
+      "published": "Publikováno",
+      "signed": "Podepsaný",
+      "yes": "Povolen",
+      "no": "Zakázán"
+    },
+    "refused": {
+      "list": "Repozitáře projektu {project} vám nejsou přístupné. Přístup ke čtení vám udělí ten, kdo projekt spravuje.",
+      "repository": "Projektu {project} nepatří žádný repozitář s názvem {name}. Může patřit jinému projektu, nebo byl odstraněn.",
+      "subtitle": "Tento repozitář se nepodařilo otevřít."
     }
   }
 }

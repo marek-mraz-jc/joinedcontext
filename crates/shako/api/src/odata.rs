@@ -327,12 +327,16 @@ async fn build_entity_table(
             })
             .await
             .map_err(|e| ShakoError::Internal(e.to_string()))??;
+            // `Position` keeps the walk's order through a page: a page is otherwise ordered by
+            // its key, which sorts commits by their sha.
             commits
                 .into_iter()
-                .map(|c| {
+                .enumerate()
+                .map(|(position, c)| {
                     let summary = c.message.lines().next().unwrap_or_default().to_owned();
                     json!({
                         "Id": format!("{repo_id}:{}", c.sha),
+                        "Position": position,
                         "RepoId": repo_id.to_string(),
                         "Sha": c.sha,
                         "Ref": ref_label,

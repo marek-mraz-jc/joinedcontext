@@ -36,6 +36,7 @@ pub mod policy_names;
 pub mod previews;
 pub mod proposals;
 pub mod replace_check;
+pub mod repositories;
 pub mod resources;
 pub mod runs;
 pub mod schemas;
@@ -777,6 +778,7 @@ fn init_registry() -> Vec<Operation> {
     operations.extend(access_tools::operations());
     operations.extend(space_reads::operations());
     operations.extend(administration::operations());
+    operations.extend(repositories::operations());
     operations
 }
 
