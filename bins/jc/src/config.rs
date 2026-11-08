@@ -95,6 +95,14 @@ pub struct Cli {
     /// environment, as for the standalone broker.
     #[arg(long, env = "JCBIN_ANTARES_ADMIN_TOKEN_FILE")]
     pub antares_admin_token_file: Option<PathBuf>,
+    /// Directory (0700) for the secrets `jc` generates on first start, one 0600 file each
+    /// (default `jc-state` in the working directory).
+    #[arg(long, env = "JCBIN_STATE_DIR")]
+    pub state_dir: Option<PathBuf>,
+    /// Whether the Portal's settings default to its sibling modules in this `jc` (default
+    /// true; `false` keeps the Portal on its own `JC_*` environment alone).
+    #[arg(long, env = "JCBIN_PORTAL_SIBLINGS")]
+    pub portal_siblings: Option<bool>,
     /// shako: directory holding bare Git repositories and package blobs.
     #[arg(long, env = "JCBIN_SHAKO_REPO_ROOT")]
     pub shako_repo_root: Option<PathBuf>,
@@ -189,6 +197,8 @@ pub struct FileConfig {
     #[serde(default)]
     pub trusted_proxies: Vec<IpNet>,
     pub log_format: Option<LogFormat>,
+    pub state_dir: Option<PathBuf>,
+    pub portal_siblings: Option<bool>,
     #[serde(default)]
     pub mounts: BTreeMap<String, MountOverride>,
     #[serde(default)]
@@ -221,16 +231,6 @@ pub enum ConfigError {
     Scheme(String),
     #[error("base host must be a plain host name, not '{0}'")]
     BaseHost(String),
-    #[error(
-        "kaisatsu needs a key-encryption key file (JCBIN_KAISATSU_KEK_FILE or [kaisatsu] kek_file)"
-    )]
-    KaisatsuKek,
-    #[error("ekiben needs an API token file (JCBIN_EKIBEN_TOKEN_FILE or [ekiben] token_file)")]
-    EkibenToken,
-    #[error(
-        "antares needs an admin token file (JCBIN_ANTARES_ADMIN_TOKEN_FILE or [antares] admin_token_file)"
-    )]
-    AntaresToken,
     #[error("the admin listener needs a token file (JCBIN_ADMIN_TOKEN_FILE or admin_token_file)")]
     AdminToken,
 }
@@ -247,6 +247,8 @@ pub struct Config {
     pub admin_token_file: Option<PathBuf>,
     pub trusted_proxies: Vec<IpNet>,
     pub log_format: LogFormat,
+    pub state_dir: PathBuf,
+    pub portal_siblings: bool,
     pub mounts: BTreeMap<Module, MountOverride>,
     pub kaisatsu: KaisatsuSection,
     pub dataroom: DataroomSection,
@@ -258,6 +260,8 @@ pub struct Config {
 impl Config {
     /// Default listener: loopback only, so a bare `jc` never listens on every interface.
     pub const DEFAULT_LISTEN: &'static str = "127.0.0.1:8080";
+    /// Default directory of the generated secrets.
+    pub const DEFAULT_STATE_DIR: &'static str = "jc-state";
 
     /// Reads and parses a TOML config file.
     pub fn read_file(path: &Path) -> Result<FileConfig, ConfigError> {
@@ -332,24 +336,15 @@ impl Config {
                 .kaisatsu_db_max_connections
                 .or(file.kaisatsu.db_max_connections),
         };
-        if roles.contains(&Module::Kaisatsu) && kaisatsu.kek_file.is_none() {
-            return Err(ConfigError::KaisatsuKek);
-        }
         let ekiben = EkibenSection {
             token_file: cli.ekiben_token_file.or(file.ekiben.token_file),
             file_root: cli.ekiben_file_root.or(file.ekiben.file_root),
         };
-        if roles.contains(&Module::Ekiben) && ekiben.token_file.is_none() {
-            return Err(ConfigError::EkibenToken);
-        }
         let antares = AntaresSection {
             admin_token_file: cli
                 .antares_admin_token_file
                 .or(file.antares.admin_token_file),
         };
-        if roles.contains(&Module::Antares) && antares.admin_token_file.is_none() {
-            return Err(ConfigError::AntaresToken);
-        }
         let shako = ShakoSection {
             repo_root: cli.shako_repo_root.or(file.shako.repo_root),
             signing_key_file: cli.shako_signing_key_file.or(file.shako.signing_key_file),
@@ -374,6 +369,11 @@ impl Config {
             admin_token_file,
             trusted_proxies,
             log_format: cli.log_format.or(file.log_format).unwrap_or_default(),
+            state_dir: cli
+                .state_dir
+                .or(file.state_dir)
+                .unwrap_or_else(|| PathBuf::from(Self::DEFAULT_STATE_DIR)),
+            portal_siblings: cli.portal_siblings.or(file.portal_siblings).unwrap_or(true),
             mounts,
             kaisatsu,
             dataroom: file.dataroom.unwrap_or_default(),
@@ -567,9 +567,11 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
     }
 
     #[test]
-    fn kaisatsu_without_a_kek_file_is_refused() {
-        let err = Config::merge(cli(&["--role", "kaisatsu"]), FileConfig::default()).unwrap_err();
-        assert!(matches!(err, ConfigError::KaisatsuKek), "{err}");
+    fn kaisatsu_without_a_kek_file_leaves_it_to_setup() {
+        // No file named: first-start setup generates the key (setup.rs), never runs without one.
+        let cfg = Config::merge(cli(&["--role", "kaisatsu"]), FileConfig::default()).unwrap();
+        assert_eq!(cfg.kaisatsu.kek_file, None);
+        assert_eq!(cfg.state_dir, PathBuf::from("jc-state"));
         let ok = Config::merge(
             cli(&["--role", "kaisatsu", "--kaisatsu-kek-file", "/run/kek"]),
             FileConfig::default(),
@@ -579,9 +581,9 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
     }
 
     #[test]
-    fn ekiben_without_a_token_file_is_refused() {
-        let err = Config::merge(cli(&["--role", "ekiben"]), FileConfig::default()).unwrap_err();
-        assert!(matches!(err, ConfigError::EkibenToken), "{err}");
+    fn ekiben_without_a_token_file_leaves_it_to_setup() {
+        let cfg = Config::merge(cli(&["--role", "ekiben"]), FileConfig::default()).unwrap();
+        assert_eq!(cfg.ekiben.token_file, None);
         let file = Config::parse_file(
             Path::new("jc.toml"),
             "[ekiben]\ntoken_file = \"/run/tok\"\nfile_root = \"/srv/files\"\n",
@@ -609,9 +611,21 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
     }
 
     #[test]
-    fn antares_without_an_admin_token_file_is_refused() {
-        let err = Config::merge(cli(&["--role", "antares"]), FileConfig::default()).unwrap_err();
-        assert!(matches!(err, ConfigError::AntaresToken), "{err}");
+    fn antares_without_an_admin_token_file_leaves_it_to_setup() {
+        let cfg = Config::merge(
+            cli(&["--role", "antares", "--state-dir", "/srv/jc"]),
+            FileConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(cfg.antares.admin_token_file, None);
+        assert_eq!(cfg.state_dir, PathBuf::from("/srv/jc"));
+        assert!(cfg.portal_siblings, "on by default");
+        let file = Config::parse_file(Path::new("jc.toml"), "portal_siblings = false\n").unwrap();
+        assert!(
+            !Config::merge(cli(&["--role", "portal"]), file)
+                .unwrap()
+                .portal_siblings
+        );
         let file = Config::parse_file(
             Path::new("jc.toml"),
             "[antares]\nadmin_token_file = \"/run/q\"\n",

@@ -5,6 +5,8 @@
 use crate::app::StartError;
 use crate::config::KaisatsuSection;
 use crate::module::Module;
+use crate::modules::BuildCtx;
+use crate::setup;
 use axum::Router;
 use jc_router::Mount;
 use kaisatsu_core::{LocalAuthorizer, Store};
@@ -55,9 +57,44 @@ pub async fn open_kaisatsu_store(
     }
 }
 
-pub async fn build(cfg: &KaisatsuSection, mount: Mount) -> Result<Router, StartError> {
+/// Applies the realm the Portal signs in through (first-start setup), when the Portal runs beside
+/// kaisatsu. Apply mode `no-delete`: a restart updates what changed and removes nothing an
+/// operator added. Secrets reach the importer as `$(env:...)` values from memory.
+async fn apply_portal_realm(store: &Arc<dyn Store>, ctx: BuildCtx<'_>) -> Result<(), StartError> {
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
-    let kek_file = cfg.kek_file.as_deref().ok_or_else(|| err(&"no kek_file"))?;
+    let (Some(base), Some(_)) = (
+        ctx.siblings.portal_base(),
+        ctx.setup.value(setup::Secret::PortalClientSecret),
+    ) else {
+        return Ok(());
+    };
+    let realm = setup::portal_realm(&base);
+    let options = ApplyOptions {
+        env_vars: setup::realm_env(ctx.setup),
+        ..ApplyOptions::default()
+    };
+    let report = apply_realm_files(store, &[("jc-portal.json".to_owned(), realm)], &options)
+        .await
+        .map_err(|e| err(&e))?;
+    tracing::info!(
+        realm = %report.realm,
+        changed = report.has_changes(),
+        "kaisatsu: the Portal's realm is applied"
+    );
+    Ok(())
+}
+
+pub async fn build(
+    cfg: &KaisatsuSection,
+    ctx: BuildCtx<'_>,
+    mount: Mount,
+) -> Result<Router, StartError> {
+    let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
+    let kek_file = cfg
+        .kek_file
+        .as_deref()
+        .or_else(|| ctx.setup.path(setup::Secret::KaisatsuKek))
+        .ok_or_else(|| err(&"no kek_file"))?;
     let kek = Kek::from_file(kek_file).map_err(|e| err(&e))?;
     let store = open_kaisatsu_store(cfg, kek.clone()).await?;
     if let Some(dir) = &cfg.import_dir {
@@ -66,6 +103,7 @@ pub async fn build(cfg: &KaisatsuSection, mount: Mount) -> Result<Router, StartE
             .await
             .map_err(|e| err(&e))?;
     }
+    apply_portal_realm(&store, ctx).await?;
     let state = KaisatsuState::new(
         store,
         kek,

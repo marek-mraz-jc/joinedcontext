@@ -6,7 +6,8 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use daiya_model::{
     Authorizer, CrError, DaiyaStore, InputLimits, InstallationId, InstanceId, OperationRegistry,
-    OrgId, PolicyAuthorizer, RequestCtx, Subject, constant_time_eq, daiya_registry, sha256_hex,
+    OrgId, PolicyAuthorizer, RequestCtx, SERVER_ADMIN_ACTOR, ServerAdminAuthorizer, Subject,
+    constant_time_eq, daiya_registry, sha256_hex,
 };
 use daiya_model::{CrResult, DatasourceRecord};
 use daiya_query::{
@@ -73,7 +74,17 @@ pub struct DaiyaState {
     pub outbound_policy: OutboundPolicy,
     /// Drivers built from stored datasource records (see [`DaiyaState::driver_for`]).
     pub built_drivers: Arc<RwLock<BuiltDriverMap>>,
+    /// Checks that recognise the server administrator ([`DaiyaState::with_server_admin`],
+    /// [`DaiyaState::with_server_admin_check`]); none by default.
+    pub server_admin: Vec<ServerAdminCheck>,
 }
+
+/// A host-supplied check that a request comes from the server administrator, e.g. a kaisatsu
+/// token verified in-process with daiya's audience (PORTAL-CALLS.md §5).
+pub type ServerAdminCheck = Arc<dyn Fn(&HeaderMap) -> bool + Send + Sync>;
+
+/// The shortest server administrator password accepted.
+pub const MIN_SERVER_ADMIN_PASSWORD: usize = 16;
 
 /// Directory mapping Grafana organization names and numeric IDs to UUIDv7 [`OrgId`]s.
 #[derive(Debug, Default)]
@@ -136,7 +147,67 @@ impl DaiyaState {
             subject_resolver: None,
             outbound_policy: OutboundPolicy::default(),
             built_drivers: Arc::new(RwLock::new(BTreeMap::new())),
+            server_admin: Vec::new(),
         }
+    }
+
+    /// Grafana's local administrator: `Authorization: Basic base64(user:password)`, as
+    /// `provision.sh` and the Portal (`JC_PORTAL_GRAFANA_USER`/`_PASSWORD`) send it, acts as
+    /// [`SERVER_ADMIN_ACTOR`] in every organization (see [`ServerAdminAuthorizer`]). Only the
+    /// digest is kept. Refuses an empty user, a user holding `:` and a password shorter than
+    /// [`MIN_SERVER_ADMIN_PASSWORD`]; the error never repeats the password.
+    pub fn with_server_admin(self, user: &str, password: &str) -> CrResult<Self> {
+        use base64::Engine as _;
+        if user.trim().is_empty() || user.contains(':') {
+            return Err(daiya_model::CrError::BadRequest(
+                "serverAdmin.user: a name without ':'".into(),
+            ));
+        }
+        if password.chars().count() < MIN_SERVER_ADMIN_PASSWORD {
+            return Err(daiya_model::CrError::BadRequest(format!(
+                "serverAdmin.password: at least {MIN_SERVER_ADMIN_PASSWORD} characters"
+            )));
+        }
+        let credential =
+            base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}"));
+        let expected = sha256_hex(credential.as_bytes());
+        Ok(self.with_server_admin_check(move |headers| basic_matches(headers, &expected)))
+    }
+
+    /// Recognises the server administrator by `check` (beside any check already set): a host
+    /// that verifies a kaisatsu token with daiya's audience passes it here.
+    #[must_use]
+    pub fn with_server_admin_check<F>(mut self, check: F) -> Self
+    where
+        F: Fn(&HeaderMap) -> bool + Send + Sync + 'static,
+    {
+        if self.server_admin.is_empty() {
+            self.authorizer = Arc::new(ServerAdminAuthorizer {
+                inner: self.authorizer.clone(),
+            });
+        }
+        self.server_admin.push(Arc::new(check));
+        self
+    }
+
+    /// The server administrator, when one of its checks recognises the request: a member of
+    /// every organization the directory holds, the main one first.
+    fn server_admin_for(&self, headers: &HeaderMap) -> Option<Subject> {
+        if !self.server_admin.iter().any(|check| check(headers)) {
+            return None;
+        }
+        let organizations = self
+            .org_registry
+            .read()
+            .by_num
+            .values()
+            .map(|(_, org)| *org)
+            .collect();
+        Some(Subject::authenticated(
+            SERVER_ADMIN_ACTOR,
+            organizations,
+            Vec::new(),
+        ))
     }
 
     /// Accepts these API credentials (hashed bindings).
@@ -268,6 +339,20 @@ impl DaiyaState {
     }
 }
 
+/// Whether `Authorization` is `Basic` with the credential whose SHA-256 is `expected`,
+/// compared in constant time.
+fn basic_matches(headers: &HeaderMap, expected: &str) -> bool {
+    let Some((scheme, credential)) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|raw| raw.trim().split_once(' '))
+    else {
+        return false;
+    };
+    scheme.eq_ignore_ascii_case("basic")
+        && constant_time_eq(expected, &sha256_hex(credential.trim().as_bytes()))
+}
+
 /// Builds the [`RequestCtx`] of a request. The subject comes only from verified sources: the
 /// mounting host's [`SubjectResolver`], then an API credential in `Authorization` (hashed,
 /// constant-time). Anything else is anonymous: no organization, no role. Client headers never
@@ -276,12 +361,20 @@ impl DaiyaState {
 /// `X-Daiya-Readonly: true` can only narrow the caller.
 #[must_use]
 pub fn resolve_request_ctx(state: &DaiyaState, headers: &HeaderMap) -> RequestCtx {
-    let mut subject = state
-        .subject_resolver
-        .as_ref()
-        .and_then(|resolve| resolve(headers))
-        .or_else(|| state.subject_for_credential(headers))
-        .unwrap_or_else(Subject::anonymous);
+    let mut subject = state.server_admin_for(headers).unwrap_or_else(|| {
+        let subject = state
+            .subject_resolver
+            .as_ref()
+            .and_then(|resolve| resolve(headers))
+            .or_else(|| state.subject_for_credential(headers))
+            .unwrap_or_else(Subject::anonymous);
+        // Only the server-admin credential makes a server administrator.
+        if subject.actor_id.as_deref() == Some(SERVER_ADMIN_ACTOR) {
+            Subject::anonymous()
+        } else {
+            subject
+        }
+    });
 
     let requested_org = headers
         .get("x-daiya-org-id")

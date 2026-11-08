@@ -37,7 +37,10 @@ fn repo_root(configured: Option<&Path>) -> Result<PathBuf, StartError> {
     Ok(dir)
 }
 
-pub fn build_state(cfg: &ShakoSection) -> Result<ShakoState, StartError> {
+pub fn build_state(
+    cfg: &ShakoSection,
+    setup: &crate::setup::Setup,
+) -> Result<ShakoState, StartError> {
     let root = repo_root(cfg.repo_root.as_deref())?;
     let org_id = OrgId::from_u128(1);
     let store = Arc::new(MemoryStore::new());
@@ -60,7 +63,11 @@ pub fn build_state(cfg: &ShakoSection) -> Result<ShakoState, StartError> {
     };
 
     let mut static_tokens = Vec::new();
-    if let Some(tf) = &cfg.token_file {
+    let token_file = cfg
+        .token_file
+        .as_deref()
+        .or_else(|| setup.path(crate::setup::Secret::ShakoToken));
+    if let Some(tf) = token_file {
         let token = crate::runtime::read_secret_file(tf).map_err(err)?;
         static_tokens.push(StaticTokenBinding::new(
             &token,

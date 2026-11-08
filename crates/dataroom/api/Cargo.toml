@@ -27,5 +27,9 @@ uuid = { version = "1.11.0", features = ["v4", "v5", "v7", "serde"] }
 
 [dev-dependencies]
 dataroom-store-memory = { path = "../store-memory" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "blocking"] }
 http-body-util = "0.1.3"
-tokio = { version = "1.44.1", features = ["macros", "rt"] }
+# The Portal's own CKAN client and publisher, replayed against the router (PORTAL-CALLS.md).
+jc-core = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0" }
+jcctl = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0", default-features = false }
+tokio = { version = "1.44.1", features = ["macros", "rt", "rt-multi-thread", "net"] }

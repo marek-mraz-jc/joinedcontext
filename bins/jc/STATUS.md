@@ -174,6 +174,99 @@ unreachable with default features), `RoleError::NotCompiled` (`module.rs:118`), 
 Note: a stale `llvm-cov-target` from stage 1 first gave 67 % (old `jc` objects merged into the report); after
 removing the stale objects the run above is clean.
 
+## Stage 7: Portal wired to its siblings (jc-portal-1)
+
+`jc --role all` runs the Portal against kaisatsu, shako, ekiben, dataroom, daiya and Antares. Nothing external is
+needed for sign-in, members, groups, changes and the forge.
+
+### Wiring (`src/siblings.rs` `portal_vars`, `src/modules/portal.rs` `config`)
+
+A row fills only when its URL key is unset in the environment, the sibling is in the role set and every secret the
+row needs is held by setup. Inside a filled row, an explicit `JC_*` key still wins. `JCBIN_PORTAL_SIBLINGS=false`
+turns it all off.
+
+| Portal setting | sibling | filled keys | status |
+|---|---|---|---|
+| OIDC, Keycloak admin | kaisatsu | `JC_OIDC_ISSUER` (public `{base}/id/realms/jc`), `JC_OIDC_CLIENT_ID/SECRET`, `JC_COOKIE_KEY`, `JC_KEYCLOAK_ADMIN_CLIENT_ID/SECRET`, `JC_KEYCLOAK_ADMIN_URL` (jc's listener when it differs from the public origin) | works: sign-in, people, groups, approval |
+| `JC_GITEA_*` | shako | `URL`, `PUBLIC_URL`, `OWNER=jc`, `REPO=config`, `TOKEN`, `APPS_OWNER=jc-apps`, `APPS_TOKEN`, `WEBHOOK_SECRET` | works: proposal commits, approval merges, sync reads them back |
+| pipeline runner | ekiben | `JC_PIPELINE_RUNNER_URL` | wired, refused: no runner credential (gap d) |
+| CKAN | dataroom | `JC_CKAN_URL`, `JC_CKAN_API_URL`, only when the public URL is https (EP-67) | wired for https installs; the http e2e leaves it unset (gap e) |
+| Grafana | daiya | `JC_GRAFANA_URL`, `_PUBLIC_URL`, `_USER=portal`, `_PASSWORD` | wired; no org per project (gap f) |
+| broker | antares | `JC_BROKER_URL`, `JC_BROKER_ADMIN_TOKEN_FILE` | wired; the gateway between Portal and broker is no jc module (gap d) |
+
+The Portal's forge client reads its `JC_GITEA_*` through `Config::forge_var` (environment first, then the values jc
+filled), so the process environment is never written.
+
+### First-start setup (`src/setup.rs`, `src/provision.rs`)
+
+- Every generated secret is a 0600 file (`create_new`) under one 0700 directory, `JCBIN_STATE_DIR` (default
+  `jc-state`); an existing looser directory is tightened. `Held` redacts its value in Debug. Files survive restarts,
+  so a second start is idempotent. Only key names are logged.
+- kaisatsu: realm `jc` imported through `kaisatsu_import::apply_realm_files` with `$(env:...)` placeholders: client
+  `portal` (confidential, code + PKCE S256, groups mapper, `view-clients`), `portal-ui` (public), `portal-admin`
+  (service account, `manage-users` + `query-groups`, no realm-admin), group `platform-admins`, user `admin` in it.
+- shako: token file; the repository `jc/config` created after serve through `POST /api/v1/orgs/jc/repos`
+  (idempotent: GET first, 409 accepted).
+- ekiben, Antares admin, daiya (`portal` Basic credential bound as Admin of org 1), dataroom (`portal` token bound as
+  Admin of the default catalogue), the webhook secret and the Portal cookie key: one file each.
+- The Portal is built after jc serves (a `LateRouter` answers 503 until then), because its discovery calls kaisatsu
+  on jc's own listener.
+- The Portal is mounted at the root (`[mounts.portal] path_prefix = ""`): its UI and redirects assume `/`.
+
+### Guards and their red proofs
+
+| guard | test | red (guard reverted once) |
+|---|---|---|
+| a row's credentials go only with jc's URL | `siblings::tests::*_row` | 4 row tests failed |
+| secret files 0600 | `setup::tests::secrets_are_private_files_in_a_private_dir_and_kept_across_restarts` | failed at setup.rs:363 |
+| state dir 0700, tightened | `setup::tests::an_open_state_dir_is_tightened` | both setup tests failed |
+| Debug redaction | same test | failed at setup.rs:376 |
+| outbound guard refuses jc's listener (no exception added) | `tests/outbound_guard.rs` | with a plain client in its place the test failed |
+| shako webhook to jc's listener | `tests/portal_siblings.rs` | refused by shako's guard |
+| ekiben stream to jc's listener | `tests/portal_siblings.rs` | the stream wrote nothing to dataroom |
+
+The blocking sync clients panicked when built on a runtime thread in debug builds; `sync::remote::off_runtime` builds
+them on a scoped thread (`the_sync_clients_build_on_a_runtime_thread`).
+
+### End-to-end (`tests/portal_siblings.rs`)
+
+The child binary with `--role all`, memory stores, and kaisatsu on Postgres 17 when `KAISATSU_TEST_DATABASE_URL` is
+set (run both ways). `JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false` is a test-only setting.
+
+| step | result |
+|---|---|
+| a. sign-in through kaisatsu (code + PKCE, cookies), session read back from kaisatsu's admin API | pass |
+| b. person created through the Portal, read back from kaisatsu | pass |
+| c. Group proposed (dry run, propose), approved by a second admin with confirm, commit read back with `git clone`, group read back from kaisatsu | pass |
+| d. Pipeline on ekiben writes Entities to Antares | gap: runner refuses the Portal |
+| e. public Endpoint in the dataroom catalogue | partial: dataroom accepts the Portal's token; the Portal does not sync to an http CKAN |
+| f. dashboard in daiya | partial: daiya accepts the Portal's credential; no org per project |
+
+### Compat gaps (refused calls)
+
+- d, ekiben: `GET/PUT/POST/DELETE /streams/streams[/{id}]` without Authorization -> 401. The Portal has no runner
+  credential setting (owner: jc-ekiben-portal).
+- d, Antares: `PUT /broker/q/views/{id}` -> 404; jc builds Antares without `views` and `jc-policy`. The Portal's
+  Endpoint writes go through context-gateway, which is not a jc module.
+- e, Portal: the CKAN URL must be https (EP-67); a CkanInstance token comes only from a `CKAN_*` env var named by
+  `apiTokenRef` (no file). dataroom answers `help`/`uri` links with https on an http install.
+- f, daiya: `GET /dashboards/api/orgs/name/{project}` with the Portal's Basic credential -> 404
+  `{"error":{"code":"cr.not_found","message":"Organization not found"}}`.
+- shako: hooks take Gitea's body but shako refuses loopback targets, so the Portal polls (`JC_PORTAL_SYNC_INTERVAL`);
+  the webhook secret store has no API; the mergeRequest link points at `/git/user/oauth2/keycloak?redirect_to=...`,
+  which shako does not serve (owner: jc-shako-portal).
+- kaisatsu: a `PUT /admin/realms/jc/users/{id}` after `reset-password` made the new password fail at sign-in; PUT
+  first, then reset, works (unverified which side is wrong; owner: jc-kaisatsu-portal).
+- Audience-bound tokens: the Portal's admin calls use kaisatsu `client_credentials` tokens of `portal-admin`. shako,
+  ekiben, daiya, dataroom and the Antares admin still take static credentials from setup files: none of them
+  verifies kaisatsu tokens in jc yet.
+
+### Not verified
+
+- Host mode with the Portal on its own host.
+- Postgres for modules other than kaisatsu.
+- Disk: the sandbox had ~14 GB free; builds ran with debuginfo off.
+
 ## Release binary
 
 `cargo build --release -p jc` (default release profile, no LTO, all default features incl. the Portal's embedded UI):

@@ -16,13 +16,17 @@ fn err(e: impl std::fmt::Display) -> StartError {
     StartError::module(Module::Antares, e)
 }
 
-pub async fn build(cfg: &AntaresSection) -> Result<Router, StartError> {
+pub async fn build(
+    cfg: &AntaresSection,
+    setup: &crate::setup::Setup,
+) -> Result<Router, StartError> {
     let render = antares_broker::telemetry::init_hosted();
     let mut broker_cfg = antares_broker::config_from_env().map_err(err)?;
     // The `/q` admin credential is mandatory in a shared process.
     let token_file = cfg
         .admin_token_file
         .as_deref()
+        .or_else(|| setup.path(crate::setup::Secret::AntaresAdminToken))
         .ok_or_else(|| err("no admin_token_file"))?;
     broker_cfg.admin_token_file = Some(token_file.display().to_string());
     if broker_cfg.metrics_port.is_some() {

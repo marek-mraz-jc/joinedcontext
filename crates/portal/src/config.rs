@@ -276,6 +276,10 @@ pub struct Config {
     /// carry `X-JC-Run-Origin: journey` (`JC_PORTAL_JOURNEY_USERS`, comma-separated; default
     /// none, so no one can mark a run; AG-93, T-2816).
     pub journey_users: Vec<String>,
+    /// Values a hosting process (the `jc` binary) supplies for the forge variables
+    /// (`JC_GITEA_*`) the environment leaves unset, read by `AppState::from_config` after
+    /// `from_vars`. Empty for the standalone Portal; an environment value always wins.
+    pub host_vars: std::collections::BTreeMap<String, String>,
     /// The client the reconciler manages the realm's groups with: a `ServiceAccount` client
     /// holding `manage-users` and `query-groups` of `realm-management` and nothing else
     /// (`JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID` and one of `JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_SECRET`, a
@@ -1651,6 +1655,13 @@ impl Config {
     /// `portal.{domain}` (ADR-N-052 §2.1, T-4632): an anonymous client on the Portal host is
     /// moved there. A Portal whose host is not `portal.…` has no data host of its own, so its
     /// own host serves.
+    /// A forge variable: the process environment first, then [`Config::host_vars`].
+    pub fn forge_var(&self, key: &str) -> Option<String> {
+        std::env::var(key)
+            .ok()
+            .or_else(|| self.host_vars.get(key).cloned())
+    }
+
     pub fn api_base_url(&self) -> Url {
         let mut url = self.public_base_url.clone();
         if let Some(domain) = url.host_str().and_then(|h| h.strip_prefix("portal.")) {
@@ -1940,11 +1951,13 @@ impl Config {
             artifact_store,
             apps_db,
             pipeline_secrets,
+            host_vars: std::collections::BTreeMap::new(),
         })
     }
 
     pub fn for_tests() -> Self {
         Self {
+            host_vars: std::collections::BTreeMap::new(),
             bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             internal_bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             public_base_url: Url::parse("http://localhost:8080")
@@ -2077,6 +2090,23 @@ mod tests {
 
     fn one(var: &'static str, value: &'static str) -> impl Fn(&str) -> Option<String> {
         move |name: &str| (name == var).then(|| value.to_owned())
+    }
+
+    /// A host value fills a forge variable the environment leaves unset; `from_vars` starts with
+    /// none, so the standalone Portal reads its environment alone.
+    #[test]
+    fn a_forge_variable_falls_back_to_the_host_value() {
+        let mut config = Config::from_vars(|_| None).expect("defaults parse");
+        assert!(config.host_vars.is_empty());
+        let key = "JC_TEST_FORGE_VAR_UNSET_IN_ANY_ENVIRONMENT";
+        assert_eq!(config.forge_var(key), None);
+        config
+            .host_vars
+            .insert(key.to_owned(), "http://127.0.0.1:1/git".to_owned());
+        assert_eq!(
+            config.forge_var(key).as_deref(),
+            Some("http://127.0.0.1:1/git")
+        );
     }
 
     /// T-5314: the catalogue's API moves to its Service only with both URLs, the public one https,

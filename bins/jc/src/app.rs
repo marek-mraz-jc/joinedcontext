@@ -5,6 +5,8 @@ use crate::config::{Config, MountMode};
 use crate::module::Module;
 use crate::modules;
 use crate::runtime;
+use crate::setup::Setup;
+use crate::siblings::Siblings;
 use axum::Router;
 use axum::extract::Request;
 use axum::http::{HeaderMap, StatusCode, header};
@@ -40,6 +42,8 @@ pub enum StartError {
     Admin(String),
     #[error("server: {0}")]
     Serve(std::io::Error),
+    #[error("first-start setup: {0}")]
+    Setup(String),
 }
 
 impl StartError {
@@ -105,29 +109,70 @@ pub fn plan_mounts(cfg: &Config) -> Result<Vec<MountPlan>, StartError> {
     Ok(plans)
 }
 
-/// Builds every module's router and the one `jc-router` in front of them. Background work of
-/// the modules is spawned on `tasks` and stops when `shutdown` is cancelled.
+/// The Portal's mount, answered with 503 until the Portal is built. The Portal discovers its
+/// realm and reads its forge over HTTP while it is built, so it is built after `jc` serves its
+/// siblings, and only then put in place.
+#[derive(Clone, Default)]
+pub struct LateRouter(Arc<std::sync::OnceLock<Router>>);
+
+impl LateRouter {
+    fn router(&self) -> Router {
+        let slot = self.clone();
+        Router::new().fallback(move |req: Request| {
+            let slot = slot.clone();
+            async move {
+                match slot.0.get() {
+                    Some(router) => {
+                        use tower::ServiceExt;
+                        match router.clone().oneshot(req).await {
+                            Ok(resp) => resp,
+                            Err(never) => match never {},
+                        }
+                    }
+                    None => (StatusCode::SERVICE_UNAVAILABLE, "starting").into_response(),
+                }
+            }
+        })
+    }
+
+    fn set(&self, router: Router) {
+        let _ = self.0.set(router);
+    }
+}
+
+/// The routers of every module and the `jc-router` in front of them, plus the Portal's late
+/// slot when the Portal is in the role set.
+pub struct Built {
+    pub router: Router,
+    portal: Option<(LateRouter, Mount)>,
+}
+
+/// Builds every module's router (the Portal's as a late slot) and the one `jc-router` in front
+/// of them. Background work of the modules is spawned on `tasks` and stops when `shutdown` is
+/// cancelled.
 pub async fn build_router(
     cfg: &Config,
+    ctx: modules::BuildCtx<'_>,
+    plans: Vec<MountPlan>,
     shutdown: &CancellationToken,
     tasks: &TaskTracker,
-) -> Result<Router, StartError> {
-    let plans = plan_mounts(cfg)?;
+) -> Result<Built, StartError> {
     let mut builder = JcRouterBuilder::new(cfg.scheme.clone(), cfg.base_host.clone());
     for net in &cfg.trusted_proxies {
         builder = builder.trust_proxy(*net);
     }
+    let mut portal = None;
     for plan in plans {
+        tracing::info!(
+            module = plan.module.name(),
+            host = plan.spec.host.as_deref().unwrap_or("*"),
+            prefix = plan.spec.path_prefix.as_deref().unwrap_or("/"),
+            "mounted"
+        );
         #[cfg(feature = "shako")]
         if plan.module == Module::Shako {
-            let state = modules::shako::build_state(&cfg.shako)?;
+            let state = modules::shako::build_state(&cfg.shako, ctx.setup)?;
             let (main_router, v2_router) = modules::shako::build(state, plan.mount.clone());
-            tracing::info!(
-                module = plan.module.name(),
-                host = plan.spec.host.as_deref().unwrap_or("*"),
-                prefix = plan.spec.path_prefix.as_deref().unwrap_or("/"),
-                "mounted"
-            );
             builder = builder.mount(plan.spec.clone(), main_router);
             // S1: mount `/v2/` at the host root in both one-domain and host modes
             let v2_spec = MountSpec {
@@ -138,16 +183,19 @@ pub async fn build_router(
             builder = builder.mount(v2_spec, v2_router);
             continue;
         }
-        let router = modules::build(plan.module, cfg, plan.mount, shutdown, tasks).await?;
-        tracing::info!(
-            module = plan.module.name(),
-            host = plan.spec.host.as_deref().unwrap_or("*"),
-            prefix = plan.spec.path_prefix.as_deref().unwrap_or("/"),
-            "mounted"
-        );
+        if plan.module == Module::Portal {
+            let late = LateRouter::default();
+            builder = builder.mount(plan.spec, late.router());
+            portal = Some((late, plan.mount));
+            continue;
+        }
+        let router = modules::build(plan.module, cfg, ctx, plan.mount, shutdown, tasks).await?;
         builder = builder.mount(plan.spec, router);
     }
-    Ok(builder.build()?.into_axum_router())
+    Ok(Built {
+        router: builder.build()?.into_axum_router(),
+        portal,
+    })
 }
 
 /// Whether `headers` carry `Authorization: Bearer <expected>`.
@@ -250,8 +298,9 @@ impl Running {
 }
 
 /// Starts `jc`: installs the crypto provider and the metrics recorder (once per process, before
-/// any module), builds the modules, binds the public listener (and the admin listener when
-/// configured) and serves until `shutdown` is cancelled.
+/// any module), runs first-start setup, binds the public listener (and the admin listener when
+/// configured), serves the modules, provisions the forge the Portal writes to, then builds the
+/// Portal against its siblings and serves it too. Serves until `shutdown` is cancelled.
 pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running, StartError> {
     runtime::install_crypto_provider();
     // The one recorder goes in before any module is built: a module that installs its own when
@@ -267,11 +316,19 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         }
         None => None,
     };
-    let tasks = TaskTracker::new();
-    let router = build_router(cfg, &shutdown, &tasks).await?;
+    let plans = plan_mounts(cfg)?;
+    let setup = Setup::prepare(&cfg.state_dir, &cfg.roles)?;
+    // Bound before the modules are built: the Portal's sibling addresses name this listener.
     let listener = bind(cfg.listen).await?;
     let addr = listener.local_addr().map_err(StartError::Serve)?;
-    let mut servers = vec![serve(listener, router, shutdown.clone())];
+    let siblings = Siblings::new(&plans, addr);
+    let ctx = modules::BuildCtx {
+        setup: &setup,
+        siblings: &siblings,
+    };
+    let tasks = TaskTracker::new();
+    let built = build_router(cfg, ctx, plans, &shutdown, &tasks).await?;
+    let mut servers = vec![serve(listener, built.router, shutdown.clone())];
     let mut admin_addr = None;
     if let (Some(admin), Some(token)) = (cfg.admin_listen, admin_token) {
         let admin_router = admin_router(token)?;
@@ -279,14 +336,38 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         admin_addr = Some(listener.local_addr().map_err(StartError::Serve)?);
         servers.push(serve(listener, admin_router, shutdown.clone()));
     }
-    tracing::info!(%addr, admin = ?admin_addr, "jc listening");
-    Ok(Running {
+    let running = Running {
         addr,
         admin_addr,
         shutdown,
         tasks,
         servers,
-    })
+    };
+    if let Some((late, mount)) = built.portal {
+        let portal = async {
+            if cfg.portal_siblings {
+                crate::provision::forge(&siblings, &setup).await?;
+            }
+            modules::build(
+                Module::Portal,
+                cfg,
+                ctx,
+                mount,
+                &running.shutdown,
+                &running.tasks,
+            )
+            .await
+        };
+        match portal.await {
+            Ok(router) => late.set(router),
+            Err(e) => {
+                let _ = running.stop().await;
+                return Err(e);
+            }
+        }
+    }
+    tracing::info!(%addr, admin = ?admin_addr, "jc listening");
+    Ok(running)
 }
 
 /// Runs `jc` until `stop` resolves (the binary passes SIGTERM/Ctrl-C), then shuts down cleanly.

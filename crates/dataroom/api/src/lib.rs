@@ -26,7 +26,7 @@ use dataroom_core::auth::constant_time_eq;
 use dataroom_core::ops::{all_operations, execute_operation, OpContext, OperationDef};
 use dataroom_core::{
     validate_and_sanitise_logo, Action, ActivityRow, Authorizer, BrandingBlock, Catalogue,
-    CatalogueId, DataroomError, Dataset, DatasetFilter, ObjectTarget, OrgId, ProfilePin,
+    CatalogueId, DataroomError, Dataset, DatasetFilter, GrantRule, ObjectTarget, OrgId, ProfilePin,
     ProfileRecord, Publisher, RecordState, RequestCtx, Result, SanitisedAsset, Store, Subject,
 };
 use dataroom_harvest::{HarvestEngine, HttpFetcher};
@@ -49,10 +49,81 @@ use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
 /// Token entry mapping a bearer/API token to a verified [`Subject`].
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TokenBinding {
     pub token: String,
     pub subject: Subject,
+}
+
+/// The token never prints: a binding lands in panics and logs.
+impl std::fmt::Debug for TokenBinding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenBinding")
+            .field("token", &"<redacted>")
+            .field("subject", &self.subject)
+            .finish()
+    }
+}
+
+/// The principal the Portal's CKAN publisher acts as (PORTAL-CALLS.md).
+pub const PORTAL_PUBLISHER: &str = "portal-ckan";
+
+/// The shortest Portal publisher token accepted: a guessable token would let anyone publish.
+pub const MIN_PORTAL_TOKEN_LEN: usize = 32;
+
+/// The Portal's CKAN publisher on one catalogue: `token` bound to [`PORTAL_PUBLISHER`] and the
+/// one grant its calls need. `Read` and `Propose` are all of it: `package_delete` is a
+/// withdrawal (`dataset.withdraw`), and `organization_*`/`package_*`/`resource_view_*` are
+/// proposals; `Delete` (purge) and `Admin` stay out. Errors never repeat the token.
+pub fn portal_publisher(
+    token: &str,
+    org_id: OrgId,
+    catalogue_id: CatalogueId,
+) -> Result<(TokenBinding, GrantRule)> {
+    let token = token.trim();
+    if token.len() < MIN_PORTAL_TOKEN_LEN || !token.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(DataroomError::field_error(
+            "portalToken",
+            format!(
+                "the Portal publisher token must be at least {MIN_PORTAL_TOKEN_LEN} printable \
+                 ASCII characters without spaces"
+            ),
+        ));
+    }
+    let binding = TokenBinding {
+        token: token.to_owned(),
+        subject: Subject {
+            actor_id: Some(PORTAL_PUBLISHER.into()),
+            organizations: vec![org_id],
+            groups: Vec::new(),
+            client_id: Some("joinedcontext-portal".into()),
+            read_only: false,
+        },
+    };
+    let grant = GrantRule {
+        org_id,
+        catalogue_id: Some(catalogue_id),
+        principal: PORTAL_PUBLISHER.into(),
+        actions: vec![Action::Read, Action::Propose],
+        publisher_id: None,
+    };
+    Ok((binding, grant))
+}
+
+/// [`portal_publisher`] with the token read from `path`, the secret file the host mounts.
+pub fn portal_publisher_from_file(
+    path: &std::path::Path,
+    org_id: OrgId,
+    catalogue_id: CatalogueId,
+) -> Result<(TokenBinding, GrantRule)> {
+    let token = std::fs::read_to_string(path).map_err(|e| {
+        DataroomError::Storage(format!(
+            "the Portal publisher token file {} could not be read: {}",
+            path.display(),
+            e.kind()
+        ))
+    })?;
+    portal_publisher(&token, org_id, catalogue_id)
 }
 
 /// Optional host-supplied subject resolver when mounted in-process inside the Portal (G1).

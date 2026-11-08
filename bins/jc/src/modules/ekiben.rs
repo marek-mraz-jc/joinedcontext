@@ -48,10 +48,11 @@ fn file_root(configured: Option<&Path>) -> Result<PathBuf, StartError> {
     Ok(dir)
 }
 
-pub fn build(cfg: &EkibenSection) -> Result<Router, StartError> {
+pub fn build(cfg: &EkibenSection, setup: &crate::setup::Setup) -> Result<Router, StartError> {
     let token_file = cfg
         .token_file
         .as_deref()
+        .or_else(|| setup.path(crate::setup::Secret::EkibenToken))
         .ok_or_else(|| err("no token_file"))?;
     let token = read_token(token_file)?;
     let root = file_root(cfg.file_root.as_deref())?;
