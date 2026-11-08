@@ -123,7 +123,11 @@ async fn reads_a_qos1_message_and_acknowledges_it_once_acked() {
     connected.expect("connects");
     let (mut s, connect, subscribe) = server;
     assert_eq!(&connect[..7], b"\x00\x04MQTT\x04");
-    assert_eq!(connect[7], 0x80 | 0x02, "user name and clean session, no password");
+    assert_eq!(
+        connect[7],
+        0x80 | 0x02,
+        "user name and clean session, no password"
+    );
     assert!(String::from_utf8_lossy(&connect).contains("jc-helsinki-mqtt-sensors"));
     assert!(String::from_utf8_lossy(&connect).contains("pipeline-runner-helsinki"));
     assert_eq!(&subscribe[2..], b"\x00\x0dsensors/+/air\x01");

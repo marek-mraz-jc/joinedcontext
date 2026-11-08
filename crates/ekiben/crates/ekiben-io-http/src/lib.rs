@@ -7,13 +7,13 @@ pub mod client;
 pub mod http_server;
 pub mod ingest;
 pub mod input;
+#[cfg(feature = "websocket")]
+pub mod mqtt;
 pub mod outbound;
 pub mod output;
 pub mod processor;
 #[cfg(feature = "websocket")]
 pub mod websocket;
-#[cfg(feature = "websocket")]
-pub mod mqtt;
 
 use ekiben_core::Registry;
 

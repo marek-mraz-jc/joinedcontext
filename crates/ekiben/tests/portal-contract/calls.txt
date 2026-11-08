@@ -1,4 +1,4 @@
- 1558 DELETE /streams/{project}.{name}
+ 1556 DELETE /streams/{project}.{name}
    10 GET /streams
-  789 GET /streams/{project}.{name}
-  789 POST /resources/rate_limit/{project}__pipeline_egress
+  788 GET /streams/{project}.{name}
+  788 POST /resources/rate_limit/{project}__pipeline_egress

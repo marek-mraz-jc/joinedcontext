@@ -65,6 +65,10 @@ with open(os.path.join(out, "calls.txt"), "w") as f:
         f.write(f"{calls.count(c):5} {c}\n")
 shutil.copy(os.path.join(deployment, "components/pipeline-runner/streams/resources.yaml"),
             os.path.join(out, "resources.yaml"))
+# The runner mounts the GTFS-RT schema alone at /proto (development-values `import_paths: [/proto]`).
+os.makedirs(os.path.join(out, "proto"), exist_ok=True)
+shutil.copy(os.path.join(deployment, "components/pipeline-runner/streams/gtfs-realtime.proto"),
+            os.path.join(out, "proto", "gtfs-realtime.proto"))
 dep = subprocess.run(["git", "-C", deployment, "rev-parse", "--short", "HEAD"],
                      capture_output=True, text=True).stdout.strip()
 with open(os.path.join(out, "SOURCE.md"), "w") as f:
@@ -72,5 +76,7 @@ with open(os.path.join(out, "SOURCE.md"), "w") as f:
             f"hands its runner for the seed of joinedcontext-deployment {dep}, rendered by "
             "tools/portal-dump (the Portal's StreamDeployer::converge, pipeline identity and validation "
             "on) and written by scripts/portal-contract/regen.py. resources.yaml is that deployment's "
-            "components/pipeline-runner/streams/resources.yaml.\n")
+            "components/pipeline-runner/streams/resources.yaml; proto/ holds its "
+            "components/pipeline-runner/streams/gtfs-realtime.proto (Apache-2.0, google/transit), which "
+            "the runner mounts at /proto.\n")
 print(len(streams), "streams,", len(schemas), "schemas,", len(set(calls)), "distinct calls")

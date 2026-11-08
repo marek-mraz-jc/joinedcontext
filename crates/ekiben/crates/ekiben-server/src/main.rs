@@ -86,7 +86,7 @@ enum Commands {
         /// A file with the `metrics:` section (Bento's prometheus exporter fields and mapping)
         #[arg(long)]
         metrics: Option<PathBuf>,
-        /// Resource config files, as Bento's `-r`: their `metrics:` section is read
+        /// Resource config files, as Bento's `-r`: their `metrics:` section and their resources (caches, rate limits, processors, inputs, outputs) for every stream
         #[arg(short = 'r', long = "resources")]
         resources: Vec<PathBuf>,
         /// Optional static stream config files to load at startup

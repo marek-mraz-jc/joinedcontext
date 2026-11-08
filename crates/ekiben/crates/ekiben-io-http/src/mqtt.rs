@@ -66,9 +66,19 @@ impl MqttConf {
         let map = val
             .as_object()
             .ok_or_else(|| CoreError::config("mqtt: expected an object"))?;
-        let str_of = |k: &str| map.get(k).and_then(JsonValue::as_str).unwrap_or("").to_string();
+        let str_of = |k: &str| {
+            map.get(k)
+                .and_then(JsonValue::as_str)
+                .unwrap_or("")
+                .to_string()
+        };
         let mut urls = Vec::new();
-        for u in map.get("urls").and_then(JsonValue::as_array).into_iter().flatten() {
+        for u in map
+            .get("urls")
+            .and_then(JsonValue::as_array)
+            .into_iter()
+            .flatten()
+        {
             // Bento splits each entry on commas.
             for part in u.as_str().unwrap_or("").split(',') {
                 let part = part.trim();
@@ -88,16 +98,28 @@ impl MqttConf {
         let topics: Vec<String> = map
             .get("topics")
             .and_then(JsonValue::as_array)
-            .map(|a| a.iter().filter_map(JsonValue::as_str).map(str::to_string).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(JsonValue::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default();
         if topics.is_empty() || topics.iter().any(|t| t.is_empty() || t.len() > 65535) {
-            return Err(CoreError::config("mqtt: topics must name at least one non-empty topic"));
+            return Err(CoreError::config(
+                "mqtt: topics must name at least one non-empty topic",
+            ));
         }
         let qos = map.get("qos").and_then(JsonValue::as_u64).unwrap_or(1);
         if qos > 2 {
             return Err(CoreError::config("mqtt: qos must be 0, 1 or 2"));
         }
-        if map.get("will").and_then(|w| w.get("enabled")).and_then(JsonValue::as_bool) == Some(true) {
+        if map
+            .get("will")
+            .and_then(|w| w.get("enabled"))
+            .and_then(JsonValue::as_bool)
+            == Some(true)
+        {
             return Err(CoreError::config("mqtt.will is not supported by ekiben"));
         }
         let mut client_id = str_of("client_id");
@@ -112,7 +134,10 @@ impl MqttConf {
                 )))
             }
         }
-        let keepalive = map.get("keepalive").and_then(JsonValue::as_u64).unwrap_or(30);
+        let keepalive = map
+            .get("keepalive")
+            .and_then(JsonValue::as_u64)
+            .unwrap_or(30);
         let connect_timeout = match map.get("connect_timeout").and_then(JsonValue::as_str) {
             Some(t) => ekiben_core::config::parse_duration_str(t)?,
             None => Duration::from_secs(30),
@@ -132,7 +157,11 @@ impl MqttConf {
                     )));
                 }
             }
-            if let Some(pem) = tls.get("root_cas").and_then(JsonValue::as_str).filter(|s| !s.is_empty()) {
+            if let Some(pem) = tls
+                .get("root_cas")
+                .and_then(JsonValue::as_str)
+                .filter(|s| !s.is_empty())
+            {
                 root_cas = pem_certificates(pem)?;
             }
         }
@@ -143,7 +172,10 @@ impl MqttConf {
             password: SecretString::new(str_of("password")),
             topics,
             qos: qos as u8,
-            clean_session: map.get("clean_session").and_then(JsonValue::as_bool).unwrap_or(true),
+            clean_session: map
+                .get("clean_session")
+                .and_then(JsonValue::as_bool)
+                .unwrap_or(true),
             keepalive: keepalive.min(u16::MAX as u64) as u16,
             connect_timeout,
             root_cas,
@@ -165,7 +197,9 @@ fn scheme_of(scheme: &str) -> Result<Transport, CoreError> {
         "ssl" | "tls" | "mqtts" | "tcps" => Ok(Transport::Tls),
         "ws" => Ok(Transport::Ws),
         "wss" => Ok(Transport::Wss),
-        other => Err(CoreError::config(format!("mqtt: unsupported url scheme '{other}'"))),
+        other => Err(CoreError::config(format!(
+            "mqtt: unsupported url scheme '{other}'"
+        ))),
     }
 }
 
@@ -236,7 +270,9 @@ fn take_packet(buf: &mut Vec<u8>) -> Result<Option<(u8, Vec<u8>)>, CoreError> {
     let mut mult = 1usize;
     let mut i = 1;
     loop {
-        let Some(&b) = buf.get(i) else { return Ok(None) };
+        let Some(&b) = buf.get(i) else {
+            return Ok(None);
+        };
         len += (b & 0x7f) as usize * mult;
         i += 1;
         if b & 0x80 == 0 {
@@ -248,7 +284,9 @@ fn take_packet(buf: &mut Vec<u8>) -> Result<Option<(u8, Vec<u8>)>, CoreError> {
         }
     }
     if len > MAX_PACKET_BYTES {
-        return Err(CoreError::other(format!("mqtt: a packet of {len} bytes is over the limit")));
+        return Err(CoreError::other(format!(
+            "mqtt: a packet of {len} bytes is over the limit"
+        )));
     }
     if buf.len() < i + len {
         return Ok(None);
@@ -273,7 +311,10 @@ struct Publish {
 fn parse_publish(first: u8, body: &[u8]) -> Result<Publish, CoreError> {
     let qos = (first >> 1) & 0x03;
     let bad = || CoreError::other("mqtt: malformed PUBLISH");
-    let tlen = u16::from_be_bytes([*body.first().ok_or_else(bad)?, *body.get(1).ok_or_else(bad)?]) as usize;
+    let tlen = u16::from_be_bytes([
+        *body.first().ok_or_else(bad)?,
+        *body.get(1).ok_or_else(bad)?,
+    ]) as usize;
     let topic = std::str::from_utf8(body.get(2..2 + tlen).ok_or_else(bad)?)
         .map_err(|_| bad())?
         .to_string();
@@ -309,7 +350,10 @@ impl Wire {
                 s.write_all(&bytes).await.map_err(|e| err(e.to_string()))?;
                 s.flush().await.map_err(|e| err(e.to_string()))
             }
-            Wire::Ws(ws) => ws.send(Message::binary(bytes)).await.map_err(|e| err(e.to_string())),
+            Wire::Ws(ws) => ws
+                .send(Message::binary(bytes))
+                .await
+                .map_err(|e| err(e.to_string())),
         }
     }
 
@@ -333,7 +377,9 @@ impl Wire {
                     }
                     Some(Ok(m)) if m.is_close() => return Ok(false),
                     Some(Ok(_)) => {}
-                    Some(Err(e)) => return Err(CoreError::other(format!("mqtt: read failed: {e}"))),
+                    Some(Err(e)) => {
+                        return Err(CoreError::other(format!("mqtt: read failed: {e}")))
+                    }
                     None => return Ok(false),
                 }
             },
@@ -363,7 +409,10 @@ async fn dial(
         .map_err(|e| CoreError::config(format!("mqtt.urls: {e}")))?;
     let addrs = outbound::resolve_checked(&probe, &ctx.org).await?;
     let tcp = outbound::connect_checked(&addrs, conf.connect_timeout).await?;
-    let bare = host.trim_start_matches('[').trim_end_matches(']').to_string();
+    let bare = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_string();
     let io: Box<dyn Io> = match transport {
         Transport::Tls | Transport::Wss => tls_connect(tcp, &bare, &conf.root_cas).await?,
         _ => Box::new(tcp),
@@ -394,7 +443,9 @@ async fn dial(
         wire.send(connect_packet(conf)).await?;
         let connack = next_packet(&mut wire, &mut buf).await?;
         if connack.0 >> 4 != 2 || connack.1.len() < 2 {
-            return Err(CoreError::other("mqtt: the broker did not answer CONNECT with CONNACK"));
+            return Err(CoreError::other(
+                "mqtt: the broker did not answer CONNECT with CONNACK",
+            ));
         }
         if connack.1[1] != 0 {
             return Err(CoreError::other(format!(
@@ -476,7 +527,10 @@ async fn run_connection(
                 },
                 // PUBREL: the QoS 2 exchange ends with PUBCOMP.
                 6 => {
-                    if let Err(e) = wire.send(packet(0x70, body.get(..2).unwrap_or(&[0, 0]))).await {
+                    if let Err(e) = wire
+                        .send(packet(0x70, body.get(..2).unwrap_or(&[0, 0])))
+                        .await
+                    {
                         break e.to_string();
                     }
                 }
@@ -569,7 +623,10 @@ impl Input for MqttInput {
         self.open(ctx).await
     }
 
-    async fn read_batch(&mut self, ctx: &StreamContext) -> Result<(Batch, AckResponder), CoreError> {
+    async fn read_batch(
+        &mut self,
+        ctx: &StreamContext,
+    ) -> Result<(Batch, AckResponder), CoreError> {
         loop {
             if self.closed {
                 return Err(CoreError::NotConnected);
@@ -672,7 +729,14 @@ mod tests {
         let publish = parse_publish(0x3b, &body).unwrap();
         assert_eq!(
             publish,
-            Publish { topic: "t/1".into(), qos: 1, dup: true, retain: true, id: 5, payload: b"hello".to_vec() }
+            Publish {
+                topic: "t/1".into(),
+                qos: 1,
+                dup: true,
+                retain: true,
+                id: 5,
+                payload: b"hello".to_vec()
+            }
         );
         let long = packet(0x30, &vec![0u8; 300]);
         assert_eq!(&long[1..3], &[0xac, 0x02]);
@@ -690,7 +754,9 @@ mod tests {
         ] {
             assert!(MqttConf::from_json(&bad).is_err(), "{bad}");
         }
-        let ok = MqttConf::from_json(&json!({"urls": ["wss://mqtt.hsl.fi:443/"], "topics": ["/hfp/#"], "qos": 0}));
+        let ok = MqttConf::from_json(
+            &json!({"urls": ["wss://mqtt.hsl.fi:443/"], "topics": ["/hfp/#"], "qos": 0}),
+        );
         assert!(ok.is_ok());
     }
 

@@ -16,7 +16,9 @@ use axum::extract::State;
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use ekiben_core::{EnvAccess, OrgId, OrgQuotas, ResourceManager};
-use ekiben_server::{build_full_registry, build_router, ServerAuthConfig, ServerState, StreamManager};
+use ekiben_server::{
+    build_full_registry, build_router, ServerAuthConfig, ServerState, StreamManager,
+};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -68,9 +70,14 @@ pub fn cases() -> Vec<Case> {
 fn inline(node: &mut Value, schemas: &HashMap<String, String>) {
     match node {
         Value::Object(map) => {
-            if let Some(Value::String(s)) = map.get_mut("json_schema").and_then(|j| j.get_mut("schema")) {
+            if let Some(Value::String(s)) =
+                map.get_mut("json_schema").and_then(|j| j.get_mut("schema"))
+            {
                 if let Some(key) = s.strip_prefix("sha256:") {
-                    *s = schemas.get(key).cloned().expect("schema in schemas.json.gz");
+                    *s = schemas
+                        .get(key)
+                        .cloned()
+                        .expect("schema in schemas.json.gz");
                 }
             }
             map.values_mut().for_each(|v| inline(v, schemas));
@@ -91,7 +98,9 @@ pub fn rewrite(node: &mut Value, stub: &str, mqtt_to: &str) {
                     ("url", Value::String(url)) if url.starts_with(INTERNAL) => {
                         *url = format!("{stub}{}", &url[INTERNAL.len()..]);
                     }
-                    ("url", Value::String(url)) if url.starts_with("http://") || url.starts_with("https://") => {
+                    ("url", Value::String(url))
+                        if url.starts_with("http://") || url.starts_with("https://") =>
+                    {
                         let (scheme, rest) = url.split_once("://").unwrap_or_default();
                         *url = format!("{stub}/up/{scheme}/{rest}");
                     }
@@ -113,6 +122,13 @@ pub fn rewrite(node: &mut Value, stub: &str, mqtt_to: &str) {
 /// deployment's shared resources registered and the deployment runner's quotas.
 pub async fn runner(allow_private_ips: bool) -> (String, tempfile::TempDir) {
     let file_root = tempfile::tempdir().unwrap();
+    // The deployment mounts the GTFS-RT schema at /proto; ekiben reads absolute paths under file_root.
+    std::fs::create_dir(file_root.path().join("proto")).unwrap();
+    std::fs::copy(
+        root().join("tests/portal-contract/proto/gtfs-realtime.proto"),
+        file_root.path().join("proto/gtfs-realtime.proto"),
+    )
+    .unwrap();
     let resources = ResourceManager::new();
     resources.set_org_quotas(
         &OrgId::default(),
@@ -133,7 +149,8 @@ pub async fn runner(allow_private_ips: bool) -> (String, tempfile::TempDir) {
         Some(file_root.path().to_path_buf()),
         EnvAccess::AllowListed,
     );
-    let shared = std::fs::read_to_string(root().join("tests/portal-contract/resources.yaml")).unwrap();
+    let shared =
+        std::fs::read_to_string(root().join("tests/portal-contract/resources.yaml")).unwrap();
     manager
         .register_resources(&OrgId::default(), &shared)
         .expect("the deployment's resources.yaml registers");
@@ -158,7 +175,12 @@ pub async fn runner(allow_private_ips: bool) -> (String, tempfile::TempDir) {
 /// The Portal's calls for one stream (`deploy_stream`, `reconciler/streams.rs:1345-1393`): the
 /// project's write budget, then PUT, then POST when the runner does not hold it. The admin token
 /// is the one `jc` asks for (the Portal sends none today: PORTAL-CALLS.md §1).
-pub async fn deploy(client: &reqwest::Client, runner: &str, case: &Case, stream: &Value) -> Result<(), String> {
+pub async fn deploy(
+    client: &reqwest::Client,
+    runner: &str,
+    case: &Case,
+    stream: &Value,
+) -> Result<(), String> {
     let egress = format!(
         "{runner}/resources/rate_limit/{}__pipeline_egress",
         case.project.replace('-', "_")
@@ -171,7 +193,11 @@ pub async fn deploy(client: &reqwest::Client, runner: &str, case: &Case, stream:
         .await
         .map_err(|e| e.to_string())?;
     if !r.status().is_success() {
-        return Err(format!("egress: {} {}", r.status(), r.text().await.unwrap_or_default()));
+        return Err(format!(
+            "egress: {} {}",
+            r.status(),
+            r.text().await.unwrap_or_default()
+        ));
     }
     let url = format!("{runner}/streams/{}", case.id);
     let mut r = client
@@ -193,7 +219,11 @@ pub async fn deploy(client: &reqwest::Client, runner: &str, case: &Case, stream:
     if r.status().is_success() {
         Ok(())
     } else {
-        Err(format!("runner answered {}: {}", r.status(), r.text().await.unwrap_or_default()))
+        Err(format!(
+            "runner answered {}: {}",
+            r.status(),
+            r.text().await.unwrap_or_default()
+        ))
     }
 }
 
@@ -218,7 +248,9 @@ pub async fn stub() -> (String, Shared) {
     let seen: Shared = Arc::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let app = axum::Router::new().fallback(answer).with_state(seen.clone());
+    let app = axum::Router::new()
+        .fallback(answer)
+        .with_state(seen.clone());
     tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
@@ -258,7 +290,11 @@ fn fixture_key(method: &str, url: &str, headers: &HeaderMap, body: &[u8]) -> Str
     let mut h = Sha256::new();
     h.update(format!("{method}\n{url}\n").as_bytes());
     for name in ["range", "accept"] {
-        let mut value = headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+        let mut value = headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
         if name == "accept" && value == "*/*" {
             value.clear();
         }
@@ -268,7 +304,13 @@ fn fixture_key(method: &str, url: &str, headers: &HeaderMap, body: &[u8]) -> Str
     hex::encode(h.finalize())
 }
 
-async fn answer(State(seen): State<Shared>, method: Method, uri: Uri, headers: HeaderMap, body: Bytes) -> Response {
+async fn answer(
+    State(seen): State<Shared>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     let path = uri.path().to_string();
     let json_body = || serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
     if path == "/token" {
@@ -287,13 +329,19 @@ async fn answer(State(seen): State<Shared>, method: Method, uri: Uri, headers: H
             .find_map(|kv| kv.strip_prefix("grant_type="))
             .unwrap_or_default()
             .to_string();
-        seen.lock().unwrap().tokens.push((client.clone(), grant.clone()));
+        seen.lock()
+            .unwrap()
+            .tokens
+            .push((client.clone(), grant.clone()));
         // The sidecar names a pipeline `{project}/{pipeline}`; it wants no secret.
         if grant != "client_credentials" || client.matches('/').count() != 1 {
             return (StatusCode::UNAUTHORIZED, "{\"error\":\"invalid_client\"}").into_response();
         }
         let token = format!("tok:{client}");
-        return axum::Json(json!({"access_token": token, "token_type": "bearer", "expires_in": 3600})).into_response();
+        return axum::Json(
+            json!({"access_token": token, "token_type": "bearer", "expires_in": 3600}),
+        )
+        .into_response();
     }
     if let Some(rest) = path.strip_prefix("/gw/") {
         let token = bearer(&headers);
@@ -303,13 +351,26 @@ async fn answer(State(seen): State<Shared>, method: Method, uri: Uri, headers: H
         if rest.ends_with("/ngsi-ld/v1/entityOperations/upsert") {
             let slug = rest.split('/').nth(2).unwrap_or_default().to_string();
             let query = uri.query().unwrap_or_default().to_string();
-            seen.lock().unwrap().upserts.push((token, slug, query, json_body()));
+            seen.lock()
+                .unwrap()
+                .upserts
+                .push((token, slug, query, json_body()));
             return StatusCode::NO_CONTENT.into_response();
         }
-        return ([("NGSILD-Results-Count", "0"), ("Content-Type", "application/json")], "[]").into_response();
+        return (
+            [
+                ("NGSILD-Results-Count", "0"),
+                ("Content-Type", "application/json"),
+            ],
+            "[]",
+        )
+            .into_response();
     }
     if path.starts_with("/internal/") {
-        seen.lock().unwrap().internal.push((bearer(&headers), path, json_body()));
+        seen.lock()
+            .unwrap()
+            .internal
+            .push((bearer(&headers), path, json_body()));
         return StatusCode::OK.into_response();
     }
     if let Some(rest) = path.strip_prefix("/up/") {
@@ -319,7 +380,10 @@ async fn answer(State(seen): State<Shared>, method: Method, uri: Uri, headers: H
             None => format!("{scheme}://{rest}"),
         };
         let key = fixture_key(method.as_str(), &url, &headers, &body);
-        let file = root().join("tests/e2e-parity/fixtures").join(&key[..2]).join(format!("{key}.json"));
+        let file = root()
+            .join("tests/e2e-parity/fixtures")
+            .join(&key[..2])
+            .join(format!("{key}.json"));
         let Ok(text) = std::fs::read_to_string(&file) else {
             seen.lock().unwrap().missing.push(format!("{method} {url}"));
             return (StatusCode::from_u16(599).unwrap(), "no recorded answer").into_response();
@@ -329,8 +393,12 @@ async fn answer(State(seen): State<Shared>, method: Method, uri: Uri, headers: H
         let payload = base64::engine::general_purpose::STANDARD
             .decode(f["body"].as_str().unwrap_or_default())
             .unwrap_or_default();
-        let status = StatusCode::from_u16(f["status"].as_u64().unwrap_or(200) as u16).unwrap_or(StatusCode::OK);
-        let ctype = f["content_type"].as_str().unwrap_or("application/octet-stream").to_string();
+        let status = StatusCode::from_u16(f["status"].as_u64().unwrap_or(200) as u16)
+            .unwrap_or(StatusCode::OK);
+        let ctype = f["content_type"]
+            .as_str()
+            .unwrap_or("application/octet-stream")
+            .to_string();
         return (status, [("Content-Type", ctype)], payload).into_response();
     }
     StatusCode::NOT_FOUND.into_response()

@@ -30,7 +30,12 @@ const INTERNAL: &str = "http://portal-internal.test";
 
 type Calls = Arc<Mutex<Vec<(String, String, Bytes)>>>;
 
-async fn capture(State(calls): State<Calls>, method: Method, uri: Uri, body: Bytes) -> (StatusCode, String) {
+async fn capture(
+    State(calls): State<Calls>,
+    method: Method,
+    uri: Uri,
+    body: Bytes,
+) -> (StatusCode, String) {
     let path = uri.path().to_owned();
     let answer = match (&method, path.as_str()) {
         (&Method::GET, "/streams") => (StatusCode::OK, "{}".to_owned()),
@@ -38,7 +43,10 @@ async fn capture(State(calls): State<Calls>, method: Method, uri: Uri, body: Byt
         (&Method::GET, p) if p.starts_with("/streams/") => (StatusCode::NOT_FOUND, String::new()),
         _ => (StatusCode::OK, "{}".to_owned()),
     };
-    calls.lock().unwrap().push((method.to_string(), uri.to_string(), body));
+    calls
+        .lock()
+        .unwrap()
+        .push((method.to_string(), uri.to_string(), body));
     answer
 }
 
@@ -66,7 +74,9 @@ async fn main() {
     let calls: Calls = Arc::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let runner = format!("http://{}", listener.local_addr().unwrap());
-    let app = axum::Router::new().fallback(capture).with_state(Arc::clone(&calls));
+    let app = axum::Router::new()
+        .fallback(capture)
+        .with_state(Arc::clone(&calls));
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
     let deployer = StreamDeployer::new(runner)
@@ -74,7 +84,7 @@ async fn main() {
         .with_concurrency(10_000, 10_000)
         .with_validation(INTERNAL, schemas);
     let outcomes = deployer
-        .converge(&mirror, &Bentos::new(), &BTreeMap::new())
+        .converge(&mirror, &bentos(&files), &BTreeMap::new())
         .await;
     for (project, name, outcome) in &outcomes {
         if matches!(outcome, StreamOutcome::Scheduled(..)) {
@@ -93,7 +103,9 @@ async fn main() {
     }
     let mut seen = std::collections::HashSet::new();
     for (method, path, body) in calls.lock().unwrap().iter() {
-        let id = path.strip_prefix("/streams/").filter(|id| !id.contains('/'));
+        let id = path
+            .strip_prefix("/streams/")
+            .filter(|id| !id.contains('/'));
         match (method.as_str(), id) {
             ("PUT" | "POST", Some(id)) if seen.insert(id.to_owned()) => {
                 let stream: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
@@ -115,18 +127,27 @@ fn load(dir: &Path, mirror: &Mirror, files: &mut HashMap<(String, String, String
         .unwrap_or_default();
     paths.sort();
     for path in paths {
-        let file = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        let file = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
         if !file.ends_with(".yaml") || file.ends_with("-bento.yaml") || file.contains(".linkml.") {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         let text = text.replace("{orgDomain}", ORG_DOMAIN);
         for doc in serde_norway::Deserializer::from_str(&text) {
-            let Ok(value) = <Value as serde::Deserialize>::deserialize(doc) else { continue };
+            let Ok(value) = <Value as serde::Deserialize>::deserialize(doc) else {
+                continue;
+            };
             if value.get("kind").is_none() || value.pointer("/metadata/name").is_none() {
                 continue;
             }
-            let Ok(envelope) = serde_json::from_value::<ResourceEnvelope>(value) else { continue };
+            let Ok(envelope) = serde_json::from_value::<ResourceEnvelope>(value) else {
+                continue;
+            };
             let ns = envelope.metadata.namespace.clone().unwrap_or_default();
             files.insert(
                 (ns, envelope.kind.clone(), envelope.metadata.name.clone()),
@@ -135,6 +156,23 @@ fn load(dir: &Path, mirror: &Mirror, files: &mut HashMap<(String, String, String
             mirror.upsert(envelope);
         }
     }
+}
+
+/// The author's `bento.yaml` of each Pipeline: in the seed it sits beside the manifest as
+/// `<manifest>-bento.yaml` (the forge seed writes it to `pipelines/<name>/bento.yaml`).
+fn bentos(files: &HashMap<(String, String, String), PathBuf>) -> Bentos {
+    files
+        .iter()
+        .filter(|((_, kind, _), _)| kind == "Pipeline")
+        .filter_map(|((project, _, name), path)| {
+            let beside = path.with_file_name(format!("{}-bento.yaml", path.file_stem()?.to_str()?));
+            let text = std::fs::read_to_string(beside).ok()?;
+            Some((
+                (project.clone(), name.clone()),
+                text.replace("{orgDomain}", ORG_DOMAIN),
+            ))
+        })
+        .collect()
 }
 
 /// The Portal's `pipeline_validation::load` over the flat seed: each space's model compiled from
@@ -147,8 +185,12 @@ fn compile_models(
     let mut compiled = HashMap::new();
     let all = mirror.matching(|_| true);
     for env in all.iter().filter(|e| e.kind == "ContextSpace") {
-        let Ok(space) = serde_json::from_value::<ContextSpaceSpec>(env.spec.clone()) else { continue };
-        let Some(named) = space.data_model_ref else { continue };
+        let Ok(space) = serde_json::from_value::<ContextSpaceSpec>(env.spec.clone()) else {
+            continue;
+        };
+        let Some(named) = space.data_model_ref else {
+            continue;
+        };
         let project = env.metadata.namespace.clone().unwrap_or_default();
         let model = all.iter().find_map(|m| {
             let spec = serde_json::from_value::<DataModelSpec>(m.spec.clone()).ok()?;
@@ -158,7 +200,9 @@ fn compile_models(
                 && spec.context_space_ref.as_deref() == Some(env.metadata.name.as_str()))
             .then(|| (m.metadata.name.clone(), spec))
         });
-        let Some((model_name, spec)) = model else { continue };
+        let Some((model_name, spec)) = model else {
+            continue;
+        };
         let json_schema = spec
             .artifacts
             .json_schema

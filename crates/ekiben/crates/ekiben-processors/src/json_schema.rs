@@ -42,7 +42,11 @@ impl JsonSchemaProcessor {
                     "json_schema: set either schema or schema_path, not both",
                 ))
             }
-            _ => return Err(CoreError::config("json_schema: a schema or schema_path is required")),
+            _ => {
+                return Err(CoreError::config(
+                    "json_schema: a schema or schema_path is required",
+                ))
+            }
         };
         let root: Value = serde_json::from_str(&text)
             .map_err(|e| CoreError::config(format!("json_schema: the schema is not JSON: {e}")))?;
@@ -59,7 +63,8 @@ fn read_schema_path(path: &str, ctx: &ProcContext) -> Result<String, CoreError> 
         Some(root) => {
             let p = std::path::Path::new(rel);
             if p.is_absolute()
-                || p.components().any(|c| matches!(c, std::path::Component::ParentDir))
+                || p.components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
             {
                 return Err(CoreError::config(
                     "json_schema: schema_path must stay inside the file root",
@@ -107,7 +112,12 @@ pub struct Schema {
     patterns: HashMap<String, Regex>,
 }
 
-const UNSUPPORTED: &[&str] = &["$recursiveRef", "$dynamicRef", "unevaluatedProperties", "unevaluatedItems"];
+const UNSUPPORTED: &[&str] = &[
+    "$recursiveRef",
+    "$dynamicRef",
+    "unevaluatedProperties",
+    "unevaluatedItems",
+];
 
 impl Schema {
     pub fn compile(root: Value) -> Result<Self, String> {
@@ -139,7 +149,14 @@ impl Schema {
         self.root.pointer(&decoded)
     }
 
-    fn walk(&self, schema: &Value, doc: &Value, at: &str, out: &mut Vec<(String, String)>, depth: usize) {
+    fn walk(
+        &self,
+        schema: &Value,
+        doc: &Value,
+        at: &str,
+        out: &mut Vec<(String, String)>,
+        depth: usize,
+    ) {
         if depth > MAX_DEPTH {
             out.push((at.into(), "schema references nest too deeply".into()));
             return;
@@ -175,14 +192,20 @@ impl Schema {
                 };
                 out.push((
                     at.into(),
-                    format!("invalid type. expected: {expected}, given: {}", type_of(doc)),
+                    format!(
+                        "invalid type. expected: {expected}, given: {}",
+                        type_of(doc)
+                    ),
                 ));
                 return;
             }
         }
         if let Some(c) = obj.get("const") {
             if !json_eq(c, doc) {
-                out.push((at.into(), format!("{} does not match: {}", field_name(at), c)));
+                out.push((
+                    at.into(),
+                    format!("{} does not match: {}", field_name(at), c),
+                ));
             }
         }
         if let Some(Value::Array(allowed)) = obj.get("enum") {
@@ -190,7 +213,11 @@ impl Schema {
                 let list: Vec<String> = allowed.iter().map(Value::to_string).collect();
                 out.push((
                     at.into(),
-                    format!("{} must be one of the following: {}", field_name(at), list.join(", ")),
+                    format!(
+                        "{} must be one of the following: {}",
+                        field_name(at),
+                        list.join(", ")
+                    ),
                 ));
             }
         }
@@ -227,12 +254,18 @@ impl Schema {
         }
         if let Some(Value::Array(any)) = obj.get("anyOf") {
             if !any.iter().any(passes) {
-                out.push((at.into(), "must validate at least one schema (anyof)".into()));
+                out.push((
+                    at.into(),
+                    "must validate at least one schema (anyof)".into(),
+                ));
             }
         }
         if let Some(Value::Array(one)) = obj.get("oneOf") {
             if one.iter().filter(|s| passes(s)).count() != 1 {
-                out.push((at.into(), "must validate one and only one schema (oneof)".into()));
+                out.push((
+                    at.into(),
+                    "must validate one and only one schema (oneof)".into(),
+                ));
             }
         }
         if let Some(not) = obj.get("not") {
@@ -246,8 +279,15 @@ impl Schema {
                 let before = out.len();
                 self.walk(s, doc, at, out, depth + 1);
                 if out.len() > before {
-                    let verdict = if branch == "then" { "valid" } else { "not valid" };
-                    out.push((at.into(), format!("must validate \"{branch}\" as \"if\" was {verdict}")));
+                    let verdict = if branch == "then" {
+                        "valid"
+                    } else {
+                        "not valid"
+                    };
+                    out.push((
+                        at.into(),
+                        format!("must validate \"{branch}\" as \"if\" was {verdict}"),
+                    ));
                 }
             }
         }
@@ -289,7 +329,11 @@ impl Schema {
             }
             if let Some(pp) = pattern_props {
                 for (pattern, s) in pp {
-                    if self.patterns.get(pattern).is_some_and(|re| re.is_match(key)) {
+                    if self
+                        .patterns
+                        .get(pattern)
+                        .is_some_and(|re| re.is_match(key))
+                    {
                         matched = true;
                         self.walk(s, value, &child, out, depth + 1);
                     }
@@ -297,9 +341,10 @@ impl Schema {
             }
             if !matched {
                 match obj.get("additionalProperties") {
-                    Some(Value::Bool(false)) => {
-                        out.push((at.into(), format!("additional property {key} is not allowed")))
-                    }
+                    Some(Value::Bool(false)) => out.push((
+                        at.into(),
+                        format!("additional property {key} is not allowed"),
+                    )),
                     Some(s @ Value::Object(_)) => self.walk(s, value, &child, out, depth + 1),
                     _ => {}
                 }
@@ -367,10 +412,15 @@ impl Schema {
                         Some(s) => self.walk(s, item, &child, out, depth + 1),
                         None => match obj.get("additionalItems") {
                             Some(Value::Bool(false)) => {
-                                out.push((at.into(), "no additional items allowed on array".into()));
+                                out.push((
+                                    at.into(),
+                                    "no additional items allowed on array".into(),
+                                ));
                                 break;
                             }
-                            Some(s @ Value::Object(_)) => self.walk(s, item, &child, out, depth + 1),
+                            Some(s @ Value::Object(_)) => {
+                                self.walk(s, item, &child, out, depth + 1)
+                            }
                             _ => {}
                         },
                     }
@@ -395,16 +445,28 @@ impl Schema {
         }
     }
 
-    fn string(&self, obj: &serde_json::Map<String, Value>, s: &str, at: &str, out: &mut Vec<(String, String)>) {
+    fn string(
+        &self,
+        obj: &serde_json::Map<String, Value>,
+        s: &str,
+        at: &str,
+        out: &mut Vec<(String, String)>,
+    ) {
         let len = s.chars().count() as u64;
         if let Some(n) = obj.get("minLength").and_then(Value::as_u64) {
             if len < n {
-                out.push((at.into(), format!("string length must be greater than or equal to {n}")));
+                out.push((
+                    at.into(),
+                    format!("string length must be greater than or equal to {n}"),
+                ));
             }
         }
         if let Some(n) = obj.get("maxLength").and_then(Value::as_u64) {
             if len > n {
-                out.push((at.into(), format!("string length must be less than or equal to {n}")));
+                out.push((
+                    at.into(),
+                    format!("string length must be less than or equal to {n}"),
+                ));
             }
         }
         if let Some(p) = obj.get("pattern").and_then(Value::as_str) {
@@ -422,44 +484,71 @@ impl Schema {
 
 const MAX_DEPTH: usize = 64;
 
-fn number(obj: &serde_json::Map<String, Value>, doc: &Value, at: &str, out: &mut Vec<(String, String)>) {
+fn number(
+    obj: &serde_json::Map<String, Value>,
+    doc: &Value,
+    at: &str,
+    out: &mut Vec<(String, String)>,
+) {
     let Some(v) = doc.as_f64() else { return };
     let get = |k: &str| obj.get(k).and_then(Value::as_f64);
     let show = |k: &str| obj.get(k).map(Value::to_string).unwrap_or_default();
     if let Some(m) = get("multipleOf") {
         if m > 0.0 && ((v / m) - (v / m).round()).abs() > 1e-9 {
-            out.push((at.into(), format!("must be a multiple of {}", show("multipleOf"))));
+            out.push((
+                at.into(),
+                format!("must be a multiple of {}", show("multipleOf")),
+            ));
         }
     }
     if let Some(min) = get("minimum") {
         if v < min {
-            out.push((at.into(), format!("must be greater than or equal to {}", show("minimum"))));
+            out.push((
+                at.into(),
+                format!("must be greater than or equal to {}", show("minimum")),
+            ));
         }
     }
     if let Some(max) = get("maximum") {
         if v > max {
-            out.push((at.into(), format!("must be less than or equal to {}", show("maximum"))));
+            out.push((
+                at.into(),
+                format!("must be less than or equal to {}", show("maximum")),
+            ));
         }
     }
     if let Some(min) = get("exclusiveMinimum") {
         if v <= min {
-            out.push((at.into(), format!("must be greater than {}", show("exclusiveMinimum"))));
+            out.push((
+                at.into(),
+                format!("must be greater than {}", show("exclusiveMinimum")),
+            ));
         }
     }
     if let Some(max) = get("exclusiveMaximum") {
         if v >= max {
-            out.push((at.into(), format!("must be less than {}", show("exclusiveMaximum"))));
+            out.push((
+                at.into(),
+                format!("must be less than {}", show("exclusiveMaximum")),
+            ));
         }
     }
 }
 
 /// Walks the schema once: patterns compile, every `$ref` is local and resolves, no keyword
 /// this validator lacks is present.
-fn check(node: &Value, root: &Value, patterns: &mut HashMap<String, Regex>, depth: usize) -> Result<(), String> {
+fn check(
+    node: &Value,
+    root: &Value,
+    patterns: &mut HashMap<String, Regex>,
+    depth: usize,
+) -> Result<(), String> {
     if depth > MAX_DEPTH {
         return Err("json_schema: the schema nests too deeply".into());
     }
-    let Value::Object(obj) = node else { return Ok(()) };
+    let Value::Object(obj) = node else {
+        return Ok(());
+    };
     for k in UNSUPPORTED {
         if obj.contains_key(*k) {
             return Err(format!("json_schema: keyword {k} is not supported"));
@@ -467,16 +556,19 @@ fn check(node: &Value, root: &Value, patterns: &mut HashMap<String, Regex>, dept
     }
     if let Some(r) = obj.get("$ref") {
         let r = r.as_str().ok_or("json_schema: $ref must be a string")?;
-        let resolvable = r == "#" || (r.starts_with("#/") && {
-            let decoded = r[1..]
-                .split('/')
-                .map(|seg| percent_decode(seg).replace("~1", "/").replace("~0", "~"))
-                .collect::<Vec<_>>()
-                .join("/");
-            root.pointer(&decoded).is_some()
-        });
+        let resolvable = r == "#"
+            || (r.starts_with("#/") && {
+                let decoded = r[1..]
+                    .split('/')
+                    .map(|seg| percent_decode(seg).replace("~1", "/").replace("~0", "~"))
+                    .collect::<Vec<_>>()
+                    .join("/");
+                root.pointer(&decoded).is_some()
+            });
         if !resolvable {
-            return Err(format!("json_schema: $ref {r} is not a local reference that resolves"));
+            return Err(format!(
+                "json_schema: $ref {r} is not a local reference that resolves"
+            ));
         }
     }
     if let Some(p) = obj.get("pattern").and_then(Value::as_str) {
@@ -502,8 +594,14 @@ fn check(node: &Value, root: &Value, patterns: &mut HashMap<String, Regex>, dept
                 }
                 child => check(child, root, patterns, depth + 1)?,
             },
-            "additionalProperties" | "additionalItems" | "not" | "if" | "then" | "else"
-            | "contains" | "propertyNames" => check(value, root, patterns, depth + 1)?,
+            "additionalProperties"
+            | "additionalItems"
+            | "not"
+            | "if"
+            | "then"
+            | "else"
+            | "contains"
+            | "propertyNames" => check(value, root, patterns, depth + 1)?,
             _ => {}
         }
     }
@@ -512,7 +610,8 @@ fn check(node: &Value, root: &Value, patterns: &mut HashMap<String, Regex>, dept
 
 fn compile_pattern(p: &str, patterns: &mut HashMap<String, Regex>) -> Result<(), String> {
     if !patterns.contains_key(p) {
-        let re = Regex::new(p).map_err(|e| format!("json_schema: pattern {p:?} does not compile: {e}"))?;
+        let re = Regex::new(p)
+            .map_err(|e| format!("json_schema: pattern {p:?} does not compile: {e}"))?;
         patterns.insert(p.to_string(), re);
     }
     Ok(())
@@ -543,7 +642,10 @@ fn field_name(at: &str) -> &str {
 }
 
 fn is_integer(v: &Value) -> bool {
-    v.is_i64() || v.is_u64() || v.as_f64().is_some_and(|f| f.is_finite() && f.fract() == 0.0)
+    v.is_i64()
+        || v.is_u64()
+        || v.as_f64()
+            .is_some_and(|f| f.is_finite() && f.fract() == 0.0)
 }
 
 fn is_type(v: &Value, t: &str) -> bool {
@@ -578,9 +680,13 @@ fn json_eq(a: &Value, b: &Value) -> bool {
             (Some(x), Some(y)) => x == y,
             _ => x.as_f64() == y.as_f64(),
         },
-        (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(a, b)| json_eq(a, b)),
+        (Value::Array(x), Value::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(a, b)| json_eq(a, b))
+        }
         (Value::Object(x), Value::Object(y)) => {
-            x.len() == y.len() && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| json_eq(v, w)))
+            x.len() == y.len()
+                && x.iter()
+                    .all(|(k, v)| y.get(k).is_some_and(|w| json_eq(v, w)))
         }
         _ => a == b,
     }
@@ -601,7 +707,9 @@ fn format_ok(format: &str, s: &str) -> bool {
         "time" => chrono::DateTime::parse_from_rfc3339(&format!("1970-01-01T{s}")).is_ok(),
         // Go's url.Parse with a scheme: a scheme, then no space or control character.
         "uri" => {
-            let Some((scheme, _)) = s.split_once(':') else { return false };
+            let Some((scheme, _)) = s.split_once(':') else {
+                return false;
+            };
             let mut chars = scheme.chars();
             chars.next().is_some_and(|c| c.is_ascii_alphabetic())
                 && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
@@ -620,7 +728,9 @@ fn date_ok(s: &str) -> bool {
     b.len() == 10
         && b[4] == b'-'
         && b[7] == b'-'
-        && b.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+        && b.iter()
+            .enumerate()
+            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
         && chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok()
 }
 
@@ -684,7 +794,10 @@ mod tests {
                 "v must validate at least one schema (anyof)",
             ]
         );
-        assert_eq!(errors(json!({"type": "integer"}), json!(2.0)), Vec::<String>::new());
+        assert_eq!(
+            errors(json!({"type": "integer"}), json!(2.0)),
+            Vec::<String>::new()
+        );
         assert_eq!(
             errors(json!({"type": ["string", "null"]}), json!(1)),
             vec!["(root) invalid type. expected: [string, null], given: integer"]
@@ -714,7 +827,8 @@ mod tests {
 
     #[test]
     fn a_self_reference_stops_at_the_depth_limit() {
-        let schema = json!({"definitions": {"a": {"$ref": "#/definitions/a"}}, "$ref": "#/definitions/a"});
+        let schema =
+            json!({"definitions": {"a": {"$ref": "#/definitions/a"}}, "$ref": "#/definitions/a"});
         let got = errors(schema, json!(1));
         assert_eq!(got, vec!["(root) schema references nest too deeply"]);
     }

@@ -15,6 +15,7 @@ fn set_runner_env() {
         ("JC_GATEWAY_URL", "http://127.0.0.1:9/gw"),
         ("JC_PIPELINE_TOKEN_URL", "http://127.0.0.1:9/token"),
         ("JC_TOKEN_URL", "http://127.0.0.1:9/token"),
+        ("JC_GATEWAY_HOST", "127.0.0.1:9"),
         ("JC_ORG_DOMAIN", "example.org"),
         ("JC_MQTT_NAMESPACE", "contract"),
     ] {
@@ -28,7 +29,11 @@ async fn every_stream_the_portal_renders_for_the_seed_is_accepted() {
     let (runner, _root) = runner(false).await;
     let client = reqwest::Client::new();
     let all = cases();
-    assert!(all.len() >= 700, "the fixture holds the whole seed ({})", all.len());
+    assert!(
+        all.len() >= 700,
+        "the fixture holds the whole seed ({})",
+        all.len()
+    );
     let mut prepared = Vec::new();
     for case in &all {
         let mut stream = case.stream.clone();
@@ -64,7 +69,13 @@ async fn every_stream_the_portal_renders_for_the_seed_is_accepted() {
         .filter_map(|r| async move { r })
         .collect()
         .await;
-    assert!(refused.is_empty(), "{} of {} refused:\n{}", refused.len(), all.len(), refused.join("\n"));
+    assert!(
+        refused.is_empty(),
+        "{} of {} refused:\n{}",
+        refused.len(),
+        all.len(),
+        refused.join("\n")
+    );
 }
 
 /// The `${NAME}` variables a stream names outside Bloblang interpolations (`${! ... }`).
@@ -118,48 +129,101 @@ async fn the_runner_api_answers_as_the_portal_reads_it() {
     // GET /streams: id -> {active}; GET /streams/{id}: active, uptime (f64), config as sent.
     let mut finished = false;
     for _ in 0..100 {
-        let one: Value = auth(client.get(&url)).send().await.unwrap().json().await.unwrap();
+        let one: Value = auth(client.get(&url))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
         assert!(one["uptime"].as_f64().is_some(), "{one}");
-        assert_eq!(one["config"]["pipeline"]["processors"][0]["mapping"], stream["pipeline"]["processors"][0]["mapping"]);
+        assert_eq!(
+            one["config"]["pipeline"]["processors"][0]["mapping"],
+            stream["pipeline"]["processors"][0]["mapping"]
+        );
         if one["active"] == json!(false) {
             finished = true;
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    assert!(finished, "a count-1 stream ends and reads as not active (the run queue's Finished)");
-    let list: Value = auth(client.get(format!("{runner}/streams"))).send().await.unwrap().json().await.unwrap();
+    assert!(
+        finished,
+        "a count-1 stream ends and reads as not active (the run queue's Finished)"
+    );
+    let list: Value = auth(client.get(format!("{runner}/streams")))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     assert_eq!(list["helsinki.contract"]["active"], json!(false), "{list}");
 
     // GET /metrics: Prometheus text with the stream label the Portal filters on.
-    let metrics = auth(client.get(format!("{runner}/metrics"))).send().await.unwrap().text().await.unwrap();
+    let metrics = auth(client.get(format!("{runner}/metrics")))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
     assert!(
-        metrics.lines().any(|l| l.contains("input_received") && l.contains("stream=\"helsinki.contract\"")),
+        metrics
+            .lines()
+            .any(|l| l.contains("input_received") && l.contains("stream=\"helsinki.contract\"")),
         "{metrics}"
     );
-    assert!(metrics.lines().any(|l| l.contains("output_sent") && l.contains("stream=\"helsinki.contract\"")));
+    assert!(metrics
+        .lines()
+        .any(|l| l.contains("output_sent") && l.contains("stream=\"helsinki.contract\"")));
 
     // The write budget: 200; a second declaration replaces it.
     for _ in 0..2 {
-        let r = auth(client.post(format!("{runner}/resources/rate_limit/helsinki__pipeline_egress")))
-            .json(&json!({"local": {"count": 500, "interval": "1s"}}))
-            .send()
-            .await
-            .unwrap();
+        let r = auth(client.post(format!(
+            "{runner}/resources/rate_limit/helsinki__pipeline_egress"
+        )))
+        .json(&json!({"local": {"count": 500, "interval": "1s"}}))
+        .send()
+        .await
+        .unwrap();
         assert!(r.status().is_success(), "{}", r.status());
     }
 
     // DELETE: 2xx, then 404 (gone), and GET 404 (the run queue's Gone).
-    assert!(auth(client.delete(&url)).send().await.unwrap().status().is_success());
-    assert_eq!(auth(client.delete(&url)).send().await.unwrap().status(), StatusCode::NOT_FOUND);
-    assert_eq!(auth(client.get(&url)).send().await.unwrap().status(), StatusCode::NOT_FOUND);
+    assert!(auth(client.delete(&url))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .is_success());
+    assert_eq!(
+        auth(client.delete(&url)).send().await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        auth(client.get(&url)).send().await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
 
     // A config the runner cannot build is a 4xx with a body (the Portal shows it as lint errors).
     let bad = json!({"input": {"generate": {"count": 1, "mapping": "root = 1"}}, "pipeline": {"processors": [{"no_such_processor": {}}]}, "output": {"drop": {}}});
-    let r = auth(client.post(format!("{runner}/streams/helsinki.bad"))).json(&bad).send().await.unwrap();
+    let r = auth(client.post(format!("{runner}/streams/helsinki.bad")))
+        .json(&bad)
+        .send()
+        .await
+        .unwrap();
     assert!(r.status().is_client_error(), "{}", r.status());
     assert!(!r.text().await.unwrap().is_empty());
 
     // Every call without the token is refused (jc's runner; the Portal must send it).
-    assert_eq!(client.get(format!("{runner}/streams")).send().await.unwrap().status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        client
+            .get(format!("{runner}/streams"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
 }
