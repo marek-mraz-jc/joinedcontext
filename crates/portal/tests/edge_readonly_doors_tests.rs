@@ -27,7 +27,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
@@ -195,30 +195,35 @@ async fn federation_graph(
 async fn a_history_is_a_read_of_one_project_and_of_as_many_commits_as_it_serves() {
     let forge = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/commits"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-            "sha": "0f1e2d3c4b5a69788796a5b4c3d2e1f0a1b2c3d4",
-            "commit": {
-                "message": "add the bikes endpoint",
-                "author": { "name": "Jana", "email": "jana@hel.fi",
-                            "date": "2026-09-18T09:12:03Z" }
-            }
-        }])))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.History(Ref=@r,Path=@p,Top=@n)"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Sha": "0f1e2d3c4b5a69788796a5b4c3d2e1f0a1b2c3d4",
+                    "Message": "add the bikes endpoint",
+                    "Author": "Jana",
+                    "Email": "jana@hel.fi",
+                    "Date": "2026-09-18T09:12:03Z"
+                }
+            ]
+        })))
         .mount(&forge)
         .await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         forge.uri().parse().expect("a url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("a client");
-    let state = state_with_two_projects().with_gitea(Arc::new(client));
+    let state = state_with_two_projects().with_shako(Arc::new(client));
 
     // A caller no binding covers, and a name that could not be a project.
     for (who, project) in [
@@ -265,7 +270,7 @@ async fn a_history_is_a_read_of_one_project_and_of_as_many_commits_as_it_serves(
         .await
         .unwrap_or_default()
         .into_iter()
-        .filter(|request| request.url.path().ends_with("/commits"))
+        .filter(|request| request.url.path().contains("/Shako.History("))
         .map(|request| request.url.query().unwrap_or_default().to_owned())
         .collect();
     assert_eq!(asked.len(), 1, "{asked:?}");

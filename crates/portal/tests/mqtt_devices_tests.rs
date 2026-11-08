@@ -33,8 +33,8 @@ fn device(jwks: Value) -> Value {
 /// The project with broker `edge` in `helsinki` and another `edge` in `espoo` with its own roles;
 /// `steward` proposes ServiceAccounts and MqttBrokers here, `viewer` reads.
 async fn state() -> (AppState, MockServer) {
-    let gitea = forge().await;
-    let state = state_on(&gitea);
+    let shako = forge().await;
+    let state = state_on(&shako);
     let org = ORG_NAMESPACE;
     let read = json!({ "kinds": ["MqttBroker", "ServiceAccount"], "verbs": ["read"] });
     for manifest in [
@@ -85,7 +85,7 @@ async fn state() -> (AppState, MockServer) {
         OTHER,
         json!({ "roles": [{ "name": "espoo-only", "serviceAccounts": ["cam"], "publish": ["espoo/#"] }] }),
     ));
-    (state, gitea)
+    (state, shako)
 }
 
 fn devices(project: &str) -> String {
@@ -93,16 +93,16 @@ fn devices(project: &str) -> String {
 }
 
 /// The files the forge was asked to write, as `(path, decoded YAML)`.
-async fn written(gitea: &MockServer) -> Vec<(String, Value)> {
-    common::committed_files(gitea, REPO)
+async fn written(shako: &MockServer) -> Vec<(String, Value)> {
+    common::committed_files(shako, REPO)
         .await
         .into_iter()
         .map(|(path, text)| (path, serde_norway::from_str(&text).expect("yaml")))
         .collect()
 }
 
-async fn requests_to(gitea: &MockServer, suffix: &str) -> usize {
-    gitea
+async fn requests_to(shako: &MockServer, suffix: &str) -> usize {
+    shako
         .received_requests()
         .await
         .unwrap_or_default()
@@ -113,7 +113,7 @@ async fn requests_to(gitea: &MockServer, suffix: &str) -> usize {
 
 #[tokio::test]
 async fn a_device_is_one_change_of_its_public_key_and_the_role_that_lists_it() {
-    let (state, gitea) = state().await;
+    let (state, shako) = state().await;
     let answer = send(
         &state,
         person("steward"),
@@ -129,7 +129,7 @@ async fn a_device_is_one_change_of_its_public_key_and_the_role_that_lists_it() {
         "a second person approves: {change}"
     );
 
-    let files = written(&gitea).await;
+    let files = written(&shako).await;
     assert_eq!(files.len(), 2, "{files:?}");
     let of = |kind: &str| {
         files
@@ -156,9 +156,13 @@ async fn a_device_is_one_change_of_its_public_key_and_the_role_that_lists_it() {
         json!(["cam"]),
         "only the role picked"
     );
-    assert_eq!(requests_to(&gitea, "/pulls").await, 1, "one merge request");
     assert_eq!(
-        requests_to(&gitea, "/merge").await,
+        requests_to(&shako, "/Shako.OpenPullRequest").await,
+        1,
+        "one merge request"
+    );
+    assert_eq!(
+        requests_to(&shako, "/Shako.Merge").await,
         0,
         "never merged by its proposer"
     );
@@ -166,7 +170,7 @@ async fn a_device_is_one_change_of_its_public_key_and_the_role_that_lists_it() {
 
 #[tokio::test]
 async fn a_private_key_member_is_refused_naming_it_and_nothing_reaches_the_forge() {
-    let (state, gitea) = state().await;
+    let (state, shako) = state().await;
     let mut key = public_key();
     key["d"] = json!("jpsQnnGQmL-YBIffH1136cspYG6-0iY7X1fCE9-E9LI");
     let answer = send(
@@ -184,12 +188,12 @@ async fn a_private_key_member_is_refused_naming_it_and_nothing_reaches_the_forge
         "the private value is never echoed: {}",
         answer.text
     );
-    assert!(written(&gitea).await.is_empty());
+    assert!(written(&shako).await.is_empty());
 }
 
 #[tokio::test]
 async fn a_symmetric_or_malformed_key_set_is_refused_naming_jwks() {
-    let (state, _gitea) = state().await;
+    let (state, _forge) = state().await;
     for jwks in [
         json!({ "keys": [{ "kty": "oct", "kid": "s", "k": "c2VjcmV0" }] }),
         json!([public_key()]),
@@ -210,7 +214,7 @@ async fn a_symmetric_or_malformed_key_set_is_refused_naming_jwks() {
 
 #[tokio::test]
 async fn a_topic_or_role_outside_the_broker_is_refused_naming_the_field() {
-    let (state, gitea) = state().await;
+    let (state, shako) = state().await;
     let keys = json!({ "keys": [public_key()] });
     let mut outside = device(keys.clone());
     outside["topic"] = json!("#");
@@ -254,12 +258,12 @@ async fn a_topic_or_role_outside_the_broker_is_refused_naming_the_field() {
     .await;
     assert_eq!(answer.status, 422, "{}", answer.text);
     assert!(answer.names_field("name", ""), "{}", answer.text);
-    assert!(written(&gitea).await.is_empty());
+    assert!(written(&shako).await.is_empty());
 }
 
 #[tokio::test]
 async fn an_existing_account_name_is_a_conflict() {
-    let (state, _gitea) = state().await;
+    let (state, _forge) = state().await;
     let mut taken = device(json!({ "keys": [public_key()] }));
     taken["name"] = json!("cam");
     let answer = send(
@@ -275,7 +279,7 @@ async fn an_existing_account_name_is_a_conflict() {
 
 #[tokio::test]
 async fn a_person_who_may_only_read_is_refused_and_offered_no_role() {
-    let (state, gitea) = state().await;
+    let (state, shako) = state().await;
     let answer = send(
         &state,
         person("viewer"),
@@ -285,7 +289,7 @@ async fn a_person_who_may_only_read_is_refused_and_offered_no_role() {
     )
     .await;
     assert_eq!(answer.status, 403, "{}", answer.text);
-    assert!(written(&gitea).await.is_empty());
+    assert!(written(&shako).await.is_empty());
 
     let options = send(&state, person("viewer"), "GET", &devices(PROJECT), None).await;
     assert_eq!(options.status, 200, "{}", options.text);
@@ -296,7 +300,7 @@ async fn a_person_who_may_only_read_is_refused_and_offered_no_role() {
 
 #[tokio::test]
 async fn the_role_list_holds_this_brokers_roles_and_no_other_projects() {
-    let (state, _gitea) = state().await;
+    let (state, _forge) = state().await;
     let options = send(&state, person("steward"), "GET", &devices(PROJECT), None).await;
     assert_eq!(options.status, 200, "{}", options.text);
     let options: Value = serde_json::from_str(&options.text).expect("json");

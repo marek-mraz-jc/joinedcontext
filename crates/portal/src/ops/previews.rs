@@ -169,13 +169,13 @@ fn files_under(root: &Path) -> BTreeMap<String, String> {
 /// `JC_ENVIRONMENT` names the overlay the branch is rendered with, the same one the reconciler
 /// applies for this installation (CC-73); unset renders the manifests as they are written.
 async fn render(state: &AppState, workspace: &Workspace) -> Result<Arc<Render>, ApiError> {
-    let gitea = state
+    let shako = state
         .forge_for(&workspace.project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let gitea: &crate::git::GiteaClient = &gitea;
-    let head = match gitea.branch_head(&workspace.branch()).await {
+    let shako: &crate::forge::ShakoClient = &shako;
+    let head = match shako.branch_head(&workspace.branch()).await {
         Ok(head) => format!("{head}\n{}", salt_of(workspace)),
-        Err(crate::git::GitError::NotFound) => {
+        Err(crate::forge::GitError::NotFound) => {
             return Err(ApiError::NotFound(format!(
                 "the branch of workspace '{}' is gone",
                 workspace.name
@@ -190,7 +190,7 @@ async fn render(state: &AppState, workspace: &Workspace) -> Result<Arc<Render>, 
     let staged = match state.mirror.repository_of(&workspace.project) {
         Some(repository) => assembled(state, workspace, revision, &repository).await?,
         None => {
-            let scratch = crate::reconciler::staging::stage(gitea, revision)
+            let scratch = crate::reconciler::staging::stage(shako, revision)
                 .await
                 .map_err(|err| ApiError::Unavailable(format!("the branch did not stage: {err}")))?;
             if let Ok(projects) = std::fs::read_dir(scratch.path().join("projects")) {
@@ -262,7 +262,7 @@ async fn assembled(
         ApiError::Unavailable(format!("the branch did not stage: {err}"))
     };
     let organization = state
-        .gitea
+        .shako
         .as_deref()
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
     let main = organization.default_branch().await?;

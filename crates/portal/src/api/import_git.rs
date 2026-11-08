@@ -19,7 +19,7 @@ use utoipa::ToSchema;
 use crate::api::import::{enclosed_path, ImportReport, Verified, MAX_UPLOAD_BYTES};
 use crate::auth::session::Identity;
 use crate::error::ApiError;
-use crate::git::GiteaClient;
+use crate::forge::ShakoClient;
 use crate::state::AppState;
 
 /// What a `format=git` import is given besides the archive.
@@ -273,11 +273,11 @@ pub async fn import(
                 .into(),
         ));
     }
-    let gitea = state
-        .gitea
+    let shako = state
+        .shako
         .as_deref()
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    crate::api::projects::new_project_name(state, gitea, project).await?;
+    crate::api::projects::new_project_name(state, shako, project).await?;
     let Checked { index, files, own } = check(bytes)?;
     let origin = index.metadata.name.clone();
 
@@ -362,14 +362,14 @@ pub async fn import(
 
     // Nothing is created while one of the names is taken: a repository already there is
     // somebody's, and is never adopted (PF-86).
-    let clients: Vec<GiteaClient> = planned
+    let clients: Vec<ShakoClient> = planned
         .iter()
         .map(|plan| {
             // An application's repository goes where the generated ones live (PF-106).
             if plan.role == "application" {
-                gitea.for_application(plan.repository.clone())
+                shako.for_application(plan.repository.clone())
             } else {
-                gitea.for_repository(plan.repository.clone())
+                shako.for_repository(plan.repository.clone())
             }
         })
         .collect();
@@ -383,7 +383,7 @@ pub async fn import(
         }
     }
 
-    let mut created: Vec<&GiteaClient> = Vec::new();
+    let mut created: Vec<&ShakoClient> = Vec::new();
     let landing = Landing {
         project,
         origin: &origin,
@@ -422,7 +422,7 @@ struct Landing<'a> {
     index: &'a Bundle,
     files: &'a BTreeMap<String, Vec<u8>>,
     planned: &'a [PlannedRepository],
-    clients: &'a [GiteaClient],
+    clients: &'a [ShakoClient],
     models: &'a [crate::api::bundle_models::PlannedModel],
     artifacts: &'a BTreeMap<String, crate::tools::model_tools::Artifacts>,
 }
@@ -433,7 +433,7 @@ async fn land<'a>(
     state: &AppState,
     identity: &Identity,
     landing: &Landing<'a>,
-    created: &mut Vec<&'a GiteaClient>,
+    created: &mut Vec<&'a ShakoClient>,
     entry_files: Vec<(String, String)>,
 ) -> Result<crate::change::Change, ApiError> {
     let Landing {
@@ -512,7 +512,6 @@ async fn land<'a>(
         .find(|(_, plan)| plan.role == "project")
         .map(|(client, _)| client.clone())
         .ok_or_else(|| ApiError::Internal("the project repository is missing".into()))?;
-    project_client.let_the_reader_in().await?;
     let mounted = project_client.for_project(project_client.repo.clone(), project);
     let applications: BTreeMap<String, String> = clients
         .iter()

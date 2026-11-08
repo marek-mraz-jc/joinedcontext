@@ -73,25 +73,27 @@ async fn open(state: &AppState, name: &str, owner: &str) {
 async fn world() -> (MockServer, AppState) {
     let server = forge().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/branches/workspace/air-v2")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": HEAD } })))
+        .and(path(format!("{REPO}/Branches('workspace%2Fair-v2')")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": HEAD })))
         .mount(&server)
         .await;
     let files = files();
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/git/trees/{HEAD}")))
+        .and(path(format!("{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"))).and(query_param("@r", format!("'{HEAD}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "truncated": false,
-            "tree": files.iter().map(|(p, _)| json!({ "path": p, "type": "blob", "sha": format!("s-{p}") })).collect::<Vec<_>>(),
+            "Truncated": false,
+            "Tree": files.iter().map(|(p, _)| json!({ "Path": p, "Type": "blob", "Sha": format!("s-{p}") })).collect::<Vec<_>>()
         })))
         .mount(&server)
         .await;
     for (file, content) in &files {
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/contents/{file}")))
-            .and(query_param("ref", HEAD))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{file}'")))
+            .and(query_param("@r", format!("'{}'", HEAD)))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "path": file, "sha": "x", "encoding": "base64", "content": encode(content)
+                "Sha": "x",
+                "Content": encode(content)
             })))
             .mount(&server)
             .await;

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 
 use super::daemon::SyncError;
-use crate::git::GiteaClient;
+use crate::forge::ShakoClient;
 
 /// Identifies files that are candidates for ResourceEnvelope manifests.
 ///
@@ -152,25 +152,25 @@ pub(super) fn namespace_of(path: &str) -> String {
 /// Its own function because two schedules need it: the mirror the Portal serves from, and the
 /// foreign-model mirror that proposes a peer's schema. A second copy of this loop would be a
 /// second answer to "which files in the repository are manifests".
-pub(crate) async fn stage(gitea: &GiteaClient, revision: &str) -> Result<Scratch, SyncError> {
-    stage_repository(gitea, revision, false).await
+pub(crate) async fn stage(shako: &ShakoClient, revision: &str) -> Result<Scratch, SyncError> {
+    stage_repository(shako, revision, false).await
 }
 
 /// One project repository of layout 2 at `revision`, staged as its own root (CC-85): the files
 /// that would be manifests under `projects/{slug}/` of layout 1, and its `.jc/layout`.
 pub(crate) async fn stage_project(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     revision: &str,
 ) -> Result<Scratch, SyncError> {
-    stage_repository(gitea, revision, true).await
+    stage_repository(shako, revision, true).await
 }
 
 async fn stage_repository(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     revision: &str,
     project: bool,
 ) -> Result<Scratch, SyncError> {
-    stage_listed(gitea, revision, &listing(gitea, revision, project).await?).await
+    stage_listed(shako, revision, &listing(shako, revision, project).await?).await
 }
 
 /// A repository's candidate files with their blob shas, by path.
@@ -179,11 +179,11 @@ pub(super) type Listing = Vec<(String, String)>;
 /// The files of the repository at `revision` a stage writes, with their blobs: one tree call,
 /// and the key a run reuses the last stage by (T-4481).
 pub(super) async fn listing(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     revision: &str,
     project: bool,
 ) -> Result<Listing, SyncError> {
-    let tree_blobs = gitea.list_tree_blobs(revision).await?;
+    let tree_blobs = shako.list_tree_blobs(revision).await?;
     let candidates: Vec<(String, String)> = tree_blobs
         .into_iter()
         .filter(|(p, _)| {
@@ -211,7 +211,7 @@ pub(super) async fn listing(
 /// The `candidates` of the repository at `revision`, written into a staging directory of their
 /// own.
 pub(super) async fn stage_listed(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     revision: &str,
     candidates: &Listing,
 ) -> Result<Scratch, SyncError> {
@@ -219,7 +219,7 @@ pub(super) async fn stage_listed(
     // ends: the run that staged it, or a later one that found the same files (T-4481).
     let scratch = Scratch::new(revision)?;
     let mut staged = 0usize;
-    for (path, file) in fetch_blobs(gitea, revision, candidates).await? {
+    for (path, file) in fetch_blobs(shako, revision, candidates).await? {
         let Some(file) = file else {
             // The tree listed it and the contents call does not have it: a race with a
             // force-push, not a broken manifest. The next run reads a consistent tree.
@@ -298,19 +298,19 @@ const FETCHES_AT_ONCE: usize = 8;
 /// mirror catches up in seconds rather than minutes (PL-61, T-4270). The rest go
 /// [`FETCHES_AT_ONCE`] at a time.
 async fn fetch_blobs(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     revision: &str,
     candidates: &[(String, String)],
 ) -> Result<Vec<(String, Option<Arc<str>>)>, SyncError> {
     use futures_util::{StreamExt, TryStreamExt};
     let fetches = candidates.iter().cloned().map(|(path, sha)| {
-        let gitea = gitea.clone();
+        let shako = shako.clone();
         let revision = revision.to_owned();
         async move {
             if let Some(content) = known_blob(&sha) {
                 return Ok::<_, SyncError>((path, Some(content)));
             }
-            let content: Option<Arc<str>> = gitea
+            let content: Option<Arc<str>> = shako
                 .get_file(&path, &revision)
                 .await?
                 .map(|file| file.content.into());

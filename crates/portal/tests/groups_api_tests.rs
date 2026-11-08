@@ -21,14 +21,14 @@ const SECOND: &str = "7d9c2e80-1a4b-4c6d-9e3f-5b8a0c2d4e61";
 
 /// A forge that takes the write and answers the open-pull list.
 async fn forge() -> MockServer {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     Mock::given(http_method("GET"))
-        .and(url_path(format!("{REPO}/pulls")))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
-        .mount(&gitea)
+        .and(url_path(format!("{REPO}/PullRequests")))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
+        .mount(&shako)
         .await;
-    gitea
+    shako
 }
 
 /// A role at organization scope with these verbs on `Group`, bound to `who`.
@@ -65,8 +65,8 @@ fn group(name: &str, members: &[&str]) -> Value {
 
 #[tokio::test]
 async fn a_reader_sees_the_members_and_a_stranger_sees_no_such_plural() {
-    let gitea = forge().await;
-    let state = common::state_on(&gitea);
+    let shako = forge().await;
+    let state = common::state_on(&shako);
     state.mirror.upsert(envelope(
         "Group",
         "city-leads",
@@ -111,8 +111,8 @@ async fn a_reader_sees_the_members_and_a_stranger_sees_no_such_plural() {
 
 #[tokio::test]
 async fn proposing_a_group_needs_propose_on_group_and_lands_in_the_red_lane() {
-    let gitea = forge().await;
-    let state = common::state_on(&gitea);
+    let shako = forge().await;
+    let state = common::state_on(&shako);
     bound(&state, "keeper", json!(["read"]));
 
     // Read is not write, and the refusal says which verb is missing (PF-50).
@@ -148,8 +148,8 @@ async fn proposing_a_group_needs_propose_on_group_and_lands_in_the_red_lane() {
 
 #[tokio::test]
 async fn a_binding_to_a_group_no_manifest_declares_is_refused_before_a_change_exists() {
-    let gitea = forge().await;
-    let state = common::state_on(&gitea);
+    let shako = forge().await;
+    let state = common::state_on(&shako);
     state.mirror.upsert(envelope(
         "Role",
         "admin",
@@ -217,8 +217,8 @@ async fn a_binding_to_a_group_no_manifest_declares_is_refused_before_a_change_ex
 /// written again under its owner passes.
 #[tokio::test]
 async fn a_group_name_another_owner_holds_is_refused_naming_both() {
-    let gitea = forge().await;
-    let state = common::state_on(&gitea);
+    let shako = forge().await;
+    let state = common::state_on(&shako);
     bound(&state, "keeper", json!(["propose", "read"]));
     state.mirror.upsert(envelope(
         "Group",
@@ -281,8 +281,8 @@ async fn a_group_name_another_owner_holds_is_refused_naming_both() {
 /// the App page, and no other group of the organization.
 #[tokio::test]
 async fn an_apps_steward_keeps_its_default_group_and_no_other() {
-    let gitea = forge().await;
-    let state = common::state_on(&gitea);
+    let shako = forge().await;
+    let state = common::state_on(&shako);
     state.mirror.upsert(envelope(
         "App",
         "board",

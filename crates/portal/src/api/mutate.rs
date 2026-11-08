@@ -12,7 +12,7 @@ use crate::auth::session::Front;
 use crate::auth::CurrentUser;
 use crate::change::{self, Change, ChangeMeta, ChangePhase, ChangeStatus, Operation};
 use crate::error::{ApiError, ProblemDetails};
-use crate::git::{Author, FileWrite, GitError};
+use crate::forge::{Author, FileWrite, GitError};
 use crate::plan;
 use crate::resource::{self, ResourceEnvelope};
 use crate::state::AppState;
@@ -218,12 +218,12 @@ pub(crate) fn within_workspace(
 /// The open change whose pull request still uses `branch`, if any (T-0883, T-0886).
 pub(crate) async fn open_change_on(
     state: &AppState,
-    gitea: &crate::git::GiteaClient,
+    shako: &crate::forge::ShakoClient,
     branch: &str,
     project: &str,
 ) -> Result<Option<ChangeMeta>, ApiError> {
     // A forge that answers 404 here has no repository at all, and the next step says so.
-    let pulls = match gitea.list_pull_requests("open").await {
+    let pulls = match shako.list_pull_requests("open").await {
         Ok(pulls) => pulls,
         Err(GitError::NotFound) => Vec::new(),
         Err(err) => return Err(err.into()),
@@ -233,7 +233,7 @@ pub(crate) async fn open_change_on(
     Ok(pulls
         .into_iter()
         .find(|pr| pr.head_branch == branch || pr.head_branch.starts_with(&suffixed))
-        .map(|pr| crate::api::changes::change_meta(state, gitea, pr.number, project)))
+        .map(|pr| crate::api::changes::change_meta(state, shako, pr.number, project)))
 }
 
 /// The branch a proposal is written on, starting from the default branch. A branch left by
@@ -249,10 +249,10 @@ pub(crate) async fn open_change_on(
 /// without that every Policy written the way the plan demands read as moved (T-6451).
 fn moved_on_main(
     judged: Option<&ResourceEnvelope>,
-    on_main: Option<&crate::git::RepoFile>,
+    on_main: Option<&crate::forge::RepoFile>,
     org_domain: &str,
 ) -> bool {
-    let rendered = |file: &crate::git::RepoFile| {
+    let rendered = |file: &crate::forge::RepoFile| {
         serde_norway::from_str::<ResourceEnvelope>(&file.content.replace("{orgDomain}", org_domain))
     };
     let (Some(judged), Some(Ok(main))) = (judged, on_main.map(rendered)) else {
@@ -297,8 +297,8 @@ pub(crate) struct Turn {
 }
 
 /// Waits until no other proposal holds `branch` in this repository.
-pub(crate) async fn turn(gitea: &crate::git::GiteaClient, branch: &str) -> Turn {
-    let key = format!("{}/{}/{}\n{branch}", gitea.base, gitea.owner, gitea.repo);
+pub(crate) async fn turn(shako: &crate::forge::ShakoClient, branch: &str) -> Turn {
+    let key = format!("{}/{}/{}\n{branch}", shako.base, shako.owner, shako.repo);
     Turn {
         branch: branch.to_owned(),
         _held: BRANCHES.lock(&key).await,
@@ -306,16 +306,16 @@ pub(crate) async fn turn(gitea: &crate::git::GiteaClient, branch: &str) -> Turn 
 }
 
 pub(crate) async fn create_or_reuse_branch(
-    gitea: &crate::git::GiteaClient,
+    shako: &crate::forge::ShakoClient,
     turn: &Turn,
     default_branch: &str,
 ) -> Result<String, ApiError> {
     let branch = turn.branch.as_str();
-    match gitea.create_branch(branch, default_branch).await {
+    match shako.create_branch(branch, default_branch).await {
         Ok(()) => Ok(branch.to_string()),
         Err(GitError::Conflict(_)) => {
             let suffixed = format!("{branch}_");
-            if let Some(open) = gitea
+            if let Some(open) = shako
                 .list_pull_requests("open")
                 .await?
                 .into_iter()
@@ -336,8 +336,8 @@ pub(crate) async fn create_or_reuse_branch(
                 .unwrap_or_default();
             let fresh = format!("{suffixed}{nanos:08x}");
             tracing::info!(stale = %branch, branch = %fresh, from = %default_branch, "replacing a stale branch");
-            gitea.delete_branch(branch).await?;
-            gitea.create_branch(&fresh, default_branch).await?;
+            shako.delete_branch(branch).await?;
+            shako.create_branch(&fresh, default_branch).await?;
             Ok(fresh)
         }
         Err(other) => Err(other.into()),
@@ -452,21 +452,21 @@ pub(crate) fn resolve_repo_path(
 /// own space, an import and `jc_space_complete` under the space it names. Without a file the path
 /// stays `path`.
 pub(crate) async fn held_file(
-    gitea: &crate::git::GiteaClient,
+    shako: &crate::forge::ShakoClient,
     path: &str,
     envelope: &ResourceEnvelope,
     kind_info: &resource::KindInfo,
     project: &str,
     git_ref: &str,
-) -> Result<(String, Option<crate::git::RepoFile>), ApiError> {
-    let at_path = gitea.get_file(path, git_ref).await?;
+) -> Result<(String, Option<crate::forge::RepoFile>), ApiError> {
+    let at_path = shako.get_file(path, git_ref).await?;
     let space = crate::api::assistant::ref_name(&envelope.spec["contextSpaceRef"]);
     if let (None, Some(space)) = (&at_path, space) {
         let name = &envelope.metadata.name;
         let filed = resource::repository_path(kind_info, project, Some(&space), name)
             .map_err(ApiError::BadRequest)?;
         if filed != path {
-            if let Some(file) = gitea.get_file(&filed, git_ref).await? {
+            if let Some(file) = shako.get_file(&filed, git_ref).await? {
                 return Ok((filed, Some(file)));
             }
         }
@@ -1165,16 +1165,16 @@ async fn propose_engine(
         crate::ops::verdict_for_manifest(state, project, received).await?;
     }
 
-    // 8. Commit to Git merge request via Gitea client
-    let gitea = state
+    // 8. Commit to Git merge request via the forge client
+    let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let gitea: &crate::git::GiteaClient = &gitea;
+    let shako: &crate::forge::ShakoClient = &shako;
 
-    let default_branch = gitea.default_branch().await?;
+    let default_branch = shako.default_branch().await?;
     if kind_info.kind == "Organization" && operation != Operation::Create {
         manifest_path = organization_path(
-            gitea,
+            shako,
             &default_branch,
             &envelope.metadata.name,
             manifest_path,
@@ -1188,7 +1188,7 @@ async fn propose_engine(
     //     moved to: the build lane's status write once undid the bootstrap's new pin (T-2674).
     if workspace.is_none() {
         let (held_at, on_main) = held_file(
-            gitea,
+            shako,
             &manifest_path,
             &envelope,
             kind_info,
@@ -1232,7 +1232,7 @@ async fn propose_engine(
     let mut published = None;
     if build_write {
         published = crate::apps::built::check_and_publish(
-            gitea,
+            shako,
             state.wasm_apps.as_deref(),
             project,
             &envelope.metadata.name,
@@ -1265,7 +1265,7 @@ async fn propose_engine(
                 )));
             }
             let branch = open.branch();
-            match gitea.create_branch(&branch, &default_branch).await {
+            match shako.create_branch(&branch, &default_branch).await {
                 Ok(()) | Err(GitError::Conflict(_)) => {}
                 Err(err) => return Err(err.into()),
             }
@@ -1275,13 +1275,13 @@ async fn propose_engine(
         // open on one of its resources still refuses it, as a proposal of its own would be (CC-34).
         (None, Some(shared)) => {
             let own = branch_name(project, kind_info.kind, &envelope.metadata.name, operation);
-            if let Some(pending) = open_change_on(state, gitea, &own, project).await? {
+            if let Some(pending) = open_change_on(state, shako, &own, project).await? {
                 return Err(ApiError::Conflict(format!(
                     "a change for {} '{}' is already open: {}; approve or reject it first",
                     kind_info.kind, envelope.metadata.name, pending.name
                 )));
             }
-            match gitea.create_branch(shared, &default_branch).await {
+            match shako.create_branch(shared, &default_branch).await {
                 Ok(()) | Err(GitError::Conflict(_)) => {}
                 Err(err) => return Err(err.into()),
             }
@@ -1289,18 +1289,18 @@ async fn propose_engine(
         }
         (None, None) => {
             let branch = branch_name(project, kind_info.kind, &envelope.metadata.name, operation);
-            let held = turn(gitea, &branch).await;
+            let held = turn(shako, &branch).await;
             // One open change per resource (CC-34): the branch is one per resource and
             // operation, so a second proposal while one is pending would rewrite the open pull
             // request under its approver. Refused before anything is written, naming the change
             // to decide first (T-0883).
-            if let Some(pending) = open_change_on(state, gitea, &branch, project).await? {
+            if let Some(pending) = open_change_on(state, shako, &branch, project).await? {
                 return Err(ApiError::Conflict(format!(
                     "a change for {} '{}' is already open: {}; approve or reject it first",
                     kind_info.kind, envelope.metadata.name, pending.name
                 )));
             }
-            let branch = create_or_reuse_branch(gitea, &held, &default_branch).await?;
+            let branch = create_or_reuse_branch(shako, &held, &default_branch).await?;
             (branch, Some(held))
         }
     };
@@ -1308,10 +1308,10 @@ async fn propose_engine(
 
     let yaml_content = manifest_yaml(&envelope, build_write, published.as_ref())?;
 
-    // Gitea wants the blob sha of the file being replaced, which only `get_file` knows;
+    // The forge wants the blob sha of the file being replaced, which only `get_file` knows;
     // `status.observedRevision` is a commit id and would be rejected. Asking the branch (not the
     // mirror) also covers a manifest that exists in Git but has not been mirrored yet.
-    let existing_sha = gitea
+    let existing_sha = shako
         .get_file(&repo_path, &branch)
         .await
         .ok()
@@ -1336,13 +1336,13 @@ async fn propose_engine(
     // The files first: a reviewer opening the merge request never reads a manifest naming a file
     // the change does not carry, and a refusal on one of them leaves no manifest behind.
     for (path, content) in &sidecars {
-        let existing = gitea
+        let existing = shako
             .get_file(path, &branch)
             .await
             .ok()
             .flatten()
             .map(|f| f.sha);
-        gitea
+        shako
             .put_file(&FileWrite {
                 path,
                 branch: &branch,
@@ -1360,11 +1360,11 @@ async fn propose_engine(
     if !grants.uploads.is_empty() || !grants.removed.is_empty() {
         let mut deletes = Vec::new();
         for path in &grants.removed {
-            if let Some(file) = gitea.get_file(path, &branch).await? {
+            if let Some(file) = shako.get_file(path, &branch).await? {
                 deletes.push((path.clone(), file.sha));
             }
         }
-        gitea
+        shako
             .change_files(
                 &branch,
                 &commit_msg,
@@ -1378,7 +1378,7 @@ async fn propose_engine(
             .await?;
     }
 
-    gitea.put_file(&file_write).await?;
+    shako.put_file(&file_write).await?;
 
     if let Some(name) = workspace {
         return Ok(ProposeOutcome::Workspace(WorkspaceCommit {
@@ -1410,12 +1410,12 @@ async fn propose_engine(
         pr_body.push_str(&crate::references::waits_on_line(waiting));
     }
 
-    let pr = gitea
+    let pr = shako
         .create_pull_request(&branch, &default_branch, &pr_title, &pr_body)
         .await?;
 
     // 9. Answer 202 Accepted with Change resource
-    let change_meta = crate::api::changes::change_meta(state, gitea, pr.number, project);
+    let change_meta = crate::api::changes::change_meta(state, shako, pr.number, project);
     let change_status = ChangeStatus::new(lane, ChangePhase::PendingApproval, plan.summary)
         .in_repository(&pr.repository)
         .proposed_through(&pr.body)
@@ -1425,7 +1425,7 @@ async fn propose_engine(
     // 10. The build lane's write, checked and published in 8b, is approved by the Portal: a person
     //     approved the source, the lane approves nothing (AP-73, AP-104, AG-11).
     let change = if build_write {
-        crate::api::changes::approve_build(state, gitea, &pr, &repo_path, change).await
+        crate::api::changes::approve_build(state, shako, &pr, &repo_path, change).await
     } else {
         change
     };
@@ -1458,13 +1458,13 @@ fn held_under_another_name(
 /// An Organization still in the legacy `org.yaml` is changed or deleted there (PF-121): written to
 /// `organizations/{name}.yaml` instead, the repository would hold it twice and load neither.
 async fn organization_path(
-    gitea: &crate::git::GiteaClient,
+    shako: &crate::forge::ShakoClient,
     branch: &str,
     name: &str,
     path: String,
 ) -> Result<String, ApiError> {
     let legacy = jc_core::kinds::LEGACY_ORGANIZATION_PATH;
-    let held = gitea.get_file(legacy, branch).await?.and_then(|file| {
+    let held = shako.get_file(legacy, branch).await?.and_then(|file| {
         serde_norway::from_str::<ResourceEnvelope>(&file.content)
             .ok()
             .map(|held| held.metadata.name)
@@ -3184,11 +3184,11 @@ mod tests {
     /// path `resolve_repo_path` gives wins when it holds the file, and no file leaves the path.
     #[tokio::test]
     async fn held_file_finds_a_policy_in_either_folder() {
-        use wiremock::matchers::{method, path};
+        use wiremock::matchers::{method, path, query_param};
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
-        let gitea =
-            crate::git::GiteaClient::new(server.uri().parse().unwrap(), "o", "r", "token-xyz")
+        let shako =
+            crate::forge::ShakoClient::new(server.uri().parse().unwrap(), "o", "r", "token-xyz")
                 .unwrap();
         let info = resource::by_kind("Policy").expect("Policy");
         let policy = |space: &str| ResourceEnvelope {
@@ -3204,35 +3204,44 @@ mod tests {
         };
         let found = |sha: &str| {
             ResponseTemplate::new(200)
-                .set_body_json(serde_json::json!({ "sha": sha, "content": "YTogYg==" }))
+                .set_body_json(serde_json::json!({ "Sha": sha, "Content": "YTogYg==" }))
         };
-        let contents = "/api/v1/repos/o/r/contents/projects/helsinki/spaces";
+        let file = "/odata/Repositories(Owner='o',Name='r')/Shako.File(Path=@p,Ref=@r)";
+        let spaces = "projects/helsinki/spaces";
         Mock::given(method("GET"))
-            .and(path(format!("{contents}/excel/policies/grant.yaml")))
+            .and(path(file))
+            .and(query_param(
+                "@p",
+                format!("'{spaces}/excel/policies/grant.yaml'"),
+            ))
             .respond_with(found("in-space"))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{contents}/helsinki/policies/grant.yaml")))
+            .and(path(file))
+            .and(query_param(
+                "@p",
+                format!("'{spaces}/helsinki/policies/grant.yaml'"),
+            ))
             .respond_with(ResponseTemplate::new(404))
             .mount(&server)
             .await;
         let own = "projects/helsinki/spaces/helsinki/policies/grant.yaml";
         let held = "projects/helsinki/spaces/excel/policies/grant.yaml";
 
-        let (at, file) = held_file(&gitea, own, &policy("excel"), info, "helsinki", "main")
+        let (at, file) = held_file(&shako, own, &policy("excel"), info, "helsinki", "main")
             .await
             .unwrap();
         assert_eq!(at, held);
         assert_eq!(file.expect("the file").sha, "in-space");
 
-        let (at, file) = held_file(&gitea, held, &policy("elsewhere"), info, "helsinki", "main")
+        let (at, file) = held_file(&shako, held, &policy("elsewhere"), info, "helsinki", "main")
             .await
             .unwrap();
         assert_eq!(at, held);
         assert!(file.is_some());
 
-        let (at, file) = held_file(&gitea, own, &policy("empty"), info, "helsinki", "main")
+        let (at, file) = held_file(&shako, own, &policy("empty"), info, "helsinki", "main")
             .await
             .unwrap();
         assert_eq!(at, own);
@@ -3248,7 +3257,7 @@ mod tests {
                  spec:\n  assigner: {assigner}\n"
             )
         };
-        let file = |content: String| crate::git::RepoFile {
+        let file = |content: String| crate::forge::RepoFile {
             sha: "s".to_owned(),
             content,
         };
@@ -3302,18 +3311,21 @@ mod tests {
         let server = MockServer::start().await;
         let legacy = "apiVersion: joinedcontext.com/v1alpha1\nkind: Organization\nmetadata:\n  name: hel\nspec:\n  domain: hel.fi\n";
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/o/r/contents/org.yaml"))
-            .and(query_param("ref", "main"))
+            .and(path(
+                "/odata/Repositories(Owner='o',Name='r')/Shako.File(Path=@p,Ref=@r)",
+            ))
+            .and(query_param("@p", "'org.yaml'"))
+            .and(query_param("@r", "'main'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "b1",
-                "content": base64::engine::Engine::encode(
+                "Sha": "b1",
+                "Content": base64::engine::Engine::encode(
                     &base64::engine::general_purpose::STANDARD,
                     legacy.as_bytes()
-                ),
+                )
             })))
             .mount(&server)
             .await;
-        let gitea = crate::git::GiteaClient::new(
+        let shako = crate::forge::ShakoClient::new(
             server.uri().parse().expect("forge url"),
             "o",
             "r",
@@ -3326,11 +3338,11 @@ mod tests {
                 .expect("a path")
         };
         assert_eq!(path_of("zilina"), "organizations/zilina.yaml");
-        let hel = organization_path(&gitea, "main", "hel", path_of("hel"))
+        let hel = organization_path(&shako, "main", "hel", path_of("hel"))
             .await
             .expect("answers");
         assert_eq!(hel, "org.yaml");
-        let zilina = organization_path(&gitea, "main", "zilina", path_of("zilina"))
+        let zilina = organization_path(&shako, "main", "zilina", path_of("zilina"))
             .await
             .expect("answers");
         assert_eq!(zilina, "organizations/zilina.yaml");
@@ -4015,7 +4027,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn propose_non_dry_run_without_gitea_answers_503() {
+    async fn propose_non_dry_run_without_a_forge_answers_503() {
         let state = AppState::new(Config::for_tests(), None);
         let user = dummy_user();
         let payload = json!({

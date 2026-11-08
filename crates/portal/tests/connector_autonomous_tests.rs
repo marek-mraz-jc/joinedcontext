@@ -12,12 +12,12 @@ use joinedcontext_portal::api::changes::{approve_change_for, ApprovedBy};
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::error::ApiError;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{self, ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path, path_regex};
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROPOSER: &str = "jana.kovacova@banskabystrica.sk";
@@ -83,51 +83,56 @@ async fn forge(kind: &str) -> (MockServer, AppState) {
 /// [`forge`] with the proposal's one file in the forge's `status` (`added`, `deleted`).
 async fn forge_with(kind: &str, status: &str) -> (MockServer, AppState) {
     let server = MockServer::start().await;
-    let repo = "/api/v1/repos/test-owner/test-repo";
+    let repo = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
     let ok = |body: Value| ResponseTemplate::new(200).set_body_json(body);
     let (file, yaml) = manifest(kind);
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{repo}/contents/")))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", repo)))
         .respond_with(ok(
-            json!({ "sha": "blob-1", "content": STANDARD.encode(&yaml) }),
+            json!({ "Sha": "blob-1", "Content": STANDARD.encode(&yaml) }),
         ))
         .mount(&server)
         .await;
     let pull = json!({
-        "number": 1,
-        "html_url": "https://gitea.example.sk/pulls/1",
-        "state": "open",
-        "title": format!("create {kind}"),
-        "head": { "ref": format!("portal/create-{}-x-11111111", kind.to_ascii_lowercase()), "sha": "head-1" },
-        "base": { "ref": "main" },
-        "created_at": "2026-11-03T05:14:22Z",
-        "user": { "login": "jana.kovacova", "full_name": "jana.kovacova", "email": PROPOSER },
-        "mergeable": true,
-        "merged": false
+        "Number": 1,
+        "HtmlUrl": "https://shako.example.sk/pulls/1",
+        "State": "open",
+        "Title": format!("create {kind}"),
+        "Head": format!("portal/create-{}-x-11111111", kind.to_ascii_lowercase()),
+        "HeadSha": "head-1",
+        "Base": "main",
+        "CreatedAt": "2026-11-03T05:14:22Z",
+        "Author": "jana.kovacova",
+        "AuthorName": "jana.kovacova",
+        "AuthorEmail": PROPOSER,
+        "Mergeable": true,
+        "Merged": false
     });
     Mock::given(method("GET"))
-        .and(path(format!("{repo}/pulls/1")))
+        .and(path(format!("{repo}/PullRequests(1)")))
         .respond_with(ok(pull))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{repo}/pulls/1/files")))
-        .respond_with(ok(json!([{ "filename": file, "status": status }])))
+        .and(path(format!("{repo}/PullRequests(1)/Files")))
+        .respond_with(ok(
+            json!({ "value": [{ "Filename": file, "Status": status }] }),
+        ))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!("{repo}/pulls/1/merge")))
+        .and(path(format!("{repo}/PullRequests(1)/Shako.Merge")))
         .respond_with(ok(json!({})))
         .mount(&server)
         .await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().expect("url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
     state.mirror.upsert(org(
         "Role",
         "admin-role",
@@ -151,7 +156,7 @@ async fn merge_message(server: &MockServer) -> Option<String> {
         .await
         .expect("requests")
         .iter()
-        .find(|r| r.url.path().ends_with("/pulls/1/merge"))
+        .find(|r| r.url.path().ends_with("/PullRequests(1)/Shako.Merge"))
         .map(|r| String::from_utf8_lossy(&r.body).into_owned())
 }
 

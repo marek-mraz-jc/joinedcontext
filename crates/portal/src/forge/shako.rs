@@ -1,4 +1,10 @@
-//! Gitea REST API client (CC-03, CC-32, CC-34, CC-41, CC-42, CC-44).
+//! The forge client: shako's OData 4.01 service (CC-03, CC-32, CC-34, CC-41, CC-42, CC-44).
+//!
+//! Every repository operation is an OData request to `{JC_SHAKO_URL}/odata/`: a repository is
+//! addressed by its alternate key `Repositories(Owner='o',Name='r')`, what lives inside it by
+//! navigation under that key, and every write by a bound or unbound action
+//! (`crates/shako/PORTAL-ODATA.md` maps each method to its request). Pack data stays on git smart
+//! HTTP and images on the OCI distribution API: OData carries metadata and operations only.
 //!
 //! Mutations in joinedcontext commit to Git merge requests server-side. Commits are attributed
 //! to the signed-in human author, while the service token only authenticates the HTTP call.
@@ -8,20 +14,25 @@ use std::time::Duration;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use url::Url;
 
 use crate::error::ApiError;
 
 /// Pages of a recursive tree read before giving up: 100,000 files, far above any project.
 const MAX_TREE_PAGES: usize = 100;
+/// Entries of one tree page.
+const TREE_PAGE: usize = 1000;
+/// Tags of one page.
+const TAG_PAGE: usize = 50;
 
-/// Gitea repository client.
+/// One repository of the forge, and the token the Portal writes it with.
 #[derive(Clone)]
-pub struct GiteaClient {
+pub struct ShakoClient {
     pub base: Url,
-    /// Where a browser reaches the same forge: the API talks to the cluster-internal service,
+    /// Where a browser reaches the same forge: the API talks to the address the Portal dials,
     /// but a "Source" link opens in the user's browser, which resolves no `.svc.cluster.local`
-    /// name. `JC_GITEA_PUBLIC_URL`; the API base when unset.
+    /// name. `JC_SHAKO_PUBLIC_URL`; the API base when unset.
     pub public_base: Url,
     pub owner: String,
     pub repo: String,
@@ -34,16 +45,12 @@ pub struct GiteaClient {
     /// writes them: another organization and another machine user than the configuration's
     /// (PF-106). `None`: beside the configuration.
     apps: Option<(String, String)>,
-    /// The forge user the Context Gateway reads the configuration as (`JC_GITEA_READER`,
-    /// PF-106): a repository the Portal opens for a project it reads too. `None`: nobody is
-    /// added.
-    reader: Option<String>,
     pub http: reqwest::Client,
 }
 
-impl std::fmt::Debug for GiteaClient {
+impl std::fmt::Debug for ShakoClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GiteaClient")
+        f.debug_struct("ShakoClient")
             .field("base", &self.base.as_str())
             .field("owner", &self.owner)
             .field("repo", &self.repo)
@@ -54,7 +61,7 @@ impl std::fmt::Debug for GiteaClient {
     }
 }
 
-/// Errors returned by the Gitea client.
+/// Errors returned by the forge client.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GitError {
     #[error("git config error: {0}")]
@@ -77,7 +84,7 @@ impl From<GitError> for ApiError {
             }
             GitError::Conflict(msg) => ApiError::Conflict(msg),
             // The forge down, slow or refusing the Portal's own token is an outage the person
-            // can wait out, not a fault of their request (T-4966: a Gitea 401 emptied the inbox).
+            // can wait out, not a fault of their request (T-4966: a forge 401 emptied the inbox).
             GitError::Transport(_)
             | GitError::Api {
                 status: 401 | 403 | 408 | 429 | 500..=599,
@@ -98,13 +105,18 @@ impl From<GitError> for ApiError {
     }
 }
 
-/// The sentence of a forge error answer: Gitea answers `{"message": …, "url": <its swagger
-/// page>}`, and only the message reaches a person, never the raw body (T-4967). Any other body
-/// keeps its first line, capped, since a proxy in front of the forge may answer a whole page.
+/// The sentence of a forge error answer: shako answers the OData error object
+/// `{"error": {"code", "message"}}`, and only the message reaches a person, never the raw body
+/// (T-4967). Any other body keeps its first line, capped, since a proxy in front of the forge may
+/// answer a whole page.
 async fn forge_message(res: reqwest::Response) -> String {
     let body = res.text().await.unwrap_or_default();
-    if let Ok(serde_json::Value::Object(map)) = serde_json::from_str(&body) {
-        if let Some(serde_json::Value::String(message)) = map.get("message") {
+    if let Ok(doc) = serde_json::from_str::<Value>(&body) {
+        let message = doc
+            .pointer("/error/message")
+            .or_else(|| doc.get("message"))
+            .and_then(Value::as_str);
+        if let Some(message) = message {
             return message.trim().to_string();
         }
     }
@@ -117,13 +129,9 @@ async fn forge_message(res: reqwest::Response) -> String {
         .collect()
 }
 
-/// A team of the forge organization (PF-87).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Team {
-    pub id: u64,
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
+/// An OData string literal: quoted, with a quote inside doubled.
+fn literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 /// A workflow run of an application's repository, as the App page links it (AP-86, AP-103).
@@ -174,39 +182,26 @@ pub struct QueuedJob {
     pub repository: String,
 }
 
+/// An OData collection answer.
 #[derive(Deserialize)]
-struct QueuedJobsResponse {
-    #[serde(default)]
-    jobs: Vec<RawQueuedJob>,
+struct Collection<T> {
+    #[serde(default = "Vec::new")]
+    value: Vec<T>,
 }
 
 #[derive(Deserialize)]
-struct RawQueuedJob {
+#[serde(rename_all = "PascalCase")]
+struct JobRow {
     id: u64,
     #[serde(default)]
     labels: Vec<String>,
     #[serde(default)]
-    url: String,
-}
-
-/// The repository a job's API URL names, `…/api/v1/repos/{owner}/{repo}/actions/jobs/{id}`, when
-/// it is a repository of `owner`; `None` for anything else, which the dispatcher then ignores.
-fn repository_of_job(url: &str, owner: &str) -> Option<String> {
-    let path = url.split("/api/v1/repos/").nth(1)?;
-    let mut parts = path.split('/');
-    let (found_owner, repo) = (parts.next()?, parts.next()?);
-    (found_owner == owner && parts.next() == Some("actions") && !repo.is_empty())
-        .then(|| repo.to_owned())
+    repository: String,
 }
 
 #[derive(Deserialize)]
-struct WorkflowRunsResponse {
-    #[serde(default)]
-    workflow_runs: Vec<WorkflowRunResponse>,
-}
-
-#[derive(Deserialize)]
-struct WorkflowRunResponse {
+#[serde(rename_all = "PascalCase")]
+struct WorkflowRunRow {
     #[serde(default)]
     status: String,
     #[serde(default)]
@@ -214,7 +209,7 @@ struct WorkflowRunResponse {
     #[serde(default)]
     head_sha: String,
     #[serde(default)]
-    run_number: Option<u64>,
+    number: Option<u64>,
     #[serde(default)]
     started_at: Option<String>,
     #[serde(default)]
@@ -232,23 +227,14 @@ pub struct Artifact {
 }
 
 #[derive(Deserialize)]
-struct ArtifactsResponse {
-    #[serde(default)]
-    artifacts: Vec<ArtifactResponse>,
-}
-
-#[derive(Deserialize)]
-struct ArtifactResponse {
+#[serde(rename_all = "PascalCase")]
+struct ArtifactRow {
     id: u64,
     name: String,
     #[serde(default)]
-    size_in_bytes: u64,
-    workflow_run: ArtifactRunResponse,
-}
-
-#[derive(Deserialize)]
-struct ArtifactRunResponse {
-    id: u64,
+    size: u64,
+    #[serde(default)]
+    run_id: u64,
     #[serde(default)]
     head_sha: String,
 }
@@ -278,7 +264,9 @@ async fn read_capped(
 /// Human author attributed on commits (CC-44).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Author<'a> {
+    #[serde(rename = "Name")]
     pub name: &'a str,
+    #[serde(rename = "Email")]
     pub email: &'a str,
 }
 
@@ -340,7 +328,8 @@ pub struct ChangedFile {
 }
 
 #[derive(Deserialize)]
-struct ChangedFileDto {
+#[serde(rename_all = "PascalCase")]
+struct ChangedFileRow {
     filename: String,
     #[serde(default)]
     status: String,
@@ -400,9 +389,9 @@ pub struct PullRequest {
     pub title: String,
     pub body: String,
     pub head_branch: String,
-    /// The commit the head branch pointed at when the forge answered, when it said (Gitea
-    /// always does). A review reads every file at this ref and the merge is pinned to it, so a
-    /// push between the two is refused instead of merged unread (PF-57, T-1683).
+    /// The commit the head branch pointed at when the forge answered. A review reads every file
+    /// at this ref and the merge is pinned to it, so a push between the two is refused instead
+    /// of merged unread (PF-57, T-1683).
     pub head_sha: String,
     pub base_branch: String,
     /// The commit the base branch pointed at when the forge answered, empty when it did not say.
@@ -415,8 +404,8 @@ pub struct PullRequest {
     /// The forge account that opened the pull request: who pushed, not what a commit claims.
     #[serde(default)]
     pub author_login: String,
-    /// Whether the forge named the head's repository and it is the base's own: not a fork. A
-    /// forge that names neither says nothing, which counts as a fork (T-3433).
+    /// Whether the head is the base's own repository: not a fork. shako has no forks, so a pull
+    /// request it answers is always its repository's own (T-3433).
     #[serde(default)]
     pub same_repository: bool,
     pub mergeable: Option<bool>,
@@ -490,57 +479,118 @@ pub enum MergeStyle {
     Rebase,
 }
 
-// Request and response DTOs for Gitea REST API
+/// A pull request as the `PullRequests` entity set answers it.
 #[derive(Deserialize)]
-struct RepoDetailsResponse {
-    default_branch: String,
+#[serde(rename_all = "PascalCase")]
+struct PullRequestRow {
+    number: u64,
+    #[serde(default)]
+    html_url: String,
+    #[serde(default)]
+    state: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    head: String,
+    #[serde(default)]
+    head_sha: String,
+    #[serde(default)]
+    base: String,
+    #[serde(default)]
+    base_sha: String,
+    #[serde(default)]
+    merge_base: Option<String>,
+    #[serde(default)]
+    mergeable: Option<bool>,
+    #[serde(default)]
+    merged: bool,
+    #[serde(default)]
+    merge_commit_sha: Option<String>,
+    #[serde(default)]
+    author: String,
+    #[serde(default)]
+    author_name: Option<String>,
+    #[serde(default)]
+    author_email: Option<String>,
+    #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
+    closed_at: Option<String>,
+}
+
+impl From<PullRequestRow> for PullRequest {
+    fn from(row: PullRequestRow) -> Self {
+        let author_name = row
+            .author_name
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| row.author.clone());
+        PullRequest {
+            number: row.number,
+            url: row.html_url,
+            state: row.state,
+            title: row.title,
+            body: row.body.unwrap_or_default(),
+            head_branch: row.head,
+            head_sha: row.head_sha,
+            base_branch: row.base,
+            base_sha: row.base_sha,
+            created_at: row.created_at.unwrap_or_default(),
+            author_name,
+            author_email: row.author_email.filter(|email| !email.is_empty()),
+            author_login: row.author,
+            same_repository: true,
+            mergeable: row.mergeable,
+            merged: row.merged,
+            repository: String::new(),
+            merge_commit_sha: row.merge_commit_sha.unwrap_or_default(),
+            closed_at: row.closed_at.unwrap_or_default(),
+            merge_base: row.merge_base.unwrap_or_default(),
+        }
+    }
+}
+
+/// One push mirror of a repository, as `R/PushMirrors` lists it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PushMirror {
+    #[serde(rename = "Name")]
+    pub remote_name: String,
+    #[serde(rename = "RemoteAddress")]
+    pub remote_address: String,
+    /// What the last sync failed with; empty when it succeeded or has not run yet.
+    #[serde(rename = "LastError", default, deserialize_with = "null_is_empty")]
+    pub last_error: String,
+}
+
+fn null_is_empty<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
 }
 
 #[derive(Deserialize)]
-struct BranchDetailsResponse {
-    commit: CommitIdDto,
-}
-
-#[derive(Deserialize)]
-struct CommitIdDto {
-    id: String,
-}
-
-#[derive(Serialize)]
-struct CreateBranchPayload<'a> {
-    new_branch_name: &'a str,
-    old_branch_name: &'a str,
-}
-
-#[derive(Deserialize)]
-struct ContentsDto {
+#[serde(rename_all = "PascalCase")]
+struct TreePage {
+    #[serde(default)]
     sha: String,
     #[serde(default)]
-    content: String,
+    tree: Vec<TreeEntry>,
+    #[serde(default)]
+    truncated: bool,
 }
 
-#[derive(Serialize)]
-struct PutFilePayload<'a> {
-    content: String,
-    message: &'a str,
-    branch: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    sha: Option<&'a str>,
-    author: Author<'a>,
-    committer: Author<'a>,
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct TreeEntry {
+    path: String,
+    #[serde(rename = "Type")]
+    entry_type: String,
+    #[serde(default)]
+    sha: String,
 }
 
+/// One file change of a `Shako.CommitFiles` call.
 #[derive(Serialize)]
-struct ChangeFilesPayload<'a> {
-    files: Vec<ChangeFileDto>,
-    message: &'a str,
-    branch: &'a str,
-    author: Author<'a>,
-    committer: Author<'a>,
-}
-
-#[derive(Serialize)]
-struct ChangeFileDto {
+struct FileChange {
     operation: &'static str,
     path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -549,211 +599,7 @@ struct ChangeFileDto {
     sha: Option<String>,
 }
 
-#[derive(Serialize)]
-struct DeleteFilePayload<'a> {
-    message: &'a str,
-    branch: &'a str,
-    sha: &'a str,
-    author: Author<'a>,
-    committer: Author<'a>,
-}
-
-#[derive(Deserialize)]
-struct FileCommitResponse {
-    #[serde(default)]
-    commit: Option<FileCommitShaDto>,
-    #[serde(default)]
-    sha: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct FileCommitShaDto {
-    sha: String,
-}
-
-#[derive(Deserialize)]
-struct CommitDto {
-    sha: String,
-    #[serde(default)]
-    commit: Option<CommitDetailsDto>,
-}
-
-#[derive(Deserialize)]
-struct CommitDetailsDto {
-    #[serde(default)]
-    message: String,
-    #[serde(default)]
-    author: Option<CommitAuthorDto>,
-}
-
-#[derive(Deserialize)]
-struct CommitAuthorDto {
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    email: Option<String>,
-    #[serde(default)]
-    date: String,
-}
-
-#[derive(Serialize)]
-struct CreatePullRequestPayload<'a> {
-    head: &'a str,
-    base: &'a str,
-    title: &'a str,
-    body: &'a str,
-}
-
-#[derive(Deserialize)]
-struct GiteaPullResponse {
-    number: u64,
-    html_url: String,
-    state: String,
-    #[serde(default)]
-    title: String,
-    #[serde(default)]
-    body: Option<String>,
-    #[serde(default)]
-    head: Option<BranchRefDto>,
-    #[serde(default)]
-    base: Option<BranchRefDto>,
-    #[serde(default)]
-    created_at: Option<String>,
-    #[serde(default)]
-    user: Option<GiteaUserDto>,
-    #[serde(default)]
-    mergeable: Option<bool>,
-    #[serde(default)]
-    merged: bool,
-    #[serde(default)]
-    merge_commit_sha: Option<String>,
-    #[serde(default)]
-    closed_at: Option<String>,
-    #[serde(default)]
-    merge_base: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct BranchRefDto {
-    #[serde(rename = "ref", default)]
-    git_ref: String,
-    #[serde(default)]
-    sha: String,
-    #[serde(default)]
-    repo_id: Option<u64>,
-}
-
-#[derive(Deserialize)]
-struct GiteaUserDto {
-    #[serde(default)]
-    login: Option<String>,
-    #[serde(default)]
-    full_name: Option<String>,
-    #[serde(default)]
-    email: Option<String>,
-}
-
-impl From<GiteaPullResponse> for PullRequest {
-    fn from(raw: GiteaPullResponse) -> Self {
-        let author_name = raw
-            .user
-            .as_ref()
-            .and_then(|u| {
-                u.full_name
-                    .as_deref()
-                    .filter(|s| !s.trim().is_empty())
-                    .or(u.login.as_deref())
-            })
-            .unwrap_or_default()
-            .to_string();
-        let author_login = raw
-            .user
-            .as_ref()
-            .and_then(|u| u.login.clone())
-            .unwrap_or_default();
-        let author_email = raw.user.and_then(|u| u.email);
-        let same_repository = matches!(
-            (
-                raw.head.as_ref().and_then(|h| h.repo_id),
-                raw.base.as_ref().and_then(|b| b.repo_id),
-            ),
-            (Some(head), Some(base)) if head == base
-        );
-        let (head_branch, head_sha) = raw.head.map(|h| (h.git_ref, h.sha)).unwrap_or_default();
-        let (base_branch, base_sha) = raw.base.map(|b| (b.git_ref, b.sha)).unwrap_or_default();
-
-        PullRequest {
-            number: raw.number,
-            url: raw.html_url,
-            state: raw.state,
-            title: raw.title,
-            body: raw.body.unwrap_or_default(),
-            head_branch,
-            head_sha,
-            base_branch,
-            base_sha,
-            created_at: raw.created_at.unwrap_or_default(),
-            author_name,
-            author_email,
-            author_login,
-            same_repository,
-            mergeable: raw.mergeable,
-            merged: raw.merged,
-            repository: String::new(),
-            merge_commit_sha: raw.merge_commit_sha.unwrap_or_default(),
-            closed_at: raw.closed_at.unwrap_or_default(),
-            merge_base: raw.merge_base.unwrap_or_default(),
-        }
-    }
-}
-
-/// One push mirror of a repository, as `GET push_mirrors` lists it.
-#[derive(Debug, Clone, Deserialize)]
-pub struct PushMirror {
-    pub remote_name: String,
-    pub remote_address: String,
-    /// What the last sync failed with; empty when it succeeded or has not run yet.
-    #[serde(default)]
-    pub last_error: String,
-}
-
-#[derive(Serialize)]
-struct ReviewPayload<'a> {
-    event: ReviewEvent,
-    body: &'a str,
-}
-
-#[derive(Serialize)]
-struct MergePayload<'a> {
-    #[serde(rename = "Do")]
-    do_field: MergeStyle,
-    merge_message_field: &'a str,
-    /// The commit the caller reviewed. Gitea refuses the merge when the branch has moved past
-    /// it, which is the only race-free way to merge what was approved (T-1683).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    head_commit_id: Option<&'a str>,
-}
-
-#[derive(Deserialize)]
-struct GitTreeResponse {
-    #[serde(default)]
-    sha: String,
-    #[serde(default)]
-    tree: Vec<GitTreeEntryDto>,
-    #[serde(default)]
-    truncated: bool,
-}
-
-#[derive(Deserialize)]
-struct GitTreeEntryDto {
-    path: String,
-    #[serde(rename = "type")]
-    entry_type: String,
-    #[serde(default)]
-    sha: String,
-}
-
-impl GiteaClient {
+impl ShakoClient {
     pub fn new(
         base: Url,
         owner: impl Into<String>,
@@ -774,60 +620,56 @@ impl GiteaClient {
             mount: None,
             token: token.into(),
             apps: None,
-            reader: None,
             http,
         })
     }
 
     /// Reads the forge's configuration from the environment.
     ///
-    /// `JC_GITEA_URL` (the API base the Portal dials), `JC_GITEA_OWNER`, `JC_GITEA_REPO` and
-    /// `JC_GITEA_TOKEN` (a secret: the token every push and merge request is written with).
-    /// `JC_GITEA_PUBLIC_URL` is the address a browser follows a "Source" link to, which differs
-    /// from the API base whenever the forge is reached through the edge; the API base when it
-    /// is unset.
+    /// `JC_SHAKO_URL` (the base the Portal dials; the OData service is `{base}/odata/`),
+    /// `JC_SHAKO_OWNER`, `JC_SHAKO_REPO` and `JC_SHAKO_TOKEN` (a secret: the token every push and
+    /// merge request is written with). `JC_SHAKO_PUBLIC_URL` is the address a browser follows a
+    /// "Source" link to, which differs from the API base whenever the forge is reached through
+    /// the edge; the API base when it is unset.
     ///
-    /// `JC_GITEA_APPS_TOKEN` (a secret, the applications' machine user's) and
-    /// `JC_GITEA_APPS_OWNER` move the generated applications' repositories, their packages and
+    /// `JC_SHAKO_APPS_TOKEN` (a secret, the applications' machine user's) and
+    /// `JC_SHAKO_APPS_OWNER` move the generated applications' repositories, their packages and
     /// their build queue into an organization of their own, written by a machine user of their
     /// own (PF-106); both or neither.
     ///
     /// Fail-closed: returns `Ok(None)` if all four are absent, or an error if partially set.
     pub fn from_env(lookup: impl Fn(&str) -> Option<String>) -> Result<Option<Self>, GitError> {
-        let apps = match (lookup("JC_GITEA_APPS_OWNER"), lookup("JC_GITEA_APPS_TOKEN")) {
+        let apps = match (lookup("JC_SHAKO_APPS_OWNER"), lookup("JC_SHAKO_APPS_TOKEN")) {
             (None, None) => None,
             (Some(owner), Some(token)) if !owner.trim().is_empty() && !token.trim().is_empty() => {
                 Some((owner.trim().to_owned(), token.trim().to_owned()))
             }
             _ => {
                 return Err(GitError::Config(
-                    "JC_GITEA_APPS_OWNER and JC_GITEA_APPS_TOKEN must be set together".to_string(),
+                    "JC_SHAKO_APPS_OWNER and JC_SHAKO_APPS_TOKEN must be set together".to_string(),
                 ))
             }
         };
         match (
-            lookup("JC_GITEA_URL"),
-            lookup("JC_GITEA_OWNER"),
-            lookup("JC_GITEA_REPO"),
-            lookup("JC_GITEA_TOKEN"),
+            lookup("JC_SHAKO_URL"),
+            lookup("JC_SHAKO_OWNER"),
+            lookup("JC_SHAKO_REPO"),
+            lookup("JC_SHAKO_TOKEN"),
         ) {
             (None, None, None, None) => Ok(None),
             (Some(url), Some(owner), Some(repo), Some(token)) => {
                 let base = Url::parse(&url)
-                    .map_err(|e| GitError::Config(format!("invalid JC_GITEA_URL: {e}")))?;
+                    .map_err(|e| GitError::Config(format!("invalid JC_SHAKO_URL: {e}")))?;
                 let mut client = Self::new(base, owner, repo, token)?;
                 client.apps = apps;
-                client.reader = lookup("JC_GITEA_READER")
-                    .map(|user| user.trim().to_owned())
-                    .filter(|user| !user.is_empty());
-                if let Some(public) = lookup("JC_GITEA_PUBLIC_URL") {
+                if let Some(public) = lookup("JC_SHAKO_PUBLIC_URL") {
                     client.public_base = Url::parse(&public)
-                        .map_err(|e| GitError::Config(format!("invalid JC_GITEA_PUBLIC_URL: {e}")))?;
+                        .map_err(|e| GitError::Config(format!("invalid JC_SHAKO_PUBLIC_URL: {e}")))?;
                 }
                 Ok(Some(client))
             }
             _ => Err(GitError::Config(
-                "JC_GITEA_URL, JC_GITEA_OWNER, JC_GITEA_REPO and JC_GITEA_TOKEN must be set together"
+                "JC_SHAKO_URL, JC_SHAKO_OWNER, JC_SHAKO_REPO and JC_SHAKO_TOKEN must be set together"
                     .to_string(),
             )),
         }
@@ -846,8 +688,7 @@ impl GiteaClient {
         ))
     }
 
-    /// Browser URL of a pull request. Gitea's own `html_url` carries its ROOT_URL, which on a
-    /// cluster is the internal service name no browser resolves.
+    /// Browser URL of a pull request, on the public address a browser resolves.
     pub fn pull_url(&self, number: u64) -> String {
         self.signed_in(&format!(
             "{}/{}/{}/pulls/{number}",
@@ -859,10 +700,9 @@ impl GiteaClient {
 
     /// A forge page behind the forge's own sign-in (PF-81). A Portal session is not a forge
     /// session, and the configuration repository is private, so a link straight to the file
-    /// answers 404. The link starts the forge's Keycloak sign-in instead of showing its sign-in
-    /// page (T-2759): the Keycloak session the Portal holds answers without a prompt, and Gitea
-    /// returns to `redirect_to`. Gitea returns only to a local path, which is why the host is
-    /// dropped here. `keycloak` is the auth source the Gitea chart registers (components/gitea).
+    /// answers 404. The link starts the forge's Keycloak sign-in instead of showing a sign-in page
+    /// (T-2759): the Keycloak session the Portal holds answers without a prompt, and the forge
+    /// returns to `redirect_to`, which it takes only as a local path, so the host is dropped here.
     fn signed_in(&self, url: &str) -> String {
         let Ok(target) = Url::parse(url) else {
             return url.to_owned();
@@ -883,9 +723,9 @@ impl GiteaClient {
     }
 
     /// A pull request as the Portal hands it on: with a public forge configured, its link is
-    /// the public one; without, Gitea's own `html_url` is the best there is.
-    fn pull(&self, raw: GiteaPullResponse) -> PullRequest {
-        let mut pull = PullRequest::from(raw);
+    /// the public one behind the sign-in; without, the forge's own `HtmlUrl`.
+    fn pull(&self, row: PullRequestRow) -> PullRequest {
+        let mut pull = PullRequest::from(row);
         pull.repository = self.repo.clone();
         if self.public_base != self.base {
             pull.url = self.pull_url(pull.number);
@@ -893,33 +733,47 @@ impl GiteaClient {
         pull
     }
 
-    /// The API address of `path` under this repository, each segment percent-encoded. A `.` or
-    /// `..` segment (a file path or ref someone typed) is refused: the URL parser would resolve
-    /// it into another forge route, called with the Portal's token, so it names nothing here
-    /// (F-R2POR4-004).
-    fn repo_url(&self, path: &str) -> Result<Url, GitError> {
-        let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-        if segments
-            .iter()
-            .any(|segment| matches!(*segment, "." | ".."))
-        {
-            return Err(GitError::NotFound);
-        }
+    /// `{base}/odata/{segments…}`, each segment percent-encoded on its own: a `/` inside a key
+    /// value (`Branches('workspace/air')`) stays inside its segment, so nothing a person typed
+    /// reaches another route.
+    fn odata_url(&self, segments: &[&str]) -> Result<Url, GitError> {
         let mut url = self.base.clone();
         url.path_segments_mut()
             .map_err(|()| GitError::Config(format!("'{}' cannot be a base", self.base)))?
             .pop_if_empty()
-            .extend(["api", "v1", "repos", &self.owner, &self.repo])
-            .extend(segments.into_iter().filter(|segment| !segment.is_empty()));
+            .push("odata")
+            .extend(segments);
         Ok(url)
+    }
+
+    /// The repository's alternate key, `Repositories(Owner='o',Name='r')`.
+    fn repo_key(&self) -> String {
+        format!(
+            "Repositories(Owner={},Name={})",
+            literal(&self.owner),
+            literal(&self.repo)
+        )
+    }
+
+    /// `R/{rest…}`: something under this repository.
+    fn repo_url(&self, rest: &[&str]) -> Result<Url, GitError> {
+        let key = self.repo_key();
+        let mut segments = vec![key.as_str()];
+        segments.extend_from_slice(rest);
+        self.odata_url(&segments)
+    }
+
+    /// `R/PullRequests({number})/{rest…}`.
+    fn pull_url_api(&self, number: u64, rest: &[&str]) -> Result<Url, GitError> {
+        let pull = format!("PullRequests({number})");
+        let mut segments = vec![pull.as_str()];
+        segments.extend_from_slice(rest);
+        self.repo_url(&segments)
     }
 
     async fn send(&self, builder: reqwest::RequestBuilder) -> Result<reqwest::Response, GitError> {
         builder
-            .header(
-                reqwest::header::AUTHORIZATION,
-                format!("token {}", self.token),
-            )
+            .bearer_auth(&self.token)
             .header(reqwest::header::ACCEPT, "application/json")
             .send()
             .await
@@ -942,6 +796,23 @@ impl GiteaClient {
                 message,
             })
         }
+    }
+
+    /// `GET url`, its JSON answer.
+    async fn get_json<T: serde::de::DeserializeOwned>(
+        &self,
+        url: Url,
+        what: &str,
+    ) -> Result<T, GitError> {
+        let res = Self::check_status(self.send(self.http.get(url)).await?).await?;
+        res.json()
+            .await
+            .map_err(|e| GitError::Transport(format!("failed to parse {what}: {e}")))
+    }
+
+    /// `POST url` with the action's parameters.
+    async fn act(&self, url: Url, params: &Value) -> Result<reqwest::Response, GitError> {
+        Self::check_status(self.send(self.http.post(url).json(params)).await?).await
     }
 
     /// The same forge, organization and token, another repository of the organization: an
@@ -1002,14 +873,15 @@ impl GiteaClient {
     /// [`Self::local_path`] for a write: a path outside the project repository is refused,
     /// so nothing meant for the organization repository lands in a project's (CC-87).
     fn write_path(&self, path: &str) -> Result<String, GitError> {
-        self.local_path(path).ok_or_else(|| {
+        let local = self.local_path(path).ok_or_else(|| {
             GitError::Conflict(format!(
                 "{} is not a file of the project repository {}; the organization's files are \
                  changed in the organization repository",
                 path.trim_start_matches('/'),
                 self.repo
             ))
-        })
+        })?;
+        file_path(local)
     }
 
     /// A path of this repository as the render spells it.
@@ -1021,7 +893,7 @@ impl GiteaClient {
     }
 
     /// The `https` address a person clones the repository from: the forge's public URL, never
-    /// the cluster-internal one (AP-77, AP-78).
+    /// the internal one (AP-77, AP-78).
     pub fn clone_url(&self) -> String {
         format!(
             "{}/{}/{}.git",
@@ -1031,74 +903,66 @@ impl GiteaClient {
         )
     }
 
-    /// Creates the repository in the organization unless it is already there, private and
-    /// initialised on `main` so a branch can be cut from it; answers whether it created one.
-    ///
-    /// An existing repository is never recreated or overwritten, and a creation that lost a race
-    /// with another (the forge's 409) is the same answer as finding it (AP-75).
-    pub async fn ensure_repository(&self, description: &str) -> Result<bool, GitError> {
-        let res = self.send(self.http.get(self.repo_url("")?)).await?;
+    /// Whether the repository is there: `GET R`, a 404 is `false`.
+    async fn exists(&self) -> Result<bool, GitError> {
+        let res = self.send(self.http.get(self.repo_url(&[])?)).await?;
         match Self::check_status(res).await {
-            Ok(_) => return Ok(false),
-            Err(GitError::NotFound) => {}
-            Err(err) => return Err(err),
+            Ok(_) => Ok(true),
+            Err(GitError::NotFound) => Ok(false),
+            Err(err) => Err(err),
         }
-        let full = format!(
-            "{}/api/v1/orgs/{}/repos",
-            self.base.as_str().trim_end_matches('/'),
-            self.owner
-        );
-        let url = Url::parse(&full)
-            .map_err(|e| GitError::Config(format!("invalid url '{full}': {e}")))?;
-        let payload = serde_json::json!({
-            "name": self.repo,
-            "description": description,
-            "private": true,
-            "auto_init": true,
-            "default_branch": "main",
+    }
+
+    /// `POST CreateRepository`, a 409 (it is there already, a lost race) answered `false`.
+    async fn create(&self, description: &str, auto_init: bool) -> Result<bool, GitError> {
+        if self.exists().await? {
+            return Ok(false);
+        }
+        let params = json!({
+            "Owner": self.owner,
+            "Name": self.repo,
+            "Description": description,
+            "Private": true,
+            "AutoInit": auto_init,
+            "DefaultBranch": "main",
         });
-        let res = self.send(self.http.post(url).json(&payload)).await?;
-        match Self::check_status(res).await {
+        match self
+            .act(self.odata_url(&["CreateRepository"])?, &params)
+            .await
+        {
             Ok(_) => Ok(true),
             Err(GitError::Conflict(_)) => Ok(false),
             Err(err) => Err(err),
         }
     }
 
-    /// Creates this repository as a copy of `origin` with its whole history, through the
-    /// forge's migration from its own address (PF-89): the forge refuses a fork into the owner
-    /// that holds the origin. Private, without the origin's issues, pull requests, wiki or
-    /// releases. Answers `false`, and copies nothing, when a repository of this name is already
-    /// there.
-    pub async fn migrate_repository(&self, origin: &GiteaClient) -> Result<bool, GitError> {
-        let res = self.send(self.http.get(self.repo_url("")?)).await?;
-        match Self::check_status(res).await {
-            Ok(_) => return Ok(false),
-            Err(GitError::NotFound) => {}
-            Err(err) => return Err(err),
+    /// Creates the repository in the organization unless it is already there, private and
+    /// initialised on `main` so a branch can be cut from it; answers whether it created one.
+    ///
+    /// An existing repository is never recreated or overwritten, and a creation that lost a race
+    /// with another (the forge's 409) is the same answer as finding it (AP-75).
+    pub async fn ensure_repository(&self, description: &str) -> Result<bool, GitError> {
+        self.create(description, true).await
+    }
+
+    /// Creates this repository as a copy of `origin` with its whole history (PF-89): private,
+    /// with no pull request of the origin's. Answers `false`, and copies nothing, when a
+    /// repository of this name is already there.
+    pub async fn migrate_repository(&self, origin: &ShakoClient) -> Result<bool, GitError> {
+        if self.exists().await? {
+            return Ok(false);
         }
-        let base = self.base.as_str().trim_end_matches('/');
-        let full = format!("{base}/api/v1/repos/migrate");
-        let url = Url::parse(&full)
-            .map_err(|e| GitError::Config(format!("invalid url '{full}': {e}")))?;
-        let payload = serde_json::json!({
-            "clone_addr": format!("{base}/{}/{}.git", origin.owner, origin.repo),
-            "service": "gitea",
-            "auth_token": self.token,
-            "repo_owner": self.owner,
-            "repo_name": self.repo,
-            "private": true,
-            "mirror": false,
-            "issues": false,
-            "pull_requests": false,
-            "wiki": false,
-            "releases": false,
-            "labels": false,
-            "milestones": false,
-            "lfs": false,
+        let params = json!({
+            "SourceOwner": origin.owner,
+            "SourceName": origin.repo,
+            "RepoOwner": self.owner,
+            "RepoName": self.repo,
+            "Private": true,
         });
-        let res = self.send(self.http.post(url).json(&payload)).await?;
-        match Self::check_status(res).await {
+        match self
+            .act(self.odata_url(&["ImportRepository"])?, &params)
+            .await
+        {
             Ok(_) => Ok(true),
             Err(GitError::Conflict(_)) => Ok(false),
             Err(err) => Err(err),
@@ -1108,32 +972,7 @@ impl GiteaClient {
     /// Creates the repository in the organization, private and empty, for a push to fill (MF-45);
     /// answers `false`, and creates nothing, when a repository of this name is already there.
     pub async fn create_empty_repository(&self, description: &str) -> Result<bool, GitError> {
-        let res = self.send(self.http.get(self.repo_url("")?)).await?;
-        match Self::check_status(res).await {
-            Ok(_) => return Ok(false),
-            Err(GitError::NotFound) => {}
-            Err(err) => return Err(err),
-        }
-        let full = format!(
-            "{}/api/v1/orgs/{}/repos",
-            self.base.as_str().trim_end_matches('/'),
-            self.owner
-        );
-        let url = Url::parse(&full)
-            .map_err(|e| GitError::Config(format!("invalid url '{full}': {e}")))?;
-        let payload = serde_json::json!({
-            "name": self.repo,
-            "description": description,
-            "private": true,
-            "auto_init": false,
-            "default_branch": "main",
-        });
-        let res = self.send(self.http.post(url).json(&payload)).await?;
-        match Self::check_status(res).await {
-            Ok(_) => Ok(true),
-            Err(GitError::Conflict(_)) => Ok(false),
-            Err(err) => Err(err),
-        }
+        self.create(description, false).await
     }
 
     /// Pushes the pack of a `git bundle` into this repository and sets `refs` to the commits
@@ -1168,14 +1007,13 @@ impl GiteaClient {
         body.extend_from_slice(b"0000");
         body.extend_from_slice(pack);
 
-        let full = format!(
-            "{}/{}/{}.git/git-receive-pack",
-            self.base.as_str().trim_end_matches('/'),
-            self.owner,
-            self.repo
-        );
-        let url = Url::parse(&full)
-            .map_err(|e| GitError::Config(format!("invalid url '{full}': {e}")))?;
+        let mut url = self.base.clone();
+        url.path_segments_mut()
+            .map_err(|()| GitError::Config(format!("'{}' cannot be a base", self.base)))?
+            .pop_if_empty()
+            .push(&self.owner)
+            .push(&format!("{}.git", self.repo))
+            .push("git-receive-pack");
         let res = self
             .send(
                 self.http
@@ -1195,67 +1033,65 @@ impl GiteaClient {
         receive_pack_status(&answer)
     }
 
-    /// The push mirrors of the repository: where each one pushes, and what its last sync said
-    /// (AP-79). Answers only for a caller that administers the repository.
+    /// `GET R/PushMirrors`: where each mirror pushes, and what its last sync said (AP-79).
+    /// Answers only for a caller that administers the repository.
     pub async fn push_mirrors(&self) -> Result<Vec<PushMirror>, GitError> {
-        let res = self
-            .send(self.http.get(self.repo_url("push_mirrors")?))
+        let listed: Collection<PushMirror> = self
+            .get_json(self.repo_url(&["PushMirrors"])?, "push mirrors")
             .await?;
-        let res = Self::check_status(res).await?;
-        res.json()
-            .await
-            .map_err(|e| GitError::Transport(format!("failed to parse push mirrors: {e}")))
+        Ok(listed.value)
     }
 
-    /// Adds a push mirror that syncs on every commit, with a periodic sync behind it for a
-    /// commit whose sync failed (AP-79).
+    /// `POST R/Shako.AddPushMirror`: a push mirror that syncs on every commit, with a periodic
+    /// sync behind it for a commit whose sync failed (AP-79).
     ///
-    /// The credential travels in its own members and never inside `remote_address`: the forge
-    /// shows the address on the repository's settings page and in `push_mirrors`, and stores the
-    /// credential encrypted.
+    /// The credential travels in its own member and never inside `remote_address`: the forge
+    /// shows the address in `PushMirrors`, keeps the credential in its secret store and never
+    /// answers it.
     pub async fn add_push_mirror(
         &self,
         remote_address: &str,
         username: &str,
         password: &str,
     ) -> Result<(), GitError> {
-        let payload = serde_json::json!({
-            "remote_address": remote_address,
-            "remote_username": username,
-            "remote_password": password,
-            "interval": "8h0m0s",
-            "sync_on_commit": true,
+        let params = json!({
+            "RemoteAddress": remote_address,
+            "RemoteUsername": username,
+            "Credential": password,
+            "Interval": "8h0m0s",
+            "SyncOnCommit": true,
         });
-        let url = self.repo_url("push_mirrors")?;
-        let res = self.send(self.http.post(url).json(&payload)).await?;
-        Self::check_status(res).await?;
+        self.act(self.repo_url(&["Shako.AddPushMirror"])?, &params)
+            .await?;
         Ok(())
     }
 
-    /// Removes one push mirror by the name the forge gave it.
+    /// `POST R/Shako.RemovePushMirror`: one push mirror, by the name the forge gave it.
     pub async fn delete_push_mirror(&self, remote_name: &str) -> Result<(), GitError> {
-        let url = self.repo_url(&format!("push_mirrors/{remote_name}"))?;
-        let res = self.send(self.http.delete(url)).await?;
-        Self::check_status(res).await?;
+        self.act(
+            self.repo_url(&["Shako.RemovePushMirror"])?,
+            &json!({ "Name": remote_name }),
+        )
+        .await?;
         Ok(())
     }
 
-    /// Pushes every mirror of the repository now instead of at its next commit or interval.
+    /// `POST R/Shako.SyncPushMirrors`: every mirror pushes now instead of at its next commit or
+    /// interval.
     pub async fn sync_push_mirrors(&self) -> Result<(), GitError> {
-        let url = self.repo_url("push_mirrors-sync")?;
-        let res = self.send(self.http.post(url)).await?;
-        Self::check_status(res).await?;
+        self.act(self.repo_url(&["Shako.SyncPushMirrors"])?, &json!({}))
+            .await?;
         Ok(())
     }
 
-    /// `GET ""` — returns the repository's default branch.
+    /// `GET R`: the repository's default branch.
     pub async fn default_branch(&self) -> Result<String, GitError> {
-        let url = self.repo_url("")?;
-        let res = self.send(self.http.get(url)).await?;
-        let res = Self::check_status(res).await?;
-        let repo: RepoDetailsResponse = res.json().await.map_err(|e| {
-            GitError::Transport(format!("failed to parse repository response: {e}"))
-        })?;
+        #[derive(Deserialize)]
+        #[serde(rename_all = "PascalCase")]
+        struct Repository {
+            default_branch: String,
+        }
+        let repo: Repository = self.get_json(self.repo_url(&[])?, "the repository").await?;
         Ok(repo.default_branch)
     }
 
@@ -1278,162 +1114,121 @@ impl GiteaClient {
         ))
     }
 
-    /// `GET /actions/runs?limit={limit}` — the newest workflow runs of the repository, newest
-    /// first; what a build's estimate is read from (T-3245).
+    /// `GET R/WorkflowRuns?$orderby=Number desc&$top={limit}`: the newest workflow runs of the
+    /// repository, newest first; what a build's estimate is read from (T-3245). shako answers
+    /// 404 until it runs workflows (`PORTAL-CALLS.md` gap 2).
     pub async fn latest_runs(&self, limit: u32) -> Result<Vec<WorkflowRun>, GitError> {
-        let mut url = self.repo_url("actions/runs")?;
+        let mut url = self.repo_url(&["WorkflowRuns"])?;
         url.query_pairs_mut()
-            .append_pair("limit", &limit.to_string());
-        let res = self.send(self.http.get(url)).await?;
-        let res = Self::check_status(res).await?;
-        let runs: WorkflowRunsResponse = res
-            .json()
-            .await
-            .map_err(|e| GitError::Transport(format!("failed to parse the workflow runs: {e}")))?;
+            .append_pair("$orderby", "Number desc")
+            .append_pair("$top", &limit.to_string());
+        let runs: Collection<WorkflowRunRow> = self.get_json(url, "the workflow runs").await?;
+        let page = format!(
+            "{}/{}/{}/actions",
+            self.public_base.as_str().trim_end_matches('/'),
+            self.owner,
+            self.repo
+        );
         Ok(runs
-            .workflow_runs
+            .value
             .into_iter()
-            .map(|run| {
-                let page = format!(
-                    "{}/{}/{}/actions",
-                    self.public_base.as_str().trim_end_matches('/'),
-                    self.owner,
-                    self.repo
-                );
-                WorkflowRun {
-                    url: self.signed_in(&match run.run_number {
-                        Some(number) => format!("{page}/runs/{number}"),
-                        None => page,
-                    }),
-                    status: run.status,
-                    conclusion: run.conclusion.filter(|c| !c.is_empty()),
-                    commit: run.head_sha,
-                    number: run.run_number,
-                    started_at: run.started_at.filter(|at| !at.is_empty()),
-                    completed_at: run.completed_at.filter(|at| !at.is_empty()),
-                }
+            .map(|run| WorkflowRun {
+                url: self.signed_in(&match run.number {
+                    Some(number) => format!("{page}/runs/{number}"),
+                    None => page.clone(),
+                }),
+                status: run.status,
+                conclusion: run.conclusion.filter(|c| !c.is_empty()),
+                commit: run.head_sha,
+                number: run.number,
+                started_at: run.started_at.filter(|at| !at.is_empty()),
+                completed_at: run.completed_at.filter(|at| !at.is_empty()),
             })
             .collect())
     }
 
-    /// `POST /actions/workflows/{file}/dispatches` — runs the workflow `file` on `git_ref`
-    /// (AP-103). A refusal keeps the forge's own words, which is what a person acts on.
+    /// `POST R/Shako.DispatchWorkflow`: runs the workflow `file` on `git_ref` (AP-103). A
+    /// refusal keeps the forge's own words, which is what a person acts on.
     pub async fn dispatch_workflow(&self, file: &str, git_ref: &str) -> Result<(), GitError> {
-        let url = self.repo_url(&format!("actions/workflows/{file}/dispatches"))?;
-        let res = self
-            .send(
-                self.http
-                    .post(url)
-                    .json(&serde_json::json!({ "ref": git_ref })),
-            )
-            .await?;
-        Self::check_status(res).await?;
+        self.act(
+            self.repo_url(&["Shako.DispatchWorkflow"])?,
+            &json!({ "File": file, "Ref": git_ref }),
+        )
+        .await?;
         Ok(())
     }
 
-    /// `GET /orgs/{owner}/actions/jobs?status=queued` — every job of the organization that waits
-    /// for a runner, each with its labels and the repository it belongs to (AP-130). One page of
-    /// 50: a queue longer than that is served on the next pass.
+    /// `GET Jobs?$filter=Owner eq '{owner}' and Status eq 'queued'&$top=50`: every job of the
+    /// organization that waits for a runner, each with its labels and the repository it belongs
+    /// to (AP-130). One page of 50: a queue longer than that is served on the next pass.
     pub async fn queued_jobs(&self) -> Result<Vec<QueuedJob>, GitError> {
-        let mut url = Url::parse(&format!(
-            "{}/api/v1/orgs/{}/actions/jobs",
-            self.base.as_str().trim_end_matches('/'),
-            self.owner
-        ))
-        .map_err(|e| GitError::Transport(e.to_string()))?;
+        let mut url = self.odata_url(&["Jobs"])?;
         url.query_pairs_mut()
-            .append_pair("status", "queued")
-            .append_pair("limit", "50");
-        let res = Self::check_status(self.send(self.http.get(url)).await?).await?;
-        let page: QueuedJobsResponse = res
-            .json()
-            .await
-            .map_err(|e| GitError::Transport(format!("failed to parse the queued jobs: {e}")))?;
+            .append_pair(
+                "$filter",
+                &format!("Owner eq {} and Status eq 'queued'", literal(&self.owner)),
+            )
+            .append_pair("$top", "50");
+        let page: Collection<JobRow> = self.get_json(url, "the queued jobs").await?;
         Ok(page
-            .jobs
+            .value
             .into_iter()
-            .filter_map(|job| {
-                let repository = repository_of_job(&job.url, &self.owner)?;
-                Some(QueuedJob {
-                    id: job.id,
-                    labels: job.labels,
-                    repository,
-                })
+            .filter(|job| !job.repository.is_empty())
+            .map(|job| QueuedJob {
+                id: job.id,
+                labels: job.labels,
+                repository: job.repository,
             })
             .collect())
     }
 
-    /// `POST /actions/runners/registration-token` of this repository: a token a runner registers
-    /// with to take this repository's jobs and no other's (AP-130). It is a credential, so it
-    /// is returned to be written into one Secret and never logged.
+    /// `POST R/Shako.RunnerRegistrationToken`: a token a runner registers with to take this
+    /// repository's jobs and no other's (AP-130). It is a credential, so it is returned to be
+    /// written into one Secret and never logged.
     pub async fn repository_registration_token(&self) -> Result<String, GitError> {
-        let url = self.repo_url("actions/runners/registration-token")?;
-        let res = Self::check_status(self.send(self.http.post(url)).await?).await?;
-        let body: serde_json::Value = res.json().await.map_err(|e| {
+        let res = self
+            .act(
+                self.repo_url(&["Shako.RunnerRegistrationToken"])?,
+                &json!({}),
+            )
+            .await?;
+        let body: Value = res.json().await.map_err(|e| {
             GitError::Transport(format!("failed to parse the registration token: {e}"))
         })?;
-        body.get("token")
-            .and_then(serde_json::Value::as_str)
+        body.get("Token")
+            .and_then(Value::as_str)
             .filter(|token| !token.trim().is_empty())
             .map(str::to_owned)
             .ok_or_else(|| GitError::Transport("the forge answered no registration token".into()))
     }
 
-    /// `GET /actions/artifacts?name={name}` — the repository's artifacts of that exact name, each
-    /// with the commit its run built (AP-104).
+    /// `GET R/Artifacts?$filter=Name eq '{name}'`: the repository's artifacts of that exact
+    /// name, each with the commit its run built (AP-104).
     pub async fn artifacts_named(&self, name: &str) -> Result<Vec<Artifact>, GitError> {
-        let mut url = self.repo_url("actions/artifacts")?;
-        url.query_pairs_mut().append_pair("name", name);
-        let res = Self::check_status(self.send(self.http.get(url)).await?).await?;
-        let listed: ArtifactsResponse = res
-            .json()
-            .await
-            .map_err(|e| GitError::Transport(format!("failed to parse the artifacts: {e}")))?;
+        let mut url = self.repo_url(&["Artifacts"])?;
+        url.query_pairs_mut()
+            .append_pair("$filter", &format!("Name eq {}", literal(name)));
+        let listed: Collection<ArtifactRow> = self.get_json(url, "the artifacts").await?;
         Ok(listed
-            .artifacts
+            .value
             .into_iter()
             .filter(|artifact| artifact.name == name)
             .map(|artifact| Artifact {
                 id: artifact.id,
-                size: artifact.size_in_bytes,
-                run: artifact.workflow_run.id,
-                commit: artifact.workflow_run.head_sha,
+                size: artifact.size,
+                run: artifact.run_id,
+                commit: artifact.head_sha,
             })
             .collect())
     }
 
-    /// `GET /actions/artifacts/{id}/zip` — the bytes the run uploaded, at most `limit` of them.
-    ///
-    /// The forge answers with a redirect to a signed address on its ROOT_URL, the public host the
-    /// cluster may not reach, so the signed path is fetched from the API base the Portal dials;
-    /// the signature is the grant and no token goes with it. The path is kept from `/api/v1/` on:
-    /// a ROOT_URL with a path (`https://host/git/`) signs `/git/api/v1/…`, which only the public
-    /// proxy strips, and the forge itself answers 404 (T-2633).
+    /// `GET R/Artifacts({id})/$value`: the bytes the run uploaded, at most `limit` of them.
     pub async fn download_artifact(&self, id: u64, limit: u64) -> Result<Vec<u8>, GitError> {
-        let url = self.repo_url(&format!("actions/artifacts/{id}/zip"))?;
-        let res = self.send(self.http.get(url)).await?;
-        let res = if res.status().is_redirection() {
-            let signed = res
-                .headers()
-                .get(reqwest::header::LOCATION)
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| Url::parse(value).ok())
-                .ok_or_else(|| GitError::Transport("the forge redirected nowhere".into()))?;
-            let path = signed.path();
-            let api = path.find("/api/v1/").map_or(path, |at| &path[at..]);
-            let full = format!("{}{api}", self.base.as_str().trim_end_matches('/'));
-            let mut here = Url::parse(&full)
-                .map_err(|e| GitError::Config(format!("invalid url '{full}': {e}")))?;
-            here.set_query(signed.query());
-            self.http
-                .get(here)
-                .timeout(Duration::from_secs(120))
-                .send()
-                .await
-                .map_err(|e| GitError::Transport(e.to_string()))?
-        } else {
-            res
-        };
+        let artifact = format!("Artifacts({id})");
+        let url = self.repo_url(&[&artifact, "$value"])?;
+        let res = self
+            .send(self.http.get(url).timeout(Duration::from_secs(120)))
+            .await?;
         read_capped(
             Self::check_status(res).await?,
             limit,
@@ -1442,23 +1237,8 @@ impl GiteaClient {
         .await
     }
 
-    fn generic_package_url(
-        &self,
-        package: &str,
-        version: &str,
-        file: &str,
-    ) -> Result<Url, GitError> {
-        let full = format!(
-            "{}/api/packages/{}/generic/{package}/{version}/{file}",
-            self.base.as_str().trim_end_matches('/'),
-            self.owner
-        );
-        Url::parse(&full).map_err(|e| GitError::Config(format!("invalid url '{full}': {e}")))
-    }
-
-    /// `PUT /api/packages/{owner}/generic/{package}/{version}/{file}` — one file of a generic
-    /// package of the organization (AP-101). A file the version already holds is a
-    /// `GitError::Conflict`: the registry never replaces one.
+    /// `POST PublishPackage`: one file of a generic package of the organization (AP-101). A file
+    /// the version already holds is a `GitError::Conflict`: the registry never replaces one.
     pub async fn put_generic_file(
         &self,
         package: &str,
@@ -1466,21 +1246,27 @@ impl GiteaClient {
         file: &str,
         bytes: Vec<u8>,
     ) -> Result<(), GitError> {
-        let url = self.generic_package_url(package, version, file)?;
+        let params = json!({
+            "Owner": self.owner,
+            "Package": package,
+            "Version": version,
+            "File": file,
+            "ContentBase64": STANDARD.encode(bytes),
+        });
+        let url = self.odata_url(&["PublishPackage"])?;
         let res = self
             .send(
                 self.http
-                    .put(url)
+                    .post(url)
                     .timeout(Duration::from_secs(120))
-                    .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-                    .body(bytes),
+                    .json(&params),
             )
             .await?;
         Self::check_status(res).await?;
         Ok(())
     }
 
-    /// `GET /api/packages/{owner}/generic/{package}/{version}/{file}`, at most `limit` bytes.
+    /// `GET PackageFiles(Owner=…,Name=…,Version=…,File=…)/$value`, at most `limit` bytes.
     pub async fn get_generic_file(
         &self,
         package: &str,
@@ -1488,7 +1274,14 @@ impl GiteaClient {
         file: &str,
         limit: u64,
     ) -> Result<Vec<u8>, GitError> {
-        let url = self.generic_package_url(package, version, file)?;
+        let key = format!(
+            "PackageFiles(Owner={},Name={},Version={},File={})",
+            literal(&self.owner),
+            literal(package),
+            literal(version),
+            literal(file)
+        );
+        let url = self.odata_url(&[&key, "$value"])?;
         let res = self
             .send(self.http.get(url).timeout(Duration::from_secs(120)))
             .await?;
@@ -1502,8 +1295,8 @@ impl GiteaClient {
 
     /// A registry token for pushing to `{owner}/{image}` of the forge's container registry,
     /// asked of `/v2/token` with this client's own token (AP-107). The token realm the registry
-    /// names carries ROOT_URL, the public host the cluster may not reach, so the token is asked
-    /// of the API base the Portal dials.
+    /// names carries the public host the Portal may not reach, so the token is asked of the base
+    /// the Portal dials.
     async fn registry_token(&self, image: &str) -> Result<String, GitError> {
         let mut url = Url::parse(&format!(
             "{}/v2/token",
@@ -1592,203 +1385,34 @@ impl GiteaClient {
             .ok_or_else(|| GitError::Transport("the registry answered no digest".into()))
     }
 
-    /// `DELETE /repos/{owner}/{repo}` — removes a repository the Portal created in the same
-    /// operation, when the rest of it failed (both or neither, CC-85).
+    /// `DELETE R`: removes a repository the Portal created in the same operation, when the rest
+    /// of it failed (both or neither, CC-85).
     pub async fn delete_repository(&self) -> Result<(), GitError> {
-        let res = self.send(self.http.delete(self.repo_url("")?)).await?;
+        let res = self.send(self.http.delete(self.repo_url(&[])?)).await?;
         match Self::check_status(res).await {
             Ok(_) | Err(GitError::NotFound) => Ok(()),
             Err(err) => Err(err),
         }
     }
 
-    fn org_url(&self, path: &str) -> Result<Url, GitError> {
-        let full = format!(
-            "{}/api/v1/{}",
-            self.base.as_str().trim_end_matches('/'),
-            path.trim_start_matches('/')
-        );
-        Url::parse(&full).map_err(|e| GitError::Config(format!("invalid url '{full}': {e}")))
-    }
-
-    /// Whether the token's own user owns the organization (`GET /user`, then
-    /// `GET /users/{login}/orgs/{org}/permissions`): creating a team or giving it a repository
-    /// takes an owner, and at layout 2 the Portal's forge user is none (T-2647, T-3323). A user
-    /// who is no member of the organization at all owns nothing either.
-    pub async fn owns_organization(&self) -> Result<bool, GitError> {
-        #[derive(Deserialize)]
-        struct Me {
-            login: String,
-        }
-        #[derive(Deserialize)]
-        struct Permissions {
-            is_owner: bool,
-        }
-        let me: Me = Self::check_status(self.send(self.http.get(self.org_url("user")?)).await?)
-            .await?
-            .json()
-            .await
-            .map_err(|e| GitError::Transport(e.to_string()))?;
-        let url = self.org_url(&format!(
-            "users/{}/orgs/{}/permissions",
-            me.login, self.owner
-        ))?;
-        match Self::check_status(self.send(self.http.get(url)).await?).await {
-            Ok(res) => Ok(res
-                .json::<Permissions>()
-                .await
-                .map_err(|e| GitError::Transport(e.to_string()))?
-                .is_owner),
-            Err(GitError::NotFound) => Ok(false),
-            Err(err) => Err(err),
-        }
-    }
-
-    /// Every team of the organization, a page of fifty at a time.
-    pub async fn org_teams(&self) -> Result<Vec<Team>, GitError> {
-        let mut teams = Vec::new();
-        for page in 1.. {
-            let url = self.org_url(&format!("orgs/{}/teams?limit=50&page={page}", self.owner))?;
-            let res = Self::check_status(self.send(self.http.get(url)).await?).await?;
-            let batch: Vec<Team> = res
-                .json()
-                .await
-                .map_err(|e| GitError::Transport(e.to_string()))?;
-            let last = batch.len() < 50;
-            teams.extend(batch);
-            if last || page >= 100 {
-                break;
-            }
-        }
-        Ok(teams)
-    }
-
-    /// Creates a team of the organization that reaches only the repositories added to it, with
-    /// `permission` (`read` or `write`) on code, pull requests, issues and releases; answers it.
-    pub async fn create_team(
-        &self,
-        name: &str,
-        description: &str,
-        permission: &str,
-    ) -> Result<Team, GitError> {
-        let units = ["repo.code", "repo.pulls", "repo.issues", "repo.releases"];
-        let payload = serde_json::json!({
-            "name": name,
-            "description": description,
-            "permission": permission,
-            "includes_all_repositories": false,
-            "can_create_org_repo": false,
-            "units": units,
-            "units_map": units
-                .iter()
-                .map(|unit| ((*unit).to_owned(), serde_json::json!(permission)))
-                .collect::<serde_json::Map<_, _>>(),
-        });
-        let url = self.org_url(&format!("orgs/{}/teams", self.owner))?;
-        let res = self.send(self.http.post(url).json(&payload)).await?;
-        Self::check_status(res)
-            .await?
-            .json()
-            .await
-            .map_err(|e| GitError::Transport(e.to_string()))
-    }
-
-    /// Removes a team; a team already gone is the same answer.
-    pub async fn delete_team(&self, id: u64) -> Result<(), GitError> {
-        let res = self
-            .send(self.http.delete(self.org_url(&format!("teams/{id}"))?))
-            .await?;
-        match Self::check_status(res).await {
-            Ok(_) | Err(GitError::NotFound) => Ok(()),
-            Err(err) => Err(err),
-        }
-    }
-
-    /// The names of the repositories a team reaches.
-    pub async fn team_repositories(&self, id: u64) -> Result<Vec<String>, GitError> {
-        #[derive(Deserialize)]
-        struct Named {
-            name: String,
-        }
-        let mut names = Vec::new();
-        for page in 1.. {
-            let url = self.org_url(&format!("teams/{id}/repos?limit=50&page={page}"))?;
-            let res = Self::check_status(self.send(self.http.get(url)).await?).await?;
-            let batch: Vec<Named> = res
-                .json()
-                .await
-                .map_err(|e| GitError::Transport(e.to_string()))?;
-            let last = batch.len() < 50;
-            names.extend(batch.into_iter().map(|repo| repo.name));
-            if last || page >= 100 {
-                break;
-            }
-        }
-        Ok(names)
-    }
-
-    /// Gives a team this repository (`true`) or takes it away (`false`).
-    pub async fn set_team_repository(
-        &self,
-        id: u64,
-        repo: &str,
-        reach: bool,
-    ) -> Result<(), GitError> {
-        let url = self.org_url(&format!("teams/{id}/repos/{}/{repo}", self.owner))?;
-        let builder = if reach {
-            self.http.put(url)
-        } else {
-            self.http.delete(url)
-        };
-        match Self::check_status(self.send(builder).await?).await {
-            Ok(_) => Ok(()),
-            Err(GitError::NotFound) if !reach => Ok(()),
-            Err(err) => Err(err),
-        }
-    }
-
-    /// `PATCH /repos/{owner}/{repo}` with `archived: true` — a deleted project's repository is
-    /// kept read-only with its history, never deleted (PF-77).
+    /// `POST R/Shako.Archive`: a deleted project's repository is kept read-only with its
+    /// history, never deleted (PF-77).
     pub async fn archive_repository(&self) -> Result<(), GitError> {
-        let payload = serde_json::json!({ "archived": true });
-        let res = self
-            .send(self.http.patch(self.repo_url("")?).json(&payload))
-            .await?;
-        Self::check_status(res).await.map(|_| ())
+        self.act(self.repo_url(&["Shako.Archive"])?, &json!({}))
+            .await
+            .map(|_| ())
     }
 
-    /// `PUT /collaborators/{reader}` with `read` — the gateway reads a project repository the
-    /// Portal opened (PF-106): its machine user is a collaborator on the repositories it reads
-    /// and nothing more, so a new one has to name it. Nothing without `JC_GITEA_READER`.
-    pub async fn let_the_reader_in(&self) -> Result<(), GitError> {
-        let Some(reader) = &self.reader else {
-            return Ok(());
-        };
-        let res = self
-            .send(
-                self.http
-                    .put(self.repo_url(&format!("collaborators/{reader}"))?)
-                    .json(&serde_json::json!({ "permission": "read" })),
-            )
-            .await?;
-        Self::check_status(res).await.map(|_| ())
-    }
-
-    /// `POST /branch_protections` — `branch` takes no direct push: every change reaches it
-    /// through a merged pull request (PF-87).
+    /// `POST R/Shako.Protect`: `branch` takes no direct push, so every change reaches it through
+    /// a merged pull request (PF-87).
     pub async fn protect_branch(&self, branch: &str) -> Result<(), GitError> {
-        let payload = serde_json::json!({ "rule_name": branch, "enable_push": false });
-        let res = self
-            .send(
-                self.http
-                    .post(self.repo_url("branch_protections")?)
-                    .json(&payload),
-            )
-            .await?;
-        Self::check_status(res).await.map(|_| ())
+        let params = json!({ "Rule": { "rule_name": branch, "enable_push": false } });
+        self.act(self.repo_url(&["Shako.Protect"])?, &params)
+            .await
+            .map(|_| ())
     }
 
-    /// `GET /git/trees/{git_ref}?recursive=true&per_page=1000&page=N` — retrieves the Git tree.
+    /// Every file path of the tree at `git_ref`.
     pub async fn list_tree(&self, git_ref: &str) -> Result<Vec<String>, GitError> {
         Ok(self
             .list_tree_blobs(git_ref)
@@ -1798,43 +1422,25 @@ impl GiteaClient {
             .collect())
     }
 
-    /// The tree's files with their blob ids, so two trees compare without reading a file.
-    ///
-    /// Gitea hands a recursive tree out 1000 entries a page and sets `truncated` while more
-    /// remain: every page is read, so a project of more than 1000 files stages (T-5047).
-    ///
-    /// A branch whose name carries a slash — every workspace branch, `workspace/{name}` (CC-76) —
-    /// is resolved to its head commit first: Gitea's `git/trees/{ref}` answers `404` for such a
-    /// name, encoded or not, so every read of a copy's tree came back "not found" and the copy
-    /// showed the project instead of itself (T-2266).
+    /// `GET R/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=1000)`: the tree's files with their
+    /// blob ids, so two trees compare without reading a file. Every page is read, so a project
+    /// of more than 1000 files stages (T-5047); a branch name with `/` (`workspace/{name}`,
+    /// CC-76) travels as a parameter value and needs no resolving first (T-2266).
     pub async fn list_tree_blobs(&self, git_ref: &str) -> Result<Vec<(String, String)>, GitError> {
-        let resolved = if git_ref.contains('/') {
-            self.branch_head(git_ref).await?
-        } else {
-            git_ref.to_owned()
-        };
-        let git_ref = resolved.as_str();
         let mut paths = Vec::new();
         let mut tree_sha: Option<String> = None;
-        for page in 1..=MAX_TREE_PAGES {
-            let mut url = self.repo_url(&format!("git/trees/{git_ref}"))?;
+        for page in 0..MAX_TREE_PAGES {
+            let mut url = self.repo_url(&["Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"])?;
             url.query_pairs_mut()
-                .append_pair("recursive", "true")
-                .append_pair("per_page", "1000")
-                .append_pair("page", &page.to_string());
-
-            let res = self.send(self.http.get(url)).await?;
-            let res = Self::check_status(res).await?;
-            let status = res.status().as_u16();
-            let raw: GitTreeResponse = res
-                .json()
-                .await
-                .map_err(|e| GitError::Transport(format!("failed to parse tree response: {e}")))?;
+                .append_pair("@r", &literal(git_ref))
+                .append_pair("@s", &(page * TREE_PAGE).to_string())
+                .append_pair("@t", &TREE_PAGE.to_string());
+            let raw: TreePage = self.get_json(url, "the tree").await?;
 
             // A ref that moved between two pages would mix two trees into one listing.
             if *tree_sha.get_or_insert_with(|| raw.sha.clone()) != raw.sha {
                 return Err(GitError::Api {
-                    status,
+                    status: 200,
                     message: format!("git tree of {git_ref} changed while it was read"),
                 });
             }
@@ -1855,83 +1461,90 @@ impl GiteaClient {
         Err(GitError::Api {
             status: 200,
             message: format!(
-                "git tree was truncated: more than {MAX_TREE_PAGES} pages of 1000 entries"
+                "git tree was truncated: more than {MAX_TREE_PAGES} pages of {TREE_PAGE} entries"
             ),
         })
     }
 
-    /// `GET /branches/{branch}` — returns the head commit id for the given branch.
+    /// `GET R/Branches('{branch}')`: the head commit id of the branch.
     pub async fn branch_head(&self, branch: &str) -> Result<String, GitError> {
-        let url = self.repo_url(&format!("branches/{branch}"))?;
-        let res = self.send(self.http.get(url)).await?;
-        let res = Self::check_status(res).await?;
-        let branch_dto: BranchDetailsResponse = res
-            .json()
-            .await
-            .map_err(|e| GitError::Transport(format!("failed to parse branch response: {e}")))?;
-        Ok(branch_dto.commit.id)
+        #[derive(Deserialize)]
+        #[serde(rename_all = "PascalCase")]
+        struct Branch {
+            head_sha: String,
+        }
+        let key = format!("Branches({})", literal(branch));
+        let found: Branch = self.get_json(self.repo_url(&[&key])?, "the branch").await?;
+        Ok(found.head_sha)
     }
 
-    /// `GET /commits/{sha}/status` — the combined CI state of one commit (`success`, `pending`,
-    /// `failure`, `error`), or `None` while no check has reported on it (CC-90).
+    /// `GET R/Shako.CommitStatus(Sha=@s)`: the combined CI state of one commit (`success`,
+    /// `pending`, `failure`, `error`), or `None` while no check has reported on it (CC-90).
     pub async fn commit_state(&self, sha: &str) -> Result<Option<String>, GitError> {
         #[derive(Deserialize)]
-        struct CombinedStatus {
+        #[serde(rename_all = "PascalCase")]
+        struct Combined {
             #[serde(default)]
             state: String,
             #[serde(default)]
             total_count: u64,
         }
-        let url = self.repo_url(&format!("commits/{sha}/status"))?;
-        let res = self.send(self.http.get(url)).await?;
-        let res = Self::check_status(res).await?;
-        let combined: CombinedStatus = res
-            .json()
-            .await
-            .map_err(|e| GitError::Transport(format!("failed to parse commit status: {e}")))?;
+        let mut url = self.repo_url(&["Shako.CommitStatus(Sha=@s)"])?;
+        url.query_pairs_mut().append_pair("@s", &literal(sha));
+        let combined: Combined = self.get_json(url, "the commit status").await?;
         Ok((combined.total_count > 0 && !combined.state.is_empty()).then_some(combined.state))
     }
 
-    /// `POST /branches` — creates a new branch from an existing one.
+    /// `POST R/Shako.CreateBranch`: a new branch cut from an existing one.
     pub async fn create_branch(&self, new_branch: &str, from_branch: &str) -> Result<(), GitError> {
-        let url = self.repo_url("branches")?;
-        let payload = CreateBranchPayload {
-            new_branch_name: new_branch,
-            old_branch_name: from_branch,
-        };
-        let res = self.send(self.http.post(url).json(&payload)).await?;
-        Self::check_status(res).await?;
+        let params = json!({ "NewBranchName": new_branch, "OldBranchName": from_branch });
+        self.act(self.repo_url(&["Shako.CreateBranch"])?, &params)
+            .await?;
         Ok(())
     }
 
-    /// `DELETE /branches/{branch}` — drops a branch; one already gone is no error (T-0886).
+    /// `POST R/Shako.DeleteBranch`: drops a branch; one already gone is no error (T-0886).
     pub async fn delete_branch(&self, branch: &str) -> Result<(), GitError> {
-        let url = self.repo_url(&format!("branches/{branch}"))?;
-        let res = self.send(self.http.delete(url)).await?;
-        match Self::check_status(res).await {
+        match self
+            .act(
+                self.repo_url(&["Shako.DeleteBranch"])?,
+                &json!({ "Branch": branch }),
+            )
+            .await
+        {
             Ok(_) | Err(GitError::NotFound) => Ok(()),
             Err(err) => Err(err),
         }
     }
 
-    /// `GET /contents/{path}?ref={git_ref}` — reads a file and decodes its base64 content.
+    /// `GET R/Shako.File(Path=@p,Ref=@r)`: a file's blob id and its text.
     pub async fn get_file(&self, path: &str, git_ref: &str) -> Result<Option<RepoFile>, GitError> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "PascalCase")]
+        struct File {
+            sha: String,
+            #[serde(default)]
+            content: String,
+        }
         // Not a file of this repository, so this repository does not have it.
         let Some(path) = self.local_path(path) else {
             return Ok(None);
         };
-        let mut url = self.repo_url(&format!("contents/{path}"))?;
-        url.query_pairs_mut().append_pair("ref", git_ref);
+        let path = file_path(path)?;
+        let mut url = self.repo_url(&["Shako.File(Path=@p,Ref=@r)"])?;
+        url.query_pairs_mut()
+            .append_pair("@p", &literal(&path))
+            .append_pair("@r", &literal(git_ref));
 
         let res = self.send(self.http.get(url)).await?;
         if res.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        let res = Self::check_status(res).await?;
-        let raw: ContentsDto = res
+        let raw: File = Self::check_status(res)
+            .await?
             .json()
             .await
-            .map_err(|e| GitError::Transport(format!("failed to parse contents response: {e}")))?;
+            .map_err(|e| GitError::Transport(format!("failed to parse the file: {e}")))?;
 
         let clean_base64: String = raw.content.chars().filter(|c| !c.is_whitespace()).collect();
         let decoded_bytes = STANDARD
@@ -1946,37 +1559,27 @@ impl GiteaClient {
         }))
     }
 
-    /// `PUT /contents/{path}` — creates or replaces a file with human commit attribution.
+    /// One file written with human commit attribution: a replacement of blob `sha` when it is
+    /// given, else created or replaced whatever is there.
     pub async fn put_file(&self, req: &FileWrite<'_>) -> Result<String, GitError> {
-        let url = self.repo_url(&format!("contents/{}", self.write_path(req.path)?))?;
-        let encoded = STANDARD.encode(committed_text(req.path, req.content).as_bytes());
-        let message = crate::change::ProposedVia::sign(req.message);
-        let payload = PutFilePayload {
-            content: encoded,
-            message: &message,
-            branch: req.branch,
-            sha: req.sha,
-            author: req.author,
-            committer: req.author,
+        let change = FileChange {
+            operation: if req.sha.is_some() {
+                "update"
+            } else {
+                "upload"
+            },
+            path: self.write_path(req.path)?,
+            content: Some(STANDARD.encode(committed_text(req.path, req.content).as_bytes())),
+            sha: req.sha.map(str::to_owned),
         };
-        let res = self.send(self.http.put(url).json(&payload)).await?;
-        let res = Self::check_status(res).await?;
-        let body: FileCommitResponse = res
-            .json()
+        self.commit_changes(req.branch, req.message, req.author, vec![change])
             .await
-            .map_err(|e| GitError::Transport(format!("failed to parse commit response: {e}")))?;
-        let commit_sha = body
-            .commit
-            .map(|c| c.sha)
-            .or(body.sha)
-            .ok_or_else(|| GitError::Transport("missing commit sha in response".to_string()))?;
-        Ok(commit_sha)
     }
 
-    /// `POST /contents` — one commit on `branch` that creates or replaces every
-    /// `(path, content)` of `uploads` and deletes every `(path, blob sha)` of `deletes`, with
-    /// human commit attribution. `upload` needs no blob sha, so a run commits what it changed
-    /// without reading each file first; only a deletion names the blob it removes.
+    /// One commit on `branch` that creates or replaces every `(path, content)` of `uploads` and
+    /// deletes every `(path, blob sha)` of `deletes`, with human commit attribution. `upload`
+    /// needs no blob sha, so a run commits what it changed without reading each file first; only
+    /// a deletion names the blob it removes.
     pub async fn change_files(
         &self,
         branch: &str,
@@ -1987,7 +1590,7 @@ impl GiteaClient {
     ) -> Result<String, GitError> {
         let mut files = Vec::with_capacity(uploads.len() + deletes.len());
         for (path, content) in uploads {
-            files.push(ChangeFileDto {
+            files.push(FileChange {
                 operation: "upload",
                 path: self.write_path(path)?,
                 content: Some(STANDARD.encode(committed_text(path, content).as_bytes())),
@@ -1995,7 +1598,7 @@ impl GiteaClient {
             });
         }
         for (path, sha) in deletes {
-            files.push(ChangeFileDto {
+            files.push(FileChange {
                 operation: "delete",
                 path: self.write_path(path)?,
                 content: None,
@@ -2005,9 +1608,9 @@ impl GiteaClient {
         self.commit_changes(branch, message, author, files).await
     }
 
-    /// `POST /contents` — one commit on `branch` that replaces every `(path, content, blob sha)`
-    /// of `updates`. Gitea refuses the whole commit when a file's blob is no longer `sha`, so a
-    /// change someone committed after the caller read the file is never overwritten.
+    /// One commit on `branch` that replaces every `(path, content, blob sha)` of `updates`. The
+    /// forge refuses the whole commit when a file's blob is no longer `sha`, so a change someone
+    /// committed after the caller read the file is never overwritten.
     pub async fn update_files(
         &self,
         branch: &str,
@@ -2017,7 +1620,7 @@ impl GiteaClient {
     ) -> Result<String, GitError> {
         let mut files = Vec::with_capacity(updates.len());
         for (path, content, sha) in updates {
-            files.push(ChangeFileDto {
+            files.push(FileChange {
                 operation: "update",
                 path: self.write_path(path)?,
                 content: Some(STANDARD.encode(committed_text(path, content).as_bytes())),
@@ -2027,9 +1630,9 @@ impl GiteaClient {
         self.commit_changes(branch, message, author, files).await
     }
 
-    /// `POST /contents` — one commit on `branch` that writes every `(path, content, blob sha)`:
-    /// a new file where the sha is `None`, else a replacement of that blob. Every file lands, or
-    /// none does (F-POR1-023).
+    /// One commit on `branch` that writes every `(path, content, blob sha)`: a new file where the
+    /// sha is `None`, else a replacement of that blob. Every file lands, or none does
+    /// (F-POR1-023).
     pub async fn write_files(
         &self,
         branch: &str,
@@ -2039,7 +1642,7 @@ impl GiteaClient {
     ) -> Result<String, GitError> {
         let mut files = Vec::with_capacity(writes.len());
         for (path, content, sha) in writes {
-            files.push(ChangeFileDto {
+            files.push(FileChange {
                 operation: if sha.is_some() { "update" } else { "create" },
                 path: self.write_path(path)?,
                 content: Some(STANDARD.encode(committed_text(path, content).as_bytes())),
@@ -2049,55 +1652,51 @@ impl GiteaClient {
         self.commit_changes(branch, message, author, files).await
     }
 
+    /// `POST R/Shako.CommitFiles`: every file change of `files` as one commit, all or nothing;
+    /// answers the commit.
     async fn commit_changes(
         &self,
         branch: &str,
         message: &str,
         author: Author<'_>,
-        files: Vec<ChangeFileDto>,
+        files: Vec<FileChange>,
     ) -> Result<String, GitError> {
-        let url = self.repo_url("contents")?;
+        #[derive(Deserialize)]
+        #[serde(rename_all = "PascalCase")]
+        struct Committed {
+            sha: String,
+        }
         let message = crate::change::ProposedVia::sign(message);
-        let payload = ChangeFilesPayload {
-            files,
-            message: &message,
-            branch,
-            author,
-            committer: author,
-        };
-        let res = self.send(self.http.post(url).json(&payload)).await?;
-        let res = Self::check_status(res).await?;
-        let body: FileCommitResponse = res
+        let params = json!({
+            "Branch": branch,
+            "Message": message,
+            "Author": author,
+            "Committer": author,
+            "Files": files,
+        });
+        let res = self
+            .act(self.repo_url(&["Shako.CommitFiles"])?, &params)
+            .await?;
+        let committed: Committed = res
             .json()
             .await
-            .map_err(|e| GitError::Transport(format!("failed to parse commit response: {e}")))?;
-        body.commit
-            .map(|c| c.sha)
-            .ok_or_else(|| GitError::Transport("missing commit sha in response".to_string()))
+            .map_err(|e| GitError::Transport(format!("failed to parse the commit: {e}")))?;
+        Ok(committed.sha)
     }
 
-    /// `DELETE /contents/{path}` — deletes a file with human commit attribution.
+    /// One file deleted with human commit attribution.
     pub async fn delete_file(&self, req: &FileDelete<'_>) -> Result<String, GitError> {
-        let url = self.repo_url(&format!("contents/{}", self.write_path(req.path)?))?;
-        let message = crate::change::ProposedVia::sign(req.message);
-        let payload = DeleteFilePayload {
-            message: &message,
-            branch: req.branch,
-            sha: req.sha,
-            author: req.author,
-            committer: req.author,
+        let change = FileChange {
+            operation: "delete",
+            path: self.write_path(req.path)?,
+            content: None,
+            sha: Some(req.sha.to_owned()),
         };
-        let res = self.send(self.http.delete(url).json(&payload)).await?;
-        let res = Self::check_status(res).await?;
-        let body: Result<FileCommitResponse, _> = res.json().await;
-        let commit_sha = match body {
-            Ok(b) => b.commit.map(|c| c.sha).or(b.sha).unwrap_or_default(),
-            Err(_) => String::new(),
-        };
-        Ok(commit_sha)
+        self.commit_changes(req.branch, req.message, req.author, vec![change])
+            .await
     }
 
-    /// `GET /commits?sha={git_ref}&path={path}&limit={limit}` — the history of one path.
+    /// `GET R/Shako.History(Ref=@r,Path=@p,Top=@n)`: the history of one path.
     ///
     /// The forge is the only source: the mirror knows the manifests of one revision, never how
     /// they got there, so a revision picker that read the mirror would have nothing to show.
@@ -2107,6 +1706,19 @@ impl GiteaClient {
         path: &str,
         limit: usize,
     ) -> Result<Vec<Commit>, GitError> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "PascalCase")]
+        struct Row {
+            sha: String,
+            #[serde(default)]
+            message: String,
+            #[serde(default)]
+            author: String,
+            #[serde(default)]
+            email: Option<String>,
+            #[serde(default)]
+            date: String,
+        }
         // No path, or the project's own root in a project repository, is the whole repository
         // (CC-87). Who wrote a Change is read this way, so an empty answer here is a proposer
         // nobody recognises at the approval (PF-58).
@@ -2122,83 +1734,60 @@ impl GiteaClient {
             let Some(path) = self.local_path(path) else {
                 return Ok(Vec::new());
             };
-            path
+            file_path(path)?
         };
-        let mut url = self.repo_url("commits")?;
-        url.query_pairs_mut().append_pair("sha", git_ref);
-        if !path.is_empty() {
-            url.query_pairs_mut().append_pair("path", &path);
-        }
+        // An empty `Path` is the whole repository.
+        let mut url = self.repo_url(&["Shako.History(Ref=@r,Path=@p,Top=@n)"])?;
         url.query_pairs_mut()
-            .append_pair("limit", &limit.to_string())
-            .append_pair("stat", "false")
-            .append_pair("verification", "false")
-            .append_pair("files", "false");
-
-        let res = self.send(self.http.get(url)).await?;
-        let res = Self::check_status(res).await?;
-        let raw: Vec<CommitDto> = res
-            .json()
-            .await
-            .map_err(|e| GitError::Transport(format!("failed to parse commits response: {e}")))?;
-
-        Ok(raw
+            .append_pair("@r", &literal(git_ref))
+            .append_pair("@p", &literal(&path))
+            .append_pair("@n", &limit.to_string());
+        let rows: Collection<Row> = self.get_json(url, "the history").await?;
+        Ok(rows
+            .value
             .into_iter()
-            .map(|dto| {
-                let details = dto.commit.unwrap_or(CommitDetailsDto {
-                    message: String::new(),
-                    author: None,
-                });
-                let author = details.author.unwrap_or(CommitAuthorDto {
-                    name: String::new(),
-                    email: None,
-                    date: String::new(),
-                });
-                Commit {
-                    sha: dto.sha,
-                    message: details
-                        .message
-                        .lines()
-                        .next()
-                        .unwrap_or_default()
-                        .to_string(),
-                    author: author.name,
-                    email: author.email,
-                    date: author.date,
-                }
+            .map(|row| Commit {
+                sha: row.sha,
+                message: row.message.lines().next().unwrap_or_default().to_string(),
+                author: row.author,
+                email: row.email.filter(|email| !email.is_empty()),
+                date: row.date,
             })
             .collect())
     }
 
-    /// `GET /pulls?state={state}&sort=recentupdate&limit=50` — retrieves pull requests.
+    /// The 50 most recently updated pull requests in `state` (`open`, `closed` or `all`).
     pub async fn list_pull_requests(&self, state: &str) -> Result<Vec<PullRequest>, GitError> {
         self.list_pull_requests_page(state, 1, 50).await
     }
 
-    /// `GET /pulls` — one page of pull requests in `state`, most recently updated first.
+    /// `GET R/PullRequests?$filter=State eq '{state}'&$orderby=UpdatedAt desc&$top&$skip`: one
+    /// page of pull requests, most recently updated first. `all` filters nothing.
     pub async fn list_pull_requests_page(
         &self,
         state: &str,
         page: u32,
         limit: u32,
     ) -> Result<Vec<PullRequest>, GitError> {
-        let mut url = self.repo_url("pulls")?;
-        url.query_pairs_mut()
-            .append_pair("state", state)
-            .append_pair("sort", "recentupdate")
-            .append_pair("page", &page.to_string())
-            .append_pair("limit", &limit.to_string());
-
-        let res = self.send(self.http.get(url)).await?;
-        let res = Self::check_status(res).await?;
-        let raw_list: Vec<GiteaPullResponse> = res
-            .json()
-            .await
-            .map_err(|e| GitError::Transport(format!("failed to parse pull requests list: {e}")))?;
-        Ok(raw_list.into_iter().map(|raw| self.pull(raw)).collect())
+        let mut url = self.repo_url(&["PullRequests"])?;
+        {
+            let mut query = url.query_pairs_mut();
+            if state != "all" {
+                query.append_pair("$filter", &format!("State eq {}", literal(state)));
+            }
+            query
+                .append_pair("$orderby", "UpdatedAt desc")
+                .append_pair("$top", &limit.to_string())
+                .append_pair(
+                    "$skip",
+                    &(u64::from(page.max(1) - 1) * u64::from(limit)).to_string(),
+                );
+        }
+        let rows: Collection<PullRequestRow> = self.get_json(url, "the pull requests").await?;
+        Ok(rows.value.into_iter().map(|row| self.pull(row)).collect())
     }
 
-    /// `POST /pulls` — creates a new pull request.
+    /// `POST R/Shako.OpenPullRequest`: a new pull request from `head` into `base`.
     pub async fn create_pull_request(
         &self,
         head: &str,
@@ -2206,186 +1795,170 @@ impl GiteaClient {
         title: &str,
         body: &str,
     ) -> Result<PullRequest, GitError> {
-        let url = self.repo_url("pulls")?;
         // A merge request opened inside a call over MCP names its channel (AG-137).
         let body = crate::change::ProposedVia::sign_body(body);
-        let payload = CreatePullRequestPayload {
-            head,
-            base,
-            title,
-            body: &body,
-        };
-        let res = self.send(self.http.post(url).json(&payload)).await?;
-        let res = Self::check_status(res).await?;
-        let raw: GiteaPullResponse = res
+        let params = json!({ "Head": head, "Base": base, "Title": title, "Body": body });
+        let res = self
+            .act(self.repo_url(&["Shako.OpenPullRequest"])?, &params)
+            .await?;
+        let row: PullRequestRow = res
             .json()
             .await
-            .map_err(|e| GitError::Transport(format!("failed to parse pull request: {e}")))?;
-        Ok(self.pull(raw))
+            .map_err(|e| GitError::Transport(format!("failed to parse the pull request: {e}")))?;
+        Ok(self.pull(row))
     }
 
-    /// `GET /pulls/{number}/files` — every file the pull request changes, all pages.
+    /// `GET R/PullRequests({number})/Files`: every file the pull request changes.
     pub async fn pull_request_files(&self, number: u64) -> Result<Vec<ChangedFile>, GitError> {
-        const PAGE: usize = 50;
-        let mut files = Vec::new();
-        for page in 1.. {
-            let mut url = self.repo_url(&format!("pulls/{number}/files"))?;
-            url.query_pairs_mut()
-                .append_pair("page", &page.to_string())
-                .append_pair("limit", &PAGE.to_string());
-            let res = self.send(self.http.get(url)).await?;
-            let res = Self::check_status(res).await?;
-            let raw: Vec<ChangedFileDto> = res.json().await.map_err(|e| {
-                GitError::Transport(format!("failed to parse pull request files: {e}"))
-            })?;
-            let count = raw.len();
-            files.extend(raw.into_iter().map(|dto| ChangedFile {
-                deleted: dto.status == "deleted",
-                added: dto.status == "added",
-                path: self.render_path(dto.filename),
-            }));
-            if count < PAGE {
-                break;
-            }
-        }
-        Ok(files)
+        let rows: Collection<ChangedFileRow> = self
+            .get_json(
+                self.pull_url_api(number, &["Files"])?,
+                "the pull request's files",
+            )
+            .await?;
+        Ok(rows
+            .value
+            .into_iter()
+            .map(|row| ChangedFile {
+                deleted: row.status == "deleted",
+                added: row.status == "added",
+                path: self.render_path(row.filename),
+            })
+            .collect())
     }
 
-    /// `GET /archive/{git_ref}.bundle` — the history of `git_ref` as one `git bundle` (MF-45).
+    /// The history of `git_ref` as one `git bundle` (MF-45): `GET R/Shako.BundleLink(Ref=@r)`
+    /// names the download, whose bytes are no OData. The link carries the forge's public host,
+    /// which the Portal may not reach, so its path is fetched from the base the Portal dials.
     /// The forge bundles that ref alone, as `refs/heads/bundle` and `HEAD`: no other branch and
     /// no tag.
     pub async fn bundle(&self, git_ref: &str) -> Result<Vec<u8>, GitError> {
-        let url = self.repo_url(&format!("archive/{git_ref}.bundle"))?;
-        let res = self.send(self.http.get(url)).await?;
-        let res = Self::check_status(res).await?;
+        #[derive(Deserialize)]
+        struct Link {
+            value: String,
+        }
+        let mut url = self.repo_url(&["Shako.BundleLink(Ref=@r)"])?;
+        url.query_pairs_mut().append_pair("@r", &literal(git_ref));
+        let link: Link = self.get_json(url, "the bundle link").await?;
+        let named = Url::parse(&link.value)
+            .map_err(|e| GitError::Transport(format!("the bundle link is no URL: {e}")))?;
+        let path = named.path();
+        let api = path
+            .find("/api/v1/repos/")
+            .map(|at| &path[at..])
+            .ok_or_else(|| GitError::Transport("the bundle link names no repository".into()))?;
+        let full = format!("{}{api}", self.base.as_str().trim_end_matches('/'));
+        let here = Url::parse(&full)
+            .map_err(|e| GitError::Config(format!("invalid url '{full}': {e}")))?;
+        let res = Self::check_status(self.send(self.http.get(here)).await?).await?;
         res.bytes()
             .await
             .map(|bytes| bytes.to_vec())
             .map_err(|e| GitError::Transport(format!("failed to read the bundle: {e}")))
     }
 
-    /// `GET /tags` — every tag of the repository and the commit it names, all pages.
+    /// `GET R/Tags?$top=50&$skip=…`: every tag of the repository and the commit it names, all
+    /// pages.
     pub async fn list_tags(&self) -> Result<Vec<(String, String)>, GitError> {
         #[derive(Deserialize)]
-        struct TagDto {
+        #[serde(rename_all = "PascalCase")]
+        struct Tag {
             name: String,
-            commit: TagCommitDto,
+            #[serde(default)]
+            target_sha: String,
         }
-        #[derive(Deserialize)]
-        struct TagCommitDto {
-            sha: String,
-        }
-        const PAGE: usize = 50;
         let mut tags = Vec::new();
-        for page in 1.. {
-            let mut url = self.repo_url("tags")?;
+        for page in 0.. {
+            let mut url = self.repo_url(&["Tags"])?;
             url.query_pairs_mut()
-                .append_pair("page", &page.to_string())
-                .append_pair("limit", &PAGE.to_string());
-            let res = self.send(self.http.get(url)).await?;
-            let res = Self::check_status(res).await?;
-            let raw: Vec<TagDto> = res
-                .json()
-                .await
-                .map_err(|e| GitError::Transport(format!("failed to parse tags: {e}")))?;
-            let count = raw.len();
-            tags.extend(raw.into_iter().map(|tag| (tag.name, tag.commit.sha)));
-            if count < PAGE {
+                .append_pair("$top", &TAG_PAGE.to_string())
+                .append_pair("$skip", &(page * TAG_PAGE).to_string());
+            let rows: Collection<Tag> = self.get_json(url, "the tags").await?;
+            let count = rows.value.len();
+            tags.extend(rows.value.into_iter().map(|tag| (tag.name, tag.target_sha)));
+            if count < TAG_PAGE || page >= 1000 {
                 break;
             }
         }
         Ok(tags)
     }
 
-    /// `GET /pulls/{number}` — retrieves an existing pull request.
+    /// `GET R/PullRequests({number})`: one pull request, its mergeability as of now.
     pub async fn pull_request(&self, number: u64) -> Result<PullRequest, GitError> {
-        let url = self.repo_url(&format!("pulls/{number}"))?;
-        let res = self.send(self.http.get(url)).await?;
-        let res = Self::check_status(res).await?;
-        let raw: GiteaPullResponse = res
-            .json()
-            .await
-            .map_err(|e| GitError::Transport(format!("failed to parse pull request: {e}")))?;
-        Ok(self.pull(raw))
+        let row: PullRequestRow = self
+            .get_json(self.pull_url_api(number, &[])?, "the pull request")
+            .await?;
+        Ok(self.pull(row))
     }
 
-    /// `GET /git/commits/{sha}` — the whole message of one commit, body included.
+    /// `GET R/Commits('{sha}')`: the whole message of one commit, body included.
     pub async fn commit_message(&self, sha: &str) -> Result<String, GitError> {
-        let url = self.repo_url(&format!("git/commits/{sha}"))?;
-        let res = self.send(self.http.get(url)).await?;
-        let res = Self::check_status(res).await?;
-        let raw: CommitDto = res
-            .json()
-            .await
-            .map_err(|e| GitError::Transport(format!("failed to parse commit: {e}")))?;
-        Ok(raw
-            .commit
-            .map(|details| details.message)
-            .unwrap_or_default())
+        #[derive(Deserialize)]
+        #[serde(rename_all = "PascalCase")]
+        struct CommitRow {
+            #[serde(default)]
+            message: String,
+        }
+        let key = format!("Commits({})", literal(sha));
+        let row: CommitRow = self.get_json(self.repo_url(&[&key])?, "the commit").await?;
+        Ok(row.message)
     }
 
-    /// `GET /pulls/{number}/reviews` — the text of every review on the pull request, oldest first.
+    /// `GET R/PullRequests({number})/Reviews`: the text of every review on the pull request,
+    /// oldest first.
     pub async fn review_bodies(&self, number: u64) -> Result<Vec<String>, GitError> {
         #[derive(Deserialize)]
-        struct ReviewDto {
+        #[serde(rename_all = "PascalCase")]
+        struct Review {
             #[serde(default)]
             body: String,
         }
-        let url = self.repo_url(&format!("pulls/{number}/reviews"))?;
-        let res = self.send(self.http.get(url)).await?;
-        let res = Self::check_status(res).await?;
-        let raw: Vec<ReviewDto> = res
-            .json()
-            .await
-            .map_err(|e| GitError::Transport(format!("failed to parse reviews: {e}")))?;
-        Ok(raw.into_iter().map(|review| review.body).collect())
+        let rows: Collection<Review> = self
+            .get_json(self.pull_url_api(number, &["Reviews"])?, "the reviews")
+            .await?;
+        Ok(rows.value.into_iter().map(|review| review.body).collect())
     }
 
-    /// `POST /pulls/{number}/reviews` — submits a review on the pull request.
+    /// `POST R/PullRequests({number})/Shako.Review`: a review on the pull request.
     pub async fn review(
         &self,
         number: u64,
         event: ReviewEvent,
         body: &str,
     ) -> Result<(), GitError> {
-        let url = self.repo_url(&format!("pulls/{number}/reviews"))?;
-        let payload = ReviewPayload { event, body };
-        let res = self.send(self.http.post(url).json(&payload)).await?;
-        Self::check_status(res).await?;
+        self.act(
+            self.pull_url_api(number, &["Shako.Review"])?,
+            &json!({ "Event": event, "Body": body }),
+        )
+        .await?;
         Ok(())
     }
 
-    /// `PATCH /pulls/{number}` with `state: closed` — closes the pull request without merging,
+    /// `POST R/PullRequests({number})/Shako.Close`: closes the pull request without merging,
     /// which is what the Portal reads back as a rejected change.
     pub async fn close_pull_request(&self, number: u64) -> Result<(), GitError> {
-        let url = self.repo_url(&format!("pulls/{number}"))?;
-        let res = self
-            .send(
-                self.http
-                    .patch(url)
-                    .json(&serde_json::json!({ "state": "closed" })),
-            )
+        self.act(self.pull_url_api(number, &["Shako.Close"])?, &json!({}))
             .await?;
-        Self::check_status(res).await?;
         Ok(())
     }
 
-    /// `POST /pulls/{number}/update?style=merge` — merges the base branch into the pull
-    /// request's branch: the configuration's branch rule merges nothing over an outdated base
-    /// (PF-105). The forge answers 500 for a branch that is not behind, and 409 when the base
-    /// does not merge into it.
+    /// `POST R/PullRequests({number})/Shako.UpdateBranch`: merges the base branch into the pull
+    /// request's branch, since the configuration's branch rule merges nothing over an outdated
+    /// base (PF-105). A branch already up to date answers 200; a base that does not merge into
+    /// it, 409.
     pub async fn update_pull_request(&self, number: u64) -> Result<(), GitError> {
-        let mut url = self.repo_url(&format!("pulls/{number}/update"))?;
-        url.query_pairs_mut().append_pair("style", "merge");
-        let res = self.send(self.http.post(url)).await?;
-        Self::check_status(res).await.map(|_| ())
+        self.act(
+            self.pull_url_api(number, &["Shako.UpdateBranch"])?,
+            &json!({ "Style": "merge" }),
+        )
+        .await
+        .map(|_| ())
     }
 
-    /// `POST /pulls/{number}/merge` — merges the pull request.
-    /// Merges pull request `number`.
+    /// `POST R/PullRequests({number})/Shako.Merge`: merges pull request `number`.
     ///
     /// `head_commit_id` is the commit whose content the caller approved: the forge refuses the
-    /// merge when the branch has moved past it, so nothing is merged that nobody reviewed
+    /// merge (409) when the branch has moved past it, so nothing is merged that nobody reviewed
     /// (PF-57, T-1683). `None` only where there is nothing to review — a proposal this Portal
     /// wrote and merges in the same call.
     pub async fn merge(
@@ -2395,16 +1968,23 @@ impl GiteaClient {
         message: &str,
         head_commit_id: Option<&str>,
     ) -> Result<(), GitError> {
-        let url = self.repo_url(&format!("pulls/{number}/merge"))?;
-        let payload = MergePayload {
-            do_field: style,
-            merge_message_field: message,
-            head_commit_id: head_commit_id.filter(|sha| !sha.is_empty()),
-        };
-        let res = self.send(self.http.post(url).json(&payload)).await?;
-        Self::check_status(res).await?;
+        let mut params = json!({ "Style": style, "Message": message });
+        if let Some(sha) = head_commit_id.filter(|sha| !sha.is_empty()) {
+            params["HeadCommitId"] = json!(sha);
+        }
+        self.act(self.pull_url_api(number, &["Shako.Merge"])?, &params)
+            .await?;
         Ok(())
     }
+}
+
+/// A repository file path as a parameter value: a `.` or `..` segment (a path someone typed) is
+/// refused, since it names no file of the repository (F-R2POR4-004).
+fn file_path(path: String) -> Result<String, GitError> {
+    if path.split('/').any(|segment| matches!(segment, "." | "..")) {
+        return Err(GitError::NotFound);
+    }
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -2441,15 +2021,15 @@ mod committed_text_tests {
 
 #[cfg(test)]
 mod browse_url_tests {
-    use super::GiteaClient;
+    use super::ShakoClient;
 
     fn env(public: Option<&str>) -> impl Fn(&str) -> Option<String> + '_ {
         move |name| match name {
-            "JC_GITEA_URL" => Some("http://gitea-http.dev.svc.cluster.local:3000".to_string()),
-            "JC_GITEA_OWNER" => Some("joinedcontext".to_string()),
-            "JC_GITEA_REPO" => Some("configuration".to_string()),
-            "JC_GITEA_TOKEN" => Some("t".to_string()),
-            "JC_GITEA_PUBLIC_URL" => public.map(str::to_string),
+            "JC_SHAKO_URL" => Some("http://shako.dev.svc.cluster.local:3000".to_string()),
+            "JC_SHAKO_OWNER" => Some("joinedcontext".to_string()),
+            "JC_SHAKO_REPO" => Some("configuration".to_string()),
+            "JC_SHAKO_TOKEN" => Some("t".to_string()),
+            "JC_SHAKO_PUBLIC_URL" => public.map(str::to_string),
             _ => None,
         }
     }
@@ -2459,7 +2039,7 @@ mod browse_url_tests {
     /// repository is private (PF-81).
     #[test]
     fn the_source_link_uses_the_public_forge_url_behind_the_sign_in() {
-        let client = GiteaClient::from_env(env(Some("https://city.example/git")))
+        let client = ShakoClient::from_env(env(Some("https://city.example/git")))
             .expect("config")
             .expect("configured");
         assert_eq!(
@@ -2471,12 +2051,12 @@ mod browse_url_tests {
     /// Without a public URL the API base is the best the Portal knows.
     #[test]
     fn the_source_link_falls_back_to_the_api_base() {
-        let client = GiteaClient::from_env(env(None))
+        let client = ShakoClient::from_env(env(None))
             .expect("config")
             .expect("configured");
         assert_eq!(
             client.browse_url("a.yaml", "main"),
-            "http://gitea-http.dev.svc.cluster.local:3000/user/oauth2/keycloak\
+            "http://shako.dev.svc.cluster.local:3000/user/oauth2/keycloak\
              ?redirect_to=%2Fjoinedcontext%2Fconfiguration%2Fsrc%2Fbranch%2Fmain%2Fa.yaml"
         );
     }
@@ -2484,7 +2064,7 @@ mod browse_url_tests {
     /// The merge request a change links is opened in a browser too (AP-71).
     #[test]
     fn the_merge_request_link_uses_the_public_forge_url() {
-        let client = GiteaClient::from_env(env(Some("https://city.example/git/")))
+        let client = ShakoClient::from_env(env(Some("https://city.example/git/")))
             .expect("config")
             .expect("configured");
         assert_eq!(
@@ -2496,20 +2076,20 @@ mod browse_url_tests {
 
     #[test]
     fn an_invalid_public_url_is_a_config_error() {
-        assert!(GiteaClient::from_env(env(Some("not a url"))).is_err());
+        assert!(ShakoClient::from_env(env(Some("not a url"))).is_err());
     }
 }
 
 #[cfg(test)]
 mod application_repository_tests {
-    use super::{GitError, GiteaClient};
+    use super::{GitError, ShakoClient};
 
     fn env(apps: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
         move |name| match name {
-            "JC_GITEA_URL" => Some("http://gitea-http.dev.svc.cluster.local:3000".to_string()),
-            "JC_GITEA_OWNER" => Some("joinedcontext".to_string()),
-            "JC_GITEA_REPO" => Some("configuration".to_string()),
-            "JC_GITEA_TOKEN" => Some("configuration-token".to_string()),
+            "JC_SHAKO_URL" => Some("http://shako.dev.svc.cluster.local:3000".to_string()),
+            "JC_SHAKO_OWNER" => Some("joinedcontext".to_string()),
+            "JC_SHAKO_REPO" => Some("configuration".to_string()),
+            "JC_SHAKO_TOKEN" => Some("configuration-token".to_string()),
             other => apps
                 .iter()
                 .find(|(key, _)| *key == other)
@@ -2521,9 +2101,9 @@ mod application_repository_tests {
     /// organization's, written with their machine user's token; the configuration keeps its own.
     #[test]
     fn an_application_lives_in_its_own_organization_with_its_own_token() {
-        let client = GiteaClient::from_env(env(&[
-            ("JC_GITEA_APPS_OWNER", "joinedcontext-apps"),
-            ("JC_GITEA_APPS_TOKEN", "apps-token"),
+        let client = ShakoClient::from_env(env(&[
+            ("JC_SHAKO_APPS_OWNER", "joinedcontext-apps"),
+            ("JC_SHAKO_APPS_TOKEN", "apps-token"),
         ]))
         .expect("config")
         .expect("configured");
@@ -2536,7 +2116,7 @@ mod application_repository_tests {
         assert_eq!(client.applications().owner, "joinedcontext-apps");
         assert_eq!(
             app.clone_url(),
-            "http://gitea-http.dev.svc.cluster.local:3000/joinedcontext-apps/helsinki_bikes.git"
+            "http://shako.dev.svc.cluster.local:3000/joinedcontext-apps/helsinki_bikes.git"
         );
         let configuration = client.for_repository("helsinki");
         assert_eq!(
@@ -2552,7 +2132,7 @@ mod application_repository_tests {
     /// Without the two variables an application stays beside the configuration, as before.
     #[test]
     fn without_an_applications_organization_nothing_moves() {
-        let client = GiteaClient::from_env(env(&[]))
+        let client = ShakoClient::from_env(env(&[]))
             .expect("config")
             .expect("configured");
         let app = client.for_application("helsinki_bikes");
@@ -2566,15 +2146,15 @@ mod application_repository_tests {
     #[test]
     fn half_an_applications_organization_is_a_config_error() {
         for apps in [
-            &[("JC_GITEA_APPS_OWNER", "joinedcontext-apps")][..],
-            &[("JC_GITEA_APPS_TOKEN", "apps-token")][..],
+            &[("JC_SHAKO_APPS_OWNER", "joinedcontext-apps")][..],
+            &[("JC_SHAKO_APPS_TOKEN", "apps-token")][..],
             &[
-                ("JC_GITEA_APPS_OWNER", " "),
-                ("JC_GITEA_APPS_TOKEN", "apps-token"),
+                ("JC_SHAKO_APPS_OWNER", " "),
+                ("JC_SHAKO_APPS_TOKEN", "apps-token"),
             ][..],
         ] {
             assert!(
-                matches!(GiteaClient::from_env(env(apps)), Err(GitError::Config(_))),
+                matches!(ShakoClient::from_env(env(apps)), Err(GitError::Config(_))),
                 "{apps:?} was accepted"
             );
         }
@@ -2583,10 +2163,10 @@ mod application_repository_tests {
 
 #[cfg(test)]
 mod project_repository_tests {
-    use super::{Author, GiteaClient};
+    use super::{Author, ShakoClient};
 
-    fn project() -> GiteaClient {
-        GiteaClient::new(
+    fn project() -> ShakoClient {
+        ShakoClient::new(
             "http://127.0.0.1:9".parse().expect("url"),
             "joinedcontext",
             "configuration",
@@ -2603,15 +2183,16 @@ mod project_repository_tests {
         let forge = wiremock::MockServer::start().await;
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::path(
-                "/api/v1/repos/joinedcontext/ovzdusie-repo/commits",
+                "/odata/Repositories(Owner='joinedcontext',Name='ovzdusie-repo')/Shako.History(Ref=@r,Path=@p,Top=@n)",
             ))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!([{
-                "sha": "head-1",
-                "commit": { "message": "m", "author": { "name": "Jana", "email": "jana@hel.fi", "date": "" } }
-            }])))
+            .and(wiremock::matchers::query_param("@r", "'head-1'"))
+            .and(wiremock::matchers::query_param("@p", "''"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "value": [{ "Sha": "head-1", "Message": "m", "Author": "Jana", "Email": "jana@hel.fi", "Date": "" }]
+            })))
             .mount(&forge)
             .await;
-        let client = GiteaClient::new(
+        let client = ShakoClient::new(
             forge.uri().parse().expect("url"),
             "joinedcontext",
             "configuration",
@@ -2687,25 +2268,42 @@ mod project_repository_tests {
             .expect_err("write_files refuses org.yaml in the project repository too");
         assert!(refused.to_string().contains("org.yaml"), "{refused}");
 
-        // F-R2POR4-004: a `..` in a path or ref would climb out of the repository into another
-        // forge route; refused before any request. What a segment carries stays in its segment.
+        // F-R2POR4-004: a `..` in a path is refused before any request, and a value that holds
+        // `/`, `?` or `#` stays inside its own segment: it never reaches another forge route.
         for climbing in [
-            "contents/../../../user",
-            "contents/projects/ovzdusie/../../../other/repo/contents/x",
-            "git/trees/..",
+            "projects/ovzdusie/../../../user",
+            "projects/ovzdusie/spaces/../../../other/repo",
+            "projects/ovzdusie/./x",
         ] {
-            assert!(client.repo_url(climbing).is_err(), "{climbing}");
+            assert!(
+                client.get_file(climbing, "main").await.is_err(),
+                "{climbing}"
+            );
+            assert!(
+                client
+                    .change_files(
+                        "portal/x",
+                        "m",
+                        author,
+                        &[(climbing.into(), "a".into())],
+                        &[]
+                    )
+                    .await
+                    .is_err(),
+                "{climbing}"
+            );
         }
-        assert!(client
-            .get_file("projects/ovzdusie/../../../user", "main")
-            .await
-            .is_err());
         assert_eq!(
             client
-                .repo_url("contents/spaces/a b?x#y.yaml")
-                .expect("a file name")
+                .repo_url(&["Branches('../../a b?x#y')"])
+                .expect("a branch key")
                 .as_str(),
-            "http://127.0.0.1:9/api/v1/repos/joinedcontext/ovzdusie-repo/contents/spaces/a%20b%3Fx%23y.yaml"
+            "http://127.0.0.1:9/odata/Repositories(Owner='joinedcontext',Name='ovzdusie-repo')/Branches('..%2F..%2Fa%20b%3Fx%23y')"
+        );
+        assert_eq!(
+            super::literal("o'brien"),
+            "'o''brien'",
+            "a quote inside a key value is doubled"
         );
 
         let organization = client.for_repository("configuration");
@@ -2732,7 +2330,7 @@ mod receive_pack_tests {
 
     #[test]
     fn an_unpacked_push_with_every_ref_taken_is_ok() {
-        // What Gitea 1.27 answered to a bundle pushed into an empty repository.
+        // What the forge answers to a bundle pushed into an empty repository.
         let none: Vec<String> = Vec::new();
         assert_eq!(
             receive_pack_status(b"000eunpack ok\n0017ok refs/heads/main\n0000").expect("ok"),

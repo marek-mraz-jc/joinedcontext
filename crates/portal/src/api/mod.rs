@@ -210,8 +210,8 @@ pub fn router() -> Router<AppState> {
         .merge(crate::tools::model_tools::router())
         .layer(axum::middleware::from_fn(auth::csrf::require_csrf));
 
-    // The Gitea webhook is a server-to-server call authenticated by its HMAC signature
-    // (x-gitea-signature), so it must be exempt from the session guard and CSRF protection.
+    // The forge webhook is a server-to-server call authenticated by its HMAC signature
+    // (x-shako-signature), so it must be exempt from the session guard and CSRF protection.
     // It is merged outside the require_csrf middleware layer as the sole exemption.
     Router::new()
         .merge(webhook::router())

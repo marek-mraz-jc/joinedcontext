@@ -3,9 +3,9 @@
 //! preview and its bring-back read again, and what a project export reads is what main holds.
 //!
 //! Each branch is a map of path to base64 content; its head is `head-` + the branch name in hex,
-//! so a tree or a file asked for by commit finds its branch again. Writes are the Gitea API's
-//! three: `PUT/POST /contents/{path}`, `DELETE /contents/{path}` and `POST /contents` (several
-//! files in one commit); `POST /branches` copies a branch and refuses one that is there.
+//! so a tree or a file asked for by commit finds its branch again. Every write is shako's one
+//! `POST R/Shako.CommitFiles` (one or several files in one commit); `POST R/Shako.CreateBranch`
+//! copies a branch and refuses one that is there.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -19,7 +19,7 @@ type Branches = BTreeMap<String, BTreeMap<String, String>>;
 
 #[derive(Clone, Default)]
 pub struct Repo {
-    /// The repository's API path, `/api/v1/repos/{owner}/{repo}`.
+    /// The repository's OData path, `/odata/Repositories(Owner='o',Name='r')`.
     root: String,
     branches: Arc<Mutex<Branches>>,
 }
@@ -78,17 +78,28 @@ impl Repo {
         };
     }
 
+    /// The parameter alias `key` (`@p`, `@r`) of an OData function call, its string literal
+    /// unquoted.
     fn query(request: &Request, key: &str) -> Option<String> {
         request
             .url
             .query_pairs()
             .find(|(k, _)| k == key)
-            .map(|(_, v)| v.into_owned())
+            .map(|(_, v)| unquote(&v))
     }
 }
 
+/// An OData string literal's value: the quotes taken off, a doubled quote made one.
+fn unquote(literal: &str) -> String {
+    literal
+        .strip_prefix('\'')
+        .and_then(|rest| rest.strip_suffix('\''))
+        .unwrap_or(literal)
+        .replace("''", "'")
+}
+
 fn committed() -> ResponseTemplate {
-    ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "commit-1" } }))
+    ResponseTemplate::new(201).set_body_json(json!({ "Sha": "commit-1" }))
 }
 
 impl Respond for Repo {
@@ -99,67 +110,61 @@ impl Respond for Repo {
         let body: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
         let text = |key: &str| body[key].as_str().unwrap_or_default().to_owned();
         match (request.method.as_str(), rest) {
-            ("GET", rest) if rest.starts_with("/branches/") => {
-                let name = &rest["/branches/".len()..];
+            ("GET", rest) if rest.starts_with("/Branches(") && rest.ends_with(')') => {
+                // `Branches('workspace%2Fs43')`: the key's `/` arrives percent-encoded.
+                let key = &rest["/Branches(".len()..rest.len() - 1];
+                let name = unquote(&key.replace("%2F", "/").replace("%2f", "/"));
                 ResponseTemplate::new(200)
-                    .set_body_json(json!({ "name": name, "commit": { "id": head(name) } }))
+                    .set_body_json(json!({ "Name": name, "HeadSha": head(&name) }))
             }
-            ("POST", "/branches") => {
+            ("POST", "/Shako.CreateBranch") => {
                 let mut branches = self.lock();
-                // Gitea refuses a branch that is there already, as the Portal expects.
-                if branches.contains_key(&text("new_branch_name")) {
-                    return ResponseTemplate::new(409)
-                        .set_body_json(json!({ "message": "branch already exists" }));
+                // The forge refuses a branch that is there already, as the Portal expects.
+                if branches.contains_key(&text("NewBranchName")) {
+                    return ResponseTemplate::new(409).set_body_json(
+                        json!({ "error": { "code": "Conflict", "message": "branch already exists" } }),
+                    );
                 }
                 let copy = branches
-                    .get(&text("old_branch_name"))
+                    .get(&text("OldBranchName"))
                     .cloned()
                     .unwrap_or_default();
-                branches.insert(text("new_branch_name"), copy);
+                branches.insert(text("NewBranchName"), copy);
                 ResponseTemplate::new(201).set_body_json(json!({}))
             }
-            ("GET", rest) if rest.starts_with("/git/trees/") => {
-                let reference = &rest["/git/trees/".len()..];
+            ("GET", rest) if rest.starts_with("/Shako.Tree(") => {
+                let reference = Self::query(request, "@r").unwrap_or_else(|| "main".into());
+                // One page holds the whole fixture: a later page is empty.
+                let first = Self::query(request, "@s").is_none_or(|skip| skip == "0");
                 let branches = self.lock();
                 let tree: Vec<Value> = branches
-                    .get(&branch_of(reference))
+                    .get(&branch_of(&reference))
                     .into_iter()
                     .flatten()
-                    .map(|(path, content)| json!({ "path": path, "type": "blob", "sha": blob(content) }))
+                    .filter(|_| first)
+                    .map(|(path, content)| json!({ "Path": path, "Type": "blob", "Sha": blob(content) }))
                     .collect();
                 ResponseTemplate::new(200)
-                    .set_body_json(json!({ "sha": reference, "tree": tree, "truncated": false }))
+                    .set_body_json(json!({ "Sha": reference, "Tree": tree, "Truncated": false }))
             }
-            ("GET", rest) if rest.starts_with("/contents/") => {
-                let path = &rest["/contents/".len()..];
+            ("GET", rest) if rest.starts_with("/Shako.File(") => {
+                let path = Self::query(request, "@p").unwrap_or_default();
                 let branch =
-                    branch_of(&Self::query(request, "ref").unwrap_or_else(|| "main".into()));
-                match self.lock().get(&branch).and_then(|files| files.get(path)) {
+                    branch_of(&Self::query(request, "@r").unwrap_or_else(|| "main".into()));
+                match self.lock().get(&branch).and_then(|files| files.get(&path)) {
                     Some(content) => ResponseTemplate::new(200)
-                        .set_body_json(json!({ "sha": blob(content), "content": content })),
-                    None => {
-                        ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" }))
-                    }
+                        .set_body_json(json!({ "Sha": blob(content), "Content": content })),
+                    None => ResponseTemplate::new(404).set_body_json(
+                        json!({ "error": { "code": "NotFound", "message": "not found" } }),
+                    ),
                 }
             }
-            ("PUT" | "POST", rest) if rest.starts_with("/contents/") => {
-                self.write(
-                    &text("branch"),
-                    &rest["/contents/".len()..],
-                    Some(&text("content")),
-                );
-                committed()
-            }
-            ("DELETE", rest) if rest.starts_with("/contents/") => {
-                self.write(&text("branch"), &rest["/contents/".len()..], None);
-                committed()
-            }
-            ("POST", "/contents") => {
-                for file in body["files"].as_array().into_iter().flatten() {
+            ("POST", "/Shako.CommitFiles") => {
+                for file in body["Files"].as_array().into_iter().flatten() {
                     let path = file["path"].as_str().unwrap_or_default();
                     let content = (file["operation"] != json!("delete"))
                         .then(|| file["content"].as_str().unwrap_or_default());
-                    self.write(&text("branch"), path, content);
+                    self.write(&text("Branch"), path, content);
                 }
                 committed()
             }

@@ -10,9 +10,12 @@ use crate::config::DaiyaSection;
 use crate::setup::{DASHBOARDS_USER, Secret, Setup};
 use axum::Router;
 use daiya_model::OrgId;
-use daiya_server::config::{MigrateConfig, StoreConfig, open_store};
+use daiya_server::config::{
+    MigrateConfig, StoreConfig, open_store, provision, provisioning_vars_from,
+};
 use daiya_server::{DaiyaState, router};
 use jc_router::Mount;
+use std::net::SocketAddr;
 
 fn store_config(cfg: &DaiyaSection) -> StoreConfig {
     match &cfg.database {
@@ -43,6 +46,27 @@ pub(crate) async fn state(cfg: &DaiyaSection, setup: &Setup) -> Result<DaiyaStat
         .map_err(|e| e.to_string())
 }
 
-pub async fn build(cfg: &DaiyaSection, setup: &Setup, mount: Mount) -> Result<Router, String> {
-    Ok(router(state(cfg, setup).await?, mount))
+/// daiya's router. With `[daiya] provisioning_dir` the files are loaded, and only the
+/// datasources they wrote may reach `own`, `jc`'s listener; the API's datasources keep the
+/// default outbound policy (no loopback, no private address, no http).
+pub async fn build(
+    cfg: &DaiyaSection,
+    setup: &Setup,
+    own: SocketAddr,
+    mount: Mount,
+) -> Result<Router, String> {
+    let mut state = state(cfg, setup).await?;
+    if let Some(dir) = &cfg.provisioning_dir {
+        state.own_addresses = vec![own];
+        let vars = provisioning_vars_from(std::env::vars());
+        let report = provision(&state, dir, &vars)
+            .await
+            .map_err(|e| e.to_string())?;
+        tracing::info!(
+            datasources = report.datasources_upserted,
+            dashboards = report.dashboards,
+            "daiya: provisioning loaded"
+        );
+    }
+    Ok(router(state, mount))
 }

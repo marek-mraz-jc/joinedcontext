@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 use serde_json::{json, Value};
 
 use crate::apps::kube::{KubeClient, KubeError};
-use crate::git::gitea::{GiteaClient, QueuedJob};
+use crate::forge::shako::{QueuedJob, ShakoClient};
 use crate::resource::ResourceEnvelope;
 use crate::store::{ListOptions, Mirror};
 
@@ -338,7 +338,7 @@ pub struct Pass {
 pub enum DispatchError {
     /// The forge did not list the queue or mint a token.
     #[error("the forge: {0}")]
-    Forge(#[from] crate::git::GitError),
+    Forge(#[from] crate::forge::GitError),
     /// The API server refused or was not reached.
     #[error("the cluster: {0}")]
     Kube(#[from] KubeError),
@@ -349,7 +349,7 @@ pub enum DispatchError {
 /// gets no pod and waits in the queue; so does a build while another one runs.
 pub async fn dispatch_once(
     kube: &KubeClient,
-    forge: &GiteaClient,
+    forge: &ShakoClient,
     mirror: &Mirror,
     settings: &Settings,
 ) -> Result<Pass, DispatchError> {
@@ -405,7 +405,7 @@ pub async fn dispatch_once(
 /// annotation that says the Job holds its token.
 async fn start(
     kube: &KubeClient,
-    forge: &GiteaClient,
+    forge: &ShakoClient,
     settings: &Settings,
     class: Class,
     app: &str,
@@ -522,7 +522,7 @@ impl Backoff {
 /// Runs [`dispatch_once`] every few seconds on the replica that holds the reconciler's lease.
 /// Outside a cluster there is nowhere to start a pod, which is not an error.
 pub fn spawn_periodic(
-    forge: std::sync::Arc<GiteaClient>,
+    forge: std::sync::Arc<ShakoClient>,
     syncer: std::sync::Arc<crate::reconciler::Syncer>,
     mirror: std::sync::Arc<Mirror>,
     settings: Settings,
@@ -582,7 +582,7 @@ mod tests {
     fn settings() -> Settings {
         Settings {
             namespace: "dev".into(),
-            forge: "http://gitea-http.dev.svc.cluster.local:3000".into(),
+            forge: "http://shako-http.dev.svc.cluster.local:3000".into(),
             node_image: "registry.example.org/builder@sha256:aa".into(),
             rust_image: "registry.example.org/builder-rust@sha256:bb".into(),
             cache_size: "1Gi".into(),

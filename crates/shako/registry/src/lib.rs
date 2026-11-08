@@ -32,16 +32,15 @@ use shako_api::{
     read_body_bounded, stream_bytes_in_64k_chunks,
 };
 use shako_core::{
-    Action, BlobRecord, ObjectTarget, PackageFileRecord, PackageId, PackageRecord,
-    PackageVersionRecord, RequestCtx, ShakoError, ShakoResult, TokenVerifier,
-    remaining_storage_allowance, sha256_hex, validate_package_segment, validate_repo_or_owner_name,
+    Action, BlobRecord, PackageId, PackageRecord, PackageVersionRecord, RequestCtx, ShakoError,
+    ShakoResult, TokenVerifier, sha256_hex, validate_package_segment, validate_repo_or_owner_name,
 };
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::LazyLock;
 
 pub const MAX_OCI_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
-pub const MAX_PACKAGE_BLOB_BYTES: usize = 256 * 1024 * 1024;
+pub use shako_api::service::MAX_PACKAGE_BLOB_BYTES;
+use shako_api::service::{self, authorize_package, blob_disk_path};
 
 /// Open chunked upload sessions: upload id -> `(owner, image, bytes received so far)`.
 type ChunkedUploads = RwLock<BTreeMap<String, (String, String, Vec<u8>)>>;
@@ -100,47 +99,6 @@ fn authenticate_oci(
         return Ok(ctx);
     }
     authenticate_request(state, headers, owner, "shako")
-}
-
-fn authorize_package(
-    state: &ShakoState,
-    ctx: &RequestCtx,
-    owner: &str,
-    pkg_type: &str,
-    image_or_pkg: &str,
-    action: Action,
-) -> ShakoResult<()> {
-    // `owner` names a directory under the blob store: refuse anything but a plain name (T1);
-    // a percent-encoded `../` arrives decoded in the path parameter.
-    validate_repo_or_owner_name(owner, "owner")
-        .map_err(|_| ShakoError::NotFound("package not found".into()))?;
-    let target_org = state.resolve_org_for_owner(owner, &ctx.subject);
-    let mut check_ctx = ctx.clone();
-    check_ctx.org_id = target_org;
-    let target = ObjectTarget::Package {
-        instance_id: ctx.instance_id,
-        org_id: target_org,
-        owner: owner.to_owned(),
-        package_type: pkg_type.to_owned(),
-        name: image_or_pkg.to_owned(),
-    };
-    state
-        .authorizer
-        .check(&check_ctx, action, &target)
-        .into_result("package not found")
-}
-
-fn blob_disk_path(state: &ShakoState, owner: &str, sha256_hex_digest: &str) -> PathBuf {
-    let hex_part = sha256_hex_digest
-        .strip_prefix("sha256:")
-        .unwrap_or(sha256_hex_digest);
-    state
-        .repo_root()
-        .join(state.default_instance_id.to_string())
-        .join("blobs")
-        .join(owner)
-        .join("sha256")
-        .join(hex_part)
 }
 
 fn validate_sha256_digest(digest: &str) -> ShakoResult<String> {
@@ -1223,117 +1181,19 @@ async fn generic_put_file(
             return gitea_error_response(&state, &e);
         }
     }
-    if let Err(e) = authorize_package(&state, &ctx, &owner, "generic", &pkg, Action::Publish) {
-        return gitea_error_response(&state, &e);
-    }
-
-    let target_org = state.resolve_org_for_owner(&owner, &ctx.subject);
-    if let Ok(Some(_)) = state
-        .store()
-        .get_package_file(ctx.instance_id, target_org, &owner, &pkg, &ver, &file)
-        .await
-    {
-        return gitea_error_response(
-            &state,
-            &ShakoError::Conflict("package file already exists".into()),
-        );
-    }
-
-    let instance = state.instance_for(ctx.instance_id, target_org).await;
-    let usage = match state
-        .store()
-        .get_quota_usage(ctx.instance_id, target_org)
-        .await
-    {
-        Ok(u) => u,
+    // The allowance (and the Publish check inside it) bounds the body before it is read.
+    let max_bytes = match service::package_allowance(&state, &ctx, &owner, &pkg).await {
+        Ok(m) => m,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let max_bytes = match remaining_storage_allowance(&instance, &usage) {
-        Ok(m) => (m as usize).min(MAX_PACKAGE_BLOB_BYTES),
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-
     let bytes = match read_body_bounded(body, max_bytes).await {
         Ok(b) => b,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let sha256 = sha256_hex(&bytes);
-    let disk_path = blob_disk_path(&state, &owner, &sha256);
-    if let Some(p) = disk_path.parent()
-        && let Err(e) = tokio::fs::create_dir_all(p).await
-    {
-        return gitea_error_response(&state, &ShakoError::Storage(e.to_string()));
-    }
-    if let Err(e) = tokio::fs::write(&disk_path, &bytes).await {
-        return gitea_error_response(&state, &ShakoError::Storage(e.to_string()));
-    }
-
-    let now = Utc::now();
-    let pkg_rec = match state
-        .store()
-        .upsert_package(PackageRecord {
-            id: PackageId::new(),
-            instance_id: ctx.instance_id,
-            org_id: target_org,
-            owner: owner.clone(),
-            package_type: "generic".into(),
-            name: pkg.clone(),
-            created_at: now,
-        })
+    match service::publish_generic_file(&state, &ctx, &owner, &pkg, &ver, &file, bytes.to_vec())
         .await
     {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-
-    let ver_rec = match state
-        .store()
-        .upsert_package_version(PackageVersionRecord {
-            id: uuid::Uuid::now_v7(),
-            instance_id: ctx.instance_id,
-            org_id: target_org,
-            package_id: pkg_rec.id,
-            owner: owner.clone(),
-            package_type: "generic".into(),
-            package_name: pkg.clone(),
-            version: ver.clone(),
-            digest: format!("sha256:{sha256}"),
-            media_type: "application/octet-stream".into(),
-            manifest_bytes: Vec::new(),
-            subject_digest: None,
-            artifact_type: None,
-            size_bytes: bytes.len() as u64,
-            signed: false,
-            created_at: now,
-        })
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-
-    let file_rec = PackageFileRecord {
-        id: uuid::Uuid::now_v7(),
-        instance_id: ctx.instance_id,
-        org_id: target_org,
-        version_id: ver_rec.id,
-        owner: owner.clone(),
-        package_name: pkg,
-        version: ver,
-        filename: file,
-        sha256,
-        size_bytes: bytes.len() as u64,
-        created_at: now,
-    };
-
-    match state.store().insert_package_file(file_rec).await {
-        Ok(saved) => {
-            let _ = state
-                .store()
-                .adjust_quota_usage(ctx.instance_id, target_org, 0, 0, bytes.len() as i64)
-                .await;
-            (StatusCode::CREATED, Json(saved)).into_response()
-        }
+        Ok(saved) => (StatusCode::CREATED, Json(saved)).into_response(),
         Err(e) => gitea_error_response(&state, &e),
     }
 }
@@ -1347,36 +1207,15 @@ async fn generic_get_file(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    if let Err(e) = authorize_package(&state, &ctx, &owner, "generic", &pkg, Action::Read) {
-        return gitea_error_response(&state, &e);
+    match service::read_generic_file(&state, &ctx, &owner, &pkg, &ver, &file).await {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/octet-stream")],
+            stream_bytes_in_64k_chunks(bytes),
+        )
+            .into_response(),
+        Err(e) => gitea_error_response(&state, &e),
     }
-    let target_org = state.resolve_org_for_owner(&owner, &ctx.subject);
-    let Some(file_rec) = state
-        .store()
-        .get_package_file(ctx.instance_id, target_org, &owner, &pkg, &ver, &file)
-        .await
-        .ok()
-        .flatten()
-    else {
-        return gitea_error_response(
-            &state,
-            &ShakoError::NotFound("package file not found".into()),
-        );
-    };
-
-    let disk_path = blob_disk_path(&state, &owner, &file_rec.sha256);
-    let Ok(bytes) = tokio::fs::read(&disk_path).await else {
-        return gitea_error_response(
-            &state,
-            &ShakoError::NotFound("package blob not found".into()),
-        );
-    };
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/octet-stream")],
-        stream_bytes_in_64k_chunks(bytes),
-    )
-        .into_response()
 }
 
 /// Builds the OCI `/v2/*` router for both `/v2/...` (inside the main router) and `/...`

@@ -109,7 +109,7 @@ async fn world() -> (AppState, Arc<StreamDeployer>, MockServer) {
     seed(&state);
     let deployer = Arc::new(StreamDeployer::new(runner.uri()));
     let syncer = Syncer::new(
-        state.gitea.clone().expect("the forge"),
+        state.shako.clone().expect("the forge"),
         Arc::clone(&state.mirror),
     )
     .with_streams(Arc::clone(&deployer));

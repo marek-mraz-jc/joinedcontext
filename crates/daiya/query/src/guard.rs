@@ -41,6 +41,11 @@ pub struct GuardConfig {
     /// on a service network). Only an allow-listed host may still be reached, and the cloud
     /// metadata addresses stay blocked even inside these networks.
     pub allowed_networks: Vec<IpNet>,
+    /// Exact addresses (IP and port) the guard lets through, over `http` too, whatever their
+    /// address class: the host's own listener, for datasources the host provisioned itself
+    /// ([`crate::OutboundPolicy::own_addresses`]). Only a URL naming the address literally
+    /// matches; another port of the same IP stays refused, and so do the metadata addresses.
+    pub own_addresses: Vec<SocketAddr>,
 }
 
 impl Default for GuardConfig {
@@ -52,6 +57,7 @@ impl Default for GuardConfig {
             allow_http: false,
             allow_loopback_for_tests: false,
             allowed_networks: Vec::new(),
+            own_addresses: Vec::new(),
         }
     }
 }
@@ -103,7 +109,8 @@ impl OutboundGuard {
         }
 
         let scheme = parsed.scheme();
-        if scheme != "https" && !(self.config.allow_http && scheme == "http") {
+        let own = self.own_address(&parsed);
+        if scheme != "https" && !((self.config.allow_http || own) && scheme == "http") {
             return Err(DsError::GuardRefused(format!(
                 "disallowed URL scheme '{scheme}' (https required)"
             )));
@@ -132,10 +139,33 @@ impl OutboundGuard {
 
         // If host is an IP literal, check it immediately
         if let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
-            self.check_ip(ip)?;
+            self.check_socket(SocketAddr::new(ip, port))?;
         }
 
         Ok((parsed, host, port))
+    }
+
+    /// `url` names one of [`GuardConfig::own_addresses`] by its IP literal and port.
+    fn own_address(&self, url: &Url) -> bool {
+        let ip = match url.host() {
+            Some(url::Host::Ipv4(v4)) => IpAddr::V4(v4),
+            Some(url::Host::Ipv6(v6)) => IpAddr::V6(v6),
+            _ => return false,
+        };
+        url.port_or_known_default().is_some_and(|port| {
+            self.config
+                .own_addresses
+                .contains(&SocketAddr::new(ip, port))
+        })
+    }
+
+    /// Checks one address and port: one of [`GuardConfig::own_addresses`] passes (never a
+    /// metadata address), anything else follows [`OutboundGuard::check_ip`].
+    pub fn check_socket(&self, addr: SocketAddr) -> Result<(), DsError> {
+        if self.config.own_addresses.contains(&addr) && !is_cloud_metadata(addr.ip()) {
+            return Ok(());
+        }
+        self.check_ip(addr.ip())
     }
 
     /// Checks one resolved address: the metadata addresses never pass, an operator-opened
@@ -178,7 +208,7 @@ impl OutboundGuard {
             )));
         }
         if let Ok(ip) = clean_host.parse::<IpAddr>() {
-            self.check_ip(ip)?;
+            self.check_socket(SocketAddr::new(ip, port))?;
             return Ok(vec![SocketAddr::new(ip, port)]);
         }
         let resolved: Vec<SocketAddr> = tokio::net::lookup_host((clean_host, port))

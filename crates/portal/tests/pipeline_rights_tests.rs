@@ -25,8 +25,8 @@ const CHANGE: u64 = 0x4893;
 /// - `dev`: proposes Pipelines in helsinki, reads entities of space `a` only.
 /// - `checker`: approves Pipelines in helsinki, reads entities of space `a` only.
 /// - `lead`: approves Pipelines and reads entities in the whole project.
-fn world(gitea: &MockServer) -> AppState {
-    let state = common::state_on(gitea);
+fn world(shako: &MockServer) -> AppState {
+    let state = common::state_on(shako);
     for (name, rules) in [
         (
             "pipeline-author",
@@ -153,56 +153,60 @@ fn refused(answer: &Answer, door: &str) {
 
 /// The forge holds change `CHANGE`: someone's pipeline from `b` into `a`.
 async fn forge() -> MockServer {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     let branch = "portal/create-pipeline-route-b-00004893";
     let file = format!("projects/{PROJECT}/pipelines/{FROM_B}/pipeline.yaml");
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/{CHANGE}")))
+        .and(path(format!("{REPO}/PullRequests({CHANGE})")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": CHANGE,
-            "html_url": format!("https://gitea.example/pulls/{CHANGE}"),
-            "state": "open",
-            "title": branch,
-            "head": { "ref": branch },
-            "base": { "ref": "main" },
-            "created_at": "2026-10-20T09:00:00Z",
-            "user": { "login": "someone", "full_name": "someone", "email": "someone@hel.fi" },
-            "mergeable": true,
-            "merged": false
+            "Number": CHANGE,
+            "HtmlUrl": format!("https://shako.example/pulls/{CHANGE}"),
+            "State": "open",
+            "Title": branch,
+            "Head": branch,
+            "Base": "main",
+            "CreatedAt": "2026-10-20T09:00:00Z",
+            "Author": "someone",
+            "AuthorName": "someone",
+            "AuthorEmail": "someone@hel.fi",
+            "Mergeable": true,
+            "Merged": false
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/{CHANGE}/files")))
+        .and(path(format!("{REPO}/PullRequests({CHANGE})/Files")))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!([{ "filename": file, "status": "added" }])),
+                .set_body_json(json!({ "value": [{ "Filename": file, "Status": "added" }] })),
         )
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     let yaml = serde_norway::to_string(&pipeline(FROM_B, "ep-b")).expect("yaml");
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/{file}")))
-        .and(query_param("ref", branch))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{file}'")))
+        .and(query_param("@r", format!("'{}'", branch)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-4893", "content": encode(&yaml)
+            "Sha": "sha-4893",
+            "Content": encode(&yaml)
         })))
         .with_priority(1)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    gitea
+    shako
 }
 
 fn no_change_opened(requests: &[wiremock::Request]) -> bool {
-    !requests
-        .iter()
-        .any(|request| request.method.as_str() == "POST" && request.url.path().ends_with("/pulls"))
+    !requests.iter().any(|request| {
+        request.method.as_str() == "POST" && request.url.path().ends_with("/Shako.OpenPullRequest")
+    })
 }
 
 #[tokio::test]
 async fn every_propose_door_refuses_a_source_the_proposer_cannot_read() {
-    let gitea = forge().await;
-    let state = world(&gitea);
+    let shako = forge().await;
+    let state = world(&shako);
     let manifest = pipeline(FROM_B, "ep-b");
 
     let answer = send(
@@ -250,7 +254,7 @@ async fn every_propose_door_refuses_a_source_the_proposer_cannot_read() {
     .await;
     refused(&answer, "blueprint");
 
-    let requests = gitea.received_requests().await.expect("requests");
+    let requests = shako.received_requests().await.expect("requests");
     assert!(
         no_change_opened(&requests),
         "a refused pipeline reached the forge"
@@ -259,8 +263,8 @@ async fn every_propose_door_refuses_a_source_the_proposer_cannot_read() {
 
 #[tokio::test]
 async fn a_pipeline_within_the_proposers_reads_still_passes_the_door() {
-    let gitea = forge().await;
-    let state = world(&gitea);
+    let shako = forge().await;
+    let state = world(&shako);
     let answer = send(
         &state,
         person("dev"),
@@ -278,18 +282,18 @@ async fn a_pipeline_within_the_proposers_reads_still_passes_the_door() {
 
 #[tokio::test]
 async fn an_approver_who_cannot_read_the_source_cannot_approve_it() {
-    let gitea = forge().await;
-    let state = world(&gitea);
+    let shako = forge().await;
+    let state = world(&shako);
     let approve = format!("/api/v1/projects/{PROJECT}/changes/chg-{CHANGE:08x}/approve");
 
     let answer = send(&state, person("checker"), "POST", &approve, Some(json!({}))).await;
     refused(&answer, "approve");
-    let merged = gitea
+    let merged = shako
         .received_requests()
         .await
         .expect("requests")
         .iter()
-        .any(|request| request.url.path().ends_with("/merge"));
+        .any(|request| request.url.path().ends_with("/Shako.Merge"));
     assert!(!merged, "the refused approval merged");
 
     let answer = send(&state, person("lead"), "POST", &approve, Some(json!({}))).await;

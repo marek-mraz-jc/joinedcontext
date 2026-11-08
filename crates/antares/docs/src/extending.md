@@ -52,7 +52,7 @@ persists; this section describes how one is selected and added.
 
 ### The registry
 
-`build_drivers` in `crates/antares-broker/src/main.rs` is the registry:
+`build_drivers` in `crates/antares-broker/src/lib.rs` is the registry:
 a match from the configured names to constructors. The shelf it selects
 from is a list of NAMES, not an enumeration — `store_shelf()` chains the
 built-in `StoreMode` values with whatever backends were compiled in from
@@ -133,7 +133,7 @@ way an unknown backend does. A selection that leaves `admin` out serves no
 refused outright.
 
 Adding one is a struct implementing the trait plus an entry in
-`SURFACE_SHELF` (`crates/antares-broker/src/main.rs`); no core crate
+`SURFACE_SHELF` (`crates/antares-broker/src/lib.rs`); no core crate
 changes. `dev/new-surface.py` generates a read-only one as a crate with its
 tests, docs and wiring ([New surface](new-surface.md)).
 
@@ -279,7 +279,7 @@ no reason for. Its `--self-test` runs first, on a synthetic workspace with
 each violation planted once.
 
 Adding one is a struct implementing the trait plus an entry in
-`POLICY_SHELF` (`crates/antares-broker/src/main.rs`); no core crate
+`POLICY_SHELF` (`crates/antares-broker/src/lib.rs`); no core crate
 changes. Hold it to `antares_api::policy::run_policy_contract` (behind the
 `test-kit` feature) from the crate's own tests: it asserts through the seam
 the three things an engine can get wrong — it stops answering, it hands

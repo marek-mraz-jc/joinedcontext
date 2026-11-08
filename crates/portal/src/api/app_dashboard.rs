@@ -27,7 +27,7 @@ use crate::api::mutate::{propose_with_identity, ProposeOutcome};
 use crate::auth::CurrentUser;
 use crate::change::{Change, Operation};
 use crate::error::{ApiError, ProblemDetails};
-use crate::git::{Author, GitError, GiteaClient, MergeStyle};
+use crate::forge::{Author, GitError, MergeStyle, ShakoClient};
 use crate::pipeline_validation::Attribute;
 use crate::state::AppState;
 
@@ -705,7 +705,7 @@ fn edit_refusal(
 }
 
 /// The file on the App's default branch, parsed; `None` when it holds none.
-async fn current_file(repo: &GiteaClient) -> Result<Option<(String, Value)>, ApiError> {
+async fn current_file(repo: &ShakoClient) -> Result<Option<(String, Value)>, ApiError> {
     let refused = |err: GitError| ApiError::Unavailable(format!("the forge did not answer: {err}"));
     let default = repo.default_branch().await.map_err(refused)?;
     let Some(file) = repo
@@ -941,7 +941,7 @@ fn checked(
 /// Commits the file on a new `dashboard/` branch and opens its merge request: the commit and the
 /// merge request's address.
 async fn commit(
-    repo: &GiteaClient,
+    repo: &ShakoClient,
     user: &CurrentUser,
     project: &str,
     name: &str,
@@ -1046,11 +1046,11 @@ pub async fn merge_approved_edit(
     else {
         return;
     };
-    let Some(gitea) = state.gitea.as_deref() else {
+    let Some(shako) = state.shako.as_deref() else {
         return;
     };
     let name = &manifest.metadata.name;
-    let repo = gitea.for_application(crate::agents::repository::name(project, name));
+    let repo = shako.for_application(crate::agents::repository::name(project, name));
     let pulls = match repo.list_pull_requests("open").await {
         Ok(pulls) => pulls,
         Err(err) => {

@@ -27,6 +27,10 @@ const ELSEWHERE: &str = "e2eotherendpointaaaaaaaaaa";
 const PERSON: &str = "e2e.person";
 const PERSON_PASSWORD: &str = "e2e-person-password-not-secret";
 const READER_SECRET: &str = "e2e-reader-client-secret-not-secret";
+/// The organization repository, not jc's default `jc/config`: the gateway must check out the
+/// repository the Portal is told to use (`JC_SHAKO_OWNER`, `JC_SHAKO_REPO`).
+const FORGE_OWNER: &str = "e2e-city";
+const FORGE_REPO: &str = "configuration";
 
 struct Jc {
     child: Child,
@@ -189,6 +193,8 @@ async fn start() -> Jc {
         .env("E2E_PERSON_PASSWORD", PERSON_PASSWORD)
         .env("JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR", "false")
         .env("JC_PORTAL_SYNC_INTERVAL", "3")
+        .env("JC_SHAKO_OWNER", FORGE_OWNER)
+        .env("JC_SHAKO_REPO", FORGE_REPO)
         .env("RUST_LOG", "info,sqlx=warn")
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -302,7 +308,9 @@ fn manifests() -> Vec<(String, String)> {
 /// Writes `path` on `main` of shako's organization repository (Gitea contents API).
 async fn put_file(jc: &Jc, path: &str, content: &str) {
     let resp = Client::new()
-        .put(jc.url(&format!("/git/api/v1/repos/jc/config/contents/{path}")))
+        .put(jc.url(&format!(
+            "/git/api/v1/repos/{FORGE_OWNER}/{FORGE_REPO}/contents/{path}"
+        )))
         .header(
             "authorization",
             format!("token {}", jc.secret("shako-token")),

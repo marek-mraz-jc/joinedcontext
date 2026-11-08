@@ -37,7 +37,7 @@ use crate::auth::session::Front;
 use crate::auth::CurrentUser;
 use crate::config::AgentSettings;
 use crate::error::{ApiError, ProblemDetails};
-use crate::git::GitError;
+use crate::forge::GitError;
 use crate::resource::is_dns1123;
 use crate::state::AppState;
 
@@ -856,16 +856,16 @@ pub(crate) fn with_links(state: &AppState, mut run: AgentRun) -> AgentRun {
         .merge_request
         .and_then(|number| u64::try_from(number).ok())
         .map(|number| crate::change::ChangeMeta::from_merge_request(number, "").name);
-    if let Some(gitea) = state.gitea.as_deref() {
+    if let Some(shako) = state.shako.as_deref() {
         if !run.branch.is_empty() {
             run.source_url = Some(if run.in_own_repository() {
-                gitea
+                shako
                     .for_application(repository::name(&run.project, &run.app_name))
                     .browse_url("", &run.branch)
             } else {
                 // The project's own repository in layout 2 (CC-87).
                 state.forge_for(&run.project).map_or_else(
-                    || gitea.browse_url(&run.path_prefix, &run.branch),
+                    || shako.browse_url(&run.path_prefix, &run.branch),
                     |forge| forge.browse_url(&run.path_prefix, &run.branch),
                 )
             });
@@ -2271,13 +2271,13 @@ async fn publish_source(state: &AppState, run: &AgentRun) -> Result<serde_json::
     if !run.in_own_repository() {
         return Ok(serde_json::json!({ "path": "./src" }));
     }
-    let gitea = state.gitea.as_deref().ok_or_else(|| {
+    let shako = state.shako.as_deref().ok_or_else(|| {
         ApiError::Unavailable(
             "no forge is configured, so the application's repository cannot be published (AP-77)"
                 .into(),
         )
     })?;
-    let repo = gitea.for_application(repository::name(&run.project, &run.app_name));
+    let repo = shako.for_application(repository::name(&run.project, &run.app_name));
     let sha = match repo.branch_head(&run.branch).await {
         Ok(sha) => sha,
         Err(GitError::NotFound) => {
@@ -2328,7 +2328,7 @@ pub async fn merge_published_application(
     else {
         return;
     };
-    let Some(gitea) = state.gitea.as_deref() else {
+    let Some(shako) = state.shako.as_deref() else {
         return;
     };
     let run = match state.agents.get_run(run_id).await {
@@ -2339,7 +2339,7 @@ pub async fn merge_published_application(
             return;
         }
     };
-    let repo = gitea.for_application(repository::name(&run.project, &run.app_name));
+    let repo = shako.for_application(repository::name(&run.project, &run.app_name));
     match repository::merge_published(&repo, &run, sha, approver).await {
         Ok(()) => {
             if let Err(err) = state
