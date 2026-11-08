@@ -749,15 +749,15 @@ def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, repo
 
 
 def bundle_settled(export: Path) -> str:
-    """Why the bundle is still being written, or "" when it is not: an export in progress keeps a
-    `.parts` directory, and manifest.json is written last."""
+    """Why the bundle is still being written, or "" when it is not: manifest.json is written last,
+    so a data file newer than it belongs to an export in progress. An exporter's own work
+    directories (`.parts`) are not read."""
     manifest = export / "manifest.json"
     if not manifest.exists():
         return "no manifest.json"
-    if parts := sorted(str(p.relative_to(export)) for p in export.rglob(".parts")):
-        return f"export in progress: {parts[0]}"
     at = manifest.stat().st_mtime
-    newer = sorted(str(p.relative_to(export)) for p in export.rglob("*") if p.is_file() and p.stat().st_mtime > at)
+    newer = sorted(str(p.relative_to(export)) for p in export.rglob("*")
+                   if p.is_file() and ".parts" not in p.parts and p.stat().st_mtime > at)
     return f"written after manifest.json: {newer[:3]}" if newer else ""
 
 

@@ -296,9 +296,11 @@ def test_a_bundle_still_being_written_is_not_imported(tmp_path):
     os.utime(data, None)
     os.utime(manifest, (1, 1))
     assert "written after manifest.json" in rh.bundle_settled(tmp_path)
-    os.utime(manifest, None)
     (tmp_path / "antares" / ".parts").mkdir()
-    assert "in progress" in rh.bundle_settled(tmp_path)
+    (tmp_path / "antares" / ".parts" / "t.done").write_text("")
+    os.utime(data, (1, 1))
+    assert rh.bundle_settled(tmp_path) == ""
+    os.utime(data, None)
     with pytest.raises(SystemExit):
         rh.main(["import", "--export", str(tmp_path), "--base", "http://127.0.0.1:1", "--state", str(tmp_path),
                  "--report", str(tmp_path / "r.json")])
