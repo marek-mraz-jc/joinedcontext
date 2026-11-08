@@ -732,7 +732,8 @@ def admin_token(h: Http, state: Path) -> str:
 def make_person(h: Http, token: str, realm: str, username: str, groups=()):
     """A test person with a random password (kept in memory only): create, then set the password."""
     auth = {"Authorization": f"Bearer {token}"}
-    password = secrets.token_urlsafe(18)
+    # The random part carries the entropy; the suffix meets a realm password policy (digit, cases, symbol).
+    password = secrets.token_urlsafe(18) + "-7aZ"
     st, body = h.json("POST", f"/id/admin/realms/{realm}/users", headers=auth, body={
         "username": username, "enabled": True, "email": f"{username}@rehearsal.invalid",
         "emailVerified": True, "firstName": "Rehearsal", "lastName": username, "groups": list(groups)})
@@ -852,12 +853,12 @@ def cmd_smoke(a):
     # The reconciler's first sync takes ~40 s over ~3400 manifests: wait for it, up to 3 min.
     for _ in range(36):
         st, projects = h.json("GET", "/api/v1/projects")
-        if projects:
+        rows = projects if isinstance(projects, list) else (projects or {}).get("items", []) \
+            if isinstance(projects, dict) else []
+        names = [p.get("name") or p.get("metadata", {}).get("name") for p in rows]
+        if names:
             break
         time.sleep(5)
-    names = [p.get("name") or p.get("metadata", {}).get("name") for p in (projects or [])] \
-        if isinstance(projects, list) else [p.get("name") for p in (projects or {}).get("items", [])] \
-        if isinstance(projects, dict) else []
     check("Portal lists the imported projects", bool(names), f"{st} {names[:12]}", "GET /api/v1/projects")
     for p in names:
         st, pipes = h.json("GET", f"/api/v1/projects/{p}/pipelines")
