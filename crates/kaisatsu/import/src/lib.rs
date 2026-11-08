@@ -294,6 +294,11 @@ pub const KNOWN_AUTHENTICATORS: &[&str] = &[
     "client-secret",
     "client-jwt",
     "federated-jwt",
+    // Password reset (the `reset credentials` flow): kaisatsu's login handler chooses the user,
+    // mails a signed single-use reset link and sets the new password (W3, K10).
+    "reset-credentials-choose-user",
+    "reset-credential-email",
+    "reset-password",
 ];
 
 pub const KNOWN_FLOW_ALIASES: &[&str] = &[

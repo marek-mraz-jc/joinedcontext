@@ -361,3 +361,19 @@ fn the_client_authentication_flow_takes_the_methods_kaisatsu_implements() {
         assert!(err.contains(&format!("unknown authenticator '{unimplemented}'")), "{err}");
     }
 }
+
+#[test]
+fn the_reset_credentials_flow_takes_the_steps_kaisatsu_implements() {
+    let mut d = ri();
+    d["authenticationFlows"].as_array_mut().unwrap().push(json!({"alias": "reset credentials",
+        "topLevel": true, "builtIn": true, "providerId": "basic-flow", "authenticationExecutions": [
+            {"authenticator": "reset-credentials-choose-user", "requirement": "REQUIRED"},
+            {"authenticator": "reset-credential-email", "requirement": "REQUIRED"},
+            {"authenticator": "reset-password", "requirement": "REQUIRED"}]}));
+    check_realm_value(&d, &opts()).unwrap();
+    let last = d["authenticationFlows"].as_array().unwrap().len() - 1;
+    d["authenticationFlows"][last]["authenticationExecutions"][0]["authenticator"] =
+        json!("reset-otp");
+    let err = check_realm_value(&d, &opts()).unwrap_err().to_string();
+    assert!(err.contains("unknown authenticator 'reset-otp'"), "{err}");
+}
