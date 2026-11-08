@@ -345,7 +345,10 @@ async fn the_portal_saves_and_removes_a_visualization_in_a_provisioned_project()
         assert_eq!(status, StatusCode::NOT_FOUND, "{auth:?}");
         assert!(!page.contains("NO2"), "{page}");
         // A refusal says what to do next, and reads the same as a dashboard that is not there.
-        assert!(page.contains("open the dashboard again from its project"), "{page}");
+        assert!(
+            page.contains("open the dashboard again from its project"),
+            "{page}"
+        );
         let (_, _, missing) = grafana
             .page("/d/no-such-board", Some(&basic(USER, PASSWORD)))
             .await;
