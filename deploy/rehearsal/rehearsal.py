@@ -192,6 +192,21 @@ def cmd_render(a):
     print(f"rendered {a.env} into {out}")
 
 
+def cmd_dashboards(a):
+    """The Grafana files a render's dashboards chart provisions (platform models and, per project,
+    folder, datasources and dashboard): what prod's and dev's Grafana load from files, not from
+    their database, so an export bundle holds none of them."""
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    n = 0
+    for doc in _yaml_docs(Path(a.render) / "grafana-dashboards.yaml"):
+        for key, text in (doc.get("data") or {}).items():
+            if key.endswith(".json"):
+                (out / key).write_text(text)
+                n += 1
+    print(f"{n} Grafana files into {out}")
+
+
 def _yaml_docs(path: Path):
     import yaml  # PyYAML is in the CI venv; only render/synth need it
 
@@ -699,15 +714,50 @@ def _daiya_kind(name: str) -> str:
     return "model"
 
 
-def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, report: dict):
+def rehearsal_endpoint_url(url: str, base: str) -> str:
+    """A datasource's Endpoint URL (`<gateway>/api/endpoint/<slug>[/...]`) on the rehearsal's own
+    gateway: the same slug, the rehearsal's base. Any other URL is left as it is."""
+    head, sep, rest = url.partition("/api/endpoint/")
+    return f"{base.rstrip('/')}/api/endpoint/{rest}" if sep and head and rest else url
+
+
+def daiya_org(h: Http, auth: dict, project: str) -> int:
+    """The project's daiya organization, made when missing (provision.sh's POST /orgs, 409 ->
+    GET /orgs/name/{project}); the Portal's provisioning loop may have made it first."""
+    st, body = h.json("POST", "/dashboards/api/orgs", headers=auth, body={"name": project})
+    if st == 409:
+        st, body = h.json("GET", f"/dashboards/api/orgs/name/{urllib.parse.quote(project)}", headers=auth)
+    org = (body or {}).get("orgId") or (body or {}).get("id") if isinstance(body, dict) else None
+    if st not in (200, 201) or not org:
+        raise RuntimeError(f"organization {project}: {st} {str(body)[:200]}")
+    return int(org)
+
+
+def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, report: dict,
+                 dashboards: Path | None = None):
+    """The deployment's Grafana provisioning into daiya, as provision.sh does it: each project's
+    files in its own organization (folder, datasources on the rehearsal's Endpoints, dashboard),
+    the plain dashboard models in the main organization."""
     pw = read_secret(state, "dashboards-password")
     auth = {"Authorization": "Basic " + base64.b64encode(f"portal:{pw}".encode()).decode()}
     order = {"folder": 0, "datasource": 1, "dashboard": 2, "model": 2}
-    files = sorted((export / "grafana" / "dashboards").glob("*.json"), key=lambda f: (order[_daiya_kind(f.name)], f.name))
-    rows = []
+    src = dashboards or export / "grafana" / "dashboards"
+    files = sorted(src.glob("*.json"), key=lambda f: (order[_daiya_kind(f.name)], f.name))
+    rows, orgs = [], {}
     for f in files:
         kind = _daiya_kind(f.name)
         row = {"file": f.name, "kind": kind}
+        hdrs = dict(auth)
+        if kind != "model":
+            project = f.name.split(".", 1)[0]
+            try:
+                if project not in orgs:
+                    orgs[project] = daiya_org(h, auth, project)
+            except RuntimeError as e:
+                rows.append({**row, "result": "refused", "reason": str(e)})
+                continue
+            hdrs["X-Grafana-Org-Id"] = str(orgs[project])
+            row.update(project=project, org=orgs[project])
         try:
             doc = json.loads(f.read_text())
         except ValueError as e:
@@ -717,8 +767,10 @@ def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, repo
             call, body = "POST /dashboards/api/folders", {"uid": doc.get("uid"), "title": doc.get("title")}
             row.update(uid=doc.get("uid"), title=doc.get("title"))
         elif kind == "datasource":
+            mapped = rehearsal_endpoint_url(doc.get("url", ""), h.base)
+            doc = {**doc, "url": mapped}
             call, body = "POST /dashboards/api/datasources", doc
-            row.update(uid=doc.get("uid"), title=doc.get("name"))
+            row.update(uid=doc.get("uid"), title=doc.get("name"), url=mapped)
         else:
             dash = doc.get("dashboard", doc) if kind == "dashboard" else doc
             body = {"dashboard": {k: v for k, v in dash.items() if k != "id"}, "overwrite": True,
@@ -741,11 +793,14 @@ def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, repo
                                                         if str(x.get("verdict")).lower() not in ("supports", "supported")})}
                 except ValueError:
                     row["check"] = {"exit": r.returncode, "stderr": r.stderr[-300:]}
-        st, answer = h.json("POST", call.split(" ", 1)[1], headers=auth, body=body)
+        st, answer = h.json("POST", call.split(" ", 1)[1], headers=hdrs, body=body)
+        if st == 409 and kind == "datasource":  # provision.sh: an existing one is replaced
+            st, answer = h.json("PUT", f"/dashboards/api/datasources/uid/{urllib.parse.quote(doc['uid'])}",
+                                headers=hdrs, body=body)
         if st in (200, 201):
             changed = bool(row.get("check", {}).get("findings"))
             row.update(result="changed" if changed else "imported", status=st)
-        elif st == 409 and kind in ("folder", "datasource"):
+        elif st in (409, 412) and kind == "folder":
             row.update(result="unchanged", status=st)
         else:
             row.update(result="refused", call=call, status=st, detail=answer)
@@ -788,7 +843,7 @@ def cmd_import(a):
     if "antares" in steps:
         import_antares(h, export, cutoff, report)
     if "daiya" in steps:
-        import_daiya(h, state, export, a.daiya_bin, report)
+        import_daiya(h, state, export, a.daiya_bin, report, Path(a.dashboards) if a.dashboards else None)
     Path(a.report).write_text(json.dumps(report, indent=1))
     summary = {
         "cutoff": report["cutoff"],
@@ -1070,11 +1125,38 @@ def cmd_smoke(a):
     # 7. dashboards in daiya
     pw = read_secret(state, "dashboards-password")
     dauth = {"Authorization": "Basic " + base64.b64encode(f"portal:{pw}".encode()).decode()}
-    st, found = h.json("GET", "/dashboards/api/search?type=dash-db", headers=dauth)
-    want = sum(1 for f in (export / "grafana" / "dashboards").glob("*.json")
-               if _daiya_kind(f.name) in ("dashboard", "model"))
-    check(f"daiya: {want} dashboards", st == 200 and isinstance(found, list) and len(found) >= want,
-          f"{st} {len(found) if isinstance(found, list) else found}", "GET /dashboards/api/search")
+    dashdir = Path(a.dashboards) if a.dashboards else export / "grafana" / "dashboards"
+    files = sorted(dashdir.glob("*.json"))
+    # each project's dashboard sits in its own organization, the platform models in the main one
+    orgs = {f.name.split(".", 1)[0] for f in files if _daiya_kind(f.name) == "dashboard"}
+    found_uids, missing = set(), []
+    for org in [None, *sorted(orgs)]:
+        hdrs = dict(dauth)
+        if org:
+            ost, o = h.json("GET", f"/dashboards/api/orgs/name/{urllib.parse.quote(org)}", headers=dauth)
+            if ost != 200 or not isinstance(o, dict):
+                missing.append(f"organization {org}: {ost}")
+                continue
+            hdrs["X-Grafana-Org-Id"] = str(o.get("id"))
+        st, found = h.json("GET", "/dashboards/api/search?type=dash-db", headers=hdrs)
+        found_uids |= {d.get("uid") for d in found} if st == 200 and isinstance(found, list) else set()
+    for f in files:
+        kind = _daiya_kind(f.name)
+        if kind in ("dashboard", "model"):
+            doc = json.loads(f.read_text())
+            uid = (doc.get("dashboard", doc) if kind == "dashboard" else doc).get("uid")
+            if uid not in found_uids:
+                missing.append(f"{f.name} ({uid})")
+    want = sum(1 for f in files if _daiya_kind(f.name) in ("dashboard", "model"))
+    check(f"daiya: {want} dashboards in their organizations", not missing and want > 0,
+          "; ".join(missing[:8]) or f"{want} found", "GET /dashboards/api/search (per organization)")
+    if any(_daiya_kind(f.name) == "dashboard" for f in files):
+        pd = portal_dashboards(h, dashdir)
+        su = pd["summary"]
+        check(f"Portal opens {su['projectDashboards']} project dashboards",
+              su["openInPortal"] == su["projectDashboards"],
+              f"{su['openInPortal']} open; panels {su['panels']}, with data {su['panelsWithData']}",
+              "GET /api/v1/projects/{p}/grafana/dashboards/{uid}")
     # 8. every public Endpoint answers a query
     eps = []
     root = export / "gitea" / "files"
@@ -1108,6 +1190,61 @@ def cmd_smoke(a):
         print(f"{c['result']:4}  {c['check']}  {c['detail'][:160]}")
     return 0 if all(c["result"] == "pass" for c in checks) else 1
 
+
+
+# ---- dashboards in the Portal ---------------------------------------------------------------------
+
+def portal_dashboards(h: Http, dashboards: Path) -> dict:
+    """Per project with a dashboard file: whether the Portal lists it, opens it, and what each
+    panel answers (GET /api/v1/projects/{p}/grafana/dashboards[/{uid}[/panels/{id}]]), as the
+    signed-in person `h` holds. Platform models have no project page and are counted apart."""
+    out = {"projects": {}, "platformModels": sorted(f.name for f in dashboards.glob("*.json")
+                                                      if _daiya_kind(f.name) == "model")}
+    for f in sorted(dashboards.glob("*.dashboard.json")):
+        project = f.name.split(".", 1)[0]
+        uid = json.loads(f.read_text())["dashboard"]["uid"]
+        base = f"/api/v1/projects/{project}/grafana/dashboards"
+        st, listed = h.json("GET", base)
+        items = listed if isinstance(listed, list) else (listed or {}).get("items", []) if isinstance(listed, dict) else []
+        row = {"uid": uid, "list": st, "listed": any((i or {}).get("uid") == uid for i in items if isinstance(i, dict))}
+        st, dash = h.json("GET", f"{base}/{urllib.parse.quote(uid)}")
+        row["open"] = st
+        panels = []
+        if st == 200 and isinstance(dash, dict):
+            body = dash.get("dashboard", dash)
+            flat = []
+            for p in body.get("panels", []):
+                flat.extend([p, *p.get("panels", [])])
+            for p in flat:
+                if p.get("type") == "row" or "id" not in p:
+                    continue
+                pst, ans = h.json("GET", f"{base}/{urllib.parse.quote(uid)}/panels/{p['id']}")
+                state = (ans.get("state") or ans.get("status") or ans.get("error") or
+                         ("frames" if ans.get("frames") is not None else "")) if isinstance(ans, dict) else ""
+                detail = (ans.get("message") or ans.get("detail") or "") if isinstance(ans, dict) else str(ans)[:120]
+                panels.append({"id": p["id"], "title": p.get("title"), "status": pst, "state": str(state)[:60],
+                               "detail": str(detail)[:160]})
+        row["panels"] = panels
+        out["projects"][project] = row
+    opened = sum(1 for r in out["projects"].values() if r["open"] == 200)
+    out["summary"] = {"projectDashboards": len(out["projects"]), "openInPortal": opened,
+                      "panels": sum(len(r["panels"]) for r in out["projects"].values()),
+                      "panelsWithData": sum(1 for r in out["projects"].values() for p in r["panels"]
+                                            if p["status"] == 200 and p["state"] in ("frames", "ok", "data"))}
+    return out
+
+
+def cmd_portal_dashboards(a):
+    loopback_only(a.base)
+    h, state = Http(a.base), Path(a.state)
+    tok = admin_token(h, state)
+    _, pw = make_person(h, tok, "jc", "rehearsal-dashboards", groups=["/platform-admins"])
+    ok, detail = sign_in(h, "rehearsal-dashboards", pw)
+    if not ok:
+        raise SystemExit(f"sign-in failed: {detail}")
+    out = portal_dashboards(h, Path(a.dashboards))
+    Path(a.report).write_text(json.dumps(out, indent=1))
+    print(json.dumps(out["summary"]))
 
 
 # ---- policy after the import ---------------------------------------------------------------------
@@ -1156,6 +1293,8 @@ def main(argv=None):
     s = sub.add_parser("import"); s.add_argument("--export", required=True); s.add_argument("--base", required=True)
     s.add_argument("--state", required=True); s.add_argument("--report", required=True)
     s.add_argument("--now"); s.add_argument("--only"); s.add_argument("--daiya-bin")
+    s.add_argument("--dashboards", help="Grafana provisioning files (rehearsal.py dashboards) instead of the bundle's")
+    s = sub.add_parser("dashboards"); s.add_argument("--render", required=True); s.add_argument("--out", required=True)
     s = sub.add_parser("retain"); s.add_argument("--host", default="127.0.0.1"); s.add_argument("--port", required=True)
     s.add_argument("--user", default="antares"); s.add_argument("--db", default="antares")
     s.add_argument("--password-file", required=True); s.add_argument("--now")
@@ -1163,9 +1302,12 @@ def main(argv=None):
     s = sub.add_parser("smoke"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     s.add_argument("--export", required=True); s.add_argument("--report", required=True); s.add_argument("--realms")
     s.add_argument("--pg-port"); s.add_argument("--antares-password-file")
+    s.add_argument("--dashboards", help="the Grafana files imported into daiya (rehearsal.py dashboards)")
+    s = sub.add_parser("portal-dashboards"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
+    s.add_argument("--dashboards", required=True); s.add_argument("--report", required=True)
     s = sub.add_parser("policy-check"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     a = p.parse_args(argv)
-    return {"policy-check": cmd_policy_check, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import,
+    return {"portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import,
             "retain": cmd_retain, "smoke": cmd_smoke}[a.cmd](a) or 0
 
 

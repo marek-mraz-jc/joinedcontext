@@ -30,6 +30,23 @@ python3 -I rehearsal.py smoke  --base http://localhost:42101 --state $REHEARSAL_
 python3 shots.py --base http://localhost:42101 --state $REHEARSAL_HOME/dev/state --out <shots>/dev
 ```
 
+Dashboards: dev's and prod's Grafana load them from the deployment's files, not from a database,
+so a bundle holds none. Render the deployment at the environment's ref (main for dev, release for
+prod; `just _dev-assemble` first) and import its Grafana files: each project's folder, datasources
+and dashboard into its own daiya organization (as `provision.sh` does), every datasource on the
+rehearsal's own gateway for the same Endpoint slug, the platform models in the main organization.
+
+```sh
+python3 -I rehearsal.py dashboards --render <render>/dev --out <dashboards>/dev
+python3 -I rehearsal.py import --export <export> --base http://localhost:42101 --state $REHEARSAL_HOME/dev/state \
+  --report $REHEARSAL_HOME/dev/dashboards-report.json --only daiya --dashboards <dashboards>/dev
+python3 -I rehearsal.py portal-dashboards --base http://localhost:42101 --state $REHEARSAL_HOME/dev/state \
+  --dashboards <dashboards>/dev --report $REHEARSAL_HOME/dev/portal-dashboards.json
+```
+
+smartcity (prod) deploys no `grafana` component: its rehearsal takes the 7 platform files of
+`components/grafana/charts/dashboards/files/` on release, for comparison only.
+
 prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME/<env>` first
 (the `rh-pg-<env>` container too: `docker rm -f rh-pg-<env>`).
 

@@ -324,3 +324,82 @@ def test_the_old_history_check_fails_when_it_cannot_read(tmp_path):
     pw.write_text("x")
     with pytest.raises(RuntimeError):
         rh.old_history("127.0.0.1", 1, "antares", "antares", str(pw), dt.datetime(2026, 11, 7, tzinfo=dt.UTC))
+
+
+def test_a_datasource_reads_the_same_endpoint_on_the_rehearsal():
+    gw = "http://context-gateway.smartcity.svc.cluster.local:8080/api/endpoint/jtjnhkaau64zmzz5csmcwem52icvufy2"
+    assert rh.rehearsal_endpoint_url(gw, "http://localhost:42102/") == \
+        "http://localhost:42102/api/endpoint/jtjnhkaau64zmzz5csmcwem52icvufy2"
+    assert rh.rehearsal_endpoint_url("http://prometheus:9090", "http://localhost:42102") == "http://prometheus:9090"
+
+
+def test_each_project_dashboard_goes_into_its_own_organization(tmp_path):
+    """The real importer against a stub daiya: a project's folder, datasource and dashboard carry
+    its organization (made once, 409 -> by name), the datasource names the rehearsal's gateway, an
+    existing datasource is replaced, and a platform model stays in the main organization."""
+    seen = []
+
+    class Daiya(http.server.BaseHTTPRequestHandler):
+        def _answer(self, status, body):
+            raw = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def _record(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n)) if n else None
+            seen.append((self.command, self.path, self.headers.get("X-Grafana-Org-Id"), body))
+            return body
+
+        def do_POST(self):  # noqa: N802
+            self._record()
+            if self.path == "/dashboards/api/orgs":
+                return self._answer(409, {"message": "exists"})
+            if self.path == "/dashboards/api/datasources":
+                return self._answer(409, {"message": "exists"})
+            self._answer(200, {"status": "success"})
+
+        def do_PUT(self):  # noqa: N802
+            self._record()
+            self._answer(200, {})
+
+        def do_GET(self):  # noqa: N802
+            self._record()
+            self._answer(200, {"id": 7, "name": "helsinki"})
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Daiya)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "dashboards-password").write_text("pw")
+    d = tmp_path / "dash"
+    d.mkdir()
+    (d / "helsinki.folder.json").write_text(json.dumps({"uid": "project-helsinki", "title": "Helsinki"}))
+    (d / "helsinki.datasource.air.json").write_text(json.dumps({
+        "uid": "air", "name": "air", "type": "ngsild-grafana-datasource",
+        "url": "http://context-gateway.dev.svc.cluster.local:8080/api/endpoint/abc"}))
+    (d / "helsinki.dashboard.json").write_text(json.dumps({"folderUid": "project-helsinki", "dashboard": {"uid": "h", "title": "H"}}))
+    (d / "portal.json").write_text(json.dumps({"uid": "portal", "title": "Portal"}))
+    report = {}
+    try:
+        rh.import_daiya(rh.Http(base), state, tmp_path, None, report, d)
+    finally:
+        server.shutdown()
+    assert {r["result"] for r in report["daiya"]} <= {"imported", "unchanged"}, report
+    org_calls = [s for s in seen if "/orgs" in s[1]]
+    assert [c[:2] for c in org_calls] == [("POST", "/dashboards/api/orgs"), ("GET", "/dashboards/api/orgs/name/helsinki")]
+    project = [s for s in seen if s[1].startswith(("/dashboards/api/folders", "/dashboards/api/datasources",
+                                                   "/dashboards/api/dashboards/db")) and s[3].get("dashboard", {}).get("uid") != "portal"]
+    assert project and all(s[2] == "7" for s in project), project
+    put = [s for s in seen if s[0] == "PUT"]
+    assert put and put[0][1] == "/dashboards/api/datasources/uid/air"
+    assert put[0][3]["url"] == f"{base}/api/endpoint/abc"
+    model = [s for s in seen if (s[3] or {}).get("dashboard", {}).get("uid") == "portal"]
+    assert model and model[0][2] is None
