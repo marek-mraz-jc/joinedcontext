@@ -6,6 +6,7 @@
 //! reached only through its mount in `jc-router` (one domain with a slug per module, a host per
 //! module, or both; overlapping mounts are refused at start).
 
+pub mod access;
 pub mod app;
 pub mod config;
 pub mod module;
