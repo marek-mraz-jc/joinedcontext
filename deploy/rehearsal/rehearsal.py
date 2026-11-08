@@ -22,7 +22,6 @@ import datetime as dt
 import hashlib
 import html
 import ipaddress
-import itertools
 import json
 import os
 import re
@@ -842,6 +841,31 @@ def retain_once(a, now: dt.datetime) -> dict:
             **({} if r.returncode == 0 else {"failed": r.stderr.strip()[-300:]})}
 
 
+def old_history_sql(cutoff: dt.datetime) -> str:
+    """Counts the history rows older than `cutoff` that retain would delete (audit rows aside)."""
+    stmts = ["BEGIN;", "SELECT set_config('antares.service', 'on', true) \\g /dev/null"]
+    for table in HISTORY_TABLES:
+        stmts.append(
+            f"SELECT to_regclass('public.{table}') IS NOT NULL AS has \\gset\n"
+            f"\\if :has\n"
+            f"SELECT 'old {table} ' || count(*) FROM public.{table} WHERE observed_at < '{iso(cutoff)}' "
+            f"AND NOT coalesce(provenance @> '{{\"audit\": true}}', false);\n"
+            f"\\endif")
+    stmts.append("COMMIT;")
+    return "\n".join(stmts) + "\n"
+
+
+def old_history(host, port, user, db, password_file, cutoff: dt.datetime) -> int:
+    """History rows older than `cutoff` in the rehearsal's Antares database; raises when it
+    cannot read them (a check that cannot look must not pass)."""
+    env = dict(os.environ, PGPASSWORD=Path(password_file).read_text().strip())
+    psql = ["psql", "-AXt", "-v", "ON_ERROR_STOP=1", "-h", host, "-p", str(port), "-U", user, "-d", db]
+    r = subprocess.run(psql, input=old_history_sql(cutoff), env=env, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip()[-300:])
+    return sum(int(x) for x in re.findall(r"^old \w+ (\d+)$", r.stdout, re.M))
+
+
 def cmd_retain(a):
     """Deletes temporal instances older than 24 h now and then every `--every` seconds."""
     while True:
@@ -1066,20 +1090,58 @@ def cmd_smoke(a):
             bad.append(f"{slug}: {st} {ctype} {body[:80]!r}")
     check(f"{len(set(eps))} public Endpoints answer a query", not bad and bool(eps),
           f"{len(bad)} failed: {'; '.join(bad[:5])}", "GET /api/endpoint/{slug}/ngsi-ld/v1/types")
-    # 9. the 24 h rule holds in the broker: no instance older than the window
-    old = []
-    for t in itertools.islice(_jsonl(export / "antares" / "temporal.jsonl"), 50):
-        st, body = h.json("GET", f"/broker/ngsi-ld/v1/temporal/entities/{urllib.parse.quote(t['id'], safe='')}"
-                                 f"?attrs={t['attr']}&timerel=before&timeAt={iso(cutoff_for(utcnow()) - SWEEP)}",
-                          headers={"NGSILD-Tenant": t["tenant"]})
-        if st == 200 and isinstance(body, dict) and body.get(t["attr"]):
-            old.append(t["id"])
-    check("broker holds no history older than 24 h", not old, f"{len(old)} entities with old instances",
-          "GET /broker/ngsi-ld/v1/temporal/entities/{id}?timerel=before")
+    # 9. the 24 h rule holds in the broker: no instance older than the window (+ one sweep), read
+    # in its database (the broker's reads need a subject on its default policy)
+    if a.pg_port and a.antares_password_file:
+        try:
+            n = old_history("127.0.0.1", a.pg_port, "antares", "antares", a.antares_password_file,
+                            cutoff_for(utcnow()) - SWEEP)
+            check("broker holds no history older than 24 h", n == 0, f"{n} history rows older than the window",
+                  "SELECT count(*) FROM attr_instances, attr_rows WHERE observed_at < now() - 25 h")
+        except RuntimeError as e:
+            check("broker holds no history older than 24 h", False, f"cannot read: {e}", "psql antares")
+    else:
+        check("broker holds no history older than 24 h", False, "not checked: no --pg-port/--antares-password-file",
+              "psql antares")
     Path(a.report).write_text(json.dumps({"base": a.base, "at": iso(utcnow()), "checks": checks}, indent=1))
     for c in checks:
         print(f"{c['result']:4}  {c['check']}  {c['detail'][:160]}")
     return 0 if all(c["result"] == "pass" for c in checks) else 1
+
+
+
+# ---- policy after the import ---------------------------------------------------------------------
+
+PROBE_TENANT = "rehearsal-probe"
+PROBE = {"id": "urn:ngsi-ld:RehearsalProbe:anonymous", "type": "RehearsalProbe"}
+
+
+def policy_problems(write_status: int, engine) -> list[str]:
+    """What is wrong with a broker that should serve on its default policy: an anonymous write
+    must answer 401 and /q/health must name the joinedcontext engine."""
+    problems = []
+    if write_status != 401:
+        problems.append(f"an anonymous write answered {write_status}, not 401")
+    if engine != "joinedcontext":
+        problems.append(f"the broker's policy engine is {engine!r}, not 'joinedcontext'")
+    return problems
+
+
+def cmd_policy_check(a):
+    """After an import under allow-all: the restarted broker refuses an anonymous write."""
+    loopback_only(a.base)
+    h = Http(a.base)
+    st, _ = h.json("POST", "/broker/ngsi-ld/v1/entities", body=PROBE,
+                   headers={"NGSILD-Tenant": PROBE_TENANT})
+    if 200 <= st < 300:  # the probe got in: take it out again
+        h.call("DELETE", f"/broker/ngsi-ld/v1/entities/{urllib.parse.quote(PROBE['id'], safe='')}",
+               headers={"NGSILD-Tenant": PROBE_TENANT})
+    hst, health = h.json("GET", "/broker/q/health", headers={
+        "Authorization": f"Bearer {read_secret(Path(a.state), 'antares-admin-token')}"})
+    engine = (health or {}).get("policy", {}).get("engine") if hst == 200 and isinstance(health, dict) else f"unknown ({hst})"
+    problems = policy_problems(st, engine)
+    print(json.dumps({"anonymousWrite": st, "engine": engine, "problems": problems}))
+    return 1 if problems else 0
 
 
 def main(argv=None):
@@ -1100,8 +1162,10 @@ def main(argv=None):
     s.add_argument("--every", type=int, default=0, help="repeat every N seconds (0: once)")
     s = sub.add_parser("smoke"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     s.add_argument("--export", required=True); s.add_argument("--report", required=True); s.add_argument("--realms")
+    s.add_argument("--pg-port"); s.add_argument("--antares-password-file")
+    s = sub.add_parser("policy-check"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     a = p.parse_args(argv)
-    return {"render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import,
+    return {"policy-check": cmd_policy_check, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import,
             "retain": cmd_retain, "smoke": cmd_smoke}[a.cmd](a) or 0
 
 

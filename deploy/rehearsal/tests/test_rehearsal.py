@@ -310,3 +310,17 @@ def test_a_bundle_still_being_written_is_not_imported(tmp_path):
     with pytest.raises(SystemExit):
         rh.main(["import", "--export", str(tmp_path), "--base", "http://127.0.0.1:1", "--state", str(tmp_path),
                  "--report", str(tmp_path / "r.json")])
+
+
+def test_the_broker_after_the_import_refuses_an_anonymous_write():
+    assert rh.policy_problems(401, "joinedcontext") == []
+    assert rh.policy_problems(201, "joinedcontext") == ["an anonymous write answered 201, not 401"]
+    assert rh.policy_problems(401, "allow-all") == ["the broker's policy engine is 'allow-all', not 'joinedcontext'"]
+    assert len(rh.policy_problems(403, None)) == 2
+
+
+def test_the_old_history_check_fails_when_it_cannot_read(tmp_path):
+    pw = tmp_path / "pw"
+    pw.write_text("x")
+    with pytest.raises(RuntimeError):
+        rh.old_history("127.0.0.1", 1, "antares", "antares", str(pw), dt.datetime(2026, 11, 7, tzinfo=dt.UTC))

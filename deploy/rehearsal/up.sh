@@ -4,8 +4,7 @@
 #   deploy/rehearsal/up.sh <env> <public port> <postgres port>
 #
 # Every secret is a 0600 file under $REHEARSAL_HOME/<env>/secrets (generated once, never printed).
-# kaisatsu, Antares, the Portal, shako, daiya and dataroom keep their state in PostgreSQL; ekiben
-# has no Postgres path in jc and starts empty.
+# kaisatsu, Antares, the Portal, shako, daiya, dataroom and ekiben keep their state in PostgreSQL.
 # The 24 h rule (owner 2026-11-08): `rehearsal.py retain` deletes Antares temporal instances older
 # than 24 h at start and hourly; Antares' own retention (whole days, whole weekly partitions) runs
 # beside it with ANTARES_TEMPORAL_RETENTION_DAYS=1. Current entity state is never deleted.
@@ -66,7 +65,7 @@ database portal portal
 database antares antares
 sql -d antares -c "CREATE EXTENSION IF NOT EXISTS postgis"
 
-# shako, daiya and dataroom: each migration runs as <m>_rh_migrate (owner of its database, member of
+# shako, daiya, dataroom and ekiben: each migration runs as <m>_rh_migrate (owner of its database, member of
 # <m>_migrate) and grants its tables to <m>_app, which the login role <m>_rh holds (NOBYPASSRLS).
 module_db() { # module_db <module>
   local m=$1
@@ -78,14 +77,20 @@ SQL
   role "${m}_rh_migrate" "$(secret "${m}-migrate-pw")" >/dev/null
   sql -c "GRANT ${m}_app TO ${m}_rh" -c "GRANT ${m}_migrate TO ${m}_rh_migrate" >/dev/null
   database "$m" "${m}_rh_migrate" >/dev/null
-  printf 'postgres://%s_rh@127.0.0.1:%s/%s\n' "$m" "$pg_port" "$m" > "$home/secrets/$m-db-url"
-  printf 'postgres://%s_rh_migrate@127.0.0.1:%s/%s\n' "$m" "$pg_port" "$m" > "$home/secrets/$m-db-migrate-url"
   # A [dataroom] section must name its organization and catalogue: jc's defaults.
   [ "$m" = dataroom ] && printf '\n[dataroom]\norg_id = "00000000-0000-7000-8000-000000000001"\ncatalogue_id = "00000000-0000-7000-8000-000000000010"\n'
-  printf '\n[%s.database]\nurl_file = "%s"\npassword_file = "%s"\nmigrate_url_file = "%s"\nmigrate_password_file = "%s"\n' \
-    "$m" "$home/secrets/$m-db-url" "$(secret "${m}-pw")" "$home/secrets/$m-db-migrate-url" "$(secret "${m}-migrate-pw")"
+  # jc reads [<m>.database] (bins/jc/src/pg.rs): the URLs name role, host and database and carry
+  # no password (jc refuses one); each password stays in its 0600 file.
+  printf '\n[%s.database]\nurl = "postgres://%s_rh@127.0.0.1:%s/%s"\npassword_file = "%s"\n' \
+    "$m" "$m" "$pg_port" "$m" "$(secret "${m}-pw")"
+  printf 'migrate_url = "postgres://%s_rh_migrate@127.0.0.1:%s/%s"\nmigrate_password_file = "%s"\n' \
+    "$m" "$pg_port" "$m" "$(secret "${m}-migrate-pw")"
 }
-db_config=$(for m in shako daiya dataroom; do module_db "$m"; done)
+db_config=$(for m in shako daiya dataroom ekiben; do module_db "$m"; done)
+# Antares migrates as its own request role and takes no migrate_url; the section switches it to
+# its Postgres store (ANTARES_STORE).
+db_config+=$(printf '\n[antares.database]\nurl = "postgres://antares@127.0.0.1:%s/antares"\npassword_file = "%s"\n' \
+  "$pg_port" "$(secret antares-pw)")
 
 kaisatsu_bin=$(dirname "$jc_bin")/kaisatsu
 "$kaisatsu_bin" migrate --database-url "postgres://kaisatsu_migrate@127.0.0.1:$pg_port/kaisatsu" \
@@ -104,7 +109,17 @@ fi
 
 url() { printf 'postgres://%s:%s@127.0.0.1:%s/%s' "$1" "$(cat "$(secret "$1-pw")")" "$pg_port" "$2"; }
 JC_PORTAL_DATABASE_URL=$(url portal portal); export JC_PORTAL_DATABASE_URL
-ANTARES_DATABASE_URL=$(url antares antares); export ANTARES_STORE=postgres ANTARES_DATABASE_URL
+# The broker serves on jc's default policy (joinedcontext: an anonymous write answers 401). Only
+# import.sh asks for allow-all, for the import's subject-less writes, and only on a loopback bind;
+# it restarts on the default policy afterwards and checks it.
+if [ "${REHEARSAL_IMPORT_POLICY:-}" = allow-all ]; then
+  case $bind in
+    127.*|::1) export ANTARES_POLICY=allow-all ;;
+    *) echo "refusing allow-all on $bind: the import runs on a loopback-only jc" >&2; exit 1 ;;
+  esac
+else
+  unset ANTARES_POLICY
+fi
 export ANTARES_TEMPORAL_RETENTION_DAYS=1 ANTARES_SWEEP_SECS=${REHEARSAL_SWEEP_SECS:-3600}
 export ANTARES_HISTORY_BACKFILL=on
 # jc is one process: the local notification bus cannot double-fire.
