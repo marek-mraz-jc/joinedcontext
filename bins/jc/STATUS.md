@@ -520,6 +520,18 @@ Portal reads it per call from `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` (`crates/porta
   (`pipeline_secrets::hand_runner_secrets_to`, `modules::ekiben::HostRunner`) instead of writing a Kubernetes Secret; a
   variable `jc` was given (`EKIBEN_VAR_*`) wins over a pipeline's.
 
+### Endpoint scopes (`src/modules/kaisatsu.rs`)
+
+The Portal's token exchange for a data read (`jc_data_query`, audience `mcp-hub`, scope
+`gateway-hub endpoint:{slug}`) needs `endpoint:{slug}` as an optional scope of `portal-api`. On
+dev the deployment's keycloak-admin-permissions-sync CronJob links it as the realm admin; jc's
+kaisatsu does the same in process every 5 s: every Portal-made `endpoint:` scope (marked
+`managed-by: joinedcontext`, no protocol mapper) becomes an optional scope of `mcp-hub`, `jcctl`
+and `portal-api` (whichever exist); an unmarked, removed or default-linked `endpoint:` scope is
+unlinked, and `endpoint:*` stays only as the hub's default. No realm-wide optional scope (T-6301).
+`tests/gateway_endpoints.rs` reads the closed Endpoint through `/api/v1/mcp` as a member, and a
+person in no group gets the exchanged token and is still refused by the gateway's Policy.
+
 ### Role split (`src/door.rs`)
 
 - Module container, `[door]` (`issuer`, `jwks_url`, `clients`): a bearer JWT that kaisatsu signed (ES256, RS256 or
