@@ -124,12 +124,11 @@ fn seeded() -> Arc<Mirror> {
             }
         })),
     ));
-    // An endpoint that publishes nowhere, which must not appear in the answer at all.
-    mirror.upsert(envelope(
-        "Endpoint",
-        "internal-air",
-        endpoint_spec(Value::Null),
-    ));
+    // A closed endpoint that publishes nowhere, which must not appear in the answer at all
+    // (EP-174: only a public one is a dataset without a block).
+    let mut internal = endpoint_spec(Value::Null);
+    internal["audience"] = json!("organization");
+    mirror.upsert(envelope("Endpoint", "internal-air", internal));
     mirror
 }
 
@@ -429,5 +428,62 @@ async fn a_catalogue_carrying_an_inline_token_is_refused() {
             .as_str()
             .is_some_and(|detail| detail.contains("apiToken")),
         "the steward has to learn which field was refused: {problem}"
+    );
+}
+
+/// EP-174, EP-175: a public endpoint without a block is listed as the dataset by its own name on
+/// the project's only catalogue, and one listing datasets as one entry per dataset, each with
+/// its narrowed resources.
+#[tokio::test]
+async fn a_public_endpoint_is_listed_by_default_and_each_dataset_of_a_list_on_its_own() {
+    let mirror = seeded();
+    mirror.upsert(envelope(
+        "Endpoint",
+        "air-default",
+        endpoint_spec(Value::Null),
+    ));
+    let mut listing = endpoint_spec(Value::Null);
+    listing["catalog"] = json!({ "datasets": [
+        { "name": "bb-pm", "title": { "sk": "Prach" }, "description": { "sk": "PM10" },
+          "types": ["AirQualityObserved"] },
+        { "name": "bb-zle", "title": { "sk": "Zlé" }, "description": { "sk": "Nad limitom" },
+          "types": ["AirQualityObserved"], "q": "pm10>50" },
+    ] });
+    mirror.upsert(envelope("Endpoint", "air-listing", listing));
+
+    let (status, body) = status_of(mirror).await;
+    assert_eq!(status, StatusCode::OK);
+    let rows: Vec<(&str, &str)> = body["publications"]
+        .as_array()
+        .expect("publications")
+        .iter()
+        .filter_map(|p| Some((p["endpoint"].as_str()?, p["dataset"].as_str()?)))
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("air-default", "air-default"),
+            ("air-listing", "bb-pm"),
+            ("air-listing", "bb-zle"),
+            ("ovzdusie-public", "kvalita-ovzdusia"),
+        ],
+        "{body}"
+    );
+    let zle = body["publications"]
+        .as_array()
+        .expect("publications")
+        .iter()
+        .find(|p| p["dataset"] == "bb-zle")
+        .expect("bb-zle");
+    assert_eq!(zle["instance"], json!("open-data"));
+    assert!(
+        zle["resources"]
+            .as_array()
+            .expect("resources")
+            .iter()
+            .any(|r| r["url"]
+                .as_str()
+                .is_some_and(|u| u.ends_with("entities?type=AirQualityObserved&q=pm10%3E50"))),
+        "{zle}"
     );
 }

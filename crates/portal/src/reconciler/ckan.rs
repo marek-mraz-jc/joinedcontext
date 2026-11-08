@@ -38,6 +38,7 @@
 use crate::store::Mirror;
 use jc_core::kinds::ckan::CkanInstanceSpec;
 use jc_core::kinds::EndpointSpec;
+use jcctl::catalogue::{self, Catalogues, Door, Planned};
 use jcctl::commands::publish_ckan::{self as publisher, Target};
 use jcctl::loader::{RawManifest, RawMetadata, Repository, ResourceId};
 use jcctl::publish::ckan::{CkanApi, CkanError, Measurements, Outcome, Settings};
@@ -69,13 +70,16 @@ pub enum Publication {
     Failed(String),
 }
 
-/// One line of a run: which Endpoint of which project, and what happened to its dataset.
+/// One line of a run: which dataset of which Endpoint of which project, and what happened to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
     /// The project the Endpoint belongs to.
     pub project: String,
     /// The Endpoint's name.
     pub endpoint: String,
+    /// The CKAN dataset name, one of several when the Endpoint lists `spec.catalog.datasets`
+    /// (EP-175); empty for a line about the Endpoint or the project as a whole.
+    pub dataset: String,
     /// What happened.
     pub publication: Publication,
 }
@@ -85,7 +89,17 @@ impl Report {
         Self {
             project: project.to_owned(),
             endpoint: endpoint.to_owned(),
+            dataset: String::new(),
             publication: Publication::Failed(reason.into()),
+        }
+    }
+
+    fn of(target: &Target, publication: Publication) -> Self {
+        Self {
+            project: target.id.namespace.clone().unwrap_or_default(),
+            endpoint: target.id.name.clone(),
+            dataset: target.dataset_name().to_owned(),
+            publication,
         }
     }
 }
@@ -105,10 +119,11 @@ pub struct CkanSync {
         Arc<crate::quality::Store>,
         Arc<crate::quality_checks::Readings>,
     )>,
-    /// What the log last said of each `(project, endpoint)`, so an outcome is logged when it
-    /// changes and not once a sync (T-4065).
-    said: Arc<Mutex<HashMap<(String, String), String>>>,
-    /// When each `(project, endpoint)` is next published (T-4717).
+    /// What the log last said of each `(project, endpoint, dataset)`, so an outcome is logged
+    /// when it changes and not once a sync (T-4065).
+    said: Arc<Mutex<HashMap<(String, String, String), String>>>,
+    /// When each `(catalogue, dataset)` is next published (T-4717, EP-178), and when an
+    /// Endpoint that cannot be published is next said to be (EP-174).
     pacing: Arc<Mutex<Pacing>>,
     /// When this Portal may next call the catalogue or read the gateway, shared by every
     /// publication (T-4717).
@@ -117,6 +132,9 @@ pub struct CkanSync {
     /// in-cluster address its API is called at instead (T-5314). `None` calls every instance
     /// at its `spec.url`.
     api_route: Option<(String, String)>,
+    /// The installation's own catalogue, where a public Endpoint of a project without a
+    /// `CkanInstance` is published (EP-174). `None` publishes such an Endpoint nowhere.
+    installation: Option<CkanInstanceSpec>,
 }
 
 impl CkanSync {
@@ -130,7 +148,15 @@ impl CkanSync {
             pacing: Arc::default(),
             last_call: Arc::default(),
             api_route: None,
+            installation: None,
         }
+    }
+
+    /// Publishes a public Endpoint of a project that declares no `CkanInstance` into the
+    /// installation's own catalogue (EP-174). The operator configures it, never a manifest.
+    pub fn with_installation_catalogue(mut self, instance: CkanInstanceSpec) -> Self {
+        self.installation = Some(instance);
+        self
     }
 
     /// Calls the API of the instance whose `spec.url` is `public` at `api` instead, the
@@ -222,14 +248,25 @@ impl CkanSync {
         let mut reports = Vec::new();
         let mut wanted: Vec<Target> = Vec::new();
         let known = Organizations::default();
-        let mut unread = false;
+        let mut unread: BTreeSet<String> = BTreeSet::new();
+        // Endpoints that would be datasets and cannot be, this run: each keeps what it had in
+        // the catalogue until its author fixes it, and is said to be unpublished (EP-174).
+        let mut held: BTreeSet<(String, String)> = BTreeSet::new();
         for project in projects(repo) {
-            match publisher::targets(repo, &project) {
-                Ok(targets) => wanted.extend(targets),
+            match publisher::targets_with(repo, &project, self.installation.as_ref()) {
+                Ok((targets, unplanned)) => {
+                    wanted.extend(targets);
+                    for line in unplanned {
+                        held.insert((line.project.clone(), line.endpoint.clone()));
+                        if let Some(report) = self.unplanned(line) {
+                            reports.push(report);
+                        }
+                    }
+                }
                 // A project whose publication does not read is one project's problem: the
                 // Endpoint names an instance that is not there, or a spec that does not parse.
                 Err(err) => {
-                    unread = true;
+                    unread.insert(project.clone());
                     reports.push(Report::failed(&project, "", err.to_string()));
                 }
             }
@@ -239,16 +276,6 @@ impl CkanSync {
         // other on every pass, across projects too (T-6079). Neither is written.
         let refused = claimed_twice(&wanted);
         let claims: BTreeSet<(String, String)> = wanted.iter().map(claim).collect();
-
-        let published: BTreeSet<(String, String)> = wanted
-            .iter()
-            .map(|target| {
-                (
-                    target.id.namespace.clone().unwrap_or_default(),
-                    target.id.name.clone(),
-                )
-            })
-            .collect();
 
         // Per catalogue and organization, the datasets the current Endpoints publish there: what
         // the sweep keeps (T-4461).
@@ -271,14 +298,11 @@ impl CkanSync {
         }
 
         for target in wanted {
-            let key = (
-                target.id.namespace.clone().unwrap_or_default(),
-                target.id.name.clone(),
-            );
-            if let Some(reason) = refused.get(&key) {
-                reports.push(Report::failed(&key.0, &key.1, reason.clone()));
+            if let Some(reason) = refused.get(&owner(&target)) {
+                reports.push(Report::of(&target, Publication::Failed(reason.clone())));
                 continue;
             }
+            let key = claim(&target);
             let print = fingerprint(&target, &self.settings);
             let due = self.pacing.lock().unwrap_or_else(|p| p.into_inner()).due(
                 &key,
@@ -296,18 +320,25 @@ impl CkanSync {
                 .record(key, print, &report.publication, Instant::now());
             reports.push(report);
         }
-        // A dataset a current Endpoint still publishes (a renamed Endpoint keeping its dataset
-        // name, or another project's) is not the gone Endpoint's to delete.
-        for target in withdrawn(previous, &published)
+        // Each dataset the previous run published and this one does not, by its catalogue and
+        // name (EP-178): an entry removed from an Endpoint's list goes alone. A dataset a
+        // current Endpoint still publishes (a renamed Endpoint keeping its dataset name, or
+        // another project's) is not the gone one's to delete; nor is the dataset of a project
+        // that did not read or of an Endpoint held back this run.
+        for target in withdrawn(previous, &claims, self.installation.as_ref())
             .into_iter()
-            .filter(|target| !claims.contains(&claim(target)))
+            .filter(|target| {
+                let project = target.id.namespace.clone().unwrap_or_default();
+                !unread.contains(&project) && !held.contains(&(project, target.id.name.clone()))
+            })
         {
             let measured = Measurements::default();
             reports.push(self.one(&target, true, repository, measured, &known).await);
         }
         // A project whose publications did not read keeps its datasets out of `kept`, and a
-        // shared organization would lose them: no sweep in such a pass.
-        if unread {
+        // shared organization would lose them: no sweep in such a pass. An Endpoint held back
+        // keeps its datasets out of `kept` the same way.
+        if !unread.is_empty() || !held.is_empty() {
             sweeps.clear();
         }
         for ((_, organization), (target, kept)) in sweeps {
@@ -318,6 +349,26 @@ impl CkanSync {
         }
         self.log(&reports);
         reports
+    }
+
+    /// The line of an Endpoint that would be a dataset and cannot be (EP-174), when it is due:
+    /// paced as a failed publication is, so the activity feed hears it again only after a
+    /// back-off or when the reason changes.
+    fn unplanned(&self, line: catalogue::Unplanned) -> Option<Report> {
+        let key = (format!("{}/{}", line.project, line.endpoint), String::new());
+        let print = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            line.reason.hash(&mut hasher);
+            hasher.finish()
+        };
+        let mut pacing = self.pacing.lock().unwrap_or_else(|p| p.into_inner());
+        if !pacing.due(&key, print, Instant::now()) {
+            return None;
+        }
+        let report = Report::failed(&line.project, &line.endpoint, line.reason);
+        pacing.record(key, print, &report.publication, Instant::now());
+        Some(report)
     }
 
     /// One log line per Endpoint whose outcome changed since the last run, and one per write:
@@ -339,7 +390,11 @@ impl CkanSync {
                 Publication::Withdrawn { .. } => ("withdrawn".to_owned(), true),
                 Publication::Failed(reason) => (format!("failed: {reason}"), false),
             };
-            let key = (report.project.clone(), report.endpoint.clone());
+            let key = (
+                report.project.clone(),
+                report.endpoint.clone(),
+                report.dataset.clone(),
+            );
             if !wrote && said.get(&key) == Some(&line) {
                 continue;
             }
@@ -369,9 +424,8 @@ impl CkanSync {
         measured: Measurements,
         known: &Organizations,
     ) -> Report {
-        let project = target.id.namespace.clone().unwrap_or_default();
-        let endpoint = target.id.name.clone();
         let settings = self.settings.clone();
+        let line = |publication| Report::of(target, publication);
         let target = target.clone();
         let repository = repository.to_path_buf();
         let age_key_file = self.age_key_file.clone();
@@ -398,17 +452,11 @@ impl CkanSync {
         .await;
 
         match work {
-            Ok(Ok(publication)) => Report {
-                project,
-                endpoint,
-                publication,
-            },
-            Ok(Err(reason)) => Report::failed(&project, &endpoint, reason),
-            Err(err) => Report::failed(
-                &project,
-                &endpoint,
-                format!("the publication did not finish: {err}"),
-            ),
+            Ok(Ok(publication)) => line(publication),
+            Ok(Err(reason)) => line(Publication::Failed(reason)),
+            Err(err) => line(Publication::Failed(format!(
+                "the publication did not finish: {err}"
+            ))),
         }
     }
 
@@ -448,7 +496,8 @@ impl CkanSync {
                 .into_iter()
                 .map(|(dataset, publication)| Report {
                     project: project.clone(),
-                    endpoint: dataset,
+                    endpoint: dataset.clone(),
+                    dataset,
                     publication,
                 })
                 .collect(),
@@ -847,117 +896,179 @@ fn projects(repo: &Repository) -> BTreeSet<String> {
 
 /// The catalogue and dataset name a publication writes: the instance's URL, so two
 /// `CkanInstance`s of two projects pointing at one CKAN are one catalogue, and the dataset name.
-fn claim(target: &Target) -> (String, String) {
+pub fn claim(target: &Target) -> (String, String) {
     (
         target.instance.base_url().to_ascii_lowercase(),
         target.dataset_name().to_owned(),
     )
 }
 
-/// Every Endpoint that shares its catalogue and dataset name with another, keyed by (project,
-/// name), with the reason it is not published: the others it collides with and the fix. CKAN
-/// dataset names are one namespace per catalogue, so publishing either would overwrite the
-/// other's dataset (T-6079); none of them is written until one takes a name of its own.
-pub fn claimed_twice(wanted: &[Target]) -> HashMap<(String, String), String> {
-    let mut claimants: BTreeMap<(String, String), Vec<(String, String)>> = BTreeMap::new();
+/// Who publishes a target: `(project, endpoint, dataset)`, the key [`claimed_twice`] refuses by.
+pub fn owner(target: &Target) -> (String, String, String) {
+    (
+        target.id.namespace.clone().unwrap_or_default(),
+        target.id.name.clone(),
+        target.dataset_name().to_owned(),
+    )
+}
+
+/// Every dataset whose catalogue and name another Endpoint's dataset also claims, keyed by
+/// [`owner`], with the reason it is not published: the others it collides with and the fix.
+/// CKAN dataset names are one namespace per catalogue, so publishing either would overwrite the
+/// other's dataset (T-6079, EP-177); none of them is written until one takes a name of its own.
+/// Another dataset of the same Endpoint is not refused with it.
+pub fn claimed_twice(wanted: &[Target]) -> HashMap<(String, String, String), String> {
+    let mut claimants: BTreeMap<(String, String), Vec<&Target>> = BTreeMap::new();
     for target in wanted {
-        claimants.entry(claim(target)).or_default().push((
-            target.id.namespace.clone().unwrap_or_default(),
-            target.id.name.clone(),
-        ));
+        claimants.entry(claim(target)).or_default().push(target);
     }
     let mut refused = HashMap::new();
-    for ((catalogue, dataset), endpoints) in claimants {
-        if endpoints.len() < 2 {
-            continue;
-        }
-        for endpoint in &endpoints {
-            let others: Vec<String> = endpoints
+    for ((catalogue, dataset), targets) in claimants {
+        for target in &targets {
+            let others: BTreeSet<String> = targets
                 .iter()
-                .filter(|other| *other != endpoint)
-                .map(|(project, name)| format!("{project}/{name}"))
+                .filter(|other| owner(other) != owner(target))
+                .map(|other| {
+                    format!(
+                        "{}/{}",
+                        other.id.namespace.as_deref().unwrap_or_default(),
+                        other.id.name
+                    )
+                })
                 .collect();
+            if others.is_empty() {
+                continue;
+            }
+            let field = if target.slice.is_some() {
+                "the spec.catalog.datasets entry"
+            } else {
+                "spec.publish.ckan.name"
+            };
+            let project = target.id.namespace.as_deref().unwrap_or_default();
             let reason = format!(
                 "not published: the CKAN dataset `{dataset}` on {catalogue} is also what Endpoint \
                  {} publishes, and one catalogue holds one dataset of a name, so neither is \
-                 written; set spec.publish.ckan.name to a name of its own, such as `{}-{dataset}`",
-                others.join(", "),
-                endpoint.0,
+                 written; give {field} a name of its own, such as `{project}-{dataset}`",
+                others.into_iter().collect::<Vec<_>>().join(", "),
             );
-            refused.insert(endpoint.clone(), reason);
+            refused.insert(owner(target), reason);
         }
     }
     refused
 }
 
-/// The publications the previous run had and this one does not: an Endpoint whose `publish.ckan`
-/// block was withdrawn, and an Endpoint that is gone altogether (CC-19).
+/// The datasets the previous run published and this one does not (CC-19, EP-178): an
+/// Endpoint whose publication was withdrawn or that is gone altogether, an Endpoint that stopped
+/// being public, and one entry removed from an Endpoint's `spec.catalog.datasets`.
 ///
-/// `published` is what this run publishes, as `(project, endpoint)`.
+/// `kept` is what this run publishes, as `(catalogue, dataset)` ([`claim`]); `installation` the
+/// installation's catalogue the previous run published into, as this one does.
 ///
 /// Read from the previous mirror rather than from CKAN, so a dataset this reconciler never
 /// published is never deleted by it. A withdrawal that happens while the Portal is down is not
 /// seen here; [`sweep_with`] finds it in the catalogue by the platform's own `generated_by` mark.
-pub fn withdrawn(previous: &Mirror, published: &BTreeSet<(String, String)>) -> Vec<Target> {
-    let mut gone = Vec::new();
-    for envelope in previous.matching(|env| env.kind == "Endpoint") {
+pub fn withdrawn(
+    previous: &Mirror,
+    kept: &BTreeSet<(String, String)>,
+    installation: Option<&CkanInstanceSpec>,
+) -> Vec<Target> {
+    let mut catalogues = Catalogues {
+        installation: installation.cloned(),
+        ..Catalogues::default()
+    };
+    let mut endpoints = Vec::new();
+    for envelope in
+        previous.matching(|env| matches!(env.kind.as_str(), "Endpoint" | "CkanInstance" | "App"))
+    {
         let project = envelope.metadata.namespace.clone().unwrap_or_default();
         let name = envelope.metadata.name.clone();
-        if published.contains(&(project.clone(), name.clone())) {
-            continue;
+        match envelope.kind.as_str() {
+            "CkanInstance" => {
+                if let Ok(spec) = serde_json::from_value(envelope.spec.clone()) {
+                    catalogues
+                        .instances
+                        .entry(project)
+                        .or_default()
+                        .insert(name, spec);
+                }
+            }
+            "App" => {
+                catalogues.apps.insert((project, name));
+            }
+            _ => {
+                if let Ok(spec) = serde_json::from_value::<EndpointSpec>(envelope.spec.clone()) {
+                    endpoints.push((project, envelope, spec));
+                }
+            }
         }
-        let Ok(spec) = serde_json::from_value::<EndpointSpec>(envelope.spec.clone()) else {
-            continue;
-        };
-        let Some(publication) = spec.publish.as_ref().and_then(|p| p.ckan.clone()) else {
-            continue;
-        };
-        let instance_name = publication.instance_ref.name().to_owned();
-        let Some(instance) = previous
-            .get(&project, "CkanInstance", &instance_name)
-            .and_then(|env| serde_json::from_value::<CkanInstanceSpec>(env.spec).ok())
-        else {
-            // The catalogue manifest went with the Endpoint. Nothing can be reached without the
-            // instance's URL and token reference, and inventing either would be worse than
-            // leaving the dataset to the sweep.
-            tracing::warn!(
-                project = %project,
-                endpoint = %name,
-                instance = %instance_name,
-                "the endpoint and its catalogue were both removed; the dataset stays until the \
-                 catalogue is declared again"
-            );
-            continue;
-        };
-        gone.push(Target {
-            id: ResourceId {
-                group: "joinedcontext.com".to_owned(),
-                kind: "Endpoint".to_owned(),
-                namespace: Some(project),
-                name: name.clone(),
-            },
-            manifest: RawManifest {
-                api_version: envelope.api_version.clone(),
-                kind: envelope.kind.clone(),
-                metadata: RawMetadata {
-                    name,
-                    namespace: envelope.metadata.namespace.clone(),
-                    rest: serde_json::Map::new(),
-                },
-                spec: envelope.spec.clone(),
-                status: None,
-            },
-            slug: spec.slug.as_str().to_owned(),
-            publication,
-            instance_name,
-            instance,
-            // A withdrawal deletes by name: no title is written and no organization created.
-            language: None,
-            instance_title: None,
-            // A withdrawal draws no chart.
-            history: Default::default(),
-            granted: Vec::new(),
-        });
     }
-    gone
+    let (planned, unplanned) = catalogue::datasets(
+        endpoints.iter().map(|(project, envelope, spec)| Door {
+            project,
+            name: &envelope.metadata.name,
+            spec,
+        }),
+        &catalogues,
+    );
+    for line in unplanned {
+        // The catalogue manifest went with the Endpoint. Nothing can be reached without the
+        // instance's URL and token reference, and inventing either would be worse than leaving
+        // the dataset to the sweep.
+        tracing::warn!(
+            project = %line.project,
+            endpoint = %line.endpoint,
+            reason = %line.reason,
+            "a dataset the previous run published cannot be reached to withdraw; it stays until \
+             the catalogue is declared again"
+        );
+    }
+    planned
+        .into_iter()
+        .filter(|dataset| !kept.contains(&dataset.key()))
+        .filter_map(|dataset| {
+            let (_, envelope, spec) = endpoints.iter().find(|(project, envelope, _)| {
+                *project == dataset.project && envelope.metadata.name == dataset.endpoint
+            })?;
+            Some(gone(envelope, spec, dataset))
+        })
+        .collect()
+}
+
+/// The target that withdraws `dataset` of the Endpoint `envelope` held.
+fn gone(
+    envelope: &crate::resource::ResourceEnvelope,
+    spec: &EndpointSpec,
+    dataset: Planned,
+) -> Target {
+    let name = envelope.metadata.name.clone();
+    Target {
+        id: ResourceId {
+            group: "joinedcontext.com".to_owned(),
+            kind: "Endpoint".to_owned(),
+            namespace: Some(dataset.project),
+            name: name.clone(),
+        },
+        manifest: RawManifest {
+            api_version: envelope.api_version.clone(),
+            kind: envelope.kind.clone(),
+            metadata: RawMetadata {
+                name,
+                namespace: envelope.metadata.namespace.clone(),
+                rest: serde_json::Map::new(),
+            },
+            spec: envelope.spec.clone(),
+            status: None,
+        },
+        slug: spec.slug.as_str().to_owned(),
+        publication: dataset.publication,
+        slice: dataset.slice,
+        instance_name: dataset.instance_name,
+        instance: dataset.instance,
+        // A withdrawal deletes by name: no title is written and no organization created.
+        language: None,
+        instance_title: None,
+        // A withdrawal draws no chart.
+        history: Default::default(),
+        granted: Vec::new(),
+    }
 }
