@@ -699,10 +699,20 @@ async fn http_create_public_dashboard(
 async fn http_update_public_dashboard(
     State(state): State<DaiyaState>,
     headers: HeaderMap,
-    Path((dashboard_uid, _uid)): Path<(String, String)>,
+    Path((dashboard_uid, uid)): Path<(String, String)>,
     Json(dto): Json<PublicDashboardCreateReq>,
 ) -> Response {
     let ctx = resolve_request_ctx(&state, &headers);
+    // As Grafana, the record is the one the path names: another uid is 404, never a new record.
+    match state
+        .store
+        .get_public_dashboard_by_dashboard_uid(ctx.org_id, &dashboard_uid)
+        .await
+    {
+        Ok(Some(existing)) if existing.uid == uid => {}
+        Ok(_) => return error_response(&CrError::NotFound("Public dashboard not found".into())),
+        Err(e) => return error_response(&e),
+    }
     match create_or_update_public_dashboard(&state, &ctx, &dashboard_uid, dto).await {
         Ok(rec) => (StatusCode::OK, Json(rec)).into_response(),
         Err(e) => error_response(&e),
