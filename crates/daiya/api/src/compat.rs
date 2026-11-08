@@ -38,7 +38,7 @@ fn can_read_folder(state: &DaiyaState, ctx: &RequestCtx, folder_uid: &str) -> bo
         )
         .allowed
 }
-use daiya_model::{Action, CrError, DatasourceRecord, FolderRecord, ObjectTarget, OrgId};
+use daiya_model::{Action, CrError, CrResult, DatasourceRecord, FolderRecord, ObjectTarget, OrgId};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -221,9 +221,7 @@ struct UpsertDatasourceReq {
     url: String,
     #[serde(default)]
     is_default: bool,
-    #[serde(default)]
-    read_only: bool,
-    #[serde(default)]
+    #[serde(default = "empty_object")]
     json_data: Value,
     #[serde(default)]
     secret_refs: BTreeMap<String, String>,
@@ -231,10 +229,120 @@ struct UpsertDatasourceReq {
     allow_hosts: Vec<String>,
     #[serde(default)]
     wasm_digest: Option<String>,
+    /// Raw credentials: refused, never stored (credentials are `secretRefs`, §7.1).
+    #[serde(default)]
+    secure_json_data: Option<Value>,
 }
 
 fn default_proxy() -> String {
     "proxy".to_owned()
+}
+
+fn empty_object() -> Value {
+    json!({})
+}
+
+impl UpsertDatasourceReq {
+    /// The record this request writes. `readOnly` is not taken from the API: as Grafana's
+    /// `json:"-"` on the add/update commands, only provisioning marks a datasource read-only.
+    fn into_record(self, state: &DaiyaState, ctx: &RequestCtx, uid: String) -> DatasourceRecord {
+        let mut allow_hosts = self.allow_hosts;
+        if allow_hosts.is_empty()
+            && let Ok(u) = url::Url::parse(&self.url)
+            && let Some(h) = u.host_str()
+        {
+            allow_hosts.push(h.to_owned());
+        }
+        let now = Utc::now();
+        DatasourceRecord {
+            installation_id: state.installation_id,
+            org_id: ctx.org_id,
+            instance_id: ctx.instance_id,
+            project_id: None,
+            uid,
+            name: self.name,
+            kind: self.kind,
+            access: self.access,
+            url: self.url,
+            is_default: self.is_default,
+            read_only: false,
+            json_data: self.json_data,
+            secret_refs: self.secret_refs,
+            allow_hosts,
+            wasm_digest: self.wasm_digest,
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
+/// Refuses raw `secureJsonData` (an empty object carries nothing and passes).
+fn refuse_raw_secrets(secure_json_data: Option<&Value>) -> CrResult<()> {
+    match secure_json_data {
+        None | Some(Value::Null) => Ok(()),
+        Some(Value::Object(m)) if m.is_empty() => Ok(()),
+        Some(_) => Err(CrError::BadRequest(
+            "secureJsonData is refused: name each credential in secretRefs instead".into(),
+        )),
+    }
+}
+
+/// A caller-given uid checked as Grafana's `util.IsValidShortUID` (at most 40 of `a-zA-Z0-9-_`),
+/// or a new random short uid when none is given.
+fn uid_or_generated(uid: Option<String>) -> CrResult<String> {
+    match uid.filter(|u| !u.is_empty()) {
+        None => Ok(short_uid()),
+        Some(u)
+            if u.len() <= 40
+                && u.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') =>
+        {
+            Ok(u)
+        }
+        Some(_) => Err(CrError::BadRequest(
+            "invalid uid: at most 40 characters of a-z, A-Z, 0-9, '-' and '_'".into(),
+        )),
+    }
+}
+
+/// 14 random lowercase letters and digits starting with a letter.
+fn short_uid() -> String {
+    use rand::Rng;
+    const ALNUM: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let mut rng = rand::thread_rng();
+    let mut uid = String::with_capacity(14);
+    uid.push(char::from(ALNUM[rng.gen_range(0..26)]));
+    for _ in 1..14 {
+        uid.push(char::from(ALNUM[rng.gen_range(0..ALNUM.len())]));
+    }
+    uid
+}
+
+/// A datasource as Grafana answers it: credentials only as `secureJsonFields` booleans.
+fn datasource_json(ds: &DatasourceRecord) -> Value {
+    let secure_fields: BTreeMap<&str, bool> =
+        ds.secret_refs.keys().map(|k| (k.as_str(), true)).collect();
+    json!({
+        "id": 1,
+        "uid": ds.uid,
+        "name": ds.name,
+        "type": ds.kind,
+        "access": ds.access,
+        "url": ds.url,
+        "isDefault": ds.is_default,
+        "jsonData": ds.json_data,
+        "secureJsonFields": secure_fields,
+        "readOnly": ds.read_only,
+        "version": ds.version,
+    })
+}
+
+fn answer(result: CrResult<Value>) -> Response {
+    match result {
+        Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+        Err(e) => error_response(&e),
+    }
 }
 
 async fn compat_add_datasource(
@@ -243,81 +351,54 @@ async fn compat_add_datasource(
     Json(req): Json<UpsertDatasourceReq>,
 ) -> Response {
     let ctx = resolve_request_ctx(&state, &headers);
-    let dec = state.authorizer.check(
-        &ctx,
-        Action::Propose,
-        &ObjectTarget::Organization { org_id: ctx.org_id },
-    );
-    if let Err(e) = dec.into_result("Organization not found") {
-        return error_response(&e);
-    }
+    answer(add_datasource(&state, &ctx, req).await)
+}
 
-    let uid = req.uid.unwrap_or_else(|| req.name.clone());
-    if let Ok(Some(_)) = state.store.get_datasource(ctx.org_id, &uid).await {
-        return error_response(&CrError::Conflict(
+async fn add_datasource(
+    state: &DaiyaState,
+    ctx: &RequestCtx,
+    req: UpsertDatasourceReq,
+) -> CrResult<Value> {
+    state
+        .authorizer
+        .check(
+            ctx,
+            Action::Propose,
+            &ObjectTarget::Organization { org_id: ctx.org_id },
+        )
+        .into_result("Organization not found")?;
+    refuse_raw_secrets(req.secure_json_data.as_ref())?;
+    let uid = uid_or_generated(req.uid.clone())?;
+    if state
+        .store
+        .get_datasource(ctx.org_id, &uid)
+        .await?
+        .is_some()
+    {
+        return Err(CrError::Conflict(
             "data source with the same uid already exists".into(),
         ));
     }
-    if let Ok(Some(_)) = state
+    if state
         .store
         .get_datasource_by_name(ctx.org_id, &req.name)
-        .await
+        .await?
+        .is_some()
     {
-        return error_response(&CrError::Conflict(
+        return Err(CrError::Conflict(
             "data source with the same name already exists".into(),
         ));
     }
-
-    let mut allow_hosts = req.allow_hosts;
-    if allow_hosts.is_empty()
-        && let Ok(u) = url::Url::parse(&req.url)
-        && let Some(h) = u.host_str()
-    {
-        allow_hosts.push(h.to_owned());
-    }
-
-    let now = Utc::now();
-    let rec = DatasourceRecord {
-        installation_id: state.installation_id,
-        org_id: ctx.org_id,
-        instance_id: ctx.instance_id,
-        project_id: None,
-        uid: uid.clone(),
-        name: req.name.clone(),
-        kind: req.kind,
-        access: req.access,
-        url: req.url,
-        is_default: req.is_default,
-        read_only: req.read_only,
-        json_data: req.json_data,
-        secret_refs: req.secret_refs,
-        allow_hosts,
-        wasm_digest: req.wasm_digest,
-        version: 1,
-        created_at: now,
-        updated_at: now,
-    };
-
-    match state.store.upsert_datasource(rec).await {
-        Ok(saved) => (
-            StatusCode::OK,
-            Json(json!({
-                "message": "Datasource added",
-                "id": 1,
-                "name": saved.name,
-                "datasource": {
-                    "uid": saved.uid,
-                    "name": saved.name,
-                    "type": saved.kind,
-                    "url": saved.url,
-                    "access": saved.access,
-                    "jsonData": saved.json_data,
-                }
-            })),
-        )
-            .into_response(),
-        Err(e) => error_response(&e),
-    }
+    let saved = state
+        .store
+        .upsert_datasource(req.into_record(state, ctx, uid))
+        .await?;
+    Ok(json!({
+        "message": "Datasource added",
+        "id": 1,
+        "name": saved.name,
+        "datasource": datasource_json(&saved),
+    }))
 }
 
 async fn compat_update_datasource_by_uid(
@@ -327,52 +408,47 @@ async fn compat_update_datasource_by_uid(
     Json(req): Json<UpsertDatasourceReq>,
 ) -> Response {
     let ctx = resolve_request_ctx(&state, &headers);
-    let dec = state.authorizer.check(
-        &ctx,
-        Action::Propose,
-        &ObjectTarget::Datasource {
-            org_id: ctx.org_id,
-            datasource_uid: uid.clone(),
-        },
-    );
-    if let Err(e) = dec.into_result("Data source not found") {
-        return error_response(&e);
-    }
+    answer(update_datasource(&state, &ctx, uid, req).await)
+}
 
-    let now = Utc::now();
-    let rec = DatasourceRecord {
-        installation_id: state.installation_id,
-        org_id: ctx.org_id,
-        instance_id: ctx.instance_id,
-        project_id: None,
-        uid: uid.clone(),
-        name: req.name.clone(),
-        kind: req.kind,
-        access: req.access,
-        url: req.url,
-        is_default: req.is_default,
-        read_only: req.read_only,
-        json_data: req.json_data,
-        secret_refs: req.secret_refs,
-        allow_hosts: req.allow_hosts,
-        wasm_digest: req.wasm_digest,
-        version: 1,
-        created_at: now,
-        updated_at: now,
-    };
-    match state.store.upsert_datasource(rec).await {
-        Ok(saved) => (
-            StatusCode::OK,
-            Json(json!({
-                "message": "Datasource updated",
-                "id": 1,
-                "name": saved.name,
-                "datasource": saved,
-            })),
+/// Updates an existing datasource; as Grafana, an unknown uid is 404 and a provisioned
+/// (read-only) one 403.
+async fn update_datasource(
+    state: &DaiyaState,
+    ctx: &RequestCtx,
+    uid: String,
+    req: UpsertDatasourceReq,
+) -> CrResult<Value> {
+    state
+        .authorizer
+        .check(
+            ctx,
+            Action::Propose,
+            &ObjectTarget::Datasource {
+                org_id: ctx.org_id,
+                datasource_uid: uid.clone(),
+            },
         )
-            .into_response(),
-        Err(e) => error_response(&e),
+        .into_result("Data source not found")?;
+    refuse_raw_secrets(req.secure_json_data.as_ref())?;
+    let Some(existing) = state.store.get_datasource(ctx.org_id, &uid).await? else {
+        return Err(CrError::NotFound("Data source not found".into()));
+    };
+    if existing.read_only {
+        return Err(CrError::Forbidden(
+            "Cannot update read-only data source".into(),
+        ));
     }
+    let saved = state
+        .store
+        .upsert_datasource(req.into_record(state, ctx, uid))
+        .await?;
+    Ok(json!({
+        "message": "Datasource updated",
+        "id": 1,
+        "name": saved.name,
+        "datasource": datasource_json(&saved),
+    }))
 }
 
 async fn compat_get_datasource_by_uid(
@@ -393,28 +469,7 @@ async fn compat_get_datasource_by_uid(
         return error_response(&e);
     }
     match state.store.get_datasource(ctx.org_id, &uid).await {
-        Ok(Some(ds)) => {
-            // Never return secret values: only list secureJsonFields booleans like Grafana
-            let secure_fields: BTreeMap<String, bool> =
-                ds.secret_refs.keys().map(|k| (k.clone(), true)).collect();
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "id": 1,
-                    "uid": ds.uid,
-                    "name": ds.name,
-                    "type": ds.kind,
-                    "access": ds.access,
-                    "url": ds.url,
-                    "isDefault": ds.is_default,
-                    "jsonData": ds.json_data,
-                    "secureJsonFields": secure_fields,
-                    "readOnly": ds.read_only,
-                    "version": ds.version,
-                })),
-            )
-                .into_response()
-        }
+        Ok(Some(ds)) => (StatusCode::OK, Json(datasource_json(&ds))).into_response(),
         Ok(None) => error_response(&CrError::NotFound("Data source not found".into())),
         Err(e) => error_response(&e),
     }
@@ -489,50 +544,56 @@ async fn compat_create_folder(
     Json(req): Json<CreateFolderReq>,
 ) -> Response {
     let ctx = resolve_request_ctx(&state, &headers);
-    let dec = state.authorizer.check(
-        &ctx,
-        Action::Propose,
-        &ObjectTarget::Organization { org_id: ctx.org_id },
-    );
-    if let Err(e) = dec.into_result("Organization not found") {
-        return error_response(&e);
-    }
-    let uid = req.uid.filter(|s| !s.is_empty()).unwrap_or_else(|| {
-        format!(
-            "folder-{}",
-            req.title.to_ascii_lowercase().replace(' ', "-")
+    answer(create_folder(&state, &ctx, req).await)
+}
+
+/// Creates a folder; as Grafana, an existing uid is 409 (`ErrFolderWithSameUIDExists`), never
+/// an overwrite.
+async fn create_folder(
+    state: &DaiyaState,
+    ctx: &RequestCtx,
+    req: CreateFolderReq,
+) -> CrResult<Value> {
+    state
+        .authorizer
+        .check(
+            ctx,
+            Action::Propose,
+            &ObjectTarget::Organization { org_id: ctx.org_id },
         )
-    });
+        .into_result("Organization not found")?;
+    let uid = uid_or_generated(req.uid)?;
+    if state.store.get_folder(ctx.org_id, &uid).await?.is_some() {
+        return Err(CrError::Conflict(
+            "a folder with the same uid already exists".into(),
+        ));
+    }
     let now = Utc::now();
-    let rec = FolderRecord {
-        installation_id: state.installation_id,
-        org_id: ctx.org_id,
-        instance_id: ctx.instance_id,
-        project_id: None,
-        uid: uid.clone(),
-        parent_uid: req.parent_uid,
-        title: req.title,
-        version: 1,
-        managed_by: None,
-        created_by: ctx.actor_name().to_owned(),
-        updated_by: ctx.actor_name().to_owned(),
-        created_at: now,
-        updated_at: now,
-    };
-    match state.store.upsert_folder(rec).await {
-        Ok(saved) => (
-            StatusCode::OK,
-            Json(json!({
-                "id": 1,
-                "uid": saved.uid,
-                "title": saved.title,
-                "url": format!("/dashboards/f/{}", saved.uid),
-                "version": saved.version,
-            })),
-        )
-            .into_response(),
-        Err(e) => error_response(&e),
-    }
+    let saved = state
+        .store
+        .upsert_folder(FolderRecord {
+            installation_id: state.installation_id,
+            org_id: ctx.org_id,
+            instance_id: ctx.instance_id,
+            project_id: None,
+            uid,
+            parent_uid: req.parent_uid,
+            title: req.title,
+            version: 1,
+            managed_by: None,
+            created_by: ctx.actor_name().to_owned(),
+            updated_by: ctx.actor_name().to_owned(),
+            created_at: now,
+            updated_at: now,
+        })
+        .await?;
+    Ok(json!({
+        "id": 1,
+        "uid": saved.uid,
+        "title": saved.title,
+        "url": format!("/dashboards/f/{}", saved.uid),
+        "version": saved.version,
+    }))
 }
 
 async fn compat_list_folders(State(state): State<DaiyaState>, headers: HeaderMap) -> Response {
@@ -748,22 +809,28 @@ async fn compat_get_dashboard_versions(
     Path(uid): Path<String>,
 ) -> Response {
     let ctx = resolve_request_ctx(&state, &headers);
-    let dec = state.authorizer.check(
-        &ctx,
-        Action::Read,
-        &ObjectTarget::Dashboard {
-            org_id: ctx.org_id,
-            dashboard_uid: uid.clone(),
-            folder_uid: None,
-        },
-    );
-    if let Err(e) = dec.into_result("Dashboard not found") {
-        return error_response(&e);
-    }
-    match state.store.list_dashboard_versions(ctx.org_id, &uid).await {
-        Ok(vers) => (StatusCode::OK, Json(json!({ "versions": vers }))).into_response(),
-        Err(e) => error_response(&e),
-    }
+    answer(dashboard_versions(&state, &ctx, &uid).await)
+}
+
+/// The versions of a dashboard, after a read decision on the dashboard in its own folder.
+async fn dashboard_versions(state: &DaiyaState, ctx: &RequestCtx, uid: &str) -> CrResult<Value> {
+    let Some(rec) = state.store.get_dashboard(ctx.org_id, uid).await? else {
+        return Err(CrError::NotFound("Dashboard not found".into()));
+    };
+    state
+        .authorizer
+        .check(
+            ctx,
+            Action::Read,
+            &ObjectTarget::Dashboard {
+                org_id: ctx.org_id,
+                dashboard_uid: rec.uid,
+                folder_uid: rec.folder_uid,
+            },
+        )
+        .into_result("Dashboard not found")?;
+    let versions = state.store.list_dashboard_versions(ctx.org_id, uid).await?;
+    Ok(json!({ "versions": versions }))
 }
 
 #[derive(Debug, Default, Deserialize)]
