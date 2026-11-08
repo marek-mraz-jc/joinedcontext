@@ -692,46 +692,235 @@ fn json_eq(a: &Value, b: &Value) -> bool {
     }
 }
 
+/// gojsonschema's format checkers (v1.2.0 `format_checkers.go`), which Bento's processor runs.
 fn format_ok(format: &str, s: &str) -> bool {
-    let b = s.as_bytes();
     match format {
-        // Go's time.Parse(time.RFC3339, ..): an upper-case T and Z, a 4-digit year.
+        // time.Parse with any of "15:04:05", "15:04:05Z07:00", "2006-01-02", RFC3339(Nano).
         "date-time" => {
-            b.len() >= 20
-                && b[10] == b'T'
-                && date_ok(&s[..10])
-                && !s.contains('z')
-                && chrono::DateTime::parse_from_rfc3339(s).is_ok()
+            go_clock(s).is_some_and(|rest| rest.is_empty() || go_zone(rest))
+                || go_date(s).is_some_and(|rest| {
+                    rest.is_empty()
+                        || rest
+                            .strip_prefix('T')
+                            .and_then(go_clock)
+                            .is_some_and(go_zone)
+                })
         }
-        "date" => date_ok(s),
-        "time" => chrono::DateTime::parse_from_rfc3339(&format!("1970-01-01T{s}")).is_ok(),
-        // Go's url.Parse with a scheme: a scheme, then no space or control character.
-        "uri" => {
-            let Some((scheme, _)) = s.split_once(':') else {
-                return false;
-            };
-            let mut chars = scheme.chars();
-            chars.next().is_some_and(|c| c.is_ascii_alphabetic())
-                && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
-                && !s.chars().any(|c| c.is_control() || c == ' ')
-        }
-        "email" => {
-            let mut parts = s.splitn(2, '@');
-            matches!((parts.next(), parts.next()), (Some(l), Some(d)) if !l.is_empty() && !d.is_empty() && !d.contains('@'))
-        }
+        "date" => go_date(s) == Some(""),
+        "time" => go_clock(s).is_some_and(|rest| rest.is_empty() || go_zone(rest)),
+        // url.Parse succeeds with a scheme, and the text holds no backslash.
+        "uri" => go_url_has_scheme(s) && !s.contains('\\'),
+        "email" => go_mail_address(s),
         _ => true,
     }
 }
 
-fn date_ok(s: &str) -> bool {
+fn digits(s: &str, n: usize) -> Option<(u32, &str)> {
+    let head = s.get(..n)?;
+    head.bytes()
+        .all(|c| c.is_ascii_digit())
+        .then(|| (head.parse().unwrap_or(0), &s[n..]))
+}
+
+/// Go's "15:04:05" with a fraction after the seconds (time.Parse takes one even when the layout
+/// has none): the hour has one or two digits; the rest of the text is answered.
+fn go_clock(s: &str) -> Option<&str> {
+    let two = s.as_bytes().get(1).is_some_and(u8::is_ascii_digit);
+    let (hour, rest) = digits(s, if two { 2 } else { 1 })?;
+    let (min, rest) = digits(rest.strip_prefix(':')?, 2)?;
+    let (sec, rest) = digits(rest.strip_prefix(':')?, 2)?;
+    if hour > 23 || min > 59 || sec > 59 {
+        return None;
+    }
+    let b = rest.as_bytes();
+    if b.len() >= 2 && matches!(b[0], b'.' | b',') && b[1].is_ascii_digit() {
+        let n = 1 + b[1..].iter().take_while(|c| c.is_ascii_digit()).count();
+        return Some(&rest[n..]);
+    }
+    Some(rest)
+}
+
+/// Go's "Z07:00" to the end of the text: `Z`, or a sign, two digits, a colon and two digits (Go
+/// checks no range here).
+fn go_zone(s: &str) -> bool {
+    if s == "Z" {
+        return true;
+    }
     let b = s.as_bytes();
-    b.len() == 10
-        && b[4] == b'-'
-        && b[7] == b'-'
-        && b.iter()
-            .enumerate()
-            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
-        && chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok()
+    b.len() == 6
+        && matches!(b[0], b'+' | b'-')
+        && b[1].is_ascii_digit()
+        && b[2].is_ascii_digit()
+        && b[3] == b':'
+        && b[4].is_ascii_digit()
+        && b[5].is_ascii_digit()
+}
+
+/// Go's "2006-01-02", a day the month has; the rest of the text is answered.
+fn go_date(s: &str) -> Option<&str> {
+    let (year, rest) = digits(s, 4)?;
+    let (month, rest) = digits(rest.strip_prefix('-')?, 2)?;
+    let (day, rest) = digits(rest.strip_prefix('-')?, 2)?;
+    chrono::NaiveDate::from_ymd_opt(year as i32, month, day)?;
+    Some(rest)
+}
+
+/// Go's `unescape`: every `%` starts two hex digits; in a host (`encodeHost`) an escape below
+/// %80 other than %25 is refused, and so is any ASCII byte a host may not hold.
+fn go_unescape_ok(s: &str, host: bool) -> bool {
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' {
+            if i + 2 >= b.len() || !b[i + 1].is_ascii_hexdigit() || !b[i + 2].is_ascii_hexdigit() {
+                return false;
+            }
+            if host && (b[i + 1] as char).to_digit(16).unwrap_or(0) < 8 && &s[i..i + 3] != "%25" {
+                return false;
+            }
+            i += 3;
+            continue;
+        }
+        if host
+            && b[i] < 0x80
+            && !(b[i].is_ascii_alphanumeric() || b"-_.~!$&'()*+,;=:[]<>\"".contains(&b[i]))
+        {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// Go's `url.Parse` (net/url) as far as it can fail, and whether it finds a scheme.
+fn go_url_has_scheme(raw: &str) -> bool {
+    if raw.bytes().any(|c| c < 0x20 || c == 0x7f) {
+        return false;
+    }
+    let (rest, fragment) = raw.split_once('#').unwrap_or((raw, ""));
+    if !go_unescape_ok(fragment, false) {
+        return false;
+    }
+    // getScheme: a letter, then letters, digits, `+`, `-` or `.` up to the colon.
+    let Some((scheme, rest)) = rest.split_once(':') else {
+        return false;
+    };
+    let mut chars = scheme.chars();
+    if !(chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')))
+    {
+        return false;
+    }
+    // The query is kept as sent; an opaque URL (no leading slash) is not looked into.
+    let rest = rest.split_once('?').map_or(rest, |(r, _)| r);
+    let Some(after) = rest.strip_prefix("//") else {
+        return rest.starts_with('/') && go_unescape_ok(rest, false) || !rest.starts_with('/');
+    };
+    let (authority, path) = after.find('/').map_or((after, ""), |i| after.split_at(i));
+    let host = match authority.rfind('@') {
+        Some(at) => {
+            let user = &authority[..at];
+            let valid = user.bytes().all(|c| {
+                c.is_ascii_alphanumeric() || b"-._:~!$&'()*+,;=%@".contains(&c) || c >= 0x80
+            });
+            if !valid || !go_unescape_ok(user, false) {
+                return false;
+            }
+            &authority[at + 1..]
+        }
+        None => authority,
+    };
+    let port_ok = |p: &str| {
+        p.is_empty()
+            || p.strip_prefix(':')
+                .is_some_and(|d| d.bytes().all(|c| c.is_ascii_digit()))
+    };
+    let name = if host.starts_with('[') {
+        let Some(close) = host.rfind(']') else {
+            return false;
+        };
+        if !port_ok(&host[close + 1..]) {
+            return false;
+        }
+        &host[..=close]
+    } else {
+        match host.rfind(':') {
+            Some(i) if !port_ok(&host[i..]) => return false,
+            Some(i) => &host[..i],
+            None => host,
+        }
+    };
+    go_unescape_ok(name, true) && go_unescape_ok(path, false)
+}
+
+/// Go's `mail.ParseAddress`, for the forms an address takes: `local@domain`, or a display name
+/// and `<local@domain>`. ponytail: comments and obsolete syntax are refused; upgrade path: port
+/// net/mail's parser when a seed's schema needs them.
+fn go_mail_address(s: &str) -> bool {
+    let s = s.trim_matches(|c| c == ' ' || c == '\t');
+    if let Some(inner) = s.strip_suffix('>') {
+        let Some(open) = inner.rfind('<') else {
+            return false;
+        };
+        let name = inner[..open].trim_end();
+        return (name.is_empty() || go_phrase(name)) && go_addr_spec(&inner[open + 1..]);
+    }
+    go_addr_spec(s)
+}
+
+fn atext(c: char) -> bool {
+    c.is_ascii_alphanumeric() || "!#$%&'*+-/=?^_`{|}~".contains(c) || !c.is_ascii()
+}
+
+fn go_dot_atom(s: &str) -> bool {
+    !s.is_empty() && s.split('.').all(|a| !a.is_empty() && a.chars().all(atext))
+}
+
+fn go_quoted(s: &str) -> bool {
+    let Some(inner) = s.strip_prefix('"').and_then(|r| r.strip_suffix('"')) else {
+        return false;
+    };
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if chars.next().is_none() => return false,
+            '"' => return false,
+            c if c.is_control() && c != '\t' => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
+fn go_addr_spec(s: &str) -> bool {
+    let Some(at) = s.rfind('@') else {
+        return false;
+    };
+    let (local, domain) = (&s[..at], &s[at + 1..]);
+    (go_dot_atom(local) || go_quoted(local))
+        && (go_dot_atom(domain)
+            || (domain.starts_with('[')
+                && domain.ends_with(']')
+                && !domain[1..domain.len() - 1].contains(['[', ']', '\\'])))
+}
+
+fn go_phrase(s: &str) -> bool {
+    let mut rest = s;
+    while !rest.is_empty() {
+        let word = if let Some(quoted) = rest.strip_prefix('"') {
+            match quoted.find('"') {
+                Some(end) => &rest[..end + 2],
+                None => return false,
+            }
+        } else {
+            rest.split([' ', '\t']).next().unwrap_or(rest)
+        };
+        if !(go_quoted(word) || word.chars().all(|c| atext(c) || c == '.')) {
+            return false;
+        }
+        rest = rest[word.len()..].trim_start_matches([' ', '\t']);
+    }
+    true
 }
 
 #[cfg(test)]
@@ -838,16 +1027,99 @@ mod tests {
     }
 
     #[test]
-    fn date_formats_follow_go() {
-        assert!(format_ok("date-time", "2026-11-08T10:00:00.5+01:00"));
-        assert!(!format_ok("date-time", "2026-11-08t10:00:00Z"));
-        assert!(!format_ok("date-time", "2026-11-08T10:00:00z"));
-        assert!(!format_ok("date-time", "2026-11-08"));
-        assert!(format_ok("date", "2026-02-28"));
-        assert!(!format_ok("date", "2026-02-30"));
-        assert!(!format_ok("date", "26-02-01"));
-        assert!(format_ok("uri", "urn:ngsi-ld:X:1"));
-        assert!(!format_ok("uri", "no scheme"));
+    fn formats_answer_as_bento_does() {
+        // Each verdict is Bento 1.22's json_schema processor over the same text.
+        for (format, text, ok) in [
+            ("date-time", "2026-11-21", true),
+            ("date-time", "2026-11-08T10:00:00Z", true),
+            ("date-time", "2026-11-08T10:00:00.5+01:00", true),
+            ("date-time", "2026-11-08t10:00:00Z", false),
+            ("date-time", "2026-11-08T10:00:00z", false),
+            ("date-time", "10:00:00", true),
+            ("date-time", "10:00:00Z", true),
+            ("date-time", "10:00:00+01:00", true),
+            ("date-time", "1:00:00", true),
+            ("date-time", "2026-11-08T1:00:00Z", true),
+            ("date-time", "2026-11-08T10:00:00", false),
+            ("date-time", "2026-11-08 10:00:00Z", false),
+            ("date-time", "2026-02-30", false),
+            ("date-time", "2026-02-30T10:00:00Z", false),
+            ("date-time", "2026-11-08T24:00:00Z", false),
+            ("date-time", "2026-11-08T10:00:60Z", false),
+            ("date-time", "2026-11-08T10:00:00,5Z", true),
+            ("date-time", "2026-11-08T10:00:00.123456789123Z", true),
+            ("date-time", "2026-11-08T10:00:00+24:00", true),
+            ("date-time", "2026-11-08T10:00:00+01:60", true),
+            ("date-time", "2026-11-08T10:00:00+0100", false),
+            ("date-time", "10:00:00.5", true),
+            ("date-time", "10:00", false),
+            ("date-time", "2026-1-08", false),
+            ("date-time", "2026-11-8", false),
+            ("date-time", "+2026-11-08T10:00:00Z", false),
+            ("date-time", "2026-11-08T10:00:00.Z", false),
+            ("date-time", "2026-11-08T10:00:00Z ", false),
+            ("date-time", "", false),
+            ("date-time", "2026-11-08T10:00:00-00:00", true),
+            ("date-time", "99:00:00", false),
+            ("date-time", "23:59:59.999Z", true),
+            ("date", "2026-11-21", true),
+            ("date", "2026-02-30", false),
+            ("date", "2026-2-01", false),
+            ("date", "26-02-01", false),
+            ("date", "2026-11-21T00:00:00Z", false),
+            ("date", "2026-11-21 ", false),
+            ("date", "", false),
+            ("date", "0000-01-01", true),
+            ("time", "10:00:00", true),
+            ("time", "10:00:00Z", true),
+            ("time", "10:00:00+01:00", true),
+            ("time", "1:00:00", true),
+            ("time", "10:00:00.5", true),
+            ("time", "10:00:00.5Z", true),
+            ("time", "24:00:00", false),
+            ("time", "10:00", false),
+            ("time", "10:00:00z", false),
+            ("time", "10:00:00 ", false),
+            ("time", "", false),
+            ("uri", "urn:ngsi-ld:X:1", true),
+            ("uri", "no scheme", false),
+            ("uri", "https://www.facebook.com/pages/Ko%C5%BEn%C3%", false),
+            ("uri", "https://a/b%2", false),
+            ("uri", "https://a/b%zz", false),
+            ("uri", "https://a/b c", true),
+            ("uri", "https://a b/", false),
+            ("uri", "https://a/b\\c", false),
+            ("uri", "http://[::1]:80/", true),
+            ("uri", "http://a:port/", false),
+            ("uri", "http://a:80x/", false),
+            ("uri", "mailto:x@y", true),
+            ("uri", "x:", true),
+            ("uri", "1http://a", false),
+            ("uri", "http://a/é", true),
+            ("uri", "https://a/?q=%", true),
+            ("uri", "https://a/#frag%", false),
+            ("uri", "http://a/b\tc", false),
+            ("uri", "//a/b", false),
+            ("uri", "/rel", false),
+            ("uri", "http://a%20b/", false),
+            ("uri", "http://user:pa ss@a/", false),
+            ("uri", "http://a:/", true),
+            ("uri", "HTTP://A/", true),
+            ("email", "a@b", true),
+            ("email", "@b", false),
+            ("email", "a@", false),
+            ("email", "a@b@c", false),
+            ("email", "a b@c", false),
+            ("email", "a@b c", false),
+            ("email", "<a@b>", true),
+            ("email", "A <a@b>", true),
+            ("email", "a@b.c", true),
+            ("email", "a.@b", false),
+            ("email", "\"a b\"@c", true),
+            ("email", "", false),
+        ] {
+            assert_eq!(format_ok(format, text), ok, "{format} {text:?}");
+        }
     }
 
     #[test]
