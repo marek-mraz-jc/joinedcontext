@@ -110,6 +110,40 @@ pub fn is_organization_member(state: &AppState, identity: &Identity) -> bool {
         || !in_force(&state.mirror, identity, Utc::now()).is_empty()
 }
 
+/// Whether the caller belongs to the Organization that owns `project` (AP-174, ADR-N-067): a
+/// bootstrap administrator, or a binding in force that reaches a project, space or scope of that
+/// Organization. With one Organization it is [`is_organization_member`]; with several, a binding
+/// in another Organization makes nobody a member here.
+pub fn is_member_of_organization_of(state: &AppState, identity: &Identity, project: &str) -> bool {
+    in_group(identity, &state.config.bootstrap_admins)
+        || member_of_organization_of(&state.mirror, identity, project, Utc::now())
+}
+
+fn member_of_organization_of(
+    mirror: &Mirror,
+    identity: &Identity,
+    project: &str,
+    now: DateTime<Utc>,
+) -> bool {
+    let held = in_force(mirror, identity, now);
+    if organizations(mirror).len() <= 1 {
+        return !held.is_empty();
+    }
+    let Some(owner) = organization_of(mirror, project) else {
+        return false;
+    };
+    held.iter().any(|(reach, _)| {
+        let of = match reach {
+            Reach::Organization(org) => Some(org.clone()),
+            Reach::Project(p) => organization_of(mirror, p),
+            Reach::Space(space) => {
+                project_of_space(mirror, space).and_then(|p| organization_of(mirror, &p))
+            }
+        };
+        of.as_deref() == Some(owner.as_str())
+    })
+}
+
 /// Reads every `Role` and `RoleBinding` of the mirror and keeps the rules whose binding names
 /// the caller, covers the project and is in force at `now`.
 pub fn effective(
@@ -2102,6 +2136,76 @@ mod tests {
             let grants = effective(&mirror, "portal-approver", &who, "espoo", Utc::now());
             assert_eq!(grants.check_converses("espoo").is_ok(), converses, "{role}");
         }
+    }
+
+    /// AP-174, ADR-N-067 (multiorg smoke): a `visibility: organization` App of one Organization
+    /// was listed to and opened by a person bound only in another, since any binding in force
+    /// made a member. Membership is of the Organization that owns the project.
+    #[test]
+    fn a_binding_in_another_organization_makes_nobody_a_member_here() {
+        let mirror = Mirror::new();
+        let person = |email: &str| Identity {
+            client: None,
+            subject: format!("sub-{email}"),
+            username: email.to_owned(),
+            email: Some(email.to_owned()),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        };
+        mirror.upsert(org(
+            "Role",
+            "viewer",
+            serde_json::json!({ "rules": [{ "kinds": ["*"], "verbs": ["read"] }] }),
+        ));
+        for (who, scope) in [
+            ("ana@ba.sk", serde_json::json!({ "project": "bratislava" })),
+            (
+                "bo@ba.sk",
+                serde_json::json!({ "organization": "bratislava" }),
+            ),
+            ("cy@hel.fi", serde_json::json!({ "project": "helsinki" })),
+        ] {
+            mirror.upsert(org(
+                "RoleBinding",
+                who.split('@').next().unwrap(),
+                serde_json::json!({ "subjects": [{ "user": who }], "role": "viewer", "scope": scope }),
+            ));
+        }
+        let now = Utc::now();
+        let member = |who: &str, project: &str| {
+            member_of_organization_of(&mirror, &person(who), project, now)
+        };
+        // One Organization: every binding in force is a member, as before.
+        mirror.upsert(org(
+            "Organization",
+            "hel",
+            serde_json::json!({ "installation": true }),
+        ));
+        assert!(member("ana@ba.sk", "helsinki"));
+        mirror.upsert(org("Organization", "bratislava", serde_json::json!({})));
+        mirror.upsert(org(
+            "Project",
+            "helsinki",
+            serde_json::json!({ "organizationRef": "hel" }),
+        ));
+        mirror.upsert(org(
+            "Project",
+            "bratislava",
+            serde_json::json!({ "organizationRef": "bratislava" }),
+        ));
+        assert!(
+            !member("ana@ba.sk", "helsinki"),
+            "a project binding of another Organization"
+        );
+        assert!(
+            !member("bo@ba.sk", "helsinki"),
+            "an organization binding of another Organization"
+        );
+        assert!(member("ana@ba.sk", "bratislava") && member("bo@ba.sk", "bratislava"));
+        assert!(member("cy@hel.fi", "helsinki") && !member("cy@hel.fi", "bratislava"));
+        assert!(!member("dee@nowhere", "helsinki"), "no binding at all");
     }
 
     #[test]
