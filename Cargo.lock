@@ -9083,6 +9083,7 @@ dependencies = [
  "http-body-util",
  "ipnet",
  "jc-router",
+ "joinedcontext-portal",
  "p256 0.13.2",
  "parking_lot",
  "rand 0.9.5",
@@ -9105,6 +9106,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "zip",
 ]
 
 [[package]]
