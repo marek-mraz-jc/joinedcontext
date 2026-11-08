@@ -24,10 +24,10 @@ const EDITOR = {
   grants: [{ role: "endpoint-editor", binding: "editors", rule: { kinds: ["Endpoint"], verbs: ["propose"] } }],
 };
 
-function renderGuard(permissions: unknown, kind = "Endpoint", verb: "propose" | "delete" = "propose") {
+function renderGuard(permissions: unknown, kind = "Endpoint", verb: "propose" | "delete" = "propose", status = 200) {
   const fetchMock = vi.fn(() =>
     Promise.resolve(
-      new Response(JSON.stringify(permissions), { status: 200, headers: { "Content-Type": "application/json" } }),
+      new Response(JSON.stringify(permissions), { status, headers: { "Content-Type": status === 200 ? "application/json" : "application/problem+json" } }),
     ),
   );
   vi.stubGlobal("fetch", fetchMock);
@@ -51,6 +51,15 @@ describe("the permission guard", () => {
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("disables a control in a project out of reach (404, PF-59), which has no document to allow it", async () => {
+    const { onClick } = renderGuard({ title: "Not Found", status: 404, detail: "project helsinki not found" }, "Endpoint", "propose", 404);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /New endpoint/ })).toHaveAttribute("title", expect.stringMatching(/^Disabled: /));
+    });
+    await userEvent.click(screen.getByRole("button", { name: /New endpoint/ }));
+    expect(onClick).not.toHaveBeenCalled();
   });
 
   it("disables a denied control, keeps it reachable and names the missing verb and kind", async () => {

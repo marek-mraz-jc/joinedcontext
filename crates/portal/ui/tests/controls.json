@@ -189,6 +189,7 @@
         "Checkbox": 1
       },
       "tests": [
+        "draft_discard.test.tsx",
         "draft_form.test.tsx",
         "form_asks_the_assistant.test.tsx",
         "form_check_names_the_missing_field.test.tsx",
@@ -411,7 +412,7 @@
     },
     "src/components/forms/ResourceFormFooter.tsx": {
       "controls": {
-        "Button": 2
+        "Button": 5
       },
       "tests": [
         "form_dialog_parts.test.tsx"
