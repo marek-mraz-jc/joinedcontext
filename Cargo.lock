@@ -1807,6 +1807,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "dataroom-store-memory",
  "odata-table",
  "schemars 0.8.22",
  "serde",
@@ -1814,6 +1815,7 @@ dependencies = [
  "sha2 0.10.9",
  "subtle",
  "thiserror 1.0.69",
+ "tokio",
  "url",
  "uuid",
 ]
@@ -1841,8 +1843,11 @@ name = "dataroom-mcp"
 version = "0.1.0"
 dependencies = [
  "dataroom-core",
+ "dataroom-store-memory",
  "serde",
  "serde_json",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -1902,10 +1907,12 @@ dependencies = [
  "dataroom-store-memory",
  "dataroom-store-pg",
  "dataroom-web",
+ "http-body-util",
  "serde",
  "serde_json",
  "sqlx",
  "tokio",
+ "tower",
  "uuid",
 ]
 

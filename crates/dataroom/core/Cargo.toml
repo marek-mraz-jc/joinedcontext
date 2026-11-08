@@ -17,3 +17,7 @@ subtle = "2.6.1"
 thiserror = "1.0.69"
 url = "2.5.4"
 uuid = { version = "1.11.0", features = ["v4", "v5", "v7", "serde"] }
+
+[dev-dependencies]
+dataroom-store-memory = { path = "../store-memory" }
+tokio = { version = "1.44.1", features = ["macros", "rt"] }

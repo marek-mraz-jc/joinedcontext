@@ -313,6 +313,39 @@ pub fn distribution_to_ckan(
         }
     }
     obj.insert("has_views".into(), json!(!views.is_empty()));
+    // Fields `distribution_from_ckan` reads back, so a `package_show` -> `package_update` cycle
+    // keeps them.
+    let optional = [
+        ("uri", &dist.uri),
+        ("compress_format", &dist.compress_format),
+        ("package_format", &dist.package_format),
+        ("license", &dist.licence),
+        ("status", &dist.status),
+        ("availability", &dist.availability),
+        ("temporal_resolution", &dist.temporal_resolution),
+    ];
+    for (key, value) in optional {
+        if let Some(v) = value {
+            obj.insert(key.into(), json!(v));
+        }
+    }
+    if let Some(m) = dist.spatial_resolution_in_meters {
+        obj.insert("spatial_resolution_in_meters".into(), json!(m));
+    }
+    if !dist.access_services.is_empty() {
+        let services: Vec<Value> = dist
+            .access_services
+            .iter()
+            .map(|svc| {
+                json!({
+                    "uri": svc.uri,
+                    "title": text_in_lang(&svc.title, Some(default_lang)),
+                    "endpoint_url": svc.endpoint_urls,
+                })
+            })
+            .collect();
+        obj.insert("access_services".into(), Value::Array(services));
+    }
     for (k, v) in &dist.extras {
         obj.entry(k.clone()).or_insert_with(|| v.clone());
     }
@@ -742,6 +775,39 @@ pub fn dataset_from_ckan(
     }
 }
 
+/// Resource keys [`distribution_from_ckan`] maps to fields or [`distribution_to_ckan`] computes;
+/// every other key of a resource is kept in `extras`, as CKAN keeps arbitrary resource keys.
+const RESOURCE_KEYS: &[&str] = &[
+    "id",
+    "package_id",
+    "name",
+    "name_translated",
+    "url",
+    "access_url",
+    "download_url",
+    "format",
+    "mimetype",
+    "description",
+    "description_translated",
+    "hash",
+    "hash_algorithm",
+    "size",
+    "position",
+    "state",
+    "resource_type",
+    "conforms_to",
+    "has_views",
+    "uri",
+    "compress_format",
+    "package_format",
+    "license",
+    "status",
+    "availability",
+    "temporal_resolution",
+    "spatial_resolution_in_meters",
+    "access_services",
+];
+
 /// Parses a CKAN resource dictionary into a [`Distribution`].
 pub fn distribution_from_ckan(
     raw: &Value,
@@ -911,7 +977,15 @@ pub fn distribution_from_ckan(
         access_services,
         issued: None,
         modified: None,
-        extras: BTreeMap::new(),
+        extras: raw
+            .as_object()
+            .map(|o| {
+                o.iter()
+                    .filter(|(k, v)| !RESOURCE_KEYS.contains(&k.as_str()) && !v.is_null())
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 

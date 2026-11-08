@@ -5,7 +5,7 @@
 //! `jc_developer_page`, `jc_mcp_install`, `jc_assistants`, `jc_assistant_guide`, `jc_page`,
 //! `jc_sitemap_xml`, `jc_robots_txt`, `jc_plain_glyphs`, NUTS 3 lookup) for `dataroom-web` (D1-D7).
 
-use crate::i18n::{format_date_localized, jc_rows, jc_t, normalize_lang_code};
+use crate::i18n::{format_date_localized, jc_t, normalize_lang_code};
 use chrono::{DateTime, Datelike, Duration, Utc};
 use dataroom_core::vocab::find_licence;
 use dataroom_core::{
@@ -159,6 +159,133 @@ pub fn html_escape(s: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+/// An absolute http(s) address a page may link (`_is_url` in `plugin.py`): no `javascript:` or
+/// other scheme, no whitespace, quote or angle bracket.
+pub fn is_url(value: &str) -> bool {
+    (value.starts_with("https://") || value.starts_with("http://"))
+        && !value.chars().any(|c| {
+            c.is_whitespace() || matches!(c, '"' | '<' | '>' | '{' | '}' | '|' | '\\' | '^' | '`')
+        })
+}
+
+/// Whether `host` is the platform's domain or a subdomain of it; never without a domain
+/// (`_on_platform` in `plugin.py`).
+fn on_platform(host: &str, branding: &BrandingBlock) -> bool {
+    let domain = branding.domain.as_str();
+    !domain.is_empty() && (host == domain || host.ends_with(&format!(".{domain}")))
+}
+
+/// The Endpoint slug of `https://api.{domain}/api/endpoint/{slug}/...` on this platform's domain
+/// (`_API_ENDPOINT` in `plugin.py`: a slug of 16 to 64 `[a-z0-9]`).
+fn api_endpoint_slug<'a>(url: &'a str, branding: &BrandingBlock) -> Option<&'a str> {
+    let rest = url
+        .strip_prefix("https://api.")?
+        .strip_prefix(branding.domain.as_str())?
+        .strip_prefix("/api/endpoint/")?;
+    let (slug, _) = rest.split_once('/')?;
+    let domain_ok = !branding.domain.is_empty()
+        && branding
+            .domain
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-');
+    let slug_ok = (16..=64).contains(&slug.len())
+        && slug
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+    (domain_ok && slug_ok).then_some(slug)
+}
+
+/// An entity type name a URL fragment may carry (`[A-Za-z][A-Za-z0-9_]{0,127}`).
+fn is_type_name(value: &str) -> bool {
+    value.len() <= 128
+        && value
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_alphabetic())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+/// An https address on the platform's own domain.
+fn https_on_platform(url: &str, branding: &BrandingBlock) -> bool {
+    url.starts_with("https://")
+        && url::Url::parse(url)
+            .ok()
+            .is_some_and(|u| u.host_str().is_some_and(|h| on_platform(h, branding)))
+}
+
+/// `value` as one shell word (`shlex.quote`): as it is when every character is safe, else in
+/// single quotes with each `'` closed, escaped and reopened.
+pub fn shlex_quote(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "@%+=:,./-_".contains(c))
+    {
+        return value.to_owned();
+    }
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+/// `value` as one shell word, always in single quotes (`_sh` in `plugin.py`, T-5701): a `'` in a
+/// resource address must not end the quoting and run the rest in the reader's shell.
+pub fn sh(value: &str) -> String {
+    let quoted = shlex_quote(value);
+    if quoted.starts_with('\'') {
+        quoted
+    } else {
+        format!("'{quoted}'")
+    }
+}
+
+/// The address with these query parameters set, the others kept (`_with` in `plugin.py`).
+pub fn with_params(url: &str, params: &[(&str, &str)]) -> String {
+    let (rest, fragment) = match url.split_once('#') {
+        Some((r, f)) => (r, Some(f)),
+        None => (url, None),
+    };
+    let (base, query) = rest.split_once('?').unwrap_or((rest, ""));
+    // parse_qs groups the values of one key in the order the key first appears.
+    let mut kept: Vec<(String, Vec<String>)> = Vec::new();
+    for (k, v) in url::form_urlencoded::parse(query.as_bytes()) {
+        if params.iter().any(|(p, _)| *p == k) {
+            continue;
+        }
+        match kept.iter_mut().find(|(key, _)| *key == k) {
+            Some((_, values)) => values.push(v.into_owned()),
+            None => kept.push((k.into_owned(), vec![v.into_owned()])),
+        }
+    }
+    let quote = |s: &str| -> String {
+        s.bytes()
+            .map(|b| {
+                if b.is_ascii_alphanumeric() || b"_.-~$".contains(&b) {
+                    (b as char).to_string()
+                } else {
+                    format!("%{b:02X}")
+                }
+            })
+            .collect()
+    };
+    let pairs: Vec<String> = kept
+        .iter()
+        .flat_map(|(k, vs)| vs.iter().map(move |v| (k.as_str(), v.as_str())))
+        .chain(params.iter().copied())
+        .map(|(k, v)| format!("{}={}", quote(k), quote(v)))
+        .collect();
+    let mut out = if pairs.is_empty() {
+        base.to_owned()
+    } else {
+        format!("{base}?{}", pairs.join("&"))
+    };
+    if let Some(f) = fragment {
+        out.push('#');
+        out.push_str(f);
+    }
+    out
+}
+
 /// Determines the kind of an Endpoint distribution from its path under `/api/endpoint/{slug}/`
 /// (`jc_kind` in `plugin.py` line 676, D3, D4).
 pub fn jc_kind(dist: &Distribution) -> Option<&'static str> {
@@ -284,12 +411,12 @@ pub fn jc_format_chips(ds: &Dataset) -> Vec<String> {
 
 /// Checks if a distribution is the harvest's link to the publisher's own page (`jc_is_source` in `plugin.py`).
 pub fn jc_is_source(dist: &Distribution, ds: &Dataset) -> bool {
-    let ds_title = ds.title.values().next().map(|s| s.trim()).unwrap_or("");
-    let dist_title = dist.title.values().next().map(|s| s.trim()).unwrap_or("");
-    !ds_title.is_empty()
-        && ds_title == dist_title
-        && jc_kind(dist).is_none()
-        && dist.format.as_deref().unwrap_or("").is_empty()
+    // The two titles are compared in the same language: the first entry of each map is the
+    // alphabetically first language, which differs when the two name different languages.
+    let same_title = ds.title.iter().any(|(lang, t)| {
+        !t.trim().is_empty() && dist.title.get(lang).is_some_and(|d| d.trim() == t.trim())
+    });
+    same_title && jc_kind(dist).is_none() && dist.format.as_deref().unwrap_or("").is_empty()
 }
 
 const API_FORMATS: [&str; 7] = [
@@ -607,11 +734,15 @@ pub fn jc_resource_sections(
         let fmt = jc_resource_format_chip(&dist);
         let label = jc_resource_label(&dist, ds, lang, default_lang);
         let what = jc_what(&dist, lang);
-        let url = dist
-            .download_url
-            .as_ref()
-            .unwrap_or(&dist.access_url)
-            .clone();
+        // A `javascript:` or other non-http address is never a link (empty: no button).
+        let url = Some(
+            dist.download_url
+                .as_ref()
+                .unwrap_or(&dist.access_url)
+                .clone(),
+        )
+        .filter(|u| is_url(u))
+        .unwrap_or_default();
         let page_url = format!("{lang_prefix}/dataset/{}/resource/{}", ds.name, dist.id);
         let action_label = if matches!(sec, "api" | "source") {
             jc_t("open", lang)
@@ -1025,7 +1156,7 @@ pub fn jc_standard(dist: &Distribution) -> Option<(String, String)> {
             Some("MCP") => Some("https://modelcontextprotocol.io/specification"),
             _ => None,
         })?;
-    if !url.starts_with("http://") && !url.starts_with("https://") {
+    if !is_url(url) {
         return None;
     }
     Some((url.to_owned(), standard_display_name(url)))
@@ -1042,7 +1173,10 @@ pub fn jc_model(ds: &Dataset, lang: &str, default_lang: &str) -> Option<(String,
     }
     for dist in &ds.distributions {
         let clean = dist.access_url.split('?').next().unwrap_or("");
-        if resource_section_key(dist, ds) == "schema" && clean.ends_with("schema.json") {
+        if resource_section_key(dist, ds) == "schema"
+            && clean.ends_with("schema.json")
+            && is_url(&dist.access_url)
+        {
             return Some((
                 dist.access_url.clone(),
                 jc_resource_label(dist, ds, lang, default_lang),
@@ -1143,14 +1277,8 @@ pub fn jc_live(ds: &Dataset, branding: &BrandingBlock) -> Option<LiveEndpointBox
         .endpoint_url
         .as_deref()
         .or_else(|| ds.extras.get("endpoint").map(String::as_str))?;
-    if !ep.starts_with("https://") {
-        return None;
-    }
     let host = ep.strip_prefix("https://")?.split('/').next()?;
-    if !branding.domain.is_empty()
-        && host != branding.domain
-        && !host.ends_with(&format!(".{}", branding.domain))
-    {
+    if !on_platform(host, branding) {
         return None;
     }
     let base = if ep.ends_with('/') {
@@ -1158,7 +1286,10 @@ pub fn jc_live(ds: &Dataset, branding: &BrandingBlock) -> Option<LiveEndpointBox
     } else {
         format!("{ep}/")
     };
-    let example = format!("curl -H 'Accept: application/ld+json' '{base}ngsi-ld/v1/types'");
+    let example = format!(
+        "curl -H 'Accept: application/ld+json' {}",
+        sh(&format!("{base}ngsi-ld/v1/types"))
+    );
     Some(LiveEndpointBox {
         url_breakable: render_breakable_html(&base),
         url: base,
@@ -1185,27 +1316,22 @@ pub fn jc_explorer(
     odata_url: &str,
 ) -> Option<ExplorerView> {
     let live = jc_live(ds, branding)?;
-    let domain = if branding.domain.is_empty() {
-        "dev.joinedcontext.com"
-    } else {
-        &branding.domain
-    };
-    let slug = live
-        .url
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .unwrap_or(&ds.name);
-    let origin = format!("https://viz.{domain}");
+    let slug = api_endpoint_slug(&live.url, branding)?;
+    let origin = format!("https://viz.{}", branding.domain);
     let code = normalize_lang_code(lang);
-    let mut src = format!(
-        "{origin}/explore.html#{slug}&inline&lang={code}&theme=light&dataset={}",
-        ds.name
-    );
-    if let Some(d) = dist {
-        if let Some(et) = jc_entity_type(d) {
-            src.push_str(&format!("&type={et}"));
-        }
+    let mut src = format!("{origin}/explore.html#{slug}&inline&lang={code}&theme=light");
+    let name_ok = (2..=100).contains(&ds.name.len())
+        && ds
+            .name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-');
+    if name_ok {
+        src.push_str("&dataset=");
+        src.push_str(&ds.name);
+    }
+    if let Some(et) = dist.and_then(jc_entity_type).filter(|t| is_type_name(t)) {
+        src.push_str("&type=");
+        src.push_str(&et);
     }
     let grid = crate::odata_grid_config(
         odata_url,
@@ -1253,10 +1379,7 @@ pub fn jc_entity_type(dist: &Distribution) -> Option<String> {
 /// Developer page URL (`/d/{slug}?lang={lang}` on `portal.{domain}`, `jc_developer_page` in `plugin.py`, D3).
 pub fn jc_developer_page(ds: &Dataset, branding: &BrandingBlock, lang: &str) -> Option<String> {
     let live = jc_live(ds, branding)?;
-    if branding.domain.is_empty() {
-        return None;
-    }
-    let slug = live.url.trim_end_matches('/').rsplit('/').next()?;
+    let slug = api_endpoint_slug(&live.url, branding)?;
     let code = normalize_lang_code(lang);
     Some(format!(
         "https://portal.{}/d/{slug}?lang={code}",
@@ -1618,21 +1741,16 @@ pub fn jc_preview(
 ) -> Option<ResourcePreviewConfig> {
     let kind = jc_kind(dist)?;
     let url = dist.access_url.as_str();
-    if !url.starts_with("https://") {
+    if !https_on_platform(url, branding) {
         return None;
     }
-    let parsed = url::Url::parse(url).ok()?;
-    let host = parsed.host_str()?;
-    if !branding.domain.is_empty()
-        && host != branding.domain
-        && !host.ends_with(&format!(".{}", branding.domain))
-    {
-        return None;
-    }
-    let path = parsed.path();
+    let path = url::Url::parse(url).ok()?.path().to_owned();
     if kind == "NGSI-LD" && path.contains("/entities") {
         return Some(ResourcePreviewConfig {
-            url: format!("{url}&limit=5&options=keyValues&count=true"),
+            url: with_params(
+                url,
+                &[("limit", "5"), ("options", "keyValues"), ("count", "true")],
+            ),
             kind: "NGSI-LD".into(),
             heading: jc_t("preview_api", lang),
         });
@@ -1646,17 +1764,15 @@ pub fn jc_preview(
         });
     }
     if matches!(kind, "ODATA" | "STA") && jc_entity_type(dist).is_some() {
-        let sep = if url.contains('?') { '&' } else { '?' };
         return Some(ResourcePreviewConfig {
-            url: format!("{url}{sep}$top=5"),
+            url: with_params(url, &[("$top", "5")]),
             kind: kind.into(),
             heading: jc_t("preview_api", lang),
         });
     }
     if kind == "OGCFEAT" && path.trim_end_matches('/').ends_with("/items") {
-        let sep = if url.contains('?') { '&' } else { '?' };
         return Some(ResourcePreviewConfig {
-            url: format!("{url}{sep}limit=5"),
+            url: with_params(url, &[("limit", "5")]),
             kind: "OGCFEAT".into(),
             heading: jc_t("preview_api", lang),
         });
@@ -1683,6 +1799,18 @@ pub fn jc_examples(dist: &Distribution, lang: &str) -> Vec<ResourceExample> {
     }
     let url = &dist.access_url;
     let entity_type = jc_entity_type(dist).unwrap_or_default();
+    // A non-public address names `$TOKEN` in its description: its commands send the header.
+    let auth = if dist.description.values().any(|d| d.contains("$TOKEN")) {
+        " -H \"Authorization: Bearer $TOKEN\""
+    } else {
+        ""
+    };
+    let key: String = dist
+        .id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .collect();
+    let key = if key.is_empty() { "resource" } else { &key };
     let mut out = Vec::new();
     let mut add = |title: String, code: Option<String>, steps: Vec<String>| {
         let idx = out.len();
@@ -1691,40 +1819,46 @@ pub fn jc_examples(dist: &Distribution, lang: &str) -> Vec<ResourceExample> {
             .map(render_breakable_html)
             .unwrap_or_default();
         out.push(ResourceExample {
-            id: format!("jc-ex-{}-{idx}", dist.id),
+            id: format!("jc-ex-{key}-{idx}"),
             title,
             steps,
             code,
             code_breakable: cb,
         });
     };
+    let path = url::Url::parse(url)
+        .map(|u| u.path().to_owned())
+        .unwrap_or_default();
 
     match kind {
-        "NGSI-LD" if !url.contains("/entities") => {
+        "NGSI-LD" if !path.contains("/entities") => {
             let base = url.split('?').next().unwrap_or(url).trim_end_matches('/');
             add(
                 jc_t("ex_types", lang),
                 Some(format!(
-                    "curl -H 'Accept: application/ld+json' '{base}/types'"
+                    "curl{auth} -H 'Accept: application/ld+json' {}",
+                    sh(&format!("{base}/types"))
                 )),
                 Vec::new(),
             );
         }
         "NGSI-LD" => {
-            let sep = if url.contains('?') { '&' } else { '?' };
             add(
                 jc_t("ex_first", lang),
                 Some(format!(
-                    "curl -H 'Accept: application/ld+json' '{url}{sep}limit=5'"
+                    "curl{auth} -H 'Accept: application/ld+json' {}",
+                    sh(&with_params(url, &[("limit", "5")]))
                 )),
                 Vec::new(),
             );
         }
         "ODATA" | "STA" => {
-            let sep = if url.contains('?') { '&' } else { '?' };
             add(
                 jc_t("ex_first", lang),
-                Some(format!("curl '{url}{sep}$top=5'")),
+                Some(format!(
+                    "curl{auth} {}",
+                    sh(&with_params(url, &[("$top", "5")]))
+                )),
                 Vec::new(),
             );
             if kind == "ODATA" {
@@ -1732,10 +1866,12 @@ pub fn jc_examples(dist: &Distribution, lang: &str) -> Vec<ResourceExample> {
             }
         }
         "OGCFEAT" => {
-            let sep = if url.contains('?') { '&' } else { '?' };
             add(
                 jc_t("ex_first", lang),
-                Some(format!("curl '{url}{sep}limit=5'")),
+                Some(format!(
+                    "curl{auth} {}",
+                    sh(&with_params(url, &[("limit", "5")]))
+                )),
                 Vec::new(),
             );
             let root = url.split("/collections/").next().unwrap_or(url);
@@ -1759,22 +1895,31 @@ pub fn jc_examples(dist: &Distribution, lang: &str) -> Vec<ResourceExample> {
             add(
                 jc_t("mcp_claude", lang),
                 Some(format!(
-                    "claude mcp add --transport http joinedcontext '{url}'"
+                    "claude mcp add --transport http joinedcontext {}",
+                    shlex_quote(url)
                 )),
                 Vec::new(),
             );
         }
         "WEBSOCKET" => {
-            let msg = if entity_type.is_empty() {
-                "{\"metadata\":{\"x-op\":\"x-subscribe\",\"x-id\":\"s1\"},\"body\":{\"type\":\"Subscription\",\"watchedAttributes\":[\"location\"]}}".to_owned()
+            // The type is the publisher's text: serde escapes it as a JSON string; the member
+            // order is plugin.py's.
+            let body = if entity_type.is_empty() {
+                r#"{"type":"Subscription","watchedAttributes":["location"]}"#.to_owned()
             } else {
                 format!(
-                    "{{\"metadata\":{{\"x-op\":\"x-subscribe\",\"x-id\":\"s1\"}},\"body\":{{\"type\":\"Subscription\",\"entities\":[{{\"type\":\"{entity_type}\"}}]}}}}"
+                    r#"{{"type":"Subscription","entities":[{{"type":{}}}]}}"#,
+                    Value::String(entity_type)
                 )
             };
+            let msg =
+                format!(r#"{{"metadata":{{"x-op":"x-subscribe","x-id":"s1"}},"body":{body}}}"#);
             add(
                 jc_t("ex_ws", lang),
-                Some(format!("websocat --protocol ngsi-ld-ws '{url}'\n{msg}")),
+                Some(format!(
+                    "websocat --protocol ngsi-ld-ws{auth} {}\n{msg}",
+                    sh(url)
+                )),
                 Vec::new(),
             );
         }
@@ -1782,7 +1927,7 @@ pub fn jc_examples(dist: &Distribution, lang: &str) -> Vec<ResourceExample> {
             let ext = kind.to_ascii_lowercase();
             add(
                 jc_t("ex_file", lang),
-                Some(format!("curl -L -o data.{ext} '{url}'")),
+                Some(format!("curl{auth} -L -o data.{ext} {}", sh(url))),
                 Vec::new(),
             );
         }
@@ -1805,6 +1950,8 @@ pub fn jc_map_config(
                 f.eq_ignore_ascii_case("OGCFEAT") || f.eq_ignore_ascii_case("GEOJSON")
             }))
             && resource_id.is_none_or(|rid| d.id == rid)
+            // The reader's browser fetches it: only an https address of this platform.
+            && https_on_platform(&d.access_url, branding)
     })?;
     let base = cat.base_url();
     let title = localized_text(&ds.title, lang, &cat.default_language)
@@ -1812,7 +1959,9 @@ pub fn jc_map_config(
         .to_owned();
     let base_url = ogc_dist.access_url.trim_end_matches('/');
     let layer = json!({
-        "type": jc_entity_type(ogc_dist).unwrap_or_else(|| "Feature".into()),
+        "type": jc_entity_type(ogc_dist)
+            .filter(|t| is_type_name(t))
+            .unwrap_or_else(|| "Feature".into()),
         "items": format!("{base_url}/items"),
         "schema": format!("{base_url}/schema"),
         "tiles": format!("{base_url}/tiles/WebMercatorQuad"),
@@ -2294,6 +2443,11 @@ pub fn jc_sitemap_xml(cat: &Catalogue, datasets: &[Dataset], publishers: &[Publi
             d.state == RecordState::Active
                 && d.visibility == Visibility::Public
                 && !cat.hidden_datasets.contains_key(&d.name)
+                // A withdrawn publisher's datasets are hidden like on package_show.
+                && publishers
+                    .iter()
+                    .find(|p| p.name == d.publisher_id || p.id == d.publisher_id)
+                    .is_none_or(|p| p.state == RecordState::Active)
         })
         .collect();
     pub_ds.sort_by(|a, b| a.name.cmp(&b.name));
@@ -2358,7 +2512,6 @@ pub fn publisher_card_info(
         default_lang,
     );
     let image = img.unwrap_or_else(|| "/base/images/placeholder-organization.png".into());
-    let _ = jc_rows;
     (title, image, desc)
 }
 

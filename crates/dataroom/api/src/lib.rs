@@ -238,6 +238,45 @@ pub fn problem_response(err: DataroomError) -> Response {
         .into_response()
 }
 
+/// The error a refused [`dataroom_core::Decision`] answers with: a hidden denial is a 404, so
+/// the caller never learns that the record exists (C11).
+pub(crate) fn decision_error(decision: dataroom_core::Decision) -> DataroomError {
+    if decision.visible {
+        DataroomError::Forbidden(decision.reason)
+    } else {
+        DataroomError::NotFound("Not found".into())
+    }
+}
+
+/// Whether `ds` is shown to the caller, by the rules of `package_show` (D2, G2): the caller may
+/// read it; a dataset hidden by the publish gate (`jc_hide`) only to its editors; a withdrawn
+/// dataset or one of a withdrawn publisher not to anonymous callers. Every surface that shows a
+/// dataset or a part of it (resource, view, map, OData row, sample validation) asks this.
+pub(crate) fn dataset_shown(
+    state: &DataroomState,
+    ctx: &RequestCtx,
+    cat: &Catalogue,
+    ds: &Dataset,
+    pub_rec: Option<&Publisher>,
+) -> bool {
+    let target = ObjectTarget::from_dataset(ds, pub_rec);
+    if !state.authorizer.check(ctx, Action::Read, &target).allowed {
+        return false;
+    }
+    if cat.hidden_datasets.contains_key(&ds.name)
+        && (ctx.subject.is_anonymous()
+            || !state
+                .authorizer
+                .check(ctx, Action::Propose, &target)
+                .allowed)
+    {
+        return false;
+    }
+    !(ctx.subject.is_anonymous()
+        && (ds.state != RecordState::Active
+            || pub_rec.is_some_and(|p| p.state == RecordState::Withdrawn)))
+}
+
 /// Mounts dataroom under `prefix` (G1): a router the host app merges beside its own routes.
 ///
 /// `Router::nest(prefix, router(state))` serves `{prefix}` but not `{prefix}/` (axum 0.8 nests
@@ -446,7 +485,7 @@ async fn handle_portal_dataset(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Response {
-    let (ctx, _cat) = match state.resolve_context(&headers).await {
+    let (ctx, cat) = match state.resolve_context(&headers).await {
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
@@ -458,14 +497,11 @@ async fn handle_portal_dataset(
             "dataset '{name}' not found"
         )));
     };
-    let pub_rec = state
-        .store
-        .get_publisher(&ctx, &ds.publisher_id)
-        .await
-        .ok()
-        .flatten();
-    let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
-    if !state.authorizer.check(&ctx, Action::Read, &target).allowed {
+    let pub_rec = match state.store.get_publisher(&ctx, &ds.publisher_id).await {
+        Ok(p) => p,
+        Err(e) => return problem_response(e),
+    };
+    if !dataset_shown(&state, &ctx, &cat, &ds, pub_rec.as_ref()) {
         return problem_response(DataroomError::NotFound(format!(
             "dataset '{name}' not found"
         )));
@@ -518,6 +554,29 @@ async fn handle_upload_profile(
     if !dec.allowed {
         return problem_response(DataroomError::Forbidden(dec.reason));
     }
+    // Activating changes what the catalogue validates against, which the activate route
+    // decides with Approve; uploading with `activate` may not skip that.
+    if req.activate {
+        let dec = state.authorizer.check(&ctx, Action::Approve, &target);
+        if !dec.allowed {
+            return problem_response(DataroomError::Forbidden(dec.reason));
+        }
+    }
+
+    // A published version is immutable (C17: catalogues pin versions). The registry serves
+    // every catalogue, so replacing a pair would change what another catalogue (or a built-in
+    // profile) validates against.
+    if state
+        .profiles
+        .list()
+        .iter()
+        .any(|p| p.id == req.profile.id && p.version == req.profile.version)
+    {
+        return problem_response(DataroomError::Conflict(format!(
+            "profile '{}' version '{}' already exists; upload a new version",
+            req.profile.id, req.profile.version
+        )));
+    }
 
     let datasets = match state.store.list_datasets(&ctx).await {
         Ok(d) => d,
@@ -556,7 +615,9 @@ async fn handle_upload_profile(
             profile_id: saved_profile.id.clone(),
             version: saved_profile.version.clone(),
         });
-        let _ = state.store.upsert_catalogue(cat).await;
+        if let Err(e) = state.store.upsert_catalogue(cat).await {
+            return problem_response(e);
+        }
     }
 
     Json(json!({
@@ -643,7 +704,7 @@ async fn handle_validate_sample(
     Path(name): Path<String>,
     Json(body): Json<ValidateSampleBody>,
 ) -> Response {
-    let (ctx, _cat) = match state.resolve_context(&headers).await {
+    let (ctx, cat) = match state.resolve_context(&headers).await {
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
@@ -655,6 +716,16 @@ async fn handle_validate_sample(
             "dataset '{name}' not found"
         )));
     };
+    let pub_rec = match state.store.get_publisher(&ctx, &ds.publisher_id).await {
+        Ok(p) => p,
+        Err(e) => return problem_response(e),
+    };
+    // The shapes of a dataset the caller may not see are not used for it either.
+    if !dataset_shown(&state, &ctx, &cat, &ds, pub_rec.as_ref()) {
+        return problem_response(DataroomError::NotFound(format!(
+            "dataset '{name}' not found"
+        )));
+    }
     let shapes = body
         .shapes_turtle
         .or_else(|| ds.custom_shacl_shapes.clone())
@@ -823,7 +894,9 @@ async fn handle_upload_logo(
         .unwrap_or_else(|e| e.into_inner())
         .insert(fname, asset.clone());
     cat.theme.logo = Some(asset.url_path.clone());
-    let _ = state.store.upsert_catalogue(cat).await;
+    if let Err(e) = state.store.upsert_catalogue(cat).await {
+        return problem_response(e);
+    }
     let full_url = format!("{}{}", state.mount_prefix, asset.url_path);
     Json(json!({
         "url": full_url,
@@ -1078,6 +1151,15 @@ fn html_response_with_csp(
         .into_response()
 }
 
+/// A map shows a dataset's distributions, so it is shown where the dataset page is (D3).
+async fn map_shown(state: &DataroomState, ctx: &RequestCtx, cat: &Catalogue, ds: &Dataset) -> bool {
+    // A failed publisher lookup shows nothing rather than skipping the withdrawn check.
+    let Ok(pub_rec) = state.store.get_publisher(ctx, &ds.publisher_id).await else {
+        return false;
+    };
+    ds.state != RecordState::Withdrawn && dataset_shown(state, ctx, cat, ds, pub_rec.as_ref())
+}
+
 async fn dispatch_ui_route(
     state: DataroomState,
     headers: HeaderMap,
@@ -1282,12 +1364,10 @@ async fn dispatch_ui_route(
                     "dataset '{ds_name}' not found"
                 )));
             }
-            let pub_rec = state
-                .store
-                .get_publisher(&ctx, &ds.publisher_id)
-                .await
-                .ok()
-                .flatten();
+            let pub_rec = match state.store.get_publisher(&ctx, &ds.publisher_id).await {
+                Ok(p) => p,
+                Err(e) => return problem_response(e),
+            };
             if pub_rec
                 .as_ref()
                 .is_some_and(|p| p.state == RecordState::Withdrawn)
@@ -1387,14 +1467,14 @@ async fn dispatch_ui_route(
                     "resource '{res_id}' not found"
                 )));
             };
-            let pub_rec = state
-                .store
-                .get_publisher(&ctx, &ds.publisher_id)
-                .await
-                .ok()
-                .flatten();
-            let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
-            if !state.authorizer.check(&ctx, Action::Read, &target).allowed {
+            let pub_rec = match state.store.get_publisher(&ctx, &ds.publisher_id).await {
+                Ok(p) => p,
+                Err(e) => return problem_response(e),
+            };
+            // A resource is shown where its dataset page is (D3).
+            if ds.state == RecordState::Withdrawn
+                || !dataset_shown(&state, &ctx, &cat, &ds, pub_rec.as_ref())
+            {
                 return problem_response(DataroomError::NotFound(format!(
                     "dataset '{ds_name}' not found"
                 )));
@@ -1587,6 +1667,11 @@ async fn dispatch_ui_route(
                     "dataset '{ds_id}' not found"
                 )));
             };
+            if !map_shown(&state, &ctx, &cat, &ds).await {
+                return problem_response(DataroomError::NotFound(format!(
+                    "dataset '{ds_id}' not found"
+                )));
+            }
             let Some(html) = render_map_page(
                 &cat,
                 Some(&state.installation_branding),
@@ -1607,6 +1692,11 @@ async fn dispatch_ui_route(
                     "dataset '{ds_id}' not found"
                 )));
             };
+            if !map_shown(&state, &ctx, &cat, &ds).await {
+                return problem_response(DataroomError::NotFound(format!(
+                    "dataset '{ds_id}' not found"
+                )));
+            }
             let Some(html) = render_map_page(
                 &cat,
                 Some(&state.installation_branding),

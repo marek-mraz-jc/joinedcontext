@@ -48,13 +48,8 @@ pub trait OutboundFetcher: Send + Sync {
 /// Production HTTPS fetcher backed by `reqwest` with DNS pinning (`resolve_to_addrs`),
 /// `Policy::none()` (so `HarvestEngine` validates every redirect hop), per-source byte cap,
 /// and timeout (A2).
+#[derive(Default)]
 pub struct HttpFetcher;
-
-impl Default for HttpFetcher {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl HttpFetcher {
     pub fn new() -> Self {
@@ -262,6 +257,17 @@ impl OutboundFetcher for MapFetcher {
 
 type CustomDnsResolver = Arc<dyn Fn(&str, u16) -> Result<Vec<SocketAddr>> + Send + Sync>;
 
+/// Most pages read from a paged Hub or DCAT feed in one run.
+const MAX_PAGES: usize = 50;
+
+/// Most `package_search` pages (1000 records each) read from a CKAN source in one run.
+const CKAN_MAX_PAGES: usize = 20;
+
+/// A source read that cannot be shown complete: nothing of it is written or withdrawn.
+fn incomplete(what: String) -> DataroomError {
+    DataroomError::OutboundRefused(format!("incomplete read: {what}"))
+}
+
 /// Harvest runner engine implementing [`HarvestRunner`] (C9, A2).
 pub struct HarvestEngine {
     fetcher: Arc<dyn OutboundFetcher>,
@@ -315,7 +321,8 @@ impl HarvestEngine {
         accept: &str,
     ) -> Result<(Option<String>, String)> {
         let mut current_url = url.to_owned();
-        for hop in 0..=MAX_REDIRECT_HOPS {
+        let mut hops = 0;
+        loop {
             let resolver_ref = self
                 .custom_dns
                 .as_ref()
@@ -344,11 +351,12 @@ impl HarvestEngine {
                     return Ok((content_type, body));
                 }
                 FetchResponse::Redirect { location, .. } => {
-                    if hop >= MAX_REDIRECT_HOPS {
+                    if hops == MAX_REDIRECT_HOPS {
                         return Err(DataroomError::OutboundRefused(format!(
                             "redirect limit of {MAX_REDIRECT_HOPS} hops exceeded from {url}"
                         )));
                     }
+                    hops += 1;
                     let next_url = target
                         .url
                         .join(&location)
@@ -362,9 +370,6 @@ impl HarvestEngine {
                 }
             }
         }
-        Err(DataroomError::OutboundRefused(format!(
-            "redirect limit of {MAX_REDIRECT_HOPS} hops exceeded"
-        )))
     }
 
     async fn gather_items(
@@ -399,7 +404,7 @@ impl HarvestEngine {
                 ));
                 let mut expected_total = None;
 
-                for _ in 0..50 {
+                for _ in 0..MAX_PAGES {
                     let Some(url) = next_url.take() else {
                         break;
                     };
@@ -429,10 +434,24 @@ impl HarvestEngine {
                         });
                 }
 
-                if let Some(expected) = expected_total {
-                    if features.len() != expected {
-                        return Err(DataroomError::OutboundRefused(format!(
-                            "incomplete Hub read: got {} of {expected} items",
+                // Only a complete read may withdraw (harvest-hub.py `hub_items`): the Hub must
+                // say how many items it holds, stop paging, and hand over exactly that many.
+                if next_url.is_some() {
+                    return Err(incomplete(format!(
+                        "the Hub still pages after {MAX_PAGES} pages"
+                    )));
+                }
+                match expected_total {
+                    Some(expected) if features.len() == expected => {}
+                    Some(expected) => {
+                        return Err(incomplete(format!(
+                            "got {} of {expected} Hub items",
+                            features.len()
+                        )));
+                    }
+                    None => {
+                        return Err(incomplete(format!(
+                            "the Hub listed {} items without numberMatched",
                             features.len()
                         )));
                     }
@@ -473,12 +492,12 @@ impl HarvestEngine {
                 let mut next_url = Some(source.url.clone());
                 let mut seen_pages = BTreeSet::new();
 
-                for _ in 0..50 {
+                for _ in 0..MAX_PAGES {
                     let Some(url) = next_url.take() else {
                         break;
                     };
                     if !seen_pages.insert(url.clone()) {
-                        break;
+                        return Err(incomplete(format!("the feed's pages loop back to {url}")));
                     }
                     let (ct, body) = self
                         .checked_fetch(
@@ -499,6 +518,11 @@ impl HarvestEngine {
                     all_datasets.extend(page_ds);
                     next_url = next;
                 }
+                if next_url.is_some() {
+                    return Err(incomplete(format!(
+                        "the feed still pages after {MAX_PAGES} pages"
+                    )));
+                }
 
                 Ok((all_datasets, Vec::new()))
             }
@@ -506,28 +530,37 @@ impl HarvestEngine {
                 let mut all_datasets = Vec::new();
                 let mut start = 0usize;
                 let base = source.url.trim_end_matches('/');
-                for _ in 0..20 {
+                let mut total = None;
+                for _ in 0..CKAN_MAX_PAGES {
                     let url = if base.contains("/api/3/action/package_search") {
-                        format!("{base}?rows=1000&start={start}")
+                        // A source URL may carry its own filter (`?fq=...`): keep it.
+                        let sep = if base.contains('?') { '&' } else { '?' };
+                        format!("{base}{sep}rows=1000&start={start}")
                     } else {
                         format!("{base}/api/3/action/package_search?rows=1000&start={start}")
                     };
                     let (_, body) = self
                         .checked_fetch(&url, source, cat_allowed_hosts, "application/json")
                         .await?;
-                    let (page_ds, total) = parse_ckan_search_page(
+                    let (page_ds, count) = parse_ckan_search_page(
                         ctx.org_id,
                         ctx.catalogue_id,
                         source,
                         &body,
                         default_lang,
                     )?;
+                    total = Some(count);
                     let fetched_len = page_ds.len();
                     all_datasets.extend(page_ds);
                     start += fetched_len;
-                    if fetched_len == 0 || start >= total {
+                    if fetched_len == 0 || start >= count {
                         break;
                     }
+                }
+                // Only a complete read may withdraw: every record the count promised was read.
+                let total = total.unwrap_or(0);
+                if start < total {
+                    return Err(incomplete(format!("read {start} of {total} CKAN packages")));
                 }
                 Ok((all_datasets, Vec::new()))
             }
@@ -574,7 +607,17 @@ impl HarvestRunner for HarvestEngine {
                 )
                 .await;
 
-            let (kept_items, skipped) = match gather_res {
+            let gather_res = gather_res.and_then(|(kept, skipped)| {
+                if kept.is_empty() {
+                    // An answer with nothing to keep is an outage, not a catalogue to empty.
+                    Err(DataroomError::OutboundRefused(
+                        "source listed 0 items to keep; nothing is written or withdrawn".into(),
+                    ))
+                } else {
+                    Ok((kept, skipped))
+                }
+            });
+            let (kept_items, mut skipped) = match gather_res {
                 Ok(pair) => pair,
                 Err(err) => {
                     logs.push(HarvestLogLine {
@@ -604,16 +647,12 @@ impl HarvestRunner for HarvestEngine {
                 }
             };
 
-            if kept_items.is_empty() {
-                let err = DataroomError::OutboundRefused(
-                    "source listed 0 items to keep; nothing is written or withdrawn".into(),
-                );
-                return Err(err);
-            }
-
             // Index existing datasets from this harvest source by `harvest_source_item_id`.
             let existing_all = store.list_datasets(ctx).await?;
             let mut existing_by_item: BTreeMap<String, Dataset> = BTreeMap::new();
+            // Ids and names of every record this source does not hold: a local dataset or another
+            // source's. A harvested item never takes one of them over (C9, C16).
+            let mut foreign: BTreeMap<String, String> = BTreeMap::new();
             for ds in existing_all {
                 let hs = ds
                     .harvest_source_id
@@ -627,6 +666,9 @@ impl HarvestRunner for HarvestEngine {
                         .or_else(|| ds.extras.get("source_uri").cloned())
                         .unwrap_or_else(|| ds.name.clone());
                     existing_by_item.insert(item_id, ds);
+                } else {
+                    foreign.insert(ds.id.clone(), ds.name.clone());
+                    foreign.insert(ds.name.clone(), ds.name.clone());
                 }
             }
 
@@ -651,8 +693,24 @@ impl HarvestRunner for HarvestEngine {
                         store.upsert_dataset(ctx, incoming).await?;
                         updated_count += 1;
                     }
+                } else if let Some(held) = foreign
+                    .get(&incoming.id)
+                    .or_else(|| foreign.get(&incoming.name))
+                {
+                    skipped.push(HarvestSkippedItem {
+                        item_id,
+                        title: dataroom_core::text_in_lang(&incoming.title, None)
+                            .unwrap_or(&incoming.name)
+                            .to_owned(),
+                        reason: format!(
+                            "dataset '{held}' already exists and does not belong to this source"
+                        ),
+                    });
                 } else {
+                    let (id, name) = (incoming.id.clone(), incoming.name.clone());
                     store.upsert_dataset(ctx, incoming).await?;
+                    foreign.insert(id, name.clone());
+                    foreign.insert(name.clone(), name);
                     created_count += 1;
                 }
             }

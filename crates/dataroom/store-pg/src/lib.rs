@@ -3,14 +3,17 @@
 //! startup security verification (C1, C14, research-tenancy §2.4 & §5.3).
 
 use chrono::Utc;
-use dataroom_core::odata_defs::dataroom_service;
+use dataroom_core::odata_defs::{
+    activity_to_row, catalogue_to_row, dataroom_service, dataset_to_row, distribution_to_row,
+    harvest_run_to_row, harvest_source_to_row, publisher_to_row, shacl_report_to_row,
+};
 use dataroom_core::store::BoxFuture;
 use dataroom_core::{
     text_in_lang, ActivityRow, Catalogue, CatalogueId, CataloguePlugin, DataroomError, Dataset,
     Distribution, HarvestRun, HarvestSource, OrgId, ProfileRecord, Publisher, RecordState,
     RequestCtx, ResourceView, Result, ShaclValidationReport, StaticPage, Store,
 };
-use odata_table::{PgTable, Table};
+use odata_table::{MemoryTable, Table};
 use sqlx::postgres::PgConnection;
 use sqlx::types::Json;
 use sqlx::PgPool;
@@ -98,6 +101,242 @@ impl PgStore {
     }
 }
 
+/// Maps a database error to the store contract: a unique violation is the caller's conflict
+/// (with CKAN's field error for a taken dataset URL), not a storage failure.
+fn db_err(e: sqlx::Error) -> DataroomError {
+    if let Some(db) = e.as_database_error() {
+        if db.code().as_deref() == Some("23505") {
+            return match db.constraint() {
+                Some("cat_dataset_org_id_catalogue_id_name_key") => {
+                    DataroomError::field_error("name", "That URL is already in use.")
+                }
+                Some("cat_publisher_org_id_catalogue_id_name_key") => DataroomError::Conflict(
+                    "publisher name already exists in this catalogue".into(),
+                ),
+                Some("cat_catalogue_host_key" | "uq_cat_catalogue_host_lower") => {
+                    DataroomError::Conflict("host is already claimed by another catalogue".into())
+                }
+                Some(other) => DataroomError::Conflict(format!("duplicate record ({other})")),
+                None => DataroomError::Conflict("duplicate record".into()),
+            };
+        }
+    }
+    DataroomError::Storage(e.to_string())
+}
+
+/// The publisher with this id, name or IRI in the caller's tenant, without following merges.
+async fn find_publisher(
+    conn: &mut PgConnection,
+    ctx: &RequestCtx,
+    id_or_name: &str,
+) -> Result<Option<Publisher>> {
+    let row: Option<(Json<Publisher>,)> = sqlx::query_as(
+        "SELECT doc FROM dataroom.cat_publisher
+         WHERE org_id = $1 AND catalogue_id = $2
+           AND (id COLLATE \"C\" = $3 OR name COLLATE \"C\" = $3 OR uri COLLATE \"C\" = $3)
+         ORDER BY (id COLLATE \"C\" = $3) DESC, (name COLLATE \"C\" = $3) DESC
+         LIMIT 1",
+    )
+    .bind(ctx.org_id.as_uuid())
+    .bind(ctx.catalogue_id.as_uuid())
+    .bind(id_or_name)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    Ok(row.map(|(Json(p),)| p))
+}
+
+/// Writes a publisher row inside the caller's tenant transaction.
+async fn write_publisher(
+    conn: &mut PgConnection,
+    ctx: &RequestCtx,
+    publisher: &Publisher,
+) -> Result<()> {
+    let title = text_in_lang(&publisher.title, None)
+        .unwrap_or(&publisher.name)
+        .to_owned();
+    sqlx::query(
+        "INSERT INTO dataroom.cat_publisher
+             (org_id, catalogue_id, id, name, title, uri, state, merged_into, modified, doc)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT (org_id, catalogue_id, id) DO UPDATE SET
+                name = EXCLUDED.name,
+                title = EXCLUDED.title,
+                uri = EXCLUDED.uri,
+                state = EXCLUDED.state,
+                merged_into = EXCLUDED.merged_into,
+                modified = EXCLUDED.modified,
+                doc = EXCLUDED.doc",
+    )
+    .bind(ctx.org_id.as_uuid())
+    .bind(ctx.catalogue_id.as_uuid())
+    .bind(&publisher.id)
+    .bind(&publisher.name)
+    .bind(title)
+    .bind(&publisher.uri)
+    .bind(publisher.state.as_str())
+    .bind(&publisher.merged_into)
+    .bind(publisher.modified)
+    .bind(Json(&publisher))
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+/// Fills the ids a new dataset and its distributions get, in the request's tenant.
+fn normalise_dataset(ctx: &RequestCtx, mut dataset: Dataset) -> Dataset {
+    dataset.org_id = ctx.org_id;
+    dataset.catalogue_id = ctx.catalogue_id;
+    if dataset.id.is_empty() {
+        dataset.id = format!("pkg-{}", dataset.name);
+    }
+    for (i, dist) in dataset.distributions.iter_mut().enumerate() {
+        dist.dataset_id = dataset.id.clone();
+        if dist.id.is_empty() {
+            dist.id = format!("res-{}-{i}", dataset.name);
+        }
+    }
+    dataset
+}
+
+/// Writes a dataset row and replaces its distribution rows inside the caller's tenant
+/// transaction.
+async fn write_dataset(conn: &mut PgConnection, ctx: &RequestCtx, dataset: &Dataset) -> Result<()> {
+    let title = text_in_lang(&dataset.title, None)
+        .unwrap_or(&dataset.name)
+        .to_owned();
+    let notes = text_in_lang(&dataset.description, None).map(str::to_owned);
+    let tags_joined = dataset.tags.join(" ");
+    let text_sk = format!(
+        "{} {} {}",
+        dataset.title.get("sk").map(String::as_str).unwrap_or(""),
+        dataset
+            .description
+            .get("sk")
+            .map(String::as_str)
+            .unwrap_or(""),
+        tags_joined
+    );
+    let text_cs = format!(
+        "{} {} {}",
+        dataset.title.get("cs").map(String::as_str).unwrap_or(""),
+        dataset
+            .description
+            .get("cs")
+            .map(String::as_str)
+            .unwrap_or(""),
+        tags_joined
+    );
+    let text_en = format!(
+        "{} {} {}",
+        dataset.title.get("en").map(String::as_str).unwrap_or(""),
+        dataset
+            .description
+            .get("en")
+            .map(String::as_str)
+            .unwrap_or(""),
+        tags_joined
+    );
+    let text_fi = dataset.title.get("fi").cloned().unwrap_or_default();
+    let text_ca = dataset.title.get("ca").cloned().unwrap_or_default();
+
+    sqlx::query(
+        "INSERT INTO dataroom.cat_dataset
+             (org_id, catalogue_id, id, name, title, notes, publisher_id, visibility, state,
+              licence_id, frequency, endpoint_url, issued, modified,
+              search_sk, search_cs, search_en, search_fi, search_ca, doc)
+             VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                to_tsvector('dataroom.dataroom_simple', $15),
+                to_tsvector('dataroom.dataroom_simple', $16),
+                to_tsvector('dataroom.dataroom_simple', $17),
+                to_tsvector('dataroom.dataroom_simple', $18),
+                to_tsvector('dataroom.dataroom_simple', $19),
+                $20
+             )
+             ON CONFLICT (org_id, catalogue_id, id) DO UPDATE SET
+                name = EXCLUDED.name,
+                title = EXCLUDED.title,
+                notes = EXCLUDED.notes,
+                publisher_id = EXCLUDED.publisher_id,
+                visibility = EXCLUDED.visibility,
+                state = EXCLUDED.state,
+                licence_id = EXCLUDED.licence_id,
+                frequency = EXCLUDED.frequency,
+                endpoint_url = EXCLUDED.endpoint_url,
+                issued = EXCLUDED.issued,
+                modified = EXCLUDED.modified,
+                search_sk = EXCLUDED.search_sk,
+                search_cs = EXCLUDED.search_cs,
+                search_en = EXCLUDED.search_en,
+                search_fi = EXCLUDED.search_fi,
+                search_ca = EXCLUDED.search_ca,
+                doc = EXCLUDED.doc",
+    )
+    .bind(ctx.org_id.as_uuid())
+    .bind(ctx.catalogue_id.as_uuid())
+    .bind(&dataset.id)
+    .bind(&dataset.name)
+    .bind(title)
+    .bind(notes)
+    .bind(&dataset.publisher_id)
+    .bind(dataset.visibility.as_str())
+    .bind(dataset.state.as_str())
+    .bind(&dataset.licence_id)
+    .bind(&dataset.frequency)
+    .bind(&dataset.endpoint_url)
+    .bind(dataset.issued)
+    .bind(dataset.modified)
+    .bind(text_sk)
+    .bind(text_cs)
+    .bind(text_en)
+    .bind(text_fi)
+    .bind(text_ca)
+    .bind(Json(&dataset))
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+
+    sqlx::query(
+        "DELETE FROM dataroom.cat_distribution
+             WHERE org_id = $1 AND catalogue_id = $2 AND dataset_id COLLATE \"C\" = $3",
+    )
+    .bind(ctx.org_id.as_uuid())
+    .bind(ctx.catalogue_id.as_uuid())
+    .bind(&dataset.id)
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+
+    for dist in &dataset.distributions {
+        let dname = text_in_lang(&dist.title, None)
+            .unwrap_or(&dist.access_url)
+            .to_owned();
+        sqlx::query(
+                "INSERT INTO dataroom.cat_distribution
+                 (org_id, catalogue_id, dataset_id, id, name, access_url, download_url, format, media_type, byte_size, doc)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(&dataset.id)
+            .bind(&dist.id)
+            .bind(dname)
+            .bind(&dist.access_url)
+            .bind(&dist.download_url)
+            .bind(&dist.format)
+            .bind(&dist.media_type)
+            .bind(dist.byte_size.and_then(|b| i64::try_from(b).ok()))
+            .bind(Json(dist))
+            .execute(&mut *conn)
+            .await
+            .map_err(db_err)?;
+    }
+
+    Ok(())
+}
+
 /// Sets `jc.org` and optionally `jc.catalogue` on the current transaction.
 pub async fn set_tenant_config(
     conn: &mut PgConnection,
@@ -169,14 +408,30 @@ pub async fn verify_rls_on_pool(pool: &PgPool) -> Result<()> {
 impl Store for PgStore {
     fn resolve_host<'a>(&'a self, host: &'a str) -> BoxFuture<'a, Result<Option<Catalogue>>> {
         Box::pin(async move {
-            let clean = host.split(':').next().unwrap_or(host).trim();
-            let row: Option<(Json<Catalogue>,)> = sqlx::query_as(
-                "SELECT doc FROM dataroom.cat_catalogue WHERE host COLLATE \"C\" = $1 LIMIT 1",
-            )
-            .bind(clean)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            let clean = host
+                .split(':')
+                .next()
+                .unwrap_or(host)
+                .trim()
+                .to_ascii_lowercase();
+            if clean.is_empty() {
+                return Ok(None);
+            }
+            // No tenant is known yet: the host lookup policy lets this transaction read the
+            // one catalogue row on the host it names, nothing else (forced RLS, C1).
+            let mut tx = self.pool.begin().await.map_err(db_err)?;
+            sqlx::query("SELECT set_config('jc.host', $1, true)")
+                .bind(&clean)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+            let row: Option<(Json<Catalogue>,)> =
+                sqlx::query_as("SELECT doc FROM dataroom.cat_catalogue WHERE lower(host) = $1")
+                    .bind(&clean)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row.map(|(Json(c),)| c))
         })
     }
@@ -190,10 +445,8 @@ impl Store for PgStore {
             .bind(org_id.as_uuid())
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows.into_iter().map(|(Json(c),)| c).collect())
         })
     }
@@ -212,10 +465,8 @@ impl Store for PgStore {
             .bind(catalogue_id.as_uuid())
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row.map(|(Json(c),)| c))
         })
     }
@@ -256,10 +507,8 @@ impl Store for PgStore {
             .bind(Json(&catalogue))
             .execute(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(catalogue)
         })
     }
@@ -278,10 +527,8 @@ impl Store for PgStore {
             .bind(ctx.catalogue_id.as_uuid())
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows.into_iter().map(|(Json(p),)| p).collect())
         })
     }
@@ -295,35 +542,18 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            let mut target_key = id_or_name.to_owned();
-            let mut resolved = None;
+            let mut resolved = find_publisher(&mut tx, ctx, id_or_name).await?;
+            // Follow merge redirects (up to 4 hops, C16).
             for _ in 0..4 {
-                let row: Option<(Json<Publisher>,)> = sqlx::query_as(
-                    "SELECT doc FROM dataroom.cat_publisher
-                     WHERE org_id = $1 AND catalogue_id = $2
-                       AND (id COLLATE \"C\" = $3 OR name COLLATE \"C\" = $3 OR uri COLLATE \"C\" = $3)
-                     LIMIT 1",
-                )
-                .bind(ctx.org_id.as_uuid())
-                .bind(ctx.catalogue_id.as_uuid())
-                .bind(&target_key)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
-                let Some((Json(pub_rec),)) = row else {
+                let Some(next) = resolved.as_ref().and_then(|p| p.merged_into.clone()) else {
                     break;
                 };
-                if let Some(ref merged) = pub_rec.merged_into {
-                    target_key = merged.clone();
-                    resolved = Some(pub_rec);
-                } else {
-                    resolved = Some(pub_rec);
-                    break;
+                match find_publisher(&mut tx, ctx, &next).await? {
+                    Some(found) => resolved = Some(found),
+                    None => break,
                 }
             }
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            tx.commit().await.map_err(db_err)?;
             Ok(resolved)
         })
     }
@@ -339,41 +569,11 @@ impl Store for PgStore {
             if publisher.id.is_empty() {
                 publisher.id = format!("pub-{}", publisher.name);
             }
-            let title = text_in_lang(&publisher.title, None)
-                .unwrap_or(&publisher.name)
-                .to_owned();
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            sqlx::query(
-                "INSERT INTO dataroom.cat_publisher
-                 (org_id, catalogue_id, id, name, title, uri, state, merged_into, modified, doc)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                 ON CONFLICT (org_id, catalogue_id, id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    title = EXCLUDED.title,
-                    uri = EXCLUDED.uri,
-                    state = EXCLUDED.state,
-                    merged_into = EXCLUDED.merged_into,
-                    modified = EXCLUDED.modified,
-                    doc = EXCLUDED.doc",
-            )
-            .bind(ctx.org_id.as_uuid())
-            .bind(ctx.catalogue_id.as_uuid())
-            .bind(&publisher.id)
-            .bind(&publisher.name)
-            .bind(title)
-            .bind(&publisher.uri)
-            .bind(publisher.state.as_str())
-            .bind(&publisher.merged_into)
-            .bind(publisher.modified)
-            .bind(Json(&publisher))
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            write_publisher(&mut tx, ctx, &publisher).await?;
+            tx.commit().await.map_err(db_err)?;
             Ok(publisher)
         })
     }
@@ -385,28 +585,60 @@ impl Store for PgStore {
         target_id_or_name: &'a str,
     ) -> BoxFuture<'a, Result<Publisher>> {
         Box::pin(async move {
-            let Some(mut source) = self.get_publisher(ctx, source_id_or_name).await? else {
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            // The source by its own record (an already merged source does not redirect to the
+            // publisher it was merged into); the target as published, following redirects.
+            let Some(mut source) = find_publisher(&mut tx, ctx, source_id_or_name).await? else {
                 return Err(DataroomError::NotFound(format!(
                     "publisher '{source_id_or_name}' not found"
                 )));
             };
-            let Some(target) = self.get_publisher(ctx, target_id_or_name).await? else {
+            let mut target = find_publisher(&mut tx, ctx, target_id_or_name).await?;
+            for _ in 0..4 {
+                match target.as_ref().and_then(|t| t.merged_into.clone()) {
+                    Some(next) => match find_publisher(&mut tx, ctx, &next).await? {
+                        Some(found) => target = Some(found),
+                        None => break,
+                    },
+                    None => break,
+                }
+            }
+            let Some(target) = target else {
                 return Err(DataroomError::NotFound(format!(
                     "publisher '{target_id_or_name}' not found"
                 )));
             };
-            let datasets = self.list_datasets(ctx).await?;
-            for mut ds in datasets {
-                if ds.publisher_id == source.id || ds.publisher_id == source.name {
-                    ds.publisher_id = target.name.clone();
-                    ds.modified = Utc::now();
-                    self.upsert_dataset(ctx, ds).await?;
-                }
+            if source.id == target.id {
+                return Err(DataroomError::field_error(
+                    "target",
+                    "cannot merge a publisher into itself",
+                ));
+            }
+            let rows: Vec<(Json<Dataset>,)> = sqlx::query_as(
+                "SELECT doc FROM dataroom.cat_dataset
+                 WHERE org_id = $1 AND catalogue_id = $2
+                   AND (publisher_id COLLATE \"C\" = $3 OR publisher_id COLLATE \"C\" = $4)",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(&source.id)
+            .bind(&source.name)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            let now = Utc::now();
+            for (Json(mut ds),) in rows {
+                ds.publisher_id = target.name.clone();
+                ds.modified = now;
+                write_dataset(&mut tx, ctx, &ds).await?;
             }
             source.merged_into = Some(target.name.clone());
             source.state = RecordState::Withdrawn;
-            source.modified = Utc::now();
-            self.upsert_publisher(ctx, source).await?;
+            source.modified = now;
+            write_publisher(&mut tx, ctx, &source).await?;
+            tx.commit().await.map_err(db_err)?;
             Ok(target)
         })
     }
@@ -442,10 +674,8 @@ impl Store for PgStore {
             .bind(ctx.catalogue_id.as_uuid())
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows.into_iter().map(|(Json(d),)| d).collect())
         })
     }
@@ -470,10 +700,8 @@ impl Store for PgStore {
             .bind(id_or_name)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row.map(|(Json(d),)| d))
         })
     }
@@ -481,157 +709,15 @@ impl Store for PgStore {
     fn upsert_dataset<'a>(
         &'a self,
         ctx: &'a RequestCtx,
-        mut dataset: Dataset,
+        dataset: Dataset,
     ) -> BoxFuture<'a, Result<Dataset>> {
         Box::pin(async move {
-            dataset.org_id = ctx.org_id;
-            dataset.catalogue_id = ctx.catalogue_id;
-            if dataset.id.is_empty() {
-                dataset.id = format!("pkg-{}", dataset.name);
-            }
-            for (i, dist) in dataset.distributions.iter_mut().enumerate() {
-                dist.dataset_id = dataset.id.clone();
-                if dist.id.is_empty() {
-                    dist.id = format!("res-{}-{i}", dataset.name);
-                }
-            }
-            let title = text_in_lang(&dataset.title, None)
-                .unwrap_or(&dataset.name)
-                .to_owned();
-            let notes = text_in_lang(&dataset.description, None).map(str::to_owned);
-            let tags_joined = dataset.tags.join(" ");
-            let text_sk = format!(
-                "{} {} {}",
-                dataset.title.get("sk").map(String::as_str).unwrap_or(""),
-                dataset
-                    .description
-                    .get("sk")
-                    .map(String::as_str)
-                    .unwrap_or(""),
-                tags_joined
-            );
-            let text_cs = format!(
-                "{} {} {}",
-                dataset.title.get("cs").map(String::as_str).unwrap_or(""),
-                dataset
-                    .description
-                    .get("cs")
-                    .map(String::as_str)
-                    .unwrap_or(""),
-                tags_joined
-            );
-            let text_en = format!(
-                "{} {} {}",
-                dataset.title.get("en").map(String::as_str).unwrap_or(""),
-                dataset
-                    .description
-                    .get("en")
-                    .map(String::as_str)
-                    .unwrap_or(""),
-                tags_joined
-            );
-            let text_fi = dataset.title.get("fi").cloned().unwrap_or_default();
-            let text_ca = dataset.title.get("ca").cloned().unwrap_or_default();
-
+            let dataset = normalise_dataset(ctx, dataset);
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            sqlx::query(
-                "INSERT INTO dataroom.cat_dataset
-                 (org_id, catalogue_id, id, name, title, notes, publisher_id, visibility, state,
-                  licence_id, frequency, endpoint_url, issued, modified,
-                  search_sk, search_cs, search_en, search_fi, search_ca, doc)
-                 VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-                    to_tsvector('dataroom.dataroom_simple', $15),
-                    to_tsvector('dataroom.dataroom_simple', $16),
-                    to_tsvector('dataroom.dataroom_simple', $17),
-                    to_tsvector('dataroom.dataroom_simple', $18),
-                    to_tsvector('dataroom.dataroom_simple', $19),
-                    $20
-                 )
-                 ON CONFLICT (org_id, catalogue_id, id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    title = EXCLUDED.title,
-                    notes = EXCLUDED.notes,
-                    publisher_id = EXCLUDED.publisher_id,
-                    visibility = EXCLUDED.visibility,
-                    state = EXCLUDED.state,
-                    licence_id = EXCLUDED.licence_id,
-                    frequency = EXCLUDED.frequency,
-                    endpoint_url = EXCLUDED.endpoint_url,
-                    issued = EXCLUDED.issued,
-                    modified = EXCLUDED.modified,
-                    search_sk = EXCLUDED.search_sk,
-                    search_cs = EXCLUDED.search_cs,
-                    search_en = EXCLUDED.search_en,
-                    search_fi = EXCLUDED.search_fi,
-                    search_ca = EXCLUDED.search_ca,
-                    doc = EXCLUDED.doc",
-            )
-            .bind(ctx.org_id.as_uuid())
-            .bind(ctx.catalogue_id.as_uuid())
-            .bind(&dataset.id)
-            .bind(&dataset.name)
-            .bind(title)
-            .bind(notes)
-            .bind(&dataset.publisher_id)
-            .bind(dataset.visibility.as_str())
-            .bind(dataset.state.as_str())
-            .bind(&dataset.licence_id)
-            .bind(&dataset.frequency)
-            .bind(&dataset.endpoint_url)
-            .bind(dataset.issued)
-            .bind(dataset.modified)
-            .bind(text_sk)
-            .bind(text_cs)
-            .bind(text_en)
-            .bind(text_fi)
-            .bind(text_ca)
-            .bind(Json(&dataset))
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-
-            sqlx::query(
-                "DELETE FROM dataroom.cat_distribution
-                 WHERE org_id = $1 AND catalogue_id = $2 AND dataset_id COLLATE \"C\" = $3",
-            )
-            .bind(ctx.org_id.as_uuid())
-            .bind(ctx.catalogue_id.as_uuid())
-            .bind(&dataset.id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-
-            for dist in &dataset.distributions {
-                let dname = text_in_lang(&dist.title, None)
-                    .unwrap_or(&dist.access_url)
-                    .to_owned();
-                sqlx::query(
-                    "INSERT INTO dataroom.cat_distribution
-                     (org_id, catalogue_id, dataset_id, id, name, access_url, download_url, format, media_type, byte_size, doc)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
-                )
-                .bind(ctx.org_id.as_uuid())
-                .bind(ctx.catalogue_id.as_uuid())
-                .bind(&dataset.id)
-                .bind(&dist.id)
-                .bind(dname)
-                .bind(&dist.access_url)
-                .bind(&dist.download_url)
-                .bind(&dist.format)
-                .bind(&dist.media_type)
-                .bind(dist.byte_size.and_then(|b| i64::try_from(b).ok()))
-                .bind(Json(dist))
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            }
-
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            write_dataset(&mut tx, ctx, &dataset).await?;
+            tx.commit().await.map_err(db_err)?;
             Ok(dataset)
         })
     }
@@ -667,16 +753,7 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            sqlx::query(
-                "DELETE FROM dataroom.cat_distribution
-                 WHERE org_id = $1 AND catalogue_id = $2 AND dataset_id COLLATE \"C\" = $3",
-            )
-            .bind(ctx.org_id.as_uuid())
-            .bind(ctx.catalogue_id.as_uuid())
-            .bind(&ds.id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            // Tables in the migration's order, so a concurrent migration cannot deadlock.
             sqlx::query(
                 "DELETE FROM dataroom.cat_dataset
                  WHERE org_id = $1 AND catalogue_id = $2 AND id COLLATE \"C\" = $3",
@@ -686,10 +763,30 @@ impl Store for PgStore {
             .bind(&ds.id)
             .execute(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            sqlx::query(
+                "DELETE FROM dataroom.cat_distribution
+                 WHERE org_id = $1 AND catalogue_id = $2 AND dataset_id COLLATE \"C\" = $3",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(&ds.id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            let resource_ids: Vec<String> = ds.distributions.iter().map(|d| d.id.clone()).collect();
+            sqlx::query(
+                "DELETE FROM dataroom.cat_view
+                 WHERE org_id = $1 AND catalogue_id = $2
+                   AND distribution_id COLLATE \"C\" = ANY($3)",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(&resource_ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(())
         })
     }
@@ -712,10 +809,8 @@ impl Store for PgStore {
             .bind(distribution_id)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             let Some((ds_id, Json(dist))) = row else {
                 return Ok(None);
             };
@@ -745,10 +840,8 @@ impl Store for PgStore {
             .bind(resource_id)
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows.into_iter().map(|(Json(v),)| v).collect())
         })
     }
@@ -771,10 +864,8 @@ impl Store for PgStore {
             .bind(view_id)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row.map(|(Json(v),)| v))
         })
     }
@@ -811,10 +902,8 @@ impl Store for PgStore {
             .bind(Json(&view))
             .execute(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(view)
         })
     }
@@ -837,10 +926,8 @@ impl Store for PgStore {
             .bind(view_id)
             .execute(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             if res.rows_affected() == 0 {
                 return Err(DataroomError::NotFound(format!(
                     "resource view '{view_id}' not found"
@@ -867,10 +954,8 @@ impl Store for PgStore {
             .bind(ctx.catalogue_id.as_uuid())
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows.into_iter().map(|(Json(s),)| s).collect())
         })
     }
@@ -895,10 +980,8 @@ impl Store for PgStore {
             .bind(id_or_name)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row.map(|(Json(s),)| s))
         })
     }
@@ -942,10 +1025,8 @@ impl Store for PgStore {
             .bind(Json(&source))
             .execute(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(source)
         })
     }
@@ -984,10 +1065,8 @@ impl Store for PgStore {
                     .await
                 }
             }
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows.into_iter().map(|(Json(r),)| r).collect())
         })
     }
@@ -1010,10 +1089,8 @@ impl Store for PgStore {
             .bind(run_id)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(row.map(|(Json(r),)| r))
         })
     }
@@ -1057,10 +1134,8 @@ impl Store for PgStore {
             .bind(Json(&run))
             .execute(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(run)
         })
     }
@@ -1093,10 +1168,8 @@ impl Store for PgStore {
             .bind(Json(&row))
             .execute(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(())
         })
     }
@@ -1121,7 +1194,7 @@ impl Store for PgStore {
                     .bind(ctx.org_id.as_uuid())
                     .bind(ctx.catalogue_id.as_uuid())
                     .bind(oid)
-                    .bind(limit as i64)
+                    .bind(i64::try_from(limit).unwrap_or(i64::MAX))
                     .fetch_all(&mut *tx)
                     .await
                 }
@@ -1133,15 +1206,13 @@ impl Store for PgStore {
                     )
                     .bind(ctx.org_id.as_uuid())
                     .bind(ctx.catalogue_id.as_uuid())
-                    .bind(limit as i64)
+                    .bind(i64::try_from(limit).unwrap_or(i64::MAX))
                     .fetch_all(&mut *tx)
                     .await
                 }
             }
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows.into_iter().map(|(Json(a),)| a).collect())
         })
     }
@@ -1188,10 +1259,8 @@ impl Store for PgStore {
             .bind(Json(&report))
             .execute(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(report)
         })
     }
@@ -1219,10 +1288,8 @@ impl Store for PgStore {
             .bind(profile_id)
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows.into_iter().map(|(Json(r),)| r).collect())
         })
     }
@@ -1244,10 +1311,8 @@ impl Store for PgStore {
             .bind(ctx.catalogue_id.as_uuid())
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows.into_iter().map(|(Json(p),)| p).collect())
         })
     }
@@ -1273,10 +1338,8 @@ impl Store for PgStore {
             .bind(Json(&profile))
             .execute(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(profile)
         })
     }
@@ -1295,10 +1358,8 @@ impl Store for PgStore {
             .bind(ctx.catalogue_id.as_uuid())
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows.into_iter().map(|(Json(p),)| p).collect())
         })
     }
@@ -1329,10 +1390,8 @@ impl Store for PgStore {
             .bind(Json(&page))
             .execute(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(page)
         })
     }
@@ -1354,10 +1413,8 @@ impl Store for PgStore {
             .bind(ctx.catalogue_id.as_uuid())
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(rows.into_iter().map(|(Json(p),)| p).collect())
         })
     }
@@ -1387,45 +1444,96 @@ impl Store for PgStore {
             .bind(Json(&plugin))
             .execute(&mut *tx)
             .await
-            .map_err(|e| DataroomError::Storage(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DataroomError::Storage(e.to_string()))?;
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
             Ok(plugin)
         })
     }
 
     fn odata_table<'a>(
         &'a self,
-        _ctx: &'a RequestCtx,
+        ctx: &'a RequestCtx,
         set_name: &'a str,
     ) -> BoxFuture<'a, Result<Arc<dyn Table>>> {
-        let service = dataroom_service();
-        let model = Arc::new(service.model());
-        let Some(info) = service.info(model, set_name) else {
-            return Box::pin(std::future::ready(Err(DataroomError::NotFound(format!(
-                "entity set '{set_name}' not found"
-            )))));
-        };
-        let relation = match set_name {
-            "Catalogues" => "dataroom.cat_catalogue",
-            "Datasets" => "dataroom.cat_dataset",
-            "Distributions" => "dataroom.cat_distribution",
-            "Publishers" => "dataroom.cat_publisher",
-            "HarvestSources" => "dataroom.cat_harvest_source",
-            "HarvestRuns" => "dataroom.cat_harvest_run",
-            "ActivityRows" => "dataroom.cat_activity",
-            "ShaclResults" => "dataroom.cat_shacl_result",
-            _ => {
-                return Box::pin(std::future::ready(Err(DataroomError::NotFound(format!(
+        Box::pin(async move {
+            let service = dataroom_service();
+            let model = Arc::new(service.model());
+            let Some(info) = service.info(model, set_name) else {
+                return Err(DataroomError::NotFound(format!(
                     "entity set '{set_name}' not found"
-                )))));
-            }
-        };
-        let res = PgTable::new(info, self.pool.clone(), relation)
-            .map(|t| Arc::new(t) as Arc<dyn Table>)
-            .map_err(DataroomError::from);
-        Box::pin(std::future::ready(res))
+                )));
+            };
+            // Every row comes through a tenant transaction, so forced RLS binds the request's
+            // organization and catalogue (C1, C14). `PgTable` runs its statement on the bare
+            // pool, where no tenant is set and RLS hides every row; the rows are therefore read
+            // here and answered by the reference evaluator, as in the memory store.
+            let lang = self
+                .get_catalogue(ctx.org_id, ctx.catalogue_id)
+                .await?
+                .map(|c| c.default_language);
+            let lang = lang.as_deref();
+            let rows: Vec<serde_json::Value> = match set_name {
+                "Catalogues" => self
+                    .list_catalogues(ctx.org_id)
+                    .await?
+                    .iter()
+                    .map(catalogue_to_row)
+                    .collect(),
+                "Datasets" => self
+                    .list_datasets(ctx)
+                    .await?
+                    .iter()
+                    .map(|d| dataset_to_row(d, lang))
+                    .collect(),
+                "Distributions" => self
+                    .list_datasets(ctx)
+                    .await?
+                    .iter()
+                    .flat_map(|ds| {
+                        ds.distributions.iter().map(move |dist| {
+                            distribution_to_row(ds.org_id, ds.catalogue_id, dist, lang)
+                        })
+                    })
+                    .collect(),
+                "Publishers" => self
+                    .list_publishers(ctx)
+                    .await?
+                    .iter()
+                    .map(|p| publisher_to_row(p, lang))
+                    .collect(),
+                "HarvestSources" => self
+                    .list_harvest_sources(ctx)
+                    .await?
+                    .iter()
+                    .map(harvest_source_to_row)
+                    .collect(),
+                "HarvestRuns" => self
+                    .list_harvest_runs(ctx, None)
+                    .await?
+                    .iter()
+                    .map(harvest_run_to_row)
+                    .collect(),
+                "ActivityRows" => self
+                    .list_activity(ctx, None, usize::MAX)
+                    .await?
+                    .iter()
+                    .map(activity_to_row)
+                    .collect(),
+                "ShaclResults" => self
+                    .list_shacl_reports(ctx, None, None)
+                    .await?
+                    .iter()
+                    .map(shacl_report_to_row)
+                    .collect(),
+                _ => {
+                    return Err(DataroomError::NotFound(format!(
+                        "entity set '{set_name}' has no Postgres source"
+                    )))
+                }
+            };
+            let table = MemoryTable::new(info, rows).map_err(DataroomError::from)?;
+            Ok(Arc::new(table) as Arc<dyn Table>)
+        })
     }
 }
 

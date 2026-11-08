@@ -220,7 +220,7 @@ impl UiLabels {
             last_update: t("last_update"),
             no_datasets: t("no_datasets"),
             empty_datasets: t("empty"),
-            empty_publishers: t("no_datasets"),
+            empty_publishers: t("no_publishers"),
             empty_distributions: t("no_resources"),
             col_title: t("dataset_singular"),
             col_publisher: t("publisher"),
@@ -691,6 +691,8 @@ pub struct ResourcePageTemplate {
     pub is_api: bool,
     pub is_source: bool,
     pub url: String,
+    /// `url` when it is an http(s) address, else empty (no link).
+    pub link_url: String,
     pub short_segments: Vec<String>,
     pub full_breakable: String,
     pub explorer: Option<ExplorerView>,
@@ -1477,6 +1479,11 @@ pub fn render_resource_page(
         .as_ref()
         .unwrap_or(&dist.access_url)
         .clone();
+    let link_url = if helpers::is_url(&url) {
+        url.clone()
+    } else {
+        String::new()
+    };
     let short_segments: Vec<String> = url
         .trim_start_matches("https://")
         .trim_start_matches("http://")
@@ -1553,6 +1560,7 @@ pub fn render_resource_page(
         .licence_url
         .clone()
         .or_else(|| lic_entry.map(|l| l.url))
+        .filter(|u| helpers::is_url(u))
         .unwrap_or_default();
 
     let standard = jc_standard(dist);
@@ -1580,6 +1588,7 @@ pub fn render_resource_page(
         is_api,
         is_source,
         url,
+        link_url,
         short_segments,
         full_breakable,
         explorer,

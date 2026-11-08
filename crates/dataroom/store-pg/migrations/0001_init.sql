@@ -21,6 +21,28 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
     SELECT public.unaccent('public.unaccent', $1);
 $$;
 
+-- The tenant of the current transaction, set by the store with set_config(..., true).
+-- NULLIF: once a custom setting was set in a session, it reads '' (not NULL) after the
+-- transaction ends; ''::uuid would raise instead of hiding every row.
+CREATE OR REPLACE FUNCTION dataroom.current_org()
+RETURNS uuid
+LANGUAGE sql STABLE PARALLEL SAFE AS $$
+    SELECT NULLIF(current_setting('jc.org', true), '')::uuid;
+$$;
+
+CREATE OR REPLACE FUNCTION dataroom.current_catalogue()
+RETURNS uuid
+LANGUAGE sql STABLE PARALLEL SAFE AS $$
+    SELECT NULLIF(current_setting('jc.catalogue', true), '')::uuid;
+$$;
+
+-- The host name a request arrived on, set only by the host lookup (resolve_host).
+CREATE OR REPLACE FUNCTION dataroom.current_host()
+RETURNS text
+LANGUAGE sql STABLE PARALLEL SAFE AS $$
+    SELECT lower(NULLIF(current_setting('jc.host', true), ''));
+$$;
+
 CREATE TABLE IF NOT EXISTS dataroom.cat_catalogue (
     org_id uuid NOT NULL,
     id uuid NOT NULL,
@@ -40,8 +62,19 @@ ALTER TABLE dataroom.cat_catalogue ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dataroom.cat_catalogue FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS cat_catalogue_isolation ON dataroom.cat_catalogue;
 CREATE POLICY cat_catalogue_isolation ON dataroom.cat_catalogue
-    USING (org_id = current_setting('jc.org', true)::uuid)
-    WITH CHECK (org_id = current_setting('jc.org', true)::uuid);
+    USING (org_id = dataroom.current_org())
+    WITH CHECK (org_id = dataroom.current_org());
+
+-- Host routing happens before the tenant is known: a request may read the one catalogue row
+-- whose host it arrived on, nothing else, and may not write through this policy.
+DROP POLICY IF EXISTS cat_catalogue_host_lookup ON dataroom.cat_catalogue;
+CREATE POLICY cat_catalogue_host_lookup ON dataroom.cat_catalogue
+    FOR SELECT
+    USING (lower(host) = dataroom.current_host());
+
+-- Host names are case-insensitive: two catalogues may not claim one host in different cases.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cat_catalogue_host_lower
+    ON dataroom.cat_catalogue (lower(host));
 
 CREATE TABLE IF NOT EXISTS dataroom.cat_publisher (
     org_id uuid NOT NULL,
@@ -63,12 +96,12 @@ ALTER TABLE dataroom.cat_publisher FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS cat_publisher_isolation ON dataroom.cat_publisher;
 CREATE POLICY cat_publisher_isolation ON dataroom.cat_publisher
     USING (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     )
     WITH CHECK (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     );
 
 CREATE TABLE IF NOT EXISTS dataroom.cat_dataset (
@@ -106,12 +139,12 @@ ALTER TABLE dataroom.cat_dataset FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS cat_dataset_isolation ON dataroom.cat_dataset;
 CREATE POLICY cat_dataset_isolation ON dataroom.cat_dataset
     USING (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     )
     WITH CHECK (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     );
 
 CREATE TABLE IF NOT EXISTS dataroom.cat_distribution (
@@ -137,12 +170,12 @@ ALTER TABLE dataroom.cat_distribution FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS cat_distribution_isolation ON dataroom.cat_distribution;
 CREATE POLICY cat_distribution_isolation ON dataroom.cat_distribution
     USING (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     )
     WITH CHECK (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     );
 
 CREATE TABLE IF NOT EXISTS dataroom.cat_view (
@@ -162,12 +195,12 @@ ALTER TABLE dataroom.cat_view FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS cat_view_isolation ON dataroom.cat_view;
 CREATE POLICY cat_view_isolation ON dataroom.cat_view
     USING (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     )
     WITH CHECK (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     );
 
 CREATE TABLE IF NOT EXISTS dataroom.cat_harvest_source (
@@ -190,12 +223,12 @@ ALTER TABLE dataroom.cat_harvest_source FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS cat_harvest_source_isolation ON dataroom.cat_harvest_source;
 CREATE POLICY cat_harvest_source_isolation ON dataroom.cat_harvest_source
     USING (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     )
     WITH CHECK (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     );
 
 CREATE TABLE IF NOT EXISTS dataroom.cat_harvest_run (
@@ -219,12 +252,12 @@ ALTER TABLE dataroom.cat_harvest_run FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS cat_harvest_run_isolation ON dataroom.cat_harvest_run;
 CREATE POLICY cat_harvest_run_isolation ON dataroom.cat_harvest_run
     USING (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     )
     WITH CHECK (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     );
 
 CREATE TABLE IF NOT EXISTS dataroom.cat_activity (
@@ -246,12 +279,12 @@ ALTER TABLE dataroom.cat_activity FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS cat_activity_isolation ON dataroom.cat_activity;
 CREATE POLICY cat_activity_isolation ON dataroom.cat_activity
     USING (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     )
     WITH CHECK (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     );
 
 CREATE TABLE IF NOT EXISTS dataroom.cat_shacl_result (
@@ -274,12 +307,12 @@ ALTER TABLE dataroom.cat_shacl_result FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS cat_shacl_result_isolation ON dataroom.cat_shacl_result;
 CREATE POLICY cat_shacl_result_isolation ON dataroom.cat_shacl_result
     USING (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     )
     WITH CHECK (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     );
 
 CREATE TABLE IF NOT EXISTS dataroom.cat_profile (
@@ -296,12 +329,12 @@ ALTER TABLE dataroom.cat_profile FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS cat_profile_isolation ON dataroom.cat_profile;
 CREATE POLICY cat_profile_isolation ON dataroom.cat_profile
     USING (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     )
     WITH CHECK (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     );
 
 CREATE TABLE IF NOT EXISTS dataroom.cat_page (
@@ -319,12 +352,12 @@ ALTER TABLE dataroom.cat_page FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS cat_page_isolation ON dataroom.cat_page;
 CREATE POLICY cat_page_isolation ON dataroom.cat_page
     USING (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     )
     WITH CHECK (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     );
 
 CREATE TABLE IF NOT EXISTS dataroom.cat_plugin (
@@ -341,10 +374,10 @@ ALTER TABLE dataroom.cat_plugin FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS cat_plugin_isolation ON dataroom.cat_plugin;
 CREATE POLICY cat_plugin_isolation ON dataroom.cat_plugin
     USING (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     )
     WITH CHECK (
-        org_id = current_setting('jc.org', true)::uuid
-        AND catalogue_id = current_setting('jc.catalogue', true)::uuid
+        org_id = dataroom.current_org()
+        AND catalogue_id = dataroom.current_catalogue()
     );

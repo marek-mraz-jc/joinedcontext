@@ -222,11 +222,13 @@ impl ObjectTarget {
         }
     }
 
+    /// The publisher as a target, keyed by its name: the key datasets carry in `publisher_id`,
+    /// so one publisher-scoped grant covers the publisher record and its datasets alike.
     pub fn from_publisher(publisher: &Publisher) -> Self {
         Self::Publisher {
             org_id: publisher.org_id,
             catalogue_id: publisher.catalogue_id,
-            publisher_id: publisher.id.clone(),
+            publisher_id: publisher.name.clone(),
             editor_grants: publisher.editor_grants.clone(),
         }
     }
@@ -321,6 +323,46 @@ impl PolicyAuthorizer {
     }
 }
 
+impl PolicyAuthorizer {
+    /// Whether the caller may read a dataset target (visibility and grants, C4); any other
+    /// target is readable here and decided by [`Authorizer::check`].
+    fn dataset_readable(&self, ctx: &RequestCtx, object: &ObjectTarget) -> bool {
+        let ObjectTarget::Dataset {
+            publisher_id,
+            visibility,
+            restricted_grants,
+            publisher_editor_grants,
+            ..
+        } = object
+        else {
+            return true;
+        };
+        let principals = ctx.subject.principals();
+        let is_publisher_editor = ctx.subject.is_member_of(ctx.org_id)
+            && (publisher_editor_grants
+                .iter()
+                .any(|g| principals.contains(&g.as_str()))
+                || self.holds_rule(ctx, Action::Propose, Some(publisher_id)));
+        match visibility {
+            Visibility::Public => true,
+            Visibility::Internal => {
+                ctx.subject.is_member_of(ctx.org_id)
+                    && (is_publisher_editor
+                        || self.holds_rule(ctx, Action::Read, Some(publisher_id))
+                        || self.holds_rule(ctx, Action::Read, None))
+            }
+            Visibility::Restricted => {
+                ctx.subject.is_member_of(ctx.org_id)
+                    && (is_publisher_editor
+                        || restricted_grants
+                            .iter()
+                            .any(|g| principals.contains(&g.as_str()))
+                        || self.holds_rule(ctx, Action::Admin, None))
+            }
+        }
+    }
+}
+
 impl Authorizer for PolicyAuthorizer {
     fn check(&self, ctx: &RequestCtx, action: Action, object: &ObjectTarget) -> Decision {
         // 1. Cross-tenant or cross-catalogue boundary is always a hidden denial.
@@ -330,12 +372,20 @@ impl Authorizer for PolicyAuthorizer {
             );
         }
 
-        // 2. Read-only connectors cannot perform writes.
+        // 2. A dataset the caller may not read stays hidden for every action, so a refused
+        //    write never reveals that the record exists (C11, F2).
+        if let ObjectTarget::Dataset { .. } = object {
+            if !self.dataset_readable(ctx, object) {
+                return Decision::deny_hidden("dataset is not visible to caller");
+            }
+        }
+
+        // 3. Read-only connectors cannot perform writes.
         if action.is_write() && ctx.subject.read_only {
             return Decision::deny_visible("connector is read-only");
         }
 
-        // 3. Writes require membership in the active organization.
+        // 4. Writes require membership in the active organization.
         if action.is_write() && !ctx.subject.is_member_of(ctx.org_id) {
             return Decision::deny_visible("caller is not a member of the organization");
         }
@@ -378,48 +428,19 @@ impl Authorizer for PolicyAuthorizer {
             }
             ObjectTarget::Dataset {
                 publisher_id,
-                visibility,
-                restricted_grants,
                 publisher_editor_grants,
                 ..
             } => {
+                // Readability was decided before the write checks (step 2).
+                if action == Action::Read {
+                    return Decision::allow("dataset is readable");
+                }
                 let principals = ctx.subject.principals();
                 let is_publisher_editor = ctx.subject.is_member_of(ctx.org_id)
                     && (publisher_editor_grants
                         .iter()
                         .any(|g| principals.contains(&g.as_str()))
                         || self.holds_rule(ctx, Action::Propose, Some(publisher_id)));
-
-                let can_read = match visibility {
-                    Visibility::Public => true,
-                    Visibility::Internal => {
-                        ctx.subject.is_member_of(ctx.org_id)
-                            && (is_publisher_editor
-                                || self.holds_rule(ctx, Action::Read, Some(publisher_id))
-                                || self.holds_rule(ctx, Action::Read, None))
-                    }
-                    Visibility::Restricted => {
-                        ctx.subject.is_member_of(ctx.org_id)
-                            && (is_publisher_editor
-                                || restricted_grants
-                                    .iter()
-                                    .any(|g| principals.contains(&g.as_str()))
-                                || self.holds_rule(ctx, Action::Admin, None))
-                    }
-                };
-
-                if action == Action::Read {
-                    return if can_read {
-                        Decision::allow("dataset is readable")
-                    } else {
-                        Decision::deny_hidden("dataset is not visible to caller")
-                    };
-                }
-
-                if !can_read {
-                    return Decision::deny_hidden("dataset is not visible to caller");
-                }
-
                 if (matches!(action, Action::Propose | Action::Approve | Action::Delete)
                     && is_publisher_editor)
                     || self.holds_rule(ctx, action, Some(publisher_id))

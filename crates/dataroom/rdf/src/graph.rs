@@ -3,6 +3,7 @@
 
 use dataroom_core::{DataroomError, Result};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -82,6 +83,33 @@ impl RdfLimits {
             forbid_owl_imports: true,
         }
     }
+}
+
+/// An IRI as RDF syntax may write it: characters no IRI may hold (controls, space and
+/// `<>"{}|^`\`) are percent-encoded. Dataset URL fields are free text; written raw, a `>` ended
+/// the IRI and the rest of the field wrote triples of its own into the feed.
+pub fn iri_text(iri: &str) -> Cow<'_, str> {
+    let forbidden = |c: char| {
+        c.is_control()
+            || matches!(
+                c,
+                ' ' | '<' | '>' | '"' | '{' | '}' | '|' | '^' | '`' | '\\'
+            )
+    };
+    if !iri.contains(forbidden) {
+        return Cow::Borrowed(iri);
+    }
+    let mut out = String::with_capacity(iri.len() + 16);
+    for c in iri.chars() {
+        if forbidden(c) {
+            for byte in c.encode_utf8(&mut [0; 4]).bytes() {
+                out.push_str(&format!("%{byte:02X}"));
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    Cow::Owned(out)
 }
 
 /// An RDF subject node (IRI or blank node).
@@ -352,5 +380,107 @@ impl RdfGraph {
             }
         }
         items
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terms_print_as_n_triples_and_convert() {
+        let named = SubjectNode::Named("https://e.org/s".into());
+        let blank = SubjectNode::Blank("b".into());
+        assert_eq!(named.to_string(), "<https://e.org/s>");
+        assert_eq!(blank.to_string(), "_:b");
+        assert_eq!(blank.as_iri(), None);
+        assert_eq!(blank.to_term(), Term::Blank("b".into()));
+        assert_eq!(
+            Term::Iri("https://e.org/o".into()).to_string(),
+            "<https://e.org/o>"
+        );
+        assert_eq!(Term::Blank("x".into()).to_string(), "_:x");
+        assert_eq!(
+            Term::Literal(LiteralValue::lang("a", "sk")).to_string(),
+            "\"a\"@sk"
+        );
+        assert_eq!(Term::Literal(LiteralValue::plain("a")).to_string(), "\"a\"");
+        assert_eq!(
+            Term::Literal(LiteralValue::typed("1", ns::XSD_INTEGER)).to_string(),
+            format!("\"1\"^^<{}>", ns::XSD_INTEGER)
+        );
+        let lit = Term::Literal(LiteralValue::plain("v"));
+        assert_eq!(lit.as_subject(), None);
+        assert_eq!(lit.as_iri(), None);
+        assert_eq!(lit.as_literal().map(|l| l.value.as_str()), Some("v"));
+        assert_eq!(Term::Blank("x".into()).as_literal(), None);
+        assert_eq!(
+            Term::Blank("x".into()).as_subject(),
+            Some(SubjectNode::Blank("x".into()))
+        );
+    }
+
+    #[test]
+    fn iri_text_encodes_only_what_no_iri_may_hold() {
+        assert!(matches!(
+            iri_text("https://e.org/a?b=1#ľ"),
+            Cow::Borrowed(_)
+        ));
+        assert_eq!(
+            iri_text("https://e.org/a b>\n\u{85}"),
+            "https://e.org/a%20b%3E%0A%C2%85"
+        );
+        assert_eq!(iri_text("x\"{}|^`\\<"), "x%22%7B%7D%7C%5E%60%5C%3C");
+    }
+
+    #[test]
+    fn lists_merge_and_inverse_lookups() {
+        let mut g = RdfGraph::new();
+        let (a, b) = (g.fresh_blank_node(), g.fresh_blank_node());
+        assert_ne!(a, b);
+        g.insert(
+            a.clone(),
+            ns::RDF_FIRST,
+            Term::Literal(LiteralValue::plain("1")),
+        );
+        g.insert(a.clone(), ns::RDF_REST, b.to_term());
+        g.insert(
+            b.clone(),
+            ns::RDF_FIRST,
+            Term::Literal(LiteralValue::plain("2")),
+        );
+        g.insert(b.clone(), ns::RDF_REST, Term::Iri(ns::RDF_NIL.into()));
+        let items: Vec<_> = g
+            .rdf_list(&a.to_term())
+            .iter()
+            .map(|t| t.string_value().to_owned())
+            .collect();
+        assert_eq!(items, ["1", "2"]);
+        assert!(g.rdf_list(&Term::Iri(ns::RDF_NIL.into())).is_empty());
+        assert!(g
+            .rdf_list(&Term::Literal(LiteralValue::plain("x")))
+            .is_empty());
+
+        // A list without rdf:rest ends after its first item; a cyclic list stops at 1024 items.
+        let mut h = RdfGraph::new();
+        let c = SubjectNode::Blank("c".into());
+        h.insert(
+            c.clone(),
+            ns::RDF_FIRST,
+            Term::Literal(LiteralValue::plain("x")),
+        );
+        assert_eq!(h.rdf_list(&c.to_term()).len(), 1);
+        h.insert(c.clone(), ns::RDF_REST, c.to_term());
+        assert_eq!(h.rdf_list(&c.to_term()).len(), 1024);
+        assert!(h.rdf_list(&Term::Blank("missing".into())).is_empty());
+
+        let before = g.len();
+        g.merge(&h);
+        assert_eq!(g.len(), before + 2);
+        assert_eq!(g.subjects_for_object(ns::RDF_REST, &c.to_term()), [c]);
+        assert!(g
+            .subjects_for_object(ns::RDF_REST, &Term::Iri("https://none".into()))
+            .is_empty());
+        assert!(!g.is_empty() && RdfGraph::default().is_empty());
     }
 }

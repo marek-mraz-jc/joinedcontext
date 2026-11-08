@@ -776,6 +776,61 @@ async fn two_publishers_in_one_catalogue_with_separate_editor_grants_and_merge()
         hdrs.get(header::LOCATION).unwrap().to_str().unwrap(),
         "/publisher/mesto-bb/catalog.ttl"
     );
+
+    // 5. organization_create cannot hand the caller editing rights: listing oneself in
+    //    editor_grants of a new organization is decided as if the list were empty.
+    let (st, _, body) = send_json(
+        &app,
+        Method::POST,
+        "/api/3/action/organization_create",
+        host,
+        Some("tok-dp"),
+        None,
+        Some(json!({
+            "name": "vlastna-org",
+            "title": "Self-granted",
+            "editor_grants": ["editor_dp"]
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
+    assert!(store
+        .get_publisher(&ctx_admin, "vlastna-org")
+        .await
+        .unwrap()
+        .is_none());
+
+    // 6. organization_create never overwrites an existing organization, not even for its
+    //    own editor: the grants of mesto-bb stay as they were.
+    let (st, _, body) = send_json(
+        &app,
+        Method::POST,
+        "/api/3/action/organization_create",
+        host,
+        Some("tok-mesto"),
+        None,
+        Some(json!({
+            "name": "mesto-bb",
+            "title": "Overwritten",
+            "editor_grants": ["editor_mesto", "editor_dp"]
+        })),
+    )
+    .await;
+    assert_ne!(st, StatusCode::OK, "{body}");
+    assert!(
+        body.contains("Group name already exists in database"),
+        "{body}"
+    );
+    let kept = store
+        .get_publisher(&ctx_admin, "mesto-bb")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.editor_grants, vec!["editor_mesto".to_string()]);
+    assert_eq!(
+        kept.title.get("sk").map(String::as_str),
+        Some("Mesto Banská Bystrica")
+    );
 }
 
 #[tokio::test]

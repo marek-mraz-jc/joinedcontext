@@ -139,12 +139,12 @@
             {% else if is_source %}
             <div class="resource-view jc-no-view">
               <p>{{ labels.source_lead }}</p>
-              <a class="btn btn-primary" href="{{ url }}" rel="noreferrer">{{ labels.open }}<span class="visually-hidden"> {{ resource_label }}</span></a>
+              {% if !link_url.is_empty() %}<a class="btn btn-primary" href="{{ link_url }}" rel="noreferrer">{{ labels.open }}<span class="visually-hidden"> {{ resource_label }}</span></a>{% endif %}
             </div>
             {% else %}
             <div class="resource-view jc-no-view">
               <p>{{ labels.file_lead }}</p>
-              <a class="btn btn-primary" href="{{ url }}" rel="noreferrer">{{ labels.download }}<span class="visually-hidden"> {{ resource_label }}</span></a>
+              {% if !link_url.is_empty() %}<a class="btn btn-primary" href="{{ link_url }}" rel="noreferrer">{{ labels.download }}<span class="visually-hidden"> {{ resource_label }}</span></a>{% endif %}
             </div>
             {% endif %}
             <p class="visually-hidden" role="status" aria-live="polite" id="jc-copy-status"></p>

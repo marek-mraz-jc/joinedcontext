@@ -19,4 +19,4 @@ uuid = { version = "1.11.0", features = ["v4", "v5", "v7", "serde"] }
 
 [dev-dependencies]
 dataroom-store-memory = { path = "../store-memory" }
-tokio = { version = "1.44.1", features = ["macros", "rt"] }
+tokio = { version = "1.44.1", features = ["io-util", "macros", "net", "rt", "time"] }
