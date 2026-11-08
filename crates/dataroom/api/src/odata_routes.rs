@@ -3,13 +3,13 @@
 //! `/odata/v4/{set}/$count`, `/odata/v4/{set}/$export`, `/odata/v4/{set}/$allowed`) and
 //! OpenAPI 3.1 document (`/api/v1/openapi.json`) built on `odata-table` (C14).
 
-use crate::{problem_response, DataroomState};
+use crate::{dataset_shown, problem_response, DataroomState};
 use axum::extract::{OriginalUri, Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use dataroom_core::odata_defs::{dataroom_service, scope_for_context};
-use dataroom_core::{Action, DataroomError, ObjectTarget, Publisher, RecordState};
+use dataroom_core::{DataroomError, Publisher, RecordState};
 use odata_table::{allowed, export, key_options, query, Operation, QueryOptions};
 use odata_url::{EdmModel, Key, KeyValue, Limits, Literal, ODataUri, Segment};
 use serde_json::{json, Map, Value};
@@ -49,7 +49,7 @@ pub async fn handle_odata(
     Path(rest): Path<String>,
     OriginalUri(orig_uri): OriginalUri,
 ) -> Response {
-    let (ctx, _cat) = match state.resolve_context(&headers).await {
+    let (ctx, cat) = match state.resolve_context(&headers).await {
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
@@ -59,9 +59,17 @@ pub async fn handle_odata(
 
     // Compute visible dataset IDs for this caller so `Scope` restricts Datasets (and their
     // Distributions) before `$filter`.
+    // A dataset is a row where `package_show` shows it: hidden (`jc_hide`) datasets only to
+    // their editors, datasets of a withdrawn publisher not to anonymous callers.
     let visible_ds_ids = if path.starts_with("Datasets") || path.starts_with("Distributions") {
-        let all_ds = state.store.list_datasets(&ctx).await.unwrap_or_default();
-        let all_pubs = state.store.list_publishers(&ctx).await.unwrap_or_default();
+        let all_ds = match state.store.list_datasets(&ctx).await {
+            Ok(d) => d,
+            Err(e) => return problem_response(e),
+        };
+        let all_pubs = match state.store.list_publishers(&ctx).await {
+            Ok(p) => p,
+            Err(e) => return problem_response(e),
+        };
         let pub_map: BTreeMap<String, Publisher> = all_pubs
             .into_iter()
             .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p)])
@@ -70,14 +78,7 @@ pub async fn handle_odata(
             .into_iter()
             .filter(|d| {
                 d.state == RecordState::Active
-                    && state
-                        .authorizer
-                        .check(
-                            &ctx,
-                            Action::Read,
-                            &ObjectTarget::from_dataset(d, pub_map.get(&d.publisher_id)),
-                        )
-                        .allowed
+                    && dataset_shown(&state, &ctx, &cat, d, pub_map.get(&d.publisher_id))
             })
             .map(|d| d.id)
             .collect();

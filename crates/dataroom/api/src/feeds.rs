@@ -8,7 +8,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use dataroom_core::{
-    text_in_lang, Catalogue, DataroomError, Dataset, Publisher, RecordState, RequestCtx, Visibility,
+    text_in_lang, Catalogue, DataroomError, Dataset, Publisher, RecordState, RequestCtx, Result,
+    Visibility,
 };
 use dataroom_rdf::{
     negotiate_profile, negotiate_rdf_format, serialize_catalogue, DcatProfileKind, HydraPageInfo,
@@ -34,15 +35,18 @@ pub struct FeedQuery {
 /// 1. Only `Active` and `Public` datasets whose publisher is not `Withdrawn`.
 /// 2. If `profile` is not the catalogue's main profile, any dataset with SHACL violations in
 ///    `profile` is hidden from that profile's feed only (C17).
+///
+/// A store failure is an error, never an empty feed: a harvester reads an empty catalogue as
+/// "every dataset was dropped" and withdraws them all (C9).
 async fn public_feed_datasets(
     state: &DataroomState,
     ctx: &RequestCtx,
     cat: &Catalogue,
     profile: DcatProfileKind,
     publisher_filter: Option<&str>,
-) -> (Vec<Dataset>, BTreeMap<String, Publisher>) {
-    let all_ds = state.store.list_datasets(ctx).await.unwrap_or_default();
-    let all_pubs = state.store.list_publishers(ctx).await.unwrap_or_default();
+) -> Result<(Vec<Dataset>, BTreeMap<String, Publisher>)> {
+    let all_ds = state.store.list_datasets(ctx).await?;
+    let all_pubs = state.store.list_publishers(ctx).await?;
     let pub_map: BTreeMap<String, Publisher> = all_pubs
         .into_iter()
         .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p)])
@@ -92,7 +96,7 @@ async fn public_feed_datasets(
         visible.push(ds);
     }
 
-    (visible, pub_map)
+    Ok((visible, pub_map))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -269,7 +273,10 @@ async fn serve_catalog(
     };
 
     if let Some(ref pub_name) = publisher_slug {
-        let all_pubs = state.store.list_publishers(&ctx).await.unwrap_or_default();
+        let all_pubs = match state.store.list_publishers(&ctx).await {
+            Ok(p) => p,
+            Err(e) => return problem_response(e),
+        };
         if let Some(raw_pub) = all_pubs
             .iter()
             .find(|p| &p.name == pub_name || &p.id == pub_name)
@@ -305,8 +312,18 @@ async fn serve_catalog(
     let chosen_qp = explicit_profile.as_deref().or(query.profile.as_deref());
     let (prof_kind, prof_uri) = negotiate_profile(chosen_qp, accept_profile, &cat.main_profile);
 
-    let (datasets, pub_map) =
-        public_feed_datasets(&state, &ctx, &cat, prof_kind, publisher_slug.as_deref()).await;
+    let (datasets, pub_map) = match public_feed_datasets(
+        &state,
+        &ctx,
+        &cat,
+        prof_kind,
+        publisher_slug.as_deref(),
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => return problem_response(e),
+    };
 
     let ext = match format {
         RdfFormat::Turtle => "ttl",
@@ -335,7 +352,10 @@ pub async fn handle_general_atom(
         Err(e) => return problem_response(e),
     };
     let (mut datasets, _) =
-        public_feed_datasets(&state, &ctx, &cat, DcatProfileKind::Eu301, None).await;
+        match public_feed_datasets(&state, &ctx, &cat, DcatProfileKind::Eu301, None).await {
+            Ok(v) => v,
+            Err(e) => return problem_response(e),
+        };
     datasets.sort_by(|a, b| {
         b.modified
             .cmp(&a.modified)
@@ -362,7 +382,10 @@ pub async fn handle_organization_atom(
         Err(e) => return problem_response(e),
     };
     let (mut datasets, _) =
-        public_feed_datasets(&state, &ctx, &cat, DcatProfileKind::Eu301, Some(&id)).await;
+        match public_feed_datasets(&state, &ctx, &cat, DcatProfileKind::Eu301, Some(&id)).await {
+            Ok(v) => v,
+            Err(e) => return problem_response(e),
+        };
     datasets.sort_by(|a, b| {
         b.modified
             .cmp(&a.modified)
@@ -393,7 +416,10 @@ pub async fn handle_tag_atom(
         Err(e) => return problem_response(e),
     };
     let (datasets, _) =
-        public_feed_datasets(&state, &ctx, &cat, DcatProfileKind::Eu301, None).await;
+        match public_feed_datasets(&state, &ctx, &cat, DcatProfileKind::Eu301, None).await {
+            Ok(v) => v,
+            Err(e) => return problem_response(e),
+        };
     let mut filtered: Vec<Dataset> = datasets
         .into_iter()
         .filter(|d| d.tags.contains(&tag))
