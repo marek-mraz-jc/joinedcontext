@@ -33,6 +33,10 @@ pub struct OutboundPolicy {
     pub allowed_networks: Vec<IpNet>,
     pub timeout: Duration,
     pub max_response_bytes: usize,
+    /// The host's own listener ([`GuardConfig::own_addresses`]): empty in the operator's policy;
+    /// `DaiyaState::driver_for_record` fills it for a datasource the host provisioned from
+    /// files and nobody changed since.
+    pub own_addresses: Vec<std::net::SocketAddr>,
 }
 
 impl Default for OutboundPolicy {
@@ -43,6 +47,7 @@ impl Default for OutboundPolicy {
             allowed_networks: Vec::new(),
             timeout: guard.timeout,
             max_response_bytes: guard.max_response_bytes,
+            own_addresses: Vec::new(),
         }
     }
 }
@@ -103,6 +108,7 @@ pub fn guard_for(
         allow_http: policy.allow_http,
         allow_loopback_for_tests: false,
         allowed_networks: policy.allowed_networks.clone(),
+        own_addresses: policy.own_addresses.clone(),
     }))
 }
 
