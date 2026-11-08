@@ -149,9 +149,11 @@ export JC_GITEA_OWNER=$JC_SHAKO_OWNER JC_GITEA_REPO=$JC_SHAKO_REPO
 if [ -s "$home/jc.pid" ] && kill "$(cat "$home/jc.pid")" 2>/dev/null; then
   for _ in $(seq 20); do kill -0 "$(cat "$home/jc.pid")" 2>/dev/null || break; sleep 0.5; done
 fi
-# The Grafana files' datasources as daiya provisioning on jc's own address (REHEARSAL_DASHBOARDS:
-# a rehearsal.py dashboards dir); daiya lets only file-provisioned datasources reach it.
-if [ -n "${REHEARSAL_DASHBOARDS:-}" ]; then
+# The Grafana files' datasources as daiya provisioning on jc's own address (REHEARSAL_DASHBOARDS,
+# default $home/dashboards: a rehearsal.py dashboards dir); daiya lets only file-provisioned
+# datasources reach it.
+REHEARSAL_DASHBOARDS=${REHEARSAL_DASHBOARDS:-$home/dashboards}
+if [ -d "$REHEARSAL_DASHBOARDS" ]; then
   python3 -I "$here/rehearsal.py" provisioning --dashboards "$REHEARSAL_DASHBOARDS" --port "$port" \
     --out "$home/daiya-provisioning"
   db_config+=$(printf '\n[daiya]\nprovisioning_dir = "%s"\n' "$home/daiya-provisioning")
