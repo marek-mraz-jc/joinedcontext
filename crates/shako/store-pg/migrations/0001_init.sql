@@ -16,8 +16,10 @@ $$;
 CREATE SCHEMA IF NOT EXISTS shako;
 GRANT USAGE ON SCHEMA shako TO shako_app;
 
+-- One row per tenant `(instance_id, org_id)`: the RLS tenant key. A key on `instance_id` alone
+-- let one org's upsert land on another org's row.
 CREATE TABLE IF NOT EXISTS shako.instance (
-    instance_id UUID PRIMARY KEY,
+    instance_id UUID NOT NULL,
     org_id UUID NOT NULL,
     host TEXT NOT NULL COLLATE "C",
     path_prefix TEXT NOT NULL DEFAULT '' COLLATE "C",
@@ -26,7 +28,8 @@ CREATE TABLE IF NOT EXISTS shako.instance (
     max_push_bytes BIGINT NOT NULL DEFAULT 536870912,
     secret_scan_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (instance_id, org_id)
 );
 
 CREATE TABLE IF NOT EXISTS shako.repo (

@@ -54,31 +54,34 @@ pub struct TableRlsStatus {
 }
 
 /// Validates the PostgreSQL catalog inspection rows at boot (S2).
+///
+/// `role` is the connected role (`current_user`) the checks were made for; every refusal names it.
 pub fn validate_rls_catalog_rows(
+    role: &str,
     role_bypass_rls: bool,
     role_super: bool,
     owned_tables: i64,
     external_grants: i64,
     tables: &[TableRlsStatus],
 ) -> ShakoResult<()> {
-    if role_bypass_rls {
-        return Err(ShakoError::RlsNotEnforced(
-            "request role shako_app has BYPASSRLS enabled".into(),
-        ));
-    }
-    if role_super {
-        return Err(ShakoError::RlsNotEnforced(
-            "request role shako_app is SUPERUSER (bypasses RLS)".into(),
-        ));
+    let refused: Vec<&str> = [(role_super, "SUPERUSER"), (role_bypass_rls, "BYPASSRLS")]
+        .into_iter()
+        .filter_map(|(set, attr)| set.then_some(attr))
+        .collect();
+    if !refused.is_empty() {
+        return Err(ShakoError::RlsNotEnforced(format!(
+            "request role {role} has {} (bypasses RLS); connect as a NOSUPERUSER NOBYPASSRLS member of shako_app",
+            refused.join(" and ")
+        )));
     }
     if owned_tables > 0 {
         return Err(ShakoError::RlsNotEnforced(format!(
-            "request role owns {owned_tables} table(s); migrations must run as shako_migrate"
+            "request role {role} owns {owned_tables} table(s); migrations must run as shako_migrate"
         )));
     }
     if external_grants > 0 {
         return Err(ShakoError::RlsNotEnforced(format!(
-            "request role holds {external_grants} grant(s) outside schema shako"
+            "request role {role} holds {external_grants} grant(s) outside schema shako"
         )));
     }
 
@@ -157,8 +160,13 @@ impl PgStore {
         if let Some(pw) = &config.password {
             opts = opts.password(pw.as_str());
         }
+        Self::connect_with(opts, config.max_connections).await
+    }
+
+    /// Connects with explicit options and runs the boot RLS check; refuses a role that bypasses RLS.
+    pub async fn connect_with(opts: PgConnectOptions, max_connections: u32) -> ShakoResult<Self> {
         let pool = PgPoolOptions::new()
-            .max_connections(config.max_connections.clamp(1, 20))
+            .max_connections(max_connections.clamp(1, 20))
             .acquire_timeout(Duration::from_secs(5))
             .connect_with(opts)
             .await
@@ -252,13 +260,14 @@ impl Store for PgStore {
     fn verify_rls_enforced(&self) -> StoreFuture<'_, ()> {
         Box::pin(async move {
             let role_row = sqlx::query(
-                "SELECT rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user",
+                "SELECT rolname::text AS rolname, rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user",
             )
             .fetch_one(&self.pool)
             .await
             .map_err(|e| ShakoError::RlsNotEnforced(format!("inspect pg_roles failed: {e}")))?;
             let bypass: bool = role_row.get("rolbypassrls");
             let superuser: bool = role_row.get("rolsuper");
+            let role: String = role_row.get("rolname");
 
             let owned_tables: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM pg_class c
@@ -305,7 +314,14 @@ impl Store for PgStore {
                 })
                 .collect();
 
-            validate_rls_catalog_rows(bypass, superuser, owned_tables, external_grants, &statuses)
+            validate_rls_catalog_rows(
+                &role,
+                bypass,
+                superuser,
+                owned_tables,
+                external_grants,
+                &statuses,
+            )
         })
     }
 
@@ -317,7 +333,7 @@ impl Store for PgStore {
             sqlx::query(
                 "INSERT INTO shako.instance (instance_id, org_id, host, path_prefix, max_repos, max_storage_bytes, max_push_bytes, secret_scan_enabled)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                 ON CONFLICT (instance_id) DO UPDATE SET
+                 ON CONFLICT (instance_id, org_id) DO UPDATE SET
                     host = EXCLUDED.host,
                     path_prefix = EXCLUDED.path_prefix,
                     max_repos = EXCLUDED.max_repos,
