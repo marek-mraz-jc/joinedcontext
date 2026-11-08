@@ -59,4 +59,12 @@ check /streams/ping pong
 check /broker/ngsi-ld/v1/info/sourceIdentity antares
 check /git/api/healthz '"status":"ok"'
 check /api/v1/health '"status":"ok"'
+# The gateway checked out shako's organization repository with the image's git (jc stops at start
+# when that fails): the tree is in the state volume behind gateway/repo/current, from a clone.
+busybox=docker.io/busybox:1.38@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+docker run --rm -v jc-smoke-state:/s:ro "$busybox" sh -c \
+  'test -L /s/gateway/repo/current && ls -A /s/gateway/repo/current/ | grep -q . && find /s/gateway/org-cache -name HEAD | grep -q .' \
+  || fail "the gateway's forge checkout is missing from the state dir"
+echo "ok gateway checkout: $(docker run --rm -v jc-smoke-state:/s:ro "$busybox" ls -A /s/gateway/repo/current/ | tr '\n' ' ')"
+if docker logs jc-smoke 2>&1 | grep -q 'forge checkout failed\|project checkout failed'; then fail "a gateway checkout failed"; fi
 echo "SMOKE: ok"
