@@ -141,6 +141,9 @@ pub struct DataroomState {
     pub tokens: Arc<Vec<TokenBinding>>,
     pub installation_branding: Arc<BrandingBlock>,
     pub mount_prefix: String,
+    /// The default catalogue's public URL (scheme, host, mount prefix), when the installation
+    /// knows it: its links follow it instead of `https://{host}`.
+    pub public_base: Option<String>,
     pub subject_resolver: Option<SubjectResolver>,
     pub assets: Arc<RwLock<BTreeMap<String, SanitisedAsset>>>,
 }
@@ -164,6 +167,7 @@ impl DataroomState {
             tokens: Arc::new(Vec::new()),
             installation_branding: Arc::new(BrandingBlock::default()),
             mount_prefix: String::new(),
+            public_base: None,
             subject_resolver: None,
             assets: Arc::new(RwLock::new(BTreeMap::new())),
         }
@@ -194,6 +198,12 @@ impl DataroomState {
         self
     }
 
+    /// The default catalogue's public URL, e.g. `http://city.test/opendata`.
+    pub fn with_public_base(mut self, base: impl Into<String>) -> Self {
+        self.public_base = Some(base.into());
+        self
+    }
+
     pub fn with_subject_resolver<F>(mut self, resolver: F) -> Self
     where
         F: Fn(&HeaderMap) -> Option<Subject> + Send + Sync + 'static,
@@ -219,7 +229,7 @@ impl DataroomState {
             .and_then(|v| v.to_str().ok())
             .map(|h| h.split(':').next().unwrap_or(h).trim());
 
-        let cat = if let Some(h) =
+        let mut cat = if let Some(h) =
             host.filter(|h| !h.is_empty() && *h != "localhost" && *h != "127.0.0.1")
         {
             match self.store.resolve_host(h).await? {
@@ -236,6 +246,9 @@ impl DataroomState {
                 .await?
                 .ok_or_else(|| DataroomError::NotFound("default catalogue not found".into()))?
         };
+        if cat.org_id == self.default_org_id && cat.id == self.default_catalogue_id {
+            cat.public_base.clone_from(&self.public_base);
+        }
 
         let raw_token = headers
             .get(header::AUTHORIZATION)

@@ -3289,3 +3289,37 @@ async fn unknown_datasets_maps_without_a_platform_service_and_refused_patches() 
         .unwrap();
     assert_ne!(ds.title.get("sk").map(String::as_str), Some("Hijacked"));
 }
+
+/// An installation that names its public URL (jc: the mount's scheme, host and prefix) answers
+/// links on it: an http install and a catalogue under `/opendata` get no `https://{host}` links.
+#[tokio::test]
+async fn links_follow_the_configured_public_url() {
+    let base = "http://city.test:8080/opendata";
+    let w = world_with(|s| router(s.with_public_base(base))).await;
+    let app = &w.app;
+    let v = get(app, "/api/3/action/status_show", None).await.json();
+    assert_eq!(v["result"]["site_url"], base);
+    assert_eq!(
+        v["help"],
+        format!("{base}/api/3/action/help_show?name=status_show")
+    );
+    let v = get(
+        app,
+        "/api/3/action/package_show?id=open",
+        Some("tok-forged"),
+    )
+    .await
+    .json();
+    assert_eq!(
+        v["help"],
+        format!("{base}/api/3/action/help_show?name=package_show")
+    );
+    let ttl = get(app, "/catalog.ttl", None).await;
+    assert_eq!(ttl.status, StatusCode::OK, "{}", ttl.body);
+    assert!(ttl.body.contains(&format!("<{base}/")), "{}", ttl.body);
+    assert!(
+        !ttl.body.contains(&format!("https://{HOST}")),
+        "{}",
+        ttl.body
+    );
+}

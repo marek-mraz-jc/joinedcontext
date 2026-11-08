@@ -72,6 +72,7 @@ fn catalogue(org_id: OrgId, id: CatalogueId) -> Catalogue {
         allowed_outbound_hosts: Vec::new(),
         applicable_legislation: Vec::new(),
         modified: Utc::now(),
+        public_base: None,
     }
 }
 
