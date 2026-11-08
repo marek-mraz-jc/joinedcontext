@@ -70,8 +70,8 @@ fn config(fx: &Fixture, mode: MountMode, mounts: BTreeMap<Module, MountOverride>
             admin_token_file: Some(fx.admin_token.clone()),
             base_host: Some("city.test".into()),
             scheme: Some("http".into()),
-            wardkeep_kek_file: Some(fx.kek.clone()),
-            wardkeep_import_dir: Some(fx.realms.clone()),
+            kaisatsu_kek_file: Some(fx.kek.clone()),
+            kaisatsu_import_dir: Some(fx.realms.clone()),
             ekiben_token_file: Some(fx.ekiben_token.clone()),
             ekiben_file_root: Some(fx.ekiben_root.clone()),
             antares_admin_token_file: Some(fx.antares_token.clone()),
@@ -89,9 +89,9 @@ fn config(fx: &Fixture, mode: MountMode, mounts: BTreeMap<Module, MountOverride>
 /// must contain.
 fn probe(module: Module) -> (&'static str, &'static str) {
     match module {
-        Module::Wardkeep => ("/realms/jc/.well-known/openid-configuration", "\"issuer\""),
+        Module::Kaisatsu => ("/realms/jc/.well-known/openid-configuration", "\"issuer\""),
         Module::Dataroom => ("/api/3/action/status_show", "\"success\""),
-        Module::Controlroom => ("/api/health", "\"database\""),
+        Module::Daiya => ("/api/health", "\"database\""),
         Module::Ekiben => ("/ping", "pong"),
         Module::Antares => ("/ngsi-ld/v1/info/sourceIdentity", "antares"),
         Module::Portal => ("/api/v1/health", "\"status\":\"ok\""),
@@ -156,7 +156,7 @@ async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    // wardkeep's issuer carries the slug: the module was built with its mount.
+    // kaisatsu's issuer carries the slug: the module was built with its mount.
     let (_, body) = get(
         addr,
         "city.test",
@@ -275,7 +275,7 @@ async fn explicit_mounts_mix_hosts_and_slugs() {
     let fx = fixture();
     let mounts = BTreeMap::from([
         (
-            Module::Wardkeep,
+            Module::Kaisatsu,
             MountOverride {
                 host: Some("Login.City.Test".into()),
                 path_prefix: None,
@@ -315,7 +315,7 @@ async fn a_forwarded_host_from_an_untrusted_peer_is_ignored() {
     let _serial = ONE_JC_AT_A_TIME.lock().await;
     let fx = fixture();
     let mut cfg = config(&fx, MountMode::Host, BTreeMap::new());
-    cfg.roles = vec![Module::Controlroom];
+    cfg.roles = vec![Module::Daiya];
     cfg.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()];
     let running = jc::start(&cfg, CancellationToken::new())
         .await
@@ -342,10 +342,7 @@ async fn overlapping_mounts_refuse_to_start() {
     let cfg = config(
         &fx,
         MountMode::Slug,
-        BTreeMap::from([
-            (Module::Dataroom, same.clone()),
-            (Module::Controlroom, same),
-        ]),
+        BTreeMap::from([(Module::Dataroom, same.clone()), (Module::Daiya, same)]),
     );
     let err = jc::start(&cfg, CancellationToken::new())
         .await
@@ -359,7 +356,7 @@ async fn overlapping_mounts_refuse_to_start() {
         &fx,
         MountMode::Slug,
         BTreeMap::from([(
-            Module::Controlroom,
+            Module::Daiya,
             MountOverride {
                 host: None,
                 path_prefix: Some("/id".into()),
@@ -407,7 +404,7 @@ async fn an_invalid_prefix_or_a_bad_module_setting_refuses_to_start() {
     );
 
     let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
-    cfg.wardkeep.kek_file = Some(fx.realms.join("missing-kek"));
+    cfg.kaisatsu.kek_file = Some(fx.realms.join("missing-kek"));
     let err = jc::start(&cfg, CancellationToken::new())
         .await
         .err()
@@ -416,7 +413,7 @@ async fn an_invalid_prefix_or_a_bad_module_setting_refuses_to_start() {
         matches!(
             err,
             StartError::Module {
-                module: Module::Wardkeep,
+                module: Module::Kaisatsu,
                 ..
             }
         ),
@@ -424,7 +421,7 @@ async fn an_invalid_prefix_or_a_bad_module_setting_refuses_to_start() {
     );
 
     let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
-    cfg.wardkeep.kek_file = None;
+    cfg.kaisatsu.kek_file = None;
     let err = jc::start(&cfg, CancellationToken::new())
         .await
         .err()
@@ -433,7 +430,7 @@ async fn an_invalid_prefix_or_a_bad_module_setting_refuses_to_start() {
         matches!(
             err,
             StartError::Module {
-                module: Module::Wardkeep,
+                module: Module::Kaisatsu,
                 ..
             }
         ),
@@ -444,7 +441,7 @@ async fn an_invalid_prefix_or_a_bad_module_setting_refuses_to_start() {
     std::fs::create_dir(&bad_realms).unwrap();
     std::fs::write(bad_realms.join("x.json"), "{ not json").unwrap();
     let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
-    cfg.wardkeep.import_dir = Some(bad_realms);
+    cfg.kaisatsu.import_dir = Some(bad_realms);
     let err = jc::start(&cfg, CancellationToken::new())
         .await
         .err()
@@ -453,7 +450,7 @@ async fn an_invalid_prefix_or_a_bad_module_setting_refuses_to_start() {
         matches!(
             err,
             StartError::Module {
-                module: Module::Wardkeep,
+                module: Module::Kaisatsu,
                 ..
             }
         ),
@@ -464,7 +461,7 @@ async fn an_invalid_prefix_or_a_bad_module_setting_refuses_to_start() {
     std::fs::create_dir(&bad_realm).unwrap();
     std::fs::write(bad_realm.join("x.json"), r#"{"realm": 42}"#).unwrap();
     let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
-    cfg.wardkeep.import_dir = Some(bad_realm);
+    cfg.kaisatsu.import_dir = Some(bad_realm);
     let err = jc::start(&cfg, CancellationToken::new())
         .await
         .err()
@@ -473,7 +470,7 @@ async fn an_invalid_prefix_or_a_bad_module_setting_refuses_to_start() {
         matches!(
             err,
             StartError::Module {
-                module: Module::Wardkeep,
+                module: Module::Kaisatsu,
                 ..
             }
         ),
@@ -548,7 +545,7 @@ async fn an_admin_listener_without_a_readable_token_is_refused() {
     let _serial = ONE_JC_AT_A_TIME.lock().await;
     let fx = fixture();
     let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
-    cfg.roles = vec![Module::Controlroom];
+    cfg.roles = vec![Module::Daiya];
     cfg.admin_token_file = None;
     let err = jc::start(&cfg, CancellationToken::new())
         .await
@@ -573,7 +570,7 @@ async fn run_until_serves_until_the_stop_future_resolves() {
     let fx = fixture();
     let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
     cfg.admin_listen = None;
-    cfg.roles = vec![Module::Controlroom];
+    cfg.roles = vec![Module::Daiya];
     // jc's start future is not Send (Antares' build_state), so it runs on this task.
     let stop = tokio::time::sleep(std::time::Duration::from_millis(50));
     jc::run_until(cfg, stop).await.expect("clean stop");
@@ -584,7 +581,7 @@ async fn running_exposes_its_shutdown_token() {
     let _serial = ONE_JC_AT_A_TIME.lock().await;
     let fx = fixture();
     let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
-    cfg.roles = vec![Module::Controlroom];
+    cfg.roles = vec![Module::Daiya];
     let running = jc::start(&cfg, CancellationToken::new())
         .await
         .expect("start");
@@ -605,9 +602,9 @@ async fn running_exposes_its_shutdown_token() {
 #[tokio::test]
 async fn another_modules_secret_is_not_readable_through_an_ekiben_stream() {
     let _serial = ONE_JC_AT_A_TIME.lock().await;
-    const SECRET: &str = "wardkeep-db-password-7f3a91";
+    const SECRET: &str = "kaisatsu-db-password-7f3a91";
     // SAFETY of the test: a unique variable name, set once before jc starts.
-    unsafe { std::env::set_var("JC_E2E_WARDKEEP_DB_PASSWORD", SECRET) };
+    unsafe { std::env::set_var("JC_E2E_KAISATSU_DB_PASSWORD", SECRET) };
     let fx = fixture();
     let cfg = config(&fx, MountMode::Slug, BTreeMap::new());
     let running = jc::start(&cfg, CancellationToken::new())
@@ -626,7 +623,7 @@ async fn another_modules_secret_is_not_readable_through_an_ekiben_stream() {
     let resp = client
         .post(format!("{base}/streams/leak"))
         .bearer_auth(EKIBEN_TOKEN)
-        .body("input:\n  generate:\n    interval: 1h\n    mapping: 'root = \"${JC_E2E_WARDKEEP_DB_PASSWORD}\"'\noutput:\n  drop: {}\n")
+        .body("input:\n  generate:\n    interval: 1h\n    mapping: 'root = \"${JC_E2E_KAISATSU_DB_PASSWORD}\"'\noutput:\n  drop: {}\n")
         .send()
         .await
         .unwrap();
@@ -635,7 +632,7 @@ async fn another_modules_secret_is_not_readable_through_an_ekiben_stream() {
     assert!(!body.contains(SECRET), "{body}");
 
     // env(), written to a file in the sandbox the test reads back.
-    let once = "input:\n  generate:\n    count: 1\n    interval: \"\"\n    mapping: 'root = {\"env\": env(\"JC_E2E_WARDKEEP_DB_PASSWORD\")}'\noutput:\n  file:\n    path: env.jsonl\n    codec: lines\n";
+    let once = "input:\n  generate:\n    count: 1\n    interval: \"\"\n    mapping: 'root = {\"env\": env(\"JC_E2E_KAISATSU_DB_PASSWORD\")}'\noutput:\n  file:\n    path: env.jsonl\n    codec: lines\n";
     let resp = client
         .post(format!("{base}/streams/env-probe?run=once"))
         .bearer_auth(EKIBEN_TOKEN)

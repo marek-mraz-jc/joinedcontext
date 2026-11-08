@@ -1,0 +1,42 @@
+[package]
+name = "kaisatsu-server"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kaisatsu"
+path = "src/main.rs"
+
+[dependencies]
+kaisatsu-core = { path = "../core" }
+kaisatsu-crypto = { path = "../crypto" }
+kaisatsu-store-memory = { path = "../store-memory" }
+kaisatsu-store-pg = { path = "../store-pg" }
+kaisatsu-oidc = { path = "../oidc" }
+kaisatsu-login = { path = "../login" }
+kaisatsu-admin = { path = "../admin" }
+kaisatsu-import = { path = "../import" }
+kaisatsu-mcp = { path = "../mcp" }
+jc-router = { path = "../../shared/jc-router" }
+axum = { version = "0.8", features = ["json", "form", "query"] }
+clap = { version = "4.6", features = ["derive"] }
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs"] }
+http = "1.5"
+ipnet = "2.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.54", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "limit", "trace"] }
+tracing = "0.1"
+url = "2.5"
+uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
+
+[dev-dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc_rs", "use_pem"] }
+http-body-util = "0.1"
+base64 = "0.22"
+sha2 = "0.11"
+totp-rs = { version = "6.0", features = ["otpauth"] }

@@ -1,0 +1,36 @@
+[package]
+name = "daiya-server"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "daiya"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["json"] }
+clap = { version = "4", features = ["derive"] }
+daiya-api = { path = "../api" }
+daiya-expr = { path = "../expr" }
+daiya-import = { path = "../import" }
+daiya-mcp = { path = "../mcp" }
+daiya-model = { path = "../model" }
+daiya-query = { path = "../query" }
+daiya-store-memory = { path = "../store-memory" }
+daiya-store-pg = { path = "../store-pg" }
+http = "1"
+jc-router = { path = "../../shared/jc-router" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "fs"] }
+uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
+
+[dev-dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+parking_lot = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+url = "2.5"
+http-body-util = "0.1"
+ipnet = "2"
+tower = { version = "0.5", features = ["util"] }

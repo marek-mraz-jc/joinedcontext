@@ -40,7 +40,7 @@ pub struct Mount {
 impl Default for Mount {
     fn default() -> Self {
         Self {
-            module: "wardkeep".into(),
+            module: "kaisatsu".into(),
             scheme: "https".into(),
             host: "idm.localhost".into(),
             path_prefix: String::new(),
@@ -472,7 +472,7 @@ mod tests {
         let overlap = JcRouterBuilder::new("https", "city.example")
             .mount(
                 MountSpec {
-                    module: "wardkeep".into(),
+                    module: "kaisatsu".into(),
                     host: Some("city.example".into()),
                     path_prefix: Some("/id".into()),
                 },
@@ -501,7 +501,7 @@ mod tests {
             .trust_proxy("10.0.0.0/8".parse().unwrap())
             .mount(
                 MountSpec {
-                    module: "wardkeep".into(),
+                    module: "kaisatsu".into(),
                     host: Some("city.example".into()),
                     path_prefix: Some("/id".into()),
                 },
@@ -517,7 +517,7 @@ mod tests {
             )
             .mount(
                 MountSpec {
-                    module: "wardkeep-dedicated".into(),
+                    module: "kaisatsu-dedicated".into(),
                     host: Some("id.city.example".into()),
                     path_prefix: None,
                 },
@@ -545,7 +545,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             body1,
-            "module=wardkeep issuer=https://city.example/id/realms/dev cookie=__Secure-wk_sso path=/realms/dev"
+            "module=kaisatsu issuer=https://city.example/id/realms/dev cookie=__Secure-wk_sso path=/realms/dev"
         );
 
         // Request at root on `id.city.example`
@@ -567,7 +567,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             body2,
-            "module=wardkeep-dedicated issuer=https://id.city.example/realms/dev cookie=__Host-wk_sso path=/realms/dev"
+            "module=kaisatsu-dedicated issuer=https://id.city.example/realms/dev cookie=__Host-wk_sso path=/realms/dev"
         );
 
         // Unmounted path on `city.example` -> 404
@@ -583,11 +583,11 @@ mod tests {
     #[test]
     fn defaults_and_mount_helpers() {
         let m = Mount::default();
-        assert_eq!(m.module, "wardkeep");
+        assert_eq!(m.module, "kaisatsu");
         assert_eq!(m.public_base(), "https://idm.localhost");
         assert_eq!(m.realm_cookie_path("dev"), "/realms/dev");
         assert_eq!(m.cookie_name("sso"), "__Host-wk_sso");
-        let m = Mount::new("wardkeep", "https", "city.example", "/id/").unwrap();
+        let m = Mount::new("kaisatsu", "https", "city.example", "/id/").unwrap();
         assert_eq!(m.realm_cookie_path("dev"), "/id/realms/dev");
         assert_eq!(m.realm_issuer("dev"), "https://city.example/id/realms/dev");
         assert!(Mount::new("x", "https", "h", "id").is_err());

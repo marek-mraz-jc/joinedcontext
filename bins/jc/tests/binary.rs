@@ -23,7 +23,7 @@ fn a_refused_configuration_exits_2_and_says_why() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("unknown module 'keycloak'"), "{stderr}");
 
-    let out = jc().env("JCBIN_ROLE", "wardkeep").output().expect("run jc");
+    let out = jc().env("JCBIN_ROLE", "kaisatsu").output().expect("run jc");
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("key-encryption key"));
 }
@@ -32,7 +32,7 @@ fn a_refused_configuration_exits_2_and_says_why() {
 fn a_start_failure_exits_1() {
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let out = jc()
-        .args(["--role", "controlroom", "--listen"])
+        .args(["--role", "daiya", "--listen"])
         .arg(taken.local_addr().unwrap().to_string())
         .output()
         .expect("run jc");
@@ -161,7 +161,7 @@ fn serves_from_a_config_file_and_stops_on_sigterm() {
     let config = dir.path().join("jc.toml");
     std::fs::write(
         &config,
-        "role = \"controlroom,dataroom\"\nlisten = \"127.0.0.1:0\"\nscheme = \"http\"\nlog_format = \"text\"\n",
+        "role = \"daiya,dataroom\"\nlisten = \"127.0.0.1:0\"\nscheme = \"http\"\nlog_format = \"text\"\n",
     )
     .unwrap();
     let mut child = jc()

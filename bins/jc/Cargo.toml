@@ -14,14 +14,14 @@ name = "jc"
 path = "src/main.rs"
 
 [features]
-default = ["wardkeep", "dataroom", "controlroom", "ekiben", "antares", "portal", "jemalloc"]
-wardkeep = [
-  "dep:wardkeep-server",
-  "dep:wardkeep-core",
-  "dep:wardkeep-crypto",
-  "dep:wardkeep-oidc",
-  "dep:wardkeep-store-memory",
-  "dep:wardkeep-import",
+default = ["kaisatsu", "dataroom", "daiya", "ekiben", "antares", "portal", "jemalloc"]
+kaisatsu = [
+  "dep:kaisatsu-server",
+  "dep:kaisatsu-core",
+  "dep:kaisatsu-crypto",
+  "dep:kaisatsu-oidc",
+  "dep:kaisatsu-store-memory",
+  "dep:kaisatsu-import",
 ]
 dataroom = [
   "dep:dataroom-server",
@@ -29,10 +29,10 @@ dataroom = [
   "dep:dataroom-core",
   "dep:dataroom-store-memory",
 ]
-controlroom = [
-  "dep:controlroom-server",
-  "dep:controlroom-model",
-  "dep:controlroom-store-memory",
+daiya = [
+  "dep:daiya-server",
+  "dep:daiya-model",
+  "dep:daiya-store-memory",
 ]
 ekiben = ["dep:ekiben-server", "dep:ekiben-core"]
 antares = ["dep:antares-broker"]
@@ -56,21 +56,21 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 tikv-jemallocator = { version = "0.7", optional = true }
 
-wardkeep-server = { path = "../../crates/wardkeep/server", optional = true }
-wardkeep-core = { path = "../../crates/wardkeep/core", optional = true }
-wardkeep-crypto = { path = "../../crates/wardkeep/crypto", optional = true }
-wardkeep-oidc = { path = "../../crates/wardkeep/oidc", optional = true }
-wardkeep-store-memory = { path = "../../crates/wardkeep/store-memory", optional = true }
-wardkeep-import = { path = "../../crates/wardkeep/import", optional = true }
+kaisatsu-server = { path = "../../crates/kaisatsu/server", optional = true }
+kaisatsu-core = { path = "../../crates/kaisatsu/core", optional = true }
+kaisatsu-crypto = { path = "../../crates/kaisatsu/crypto", optional = true }
+kaisatsu-oidc = { path = "../../crates/kaisatsu/oidc", optional = true }
+kaisatsu-store-memory = { path = "../../crates/kaisatsu/store-memory", optional = true }
+kaisatsu-import = { path = "../../crates/kaisatsu/import", optional = true }
 
 dataroom-server = { path = "../../crates/dataroom/server", optional = true }
 dataroom-api = { path = "../../crates/dataroom/api", optional = true }
 dataroom-core = { path = "../../crates/dataroom/core", optional = true }
 dataroom-store-memory = { path = "../../crates/dataroom/store-memory", optional = true }
 
-controlroom-server = { path = "../../crates/controlroom/server", optional = true }
-controlroom-model = { path = "../../crates/controlroom/model", optional = true }
-controlroom-store-memory = { path = "../../crates/controlroom/store-memory", optional = true }
+daiya-server = { path = "../../crates/daiya/server", optional = true }
+daiya-model = { path = "../../crates/daiya/model", optional = true }
+daiya-store-memory = { path = "../../crates/daiya/store-memory", optional = true }
 
 ekiben-server = { path = "../../crates/ekiben/crates/ekiben-server", optional = true }
 ekiben-core = { path = "../../crates/ekiben/crates/ekiben-core", optional = true }

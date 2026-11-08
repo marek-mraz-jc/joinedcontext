@@ -1,0 +1,282 @@
+#![forbid(unsafe_code)]
+//! Shared application state and request context extraction for `daiya-api`.
+
+use crate::public::PublicRateLimiter;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
+use daiya_model::{
+    Authorizer, CrError, DaiyaStore, InputLimits, InstallationId, InstanceId, OperationRegistry,
+    OrgId, PolicyAuthorizer, RequestCtx, Subject, constant_time_eq, daiya_registry, sha256_hex,
+};
+use daiya_query::{
+    Datasource, DenyTokenExchanger, MapSecretResolver, QueryCache, SecretResolver, TokenExchanger,
+    WasmPluginHost,
+};
+use parking_lot::RwLock;
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+/// Live datasource drivers keyed by `(org_id, datasource_uid)`.
+pub type DriverMap = BTreeMap<(OrgId, String), Arc<dyn Datasource>>;
+
+/// Host-supplied resolver of a verified [`Subject`] (the Portal or jc binary that mounts daiya
+/// in-process and has already verified the session or bearer token). `None` means "not mine".
+pub type SubjectResolver = Arc<dyn Fn(&HeaderMap) -> Option<Subject> + Send + Sync>;
+
+/// One API credential: the SHA-256 of the token (never the token) and the subject it stands for.
+#[derive(Debug, Clone)]
+pub struct TokenBinding {
+    pub token_sha256: String,
+    pub subject: Subject,
+}
+
+impl TokenBinding {
+    /// Binds the raw `token` (hashed here, the raw value is not kept) to `subject`.
+    #[must_use]
+    pub fn new(token: &str, subject: Subject) -> Self {
+        Self {
+            token_sha256: sha256_hex(token.as_bytes()),
+            subject,
+        }
+    }
+}
+
+/// Shared state of a `daiya` instance (R11: passed in as a struct, no globals or env reads).
+#[derive(Clone)]
+pub struct DaiyaState {
+    pub installation_id: InstallationId,
+    pub default_org_id: OrgId,
+    pub default_instance_id: InstanceId,
+    pub store: Arc<dyn DaiyaStore>,
+    pub authorizer: Arc<dyn Authorizer>,
+    /// Live datasource drivers keyed by `(org_id, datasource_uid)`.
+    pub datasources: Arc<RwLock<DriverMap>>,
+    /// Mapping between Grafana numeric `orgId` / org name and `(numeric_id, OrgId)` for `provision.sh` and `src/grafana.rs`.
+    pub org_registry: Arc<RwLock<OrgDirectory>>,
+    pub query_cache: Arc<QueryCache>,
+    pub wasm_host: Arc<WasmPluginHost>,
+    pub secret_resolver: Arc<dyn SecretResolver>,
+    pub token_exchanger: Arc<dyn TokenExchanger>,
+    pub limits: InputLimits,
+    pub public_rate_limiter: Arc<PublicRateLimiter>,
+    pub registry: Arc<OperationRegistry>,
+    /// API credentials (hashed) accepted as `Authorization: Bearer <token>` or `Basic <base64>`.
+    pub tokens: Arc<Vec<TokenBinding>>,
+    /// Verified subject from the host that mounts daiya (checked before `tokens`).
+    pub subject_resolver: Option<SubjectResolver>,
+}
+
+/// Directory mapping Grafana organization names and numeric IDs to UUIDv7 [`OrgId`]s.
+#[derive(Debug, Default)]
+pub struct OrgDirectory {
+    pub by_name: BTreeMap<String, (i64, OrgId)>,
+    pub by_num: BTreeMap<i64, (String, OrgId)>,
+    pub next_num: i64,
+}
+
+impl OrgDirectory {
+    #[must_use]
+    pub fn with_main_org(main_org_id: OrgId) -> Self {
+        let mut dir = Self {
+            by_name: BTreeMap::new(),
+            by_num: BTreeMap::new(),
+            next_num: 2,
+        };
+        dir.by_name.insert("Main Org.".to_owned(), (1, main_org_id));
+        dir.by_num.insert(1, ("Main Org.".to_owned(), main_org_id));
+        dir
+    }
+
+    pub fn register_org(&mut self, name: &str, org_id: OrgId) -> (i64, OrgId, bool) {
+        if let Some(&(num, existing_id)) = self.by_name.get(name) {
+            return (num, existing_id, false);
+        }
+        let num = self.next_num;
+        self.next_num += 1;
+        self.by_name.insert(name.to_owned(), (num, org_id));
+        self.by_num.insert(num, (name.to_owned(), org_id));
+        (num, org_id, true)
+    }
+}
+
+impl DaiyaState {
+    #[must_use]
+    pub fn new(
+        installation_id: InstallationId,
+        default_org_id: OrgId,
+        default_instance_id: InstanceId,
+        store: Arc<dyn DaiyaStore>,
+        authorizer: Arc<dyn Authorizer>,
+    ) -> Self {
+        Self {
+            installation_id,
+            default_org_id,
+            default_instance_id,
+            store,
+            authorizer,
+            datasources: Arc::new(RwLock::new(BTreeMap::new())),
+            org_registry: Arc::new(RwLock::new(OrgDirectory::with_main_org(default_org_id))),
+            query_cache: Arc::new(QueryCache::default()),
+            wasm_host: Arc::new(WasmPluginHost::default()),
+            secret_resolver: Arc::new(MapSecretResolver::new()),
+            token_exchanger: Arc::new(DenyTokenExchanger),
+            limits: InputLimits::default(),
+            public_rate_limiter: Arc::new(PublicRateLimiter::new(120, 60)),
+            registry: Arc::new(daiya_registry()),
+            tokens: Arc::new(Vec::new()),
+            subject_resolver: None,
+        }
+    }
+
+    /// Accepts these API credentials (hashed bindings).
+    #[must_use]
+    pub fn with_tokens(mut self, tokens: Vec<TokenBinding>) -> Self {
+        self.tokens = Arc::new(tokens);
+        self
+    }
+
+    /// Takes the verified subject from the mounting host before looking at API credentials.
+    #[must_use]
+    pub fn with_subject_resolver<F>(mut self, resolver: F) -> Self
+    where
+        F: Fn(&HeaderMap) -> Option<Subject> + Send + Sync + 'static,
+    {
+        self.subject_resolver = Some(Arc::new(resolver));
+        self
+    }
+
+    /// The subject bound to the credential in `Authorization`, compared on SHA-256 digests in
+    /// constant time; `None` for a missing or unknown credential.
+    #[must_use]
+    pub fn subject_for_credential(&self, headers: &HeaderMap) -> Option<Subject> {
+        let raw = headers
+            .get(axum::http::header::AUTHORIZATION)?
+            .to_str()
+            .ok()?
+            .trim();
+        let (scheme, credential) = raw.split_once(' ')?;
+        let credential = credential.trim();
+        if credential.is_empty() {
+            return None;
+        }
+        let is_bearer = scheme.eq_ignore_ascii_case("bearer");
+        if !is_bearer && !scheme.eq_ignore_ascii_case("basic") {
+            return None;
+        }
+        let digest = sha256_hex(credential.as_bytes());
+        let mut found: Option<&TokenBinding> = None;
+        for binding in self.tokens.iter() {
+            if constant_time_eq(&binding.token_sha256, &digest) && found.is_none() {
+                found = Some(binding);
+            }
+        }
+        let mut subject = found?.subject.clone();
+        if is_bearer {
+            subject.bearer_token = Some(credential.to_owned());
+        }
+        Some(subject)
+    }
+
+    /// Registers a runtime [`Datasource`] implementation for `(org_id, uid)`.
+    pub fn register_datasource_driver(
+        &self,
+        org_id: OrgId,
+        uid: impl Into<String>,
+        driver: Arc<dyn Datasource>,
+    ) {
+        self.datasources
+            .write()
+            .insert((org_id, uid.into()), driver);
+    }
+
+    /// Looks up a registered [`Datasource`] driver for `(org_id, uid)`.
+    #[must_use]
+    pub fn get_datasource_driver(&self, org_id: OrgId, uid: &str) -> Option<Arc<dyn Datasource>> {
+        self.datasources
+            .read()
+            .get(&(org_id, uid.to_owned()))
+            .cloned()
+    }
+
+    /// Convenience constructor with a permissive policy for standalone tests.
+    #[must_use]
+    pub fn for_standalone(store: Arc<dyn DaiyaStore>, default_org_id: OrgId) -> Self {
+        let authz = Arc::new(PolicyAuthorizer::allow_org_members(default_org_id, "admin"));
+        Self::new(
+            InstallationId::from_u128(1),
+            default_org_id,
+            InstanceId::from_u128(1),
+            store,
+            authz,
+        )
+    }
+}
+
+/// Builds the [`RequestCtx`] of a request. The subject comes only from verified sources: the
+/// mounting host's [`SubjectResolver`], then an API credential in `Authorization` (hashed,
+/// constant-time). Anything else is anonymous: no organization, no role. Client headers never
+/// grant identity or membership; `X-Daiya-Org-Id` / `X-Grafana-Org-Id` only choose which
+/// of the subject's organizations is active (authorization still checks membership), and
+/// `X-Daiya-Readonly: true` can only narrow the caller.
+#[must_use]
+pub fn resolve_request_ctx(state: &DaiyaState, headers: &HeaderMap) -> RequestCtx {
+    let mut subject = state
+        .subject_resolver
+        .as_ref()
+        .and_then(|resolve| resolve(headers))
+        .or_else(|| state.subject_for_credential(headers))
+        .unwrap_or_else(Subject::anonymous);
+
+    let requested_org = headers
+        .get("x-daiya-org-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<OrgId>().ok())
+        .or_else(|| {
+            let gf_org = headers.get("x-grafana-org-id")?.to_str().ok()?.trim();
+            if let Ok(uuid_org) = gf_org.parse::<OrgId>() {
+                return Some(uuid_org);
+            }
+            let num: i64 = gf_org.parse().ok()?;
+            state
+                .org_registry
+                .read()
+                .by_num
+                .get(&num)
+                .map(|(_, oid)| *oid)
+        });
+    let active_org = requested_org
+        .or_else(|| subject.organizations.first().copied())
+        .unwrap_or(state.default_org_id);
+
+    if headers
+        .get("x-daiya-readonly")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|s| s == "true" || s == "1")
+    {
+        subject.read_only = true;
+    }
+
+    RequestCtx::new(
+        state.installation_id,
+        active_org,
+        state.default_instance_id,
+        subject,
+    )
+}
+
+/// Converts a [`CrError`] into an OData 4.01 / RFC 9457 JSON HTTP response with `Cache-Control: private, no-store`.
+#[must_use]
+pub fn error_response(err: &CrError) -> Response {
+    let status =
+        StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let body = err.to_odata_error();
+    (
+        status,
+        [
+            (axum::http::header::CONTENT_TYPE, "application/json"),
+            (axum::http::header::CACHE_CONTROL, "private, no-store"),
+        ],
+        axum::Json(body),
+    )
+        .into_response()
+}

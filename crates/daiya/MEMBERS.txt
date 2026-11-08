@@ -1,0 +1,9 @@
+crates/daiya/model
+crates/daiya/expr
+crates/daiya/query
+crates/daiya/store-pg
+crates/daiya/store-memory
+crates/daiya/import
+crates/daiya/api
+crates/daiya/mcp
+crates/daiya/server

@@ -1,9 +1,0 @@
-crates/controlroom/model
-crates/controlroom/expr
-crates/controlroom/query
-crates/controlroom/store-pg
-crates/controlroom/store-memory
-crates/controlroom/import
-crates/controlroom/api
-crates/controlroom/mcp
-crates/controlroom/server

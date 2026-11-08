@@ -34,7 +34,7 @@ pub struct Cli {
     /// TOML configuration file.
     #[arg(long, env = "JCBIN_CONFIG")]
     pub config: Option<PathBuf>,
-    /// Modules to run: `all` or a comma-separated list (wardkeep,dataroom,controlroom,...).
+    /// Modules to run: `all` or a comma-separated list (kaisatsu,dataroom,daiya,...).
     #[arg(long, env = "JCBIN_ROLE")]
     pub role: Option<String>,
     /// Address of the one public listener.
@@ -68,12 +68,12 @@ pub struct Cli {
     /// Log format: `json` or `text`.
     #[arg(long, env = "JCBIN_LOG_FORMAT")]
     pub log_format: Option<LogFormat>,
-    /// wardkeep: file holding the 32-byte key-encryption key (raw or 64 hex characters).
-    #[arg(long, env = "JCBIN_WARDKEEP_KEK_FILE")]
-    pub wardkeep_kek_file: Option<PathBuf>,
-    /// wardkeep: realm files (JSON) applied at start.
-    #[arg(long, env = "JCBIN_WARDKEEP_IMPORT_DIR")]
-    pub wardkeep_import_dir: Option<PathBuf>,
+    /// kaisatsu: file holding the 32-byte key-encryption key (raw or 64 hex characters).
+    #[arg(long, env = "JCBIN_KAISATSU_KEK_FILE")]
+    pub kaisatsu_kek_file: Option<PathBuf>,
+    /// kaisatsu: realm files (JSON) applied at start.
+    #[arg(long, env = "JCBIN_KAISATSU_IMPORT_DIR")]
+    pub kaisatsu_import_dir: Option<PathBuf>,
     /// ekiben: file holding the API bearer token (required: hosted ekiben never runs without auth).
     #[arg(long, env = "JCBIN_EKIBEN_TOKEN_FILE")]
     pub ekiben_token_file: Option<PathBuf>,
@@ -105,10 +105,10 @@ pub struct MountOverride {
     pub path_prefix: Option<String>,
 }
 
-/// `[wardkeep]` section.
+/// `[kaisatsu]` section.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct WardkeepSection {
+pub struct KaisatsuSection {
     pub kek_file: Option<PathBuf>,
     pub import_dir: Option<PathBuf>,
 }
@@ -162,7 +162,7 @@ pub struct FileConfig {
     #[serde(default)]
     pub mounts: BTreeMap<String, MountOverride>,
     #[serde(default)]
-    pub wardkeep: WardkeepSection,
+    pub kaisatsu: KaisatsuSection,
     #[serde(default)]
     pub dataroom: Option<DataroomSection>,
     #[serde(default)]
@@ -190,9 +190,9 @@ pub enum ConfigError {
     #[error("base host must be a plain host name, not '{0}'")]
     BaseHost(String),
     #[error(
-        "wardkeep needs a key-encryption key file (JCBIN_WARDKEEP_KEK_FILE or [wardkeep] kek_file)"
+        "kaisatsu needs a key-encryption key file (JCBIN_KAISATSU_KEK_FILE or [kaisatsu] kek_file)"
     )]
-    WardkeepKek,
+    KaisatsuKek,
     #[error("ekiben needs an API token file (JCBIN_EKIBEN_TOKEN_FILE or [ekiben] token_file)")]
     EkibenToken,
     #[error(
@@ -216,7 +216,7 @@ pub struct Config {
     pub trusted_proxies: Vec<IpNet>,
     pub log_format: LogFormat,
     pub mounts: BTreeMap<Module, MountOverride>,
-    pub wardkeep: WardkeepSection,
+    pub kaisatsu: KaisatsuSection,
     pub dataroom: DataroomSection,
     pub ekiben: EkibenSection,
     pub antares: AntaresSection,
@@ -286,12 +286,12 @@ impl Config {
         }
         let mut trusted_proxies = file.trusted_proxies;
         trusted_proxies.extend(cli.trusted_proxies);
-        let wardkeep = WardkeepSection {
-            kek_file: cli.wardkeep_kek_file.or(file.wardkeep.kek_file),
-            import_dir: cli.wardkeep_import_dir.or(file.wardkeep.import_dir),
+        let kaisatsu = KaisatsuSection {
+            kek_file: cli.kaisatsu_kek_file.or(file.kaisatsu.kek_file),
+            import_dir: cli.kaisatsu_import_dir.or(file.kaisatsu.import_dir),
         };
-        if roles.contains(&Module::Wardkeep) && wardkeep.kek_file.is_none() {
-            return Err(ConfigError::WardkeepKek);
+        if roles.contains(&Module::Kaisatsu) && kaisatsu.kek_file.is_none() {
+            return Err(ConfigError::KaisatsuKek);
         }
         let ekiben = EkibenSection {
             token_file: cli.ekiben_token_file.or(file.ekiben.token_file),
@@ -328,7 +328,7 @@ impl Config {
             trusted_proxies,
             log_format: cli.log_format.or(file.log_format).unwrap_or_default(),
             mounts,
-            wardkeep,
+            kaisatsu,
             dataroom: file.dataroom.unwrap_or_default(),
             ekiben,
             antares,
@@ -399,7 +399,7 @@ mod tests {
         let file = Config::parse_file(
             Path::new("jc.toml"),
             r#"
-role = "controlroom"
+role = "daiya"
 listen = "127.0.0.1:1"
 mode = "host"
 base_host = "file.example"
@@ -409,7 +409,7 @@ admin_token_file = "/run/jc/admin-token"
 trusted_proxies = ["10.0.0.0/8"]
 log_format = "text"
 
-[mounts.controlroom]
+[mounts.daiya]
 host = "grafana.example"
 
 [dataroom]
@@ -419,7 +419,7 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
         )
         .unwrap();
         let from_file = Config::merge(Cli::default(), file.clone()).unwrap();
-        assert_eq!(from_file.roles, vec![Module::Controlroom]);
+        assert_eq!(from_file.roles, vec![Module::Daiya]);
         assert_eq!(from_file.mode, MountMode::Host);
         assert_eq!(from_file.scheme, "http");
         assert_eq!(from_file.base_host, "file.example");
@@ -430,7 +430,7 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
         );
         assert_eq!(from_file.log_format, LogFormat::Text);
         assert_eq!(
-            from_file.mounts[&Module::Controlroom].host.as_deref(),
+            from_file.mounts[&Module::Daiya].host.as_deref(),
             Some("grafana.example")
         );
         assert_eq!(
@@ -519,15 +519,15 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
     }
 
     #[test]
-    fn wardkeep_without_a_kek_file_is_refused() {
-        let err = Config::merge(cli(&["--role", "wardkeep"]), FileConfig::default()).unwrap_err();
-        assert!(matches!(err, ConfigError::WardkeepKek), "{err}");
+    fn kaisatsu_without_a_kek_file_is_refused() {
+        let err = Config::merge(cli(&["--role", "kaisatsu"]), FileConfig::default()).unwrap_err();
+        assert!(matches!(err, ConfigError::KaisatsuKek), "{err}");
         let ok = Config::merge(
-            cli(&["--role", "wardkeep", "--wardkeep-kek-file", "/run/kek"]),
+            cli(&["--role", "kaisatsu", "--kaisatsu-kek-file", "/run/kek"]),
             FileConfig::default(),
         )
         .unwrap();
-        assert_eq!(ok.wardkeep.kek_file.as_deref(), Some(Path::new("/run/kek")));
+        assert_eq!(ok.kaisatsu.kek_file.as_deref(), Some(Path::new("/run/kek")));
     }
 
     #[test]
@@ -588,23 +588,23 @@ catalogue_id = "00000000-0000-7000-8000-0000000000bb"
     #[test]
     fn an_admin_listener_without_a_token_file_is_refused() {
         let err = Config::merge(
-            cli(&["--role", "controlroom", "--admin-listen", "127.0.0.1:0"]),
+            cli(&["--role", "daiya", "--admin-listen", "127.0.0.1:0"]),
             FileConfig::default(),
         )
         .unwrap_err();
         assert!(matches!(err, ConfigError::AdminToken), "{err}");
         let file =
             Config::parse_file(Path::new("jc.toml"), "admin_listen = \"127.0.0.1:0\"\n").unwrap();
-        let err = Config::merge(cli(&["--role", "controlroom"]), file.clone()).unwrap_err();
+        let err = Config::merge(cli(&["--role", "daiya"]), file.clone()).unwrap_err();
         assert!(matches!(err, ConfigError::AdminToken), "{err}");
         let ok = Config::merge(
-            cli(&["--role", "controlroom", "--admin-token-file", "/run/a"]),
+            cli(&["--role", "daiya", "--admin-token-file", "/run/a"]),
             file,
         )
         .unwrap();
         assert_eq!(ok.admin_token_file.as_deref(), Some(Path::new("/run/a")));
         // Without an admin listener no token is needed.
-        let ok = Config::merge(cli(&["--role", "controlroom"]), FileConfig::default()).unwrap();
+        let ok = Config::merge(cli(&["--role", "daiya"]), FileConfig::default()).unwrap();
         assert_eq!(ok.admin_token_file, None);
     }
 

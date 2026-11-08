@@ -7,9 +7,9 @@ use std::str::FromStr;
 /// A module of the platform that `jc` can mount.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Module {
-    Wardkeep,
+    Kaisatsu,
     Dataroom,
-    Controlroom,
+    Daiya,
     Ekiben,
     Antares,
     Portal,
@@ -18,9 +18,9 @@ pub enum Module {
 impl Module {
     /// Every module in mount order.
     pub const ALL: [Module; 6] = [
-        Module::Wardkeep,
+        Module::Kaisatsu,
         Module::Dataroom,
-        Module::Controlroom,
+        Module::Daiya,
         Module::Ekiben,
         Module::Antares,
         Module::Portal,
@@ -30,9 +30,9 @@ impl Module {
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
-            Module::Wardkeep => "wardkeep",
+            Module::Kaisatsu => "kaisatsu",
             Module::Dataroom => "dataroom",
-            Module::Controlroom => "controlroom",
+            Module::Daiya => "daiya",
             Module::Ekiben => "ekiben",
             Module::Antares => "antares",
             Module::Portal => "portal",
@@ -43,9 +43,9 @@ impl Module {
     #[must_use]
     pub fn slug(self) -> &'static str {
         match self {
-            Module::Wardkeep => "id",
+            Module::Kaisatsu => "id",
             Module::Dataroom => "opendata",
-            Module::Controlroom => "dashboards",
+            Module::Daiya => "dashboards",
             Module::Ekiben => "streams",
             Module::Antares => "broker",
             Module::Portal => "portal",
@@ -62,9 +62,9 @@ impl Module {
     #[must_use]
     pub fn compiled_in(self) -> bool {
         match self {
-            Module::Wardkeep => cfg!(feature = "wardkeep"),
+            Module::Kaisatsu => cfg!(feature = "kaisatsu"),
             Module::Dataroom => cfg!(feature = "dataroom"),
-            Module::Controlroom => cfg!(feature = "controlroom"),
+            Module::Daiya => cfg!(feature = "daiya"),
             Module::Ekiben => cfg!(feature = "ekiben"),
             Module::Antares => cfg!(feature = "antares"),
             Module::Portal => cfg!(feature = "portal"),
@@ -81,9 +81,7 @@ impl fmt::Display for Module {
 /// Error of [`Module::from_str`] and [`parse_roles`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RoleError {
-    #[error(
-        "unknown module '{0}' (known: wardkeep, dataroom, controlroom, ekiben, antares, portal)"
-    )]
+    #[error("unknown module '{0}' (known: kaisatsu, dataroom, daiya, ekiben, antares, portal)")]
     Unknown(String),
     #[error("module '{0}' is not compiled into this jc binary (Cargo feature '{0}')")]
     NotCompiled(String),
@@ -139,7 +137,7 @@ mod tests {
             assert_eq!(m.host_label(), m.slug());
             assert!(!m.slug().is_empty());
         }
-        assert_eq!(" WardKeep ".parse::<Module>().unwrap(), Module::Wardkeep);
+        assert_eq!(" Kaisatsu ".parse::<Module>().unwrap(), Module::Kaisatsu);
     }
 
     #[test]
@@ -149,7 +147,7 @@ mod tests {
             Err(RoleError::Unknown("keycloak".into()))
         );
         assert_eq!(
-            parse_roles("wardkeep,keycloak"),
+            parse_roles("kaisatsu,keycloak"),
             Err(RoleError::Unknown("keycloak".into()))
         );
     }

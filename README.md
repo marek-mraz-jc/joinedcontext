@@ -6,10 +6,10 @@ The joinedcontext platform in Rust, one repository: one binary (`bins/jc`) whose
 |---|---|---|
 | Antares | context broker | crates/antares |
 | ekiben | Bento | crates/ekiben |
-| wardkeep | Keycloak, FIWARE VCVerifier | crates/wardkeep |
+| kaisatsu | Keycloak, FIWARE VCVerifier | crates/kaisatsu |
 | shako | Gitea | crates/shako |
 | dataroom | CKAN | crates/dataroom |
-| controlroom | Grafana | crates/controlroom |
+| daiya | Grafana | crates/daiya |
 | factory | code factory and deploy | crates/factory |
 | portal | management UI and API | crates/portal |
 

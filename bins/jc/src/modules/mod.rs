@@ -12,16 +12,16 @@ use tokio_util::task::TaskTracker;
 
 #[cfg(feature = "antares")]
 mod antares;
-#[cfg(feature = "controlroom")]
-mod controlroom;
+#[cfg(feature = "daiya")]
+mod daiya;
 #[cfg(feature = "dataroom")]
 mod dataroom;
 #[cfg(feature = "ekiben")]
 mod ekiben;
+#[cfg(feature = "kaisatsu")]
+mod kaisatsu;
 #[cfg(feature = "portal")]
 mod portal;
-#[cfg(feature = "wardkeep")]
-mod wardkeep;
 
 /// Builds the router of `module` mounted at `mount`.
 pub async fn build(
@@ -33,12 +33,12 @@ pub async fn build(
 ) -> Result<Router, StartError> {
     let _ = (shutdown, tasks);
     match module {
-        #[cfg(feature = "wardkeep")]
-        Module::Wardkeep => wardkeep::build(&cfg.wardkeep, mount).await,
+        #[cfg(feature = "kaisatsu")]
+        Module::Kaisatsu => kaisatsu::build(&cfg.kaisatsu, mount).await,
         #[cfg(feature = "dataroom")]
         Module::Dataroom => dataroom::build(&cfg.dataroom, mount).await,
-        #[cfg(feature = "controlroom")]
-        Module::Controlroom => Ok(controlroom::build(mount)),
+        #[cfg(feature = "daiya")]
+        Module::Daiya => Ok(daiya::build(mount)),
         #[cfg(feature = "ekiben")]
         Module::Ekiben => ekiben::build(&cfg.ekiben),
         #[cfg(feature = "antares")]

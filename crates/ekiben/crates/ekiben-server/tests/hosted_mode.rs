@@ -43,7 +43,7 @@ fn hosted_state(
 
 #[test]
 fn allow_listed_access_reads_only_ekiben_var_names() {
-    std::env::set_var("JC_HOSTED_UNIT_SECRET", "wardkeep-kek-would-be-here");
+    std::env::set_var("JC_HOSTED_UNIT_SECRET", "kaisatsu-kek-would-be-here");
     std::env::set_var("EKIBEN_VAR_HOSTED_UNIT", "visible");
     assert_eq!(EnvAccess::AllowListed.lookup("JC_HOSTED_UNIT_SECRET"), None);
     assert_eq!(
@@ -57,7 +57,7 @@ fn allow_listed_access_reads_only_ekiben_var_names() {
         EnvAccess::Process
             .lookup("JC_HOSTED_UNIT_SECRET")
             .as_deref(),
-        Some("wardkeep-kek-would-be-here")
+        Some("kaisatsu-kek-would-be-here")
     );
     assert_eq!(EnvAccess::from(true), EnvAccess::Process);
     assert_eq!(EnvAccess::from(false), EnvAccess::None);
@@ -161,7 +161,7 @@ async fn a_posted_config_cannot_substitute_another_modules_secret() {
 
 #[tokio::test]
 async fn a_running_stream_cannot_read_another_modules_secret_through_env() {
-    std::env::set_var("JC_HOSTED_RUN_SECRET", "kek-bytes-of-wardkeep");
+    std::env::set_var("JC_HOSTED_RUN_SECRET", "kek-bytes-of-kaisatsu");
     std::env::set_var("EKIBEN_VAR_HOSTED_RUN", "ok-value");
     let root = tempfile::tempdir().unwrap();
     let yaml = r#"
@@ -188,7 +188,7 @@ output:
     .expect("run");
     assert!(summary.success, "{summary:?}");
     let out = std::fs::read_to_string(root.path().join("out.jsonl")).expect("output file");
-    assert!(!out.contains("kek-bytes-of-wardkeep"), "{out}");
+    assert!(!out.contains("kek-bytes-of-kaisatsu"), "{out}");
     assert!(out.contains("ok-value"), "{out}");
 }
 

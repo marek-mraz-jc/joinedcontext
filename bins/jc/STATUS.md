@@ -1,9 +1,9 @@
 # jc one binary: status
 
-Branch `jc-one-binary-1` (from `controlroom-argon-1`), local only, never pushed. Plan: the feasibility report
+Branch `jc-one-binary-1` (from `daiya-argon-1`), local only, never pushed. Plan: the feasibility report
 (`/home/dev/tmp-jc-feasibility/report.md`). This file says where the work stands after each stage.
 
-## Stage 1: bins/jc with wardkeep, dataroom, controlroom (done)
+## Stage 1: bins/jc with kaisatsu, dataroom, daiya (done)
 
 - `bins/jc`: lib (`app`, `config`, `module`, `modules/*`, `runtime`) and a thin `main.rs`.
 - One tokio runtime (built in `main.rs`), one tracing subscriber (`runtime::init_tracing`, `try_init`, idempotent),
@@ -18,8 +18,8 @@ Branch `jc-one-binary-1` (from `controlroom-argon-1`), local only, never pushed.
 - `jc --role all|<module>[,<module>]`; a module that is not compiled in is refused, not skipped.
 - Configuration: defaults < TOML file (`--config`/`JCBIN_CONFIG`, unknown keys refused) < `JCBIN_*` < flags. No key
   starts with `JC_` (unit test `no_jc_key_starts_with_jc_underscore`). Default listener `127.0.0.1:8080`.
-- Modules mounted: wardkeep (in-memory store, KEK from file, realm import dir), dataroom (in-memory store, default
-  catalogue via the new `dataroom_server::ensure_default_catalogue`, URLs under the mount prefix), controlroom
+- Modules mounted: kaisatsu (in-memory store, KEK from file, realm import dir), dataroom (in-memory store, default
+  catalogue via the new `dataroom_server::ensure_default_catalogue`, URLs under the mount prefix), daiya
   (in-memory store, `for_standalone` state). Each is the module's own `router(state, mount)` over its own state.
 - Postgres paths of these modules are not wired into `jc` (memory stores only): not verified, no Postgres here.
 
@@ -124,7 +124,7 @@ Gates: Antares workspace `cargo build/test/clippy -p antares-broker --all-target
 - Background tasks of the Portal are plain `tokio::spawn` and stop with the runtime; the internal listener stops on
   `jc`'s cancellation token.
 - Not verified: the Portal UI (embedded assets, absolute asset paths) under `/portal/` in slug mode; the Portal with a
-  realm (no Keycloak/wardkeep realm wiring between modules in this prototype); every Postgres path (no Postgres: the
+  realm (no Keycloak/kaisatsu realm wiring between modules in this prototype); every Postgres path (no Postgres: the
   12 tests that need `JC_APPS_DB_TEST_URL` fail by design without it, all other 4965 pass).
 
 Gates: Portal workspace `cargo test -p joinedcontext-portal --no-fail-fast` (2 jobs, `debug=0`): 4965 passed, 12
@@ -164,9 +164,9 @@ Result: `cargo test -p jc`: lib 22, binary 4, one_binary 12, all green.
 | `ekiben-bloblang` | 72.03 % (7151/9928) | same |
 | `antares-broker` | 66.61 % (1578/2369) | Antares workspace, its own tests (Postgres/NATS/MQTT ones skip without their env) |
 | `joinedcontext-portal` | 90.10 % (162536/180395) | Portal workspace, its own tests; the 12 Postgres tests fail without `JC_APPS_DB_TEST_URL` |
-| `wardkeep-server` | 15.02 % (35/233) | root, its own tests (thin binary crate; the logic is in the other wardkeep crates) |
+| `kaisatsu-server` | 15.02 % (35/233) | root, its own tests (thin binary crate; the logic is in the other kaisatsu crates) |
 | `dataroom-server` | 56.32 % (254/451) | root, its own tests |
-| `controlroom-server` | 28.42 % (81/285) | root, its own tests |
+| `daiya-server` | 28.42 % (81/285) | root, its own tests |
 
 These are the floors. Uncovered in `bins/jc`: the fallback arm for a module not compiled in (`modules/mod.rs:49-52`,
 unreachable with default features), `RoleError::NotCompiled` (`module.rs:118`), the runtime-build failure in
@@ -190,12 +190,12 @@ removing the stale objects the run above is clean.
   - Warnings for unmaintained crates: `atomic-polyfill`, `basic-toml`, `paste`.
 - `cargo deny check`: the root has no `deny.toml`; with `crates/portal/deny.toml` the result is licenses ok,
   advisories FAILED (the vulnerabilities above plus `paste`), bans FAILED (wildcard path dependencies in every
-  monorepo crate, e.g. `controlroom-api`, `jc`), sources FAILED (`odata-*` from an Antares git rev in
-  `crates/controlroom/model/Cargo.toml:11`, already in the base). No root policy was added to make it pass.
+  monorepo crate, e.g. `daiya-api`, `jc`), sources FAILED (`odata-*` from an Antares git rev in
+  `crates/daiya/model/Cargo.toml:11`, already in the base). No root policy was added to make it pass.
 
 ## Security review of the diff
 
-Read once over `controlroom-argon-1..HEAD`, excluding the squashed imports and `vendor/`:
+Read once over `daiya-argon-1..HEAD`, excluding the squashed imports and `vendor/`:
 
 - Fixed while reviewing: the admin listener's `/metrics` was open, but it carries Antares' series, which the broker
   serves only behind its admin token. `--admin-listen` now needs `--admin-token-file` (`JCBIN_ADMIN_TOKEN_FILE`),
@@ -203,9 +203,9 @@ Read once over `controlroom-argon-1..HEAD`, excluding the squashed imports and `
   check bypassed, `slug_mode_...` got 200 where it expects 401.
 - Each module keeps its own state, store, and auth. `jc-router` hands a request only to the router of the mount it
   matched; the modules share no state (only the process-wide recorder, subscriber, and crypto provider).
-  - wardkeep: KEK from a file, `LocalAuthorizer`, as standalone.
+  - kaisatsu: KEK from a file, `LocalAuthorizer`, as standalone.
   - dataroom: `PolicyAuthorizer::default()`, as its standalone `serve`.
-  - controlroom: `for_standalone`, as standalone.
+  - daiya: `for_standalone`, as standalone.
   - ekiben: `require_auth` plus allow-listed env plus a file root (stage 2).
   - Antares: admin token mandatory.
   - Portal: its own `JC_*` config, unchanged.
@@ -228,7 +228,7 @@ Read once over `controlroom-argon-1..HEAD`, excluding the squashed imports and `
 
 - Postgres paths of every module: no Postgres here (dind is broken). `jc` wires memory stores only; the Portal
   connects to whatever `JC_*` names, untested.
-- A realm between modules (the Portal or Antares verifying wardkeep tokens), and the Portal UI under `/portal/`.
+- A realm between modules (the Portal or Antares verifying kaisatsu tokens), and the Portal UI under `/portal/`.
 - Antares under the ETSI suite while hosted (axum writer, no own connection cap or drain); `nest_service` is replaced
   by `fallback_service` (axum 0.8 refuses `nest_service("/")`).
 - The Portal's gateway on Antares `b683bfc3`'s ngsild instead of `v0.3.0`, beyond the jc tests.
@@ -238,8 +238,8 @@ Read once over `controlroom-argon-1..HEAD`, excluding the squashed imports and `
 
 - Slug mode puts every module on one origin (`app.rs:75`). The Portal's `__Host-` cookies are `Path=/`
   (`crates/portal/src/auth/session.rs:227`), so they ride along to every module on that host, and an XSS in any
-  module could drive the Portal API same-origin. wardkeep scopes its cookies to its mount. Host mode avoids this;
-  production should use host mode at least for the Portal and wardkeep.
+  module could drive the Portal API same-origin. kaisatsu scopes its cookies to its mount. Host mode avoids this;
+  production should use host mode at least for the Portal and kaisatsu.
 - Module background work is not on `jc`'s `TaskTracker`: the tracker is passed but unused (`modules/mod.rs:34`).
   Antares (`crates/antares/crates/antares-broker/src/lib.rs:1323`) and the Portal (`crates/portal/src/server.rs:292`)
   `tokio::spawn` on their own and stop with the runtime, not with the token.

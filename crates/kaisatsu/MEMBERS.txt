@@ -1,0 +1,11 @@
+crates/shared/jc-router
+crates/kaisatsu/core
+crates/kaisatsu/crypto
+crates/kaisatsu/store-pg
+crates/kaisatsu/store-memory
+crates/kaisatsu/oidc
+crates/kaisatsu/login
+crates/kaisatsu/admin
+crates/kaisatsu/import
+crates/kaisatsu/mcp
+crates/kaisatsu/server
