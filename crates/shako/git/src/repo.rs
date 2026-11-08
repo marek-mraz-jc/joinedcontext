@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use tokio::sync::{OwnedMutexGuard, Mutex as AsyncMutex};
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 /// Safe minimal `config` written by `shako` to every bare repository at init (S2, R§2.5, Threat T2).
 /// Disables auto-gc, hooks, fsmonitor, and symlinks.
@@ -438,7 +438,9 @@ pub fn commit_file_changes(
 ) -> ShakoResult<String> {
     validate_branch_name(branch)?;
     if changes.is_empty() {
-        return Err(ShakoError::Unprocessable("no file changes specified".into()));
+        return Err(ShakoError::Unprocessable(
+            "no file changes specified".into(),
+        ));
     }
     let repo = open_isolated(repo_path)?;
     let full_ref_str = format!("refs/heads/{branch}");
@@ -698,7 +700,12 @@ pub(crate) fn build_nested_trees(
         entries.sort_by(|a, b| {
             let a_is_tree = a.mode.is_tree();
             let b_is_tree = b.mode.is_tree();
-            tree_entry_cmp(a.filename.as_slice(), a_is_tree, b.filename.as_slice(), b_is_tree)
+            tree_entry_cmp(
+                a.filename.as_slice(),
+                a_is_tree,
+                b.filename.as_slice(),
+                b_is_tree,
+            )
         });
         let tree_obj = gix_object::Tree { entries };
         let (oid, raw) = hash_and_serialize_object(gix_object::Kind::Tree, &tree_obj)?;
@@ -786,10 +793,7 @@ fn walk_tree_entries(
         let (mode_str, type_str, size) = if is_tree {
             ("040000".to_owned(), "tree".to_owned(), 0)
         } else {
-            let sz = repo
-                .find_header(entry.oid)
-                .map(|h| h.size())
-                .unwrap_or(0);
+            let sz = repo.find_header(entry.oid).map(|h| h.size()).unwrap_or(0);
             let mode = if entry.mode.is_executable() {
                 "100755"
             } else if entry.mode.is_link() {
@@ -876,12 +880,14 @@ fn decode_commit_info(commit: &gix::Commit<'_>) -> ShakoResult<CommitInfo> {
         .map_err(|e| ShakoError::Git(format!("decode commit: {e}")))?;
     let author = decoded.author().unwrap_or_default();
     let committer = decoded.committer().unwrap_or_default();
-    let author_dt = chrono::DateTime::from_timestamp(author.time().map(|t| t.seconds).unwrap_or(0), 0)
-        .unwrap_or_else(chrono::Utc::now)
-        .to_rfc3339();
-    let committer_dt = chrono::DateTime::from_timestamp(committer.time().map(|t| t.seconds).unwrap_or(0), 0)
-        .unwrap_or_else(chrono::Utc::now)
-        .to_rfc3339();
+    let author_dt =
+        chrono::DateTime::from_timestamp(author.time().map(|t| t.seconds).unwrap_or(0), 0)
+            .unwrap_or_else(chrono::Utc::now)
+            .to_rfc3339();
+    let committer_dt =
+        chrono::DateTime::from_timestamp(committer.time().map(|t| t.seconds).unwrap_or(0), 0)
+            .unwrap_or_else(chrono::Utc::now)
+            .to_rfc3339();
     Ok(CommitInfo {
         sha: commit.id.to_hex().to_string(),
         message: decoded.message.to_str_lossy().into_owned(),
@@ -906,7 +912,10 @@ pub fn list_commits(
 ) -> ShakoResult<Vec<CommitInfo>> {
     let repo = open_isolated(repo_path)?;
     let start_oid = resolve_commit_oid(&repo, git_ref)?;
-    let filter_path = match path_filter.map(|p| p.trim_matches('/')).filter(|p| !p.is_empty()) {
+    let filter_path = match path_filter
+        .map(|p| p.trim_matches('/'))
+        .filter(|p| !p.is_empty())
+    {
         Some(p) => Some(validate_tree_path(p)?),
         None => None,
     };

@@ -100,7 +100,10 @@ fn merge_trees_in_memory(
     ancestor_oid: Option<ObjectId>,
     our_oid: ObjectId,
     their_oid: ObjectId,
-) -> ShakoResult<(BTreeMap<String, (EntryKind, ObjectId, Option<Vec<u8>>)>, Vec<String>)> {
+) -> ShakoResult<(
+    BTreeMap<String, (EntryKind, ObjectId, Option<Vec<u8>>)>,
+    Vec<String>,
+)> {
     let mut base_files = BTreeMap::new();
     if let Some(anc) = ancestor_oid
         && let Ok(c) = repo.find_commit(anc)

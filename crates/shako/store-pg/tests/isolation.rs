@@ -75,7 +75,10 @@ async fn postgres_isolation_boot_rls_and_leakproof_index_plan() {
         .fetch_one(&mut *tx)
         .await
         .unwrap();
-    assert_eq!(count_unset, 0, "queries as shako_app with shako.org unset must return zero rows");
+    assert_eq!(
+        count_unset, 0,
+        "queries as shako_app with shako.org unset must return zero rows"
+    );
 
     // 2. Prove leakproof index plan for `(instance_id, owner, name)` as `shako_app`
     sqlx::query("SET LOCAL enable_seqscan = off")

@@ -4,9 +4,7 @@
 
 use clap::{Parser, Subcommand};
 use jc_router::Mount;
-use shako_core::{
-    Action, LocalAuthorizer, OrgId, RoleBinding, StaticTokenBinding, Subject,
-};
+use shako_core::{Action, LocalAuthorizer, OrgId, RoleBinding, StaticTokenBinding, Subject};
 use shako_server::{
     ShakoManifestBundle, ShakoState, apply_manifest_bundle, check_manifest_bundle,
     compact_all_repositories, fsck_all_repositories, router,
@@ -167,7 +165,11 @@ async fn main() -> ExitCode {
                 };
                 opts = opts.password(pw.trim());
             }
-            let pool = match PgPoolOptions::new().max_connections(2).connect_with(opts).await {
+            let pool = match PgPoolOptions::new()
+                .max_connections(2)
+                .connect_with(opts)
+                .await
+            {
                 Ok(p) => p,
                 Err(e) => {
                     eprintln!("shako: db connect failed: {e}");

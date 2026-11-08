@@ -209,7 +209,11 @@ pub async fn run_isolation_suite(store: &dyn Store) {
         .await
         .expect("upsert package");
     assert_eq!(
-        store.list_packages(inst, org_b).await.expect("pkgs b").len(),
+        store
+            .list_packages(inst, org_b)
+            .await
+            .expect("pkgs b")
+            .len(),
         0
     );
     assert_eq!(pkg.name, "app-bundle");

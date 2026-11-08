@@ -20,7 +20,11 @@ pub enum ArchiveFormat {
 
 fn sanitize_archive_prefix_ref(git_ref: &str) -> ShakoResult<String> {
     let cleaned = git_ref.trim().replace('/', "-");
-    if cleaned.is_empty() || cleaned.contains("..") || cleaned.contains('\\') || cleaned.contains('\0') {
+    if cleaned.is_empty()
+        || cleaned.contains("..")
+        || cleaned.contains('\\')
+        || cleaned.contains('\0')
+    {
         return Err(ShakoError::Unprocessable("invalid archive ref".into()));
     }
     Ok(cleaned)

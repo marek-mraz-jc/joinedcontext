@@ -24,8 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, atomic::AtomicBool};
 
-pub const RECEIVE_PACK_CAPABILITIES: &str =
-    "report-status report-status-v2 delete-refs side-band-64k quiet atomic ofs-delta object-format=sha1 agent=shako/0.1.0";
+pub const RECEIVE_PACK_CAPABILITIES: &str = "report-status report-status-v2 delete-refs side-band-64k quiet atomic ofs-delta object-format=sha1 agent=shako/0.1.0";
 
 /// Generates the `GET {repo}.git/info/refs?service=git-receive-pack` advertisement (S4).
 pub fn advertise_receive_pack(repo_path: &Path) -> ShakoResult<Vec<u8>> {
@@ -236,11 +235,7 @@ pub fn handle_receive_pack(
 
     // 2. Enforce streaming push byte limit / quota BEFORE storing anything (S4, S6, Threat T5)
     if pack_data.len() as u64 > max_push_bytes {
-        return Ok(format_unpack_error(
-            "quota",
-            &commands,
-            &caps,
-        )?);
+        return Ok(format_unpack_error("quota", &commands, &caps)?);
     }
 
     let has_non_delete = commands.iter().any(|c| !c.is_delete());
@@ -295,7 +290,16 @@ pub fn handle_receive_pack(
         Vec::with_capacity(commands.len());
 
     for cmd in &commands {
-        let res = evaluate_single_command(&repo, ctx, authorizer, owner, repo_name, policy, secret_scan_enabled, cmd);
+        let res = evaluate_single_command(
+            &repo,
+            ctx,
+            authorizer,
+            owner,
+            repo_name,
+            policy,
+            secret_scan_enabled,
+            cmd,
+        );
         cmd_results.push((cmd.clone(), res));
     }
 
@@ -336,7 +340,8 @@ pub fn handle_receive_pack(
                 }
                 Err(_) => {
                     for (c, _) in cmd_results {
-                        final_results.push((c, Err("failed to lock/update ref (fetch first)".into())));
+                        final_results
+                            .push((c, Err("failed to lock/update ref (fetch first)".into())));
                     }
                 }
             }
@@ -483,7 +488,9 @@ fn evaluate_single_command(
     secret_scan_enabled: bool,
     cmd: &RefUpdateCommand,
 ) -> Result<(), String> {
-    if cmd.refname == "HEAD" || !(cmd.refname.starts_with("refs/heads/") || cmd.refname.starts_with("refs/tags/")) {
+    if cmd.refname == "HEAD"
+        || !(cmd.refname.starts_with("refs/heads/") || cmd.refname.starts_with("refs/tags/"))
+    {
         return Err("refusing to update non-branch/tag ref".into());
     }
     validate_full_ref_name(&cmd.refname).map_err(|e| e.to_string())?;
@@ -579,9 +586,7 @@ fn verify_tip_connectivity_and_tree(
         let old_entry = old_blobs.get(path);
         if old_entry.map(|(_, o)| o) != Some(blob_oid) {
             changed_paths.push(path.clone());
-            if secret_scan_enabled
-                && let Some(msg) = scan_blob_for_secrets(path, &blob.data)
-            {
+            if secret_scan_enabled && let Some(msg) = scan_blob_for_secrets(path, &blob.data) {
                 return Err(msg);
             }
         }

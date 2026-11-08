@@ -173,7 +173,8 @@ pub async fn dispatch_pending_outbox(
                 {
                     continue;
                 }
-                let _ = deliver_webhook_with_retries(state, &hook, &ev.event_kind, &ev.payload).await;
+                let _ =
+                    deliver_webhook_with_retries(state, &hook, &ev.event_kind, &ev.payload).await;
             }
         }
 

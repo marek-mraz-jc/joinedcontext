@@ -3,7 +3,7 @@
 //! Row 32, Contract S11) and full-repository backup bundles (Contract S6).
 
 use crate::repo::{open_isolated, resolve_commit_oid};
-use crate::upload_pack::{ build_pack_bytes, collect_advertised_refs};
+use crate::upload_pack::{build_pack_bytes, collect_advertised_refs};
 use gix_hash::ObjectId;
 use shako_core::{ShakoError, ShakoResult};
 use std::collections::BTreeSet;
@@ -57,7 +57,9 @@ pub fn create_full_backup_bundle(repo_path: &Path) -> ShakoResult<Vec<u8>> {
 /// Restores a bare repository from a Git v2 bundle created by [`create_full_backup_bundle`] (Contract S6).
 pub fn restore_from_bundle(repo_path: &Path, bundle_bytes: &[u8]) -> ShakoResult<()> {
     let Some(header_end) = bundle_bytes.windows(2).position(|w| w == b"\n\n") else {
-        return Err(ShakoError::BadRequest("bundle missing header terminator".into()));
+        return Err(ShakoError::BadRequest(
+            "bundle missing header terminator".into(),
+        ));
     };
     let header_str = std::str::from_utf8(&bundle_bytes[..header_end])
         .map_err(|_| ShakoError::BadRequest("bundle header is not UTF-8".into()))?;

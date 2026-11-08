@@ -41,11 +41,7 @@ pub fn has_active_quarantine(repo_path: &Path) -> bool {
         return false;
     };
     for entry in rd.flatten() {
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with("incoming-")
-        {
+        if entry.file_name().to_string_lossy().starts_with("incoming-") {
             return true;
         }
     }
@@ -68,10 +64,7 @@ fn list_pack_files(pack_dir: &Path) -> Vec<PathBuf> {
 /// Compacts all packfiles in `repo_path` into a single packfile, keeping unreachable objects
 /// from packs modified within `prune_grace` (default 14 days, Contract S6, Threat T15).
 /// Caller MUST hold the repository's write lock (`RepoLocks::lock`).
-pub fn compact_repository(
-    repo_path: &Path,
-    prune_grace: Duration,
-) -> ShakoResult<CompactOutcome> {
+pub fn compact_repository(repo_path: &Path, prune_grace: Duration) -> ShakoResult<CompactOutcome> {
     if has_active_quarantine(repo_path) {
         return Ok(CompactOutcome {
             packs_before: 0,
@@ -119,9 +112,7 @@ pub fn compact_repository(
             .ok()
             .and_then(|mtime| now.duration_since(mtime).ok())
             .is_none_or(|age| age < prune_grace);
-        if within_grace
-            && let Ok(bundle) = gix_pack::Bundle::at(pack_path, gix_hash::Kind::Sha1)
-        {
+        if within_grace && let Ok(bundle) = gix_pack::Bundle::at(pack_path, gix_hash::Kind::Sha1) {
             for entry in bundle.index.iter() {
                 objects_to_keep.insert(entry.oid);
             }
@@ -185,8 +176,9 @@ pub fn fsck_repository(repo_path: &Path) -> ShakoResult<FsckOutcome> {
     let should_interrupt = AtomicBool::new(false);
 
     for pack_path in &packs {
-        let bundle = gix_pack::Bundle::at(pack_path, gix_hash::Kind::Sha1)
-            .map_err(|e| ShakoError::Git(format!("fsck open bundle {}: {e}", pack_path.display())))?;
+        let bundle = gix_pack::Bundle::at(pack_path, gix_hash::Kind::Sha1).map_err(|e| {
+            ShakoError::Git(format!("fsck open bundle {}: {e}", pack_path.display()))
+        })?;
         let mut progress = gix::progress::Discard;
         bundle
             .verify_integrity(
@@ -200,7 +192,10 @@ pub fn fsck_repository(repo_path: &Path) -> ShakoResult<FsckOutcome> {
                 },
             )
             .map_err(|e| {
-                ShakoError::Git(format!("fsck integrity failed on {}: {e}", pack_path.display()))
+                ShakoError::Git(format!(
+                    "fsck integrity failed on {}: {e}",
+                    pack_path.display()
+                ))
             })?;
     }
 

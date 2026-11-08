@@ -25,7 +25,7 @@ use jc_router::Mount;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use shako_core::{
-     ARCHIVE_OPERATION_WEIGHT_BYTES, Action, BranchProtectionRule, CommitStatusRecord,
+    ARCHIVE_OPERATION_WEIGHT_BYTES, Action, BranchProtectionRule, CommitStatusRecord,
     MERGE_OPERATION_WEIGHT_BYTES, MergePolicyInput, ObjectTarget, ProtectionRuleRecord,
     PullRequestRecord, PushMirrorRecord, RefPolicy, RepoId, RepoRecord, ReviewRecord,
     ReviewVerdict, ShakoError, WebhookId, WebhookRecord, check_repo_count_quota,
@@ -112,10 +112,11 @@ async fn compat_get_repo(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, _) = match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Read).await {
-        Ok(r) => r,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
+    let (repo, _) =
+        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Read).await {
+            Ok(r) => r,
+            Err(e) => return gitea_error_response(&state, &e),
+        };
     let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
     (StatusCode::OK, Json(repo_to_gitea_json(&repo, &mount))).into_response()
 }
@@ -228,7 +229,11 @@ async fn compat_create_org_repo(
         .await;
 
     let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
-    (StatusCode::CREATED, Json(repo_to_gitea_json(&created, &mount))).into_response()
+    (
+        StatusCode::CREATED,
+        Json(repo_to_gitea_json(&created, &mount)),
+    )
+        .into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -284,7 +289,9 @@ async fn compat_migrate_repo(
     if req.mirror {
         return gitea_error_response(
             &state,
-            &ShakoError::Unprocessable("pull mirrors are not supported; only intra-forge copies".into()),
+            &ShakoError::Unprocessable(
+                "pull mirrors are not supported; only intra-forge copies".into(),
+            ),
         );
     }
 
@@ -322,10 +329,7 @@ async fn compat_migrate_repo(
         .path()
         .trim_end_matches('/')
         .trim_end_matches(".git");
-    let segs: Vec<&str> = path_trimmed
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .collect();
+    let segs: Vec<&str> = path_trimmed.split('/').filter(|s| !s.is_empty()).collect();
     if segs.len() < 2 {
         return gitea_error_response(
             &state,
@@ -421,7 +425,11 @@ async fn compat_migrate_repo(
         .adjust_quota_usage(ctx.instance_id, ctx.org_id, 1, size_bytes as i64, 0)
         .await;
 
-    (StatusCode::CREATED, Json(repo_to_gitea_json(&created, &mount))).into_response()
+    (
+        StatusCode::CREATED,
+        Json(repo_to_gitea_json(&created, &mount)),
+    )
+        .into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -1169,20 +1177,17 @@ async fn compat_get_git_tree(
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.or(q.limit).unwrap_or(1000).clamp(1, 1000);
 
-    let res = tokio::task::spawn_blocking(move || list_tree_entries(&disk_path, &git_ref, recursive))
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))
-        .and_then(|r| r);
+    let res =
+        tokio::task::spawn_blocking(move || list_tree_entries(&disk_path, &git_ref, recursive))
+            .await
+            .map_err(|e| ShakoError::Internal(e.to_string()))
+            .and_then(|r| r);
 
     match res {
         Ok((tree_sha, all_entries)) => {
             let total = all_entries.len();
             let start = (page - 1).saturating_mul(per_page);
-            let page_entries: Vec<_> = all_entries
-                .into_iter()
-                .skip(start)
-                .take(per_page)
-                .collect();
+            let page_entries: Vec<_> = all_entries.into_iter().skip(start).take(per_page).collect();
             let truncated = start.saturating_add(page_entries.len()) < total;
             (
                 StatusCode::OK,
@@ -1878,7 +1883,9 @@ async fn compat_post_contents_multi(
                     Err(e) => {
                         return gitea_error_response(
                             &state,
-                            &ShakoError::Unprocessable(format!("invalid base64 for '{clean}': {e}")),
+                            &ShakoError::Unprocessable(format!(
+                                "invalid base64 for '{clean}': {e}"
+                            )),
                         );
                     }
                 }
@@ -2218,7 +2225,9 @@ async fn compat_get_archive(
     } else {
         return gitea_error_response(
             &state,
-            &ShakoError::NotFound("unsupported archive format (use .zip, .tar.gz, or .bundle)".into()),
+            &ShakoError::NotFound(
+                "unsupported archive format (use .zip, .tar.gz, or .bundle)".into(),
+            ),
         );
     };
 
@@ -2372,15 +2381,14 @@ async fn compat_create_pull(
     let head = req.head.clone();
     let base = req.base.clone();
     let disk_clone = disk_path.clone();
-    let mergeability = match tokio::task::spawn_blocking(move || {
-        check_mergeability(&disk_clone, &base, &head)
-    })
-    .await
-    {
-        Ok(Ok(m)) => m,
-        Ok(Err(e)) => return gitea_error_response(&state, &e),
-        Err(e) => return gitea_error_response(&state, &ShakoError::Internal(e.to_string())),
-    };
+    let mergeability =
+        match tokio::task::spawn_blocking(move || check_mergeability(&disk_clone, &base, &head))
+            .await
+        {
+            Ok(Ok(m)) => m,
+            Ok(Err(e)) => return gitea_error_response(&state, &e),
+            Err(e) => return gitea_error_response(&state, &ShakoError::Internal(e.to_string())),
+        };
 
     let number = match state
         .store()
@@ -2395,7 +2403,11 @@ async fn compat_create_pull(
     let head_sha_clone = mergeability.head_sha.clone();
     let disk_clone2 = disk_path.clone();
     let _ = tokio::task::spawn_blocking(move || {
-        set_ref_direct(&disk_clone2, &format!("refs/pull/{number}/head"), &head_sha_clone)
+        set_ref_direct(
+            &disk_clone2,
+            &format!("refs/pull/{number}/head"),
+            &head_sha_clone,
+        )
     })
     .await;
 
@@ -2441,7 +2453,11 @@ async fn compat_create_pull(
     .await;
 
     let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
-    (StatusCode::CREATED, Json(pr_to_gitea_json(&repo, &saved, &mount))).into_response()
+    (
+        StatusCode::CREATED,
+        Json(pr_to_gitea_json(&repo, &saved, &mount)),
+    )
+        .into_response()
 }
 
 async fn compat_get_pull(
@@ -2467,7 +2483,10 @@ async fn compat_get_pull(
         Ok(p) => p,
         Err(e) => return gitea_error_response(&state, &e),
     }) else {
-        return gitea_error_response(&state, &ShakoError::NotFound("pull request not found".into()));
+        return gitea_error_response(
+            &state,
+            &ShakoError::NotFound("pull request not found".into()),
+        );
     };
 
     // Refresh mergeability if PR is still open
@@ -2514,7 +2533,10 @@ async fn compat_get_pull_files(
         Ok(p) => p,
         Err(e) => return gitea_error_response(&state, &e),
     }) else {
-        return gitea_error_response(&state, &ShakoError::NotFound("pull request not found".into()));
+        return gitea_error_response(
+            &state,
+            &ShakoError::NotFound("pull request not found".into()),
+        );
     };
 
     let page = q.page.unwrap_or(1).max(1);
@@ -2526,10 +2548,11 @@ async fn compat_get_pull_files(
     };
     let head_ref = pr.head_sha.clone();
 
-    let res = tokio::task::spawn_blocking(move || diff_refs_files(&disk_path, &base_ref, &head_ref))
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))
-        .and_then(|r| r);
+    let res =
+        tokio::task::spawn_blocking(move || diff_refs_files(&disk_path, &base_ref, &head_ref))
+            .await
+            .map_err(|e| ShakoError::Internal(e.to_string()))
+            .and_then(|r| r);
 
     match res {
         Ok(all_files) => {
@@ -2610,11 +2633,11 @@ async fn compat_create_review(
         ReviewVerdict::Comment => Action::Propose,
         ReviewVerdict::Approved | ReviewVerdict::RequestChanges => Action::Approve,
     };
-    let (repo, _) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, needed).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
+    let (repo, _) = match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, needed).await
+    {
+        Ok(r) => r,
+        Err(e) => return gitea_error_response(&state, &e),
+    };
     let Some(pr) = (match state
         .store()
         .get_pull_request(repo.instance_id, repo.org_id, repo.id, number)
@@ -2623,7 +2646,10 @@ async fn compat_create_review(
         Ok(p) => p,
         Err(e) => return gitea_error_response(&state, &e),
     }) else {
-        return gitea_error_response(&state, &ShakoError::NotFound("pull request not found".into()));
+        return gitea_error_response(
+            &state,
+            &ShakoError::NotFound("pull request not found".into()),
+        );
     };
 
     // Contract S10: a subject may not approve its own PR when the protection rule requires approvals
@@ -2637,7 +2663,9 @@ async fn compat_create_review(
         {
             return gitea_error_response(
                 &state,
-                &ShakoError::Unprocessable("pull request author cannot approve their own pull request".into()),
+                &ShakoError::Unprocessable(
+                    "pull request author cannot approve their own pull request".into(),
+                ),
             );
         }
     }
@@ -2707,7 +2735,10 @@ async fn compat_patch_pull(
         Ok(p) => p,
         Err(e) => return gitea_error_response(&state, &e),
     }) else {
-        return gitea_error_response(&state, &ShakoError::NotFound("pull request not found".into()));
+        return gitea_error_response(
+            &state,
+            &ShakoError::NotFound("pull request not found".into()),
+        );
     };
 
     if let Some(st) = req.state {
@@ -2732,7 +2763,11 @@ async fn compat_patch_pull(
     match state.store().update_pull_request(pr).await {
         Ok(saved) => {
             let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
-            (StatusCode::OK, Json(pr_to_gitea_json(&repo, &saved, &mount))).into_response()
+            (
+                StatusCode::OK,
+                Json(pr_to_gitea_json(&repo, &saved, &mount)),
+            )
+                .into_response()
         }
         Err(e) => gitea_error_response(&state, &e),
     }
@@ -2776,10 +2811,17 @@ async fn compat_update_pull_branch(
         Ok(p) => p,
         Err(e) => return gitea_error_response(&state, &e),
     }) else {
-        return gitea_error_response(&state, &ShakoError::NotFound("pull request not found".into()));
+        return gitea_error_response(
+            &state,
+            &ShakoError::NotFound("pull request not found".into()),
+        );
     };
 
-    let permit = match state.memory_budget.acquire(MERGE_OPERATION_WEIGHT_BYTES).await {
+    let permit = match state
+        .memory_budget
+        .acquire(MERGE_OPERATION_WEIGHT_BYTES)
+        .await
+    {
         Ok(p) => p,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -2862,7 +2904,10 @@ async fn compat_merge_pull(
         Ok(p) => p,
         Err(e) => return gitea_error_response(&state, &e),
     }) else {
-        return gitea_error_response(&state, &ShakoError::NotFound("pull request not found".into()));
+        return gitea_error_response(
+            &state,
+            &ShakoError::NotFound("pull request not found".into()),
+        );
     };
 
     if pr.merged || pr.state == "closed" {
@@ -2872,7 +2917,11 @@ async fn compat_merge_pull(
         );
     }
 
-    let permit = match state.memory_budget.acquire(MERGE_OPERATION_WEIGHT_BYTES).await {
+    let permit = match state
+        .memory_budget
+        .acquire(MERGE_OPERATION_WEIGHT_BYTES)
+        .await
+    {
         Ok(p) => p,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -2999,8 +3048,7 @@ async fn compat_merge_pull(
             repo.size_bytes = compute_repo_size_bytes(&disk_path);
             let _ = state.store().update_repo(repo.clone()).await;
 
-            let payload =
-                build_pr_webhook_payload(&repo, &saved, "closed", &ctx.subject.username);
+            let payload = build_pr_webhook_payload(&repo, &saved, "closed", &ctx.subject.username);
             let _ = emit_and_dispatch_event(
                 &state,
                 repo.org_id,
@@ -3108,7 +3156,8 @@ async fn compat_redeliver_webhook(
     }) else {
         return gitea_error_response(&state, &ShakoError::NotFound("webhook not found".into()));
     };
-    let payload = build_push_webhook_payload(&repo, "refs/heads/main", "", "", &ctx.subject.username);
+    let payload =
+        build_push_webhook_payload(&repo, "refs/heads/main", "", "", &ctx.subject.username);
     match deliver_webhook_with_retries(&state, &hook, "push", &payload).await {
         Ok(del) => (StatusCode::OK, Json(del)).into_response(),
         Err(e) => gitea_error_response(&state, &e),

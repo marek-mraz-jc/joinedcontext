@@ -7,11 +7,11 @@ use crate::ids::{InstanceId, OrgId, constant_time_eq, sha256_hex};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use chrono::Utc;
-use p256::ecdsa::signature::Signer;
 use jsonwebtoken::jwk::Jwk;
 use jsonwebtoken::{
     Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, decode_header, encode,
 };
+use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
 use p256::pkcs8::{EncodePrivateKey, EncodePublicKey};
 use parking_lot::RwLock;
@@ -550,7 +550,10 @@ impl ShakoSigningKey {
     /// Loads a P-256 key from a file in the secrets mount (raw 32 bytes, 64-char hex, or PKCS#8 PEM).
     pub fn from_file(path: &Path) -> ShakoResult<Self> {
         let bytes = std::fs::read(path).map_err(|e| {
-            ShakoError::Internal(format!("failed to read signing key {}: {e}", path.display()))
+            ShakoError::Internal(format!(
+                "failed to read signing key {}: {e}",
+                path.display()
+            ))
         })?;
         if let Ok(text) = std::str::from_utf8(&bytes) {
             let trimmed = text.trim();

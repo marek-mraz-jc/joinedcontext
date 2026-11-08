@@ -70,7 +70,12 @@ fn setup_world() -> TestWorld {
         RoleBinding {
             org_id: org_a,
             principal: "jc-portal".into(),
-            actions: vec![Action::Admin, Action::Write, Action::Approve, Action::Publish],
+            actions: vec![
+                Action::Admin,
+                Action::Write,
+                Action::Approve,
+                Action::Publish,
+            ],
             project_id: None,
             repo: None,
         },
@@ -97,8 +102,7 @@ fn setup_world() -> TestWorld {
         },
     ]));
 
-    let mut apps_only_subj =
-        Subject::authenticated("apps-bot", "jc-portal", vec![org_a], vec![]);
+    let mut apps_only_subj = Subject::authenticated("apps-bot", "jc-portal", vec![org_a], vec![]);
     apps_only_subj.connector_segments = Some(vec!["apps".into()]);
 
     let tokens = vec![
@@ -130,10 +134,7 @@ fn setup_world() -> TestWorld {
     let wh_sig = last_webhook_sig.clone();
 
     let guard = OutboundGuard::new(OutboundPolicy {
-        allowed_hosts: Some(vec![
-            "github.com".into(),
-            "portal.city.example".into(),
-        ]),
+        allowed_hosts: Some(vec!["github.com".into(), "portal.city.example".into()]),
         allow_loopback_for_tests: false,
         mock_handler: Some(Arc::new(move |method, url, headers, body| {
             if url == "https://portal.city.example/api/v1/webhooks/gitea" {
@@ -323,7 +324,14 @@ async fn s1_mount_modes_and_overlap_refusal() {
     );
 
     // OData `$metadata` under `/git/odata/$metadata`
-    let (st, meta) = send_json(&app, "GET", "/git/odata/$metadata", Some("portal-token"), None).await;
+    let (st, meta) = send_json(
+        &app,
+        "GET",
+        "/git/odata/$metadata",
+        Some("portal-token"),
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     assert!(meta.as_str().unwrap().contains("Namespace=\"Shako\""));
 
@@ -402,7 +410,12 @@ async fn s3_s4_git_client_matrix_v0_v2_and_portal_push_bundle() {
     // 1. `git ls-remote` with protocol v0 and v2
     for proto in ["0", "2"] {
         let out = git_cmd()
-            .args(["-c", &format!("protocol.version={proto}"), "ls-remote", &repo_url])
+            .args([
+                "-c",
+                &format!("protocol.version={proto}"),
+                "ls-remote",
+                &repo_url,
+            ])
             .env("GIT_TERMINAL_PROMPT", "0")
             .output()
             .expect("git ls-remote");
@@ -582,7 +595,11 @@ async fn s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup() 
     .await;
     assert_eq!(st, StatusCode::OK);
     // Secret password never appears in response
-    assert!(!mirror_resp.to_string().contains("ghp_supersecretmirrorcredential123456"));
+    assert!(
+        !mirror_resp
+            .to_string()
+            .contains("ghp_supersecretmirrorcredential123456")
+    );
 
     // 3. Create branch `portal/change-1` (Row 24) and commit files (Row 26 & 27)
     let (st, _) = send_json(
@@ -932,10 +949,8 @@ async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
         .await
         .unwrap();
     assert_eq!(tok_resp.status(), StatusCode::OK);
-    let tok_json: Value = serde_json::from_slice(
-        &tok_resp.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let tok_json: Value =
+        serde_json::from_slice(&tok_resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
     let reg_jwt = tok_json["token"].as_str().unwrap();
 
     let layer_bytes = b"fake-layer-tar-bytes";
@@ -1012,10 +1027,7 @@ async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
                 .method("PUT")
                 .uri("/v2/joinedcontext/bikes/manifests/v1.0.0")
                 .header("authorization", format!("Bearer {reg_jwt}"))
-                .header(
-                    "content-type",
-                    "application/vnd.oci.image.manifest.v1+json",
-                )
+                .header("content-type", "application/vnd.oci.image.manifest.v1+json")
                 .body(Body::from(manifest_bytes))
                 .unwrap(),
         )
@@ -1047,10 +1059,9 @@ async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
         .await
         .unwrap();
     assert_eq!(sig_tag_resp.status(), StatusCode::OK);
-    let sig_man: Value = serde_json::from_slice(
-        &sig_tag_resp.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let sig_man: Value =
+        serde_json::from_slice(&sig_tag_resp.into_body().collect().await.unwrap().to_bytes())
+            .unwrap();
     let sig_b64 = sig_man["layers"][0]["annotations"]["dev.cosignproject.cosign/signature"]
         .as_str()
         .unwrap();
@@ -1060,21 +1071,14 @@ async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(format!(
-                    "/v2/joinedcontext/bikes/blobs/{payload_digest}"
-                ))
+                .uri(format!("/v2/joinedcontext/bikes/blobs/{payload_digest}"))
                 .header("authorization", format!("Bearer {reg_jwt}"))
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    let payload_bytes = payload_resp
-        .into_body()
-        .collect()
-        .await
-        .unwrap()
-        .to_bytes();
+    let payload_bytes = payload_resp.into_body().collect().await.unwrap().to_bytes();
     assert!(
         world
             .state
@@ -1232,7 +1236,10 @@ async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
     .await
     .unwrap();
     assert_eq!(cli_res, mcp_res["result"]);
-    assert_eq!(list_mcp_tools(&world.state, &ctx).len(), world.state.registry.operations().len());
+    assert_eq!(
+        list_mcp_tools(&world.state, &ctx).len(),
+        world.state.registry.operations().len()
+    );
 }
 
 /// Deny by default (S12): discovery, version and the not-yet-served Actions rows answer 401
@@ -1251,9 +1258,20 @@ async fn deny_by_default_on_discovery_version_and_actions() {
         let (st, _) = send_json(&world.app, "GET", uri, None, None).await;
         assert_eq!(st, StatusCode::UNAUTHORIZED, "{uri} must require a token");
         let (st, _) = send_json(&world.app, "GET", uri, Some("not-a-token"), None).await;
-        assert_eq!(st, StatusCode::UNAUTHORIZED, "{uri} must refuse a bad token");
+        assert_eq!(
+            st,
+            StatusCode::UNAUTHORIZED,
+            "{uri} must refuse a bad token"
+        );
     }
-    let (st, _) = send_json(&world.app, "GET", "/odata/$metadata", Some("bob-token"), None).await;
+    let (st, _) = send_json(
+        &world.app,
+        "GET",
+        "/odata/$metadata",
+        Some("bob-token"),
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     let (st, body) = send_json(
         &world.app,
@@ -1264,7 +1282,12 @@ async fn deny_by_default_on_discovery_version_and_actions() {
     )
     .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
-    assert!(body["message"].as_str().unwrap_or_default().contains("actions"));
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("actions")
+    );
     let (st, body) = send_json(&world.app, "GET", "/api/healthz", None, None).await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(body, json!({ "status": "ok" }));

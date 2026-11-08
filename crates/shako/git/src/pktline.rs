@@ -27,7 +27,11 @@ impl PktLine {
         match self {
             Self::Data(bytes) => {
                 let s = std::str::from_utf8(bytes).ok()?;
-                Some(s.strip_suffix("\r\n").or_else(|| s.strip_suffix('\n')).unwrap_or(s))
+                Some(
+                    s.strip_suffix("\r\n")
+                        .or_else(|| s.strip_suffix('\n'))
+                        .unwrap_or(s),
+                )
             }
             _ => None,
         }
@@ -54,7 +58,9 @@ pub fn read_pkt_line(input: &[u8]) -> ShakoResult<Option<(PktLine, usize)>> {
         0 => Ok(Some((PktLine::Flush, 4))),
         1 => Ok(Some((PktLine::Delimiter, 4))),
         2 => Ok(Some((PktLine::ResponseEnd, 4))),
-        3 => Err(ShakoError::BadRequest("invalid pkt-line length 0003".into())),
+        3 => Err(ShakoError::BadRequest(
+            "invalid pkt-line length 0003".into(),
+        )),
         4 => Ok(Some((PktLine::Data(Vec::new()), 4))),
         n if n > MAX_PKT_LINE_LEN => Err(ShakoError::BadRequest(format!(
             "pkt-line length {n} exceeds maximum {MAX_PKT_LINE_LEN}"

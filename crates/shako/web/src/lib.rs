@@ -77,7 +77,10 @@ pub fn render_safe_markdown(markdown: &str) -> String {
 
 fn is_safe_href(url: &str) -> bool {
     let trimmed = url.trim();
-    if trimmed.is_empty() || trimmed.starts_with('#') || (trimmed.starts_with('/') && !trimmed.starts_with("//")) {
+    if trimmed.is_empty()
+        || trimmed.starts_with('#')
+        || (trimmed.starts_with('/') && !trimmed.starts_with("//"))
+    {
         return true;
     }
     let lower = trimmed.to_ascii_lowercase();
@@ -607,11 +610,12 @@ async fn web_commits(
     };
     let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
     let gr = git_ref.clone();
-    let commits = tokio::task::spawn_blocking(move || list_commits(&disk_path, &gr, None, 50, 10_000))
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .unwrap_or_default();
+    let commits =
+        tokio::task::spawn_blocking(move || list_commits(&disk_path, &gr, None, 50, 10_000))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default();
     render_template(&CommitsTemplate {
         prefix: mount.path_prefix,
         owner: repo.owner,
@@ -716,11 +720,12 @@ async fn web_pull_detail(
         pr.base_sha.clone()
     };
     let head_sha = pr.head_sha.clone();
-    let files = tokio::task::spawn_blocking(move || diff_refs_files(&disk_path, &base_sha, &head_sha))
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .unwrap_or_default();
+    let files =
+        tokio::task::spawn_blocking(move || diff_refs_files(&disk_path, &base_sha, &head_sha))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default();
     let body_html = render_safe_markdown(&pr.body);
 
     render_template(&PullDetailTemplate {
@@ -789,10 +794,7 @@ async fn web_actions_not_served() -> Response {
 pub fn web_router() -> Router<ShakoState> {
     Router::new()
         .route("/", get(web_repo_list))
-        .route(
-            "/user/oauth2/keycloak",
-            get(redirect_gitea_oauth_keycloak),
-        )
+        .route("/user/oauth2/keycloak", get(redirect_gitea_oauth_keycloak))
         .route(
             "/{owner}/-/packages/generic/{pkg}/{ver}",
             get(redirect_gitea_package_page),
@@ -802,14 +804,8 @@ pub fn web_router() -> Router<ShakoState> {
             "/{owner}/{repo}/src/branch/{git_ref}/{*path}",
             get(redirect_gitea_src_branch),
         )
-        .route(
-            "/{owner}/{repo}/blob/{git_ref}/{*path}",
-            get(web_file_view),
-        )
-        .route(
-            "/{owner}/{repo}/raw/{git_ref}/{*path}",
-            get(web_raw_file),
-        )
+        .route("/{owner}/{repo}/blob/{git_ref}/{*path}", get(web_file_view))
+        .route("/{owner}/{repo}/raw/{git_ref}/{*path}", get(web_raw_file))
         .route("/{owner}/{repo}/branches", get(web_branches))
         .route("/{owner}/{repo}/tags", get(web_tags))
         .route("/{owner}/{repo}/commits/{git_ref}", get(web_commits))

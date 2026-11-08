@@ -248,8 +248,8 @@ impl RefPolicy {
                     "branch '{branch_name}' is protected: non-fast-forward force push is disabled"
                 )));
             }
-            let fp_whitelist_active = rule.enable_force_push_allowlist
-                || !rule.force_push_allowlist_usernames.is_empty();
+            let fp_whitelist_active =
+                rule.enable_force_push_allowlist || !rule.force_push_allowlist_usernames.is_empty();
             if fp_whitelist_active
                 && !rule
                     .force_push_allowlist_usernames
@@ -308,9 +308,7 @@ impl RefPolicy {
         };
 
         let principals = ctx.subject.principals();
-        let is_admin = authorizer
-            .check(ctx, Action::Admin, &target)
-            .allowed;
+        let is_admin = authorizer.check(ctx, Action::Admin, &target).allowed;
         let can_admin_override = is_admin && !rule.block_admin_merge_override;
 
         // 1. Merge whitelist check (`block_admin_merge_override` blocks admins too!)
@@ -386,10 +384,9 @@ impl RefPolicy {
             && !can_admin_override
         {
             for req_ctx in &rule.status_check_contexts {
-                let passed = input
-                    .statuses
-                    .iter()
-                    .any(|s| s.sha == input.head_sha && &s.context == req_ctx && s.state == "success");
+                let passed = input.statuses.iter().any(|s| {
+                    s.sha == input.head_sha && &s.context == req_ctx && s.state == "success"
+                });
                 if !passed {
                     return Err(ShakoError::MethodNotAllowed(format!(
                         "Required status check '{req_ctx}' has not succeeded"
@@ -503,28 +500,78 @@ mod tests {
         // Non-whitelisted writer-bob and even admin-root cannot push directly to main
         assert!(
             policy
-                .check_ref_update(&bob_ctx, &authz, "jc", "cfg", "refs/heads/main", false, false, true, &[])
+                .check_ref_update(
+                    &bob_ctx,
+                    &authz,
+                    "jc",
+                    "cfg",
+                    "refs/heads/main",
+                    false,
+                    false,
+                    true,
+                    &[]
+                )
                 .is_err()
         );
         assert!(
             policy
-                .check_ref_update(&admin_ctx, &authz, "jc", "cfg", "refs/heads/main", false, false, true, &[])
+                .check_ref_update(
+                    &admin_ctx,
+                    &authz,
+                    "jc",
+                    "cfg",
+                    "refs/heads/main",
+                    false,
+                    false,
+                    true,
+                    &[]
+                )
                 .is_err()
         );
         // jc-portal can push fast-forward, but NOT force-push, NOT delete, and NOT touch .gitea/
         assert!(
             policy
-                .check_ref_update(&portal_ctx, &authz, "jc", "cfg", "refs/heads/main", false, false, true, &["a.yaml".into()])
+                .check_ref_update(
+                    &portal_ctx,
+                    &authz,
+                    "jc",
+                    "cfg",
+                    "refs/heads/main",
+                    false,
+                    false,
+                    true,
+                    &["a.yaml".into()]
+                )
                 .is_ok()
         );
         assert!(
             policy
-                .check_ref_update(&portal_ctx, &authz, "jc", "cfg", "refs/heads/main", false, false, false, &[])
+                .check_ref_update(
+                    &portal_ctx,
+                    &authz,
+                    "jc",
+                    "cfg",
+                    "refs/heads/main",
+                    false,
+                    false,
+                    false,
+                    &[]
+                )
                 .is_err()
         );
         assert!(
             policy
-                .check_ref_update(&portal_ctx, &authz, "jc", "cfg", "refs/heads/main", true, false, true, &[])
+                .check_ref_update(
+                    &portal_ctx,
+                    &authz,
+                    "jc",
+                    "cfg",
+                    "refs/heads/main",
+                    true,
+                    false,
+                    true,
+                    &[]
+                )
                 .is_err()
         );
         assert!(

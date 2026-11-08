@@ -60,7 +60,9 @@ pub async fn push_mirror_over_https(
         if idx == 0 {
             write_text_line(
                 &mut body,
-                &format!("{old_oid} {new_oid} {refname}\0 report-status ofs-delta agent=shako/0.1.0"),
+                &format!(
+                    "{old_oid} {new_oid} {refname}\0 report-status ofs-delta agent=shako/0.1.0"
+                ),
             )?;
         } else {
             write_text_line(&mut body, &format!("{old_oid} {new_oid} {refname}"))?;
@@ -106,7 +108,9 @@ fn scrub_secret(err: &ShakoError, secret: &str) -> ShakoError {
     }
 }
 
-fn parse_remote_receive_pack_advertisement(bytes: &[u8]) -> ShakoResult<BTreeMap<String, ObjectId>> {
+fn parse_remote_receive_pack_advertisement(
+    bytes: &[u8],
+) -> ShakoResult<BTreeMap<String, ObjectId>> {
     let lines = parse_all_pkt_lines(bytes)?;
     let mut map = BTreeMap::new();
     for line in lines {

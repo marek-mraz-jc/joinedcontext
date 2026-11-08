@@ -3,6 +3,7 @@
 //! security headers + per-response CSP nonce middleware, declarative manifest `apply -f` / `check -f`,
 //! and unified CLI dispatcher (Contract S1, S6, S8, S21).
 
+use axum::Json;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Extension, State};
@@ -10,7 +11,6 @@ use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::Json;
 use chrono::Utc;
 use jc_router::Mount;
 use serde::{Deserialize, Serialize};
@@ -198,10 +198,15 @@ pub struct ManifestWebhookSpec {
 }
 
 /// Offline validation of a `ShakoManifestBundle` (`shako check -f`, Contract S1).
-pub fn check_manifest_bundle(bundle: &ShakoManifestBundle, state: &ShakoState, org_id: OrgId) -> ShakoResult<()> {
+pub fn check_manifest_bundle(
+    bundle: &ShakoManifestBundle,
+    state: &ShakoState,
+    org_id: OrgId,
+) -> ShakoResult<()> {
     if bundle.api_version != "joinedcontext.com/v1alpha1" || bundle.kind != "ForgeManifest" {
         return Err(ShakoError::Unprocessable(
-            "manifest must have apiVersion 'joinedcontext.com/v1alpha1' and kind 'ForgeManifest'".into(),
+            "manifest must have apiVersion 'joinedcontext.com/v1alpha1' and kind 'ForgeManifest'"
+                .into(),
         ));
     }
     for r in &bundle.repositories {

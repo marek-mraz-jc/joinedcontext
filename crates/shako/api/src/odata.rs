@@ -250,10 +250,9 @@ async fn build_entity_table(
                 .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
                 .await?;
             let disk_path = repo_disk_path(state.repo_root(), repo.instance_id, repo.id)?;
-            let branches =
-                tokio::task::spawn_blocking(move || list_branches(&disk_path))
-                    .await
-                    .map_err(|e| ShakoError::Internal(e.to_string()))??;
+            let branches = tokio::task::spawn_blocking(move || list_branches(&disk_path))
+                .await
+                .map_err(|e| ShakoError::Internal(e.to_string()))??;
             branches
                 .into_iter()
                 .map(|(name, sha)| {
@@ -615,9 +614,7 @@ async fn apply_pr_expansions(
     let want_reviews = expand_props
         .iter()
         .any(|p| p.eq_ignore_ascii_case("Reviews"));
-    let want_files = expand_props
-        .iter()
-        .any(|p| p.eq_ignore_ascii_case("Files"));
+    let want_files = expand_props.iter().any(|p| p.eq_ignore_ascii_case("Files"));
     if !want_reviews && !want_files {
         return Err(ShakoError::BadRequest(format!(
             "unsupported $expand property '{}'",
@@ -714,7 +711,10 @@ async fn odata_service_doc(State(state): State<ShakoState>, headers: HeaderMap) 
     (
         StatusCode::OK,
         [
-            (header::CONTENT_TYPE, "application/json; odata.metadata=minimal"),
+            (
+                header::CONTENT_TYPE,
+                "application/json; odata.metadata=minimal",
+            ),
             (header::HeaderName::from_static("odata-version"), "4.01"),
             (header::CACHE_CONTROL, "private, no-store"),
         ],
@@ -774,7 +774,9 @@ async fn odata_single_get(
         return (StatusCode::OK, Json(dec)).into_response();
     }
 
-    let table = match build_entity_table(&state, &ctx, &mount, short_name, parens, raw_q.as_deref()).await {
+    let table = match build_entity_table(&state, &ctx, &mount, short_name, parens, raw_q.as_deref())
+        .await
+    {
         Ok(t) => t,
         Err(e) => return odata_error_response(&e),
     };
@@ -893,8 +895,14 @@ async fn odata_two_segment_get(
                 };
             }
             ("Repositories", "ArchiveLink") => {
-                let git_ref = args.get("Ref").or_else(|| args.get("ref")).map_or("main", String::as_str);
-                let fmt = args.get("Format").or_else(|| args.get("format")).map_or("zip", String::as_str);
+                let git_ref = args
+                    .get("Ref")
+                    .or_else(|| args.get("ref"))
+                    .map_or("main", String::as_str);
+                let fmt = args
+                    .get("Format")
+                    .or_else(|| args.get("format"))
+                    .map_or("zip", String::as_str);
                 return match find_visible_repo_by_key(&state, &ctx, &key_str).await {
                     Ok((r, _)) => (
                         StatusCode::OK,
@@ -907,7 +915,10 @@ async fn odata_two_segment_get(
                 };
             }
             ("Repositories", "BundleLink") => {
-                let git_ref = args.get("Ref").or_else(|| args.get("ref")).map_or("main", String::as_str);
+                let git_ref = args
+                    .get("Ref")
+                    .or_else(|| args.get("ref"))
+                    .map_or("main", String::as_str);
                 return match find_visible_repo_by_key(&state, &ctx, &key_str).await {
                     Ok((r, _)) => (
                         StatusCode::OK,
@@ -949,7 +960,16 @@ async fn odata_two_segment_get(
         }
     }
 
-    let table = match build_entity_table(&state, &ctx, &mount, set_name, key_parens, raw_q.as_deref()).await {
+    let table = match build_entity_table(
+        &state,
+        &ctx,
+        &mount,
+        set_name,
+        key_parens,
+        raw_q.as_deref(),
+    )
+    .await
+    {
         Ok(t) => t,
         Err(e) => return odata_error_response(&e),
     };
@@ -1135,7 +1155,10 @@ pub async fn find_visible_repo_by_key(
     if let Some((owner, name)) = key.split_once('/') {
         return resolve_and_authorize_repo(state, ctx, owner, name, Action::Read).await;
     }
-    let repos = state.store().list_repos(ctx.instance_id, ctx.org_id).await?;
+    let repos = state
+        .store()
+        .list_repos(ctx.instance_id, ctx.org_id)
+        .await?;
     let Some(repo) = repos.into_iter().find(|r| r.name == key) else {
         return Err(ShakoError::NotFound("repository not found".into()));
     };
@@ -1248,9 +1271,9 @@ async fn exec_bound_pr_mergeable(
     ctx: &RequestCtx,
     pr_key: &str,
 ) -> ShakoResult<Value> {
-    let (repo_part, num_part) = pr_key
-        .rsplit_once(':')
-        .ok_or_else(|| ShakoError::BadRequest("PullRequest key must be {RepoId}:{Number}".into()))?;
+    let (repo_part, num_part) = pr_key.rsplit_once(':').ok_or_else(|| {
+        ShakoError::BadRequest("PullRequest key must be {RepoId}:{Number}".into())
+    })?;
     let number: u64 = num_part
         .parse()
         .map_err(|_| ShakoError::BadRequest("invalid PR number".into()))?;
@@ -1310,8 +1333,9 @@ pub async fn exec_odata_operation(
             fn default_main_fn() -> String {
                 "main".into()
             }
-            let req: Req = serde_json::from_value(body)
-                .map_err(|e| ShakoError::Unprocessable(format!("invalid CreateRepository body: {e}")))?;
+            let req: Req = serde_json::from_value(body).map_err(|e| {
+                ShakoError::Unprocessable(format!("invalid CreateRepository body: {e}"))
+            })?;
             let owner = req
                 .owner
                 .filter(|s| !s.is_empty())
@@ -1532,7 +1556,7 @@ pub async fn exec_odata_operation(
             let now = Utc::now();
             let pr = state
                 .store()
-                .create_pull_request( shako_core::PullRequestRecord {
+                .create_pull_request(shako_core::PullRequestRecord {
                     id: uuid::Uuid::now_v7(),
                     instance_id: repo.instance_id,
                     org_id: repo.org_id,
@@ -1628,7 +1652,9 @@ pub async fn exec_odata_operation(
             if let Some(exp) = head_cid.as_deref().filter(|s| !s.is_empty())
                 && exp != m.head_sha
             {
-                return Err(ShakoError::Conflict("head commit has moved since review".into()));
+                return Err(ShakoError::Conflict(
+                    "head commit has moved since review".into(),
+                ));
             }
             let policy = state
                 .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
@@ -1686,8 +1712,7 @@ pub async fn exec_odata_operation(
             pr.merge_commit_sha = sha.clone();
             pr.closed_at = Some(Utc::now());
             let saved = state.store().update_pull_request(pr).await?;
-            let payload =
-                build_pr_webhook_payload(&repo, &saved, "closed", &ctx.subject.username);
+            let payload = build_pr_webhook_payload(&repo, &saved, "closed", &ctx.subject.username);
             let _ = emit_and_dispatch_event(
                 state,
                 repo.org_id,
@@ -1848,15 +1873,9 @@ pub async fn exec_odata_operation(
                 && let Some(set_name) = op_def.entity_set
             {
                 let filter_q = get_str("filter", "Filter").map(|f| format!("$filter={f}"));
-                let table = build_entity_table(
-                    state,
-                    ctx,
-                    mount,
-                    set_name,
-                    None,
-                    filter_q.as_deref(),
-                )
-                .await?;
+                let table =
+                    build_entity_table(state, ctx, mount, set_name, None, filter_q.as_deref())
+                        .await?;
                 let scope = scope_for_context(ctx, state.authorizer.as_ref());
                 let (opts, _) = parse_odata_options_with_expand(
                     &table.info().model,

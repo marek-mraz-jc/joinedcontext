@@ -157,7 +157,11 @@ impl OutboundGuard {
     }
 
     /// Validates a URL against scheme, userinfo, allow-list, and IP literal rules before DNS/connect.
-    pub fn validate_url(&self, raw_url: &str, extra_allowed: Option<&[String]>) -> ShakoResult<Url> {
+    pub fn validate_url(
+        &self,
+        raw_url: &str,
+        extra_allowed: Option<&[String]>,
+    ) -> ShakoResult<Url> {
         let parsed = Url::parse(raw_url)
             .map_err(|_| ShakoError::SsrfBlocked("invalid outbound URL".into()))?;
         if !parsed.username().is_empty() || parsed.password().is_some() {
@@ -173,7 +177,9 @@ impl OutboundGuard {
         let in_cluster = self.is_in_cluster_host(&host);
         let is_test_loopback =
             self.policy.allow_loopback_for_tests && (host == "127.0.0.1" || host == "localhost");
-        if parsed.scheme() != "https" && !((in_cluster || is_test_loopback) && parsed.scheme() == "http") {
+        if parsed.scheme() != "https"
+            && !((in_cluster || is_test_loopback) && parsed.scheme() == "http")
+        {
             return Err(ShakoError::SsrfBlocked(format!(
                 "outbound scheme '{}' is refused; https required",
                 parsed.scheme()
@@ -238,7 +244,8 @@ impl OutboundGuard {
     ) -> ShakoResult<(u16, Vec<u8>)> {
         let url = self.validate_url(raw_url, extra_allowed)?;
         if let Some(handler) = &self.policy.mock_handler
-            && let Some((status, resp_body)) = handler(method.as_str(), url.as_str(), headers, &body)
+            && let Some((status, resp_body)) =
+                handler(method.as_str(), url.as_str(), headers, &body)
         {
             if (300..400).contains(&status) {
                 return Err(ShakoError::SsrfBlocked(format!(
@@ -285,8 +292,7 @@ impl OutboundGuard {
             return Err(ShakoError::SsrfBlocked("DNS returned no addresses".into()));
         };
         for addr in &addrs {
-            if !in_cluster
-                && Self::is_forbidden_ip(addr.ip(), self.policy.allow_loopback_for_tests)
+            if !in_cluster && Self::is_forbidden_ip(addr.ip(), self.policy.allow_loopback_for_tests)
             {
                 return Err(ShakoError::SsrfBlocked(format!(
                     "resolved address {} is private, loopback, or metadata",
@@ -380,7 +386,10 @@ mod tests {
         });
         assert!(
             portal_only
-                .validate_url("http://portal.jc.svc.cluster.local/api/v1/webhooks/gitea", None)
+                .validate_url(
+                    "http://portal.jc.svc.cluster.local/api/v1/webhooks/gitea",
+                    None
+                )
                 .is_ok()
         );
         assert!(

@@ -14,7 +14,11 @@ pub fn validate_repo_or_owner_name(name: &str, what: &str) -> ShakoResult<()> {
             "invalid {what} name: length must be 1..=100"
         )));
     }
-    if name.starts_with('.') || name.ends_with('.') || name.ends_with(".lock") || name.ends_with(".git") {
+    if name.starts_with('.')
+        || name.ends_with('.')
+        || name.ends_with(".lock")
+        || name.ends_with(".git")
+    {
         return Err(ShakoError::Unprocessable(format!(
             "invalid {what} name '{name}': leading dot or .git/.lock suffix is forbidden"
         )));
@@ -43,7 +47,9 @@ pub fn validate_repo_or_owner_name(name: &str, what: &str) -> ShakoResult<()> {
 /// Validates a full Git reference name (e.g. `refs/heads/main`, `refs/tags/v1.0`).
 pub fn validate_full_ref_name(refname: &str) -> ShakoResult<()> {
     if refname.is_empty() || refname.len() > 255 {
-        return Err(ShakoError::Unprocessable("invalid reference name length".into()));
+        return Err(ShakoError::Unprocessable(
+            "invalid reference name length".into(),
+        ));
     }
     if refname != "HEAD"
         && !refname.starts_with("refs/heads/")
@@ -75,20 +81,20 @@ pub fn validate_branch_name(branch: &str) -> ShakoResult<()> {
         )));
     }
     let full = format!("refs/heads/{branch}");
-    gix_validate::reference::branch_name(full.as_bytes().into()).map_err(|e| {
-        ShakoError::Unprocessable(format!("invalid branch name '{branch}': {e}"))
-    })?;
+    gix_validate::reference::branch_name(full.as_bytes().into())
+        .map_err(|e| ShakoError::Unprocessable(format!("invalid branch name '{branch}': {e}")))?;
     validate_full_ref_name(&full)
 }
 
 /// Validates a short tag name (e.g. `v1.0.0`).
 pub fn validate_tag_name(tag: &str) -> ShakoResult<()> {
     if tag.is_empty() || tag.len() > 200 {
-        return Err(ShakoError::Unprocessable(format!("invalid tag name '{tag}'")));
+        return Err(ShakoError::Unprocessable(format!(
+            "invalid tag name '{tag}'"
+        )));
     }
-    gix_validate::tag::name(tag.as_bytes().into()).map_err(|e| {
-        ShakoError::Unprocessable(format!("invalid tag name '{tag}': {e}"))
-    })?;
+    gix_validate::tag::name(tag.as_bytes().into())
+        .map_err(|e| ShakoError::Unprocessable(format!("invalid tag name '{tag}': {e}")))?;
     Ok(())
 }
 

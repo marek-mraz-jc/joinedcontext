@@ -5,8 +5,8 @@
 use chrono::Utc;
 use parking_lot::RwLock;
 use shako_core::{
-    BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId,
-    OutboxEvent, PackageFileRecord, PackageRecord, PackageVersionRecord, ProtectionRuleRecord,
+    BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId, OutboxEvent,
+    PackageFileRecord, PackageRecord, PackageVersionRecord, ProtectionRuleRecord,
     PullRequestRecord, PushMirrorRecord, QuotaUsageRecord, RepoId, RepoRecord, ReviewRecord,
     ShakoError, Store, StoreFuture, TagProtectionRecord, WebhookId, WebhookRecord,
 };
@@ -391,7 +391,10 @@ impl Store for MemoryStore {
     fn create_pull_request(&self, pr: PullRequestRecord) -> StoreFuture<'_, PullRequestRecord> {
         Box::pin(async move {
             let mut guard = self.inner.write();
-            let t = guard.tenants.entry((pr.instance_id, pr.org_id)).or_default();
+            let t = guard
+                .tenants
+                .entry((pr.instance_id, pr.org_id))
+                .or_default();
             t.pull_requests.insert((pr.repo_id, pr.number), pr.clone());
             Ok(pr)
         })
@@ -400,7 +403,10 @@ impl Store for MemoryStore {
     fn update_pull_request(&self, mut pr: PullRequestRecord) -> StoreFuture<'_, PullRequestRecord> {
         Box::pin(async move {
             let mut guard = self.inner.write();
-            let t = guard.tenants.entry((pr.instance_id, pr.org_id)).or_default();
+            let t = guard
+                .tenants
+                .entry((pr.instance_id, pr.org_id))
+                .or_default();
             pr.updated_at = Utc::now();
             t.pull_requests.insert((pr.repo_id, pr.number), pr.clone());
             Ok(pr)
@@ -447,7 +453,11 @@ impl Store for MemoryStore {
                 })
                 .cloned()
                 .collect();
-            list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then_with(|| b.number.cmp(&a.number)));
+            list.sort_by(|a, b| {
+                b.updated_at
+                    .cmp(&a.updated_at)
+                    .then_with(|| b.number.cmp(&a.number))
+            });
             Ok(list)
         })
     }
@@ -674,7 +684,11 @@ impl Store for MemoryStore {
                 .tenants
                 .entry((pkg.instance_id, pkg.org_id))
                 .or_default();
-            let key = (pkg.owner.clone(), pkg.package_type.clone(), pkg.name.clone());
+            let key = (
+                pkg.owner.clone(),
+                pkg.package_type.clone(),
+                pkg.name.clone(),
+            );
             if let Some(existing) = t.packages.get(&key) {
                 return Ok(existing.clone());
             }
@@ -739,9 +753,9 @@ impl Store for MemoryStore {
             let Some(t) = guard.tenants.get(&(instance_id, org_id)) else {
                 return Ok(None);
             };
-            if let Some(found) = t
-                .package_versions
-                .get(&(owner.clone(), pt.clone(), pn.clone(), vd.clone()))
+            if let Some(found) =
+                t.package_versions
+                    .get(&(owner.clone(), pt.clone(), pn.clone(), vd.clone()))
             {
                 return Ok(Some(found.clone()));
             }
@@ -923,13 +937,7 @@ impl Store for MemoryStore {
             Ok(guard
                 .tenants
                 .get(&(instance_id, org_id))
-                .map(|t| {
-                    t.outbox
-                        .iter()
-                        .filter(|e| !e.dispatched)
-                        .cloned()
-                        .collect()
-                })
+                .map(|t| t.outbox.iter().filter(|e| !e.dispatched).cloned().collect())
                 .unwrap_or_default())
         })
     }

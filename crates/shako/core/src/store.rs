@@ -4,10 +4,10 @@
 use crate::error::ShakoResult;
 use crate::ids::{InstanceId, OrgId, RepoId, WebhookId};
 use crate::model::*;
+use parking_lot::RwLock;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
-use parking_lot::RwLock;
 
 pub type StoreFuture<'a, T> = Pin<Box<dyn Future<Output = ShakoResult<T>> + Send + 'a>>;
 
@@ -132,7 +132,10 @@ pub trait Store: Send + Sync {
         rule_name: &str,
     ) -> StoreFuture<'_, bool>;
 
-    fn upsert_tag_protection(&self, rec: TagProtectionRecord) -> StoreFuture<'_, TagProtectionRecord>;
+    fn upsert_tag_protection(
+        &self,
+        rec: TagProtectionRecord,
+    ) -> StoreFuture<'_, TagProtectionRecord>;
     fn list_tag_protections(
         &self,
         instance_id: InstanceId,

@@ -104,8 +104,7 @@ pub fn collect_advertised_refs(
 
 /// Generates the `GET {repo}.git/info/refs?service=git-upload-pack` response for Protocol v0 or v2 (S3).
 pub fn advertise_upload_pack(repo_path: &Path, git_protocol: Option<&str>) -> ShakoResult<Vec<u8>> {
-    let is_v2 = git_protocol
-        .is_some_and(|hdr| hdr.split(':').any(|p| p.trim() == "version=2"));
+    let is_v2 = git_protocol.is_some_and(|hdr| hdr.split(':').any(|p| p.trim() == "version=2"));
 
     let mut out = Vec::new();
     if is_v2 {
@@ -136,10 +135,7 @@ pub fn advertise_upload_pack(repo_path: &Path, git_protocol: Option<&str>) -> Sh
 
     if refs.is_empty() {
         let zero = ObjectId::null(gix_hash::Kind::Sha1);
-        write_text_line(
-            &mut out,
-            &format!("{zero} capabilities^{{}}\0{symref_cap}"),
-        )?;
+        write_text_line(&mut out, &format!("{zero} capabilities^{{}}\0{symref_cap}"))?;
     } else {
         for (idx, r) in refs.iter().enumerate() {
             if idx == 0 {
@@ -212,8 +208,7 @@ pub fn handle_upload_pack(
         return Ok(Vec::new());
     }
 
-    let is_v2 = git_protocol
-        .is_some_and(|hdr| hdr.split(':').any(|p| p.trim() == "version=2"))
+    let is_v2 = git_protocol.is_some_and(|hdr| hdr.split(':').any(|p| p.trim() == "version=2"))
         || lines
             .first()
             .and_then(PktLine::as_text)
@@ -316,8 +311,7 @@ fn handle_v2_ls_refs(repo_path: &Path, args: &[String]) -> ShakoResult<Vec<u8>> 
 
     for r in &refs {
         // Hide `refs/pull/*` unless explicitly requested via `ref-prefix`
-        if r.name.starts_with("refs/pull/")
-            && !prefixes.iter().any(|p| p.starts_with("refs/pull/"))
+        if r.name.starts_with("refs/pull/") && !prefixes.iter().any(|p| p.starts_with("refs/pull/"))
         {
             continue;
         }
@@ -453,8 +447,7 @@ fn handle_v2_fetch(repo_path: &Path, args: &[String]) -> ShakoResult<Vec<u8>> {
         }
     }
 
-    if params.deepen.is_some() && (params.deepen_since.is_some() || !params.deepen_not.is_empty())
-    {
+    if params.deepen.is_some() && (params.deepen_since.is_some() || !params.deepen_not.is_empty()) {
         return Err(ShakoError::BadRequest(
             "deepen cannot be combined with deepen-since or deepen-not".into(),
         ));
@@ -480,7 +473,9 @@ fn handle_v2_fetch(repo_path: &Path, args: &[String]) -> ShakoResult<Vec<u8>> {
     }
 
     if params.wants.is_empty() {
-        return Err(ShakoError::BadRequest("fetch requires at least one want".into()));
+        return Err(ShakoError::BadRequest(
+            "fetch requires at least one want".into(),
+        ));
     }
 
     let reachable_pool = collect_reachable_objects_for_check(&repo)?;
@@ -501,13 +496,19 @@ fn handle_v2_fetch(repo_path: &Path, args: &[String]) -> ShakoResult<Vec<u8>> {
         .filter(|h| repo.has_object(*h))
         .collect();
 
-    let ready_to_send = params.done || (!params.wait_for_done && (params.haves.is_empty() || !common_haves.is_empty()));
+    let ready_to_send = params.done
+        || (!params.wait_for_done && (params.haves.is_empty() || !common_haves.is_empty()));
 
     let mut out = Vec::new();
     let write_line = |buf: &mut Vec<u8>, line: &str, sideband_all: bool| -> ShakoResult<()> {
         if sideband_all {
             let with_lf = format!("{line}\n");
-            write_sideband_chunks(buf, Channel::Data, with_lf.as_bytes(), MAX_SIDEBAND_64K_DATA)
+            write_sideband_chunks(
+                buf,
+                Channel::Data,
+                with_lf.as_bytes(),
+                MAX_SIDEBAND_64K_DATA,
+            )
         } else {
             write_text_line(buf, line)
         }
@@ -720,7 +721,11 @@ fn handle_upload_pack_v0(repo_path: &Path, lines: &[PktLine]) -> ShakoResult<Vec
     } else if let Some(last) = common_haves.last() {
         if multi_ack || multi_ack_detailed {
             for c in &common_haves {
-                let status = if multi_ack_detailed { "common" } else { "continue" };
+                let status = if multi_ack_detailed {
+                    "common"
+                } else {
+                    "continue"
+                };
                 write_text_line(&mut out, &format!("ACK {c} {status}"))?;
             }
         }
@@ -865,7 +870,8 @@ fn compute_pack_object_set(
         if included_commits.contains(client_shallow)
             && !shallow_boundaries.contains(client_shallow)
             && let Ok(c) = repo.find_commit(*client_shallow)
-            && c.parent_ids().all(|p| included_commits.contains(&p.detach()))
+            && c.parent_ids()
+                .all(|p| included_commits.contains(&p.detach()))
         {
             unshallows.push(*client_shallow);
         }

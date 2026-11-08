@@ -66,7 +66,10 @@ pub async fn call_mcp_tool(
         )));
     };
 
-    if !ctx.subject.allows_connector_segment(op_def.connector_segment) {
+    if !ctx
+        .subject
+        .allows_connector_segment(op_def.connector_segment)
+    {
         return Err(ShakoError::NotFound(format!(
             "unknown MCP tool '{tool_name}'"
         )));

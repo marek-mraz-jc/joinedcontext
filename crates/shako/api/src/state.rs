@@ -374,7 +374,10 @@ pub fn odata_error_response(err: &ShakoError) -> Response {
     (
         status,
         [
-            (header::CONTENT_TYPE, "application/json; odata.metadata=minimal"),
+            (
+                header::CONTENT_TYPE,
+                "application/json; odata.metadata=minimal",
+            ),
             (header::HeaderName::from_static("odata-version"), "4.01"),
             (header::CACHE_CONTROL, "private, no-store"),
         ],

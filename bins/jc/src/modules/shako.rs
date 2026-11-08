@@ -44,7 +44,12 @@ pub fn build_state(cfg: &ShakoSection) -> Result<ShakoState, StartError> {
     let authz = Arc::new(LocalAuthorizer::new(vec![RoleBinding {
         org_id,
         principal: "admin".into(),
-        actions: vec![Action::Admin, Action::Write, Action::Approve, Action::Publish],
+        actions: vec![
+            Action::Admin,
+            Action::Write,
+            Action::Approve,
+            Action::Publish,
+        ],
         project_id: None,
         repo: None,
     }]));

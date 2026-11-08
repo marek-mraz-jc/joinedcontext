@@ -215,9 +215,7 @@ mod tests {
 
     #[test]
     fn error_mappings_preserve_quirks_and_hide_internal_details() {
-        let behind = ShakoError::BehindBaseBranch(
-            "Pull request is behind the base branch".into(),
-        );
+        let behind = ShakoError::BehindBaseBranch("Pull request is behind the base branch".into());
         assert_eq!(behind.status_code(), 405);
         assert!(
             behind

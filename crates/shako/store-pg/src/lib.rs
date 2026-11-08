@@ -9,8 +9,8 @@
 //!   `set_config('shako.org', $2, true)` and `LISTEN/NOTIFY shako_outbox`.
 
 use shako_core::{
-    BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId,
-    OutboxEvent, PackageFileRecord, PackageRecord, PackageVersionRecord, ProtectionRuleRecord,
+    BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId, OutboxEvent,
+    PackageFileRecord, PackageRecord, PackageVersionRecord, ProtectionRuleRecord,
     PullRequestRecord, PushMirrorRecord, QuotaUsageRecord, RepoId, RepoRecord, ReviewRecord,
     ShakoError, ShakoResult, Store, StoreFuture, TagProtectionRecord, WebhookId, WebhookRecord,
 };
@@ -445,7 +445,8 @@ impl Store for PgStore {
         owner: &str,
         name: &str,
     ) -> StoreFuture<'_, Option<RepoRecord>> {
-        self.mirror.get_repo_by_name(instance_id, org_id, owner, name)
+        self.mirror
+            .get_repo_by_name(instance_id, org_id, owner, name)
     }
 
     fn get_repo_by_id(
@@ -473,13 +474,15 @@ impl Store for PgStore {
     ) -> StoreFuture<'_, bool> {
         Box::pin(async move {
             let mut tx = self.begin_tenant_tx(instance_id, org_id).await?;
-            sqlx::query("DELETE FROM shako.repo WHERE instance_id = $1 AND org_id = $2 AND id = $3")
-                .bind(instance_id.as_uuid())
-                .bind(org_id.as_uuid())
-                .bind(repo_id.as_uuid())
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| ShakoError::Storage(e.to_string()))?;
+            sqlx::query(
+                "DELETE FROM shako.repo WHERE instance_id = $1 AND org_id = $2 AND id = $3",
+            )
+            .bind(instance_id.as_uuid())
+            .bind(org_id.as_uuid())
+            .bind(repo_id.as_uuid())
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ShakoError::Storage(e.to_string()))?;
             tx.commit()
                 .await
                 .map_err(|e| ShakoError::Storage(e.to_string()))?;
@@ -720,13 +723,8 @@ impl Store for PgStore {
         package_type: Option<&str>,
         package_name: Option<&str>,
     ) -> StoreFuture<'_, Vec<PackageVersionRecord>> {
-        self.mirror.list_package_versions(
-            instance_id,
-            org_id,
-            owner,
-            package_type,
-            package_name,
-        )
+        self.mirror
+            .list_package_versions(instance_id, org_id, owner, package_type, package_name)
     }
 
     fn insert_package_file(&self, file: PackageFileRecord) -> StoreFuture<'_, PackageFileRecord> {
@@ -742,14 +740,8 @@ impl Store for PgStore {
         version: &str,
         filename: &str,
     ) -> StoreFuture<'_, Option<PackageFileRecord>> {
-        self.mirror.get_package_file(
-            instance_id,
-            org_id,
-            owner,
-            package_name,
-            version,
-            filename,
-        )
+        self.mirror
+            .get_package_file(instance_id, org_id, owner, package_name, version, filename)
     }
 
     fn list_package_files(
@@ -778,7 +770,9 @@ impl Store for PgStore {
 
     fn append_outbox(&self, event: OutboxEvent) -> StoreFuture<'_, OutboxEvent> {
         Box::pin(async move {
-            let mut tx = self.begin_tenant_tx(event.instance_id, event.org_id).await?;
+            let mut tx = self
+                .begin_tenant_tx(event.instance_id, event.org_id)
+                .await?;
             sqlx::query(
                 "INSERT INTO shako.outbox (id, instance_id, org_id, repo_id, event_kind, idempotency_key, payload, dispatched)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)

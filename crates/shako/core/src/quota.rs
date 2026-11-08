@@ -121,7 +121,10 @@ mod tests {
     #[tokio::test]
     async fn memory_budget_returns_503_when_saturated() {
         let budget = MemoryBudget::new(16 * 1024 * 1024, Duration::from_millis(20));
-        let _p1 = budget.acquire(16 * 1024 * 1024).await.expect("first permit");
+        let _p1 = budget
+            .acquire(16 * 1024 * 1024)
+            .await
+            .expect("first permit");
         let err = budget
             .acquire(4 * 1024 * 1024)
             .await

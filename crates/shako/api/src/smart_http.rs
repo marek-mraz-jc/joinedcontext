@@ -16,9 +16,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use serde::Deserialize;
-use shako_core::{
-    Action, PACK_OPERATION_WEIGHT_BYTES, ShakoError, remaining_storage_allowance,
-};
+use shako_core::{Action, PACK_OPERATION_WEIGHT_BYTES, ShakoError, remaining_storage_allowance};
 use shako_git::{
     advertise_receive_pack, advertise_upload_pack, compute_repo_size_bytes, handle_receive_pack,
     handle_upload_pack, push_mirror_over_https,
@@ -87,7 +85,10 @@ async fn handle_info_refs(
                 StatusCode::OK,
                 [
                     (header::CONTENT_TYPE, content_type.as_str()),
-                    (header::CACHE_CONTROL, "no-cache, max-age=0, must-revalidate"),
+                    (
+                        header::CACHE_CONTROL,
+                        "no-cache, max-age=0, must-revalidate",
+                    ),
                 ],
                 bytes,
             )
@@ -113,7 +114,11 @@ async fn handle_post_upload_pack(
             Err(e) => return gitea_error_response(&state, &e),
         };
 
-    let permit = match state.memory_budget.acquire(PACK_OPERATION_WEIGHT_BYTES).await {
+    let permit = match state
+        .memory_budget
+        .acquire(PACK_OPERATION_WEIGHT_BYTES)
+        .await
+    {
         Ok(p) => p,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -140,11 +145,11 @@ async fn handle_post_upload_pack(
         Ok(out_bytes) => (
             StatusCode::OK,
             [
+                (header::CONTENT_TYPE, "application/x-git-upload-pack-result"),
                 (
-                    header::CONTENT_TYPE,
-                    "application/x-git-upload-pack-result",
+                    header::CACHE_CONTROL,
+                    "no-cache, max-age=0, must-revalidate",
                 ),
-                (header::CACHE_CONTROL, "no-cache, max-age=0, must-revalidate"),
             ],
             stream_bytes_in_64k_chunks(out_bytes),
         )
@@ -169,7 +174,11 @@ async fn handle_post_receive_pack(
             Err(e) => return gitea_error_response(&state, &e),
         };
 
-    let permit = match state.memory_budget.acquire(PACK_OPERATION_WEIGHT_BYTES).await {
+    let permit = match state
+        .memory_budget
+        .acquire(PACK_OPERATION_WEIGHT_BYTES)
+        .await
+    {
         Ok(p) => p,
         Err(e) => return gitea_error_response(&state, &e),
     };
@@ -269,15 +278,9 @@ async fn handle_post_receive_pack(
                 &ctx.subject.username,
             );
             let idem = format!("push:{}:{}:{}", repo.id, cmd.refname, cmd.new_oid);
-            let _ = emit_and_dispatch_event(
-                &state,
-                repo.org_id,
-                Some(repo.id),
-                "push",
-                idem,
-                payload,
-            )
-            .await;
+            let _ =
+                emit_and_dispatch_event(&state, repo.org_id, Some(repo.id), "push", idem, payload)
+                    .await;
         }
 
         // Sync any push mirrors with `sync_on_commit = true` (S15)
@@ -291,7 +294,10 @@ async fn handle_post_receive_pack(
                 header::CONTENT_TYPE,
                 "application/x-git-receive-pack-result",
             ),
-            (header::CACHE_CONTROL, "no-cache, max-age=0, must-revalidate"),
+            (
+                header::CACHE_CONTROL,
+                "no-cache, max-age=0, must-revalidate",
+            ),
         ],
         outcome.response_bytes,
     )

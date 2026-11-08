@@ -15,13 +15,13 @@
 //! - Generic package registry: `PUT` / `GET /api/packages/{owner}/generic/{pkg}/{ver}/{file}`
 //!   (no overwrite -> `409 Conflict`, SHA-256 recorded).
 
+use axum::Json;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post, put};
-use axum::Json;
 use chrono::Utc;
 use jc_router::Mount;
 use parking_lot::RwLock;
@@ -46,7 +46,12 @@ pub const MAX_PACKAGE_BLOB_BYTES: usize = 256 * 1024 * 1024;
 static CHUNKED_UPLOADS: LazyLock<RwLock<BTreeMap<String, (String, String, Vec<u8>)>>> =
     LazyLock::new(|| RwLock::new(BTreeMap::new()));
 
-fn oci_error_response(status: StatusCode, code: &str, message: &str, realm: Option<&str>) -> Response {
+fn oci_error_response(
+    status: StatusCode,
+    code: &str,
+    message: &str,
+    realm: Option<&str>,
+) -> Response {
     let body = json!({
         "errors": [{
             "code": code,
@@ -300,10 +305,7 @@ async fn oci_get_token(
 /// `POST /v2/token` — containerd's OAuth token probe (`dep:components/gitea/apisix-routes.yaml:37-49`, T-2665).
 /// Answers 404 JSON (never a 302 HTML redirect!) so containerd falls back to `GET /v2/token`.
 async fn oci_post_token(State(state): State<ShakoState>) -> Response {
-    gitea_error_response(
-        &state,
-        &ShakoError::NotFound("use GET /v2/token".into()),
-    )
+    gitea_error_response(&state, &ShakoError::NotFound("use GET /v2/token".into()))
 }
 
 // =========================================================================
@@ -333,7 +335,12 @@ async fn oci_head_or_get_blob(
     let clean_digest = match validate_sha256_digest(&digest) {
         Ok(d) => d,
         Err(_) => {
-            return oci_error_response(StatusCode::BAD_REQUEST, "DIGEST_INVALID", "invalid digest", None);
+            return oci_error_response(
+                StatusCode::BAD_REQUEST,
+                "DIGEST_INVALID",
+                "invalid digest",
+                None,
+            );
         }
     };
 
@@ -435,7 +442,12 @@ async fn oci_post_blob_upload(
     //    Contract S13 & Threat T13: mount allowed ONLY within the SAME `owner`!
     if let (Some(mount_digest), Some(from_repo)) = (&q.mount, &q.from) {
         let Ok(clean_digest) = validate_sha256_digest(mount_digest) else {
-            return oci_error_response(StatusCode::BAD_REQUEST, "DIGEST_INVALID", "invalid digest", None);
+            return oci_error_response(
+                StatusCode::BAD_REQUEST,
+                "DIGEST_INVALID",
+                "invalid digest",
+                None,
+            );
         };
         let from_owner = from_repo
             .split_once('/')
@@ -500,7 +512,16 @@ async fn oci_post_blob_upload(
                 None,
             );
         };
-        return finish_blob_store(&state, ctx.instance_id, target_org, &owner, &image, &clean_digest, &bytes).await;
+        return finish_blob_store(
+            &state,
+            ctx.instance_id,
+            target_org,
+            &owner,
+            &image,
+            &clean_digest,
+            &bytes,
+        )
+        .await;
     }
 
     // 3. Start chunked upload session
@@ -509,9 +530,10 @@ async fn oci_post_blob_upload(
         .await
         .unwrap_or_default();
     let len = initial_bytes.len();
-    CHUNKED_UPLOADS
-        .write()
-        .insert(upload_uuid.clone(), (owner.clone(), image.clone(), initial_bytes));
+    CHUNKED_UPLOADS.write().insert(
+        upload_uuid.clone(),
+        (owner.clone(), image.clone(), initial_bytes),
+    );
     let loc = format!("/v2/{owner}/{image}/blobs/uploads/{upload_uuid}");
     let range = if len > 0 {
         format!("0-{}", len - 1)
@@ -928,8 +950,8 @@ async fn store_cosign_signature_tag(
             "creator": "shako"
         }
     });
-    let payload_bytes =
-        serde_json::to_vec(&simple_signing_payload).map_err(|e| ShakoError::Internal(e.to_string()))?;
+    let payload_bytes = serde_json::to_vec(&simple_signing_payload)
+        .map_err(|e| ShakoError::Internal(e.to_string()))?;
     let sig_b64 = state.signing_key().sign_cosign_payload(&payload_bytes);
     let payload_digest = format!("sha256:{}", sha256_hex(&payload_bytes));
 
@@ -1055,10 +1077,7 @@ async fn oci_get_or_head_manifest(
                 header::HeaderName::from_static("docker-content-digest"),
                 ver.digest.as_str(),
             ),
-            (
-                header::CONTENT_LENGTH,
-                ver.size_bytes.to_string().as_str(),
-            ),
+            (header::CONTENT_LENGTH, ver.size_bytes.to_string().as_str()),
         ],
         body,
     )
@@ -1323,12 +1342,18 @@ async fn generic_get_file(
         .ok()
         .flatten()
     else {
-        return gitea_error_response(&state, &ShakoError::NotFound("package file not found".into()));
+        return gitea_error_response(
+            &state,
+            &ShakoError::NotFound("package file not found".into()),
+        );
     };
 
     let disk_path = blob_disk_path(&state, &owner, &file_rec.sha256);
     let Ok(bytes) = tokio::fs::read(&disk_path).await else {
-        return gitea_error_response(&state, &ShakoError::NotFound("package blob not found".into()));
+        return gitea_error_response(
+            &state,
+            &ShakoError::NotFound("package blob not found".into()),
+        );
     };
     (
         StatusCode::OK,
@@ -1389,10 +1414,7 @@ pub fn stripped_v2_registry_routes() -> Router<ShakoState> {
             "/{owner}/{image}/blobs/uploads/",
             post(oci_post_blob_upload),
         )
-        .route(
-            "/{owner}/{image}/blobs/uploads",
-            post(oci_post_blob_upload),
-        )
+        .route("/{owner}/{image}/blobs/uploads", post(oci_post_blob_upload))
         .route(
             "/{owner}/{image}/blobs/uploads/{uuid}",
             patch(oci_patch_blob_upload).put(oci_put_blob_upload),

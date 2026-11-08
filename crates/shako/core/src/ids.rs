@@ -96,9 +96,18 @@ macro_rules! define_uuid_id {
     };
 }
 
-define_uuid_id!(InstanceId, "Forge instance identifier present on every row (S2).");
-define_uuid_id!(OrgId, "Organization identifier enforced by Postgres forced RLS (S2).");
-define_uuid_id!(RepoId, "Repository identifier used as the sole filesystem key (S2, T1).");
+define_uuid_id!(
+    InstanceId,
+    "Forge instance identifier present on every row (S2)."
+);
+define_uuid_id!(
+    OrgId,
+    "Organization identifier enforced by Postgres forced RLS (S2)."
+);
+define_uuid_id!(
+    RepoId,
+    "Repository identifier used as the sole filesystem key (S2, T1)."
+);
 define_uuid_id!(WebhookId, "Webhook identifier.");
 define_uuid_id!(PackageId, "Package identifier.");
 
