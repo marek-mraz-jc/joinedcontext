@@ -3329,3 +3329,154 @@ async fn unknown_datasets_maps_without_a_platform_service_and_refused_patches() 
         .unwrap();
     assert_ne!(ds.title.get("sk").map(String::as_str), Some("Hijacked"));
 }
+
+/// An installation that names its public URL (jc: the mount's scheme, host and prefix) answers
+/// links on it: an http install and a catalogue under `/opendata` get no `https://{host}` links.
+#[tokio::test]
+async fn links_follow_the_configured_public_url() {
+    let base = "http://city.test:8080/opendata";
+    let w = world_with(|s| router(s.with_public_base(base))).await;
+    let app = &w.app;
+    let v = get(app, "/api/3/action/status_show", None).await.json();
+    assert_eq!(v["result"]["site_url"], base);
+    assert_eq!(
+        v["help"],
+        format!("{base}/api/3/action/help_show?name=status_show")
+    );
+    let v = get(
+        app,
+        "/api/3/action/package_show?id=open",
+        Some("tok-forged"),
+    )
+    .await
+    .json();
+    assert_eq!(
+        v["help"],
+        format!("{base}/api/3/action/help_show?name=package_show")
+    );
+    let ttl = get(app, "/catalog.ttl", None).await;
+    assert_eq!(ttl.status, StatusCode::OK, "{}", ttl.body);
+    assert!(ttl.body.contains(&format!("<{base}/")), "{}", ttl.body);
+    assert!(
+        !ttl.body.contains(&format!("https://{HOST}")),
+        "{}",
+        ttl.body
+    );
+}
+
+/// Anonymous listings show only what `package_show` shows an anonymous caller: no draft, no
+/// withdrawn record or publisher (whatever `include_drafts` / `include_private` say), no dataset
+/// the publish gate hid (`dataset.search`), and no hidden-dataset list or outbound allow-list in
+/// the catalogue record. Editors keep what they may propose.
+#[tokio::test]
+async fn anonymous_listings_hold_no_draft_hidden_or_withdrawn_dataset() {
+    let w = world().await;
+    let app = &w.app;
+    let mut draft = dataset("draft-one", "city", "public", 30);
+    draft.state = dataroom_core::RecordState::Draft;
+    w.store.upsert_dataset(&w.admin_ctx(), draft).await.unwrap();
+    let mut cat = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
+    cat.allowed_outbound_hosts = vec!["harvest.internal".into()];
+    w.store.upsert_catalogue(cat).await.unwrap();
+    let never = [
+        "draft-one",
+        "retired",
+        "orphan",
+        "inner",
+        "secret",
+        "veiled",
+    ];
+
+    for flags in [
+        "include_drafts=true",
+        "include_private=true",
+        "include_drafts=true&include_private=true",
+    ] {
+        let a = get(
+            app,
+            &format!("/api/3/action/package_search?rows=50&{flags}"),
+            None,
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+        let names: Vec<String> = a.json()["result"]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap().to_owned())
+            .collect();
+        for name in never {
+            assert!(
+                !names.iter().any(|n| n == name),
+                "{flags}: {name} in {names:?}"
+            );
+        }
+    }
+
+    let a = post(app, "/api/v1/ops/dataset.search", None, json!({})).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert!(!a.body.contains("veiled"), "{}", a.body);
+    let a = post(
+        app,
+        "/api/v1/ops/dataset.search",
+        Some("tok-editor"),
+        json!({}),
+    )
+    .await;
+    assert!(a.body.contains("veiled"), "the editor keeps it: {}", a.body);
+
+    for op in ["catalogue.get", "catalogue.list"] {
+        let a = post(app, &format!("/api/v1/ops/{op}"), None, json!({})).await;
+        assert_eq!(a.status, StatusCode::OK, "{op}: {}", a.body);
+        assert!(
+            !a.body.contains("quality check pending") && !a.body.contains("harvest.internal"),
+            "{op}: {}",
+            a.body
+        );
+        let a = post(
+            app,
+            &format!("/api/v1/ops/{op}"),
+            Some("tok-proposer"),
+            json!({}),
+        )
+        .await;
+        assert!(
+            a.body.contains("quality check pending") && a.body.contains("harvest.internal"),
+            "{op} for a proposer: {}",
+            a.body
+        );
+    }
+}
+
+/// The tag or publisher id in a feed address is escaped wherever the feed writes it, and feeds
+/// carry `nosniff` and a CSP that runs nothing.
+#[tokio::test]
+async fn feed_addresses_are_escaped_and_feeds_run_no_script() {
+    let w = world().await;
+    let tag = "%22%2F%3E%3Cx%3Ascript%20xmlns%3Ax%3D%22http%3A%2F%2Fwww.w3.org%2F1999%2Fxhtml%22%3Ealert(1)%3C%2Fx%3Ascript%3E";
+    for path in [
+        format!("/feeds/tag/{tag}.atom"),
+        format!("/feeds/organization/{tag}.atom"),
+    ] {
+        let a = get(&w.app, &path, None).await;
+        assert_eq!(a.status, StatusCode::OK, "{path}: {}", a.body);
+        assert!(!a.body.contains("<x:script"), "{path}: {}", a.body);
+        assert!(a.body.contains("&lt;x:script"), "{path}: {}", a.body);
+        assert_eq!(a.header("x-content-type-options"), "nosniff");
+        assert_eq!(a.header("content-security-policy"), "default-src 'none'");
+    }
+}
+
+/// A caller-chosen page number cannot overflow the offset (debug builds panicked, release wrapped).
+#[tokio::test]
+async fn a_huge_page_number_answers_an_empty_page() {
+    let w = world().await;
+    let huge = usize::MAX;
+    for uri in [
+        format!("/api/v1/catalogue?page={huge}"),
+        format!("/dataset?page={huge}"),
+    ] {
+        let a = get(&w.app, &uri, None).await;
+        assert_eq!(a.status, StatusCode::OK, "{uri}");
+    }
+}

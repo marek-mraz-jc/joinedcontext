@@ -1541,6 +1541,36 @@ async fn compat_list_groups(
     Ok(Json(groups))
 }
 
+/// Group attributes the token mappers read as organization membership (`jc_org`) and groups
+/// (`jc_groups`).
+const MEMBERSHIP_ATTRIBUTES: [&str; 2] = ["jc_org", "jc_groups"];
+
+/// What a group create or update may carry, as Keycloak's REST group representation:
+/// - role grants (`realmRoles`, `clientRoles`) and `subGroups` are not written through it; roles
+///   go through the role-mapping routes and their own checks, so the stored values stay;
+/// - an organization-scoped caller cannot set or change the membership attributes, which the
+///   token mappers and the login's organization choice read as membership of an organization.
+fn guard_group_write(
+    ctx: &RequestCtx,
+    group: &mut GroupRepresentation,
+    existing: Option<&GroupRepresentation>,
+) -> Result<()> {
+    group.realm_roles = existing.map(|e| e.realm_roles.clone()).unwrap_or_default();
+    group.client_roles = existing.map(|e| e.client_roles.clone()).unwrap_or_default();
+    group.sub_groups = Vec::new();
+    if ctx.allowed_orgs().is_some() {
+        for key in MEMBERSHIP_ATTRIBUTES {
+            let before = existing.and_then(|e| e.attributes.get(key));
+            if group.attributes.get(key) != before {
+                return Err(KaisatsuError::Forbidden(format!(
+                    "only a realm-wide manager sets the group attribute '{key}'"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn compat_create_group(
     State(state): State<AdminState>,
     Path(realm): Path<String>,
@@ -1569,6 +1599,24 @@ async fn compat_create_group(
             managed_by: group.managed_by.clone(),
         },
     ))?;
+    guard_group_write(&ctx, &mut group, None)?;
+    // The store upserts by id or path: a create names neither, or it would replace another
+    // (possibly another organization's) group. As Keycloak, a taken top-level name is 409.
+    group.id = String::new();
+    group.parent_id = None;
+    group.path = format!("/{}", group.name);
+    if state
+        .oidc
+        .store
+        .get_group_by_path(&realm, None, &group.path)
+        .await?
+        .is_some()
+    {
+        return Err(KaisatsuError::Conflict(format!(
+            "Top level group named '{}' already exists.",
+            group.name
+        )));
+    }
     let created = state.oidc.store.upsert_group(group).await?;
     let location = format!(
         "{}/admin/realms/{realm}/groups/{}",
@@ -1642,10 +1690,12 @@ async fn compat_update_group(
         },
     ))?;
     group.id = id.clone();
+    guard_group_write(&ctx, &mut group, Some(&existing))?;
+    // The stored path stays (a move has its own route in Keycloak): a body path naming another
+    // group would make the store's upsert replace that group.
+    group.path.clone_from(&existing.path);
+    group.parent_id.clone_from(&existing.parent_id);
     group.realm_id = realm;
-    if group.path.is_empty() {
-        group.path = existing.path;
-    }
     // Only a realm admin moves a group to another organization.
     if group.org_id.is_none() || !ctx.principal.is_realm_admin() {
         group.org_id = existing.org_id;
@@ -2040,6 +2090,27 @@ async fn compat_create_client(
             managed_by: managed,
         },
     ))?;
+    // The store upserts by clientId or id: a create naming a taken one would replace that
+    // client (another organization's, or a realm client) and keep its secret. Keycloak: 409.
+    if state
+        .oidc
+        .store
+        .get_client_by_client_id(&realm, &client.client_id)
+        .await?
+        .is_some()
+        || (!client.id.is_empty()
+            && state
+                .oidc
+                .store
+                .get_client_by_uuid(&realm, None, &client.id)
+                .await?
+                .is_some())
+    {
+        return Err(KaisatsuError::Conflict(format!(
+            "Client {} already exists",
+            client.client_id
+        )));
+    }
     let created = state.oidc.store.upsert_client(client).await?;
     let location = format!(
         "{}/admin/realms/{realm}/clients/{}",
@@ -2113,6 +2184,19 @@ async fn compat_update_client(
         },
     ))?;
     client.id = uuid.clone();
+    if client.client_id != existing.client_id
+        && state
+            .oidc
+            .store
+            .get_client_by_client_id(&realm, &client.client_id)
+            .await?
+            .is_some()
+    {
+        return Err(KaisatsuError::Conflict(format!(
+            "Client {} already exists",
+            client.client_id
+        )));
+    }
     client.realm_id = realm;
     // Only a realm admin moves an application to another organization.
     if client.org_id.is_none() || !ctx.principal.is_realm_admin() {
@@ -2967,6 +3051,20 @@ async fn compat_create_client_scope(
     ))?;
     // Keycloak answers 409 for a name in use; the store would replace that scope instead.
     scope_name_free(&state, &realm, &scope.name, None).await?;
+    // The store upserts by id: a create naming another scope's id would replace it.
+    if !scope.id.is_empty()
+        && state
+            .oidc
+            .store
+            .get_client_scope(&realm, &scope.id)
+            .await?
+            .is_some()
+    {
+        return Err(KaisatsuError::Conflict(format!(
+            "Client Scope with id {} already exists",
+            scope.id
+        )));
+    }
     scope.realm_id = realm.clone();
     let created = state.oidc.store.upsert_client_scope(scope).await?;
     let location = format!(
