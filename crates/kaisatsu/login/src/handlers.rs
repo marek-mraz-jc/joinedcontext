@@ -69,6 +69,7 @@ pub fn login_router(state: OidcState) -> Router {
             get(action_token_get).post(action_token_post),
         )
         .merge(kaisatsu_oidc::broker_router())
+        .merge(crate::account::account_router())
         .with_state(state)
 }
 
@@ -128,19 +129,8 @@ async fn build_policy_context(
         .iter()
         .any(|c| c.credential_type.starts_with("webauthn"));
     let user_groups = store.list_user_groups(&realm.id, &user.id).await?;
-    let all_roles = store.list_roles(&realm.id, None).await?;
-    let group_roles: Vec<String> = user_groups
-        .iter()
-        .flat_map(|g| g.realm_roles.iter().cloned())
-        .collect();
-    let eff_roles = kaisatsu_core::claims::resolve_effective_realm_roles(
-        &user.realm_roles,
-        &group_roles,
-        &all_roles,
-    );
-    let mfa_role = eff_roles.iter().any(|r| r == "mfa-required");
+    let realm_requires = second_factor_required(store, realm, user).await?;
     let step_up = auth_session.acr_requested.as_deref() == Some("mfa");
-    let is_master = realm.realm == "master";
 
     let memberships = store
         .list_memberships_for_person(&realm.id, &user.id)
@@ -202,7 +192,7 @@ async fn build_policy_context(
     }
 
     Ok(LoginPolicyContext {
-        second_factor_required: mfa_role || step_up || is_master,
+        second_factor_required: realm_requires || step_up,
         has_totp_credential: has_totp,
         has_webauthn_credential: has_webauthn,
         pending_actions: pending,
@@ -214,6 +204,30 @@ async fn build_policy_context(
             .clone()
             .filter(|_| !auth_session.kc_action_done),
     })
+}
+
+/// True when the realm requires a second factor of this person at every sign-in: the
+/// `master` realm, or the effective realm role `mfa-required` (direct, composite or by group).
+pub(crate) async fn second_factor_required(
+    store: &Arc<dyn Store>,
+    realm: &RealmConfig,
+    user: &UserRepresentation,
+) -> Result<bool> {
+    if realm.realm == "master" {
+        return Ok(true);
+    }
+    let user_groups = store.list_user_groups(&realm.id, &user.id).await?;
+    let all_roles = store.list_roles(&realm.id, None).await?;
+    let group_roles: Vec<String> = user_groups
+        .iter()
+        .flat_map(|g| g.realm_roles.iter().cloned())
+        .collect();
+    let eff_roles = kaisatsu_core::claims::resolve_effective_realm_roles(
+        &user.realm_roles,
+        &group_roles,
+        &all_roles,
+    );
+    Ok(eff_roles.iter().any(|r| r == "mfa-required"))
 }
 
 async fn render_state_page(
@@ -677,7 +691,7 @@ async fn sign_out_other_sessions(
     Ok(())
 }
 
-fn read_cookie(headers: &HeaderMap, target: &str) -> Option<String> {
+pub(crate) fn read_cookie(headers: &HeaderMap, target: &str) -> Option<String> {
     headers
         .get_all(header::COOKIE)
         .iter()

@@ -13,6 +13,7 @@
 pub mod email;
 pub mod handlers;
 pub mod i18n;
+pub mod account;
 pub mod machine;
 pub mod outbox;
 pub mod passkey;
