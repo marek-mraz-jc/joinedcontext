@@ -112,6 +112,17 @@ fn drift_summary(err: &SyncError) -> String {
     }
 }
 
+/// One line when warnings of a family stopped standing since the last cycle, with how many.
+fn cleared(what: &str, change: &super::warned::Change) {
+    if change.cleared > 0 {
+        tracing::info!(
+            cleared = change.cleared,
+            standing = change.standing,
+            "{what}: some no longer stand"
+        );
+    }
+}
+
 /// Background reconciler synchronizing repository manifests into the in-memory mirror.
 pub struct Syncer {
     shako: Arc<ShakoClient>,
@@ -191,6 +202,11 @@ pub struct Syncer {
     mqtt_capture: Option<Arc<crate::mqtt_capture::Capture>>,
     /// The MqttBroker warnings the last cycle logged ([`super::mqtt_brokers::log_warnings`]).
     mqtt_warned: std::sync::Mutex<std::collections::BTreeSet<String>>,
+    /// The repository and realm warnings the last cycle logged: each is logged when it first
+    /// appears, and a line says when some cleared ([`super::warned`]).
+    warned_misplaced: super::warned::Warned,
+    warned_invalid: super::warned::Warned,
+    warned_members: super::warned::Warned,
     /// Where a run says what it did (OPS-48). `None` leaves the loop silent, which is what a
     /// Portal built without a state does in a unit test.
     activity: Option<ActivityStore>,
@@ -299,6 +315,9 @@ impl Syncer {
             mqtt_clients: None,
             mqtt_capture: None,
             mqtt_warned: Default::default(),
+            warned_misplaced: Default::default(),
+            warned_invalid: Default::default(),
+            warned_members: Default::default(),
             activity: None,
             apps_cache_dir: None,
             apps_dir: None,
@@ -1403,9 +1422,17 @@ impl Syncer {
             elapsed_ms = staging.elapsed().as_millis() as u64,
             "repository staged and loaded"
         );
-        for (id, path, expected) in repository.misplaced() {
-            tracing::warn!(resource = %id, path = %path.display(), %expected, "manifest is not at the path its kind declares");
+        let misplaced = repository
+            .misplaced()
+            .into_iter()
+            .map(|(id, path, expected)| {
+                format!("{id} at {} (expected {expected})", path.display())
+            });
+        let change = self.warned_misplaced.cycle(misplaced);
+        for warning in &change.new {
+            tracing::warn!(%warning, standing = change.standing, "manifest is not at the path its kind declares");
         }
+        cleared("manifests not at the path their kind declares", &change);
         Ok((scratch, repository))
     }
 
@@ -1429,6 +1456,7 @@ impl Syncer {
                 .collect(),
         );
         let mut loaded = 0usize;
+        let mut invalid = Vec::new();
         for (_, resource) in repository.iter() {
             let path = resource.path.to_string_lossy().to_string();
             // The kind's own invariants, the check `jcctl validate` runs (T-0412). A manifest
@@ -1438,7 +1466,7 @@ impl Syncer {
                 if let Some(Err(err)) =
                     jc_core::registry::validate_yaml(&resource.manifest.kind, &yaml)
                 {
-                    tracing::warn!(path = %path, error = %err, "manifest fails its kind's validation");
+                    invalid.push(format!("{path}: {err}"));
                 }
             }
             let mut envelope: ResourceEnvelope = match serde_json::to_value(&resource.manifest)
@@ -1490,6 +1518,11 @@ impl Syncer {
             fresh_mirror.upsert(envelope);
             loaded += 1;
         }
+        let change = self.warned_invalid.cycle(invalid);
+        for warning in &change.new {
+            tracing::warn!(%warning, standing = change.standing, "manifest fails its kind's validation");
+        }
+        cleared("manifests failing their kind's validation", &change);
 
         if loaded == 0 {
             return Err(SyncError::Empty(
@@ -1599,6 +1632,17 @@ impl Syncer {
             let generated =
                 super::groups::derived_groups(fresh_mirror, projects, chrono::Utc::now());
             let outcomes = groups.converge_with(fresh_mirror, &generated).await;
+            let members = outcomes.iter().flat_map(|outcome| {
+                outcome
+                    .warnings
+                    .iter()
+                    .map(|warning| format!("{}: {warning}", outcome.name))
+            });
+            let change = self.warned_members.cycle(members);
+            for warning in &change.new {
+                tracing::warn!(%warning, standing = change.standing, "group member is not a realm user yet");
+            }
+            cleared("group members who were not realm users", &change);
             for outcome in &outcomes {
                 match (&outcome.error, outcome.drift.is_empty()) {
                     (Some(err), _) => {
@@ -1608,9 +1652,6 @@ impl Syncer {
                         tracing::info!(group = %outcome.name, drift = %outcome.drift.join("; "), "group brought back to the manifest")
                     }
                     (None, true) => {}
-                }
-                for warning in &outcome.warnings {
-                    tracing::warn!(group = %outcome.name, %warning, "group member is not a realm user yet");
                 }
             }
             super::groups::record(fresh_mirror, &outcomes);
