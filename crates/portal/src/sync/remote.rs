@@ -58,6 +58,17 @@ pub struct HttpRemote {
     http: reqwest::blocking::Client,
 }
 
+/// Runs `build` on a thread of its own: reqwest's debug builds refuse to make a blocking client on
+/// a tokio runtime thread, and the Portal builds its sync clients while it starts, inside one.
+pub(crate) fn off_runtime<T: Send>(build: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(build)
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
 impl HttpRemote {
     /// A client that refuses to leave `https`, times out and follows a few redirects.
     ///
@@ -66,12 +77,14 @@ impl HttpRemote {
     /// rather than holding a runtime worker while a repository is downloaded.
     pub fn new() -> Result<Self, reqwest::Error> {
         Ok(Self {
-            http: reqwest::blocking::Client::builder()
-                .no_proxy()
-                .redirect(https_redirects(MAX_REDIRECTS))
-                .dns_resolver(Arc::new(PublicOnly))
-                .timeout(TIMEOUT)
-                .build()?,
+            http: off_runtime(|| {
+                reqwest::blocking::Client::builder()
+                    .no_proxy()
+                    .redirect(https_redirects(MAX_REDIRECTS))
+                    .dns_resolver(Arc::new(PublicOnly))
+                    .timeout(TIMEOUT)
+                    .build()
+            })?,
         })
     }
 
@@ -475,6 +488,14 @@ fn reason(err: reqwest::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Portal starts inside a tokio runtime; a debug build used to panic there making its
+    /// blocking sync clients.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn the_sync_clients_build_on_a_runtime_thread() {
+        HttpRemote::new().expect("the origin client");
+        crate::sync::schema_api::PeerSchemaApi::new().expect("the schema client");
+    }
 
     #[test]
     fn a_platform_origin_lists_a_commit_or_no_revision() {

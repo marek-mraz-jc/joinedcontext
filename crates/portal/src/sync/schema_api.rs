@@ -55,12 +55,14 @@ impl PeerSchemaApi {
     pub fn new() -> Result<Self, reqwest::Error> {
         // A refused hop is stopped, not failed with a reason: a peer learns nothing about the
         // inside of this cluster from the shape of the answer.
-        let http = reqwest::blocking::Client::builder()
-            .no_proxy()
-            .redirect(https_redirects(MAX_REDIRECTS))
-            .dns_resolver(Arc::new(PublicOnly))
-            .timeout(TIMEOUT)
-            .build()?;
+        let http = crate::sync::remote::off_runtime(|| {
+            reqwest::blocking::Client::builder()
+                .no_proxy()
+                .redirect(https_redirects(MAX_REDIRECTS))
+                .dns_resolver(Arc::new(PublicOnly))
+                .timeout(TIMEOUT)
+                .build()
+        })?;
         Ok(Self { http })
     }
 }
