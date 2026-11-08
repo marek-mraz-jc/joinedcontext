@@ -535,3 +535,26 @@ def test_import_sh_stops_the_allow_all_jc_when_the_import_fails(tmp_path):
         os.kill(pid, 9)
     assert r.returncode != 0 and "import FAILED" in r.stderr
     assert not alive, "jc on allow-all stayed up after a failed import"
+
+
+def test_people_come_with_ids_groups_and_roles_and_never_a_credential():
+    lines = [
+        {"id": "u-1", "username": "demo.steward@hel.fi", "email": "demo.steward@hel.fi", "enabled": True,
+         "attributes": {"jc_org": ["hel"], "x": ["$(env:SECRET)"], "$(file:/etc/shadow)": ["y"]},
+         "groups": ["/helsinki/stewards"], "realmRoles": ["portal-approver"], "totp": True,
+         "requiredActions": ["VERIFY_EMAIL"],
+         "credentials": [{"type": "password", "secretData": "{\"value\":\"hash\"}"}],
+         "federatedIdentities": [{"identityProvider": "x"}], "access": {"manage": True}},
+        {"id": "u-2", "username": "service-account-c", "serviceAccountClientId": "c"},
+        {"id": "u-3", "username": "plain", "enabled": True},
+    ]
+    realm, n = rh.add_people({"realm": "dev", "users": [{"username": "service-account-c"}]}, lines)
+    assert n == 2 and [u["username"] for u in realm["users"]] == ["service-account-c", "demo.steward@hel.fi", "plain"]
+    steward, plain = realm["users"][1], realm["users"][2]
+    assert steward["id"] == "u-1" and steward["groups"] == ["/helsinki/stewards"]
+    assert steward["realmRoles"] == ["portal-approver"] and steward["attributes"] == {"jc_org": ["hel"], "x": []}
+    assert steward["requiredActions"] == ["VERIFY_EMAIL", "UPDATE_PASSWORD", "CONFIGURE_TOTP"]
+    assert plain["requiredActions"] == ["UPDATE_PASSWORD"]
+    text = json.dumps(realm)
+    for leak in ("credentials", "secretData", "hash", "federatedIdentities", "totp", "access", "$("):
+        assert leak not in text, leak

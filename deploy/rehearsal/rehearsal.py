@@ -355,6 +355,35 @@ def strip_people(realm: dict) -> dict:
     return out
 
 
+# A person from the deployer's users-<realm>.jsonl (supervisor G14, owner may override): ids,
+# attributes, groups and realm roles, never a credential. Every other member is dropped.
+PERSON_FIELDS = ("id", "username", "email", "firstName", "lastName", "enabled", "emailVerified",
+                 "createdTimestamp", "attributes", "requiredActions", "groups", "realmRoles")
+
+
+def person(u: dict) -> dict | None:
+    """The person as kaisatsu imports it: allow-listed fields only, no credential, and the
+    required actions that make them set a password (and OTP where they had one) at first sign-in.
+    A service account is the realm file's, not a person: None."""
+    if u.get("serviceAccountClientId") or not u.get("username"):
+        return None
+    out = {k: u[k] for k in PERSON_FIELDS if k in u}
+    # kaisatsu resolves $(env:...) and $(file:...) in imported text: no person's text may name one.
+    out["attributes"] = {k: [v for v in vs if "$(" not in str(v)]
+                         for k, vs in (u.get("attributes") or {}).items() if "$(" not in k}
+    actions = [a for a in out.get("requiredActions") or [] if a not in ("UPDATE_PASSWORD", "CONFIGURE_TOTP")]
+    out["requiredActions"] = actions + ["UPDATE_PASSWORD"] + (["CONFIGURE_TOTP"] if u.get("totp") else [])
+    return out
+
+
+def add_people(realm: dict, lines) -> tuple[dict, int]:
+    """`realm` with the people of a users file added beside its service accounts."""
+    people = [p for p in map(person, lines) if p]
+    out = dict(realm)
+    out["users"] = list(realm.get("users") or []) + people
+    return out, len(people)
+
+
 def add_tester(realm: dict) -> dict:
     """The rehearsal's own test person, its password a secret variable up.sh fills."""
     out = dict(realm)
@@ -459,7 +488,13 @@ def cmd_realms(a):
         name = realm.get("realm", "")
         if name in SKIPPED_REALMS:
             continue
-        clean = add_tester(strip_people(realm))
+        clean = strip_people(realm)
+        people_file = src / f"users-{name}.jsonl"
+        if people_file.exists():
+            clean, n = add_people(clean, _jsonl(people_file))
+            (dst.parent / f"realm-{name}-people.json").write_text(json.dumps({"people": n, "credentials": 0}))
+            print(f"realm {name}: {n} people, no credentials (UPDATE_PASSWORD set)")
+        clean = add_tester(clean)
         if a.kaisatsu_bin:
             tmp = dst.parent / f".check-{name}.json"
             clean, dropped = drop_refused_mappers(clean, kaisatsu_check(a.kaisatsu_bin, tmp))
