@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "EUPL-1.2"
 description = "DCAT-AP 3.0.1, DCAT-AP-CZ and DCAT-AP-SK 2.0 RDF mapping and serializers (Turtle, JSON-LD, RDF/XML, N-Triples)"
+publish = false
 
 [dependencies]
 chrono = { version = "0.4.38", features = ["serde"] }

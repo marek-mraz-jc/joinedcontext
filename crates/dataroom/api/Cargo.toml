@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "EUPL-1.2"
 description = "Axum HTTP router for dataroom: REST, OData v4, OpenAPI 3.1, CKAN Action API v3, DCAT-AP feeds, Atom, MCP, and HTML UI"
+publish = false
 
 [dependencies]
 axum = { version = "0.8.1", features = ["json", "query", "original-uri"] }

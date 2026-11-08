@@ -288,19 +288,40 @@ uses `dataroom_api::portal_publisher` and `DaiyaState::with_server_admin` from t
 `cargo build --release -p jc` (default release profile, no LTO, all default features incl. the Portal's embedded UI):
 196,455,176 bytes, 151,883,704 bytes stripped. Built in 9 min.
 
-## Dependency checks (once, root lockfile = everything `jc` links)
+## Dependency checks (root lockfile = everything `jc` links; 2026-11-08, jc-ship)
 
-- `cargo audit`: 4 vulnerabilities, none introduced by `jc` code, none ignored:
-  - `quick-xml 0.37.5`: RUSTSEC-2026-0194 and -0195. It comes through `oxrdfxml 0.1.7` from `dataroom-rdf`, which was
-    already in the base. The fix needs quick-xml 0.41, i.e. a newer oxrdfxml.
-  - `crypto-bigint 0.5.5` (RUSTSEC-2026-0387, through `age` -> `jcctl`/Portal): the fix is 0.7.6, a different
-    major version used by elliptic-curve 0.13.
-  - `rsa 0.9.10` (RUSTSEC-2023-0071, through `openidconnect` -> Portal): no fixed version exists.
-  - Warnings for unmaintained crates: `atomic-polyfill`, `basic-toml`, `paste`.
-- `cargo deny check`: the root has no `deny.toml`; with `crates/portal/deny.toml` the result is licenses ok,
-  advisories FAILED (the vulnerabilities above plus `paste`), bans FAILED (wildcard path dependencies in every
-  monorepo crate, e.g. `daiya-api`, `jc`), sources FAILED (`odata-*` from an Antares git rev in
-  `crates/daiya/model/Cargo.toml:11`, already in the base). No root policy was added to make it pass.
+Root `deny.toml` and `cargo audit` carry no ignore. Fixed on branch `jc-ship`:
+
+- Wildcard path dependencies: every root workspace crate has `publish = false`.
+- `quick-xml 0.37.5` (RUSTSEC-2026-0194, -0195, CVSS 7.5): `vendor/oxrdfxml` is oxrdfxml 0.1.7 ported to
+  quick-xml 0.42 (`vendor/SOURCES.md`).
+- `basic-toml` through askama: askama without its `config` feature.
+- `paste` (RUSTSEC-2024-0436): `vendor/tikv-jemalloc-ctl`, upstream commit 66b124bdf4 without paste.
+- `crypto-bigint 0.5.5` through shako-core: p256 0.14 (crypto-bigint 0.7.10).
+
+Still red, with no fixed release to take:
+
+- RUSTSEC-2026-0387 `crypto-bigint 0.5.5` <- `elliptic-curve 0.13.8` <- `p256 0.13.2` (and `hpke 0.12.0`,
+  `ecdsa`, `primeorder`) <- `age-core 0.12.0` / `age 0.12.1` <- `jcctl` (vendor/joinedcontext-platform) and
+  `joinedcontext-portal` <- `jc`. age 0.12.1 (2026-07-14) is the newest release and requires hpke 0.12 with p256;
+  rage main is on p256 0.14 / hpke 0.14, unreleased; age 0.11.5 fails deny on proc-macro-error2. jcctl
+  (`src/secrets/sops.rs`) and the Portal (`src/secret_files.rs`) use only `age::x25519::Identity`,
+  `age::armor::ArmoredReader` and `age::Decryptor`; an x25519 identity unwraps only X25519 stanzas, so no p256
+  code runs when they decrypt. Take the next age release.
+- RUSTSEC-2026-0374 `basic-toml 0.1.10` (unmaintained) <- `i18n-config 0.4.8` <- `i18n-embed-fl 0.10.1`
+  (proc-macro, unconditional dependency of age) <- `age 0.12.1` <- the same chain. Build time only.
+- RUSTSEC-2023-0071 `rsa 0.9.10` (Marvin, no fixed release) <- `openidconnect 4.1.0` <- `joinedcontext-portal`
+  <- `jc`. The timing leak is in RSA private-key operations. openidconnect calls rsa for signature
+  verification with the issuer's public key (`core/crypto.rs` `verify_rsa_signature`, `BigUint` n and e) and,
+  in `CoreRsaPrivateSigningKey` (`core/jwk/mod.rs:541`), for signing with a private key. It has no RSA
+  decryption: an encrypted ID token is refused as `Unsupported` (`verification/mod.rs:303`). The Portal never
+  constructs `CoreRsaPrivateSigningKey`; the only `RsaPrivateKey` in our sources is the test key of
+  `crates/portal/src/auth/bearer.rs:1106` inside `#[cfg(test)]`. The vulnerable path is unreachable; the
+  advisory stays red until openidconnect moves to rsa 0.10 or drops it. kaisatsu keeps openidconnect out for
+  this reason (`crates/kaisatsu/server/Cargo.toml:51`).
+- `cargo audit` also warns on `atomic-polyfill` (unmaintained, RUSTSEC-2023-0089) from a `heapless 0.7.17` lock
+  entry that no target of the graph builds (`cargo tree -i heapless@0.7.17 --target all` prints nothing); a
+  warning, not a failure.
 
 ## Security review of the diff
 
@@ -359,7 +380,7 @@ Read once over `daiya-argon-1..HEAD`, excluding the squashed imports and `vendor
   (`crates/ekiben/crates/ekiben-server/src/main.rs:204`).
 - `zip` requirement relaxed to `^9.2` for the cooldown (`crates/ekiben/Cargo.toml:64`); back to `^9.3` from
   2026-11-09.
-- The vulnerable dependencies and `cargo deny` findings above.
+- The three advisories still open in the dependency checks above.
 - gitleaks over the branch reports 73 findings, all in upstream test fixtures and docs of the imported trees and
   `vendor/` (JWT/PEM test vectors, sample keys), none in `bins/jc`. These repositories have their own allow-lists
   upstream.

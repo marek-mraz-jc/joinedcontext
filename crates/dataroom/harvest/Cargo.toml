@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "EUPL-1.2"
 description = "Catalogue harvesters (DCAT-AP, NKOD SPARQL, CKAN Action API, ArcGIS Hub) with SSRF guard and withdrawal"
+publish = false
 
 [dependencies]
 chrono = { version = "0.4.38", features = ["serde"] }

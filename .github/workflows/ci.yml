@@ -1,0 +1,231 @@
+name: ci
+# The monorepo's gate: fmt, clippy -D warnings and cargo test (--locked) per workspace, the
+# Portal UI build, cargo deny + cargo audit, gitleaks over the pushed range and actionlint.
+# Four Cargo workspaces live here: the root (bins/jc and the modules it links) and the nested
+# crates/antares, crates/ekiben and crates/portal, each with its own lockfile; each is its own job.
+# Jobs are gated by the paths changed since the base (`changes`): a docs-only change runs only
+# gitleaks. A dispatch runs every job (the repository is private and its minutes are metered, so
+# there is no schedule; to put one back: `schedule: [{ cron: "7 2 * * *" }]`).
+on:
+  pull_request:
+  push:
+    branches: [main, "jc-*", "agent/**"]
+  workflow_dispatch:
+permissions: { contents: read }
+concurrency:
+  group: "ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}"
+  cancel-in-progress: "${{ github.ref != 'refs/heads/main' }}"
+env:
+  CARGO_TERM_COLOR: always
+  # Debuginfo off: the Portal's test binaries and jc's link everything; with line tables the
+  # runner's disk and memory run out before a test starts (KNOWLEDGE: portal lib test ~6 GB).
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_INCREMENTAL: "0"
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      root: ${{ steps.paths.outputs.root }}
+      antares: ${{ steps.paths.outputs.antares }}
+      ekiben: ${{ steps.paths.outputs.ekiben }}
+      portal: ${{ steps.paths.outputs.portal }}
+      ui: ${{ steps.paths.outputs.ui }}
+      supply: ${{ steps.paths.outputs.supply }}
+      workflows: ${{ steps.paths.outputs.workflows }}
+      image: ${{ steps.paths.outputs.image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { fetch-depth: 0 }
+      - id: paths
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: sh .github/scripts/changes.sh
+  # The root workspace: every module crate and bins/jc, which links Antares, ekiben and the Portal
+  # by path, so a change in any of them reaches it. Postgres for the store tests of each module
+  # (each its own database; kaisatsu and the Portal's apps tests create their own roles).
+  root:
+    needs: changes
+    if: needs.changes.outputs.root == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
+        env: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      KAISATSU_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/kaisatsu
+      DATAROOM_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/dataroom
+      DAIYA_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/daiya
+      SHAKO_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/shako
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: sh .github/scripts/free-disk.sh
+      - run: |
+          for db in kaisatsu dataroom daiya shako; do
+            psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $db"
+          done
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with: { components: "clippy, rustfmt" }
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with: { shared-key: root, save-if: "${{ github.ref == 'refs/heads/main' }}" }
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked --no-fail-fast
+  antares:
+    needs: changes
+    if: needs.changes.outputs.antares == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults: { run: { working-directory: crates/antares } }
+    services:
+      postgis:
+        # The major dev and prod run, as Antares' own workspace.yml pins it.
+        image: postgis/postgis:16-3.6@sha256:d07ce3f06f657b6516c7511412232e97174d7e9dcf4c9fe520109b682b44a201
+        env: { POSTGRES_USER: antares, POSTGRES_PASSWORD: antares, POSTGRES_DB: antares }
+        # Below 32768, out of the ephemeral range outbound sockets take (Antares workspace.yml).
+        ports: ["15432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U antares" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      ANTARES_TEST_DATABASE_URL: postgresql://antares:antares@localhost:15432/antares
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: sh ../../.github/scripts/free-disk.sh
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with: { components: "clippy, rustfmt" }
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with: { workspaces: crates/antares, shared-key: antares, save-if: "${{ github.ref == 'refs/heads/main' }}" }
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked --no-fail-fast
+  ekiben:
+    needs: changes
+    if: needs.changes.outputs.ekiben == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults: { run: { working-directory: crates/ekiben } }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with: { components: "clippy, rustfmt" }
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with: { workspaces: crates/ekiben, shared-key: ekiben, save-if: "${{ github.ref == 'refs/heads/main' }}" }
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked --no-fail-fast
+  portal:
+    needs: changes
+    if: needs.changes.outputs.portal == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults: { run: { working-directory: crates/portal } }
+    services:
+      postgres:
+        image: postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
+        env: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      JC_PORTAL_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/portal
+      # A server whose user may create roles and databases (tests/common/apps_db.rs).
+      JC_APPS_DB_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      JC_WASM_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      # Two jobs: one Portal test binary links in ~6 GB, the runner has 7 GB.
+      CARGO_BUILD_JOBS: "2"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: sh ../../.github/scripts/free-disk.sh
+      - run: psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE portal"
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with: { components: "clippy, rustfmt" }
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with: { workspaces: crates/portal, shared-key: portal, save-if: "${{ github.ref == 'refs/heads/main' }}" }
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked --no-fail-fast
+  # The bundles the jc image embeds: a UI that does not build ships the placeholder page.
+  ui:
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults: { run: { working-directory: crates/portal } }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with: { package_json_file: crates/portal/ui/package.json }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 24 }
+      - run: cd sdk && pnpm install --frozen-lockfile && pnpm build
+      - run: cd ui && pnpm install --frozen-lockfile
+      - run: cd ui && pnpm lint
+      - run: cd ui && pnpm build && test -s dist/index.html
+  # Advisories, licenses, bans and sources of every lockfile. No ignore is added at the root; the
+  # nested workspaces read their own deny.toml and .cargo/audit.toml.
+  supply-chain:
+    needs: changes
+    if: needs.changes.outputs.supply == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [".", crates/antares, crates/ekiben, crates/portal]
+    defaults: { run: { working-directory: "${{ matrix.dir }}" } }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
+        with: { tool: "cargo-audit,cargo-deny" }
+      - run: cargo deny --locked check advisories bans licenses sources
+      - run: cargo audit
+        if: always()
+  # Every commit this push or pull request brings, not the repository's history: the imported
+  # trees carry upstream test vectors their own repositories allow-list.
+  gitleaks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { fetch-depth: 0 }
+      - env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          BRANCH: ${{ github.ref_name }}
+        run: sh .github/scripts/gitleaks.sh
+  actionlint:
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: sh .github/scripts/changes.sh --selftest
+      - run: >-
+          docker run --rm -v "$PWD:/repo" -w /repo
+          rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 -color
+  # The jc image builds (no push) when its Dockerfile or ignore file changes; image.yml builds and
+  # pushes it from main.
+  image:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: sh .github/scripts/free-disk.sh
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: bins/jc/Dockerfile
+          push: false
+          cache-from: type=gha,scope=jc

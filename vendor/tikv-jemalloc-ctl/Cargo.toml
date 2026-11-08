@@ -1,0 +1,27 @@
+# tikv-jemalloc-ctl 0.7.0 (crates.io, MIT OR Apache-2.0, https://github.com/tikv/jemallocator)
+# with jemalloc-ctl/src from upstream commit 66b124bdf4 "Remove the paste crate dependency"
+# (#189, 2026-09-25), which also carries the profiling hooks of #172: paste is unmaintained
+# (RUSTSEC-2024-0436) and 0.7.0 is the newest release. vendor/SOURCES.md. Drop this copy when a
+# release after 0.7.0 ships without paste.
+[package]
+name = "tikv-jemalloc-ctl"
+version = "0.7.0"
+edition = "2018"
+license = "MIT OR Apache-2.0"
+description = "A safe wrapper over jemalloc's control and introspection APIs (0.7.0 without paste)"
+publish = false
+
+[dependencies]
+libc = { version = "0.2", default-features = false }
+tikv-jemalloc-sys = "0.7.0"
+
+[dev-dependencies]
+tikv-jemallocator = "0.7.0"
+
+[features]
+default = []
+disable_initial_exec_tls = ["tikv-jemalloc-sys/disable_initial_exec_tls"]
+profiling = ["tikv-jemalloc-sys/profiling"]
+profiling_libunwind = ["tikv-jemalloc-sys/profiling_libunwind", "profiling"]
+stats = ["tikv-jemalloc-sys/stats"]
+use_std = ["libc/use_std"]
