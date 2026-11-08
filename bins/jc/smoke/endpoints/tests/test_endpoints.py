@@ -225,3 +225,25 @@ def test_a_stopped_gateway_fails_and_never_passes(tmp_path):
 def test_only_loopback_targets_are_accepted(tmp_path):
     with pytest.raises(SystemExit):
         suite.main(["--base-url", "https://portal.dev.joinedcontext.com", "--export", str(tmp_path), "--out", str(tmp_path)])
+
+
+def test_an_app_endpoint_keeps_only_the_apps_own_grants(tmp_path):
+    b = bundle(tmp_path)
+    proj = b / "gitea" / "files" / "org" / "city"
+    (proj / "apps" / "map").mkdir(parents=True)
+    (proj / "apps" / "map" / "app.yaml").write_text("kind: App\nmetadata: {name: map, namespace: city}\n")
+    (proj / "spaces" / "air" / "endpoints" / "app-map.yaml").write_text(ENDPOINT.format(
+        name="app-map", slug="c" * 32, audience="public", extra=""))
+    (proj / "spaces" / "air" / "policies" / "app-map-1.yaml").write_text(POLICY.format(
+        name="app-map-1", assignee="{kind: role, id: 'endpoint:city/app-map'}", pattern=""))
+    app = {e.name: e for e in ex.load_endpoints(b / "gitea" / "files")}["app-map"]
+    assert [g.name for g in app.grants] == ["app-map-1"] and app.public_grants() == []
+
+
+def test_a_person_holds_a_group_grant_by_bare_or_full_path():
+    tok = "x." + suite.base64_json({"aud": ["s"], "sub": "u1", "groups": ["/city/staff"]}) + ".y"
+    p = suite.Person(tok)
+    assert p.aud == {"s"}
+    assert p.holds(ex.Grant("g", {"kind": "group", "id": "staff"}, {"retrieveOps"}, []))
+    assert p.holds(ex.Grant("u", {"kind": "user", "id": "u1"}, {"retrieveOps"}, []))
+    assert not p.holds(ex.Grant("o", {"kind": "group", "id": "others"}, {"retrieveOps"}, []))

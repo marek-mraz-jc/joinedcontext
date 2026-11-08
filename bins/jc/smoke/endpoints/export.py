@@ -77,13 +77,19 @@ class Endpoint:
     datasets: list = field(default_factory=list)  # CKAN dataset names (public catalogue)
     slices: list = field(default_factory=list)    # spec.catalog.datasets names
     file: str = ""
+    caller_role: bool = False  # every admitted caller holds endpoint:{project}/{name} (AP-96)
 
     @property
     def closed(self) -> bool:
         return self.audience in CLOSED
 
+    def own_role(self, grant: "Grant") -> bool:
+        """With callerRole every caller it admits holds `endpoint:{project}/{name}` here."""
+        return self.caller_role and grant.assignee.get("kind") == "role" \
+            and grant.assignee.get("id") == f"endpoint:{self.project}/{self.name}"
+
     def public_grants(self) -> list:
-        return [g for g in self.grants if g.public() and g.reads()]
+        return [g for g in self.grants if (g.public() or self.own_role(g)) and g.reads()]
 
     def selectors(self, grants) -> list | None:
         """The selectors a set of grants opens; None = every type of the tenant."""
@@ -106,8 +112,8 @@ def _load_yaml(path: Path):
 def _grant(name: str, spec: dict) -> Grant:
     selectors, narrowed = [], []
     for info in spec.get("information") or []:
-        if info.get("propertyNames") or info.get("relationshipNames"):
-            narrowed.append("attribute list")
+        # propertyNames/relationshipNames narrow the attributes an entity shows, never which
+        # entities a read finds: counts and ids stay comparable.
         for e in info.get("entities") or []:
             selectors.append(Selector(short_type(str(e.get("type", "*"))), e.get("idPattern")))
     for k in ("q", "scopeQ", "validity"):
@@ -115,6 +121,15 @@ def _grant(name: str, spec: dict) -> Grant:
             narrowed.append(k)
     return Grant(name, spec.get("assignee") or {}, set(spec.get("operations") or []), selectors,
                  ", ".join(sorted(set(narrowed))))
+
+
+def own_grant(spec: dict, project: str, endpoint: str) -> bool:
+    """Portal views.rs own_grant: assignee role `endpoint:{project}/{endpoint}` or `.../{role}`."""
+    a = spec.get("assignee") or {}
+    own = f"endpoint:{project}/{endpoint}"
+    rest = str(a.get("id", ""))[len(own):] if str(a.get("id", "")).startswith(own) else None
+    return a.get("kind") == "role" and rest is not None and (
+        rest == "" or (rest.startswith("/") and len(rest) > 1 and "/" not in rest[1:]))
 
 
 def load_endpoints(files: Path) -> list[Endpoint]:
@@ -133,6 +148,11 @@ def load_endpoints(files: Path) -> list[Endpoint]:
                 ref = s.get("contextSpaceRef")
                 space = ref.get("name") if isinstance(ref, dict) else ref or f.parts[-3]
                 policies.setdefault((project, space), []).append((d["metadata"]["name"], s))
+    apps = set()
+    for f in list(files.glob("*/*/apps/*/app.yaml")) + list(files.glob("*/*/apps/*.yaml")):
+        for d in _load_yaml(f):
+            if d.get("kind") == "App":
+                apps.add((d["metadata"].get("namespace") or f.relative_to(files).parts[1], d["metadata"]["name"]))
     out = []
     for f in sorted(files.glob("*/*/spaces/*/endpoints/*.yaml")):
         for d in _load_yaml(f):
@@ -149,6 +169,10 @@ def load_endpoints(files: Path) -> list[Endpoint]:
                 if refs is not None and not any(
                         str(r).split(":")[-2:] == [tenant, pname] for r in refs):
                     continue
+                # An App's Endpoint keeps only the App's own grants (Portal views.rs bound(), AP-139).
+                if meta["name"].startswith("app-") and (project, meta["name"][4:]) in apps \
+                        and not own_grant(pspec, project, meta["name"]):
+                    continue
                 bound.append(_grant(pname, pspec))
             catalog = s.get("catalog") or {}
             slices = [x["name"] for x in catalog.get("datasets") or [] if isinstance(x, dict) and x.get("name")]
@@ -159,7 +183,8 @@ def load_endpoints(files: Path) -> list[Endpoint]:
                 audience=str(s.get("audience")), representations=list(s.get("enabledRepresentations") or []),
                 grants=bound, ical=[o["name"] for o in (s.get("representations") or {}).get("ical") or []
                                     if isinstance(o, dict) and o.get("name")],
-                datasets=datasets, slices=slices, file=str(f.relative_to(files))))
+                datasets=datasets, slices=slices, file=str(f.relative_to(files)),
+                caller_role=bool(s.get("callerRole"))))
     return out
 
 
