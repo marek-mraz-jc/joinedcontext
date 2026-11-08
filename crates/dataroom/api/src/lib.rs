@@ -513,7 +513,7 @@ async fn handle_portal_catalogue(
     let page = params.page.unwrap_or(1).max(1);
     let mut filter = DatasetFilter {
         q: params.q.unwrap_or_default(),
-        offset: (page - 1) * 20,
+        offset: (page - 1).saturating_mul(20),
         limit: 20,
         ..DatasetFilter::default()
     };
@@ -1361,7 +1361,7 @@ async fn dispatch_ui_route(
             let mut filter = DatasetFilter {
                 q: q.clone(),
                 sort: Some(sort.clone()),
-                offset: (page - 1) * 20,
+                offset: (page - 1).saturating_mul(20),
                 limit: 20,
                 ..DatasetFilter::default()
             };

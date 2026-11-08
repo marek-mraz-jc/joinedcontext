@@ -3426,3 +3426,17 @@ async fn feed_addresses_are_escaped_and_feeds_run_no_script() {
         assert_eq!(a.header("content-security-policy"), "default-src 'none'");
     }
 }
+
+/// A caller-chosen page number cannot overflow the offset (debug builds panicked, release wrapped).
+#[tokio::test]
+async fn a_huge_page_number_answers_an_empty_page() {
+    let w = world().await;
+    let huge = usize::MAX;
+    for uri in [
+        format!("/api/v1/catalogue?page={huge}"),
+        format!("/dataset?page={huge}"),
+    ] {
+        let a = get(&w.app, &uri, None).await;
+        assert_eq!(a.status, StatusCode::OK, "{uri}");
+    }
+}
