@@ -8,7 +8,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE.parent.parent))
-sys.path.insert(0, str(HERE.parent.parent / "endpoints"))
+sys.path.append(str(HERE.parent.parent / "endpoints"))  # after charts-apps: endpoints has a suite.py too
 
 import inventory as inv
 import suite

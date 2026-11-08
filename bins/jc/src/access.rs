@@ -8,6 +8,11 @@
 //! `request` span that names the module and the id (every line the module writes for the
 //! request carries both), answers with the id, and writes one `jc::access` line: method, path
 //! without the query, status and milliseconds; for a refusal or a failure also the reason.
+//!
+//! The same door counts the call into jc's one metrics recorder for the modules that record
+//! nothing of their own (shako, kaisatsu, daiya, dataroom, ekiben): `<module>_http_requests_total`
+//! by status and `<module>_http_request_duration_seconds`. Antares, the gateway and the Portal
+//! keep their own request series.
 
 use axum::Router;
 use axum::extract::Request;
@@ -60,6 +65,7 @@ async fn access(module: &'static str, mut req: Request, next: Next) -> Response 
     let mut response = next.run(req).instrument(span.clone()).await;
     let status = response.status();
     let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    record(module, status.as_u16(), started.elapsed().as_secs_f64());
     span.in_scope(|| {
         let code = status.as_u16();
         if status.is_server_error() || status.is_client_error() {
@@ -71,6 +77,20 @@ async fn access(module: &'static str, mut req: Request, next: Next) -> Response 
     });
     response.headers_mut().insert(HEADER, value);
     response
+}
+
+/// The modules whose own code records their request series (`antares_http_requests_total`,
+/// `jc_gateway_*`, `jc_portal_*`): a second series of the same name would collide.
+const RECORDS_ITS_OWN: [&str; 3] = ["antares", "gateway", "portal"];
+
+/// One answered call of `module` into the process recorder.
+fn record(module: &'static str, status: u16, seconds: f64) {
+    if RECORDS_ITS_OWN.contains(&module) {
+        return;
+    }
+    metrics::counter!(format!("{module}_http_requests_total"), "status" => status.to_string())
+        .increment(1);
+    metrics::histogram!(format!("{module}_http_request_duration_seconds")).record(seconds);
 }
 
 #[cfg(test)]
@@ -181,6 +201,30 @@ mod tests {
             lines[0].contains("status=401") && lines[0].contains("reason=\"Unauthorized\""),
             "{log}"
         );
+    }
+
+    #[test]
+    fn every_module_without_series_of_its_own_records_its_calls() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            for module in crate::module::Module::ALL {
+                record(module.name(), 200, 0.01);
+                record(module.name(), 401, 0.002);
+            }
+        });
+        let text = handle.render();
+        for module in ["shako", "kaisatsu", "daiya", "dataroom", "ekiben"] {
+            assert!(
+                text.contains(&format!("{module}_http_requests_total{{status=\"200\"}} 1"))
+                    && text.contains(&format!("{module}_http_requests_total{{status=\"401\"}} 1"))
+                    && text.contains(&format!("{module}_http_request_duration_seconds")),
+                "{module}: {text}"
+            );
+        }
+        for module in RECORDS_ITS_OWN {
+            assert!(!text.contains(&format!("{module}_http_")), "{module}: {text}");
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
