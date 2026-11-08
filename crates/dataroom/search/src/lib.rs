@@ -187,7 +187,10 @@ pub fn parse_search_terms(q: &str) -> Result<Vec<String>> {
 
 /// Parses a CKAN `fq` filter string using a closed grammar into `DatasetFilter` clauses.
 ///
-/// Refuses Solr local parameters (`{!...}`) and unknown syntax.
+/// The grammar is `key:value` or `key:"quoted value"` clauses joined by whitespace, `AND` or a
+/// leading `+`. Solr local parameters (`{!...}`), negation (`-key:`, `NOT`), `OR` and words
+/// outside a clause are refused: ignoring them would widen or change the result silently.
+/// Unknown keys (`dataset_type:dataset`, which CKAN clients send) are accepted and ignored.
 pub fn apply_fq_to_filter(fq: &str, filter: &mut DatasetFilter) -> Result<()> {
     let trimmed = fq.trim();
     if trimmed.is_empty() {
@@ -215,10 +218,22 @@ pub fn apply_fq_to_filter(fq: &str, filter: &mut DatasetFilter) -> Result<()> {
         if let Some(after_plus) = rest.strip_prefix('+') {
             rest = after_plus;
         }
+        let refuse = |what: &str| {
+            Err(DataroomError::field_error(
+                "fq",
+                format!("{what} is not supported in fq; use key:value clauses joined by AND"),
+            ))
+        };
         let Some((key, after_colon)) = rest.split_once(':') else {
-            break;
+            return refuse(&format!("'{}'", rest.trim()));
         };
         let key = key.trim().to_owned();
+        if key.starts_with('-') || key.starts_with('!') {
+            return refuse("negation");
+        }
+        if key.contains(char::is_whitespace) || key.is_empty() {
+            return refuse(&format!("'{key}'"));
+        }
         let after_colon = after_colon.trim_start();
         let (val, tail) = if let Some(quoted) = after_colon.strip_prefix('"') {
             match quoted.split_once('"') {
@@ -1164,5 +1179,476 @@ mod tests {
         let (matched, score) = matches_full_text(&ds, &terms);
         assert!(matched && score > 0);
         let _ = (org_id, catalogue_id);
+    }
+
+    fn publisher(id: &str, name: &str, title: &str, state: RecordState) -> Publisher {
+        let (org_id, catalogue_id) = test_ids();
+        serde_json::from_value(json!({
+            "orgId": org_id, "catalogueId": catalogue_id, "id": id, "name": name,
+            "title": {"sk": title}, "description": {}, "uri": format!("https://e.org/{name}"),
+            "state": state, "editorGrants": [],
+            "created": "2026-11-01T10:00:00Z", "modified": "2026-11-01T10:00:00Z"
+        }))
+        .expect("publisher fixture")
+    }
+
+    fn fq(text: &str) -> Result<DatasetFilter> {
+        let mut f = DatasetFilter::default();
+        apply_fq_to_filter(text, &mut f).map(|()| f)
+    }
+
+    #[test]
+    fn fq_closed_grammar_maps_every_key_and_refuses_the_rest() {
+        let f = fq(r#"organization:a +owner_org:"b c" AND tags:t1 keyword:t2 res_format:CSV license_id:cc-by theme:ENVI spatial:SK032 visibility:internal visibility:restricted visibility:other harvest_source:h1 dataset_type:dataset publisher:"""#).unwrap();
+        assert_eq!(f.publishers, ["a", "b c"]);
+        assert_eq!(f.tags, ["t1", "t2"]);
+        assert_eq!(f.formats, ["CSV"]);
+        assert_eq!(f.licences, ["cc-by"]);
+        assert_eq!(f.themes, ["ENVI"]);
+        assert_eq!(f.spatial, ["SK032"]);
+        assert_eq!(
+            f.visibilities,
+            [
+                Visibility::Internal,
+                Visibility::Restricted,
+                Visibility::Public
+            ]
+        );
+        assert_eq!(f.harvest_source.as_deref(), Some("h1"));
+        assert_eq!(fq("tags:\"unterminated").unwrap().tags, ["unterminated"]);
+        assert_eq!(fq("   ").unwrap(), DatasetFilter::default());
+
+        // Each of these used to be dropped without a word, widening or changing the result.
+        for bad in [
+            "-organization:a",
+            "!tags:x",
+            "organization:a OR organization:b",
+            "NOT organization:a",
+            "organization:a stray",
+            "justwords",
+            ":empty-key",
+            "_query_:x",
+            "_val_:x",
+        ] {
+            let e = fq(bad).expect_err(bad);
+            assert!(
+                matches!(&e, DataroomError::Validation { fields, .. } if fields.contains_key("fq")),
+                "{bad}: {e:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn query_terms_tsquery_and_search_words() {
+        assert!(parse_search_terms("a _query_:x").is_err());
+        assert!(parse_search_terms("_val_:x").is_err());
+        for empty in ["", "  ", "*", "*:*"] {
+            assert!(parse_search_terms(empty).unwrap().is_empty());
+        }
+        assert_eq!(
+            parse_search_terms("Ovzdušie, bike-sharing!").unwrap(),
+            ["ovzdusie", "bike-sharing"]
+        );
+        let many = "slovo ".repeat(40);
+        assert_eq!(
+            parse_search_terms(&many).unwrap().len(),
+            32,
+            "terms are capped"
+        );
+
+        assert_eq!(
+            to_pg_prefix_tsquery(&["a'b".into(), "c".into()]).as_deref(),
+            Some("ab:* & c:*")
+        );
+        assert_eq!(to_pg_prefix_tsquery(&["!&|".into()]), None);
+        assert_eq!(to_pg_prefix_tsquery(&[]), None);
+
+        assert_eq!(jc_search_words(""), "");
+        assert_eq!(jc_search_words("\"exact\" x"), "\"exact\" x");
+        assert_eq!(jc_search_words("tags:x"), "tags:x");
+        assert_eq!(
+            jc_search_words("a- -b"),
+            "a- -b",
+            "short or broken words stay"
+        );
+        assert_eq!(jc_stem("dom2x"), "dom2x");
+        assert_eq!(word_stem_candidates("ovzdušie"), ["ovzdusie", "ovzdus"]);
+        assert_eq!(word_stem_candidates("dôchodok"), ["dochodok", "dochodk"]);
+        assert_eq!(word_stem_candidates("most"), ["most"]);
+        assert!(word_stem_candidates("").is_empty());
+    }
+
+    #[test]
+    fn full_text_ranks_name_title_keywords_and_description() {
+        let mut ds = make_dataset("parking-zones", "p", "Státie", &[], &[], Visibility::Public);
+        ds.description.insert("sk".into(), "Text".into());
+        ds.title.insert("fi".into(), "Pysäköinti".into());
+        ds.title.insert("de".into(), "Parkzonen".into());
+        ds.description.insert("de".into(), "Beschreibung".into());
+        ds.keywords.insert("en".into(), vec!["mobility".into()]);
+        let score = |q: &str| matches_full_text(&ds, &parse_search_terms(q).unwrap());
+        assert_eq!(score(""), (true, 0));
+        assert_eq!(score("parking"), (true, 8), "name");
+        assert_eq!(score("statie"), (true, 4), "title, folded");
+        assert_eq!(score("pysakointi"), (true, 4), "Finnish title");
+        assert_eq!(score("parkzonen"), (true, 4), "any other title language");
+        assert_eq!(score("mobil"), (true, 2), "keyword prefix");
+        assert_eq!(score("ovzdusie"), (true, 2), "tag");
+        assert_eq!(score("beschreib"), (true, 1), "description");
+        assert_eq!(score("zones-x"), (false, 0));
+        assert_eq!(score("parking statie").1, 12, "every term adds");
+    }
+
+    #[test]
+    fn search_filters_sorts_pages_and_keeps_active_facet_values() {
+        let (org_id, catalogue_id) = test_ids();
+        let ctx = RequestCtx::anonymous(org_id, catalogue_id);
+        let authz = PolicyAuthorizer::default();
+        let mut a = make_dataset(
+            "alpha",
+            "pub-a",
+            "Zeta",
+            &["ENVI"],
+            &["CSV"],
+            Visibility::Public,
+        );
+        a.modified = Utc::now() - chrono::Duration::days(2);
+        a.harvest_source_id = Some("h1".into());
+        a.keywords
+            .insert("sk".into(), vec!["voda".into(), "ovzdusie".into()]);
+        let mut b = make_dataset(
+            "beta",
+            "b-slug",
+            "Alfa",
+            &["TRAN", "TRAN"],
+            &["json", "JSON", " "],
+            Visibility::Public,
+        );
+        b.licence_id = Some("unknown-licence".into());
+        b.extras.insert("harvest_source".into(), "h2".into());
+        b.spatial.push("{\"type\":\"Point\"}".into());
+        b.temporal = Some(TemporalPeriod {
+            start: None,
+            end: NaiveDate::from_ymd_opt(2020, 1, 1),
+        });
+        let mut c = make_dataset("gamma", "pub-a", "Mid", &[], &[], Visibility::Public);
+        c.temporal = Some(TemporalPeriod {
+            start: NaiveDate::from_ymd_opt(2026, 1, 1),
+            end: NaiveDate::from_ymd_opt(2020, 1, 1),
+        });
+        c.licence_id = None;
+        let mut draft = make_dataset("draft", "pub-a", "Draft", &[], &[], Visibility::Public);
+        draft.state = RecordState::Draft;
+        let mut gone = make_dataset("gone", "pub-a", "Gone", &[], &[], Visibility::Public);
+        gone.state = RecordState::Withdrawn;
+        let orphan = make_dataset("orphan", "pub-w", "Orphan", &[], &[], Visibility::Public);
+        let mut foreign = make_dataset("foreign", "pub-a", "Foreign", &[], &[], Visibility::Public);
+        foreign.org_id = OrgId::from_uuid(Uuid::from_u128(99));
+        let mut empty_temporal =
+            make_dataset("none", "pub-a", "None", &[], &[], Visibility::Public);
+        empty_temporal.temporal = Some(TemporalPeriod {
+            start: None,
+            end: None,
+        });
+        let all = vec![a, b, c, draft, gone, orphan, foreign, empty_temporal];
+        let pubs = vec![
+            publisher("pub-a", "a-slug", "Vydavateľ A", RecordState::Active),
+            publisher("pub-w", "w-slug", "Zrušený", RecordState::Withdrawn),
+            publisher("pub-z", "z-slug", "Iný", RecordState::Active),
+        ];
+        let run = |f: DatasetFilter| {
+            search_datasets(&ctx, &authz, &all, &pubs, &f, "sk").expect("search")
+        };
+        let names = |o: &SearchOutcome| {
+            o.datasets
+                .iter()
+                .map(|d| d.name.clone())
+                .collect::<Vec<_>>()
+        };
+        let base = DatasetFilter {
+            limit: 20,
+            ..DatasetFilter::default()
+        };
+
+        // Drafts, withdrawn records, a withdrawn publisher's datasets and other organizations' are out.
+        let res = run(base.clone());
+        assert_eq!(res.total, 4, "{:?}", names(&res));
+        assert_eq!(
+            run(DatasetFilter {
+                include_drafts: true,
+                ..base.clone()
+            })
+            .total,
+            5
+        );
+        assert_eq!(
+            run(DatasetFilter {
+                include_withdrawn: true,
+                ..base.clone()
+            })
+            .total,
+            5
+        );
+        assert_eq!(
+            run(DatasetFilter {
+                include_private: true,
+                ..base.clone()
+            })
+            .total,
+            5,
+            "include_private keeps the withdrawn publisher's"
+        );
+
+        // Facets: themes deduplicated, formats case-folded and sorted, blank ones dropped,
+        // unknown licences labelled by id, GeoJSON spatial skipped, years spanned and bounded.
+        let fmt: Vec<_> = res
+            .facets
+            .format
+            .iter()
+            .map(|f| (f.value.as_str(), f.count))
+            .collect();
+        assert_eq!(fmt, [("CSV", 1), ("json", 1)]);
+        assert!(res
+            .facets
+            .theme
+            .iter()
+            .any(|f| f.value == "TRAN" && f.count == 1));
+        assert!(res
+            .facets
+            .licence
+            .iter()
+            .any(|f| f.value == "unknown-licence" && f.label == "unknown-licence"));
+        assert!(res.facets.spatial.iter().all(|f| !f.value.starts_with('{')));
+        assert_eq!(res.facets.spatial[0].label, "SK032");
+        let years: Vec<_> = res.facets.year.iter().map(|f| f.value.as_str()).collect();
+        assert!(
+            years.contains(&"2020") && years.contains(&"2024") && years.contains(&"2026"),
+            "{years:?}"
+        );
+        assert!(res.facets.keyword.iter().any(|f| f.value == "voda"));
+        assert_eq!(
+            res.facets
+                .publisher
+                .iter()
+                .find(|f| f.value == "a-slug")
+                .map(|f| f.label.as_str()),
+            Some("Vydavateľ A")
+        );
+        assert_eq!(res.facets.visibility[0].value, "public");
+
+        // Sorting.
+        let sorted = |s: &str| {
+            names(&run(DatasetFilter {
+                sort: Some(s.into()),
+                ..base.clone()
+            }))
+        };
+        assert_eq!(sorted("name asc"), ["alpha", "beta", "gamma", "none"]);
+        assert_eq!(sorted("name"), ["alpha", "beta", "gamma", "none"]);
+        assert_eq!(sorted("name desc"), ["none", "gamma", "beta", "alpha"]);
+        assert_eq!(
+            sorted("title_string asc"),
+            ["beta", "gamma", "none", "alpha"]
+        );
+        assert_eq!(sorted("title desc"), ["alpha", "none", "gamma", "beta"]);
+        assert_eq!(
+            sorted("metadata_modified desc").last().map(String::as_str),
+            Some("alpha")
+        );
+        let ranked = run(DatasetFilter {
+            q: "alpha zeta".into(),
+            ..base.clone()
+        });
+        assert_eq!(names(&ranked), ["alpha"]);
+
+        // Paging: rows=0 counts only, rows over 1000 are capped, offset skips.
+        let counted = run(DatasetFilter {
+            limit: 0,
+            ..base.clone()
+        });
+        assert_eq!(
+            (counted.total, counted.datasets.len(), counted.limit),
+            (4, 0, 0)
+        );
+        assert_eq!(
+            run(DatasetFilter {
+                limit: 5000,
+                ..base.clone()
+            })
+            .limit,
+            1000
+        );
+        let paged = run(DatasetFilter {
+            offset: 3,
+            sort: Some("name".into()),
+            ..base.clone()
+        });
+        assert_eq!(names(&paged), ["none"]);
+
+        // Filters per facet, harvest source from the column or the extras.
+        let only = |f: DatasetFilter| names(&run(f));
+        assert_eq!(
+            only(DatasetFilter {
+                harvest_source: Some("h1".into()),
+                ..base.clone()
+            }),
+            ["alpha"]
+        );
+        assert_eq!(
+            only(DatasetFilter {
+                harvest_source: Some("h2".into()),
+                ..base.clone()
+            }),
+            ["beta"]
+        );
+        assert_eq!(
+            only(DatasetFilter {
+                formats: vec!["JSON".into()],
+                ..base.clone()
+            }),
+            ["beta"]
+        );
+        assert_eq!(
+            only(DatasetFilter {
+                tags: vec!["voda".into()],
+                ..base.clone()
+            }),
+            ["alpha"]
+        );
+        assert_eq!(
+            only(DatasetFilter {
+                licences: vec!["unknown-licence".into()],
+                ..base.clone()
+            }),
+            ["beta"]
+        );
+        assert_eq!(
+            only(DatasetFilter {
+                spatial: vec!["SK032".into()],
+                ..base.clone()
+            })
+            .len(),
+            4,
+            "label matches"
+        );
+        assert_eq!(
+            only(DatasetFilter {
+                years: vec![2026],
+                sort: Some("name".into()),
+                ..base.clone()
+            }),
+            ["gamma"]
+        );
+        assert_eq!(
+            only(DatasetFilter {
+                visibilities: vec![Visibility::Internal],
+                ..base.clone()
+            }),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            only(DatasetFilter {
+                publishers: vec!["pub-a".into()],
+                sort: Some("name".into()),
+                ..base.clone()
+            }),
+            ["alpha", "gamma", "none"],
+            "by id too"
+        );
+        assert_eq!(
+            only(DatasetFilter {
+                themes: vec![
+                    "http://publications.europa.eu/resource/authority/data-theme/TRAN".into()
+                ],
+                ..base.clone()
+            }),
+            ["beta"]
+        );
+
+        // An active filter value nothing matches stays in its facet with count 0 and a label.
+        let res = run(DatasetFilter {
+            publishers: vec!["z-slug".into(), "nobody".into()],
+            themes: vec!["AGRI".into()],
+            licences: vec!["cc-zero".into(), "own".into()],
+            formats: vec!["XLSX".into()],
+            ..base.clone()
+        });
+        assert_eq!(res.total, 0);
+        let label = |list: &[FacetCount], v: &str| {
+            list.iter()
+                .find(|f| f.value == v)
+                .map(|f| (f.label.clone(), f.count))
+        };
+        assert_eq!(
+            label(&res.facets.publisher, "z-slug"),
+            Some(("Iný".into(), 0))
+        );
+        assert_eq!(
+            label(&res.facets.publisher, "nobody"),
+            Some(("nobody".into(), 0))
+        );
+        assert_eq!(
+            label(&res.facets.publisher, "a-slug").map(|l| l.1),
+            Some(0),
+            "the other facets narrow it to 0, it stays selectable"
+        );
+        assert!(label(&res.facets.theme, "AGRI").is_some_and(|(l, c)| c == 0 && l != "AGRI"));
+        assert!(
+            label(&res.facets.licence, "cc-zero").is_some_and(|(l, c)| c == 0 && l != "cc-zero")
+        );
+        assert_eq!(label(&res.facets.licence, "own"), Some(("own".into(), 0)));
+        assert_eq!(label(&res.facets.format, "XLSX"), Some(("XLSX".into(), 0)));
+
+        // A query refused by the term parser refuses the search.
+        assert!(search_datasets(
+            &ctx,
+            &authz,
+            &all,
+            &pubs,
+            &DatasetFilter {
+                q: "{!x}".into(),
+                ..base
+            },
+            "sk"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn ckan_facet_dictionaries() {
+        let facets = SearchFacets {
+            publisher: vec![FacetCount {
+                value: "a".into(),
+                label: "A".into(),
+                count: 2,
+            }],
+            spatial: vec![FacetCount {
+                value: "s".into(),
+                label: "S".into(),
+                count: 1,
+            }],
+            ..SearchFacets::default()
+        };
+        let (simple, detailed) = facets.to_ckan_facets(&[]);
+        assert_eq!(simple["organization"], json!({"a": 2}));
+        assert_eq!(simple.as_object().unwrap().len(), 5);
+        assert_eq!(detailed["organization"]["items"][0]["display_name"], "A");
+        let asked: Vec<String> = [
+            "spatial",
+            "visibility",
+            "owner_org",
+            "groups",
+            "license_id",
+            "format",
+            "keyword",
+            "nonsense",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        let (simple, detailed) = facets.to_ckan_facets(&asked);
+        assert_eq!(simple["spatial"], json!({"s": 1}));
+        assert_eq!(simple["visibility"], json!({}));
+        assert!(simple.get("nonsense").is_none());
+        assert_eq!(detailed["owner_org"]["title"], "owner_org");
     }
 }
