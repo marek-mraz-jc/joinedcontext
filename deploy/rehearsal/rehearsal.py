@@ -748,9 +748,24 @@ def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, repo
     report["daiya"] = rows
 
 
+def bundle_settled(export: Path) -> str:
+    """Why the bundle is still being written, or "" when it is not: an export in progress keeps a
+    `.parts` directory, and manifest.json is written last."""
+    manifest = export / "manifest.json"
+    if not manifest.exists():
+        return "no manifest.json"
+    if parts := sorted(str(p.relative_to(export)) for p in export.rglob(".parts")):
+        return f"export in progress: {parts[0]}"
+    at = manifest.stat().st_mtime
+    newer = sorted(str(p.relative_to(export)) for p in export.rglob("*") if p.is_file() and p.stat().st_mtime > at)
+    return f"written after manifest.json: {newer[:3]}" if newer else ""
+
+
 def cmd_import(a):
     loopback_only(a.base)
     export, state = Path(a.export), Path(a.state)
+    if why := bundle_settled(export):
+        raise SystemExit(f"the bundle is not settled ({why}): import after the exporter finishes")
     now = parse_time(a.now) if a.now else utcnow()
     manifest = json.loads((export / "manifest.json").read_text())
     # The window ends at the export: an instance observed more than 24 h before it is refused.

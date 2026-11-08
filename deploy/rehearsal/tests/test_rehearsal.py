@@ -212,11 +212,11 @@ def test_the_import_never_sends_an_instance_older_than_the_window(tmp_path):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     export = tmp_path / "export"
     (export / "antares").mkdir(parents=True)
-    (export / "manifest.json").write_text(json.dumps({"env": "unit", "exportedAt": rh.iso(NOW)}))
     later = NOW + dt.timedelta(hours=5)
     (export / "antares" / "entities.jsonl").write_text(json.dumps(
         {"tenant": "t", "entity": {"id": "urn:ngsi-ld:X:1", "type": "X"}}) + "\n")
     (export / "antares" / "temporal.jsonl").write_text("".join(json.dumps(instance(d)) + "\n" for d in (25, 23, 1)))
+    (export / "manifest.json").write_text(json.dumps({"env": "unit", "exportedAt": rh.iso(NOW)}))  # written last
     report = tmp_path / "report.json"
     rh.main(["import", "--export", str(export), "--base", f"http://127.0.0.1:{server.server_port}",
              "--state", str(tmp_path), "--report", str(report), "--only", "antares", "--now", rh.iso(later)])
@@ -283,3 +283,22 @@ def test_antares_deletes_history_older_than_24_hours_and_never_the_current_state
                          headers={"NGSILD-Tenant": tenant})
     assert st == 200 and current["reading"]["value"] == 42, current
 
+
+
+def test_a_bundle_still_being_written_is_not_imported(tmp_path):
+    (tmp_path / "antares").mkdir()
+    data = tmp_path / "antares" / "entities.jsonl"
+    data.write_text("")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}")
+    os.utime(data, (1, 1))
+    assert rh.bundle_settled(tmp_path) == ""
+    os.utime(data, None)
+    os.utime(manifest, (1, 1))
+    assert "written after manifest.json" in rh.bundle_settled(tmp_path)
+    os.utime(manifest, None)
+    (tmp_path / "antares" / ".parts").mkdir()
+    assert "in progress" in rh.bundle_settled(tmp_path)
+    with pytest.raises(SystemExit):
+        rh.main(["import", "--export", str(tmp_path), "--base", "http://127.0.0.1:1", "--state", str(tmp_path),
+                 "--report", str(tmp_path / "r.json")])
