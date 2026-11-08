@@ -332,10 +332,10 @@ pub(super) fn context(view: &View, generator_version: &str) -> Result<Value, Str
             for r in any_of.iter().filter(|r| view.is_type(r)) {
                 coercions.insert(generator.type_coercion(view, r)?);
             }
-            if coercions.len() == 1 {
-                if let Some(Some(c)) = coercions.into_iter().next() {
-                    def.insert("@type".to_owned(), Value::String(c));
-                }
+            if coercions.len() == 1
+                && let Some(Some(c)) = coercions.into_iter().next()
+            {
+                def.insert("@type".to_owned(), Value::String(c));
             }
         } else if has_class {
             def.insert("@type".to_owned(), Value::String("@id".to_owned()));
@@ -475,13 +475,12 @@ fn check_namespaces(view: &View) -> Result<(), String> {
     let slots = view.all_slots().into_iter().map(|(n, s)| (false, n, s));
     for (class, name, element) in classes.chain(slots) {
         let iri = view.get_uri(class, &name, element, true);
-        if let Some(ns) = RESERVED_NAMESPACES.iter().find(|ns| iri.starts_with(*ns)) {
-            if annotation_value(element, "upstream_source")
+        if let Some(ns) = RESERVED_NAMESPACES.iter().find(|ns| iri.starts_with(*ns))
+            && annotation_value(element, "upstream_source")
                 .filter(|v| !v.is_empty())
                 .is_none()
-            {
-                squatted.push(format!("'{name}' → {iri} (reserved: {ns})"));
-            }
+        {
+            squatted.push(format!("'{name}' → {iri} (reserved: {ns})"));
         }
     }
     if squatted.is_empty() {

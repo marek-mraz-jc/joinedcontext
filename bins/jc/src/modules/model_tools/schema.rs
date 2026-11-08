@@ -933,7 +933,6 @@ impl View {
         })
     }
 
-    #[must_use]
     pub(super) fn classes(&self) -> impl Iterator<Item = (&String, &Obj)> {
         self.schema
             .classes
@@ -951,7 +950,6 @@ impl View {
             .ok_or_else(|| format!("No such class: \"{name}\""))
     }
 
-    #[must_use]
     pub(super) fn enums(&self) -> impl Iterator<Item = (&String, &Obj)> {
         self.schema
             .enums
@@ -1078,10 +1076,10 @@ impl View {
                     continue;
                 };
                 for metaslot in INHERITED_SLOT_METASLOTS {
-                    if truthy(anc.get(metaslot)) {
-                        if let Some(v) = anc.get(metaslot) {
-                            induced.insert(metaslot.to_owned(), v.clone());
-                        }
+                    if truthy(anc.get(metaslot))
+                        && let Some(v) = anc.get(metaslot)
+                    {
+                        induced.insert(metaslot.to_owned(), v.clone());
                     }
                 }
             }
@@ -1205,10 +1203,10 @@ impl View {
     #[must_use]
     pub(super) fn expand_curie(&self, uri: &str) -> String {
         let parts: Vec<&str> = uri.split(':').collect();
-        if let [pfx, local] = parts.as_slice() {
-            if let Some((_, ns)) = self.namespaces.iter().find(|(p, _)| p == pfx) {
-                return format!("{ns}{local}");
-            }
+        if let [pfx, local] = parts.as_slice()
+            && let Some((_, ns)) = self.namespaces.iter().find(|(p, _)| p == pfx)
+        {
+            return format!("{ns}{local}");
         }
         uri.to_owned()
     }

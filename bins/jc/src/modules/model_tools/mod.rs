@@ -60,7 +60,6 @@ struct State {
 }
 
 /// The module's router: `/healthz`, `/generate`, and a JSON 404 for anything else.
-#[must_use]
 pub fn router() -> Router {
     let state = State {
         slots: Arc::new(Semaphore::new(WORK_SLOTS)),
