@@ -45,7 +45,7 @@ const RETIRED: &str = "the-secret-being-retired";
 /// A second source's own secret: what must not open the first one.
 const OTHER: &str = "the-neighbouring-sources-secret";
 /// The forge's own hook secret, which used to authorise every sync source there was.
-const GITEA: &str = "the-forges-own-webhook-secret";
+const FORGE_SECRET: &str = "the-forges-own-webhook-secret";
 const STATUS: &str = "/api/v1/projects/bb/syncsources/regional/status";
 const DETACH: &str = "/api/v1/projects/bb/syncsources/regional/detach";
 const HOOK: &str = "/api/v1/webhooks/sync/bb/regional";
@@ -376,7 +376,12 @@ async fn the_sync_webhook_refuses_before_it_reads_the_project_or_the_source() {
 async fn a_source_is_run_by_its_own_secret_and_by_nobody_elses() {
     let shako = forge().await;
     // The platform's own shako secret is a third value here, so an answer that took it would show.
-    let state = state_with(&shako, &["read", "propose", "delete"], Some(GITEA), None);
+    let state = state_with(
+        &shako,
+        &["read", "propose", "delete"],
+        Some(FORGE_SECRET),
+        None,
+    );
     state
         .webhook_secrets
         .replace_all(std::collections::BTreeMap::from([
@@ -403,6 +408,24 @@ async fn a_source_is_run_by_its_own_secret_and_by_nobody_elses() {
     assert_ne!(status, StatusCode::UNAUTHORIZED, "{text}");
     assert_ne!(status, StatusCode::NOT_FOUND, "{text}");
 
+    // An outside Gitea origin signs in its own header; the same secret rule holds there.
+    let (status, text) = hook(
+        &state,
+        HOOK,
+        &[("x-gitea-signature", &sign(SECRET, body))],
+        body,
+    )
+    .await;
+    assert_ne!(status, StatusCode::UNAUTHORIZED, "{text}");
+    let (status, text) = hook(
+        &state,
+        HOOK,
+        &[("x-gitea-signature", &sign(OTHER, body))],
+        body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{text}");
+
     // The same signed body on the neighbouring source's path, and the neighbour's secret on this
     // one: both refused. This is the whole point of a secret per source.
     for (uri, signature) in [
@@ -415,7 +438,7 @@ async fn a_source_is_run_by_its_own_secret_and_by_nobody_elses() {
 
     // And the forge's own webhook secret, which used to open every source, opens none of them —
     // while the shako hook it belongs to still takes it.
-    let forge_signed = sign(GITEA, body);
+    let forge_signed = sign(FORGE_SECRET, body);
     let (status, text) = hook(&state, HOOK, &[(SIGNATURE_HEADER, &forge_signed)], body).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{text}");
     let (status, text) = hook(
@@ -434,7 +457,12 @@ async fn a_source_is_run_by_its_own_secret_and_by_nobody_elses() {
 #[tokio::test]
 async fn the_retiring_secret_is_accepted_until_a_pass_drops_it() {
     let shako = forge().await;
-    let state = state_with(&shako, &["read", "propose", "delete"], Some(GITEA), None);
+    let state = state_with(
+        &shako,
+        &["read", "propose", "delete"],
+        Some(FORGE_SECRET),
+        None,
+    );
     let body = r#"{"pushed":true}"#;
     let held = |secrets: Vec<String>| {
         state
