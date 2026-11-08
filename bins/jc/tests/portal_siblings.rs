@@ -101,6 +101,11 @@ async fn kaisatsu_pg(dir: &Path) -> Option<(PathBuf, PathBuf)> {
         .unwrap();
     let suffix = format!("{:x}", std::process::id());
     let (app_pw, mig_pw) = (format!("app{suffix}x9"), format!("mig{suffix}x9"));
+    // Both tests of this binary set the shared roles: two ALTER ROLE at once fail with "tuple
+    // concurrently updated", so they take turns; each test gets its own database.
+    static ROLES: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let roles = ROLES.lock().await;
     for (role, pw) in [("kaisatsu_app", &app_pw), ("kaisatsu_migrate", &mig_pw)] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "DO $$ BEGIN CREATE ROLE {role}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -110,7 +115,9 @@ async fn kaisatsu_pg(dir: &Path) -> Option<(PathBuf, PathBuf)> {
         .await
         .unwrap();
     }
-    let db = format!("kaisatsu_e2e_{suffix}");
+    drop(roles);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let db = format!("kaisatsu_e2e_{suffix}_{n}");
     for statement in [
         format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
         format!("CREATE DATABASE {db} OWNER kaisatsu_migrate"),
