@@ -16,6 +16,8 @@ pg_port=${3:?postgres port}
 here=$(cd "$(dirname "$0")" && pwd)
 home=${REHEARSAL_HOME:-$HOME/rehearsal}/$env_name
 jc_bin=${JC_BIN:-${CARGO_TARGET_DIR:-$here/../../target}/debug/jc}
+# A jc embedding a Portal UI older than the clone's UI sources serves the old UI silently: refuse it.
+"$here/ui-fresh.sh" "$here/../.." "$jc_bin" || exit 1
 export_dir=${REHEARSAL_EXPORT:-$home/export}
 bind=${REHEARSAL_BIND:-127.0.0.1}
 
