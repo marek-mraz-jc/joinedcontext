@@ -1,0 +1,684 @@
+//! Edge cases of `routes::data::handler` and `routes::data::endpoint_handler` (T-1863).
+//!
+//! The data route is the run's door to its project's context. Everything it is trusted with is
+//! here: the run comes from the ticket, the endpoint comes from the run, the token is minted for
+//! that endpoint alone, and nothing the workspace sets chooses any of the three.
+
+mod common;
+
+use axum::body::Body;
+use axum::http::StatusCode;
+use common::{app, authed, body_of, sample_run, Bases, RUN_ID, SLUG, TICKET};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tower::ServiceExt;
+use wiremock::matchers::{method, path, query_param};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// A proxy whose gateway is `gateway` and whose other upstreams resolve nowhere.
+fn with_gateway(allows_write: bool, gateway: &str) -> axum::Router {
+    app(
+        sample_run(allows_write),
+        Bases {
+            gateway: gateway.to_owned(),
+            ..Bases::default()
+        },
+    )
+}
+
+/// A proxy whose Portal answers `404` to every run lookup, which is what "no such run" is.
+///
+/// The default harness points the Portal at a name that resolves nowhere, so a run id the proxy
+/// does not hold used to fail in transport — a failure of the platform's, which answers `503` and
+/// not `401` since T-2418. A case about an unknown run id has to ask a Portal that is there.
+fn with_portal_answering_no_such_run(gateway: &str, portal: &MockServer) -> axum::Router {
+    app(
+        sample_run(false),
+        Bases {
+            gateway: gateway.to_owned(),
+            portal: portal.uri(),
+            ..Bases::default()
+        },
+    )
+}
+
+/// A Portal that holds no run at all.
+async fn portal_holding_nothing() -> MockServer {
+    let portal = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&portal)
+        .await;
+    portal
+}
+
+/// AG-22, AG-64: no credential, no request to the gateway — the refusal happens in the proxy.
+#[tokio::test]
+async fn a_request_without_credentials_is_refused_before_the_gateway_is_asked() {
+    let gateway = MockServer::start().await;
+    let proxy = with_gateway(false, &gateway.uri());
+
+    let response = proxy
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/data/ngsi-ld/v1/entities")
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(
+        gateway
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty(),
+        "nothing reached the gateway"
+    );
+}
+
+/// AG-22: an unknown run id and a wrong ticket answer the same sentence, so the route is no
+/// oracle for which run ids are live (T-2285).
+#[tokio::test]
+async fn an_unknown_run_and_a_wrong_ticket_are_refused_with_the_same_sentence() {
+    let portal = portal_holding_nothing().await;
+    let mut details = Vec::new();
+    for (run, ticket) in [
+        (RUN_ID, "not-the-ticket"),
+        ("11111111-2222-3333-4444-555555555555", TICKET),
+        ("11111111-2222-3333-4444-555555555555", "not-the-ticket"),
+    ] {
+        let proxy =
+            with_portal_answering_no_such_run("http://context-gateway.invalid:8080", &portal);
+        let response = proxy
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/v1/data/ngsi-ld/v1/entities")
+                    .header("x-jc-run", run)
+                    .header("x-jc-ticket", ticket)
+                    .body(Body::empty())
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "run '{run}'");
+        details.push(body_of(response).await);
+    }
+    assert!(
+        details.windows(2).all(|pair| pair[0] == pair[1]),
+        "the refusals differ and tell a caller which run ids exist: {details:?}"
+    );
+}
+
+/// AG-22: the bearer form carries the same credential and is verified the same way; a bearer
+/// naming another run is refused.
+#[tokio::test]
+async fn the_bearer_form_of_the_ticket_is_accepted_and_one_for_another_run_is_not() {
+    let gateway = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+        .mount(&gateway)
+        .await;
+
+    let portal = portal_holding_nothing().await;
+    for (bearer, expected) in [
+        (format!("Bearer jcr_{RUN_ID}.{TICKET}"), StatusCode::OK),
+        (
+            format!("Bearer jcr_11111111-2222-3333-4444-555555555555.{TICKET}"),
+            StatusCode::UNAUTHORIZED,
+        ),
+        (format!("Bearer jcr_{RUN_ID}."), StatusCode::UNAUTHORIZED),
+        (format!("Bearer {TICKET}"), StatusCode::UNAUTHORIZED),
+    ] {
+        let proxy = with_portal_answering_no_such_run(&gateway.uri(), &portal);
+        let response = proxy
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/v1/data/ngsi-ld/v1/entities")
+                    .header("authorization", &bearer)
+                    .body(Body::empty())
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        assert_eq!(response.status(), expected, "bearer '{bearer}'");
+    }
+}
+
+/// AG-64, T-1300/T-1301: a path that would leave the endpoint's base is refused however it is
+/// spelled — encoded once, encoded twice, a backslash, an absolute path, an empty segment.
+#[tokio::test]
+async fn a_path_that_would_leave_the_endpoint_is_refused_however_it_is_spelled() {
+    let gateway = MockServer::start().await;
+    for suffix in [
+        "../admin",
+        "%2e%2e/admin",
+        "%252e%252e/admin",
+        "ngsi-ld/v1/../../admin",
+        "a//b",
+        "./x",
+    ] {
+        let proxy = with_gateway(false, &gateway.uri());
+        let response = proxy
+            .oneshot(
+                authed("GET", &format!("/v1/data/{suffix}"))
+                    .body(Body::empty())
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        assert!(
+            response.status() == StatusCode::FORBIDDEN
+                || response.status() == StatusCode::NOT_FOUND,
+            "'{suffix}' answered {}",
+            response.status()
+        );
+    }
+    assert!(
+        gateway
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty(),
+        "no traversal reached the gateway"
+    );
+}
+
+/// AG-64: `%2F` is decoded before the traversal check, so it names a segment separator and not a
+/// way past it: `a%2Fb` is the ordinary path `a/b` under the run's own endpoint, and the check
+/// runs on the decoded form rather than the one the workspace typed.
+#[tokio::test]
+async fn an_encoded_slash_is_a_segment_separator_under_the_runs_own_endpoint() {
+    let gateway = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/endpoint/{SLUG}/a/b")))
+        .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+        .mount(&gateway)
+        .await;
+
+    let proxy = with_gateway(false, &gateway.uri());
+    let response = proxy
+        .oneshot(
+            authed("GET", "/v1/data/a%2Fb")
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// AG-64, AP-44: a slug of somebody else's endpoint is refused, and no token is minted for it.
+#[tokio::test]
+async fn an_endpoint_slug_the_run_does_not_name_is_refused() {
+    let gateway = MockServer::start().await;
+    let proxy = with_gateway(false, &gateway.uri());
+
+    let response = proxy
+        .oneshot(
+            authed(
+                "GET",
+                "/v1/data/endpoints/someone-elses-slug/ngsi-ld/v1/entities",
+            )
+            .body(Body::empty())
+            .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let detail = body_of(response).await;
+    assert!(
+        detail.contains("someone-elses-slug") && detail.contains("not an endpoint of this run"),
+        "the refusal names what was asked for: {detail}"
+    );
+    assert!(
+        gateway
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty(),
+        "nothing reached the gateway"
+    );
+}
+
+/// AG-25: a read-only run writes nothing, whatever the method and whatever the path.
+#[tokio::test]
+async fn a_read_only_run_is_refused_every_write_method() {
+    let gateway = MockServer::start().await;
+    for verb in ["PATCH", "PUT", "DELETE"] {
+        let proxy = with_gateway(false, &gateway.uri());
+        let response = proxy
+            .oneshot(
+                authed(verb, "/v1/data/ngsi-ld/v1/entities/urn:ngsi-ld:Bike:a")
+                    .body(Body::empty())
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{verb} passed");
+    }
+    assert!(
+        gateway
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty(),
+        "no write reached the gateway"
+    );
+}
+
+/// AG-25: a POST that is a read (a query) passes on a read-only run; a POST that creates does not.
+#[tokio::test]
+async fn a_read_only_run_may_post_a_query_and_nothing_else() {
+    let gateway = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+        .mount(&gateway)
+        .await;
+
+    for (rest, expected) in [
+        ("entityOperations/query", StatusCode::OK),
+        ("ngsi-ld/v1/entityOperations/query", StatusCode::OK),
+        ("mcp", StatusCode::OK),
+        ("ngsi-ld/v1/entities", StatusCode::FORBIDDEN),
+        ("entityOperations/upsert", StatusCode::FORBIDDEN),
+        ("entityOperations/queryX", StatusCode::FORBIDDEN),
+    ] {
+        let proxy = with_gateway(false, &gateway.uri());
+        let response = proxy
+            .oneshot(
+                authed("POST", &format!("/v1/data/{rest}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        assert_eq!(response.status(), expected, "POST {rest}");
+    }
+}
+
+/// AG-25: the MCP body of a read-only run is read for the tool it calls, so a mutation named
+/// inside a POST that is otherwise allowed is refused too. The read tools are named, not the
+/// writes: the broker's MCP surface has write tools under names no deny-list knows (T-3806).
+#[tokio::test]
+async fn a_read_only_run_may_not_call_a_mutation_tool_over_mcp() {
+    let gateway = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .mount(&gateway)
+        .await;
+
+    let call = |tool: &str| {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": { "name": tool, "arguments": {} }
+        })
+    };
+    let list = serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
+    let mut cases: Vec<(String, String, StatusCode)> = Vec::new();
+    for tool in [
+        "upsert_entity",
+        "create_subscription",
+        "create_entity",
+        "batch_delete",
+        "replace_entity",
+        "no_such_tool",
+    ] {
+        cases.push((
+            tool.to_owned(),
+            call(tool).to_string(),
+            StatusCode::FORBIDDEN,
+        ));
+    }
+    for tool in [
+        "query_entities",
+        "get_entity",
+        "batch_query",
+        "query_temporal",
+        "list_types",
+        "list_type_details",
+        "describe_schema",
+        "describe_access",
+    ] {
+        cases.push((tool.to_owned(), call(tool).to_string(), StatusCode::OK));
+    }
+    cases.push(("tools/list".to_owned(), list.to_string(), StatusCode::OK));
+    // A JSON-RPC batch is checked member by member.
+    cases.push((
+        "batch with a write".to_owned(),
+        serde_json::json!([call("query_entities"), call("upsert_entity")]).to_string(),
+        StatusCode::FORBIDDEN,
+    ));
+    cases.push((
+        "batch of reads".to_owned(),
+        serde_json::json!([list, call("get_entity")]).to_string(),
+        StatusCode::OK,
+    ));
+    // A body the proxy cannot read is not a body it may pass.
+    cases.push(("not json".to_owned(), "{".to_owned(), StatusCode::FORBIDDEN));
+
+    for (case, body, expected) in cases {
+        let proxy = with_gateway(false, &gateway.uri());
+        let response = proxy
+            .oneshot(
+                authed("POST", "/v1/data/mcp")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        assert_eq!(response.status(), expected, "{case}");
+    }
+
+    // A run that may write is not narrowed by tool.
+    let proxy = with_gateway(true, &gateway.uri());
+    let response = proxy
+        .oneshot(
+            authed("POST", "/v1/data/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(call("create_entity").to_string()))
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::OK, "a write run");
+}
+
+/// AG-64: the query string is the read, so it travels with the path and nothing of it is dropped.
+#[tokio::test]
+async fn the_whole_query_string_reaches_the_gateway() {
+    let gateway = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/endpoint/{SLUG}/ngsi-ld/v1/entities")))
+        .and(query_param("type", "Bike"))
+        .and(query_param("limit", "3"))
+        .and(query_param("options", "keyValues"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+        .mount(&gateway)
+        .await;
+
+    let proxy = with_gateway(false, &gateway.uri());
+    let response = proxy
+        .oneshot(
+            authed(
+                "GET",
+                "/v1/data/ngsi-ld/v1/entities?type=Bike&limit=3&options=keyValues",
+            )
+            .body(Body::empty())
+            .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// AG-64: the credential the gateway sees is the endpoint's token and never the caller's. A
+/// workspace that sets `Authorization`, a cookie or a gateway identity header changes nothing.
+#[tokio::test]
+async fn nothing_the_workspace_sets_reaches_the_gateway_as_an_identity() {
+    let gateway = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+        .mount(&gateway)
+        .await;
+
+    let proxy = with_gateway(false, &gateway.uri());
+    let response = proxy
+        .oneshot(
+            authed("GET", "/v1/data/ngsi-ld/v1/entities")
+                .header("cookie", "session=stolen")
+                .header("NgsiLD-Tenant", "another-tenant")
+                .header("X-Userinfo", "{\"sub\":\"root\"}")
+                .header("x-allowed-scope-ids", "*")
+                .header("X-Endpoint-Slug", "someone-elses-slug")
+                .header("x-consumer-identity", "root")
+                .header("accept", "application/ld+json")
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let seen = gateway
+        .received_requests()
+        .await
+        .expect("the mock recorded");
+    let headers = &seen
+        .first()
+        .expect("one request reached the gateway")
+        .headers;
+    assert_eq!(
+        headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok()),
+        Some(format!("Bearer mock-token-for-run-{RUN_ID}").as_str()),
+        "the gateway is told the run's token and nothing else"
+    );
+    for forbidden in [
+        "cookie",
+        "ngsild-tenant",
+        "x-userinfo",
+        "x-allowed-scope-ids",
+        "x-endpoint-slug",
+        "x-consumer-identity",
+        "x-jc-run",
+        "x-jc-ticket",
+    ] {
+        assert!(
+            headers.get(forbidden).is_none(),
+            "'{forbidden}' was relayed to the gateway"
+        );
+    }
+    assert!(
+        headers.get("accept").is_some(),
+        "an ordinary header still travels"
+    );
+}
+
+/// AG-41, T-0811: a body past the proxy's ceiling is refused, and the one at the ceiling is not.
+#[tokio::test]
+async fn a_body_past_the_ceiling_is_refused_and_the_one_at_it_is_not() {
+    let gateway = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+        .mount(&gateway)
+        .await;
+    let ceiling = 4 * 1024 * 1024;
+
+    for (size, expected) in [
+        (ceiling, StatusCode::OK),
+        (ceiling + 1, StatusCode::PAYLOAD_TOO_LARGE),
+    ] {
+        let proxy = with_gateway(true, &gateway.uri());
+        let response = proxy
+            .oneshot(
+                authed("POST", "/v1/data/entityOperations/query")
+                    .header("content-type", "application/json")
+                    .body(Body::from(vec![b'x'; size]))
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        assert_eq!(response.status(), expected, "a body of {size} bytes");
+    }
+}
+
+/// AG-64: a cookie the gateway sets is not a cookie the workspace gets.
+#[tokio::test]
+async fn a_set_cookie_from_the_gateway_is_not_relayed_to_the_workspace() {
+    let gateway = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("set-cookie", "session=abc; HttpOnly")
+                .insert_header("content-type", "application/json")
+                .set_body_string("[]"),
+        )
+        .mount(&gateway)
+        .await;
+
+    let proxy = with_gateway(false, &gateway.uri());
+    let response = proxy
+        .oneshot(
+            authed("GET", "/v1/data/ngsi-ld/v1/entities")
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().get("set-cookie").is_none());
+    assert!(response.headers().get("content-type").is_some());
+}
+
+/// AG-64: every answer the gateway can give is relayed as itself, including the ones that are
+/// not JSON and the ones that are errors — and none of them carries the gateway's address.
+#[tokio::test]
+async fn an_upstream_status_is_relayed_without_the_gateways_address() {
+    for upstream in [401u16, 403, 404, 409, 429, 500] {
+        let gateway = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(upstream).set_body_string("not json at all"))
+            .mount(&gateway)
+            .await;
+        let host = gateway.address().to_string();
+
+        let proxy = with_gateway(false, &gateway.uri());
+        let response = proxy
+            .oneshot(
+                authed("GET", "/v1/data/ngsi-ld/v1/entities")
+                    .body(Body::empty())
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+
+        assert_eq!(response.status().as_u16(), upstream);
+        let body = body_of(response).await;
+        assert_eq!(body, "not json at all", "the answer is relayed as it is");
+        assert!(
+            !body.contains(&host),
+            "the gateway's address leaked: {body}"
+        );
+    }
+}
+
+/// AG-64: an unknown door of the proxy is refused by the fallback, not routed by accident.
+#[tokio::test]
+async fn a_door_the_proxy_does_not_have_is_refused() {
+    for uri in ["/v1/admin", "/v1/data", "/internal/agent-runs/x", "/"] {
+        let proxy = with_gateway(false, "http://context-gateway.invalid:8080");
+        let response = proxy
+            .oneshot(authed("GET", uri).body(Body::empty()).expect("a request"))
+            .await
+            .expect("an answer");
+        assert!(
+            response.status() == StatusCode::FORBIDDEN
+                || response.status() == StatusCode::NOT_FOUND
+                || response.status() == StatusCode::METHOD_NOT_ALLOWED,
+            "{uri} answered {}",
+            response.status()
+        );
+    }
+}
+
+/// F-R2PLT1-004: the data door counts against the run's `requests_per_minute` like the MCP door,
+/// so a loop of reads, or of slugs the run does not name, stops at the limit instead of driving
+/// the gateway and the Portal without end.
+#[tokio::test]
+async fn the_data_door_counts_against_the_runs_requests_per_minute() {
+    let gateway = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+        .mount(&gateway)
+        .await;
+    let proxy = app(
+        agent_proxy::runs::RunContext {
+            requests_per_minute: 2,
+            ..sample_run(false)
+        },
+        Bases {
+            gateway: gateway.uri(),
+            ..Bases::default()
+        },
+    );
+    let mut statuses = Vec::new();
+    for _ in 0..3 {
+        let response = proxy
+            .clone()
+            .oneshot(
+                authed("GET", "/v1/data/ngsi-ld/v1/entities?type=Bike")
+                    .body(Body::empty())
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        statuses.push(response.status());
+    }
+    assert_eq!(
+        statuses,
+        [
+            StatusCode::OK,
+            StatusCode::OK,
+            StatusCode::TOO_MANY_REQUESTS
+        ]
+    );
+    assert_eq!(
+        gateway.received_requests().await.unwrap_or_default().len(),
+        2
+    );
+}
+
+/// A gateway that streams its answer, as the live one does for a read (T-6434): the proxy buffers
+/// the body, so what it sends the run has to be framed for that body, not for the gateway's stream.
+/// Only a real connection shows it: hyper refuses the head while writing, after the handler ended.
+#[tokio::test]
+async fn a_chunked_gateway_answer_reaches_the_run_over_a_real_connection() {
+    let gateway = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let gateway_at = format!("http://{}", gateway.local_addr().unwrap());
+    tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = gateway.accept().await.unwrap();
+            let mut asked = [0u8; 4096];
+            let _ = socket.read(&mut asked).await;
+            let _ = socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\
+                      transfer-encoding: chunked\r\n\r\n5\r\n[1,2]\r\n0\r\n\r\n",
+                )
+                .await;
+        }
+    });
+    let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_at = proxy.local_addr().unwrap();
+    let app = with_gateway(false, &gateway_at);
+    tokio::spawn(async move { axum::serve(proxy, app).await.unwrap() });
+
+    let mut run = tokio::net::TcpStream::connect(proxy_at).await.unwrap();
+    let asked = format!(
+        "GET /v1/data/ngsi-ld/v1/entities?type=A HTTP/1.1\r\nhost: proxy\r\n\
+         x-jc-run: {RUN_ID}\r\nx-jc-ticket: {TICKET}\r\nconnection: close\r\n\r\n"
+    );
+    run.write_all(asked.as_bytes()).await.unwrap();
+    let mut answer = String::new();
+    run.read_to_string(&mut answer).await.unwrap();
+
+    assert!(answer.starts_with("HTTP/1.1 200"), "answer: {answer:?}");
+    assert!(answer.contains("[1,2]"), "answer: {answer:?}");
+    let heads = answer.to_lowercase();
+    assert_eq!(
+        heads.matches("transfer-encoding").count() + heads.matches("content-length").count(),
+        1,
+        "one framing header: {answer:?}"
+    );
+}

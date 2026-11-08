@@ -1,0 +1,87 @@
+[package]
+name = "assistant"
+version = "0.1.0"
+# A member of the jc root workspace (vendor/SOURCES.md), so the fields the platform workspace
+# handed down are written out here.
+edition = "2021"
+license = "EUPL-1.2"
+repository = "https://github.com/marek-mraz-jc/joinedcontext-platform"
+publish = false
+description = "jc-assistant: the knowledge assistant's store, migrations and hybrid retrieval (ADR-N-040)"
+
+[[bin]]
+name = "jc-assistant"
+path = "src/bin/jc-assistant.rs"
+
+[dependencies]
+# The Portal's version. `macros` only for `migrate!`, which embeds the migration files at build
+# time; every query is a runtime one, checked by the tests against the cluster's own PostgreSQL
+# image, so building needs no database. No TLS feature: the service reaches the cluster's
+# PostgreSQL inside the mesh, which Linkerd already encrypts, and a TLS stack would bring
+# webpki-roots, whose CDLA-Permissive-2.0 licence deny.toml does not allow.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "migrate", "macros"] }
+jc-core = { path = "../jc-core", version = "0.1.0", features = ["outbound"] }
+agent-proxy = { path = "../agent-proxy", version = "0.1.0" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "stream"] }
+# The crawler's own TLS check (T-3298): webpki over the native roots, with the public
+# intermediates some sites do not send. Same versions and features as context-gateway.
+rustls = { version = "0.23", default-features = false, features = ["ring", "tls12", "std", "logging"] }
+rustls-pki-types = "1"
+rustls-native-certs = "0.8"
+regex = "1"
+# The detector kreuzberg already links: a passage's own language, not its page's (T-5368).
+whatlang = "0.18"
+url = "2.5"
+sha2 = "0.10"
+# HMAC for the visitor token (T-4653); already in the tree through rustls.
+ring = "0.17"
+hex = "0.4"
+scraper = "0.27"
+quick-xml = "0.41"
+texting_robots = "0.2.2"
+futures-util = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal"] }
+# The worker: the organization's manifests read the way the gateway reads them (layout 1 and 2),
+# its schedule, its log and its health probe.
+jc-manifest = { path = "../jc-manifest", version = "0.1.0" }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+# A polygon answer's geodesic area and perimeter and its simpler outline for the map (T-4697);
+# already in the tree through ngsild-ql, no default features there either.
+geo = { version = "0.33", default-features = false }
+time = { version = "0.3", features = ["macros", "parsing", "formatting"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+axum = "0.8"
+# Text out of HTML and PDF, language detection and chunking (ADR-N-040 §3.1). PDFium is linked
+# from a prepared directory: `KREUZBERG_PDFIUM_PREBUILT` names an unpacked
+# bblanchon/pdfium-binaries chromium/7568 release whose SHA-256 the build checks first (CI, the
+# image's Dockerfile). Without it kreuzberg's build script would fetch whatever release is
+# newest, unpinned and unchecked. No OCR, office or embedding features: they bring ONNX Runtime.
+# `office` and `excel` read uploaded DOCX and XLSX (T-4184). kreuzberg is the patched copy in
+# ../../vendor/kreuzberg (the jc root Cargo.toml [patch.crates-io]): zip 9.0.5 and calamine 0.37 (T-6053).
+kreuzberg = { version = "=4.10.4", default-features = false, features = ["tokio-runtime", "pdf", "bundled-pdfium", "html", "office", "excel", "chunking", "language-detection"] }
+# The inflation of an uploaded Office file is counted before kreuzberg reads it (T-5699); the
+# version and features kreuzberg already builds, so no new crate. 9.2 in the jc root workspace,
+# the zip shako-git takes (kreuzberg's `^9.0.5` admits it); the platform workspace pins 9.0.5.
+zip = { version = "9.2", default-features = false, features = ["deflate"] }
+# The version kreuzberg already links: cuts a PDF to `pdf.maxPages` before PDFium reads it.
+lopdf = { version = "=0.45.0", default-features = false }
+# Without resolve-http: a connector's schema never makes this service fetch a `$ref`.
+jsonschema = { version = "0.54", default-features = false }
+# Passage and question embeddings (ADR-N-040 §3.1, T-3053): `multilingual-e5-small` int8, its
+# files read from a directory whose SHA-256s `embed.rs` pins (`scripts/ci/e5-small.sh` fetches
+# them); nothing is downloaded at run time. ONNX Runtime is loaded at start from ORT_DYLIB_PATH
+# (`scripts/ci/onnxruntime.sh`, pinned and checked): the static library `ort` would download
+# needs glibc 2.38. `ort` has no stable release; 2.0.0-rc.13 binds ONNX Runtime 1.28.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "api-24", "load-dynamic"] }
+tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"] }
+
+[dev-dependencies]
+wiremock = "0.6"
+rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+tower = { version = "0.5", features = ["util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "test-util"] }
+# The gateway's q grammar, so a query card's example is one the gateway takes (T-4759).
+antares-ql = { package = "ngsild-ql", git = "https://github.com/marek-mraz-jc/ngsild", tag = "v0.3.0", version = "0.3" }

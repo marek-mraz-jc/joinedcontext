@@ -1,0 +1,847 @@
+//! Edge cases of `routes::llm::handler` (T-1869).
+//!
+//! The model door holds the one key the workspace must never see, counts the steps and the
+//! tokens a run is allowed, and forwards nothing of the inbound request but the body.
+
+mod common;
+
+use axum::body::Body;
+use axum::http::StatusCode;
+use common::{app, authed, body_of, sample_run, Bases, RUN_ID, TICKET};
+use tower::ServiceExt;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// A proxy whose model provider is `model`, for a run bounded by `steps` and `tokens`.
+fn proxy(model: &str, steps: u32, tokens: u64) -> axum::Router {
+    let mut run = sample_run(false);
+    run.steps_per_run = steps;
+    run.max_tokens = tokens;
+    app(
+        run,
+        Bases {
+            model: model.to_owned(),
+            ..Bases::default()
+        },
+    )
+}
+
+/// The same proxy, asking a Portal that holds no run and answers `404` to every lookup.
+///
+/// `Bases::default()` points the Portal at a name that resolves nowhere, which since T-2418 is a
+/// failure of the platform's (`503`) rather than a bad credential (`401`). A case about a run id
+/// nobody holds has to ask a Portal that is there.
+fn proxy_asking(model: &str, portal: &wiremock::MockServer) -> axum::Router {
+    proxy_asking_at(model, portal, None)
+}
+
+/// [`proxy_asking`] for a run whose profile sets a reasoning effort (AG-72).
+fn proxy_asking_at(
+    model: &str,
+    portal: &wiremock::MockServer,
+    effort: Option<&str>,
+) -> axum::Router {
+    let mut run = sample_run(false);
+    run.reasoning_effort = effort.map(str::to_owned);
+    run.model_name = "google/gemini-3.8-flash".to_owned();
+    app(
+        run,
+        Bases {
+            model: model.to_owned(),
+            portal: portal.uri(),
+            ..Bases::default()
+        },
+    )
+}
+
+fn body(text: &str) -> Body {
+    Body::from(text.to_owned())
+}
+
+/// AG-22: no run credentials, no model call — and the provider is never asked.
+#[tokio::test]
+async fn a_model_call_without_credentials_is_refused_before_the_provider_is_asked() {
+    let provider = MockServer::start().await;
+    let response = proxy(&provider.uri(), 0, 1000)
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/v1/llm/v1/messages")
+                .body(body("{}"))
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(provider
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .is_empty());
+}
+
+/// AG-22: a ticket of another run buys no model time.
+#[tokio::test]
+async fn a_ticket_of_another_run_buys_no_model_time() {
+    let portal = wiremock::MockServer::start().await;
+    for (run, ticket) in [(RUN_ID, "another-runs-ticket"), ("nobody", TICKET)] {
+        let response = proxy_asking("http://model.invalid", &portal)
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/v1/llm/v1/messages")
+                    .header("x-jc-run", run)
+                    .header("x-jc-ticket", ticket)
+                    .body(body("{}"))
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "run '{run}'");
+    }
+}
+
+/// AG-51: the door is the completion endpoints and nothing else. A path that only looks like one
+/// is refused, and so is one that would leave the provider's base.
+#[tokio::test]
+async fn only_the_completion_endpoints_are_open() {
+    let provider = MockServer::start().await;
+    for rest in [
+        "v1/models",
+        "v1/messages/batches",
+        "messages/count_tokens",
+        "v1/chat/completions/x",
+        "../admin",
+        "v1/organizations/me",
+        "",
+    ] {
+        let response = proxy(&provider.uri(), 0, 1000)
+            .oneshot(
+                authed("POST", &format!("/v1/llm/{rest}"))
+                    .body(body("{}"))
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        assert!(
+            !response.status().is_success(),
+            "'{rest}' answered {}",
+            response.status()
+        );
+    }
+    assert!(
+        provider
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty(),
+        "nothing reached the provider"
+    );
+}
+
+/// AG-51: the door is a POST. A GET on it is refused by the router, before a step is counted.
+#[tokio::test]
+async fn the_model_door_takes_no_get() {
+    let response = proxy("http://model.invalid", 0, 1000)
+        .oneshot(
+            authed("GET", "/v1/llm/v1/messages")
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
+
+/// AG-25, AG-51: one model call is one step, and the call past the profile's `stepsPerRun` is
+/// refused however the run's driver loops.
+#[tokio::test]
+async fn the_call_past_the_step_limit_is_refused() {
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .mount(&provider)
+        .await;
+    let app = proxy(&provider.uri(), 2, 100_000);
+
+    for expected in [
+        StatusCode::OK,
+        StatusCode::OK,
+        StatusCode::TOO_MANY_REQUESTS,
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                authed("POST", "/v1/llm/v1/messages")
+                    .body(body(r#"{"model":"m"}"#))
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        assert_eq!(response.status(), expected);
+    }
+    assert_eq!(
+        provider.received_requests().await.unwrap_or_default().len(),
+        2,
+        "the refused call never reached the provider"
+    );
+}
+
+/// AG-41: the run's token budget is counted from what the provider reports, in either of the two
+/// shapes, and the call after the budget is spent is refused.
+#[tokio::test]
+async fn the_budget_is_counted_from_the_providers_usage_and_then_refuses() {
+    for usage in [
+        serde_json::json!({ "total_tokens": 120 }),
+        serde_json::json!({ "input_tokens": 100, "output_tokens": 20 }),
+    ] {
+        let provider = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "usage": usage })),
+            )
+            .mount(&provider)
+            .await;
+        let app = proxy(&provider.uri(), 0, 100);
+
+        let first = app
+            .clone()
+            .oneshot(
+                authed("POST", "/v1/llm/v1/messages")
+                    .body(body(r#"{"model":"m"}"#))
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        assert_eq!(first.status(), StatusCode::OK, "{usage}");
+
+        let second = app
+            .oneshot(
+                authed("POST", "/v1/llm/v1/messages")
+                    .body(body(r#"{"model":"m"}"#))
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS, "{usage}");
+    }
+}
+
+/// AG-41: an answer that reports no usage, or is not JSON at all, costs the run nothing and
+/// crashes nothing — the door stays open for the next call.
+#[tokio::test]
+async fn an_answer_without_usage_costs_nothing_and_breaks_nothing() {
+    for answer in ["{}", "not json at all", "[]", r#"{"usage":"lots"}"#, ""] {
+        let provider = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(answer))
+            .mount(&provider)
+            .await;
+        let app = proxy(&provider.uri(), 0, 100);
+
+        for _ in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(
+                    authed("POST", "/v1/llm/v1/messages")
+                        .body(body(r#"{"model":"m"}"#))
+                        .expect("a request"),
+                )
+                .await
+                .expect("an answer");
+            assert_eq!(response.status(), StatusCode::OK, "answer '{answer}'");
+        }
+    }
+}
+
+/// AG-35: the provider sees the platform's key and nothing the workspace sent — not its ticket,
+/// not an `Authorization` header of its own, not a cookie.
+#[tokio::test]
+async fn the_provider_sees_the_platforms_key_and_nothing_of_the_workspace() {
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .mount(&provider)
+        .await;
+
+    let response = proxy(&provider.uri(), 0, 1000)
+        .oneshot(
+            authed("POST", "/v1/llm/v1/messages")
+                .header("authorization", "Bearer the-workspaces-own-key")
+                .header("cookie", "session=stolen")
+                .header("x-api-key", "the-workspaces-own-key")
+                .body(body(r#"{"model":"m"}"#))
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let seen = provider
+        .received_requests()
+        .await
+        .expect("the mock recorded");
+    let headers = &seen
+        .first()
+        .expect("one request reached the provider")
+        .headers;
+    // The default provider is Anthropic, which is told the key in `x-api-key`; the workspace's
+    // own value in that slot is replaced rather than appended to.
+    assert_eq!(
+        headers
+            .get("x-api-key")
+            .and_then(|value| value.to_str().ok()),
+        Some("mock-model-key"),
+        "the provider is told the platform's key"
+    );
+    for forbidden in ["cookie", "x-jc-run", "x-jc-ticket", "authorization"] {
+        assert!(
+            headers.get(forbidden).is_none(),
+            "'{forbidden}' was relayed to the provider"
+        );
+    }
+}
+
+/// AG-35: the key is not in what the workspace gets back, whatever the provider answers and
+/// whether the provider answers at all.
+#[tokio::test]
+async fn the_model_key_is_in_no_answer_the_workspace_reads() {
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(401).set_body_string(r#"{"error":"bad key"}"#))
+        .mount(&provider)
+        .await;
+
+    for model in [provider.uri(), "http://model.invalid".to_owned()] {
+        let response = proxy(&model, 0, 1000)
+            .oneshot(
+                authed("POST", "/v1/llm/v1/messages")
+                    .body(body(r#"{"model":"m"}"#))
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        let detail = body_of(response).await;
+        for secret in ["mock-model-key", "mock-forge-token", TICKET] {
+            assert!(!detail.contains(secret), "'{secret}' leaked: {detail}");
+        }
+    }
+}
+
+/// AG-41, T-0811: a prompt past the proxy's ceiling is refused, and the step is spent before the
+/// body is read — the ceiling is the proxy's memory, not the provider's.
+#[tokio::test]
+async fn a_body_past_the_ceiling_is_refused() {
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .mount(&provider)
+        .await;
+
+    let response = proxy(&provider.uri(), 0, 1000)
+        .oneshot(
+            authed("POST", "/v1/llm/v1/messages")
+                .body(Body::from(vec![b'x'; 4 * 1024 * 1024 + 1]))
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(provider
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .is_empty());
+}
+
+/// AG-72: the run's reasoning effort reaches the provider in the shape that endpoint reads, and
+/// a body that already carries one of its own is sent as it is.
+#[tokio::test]
+async fn the_runs_reasoning_effort_travels_and_a_body_that_has_one_is_left_alone() {
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .mount(&provider)
+        .await;
+
+    let mut run = sample_run(false);
+    run.reasoning_effort = Some("low".to_owned());
+    let app = app(
+        run,
+        Bases {
+            model: provider.uri(),
+            ..Bases::default()
+        },
+    );
+
+    for (rest, sent, expected) in [
+        (
+            "v1/messages",
+            r#"{"model":"m","max_tokens":100}"#,
+            serde_json::json!({"type":"enabled","budget_tokens":2048}),
+        ),
+        (
+            "v1/chat/completions",
+            r#"{"model":"m"}"#,
+            serde_json::json!({"effort":"low"}),
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                authed("POST", &format!("/v1/llm/{rest}"))
+                    .body(body(sent))
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        assert_eq!(response.status(), StatusCode::OK, "{rest}");
+
+        let seen = provider
+            .received_requests()
+            .await
+            .expect("the mock recorded");
+        let last: serde_json::Value =
+            serde_json::from_slice(&seen.last().expect("a request").body).expect("JSON reached");
+        let key = match rest {
+            "v1/messages" => "thinking",
+            _ => "reasoning",
+        };
+        assert_eq!(last[key], expected, "{rest}: {last}");
+    }
+}
+
+/// AG-72: a body that is not JSON is forwarded as the bytes it is, so a provider that reads
+/// another format is not broken by a setting this proxy could not place.
+#[tokio::test]
+async fn a_body_that_is_not_json_is_forwarded_unchanged() {
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .mount(&provider)
+        .await;
+
+    let mut run = sample_run(false);
+    run.reasoning_effort = Some("high".to_owned());
+    let app = app(
+        run,
+        Bases {
+            model: provider.uri(),
+            ..Bases::default()
+        },
+    );
+
+    let response = app
+        .oneshot(
+            authed("POST", "/v1/llm/v1/messages")
+                .body(body("not json at all"))
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let seen = provider
+        .received_requests()
+        .await
+        .expect("the mock recorded");
+    assert_eq!(
+        seen.first().expect("a request").body,
+        b"not json at all",
+        "the bytes travelled as they arrived"
+    );
+}
+
+/// T-2821, ADR-N-032: a streamed call passes through as the provider's events, and the usage
+/// its last chunk reports is counted before the stream ends, so the next call past the budget
+/// is refused as for a whole answer.
+#[tokio::test]
+async fn a_stream_passes_through_and_its_usage_is_counted() {
+    let provider = MockServer::start().await;
+    let stream = "data: {\"choices\":[{\"delta\":{\"content\":\"Two stations\"}}]}\n\n\
+                  data: {\"choices\":[{\"delta\":{\"content\":\" are empty.\"}}]}\n\n\
+                  data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20,\"total_tokens\":120}}\n\n\
+                  data: [DONE]\n\n";
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(wiremock::matchers::body_partial_json(serde_json::json!({
+            "stream": true,
+            "stream_options": { "include_usage": true }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(stream, "text/event-stream"))
+        .mount(&provider)
+        .await;
+    let app = proxy(&provider.uri(), 0, 100);
+    let ask = || {
+        authed("POST", "/v1/llm/v1/chat/completions")
+            .body(body(r#"{"model":"m","stream":true,"max_tokens":50}"#))
+            .expect("a request")
+    };
+    let first = app.clone().oneshot(ask()).await.expect("an answer");
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(
+        first.headers()["content-type"],
+        "text/event-stream",
+        "the provider's events, not a JSON body"
+    );
+    let text = body_of(first).await;
+    assert!(
+        text.contains("Two stations") && text.contains("[DONE]"),
+        "{text}"
+    );
+    let second = app.oneshot(ask()).await.expect("an answer");
+    assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+/// AG-41: a stream that reports no usage is never free: it counts as the output it was allowed
+/// plus a quarter of its body, so a run cannot stream past its budget.
+#[tokio::test]
+async fn a_stream_without_usage_counts_as_what_it_was_allowed() {
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n",
+            "text/event-stream",
+        ))
+        .mount(&provider)
+        .await;
+    let app = proxy(&provider.uri(), 0, 100);
+    let ask = |max: u64| {
+        authed("POST", "/v1/llm/v1/chat/completions")
+            .body(body(&format!(
+                r#"{{"model":"m","stream":true,"max_tokens":{max}}}"#
+            )))
+            .expect("a request")
+    };
+    // 60 allowed plus the body's quarter stays under 100; the next such call goes over.
+    let first = app.clone().oneshot(ask(60)).await.expect("an answer");
+    assert_eq!(first.status(), StatusCode::OK);
+    body_of(first).await;
+    let second = app.clone().oneshot(ask(60)).await.expect("an answer");
+    assert_eq!(second.status(), StatusCode::OK);
+    body_of(second).await;
+    let third = app.oneshot(ask(60)).await.expect("an answer");
+    assert_eq!(third.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+/// T-2771, AG-72: every model call reaches the Portal as a `usage` frame with its halves, the
+/// input the provider read from its cache, how long the provider took, and the model named in the
+/// call, so a slow answer is traced to its call.
+#[tokio::test]
+async fn a_model_call_is_reported_with_its_latency_tokens_and_model() {
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({
+                    "choices": [{ "message": { "content": "hi" } }],
+                    "usage": { "prompt_tokens": 3980, "completion_tokens": 140, "total_tokens": 4120,
+                               "prompt_tokens_details": { "cached_tokens": 3200 } }
+                }))
+                .set_delay(std::time::Duration::from_millis(120)),
+        )
+        .mount(&provider)
+        .await;
+    let portal = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/internal/agent-runs/events"))
+        .respond_with(ResponseTemplate::new(202).set_body_json(serde_json::json!({ "seq": 1 })))
+        .mount(&portal)
+        .await;
+
+    let response = proxy_asking(&provider.uri(), &portal)
+        .oneshot(
+            authed("POST", "/v1/llm/v1/chat/completions")
+                .body(body(r#"{"model":"google/gemini-3.8-flash","messages":[]}"#))
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let reported = reported_usage(&portal).await;
+    assert_eq!(reported["kind"], "usage");
+    let usage = &reported["payload"];
+    assert_eq!(usage["tokensThisStep"], 4120);
+    assert_eq!(usage["inputTokens"], 3980);
+    assert_eq!(usage["outputTokens"], 140);
+    assert_eq!(usage["cachedTokens"], 3200);
+    assert_eq!(usage["model"], "google/gemini-3.8-flash");
+    let latency = usage["latencyMs"].as_u64().expect("a latency");
+    assert!((120..10_000).contains(&latency), "{latency}");
+    // A run whose profile sets no effort sends none, and its frame names none (T-2998).
+    assert!(usage.get("reasoningEffort").is_none(), "{usage}");
+}
+
+/// The first frame the proxy sent the Portal. It is sent beside the answer, never before it, so
+/// the test waits for it.
+async fn reported_usage(portal: &MockServer) -> serde_json::Value {
+    for _ in 0..500 {
+        let seen = portal.received_requests().await.unwrap_or_default();
+        if let Some(request) = seen.first() {
+            return serde_json::from_slice(&request.body).expect("a JSON frame");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("the usage never reached the Portal");
+}
+
+/// T-2998, AG-72: the frame names the effort the call was sent with, beside the model, so a run
+/// shows which effort its model worked at.
+#[tokio::test]
+async fn a_model_call_is_reported_with_the_reasoning_effort_it_was_sent_with() {
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "usage": { "prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12 }
+        })))
+        .mount(&provider)
+        .await;
+    let portal = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/internal/agent-runs/events"))
+        .respond_with(ResponseTemplate::new(202).set_body_json(serde_json::json!({ "seq": 1 })))
+        .mount(&portal)
+        .await;
+
+    let response = proxy_asking_at(&provider.uri(), &portal, Some("medium"))
+        .oneshot(
+            authed("POST", "/v1/llm/v1/chat/completions")
+                .body(body(r#"{"model":"google/gemini-3.8-flash","messages":[]}"#))
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::OK);
+    let usage = &reported_usage(&portal).await["payload"];
+    assert_eq!(usage["model"], "google/gemini-3.8-flash");
+    assert_eq!(usage["reasoningEffort"], "medium");
+}
+
+/// The request the Portal received on `path`, once the proxy sent it beside its answer.
+async fn received_on(portal: &MockServer, on: &str) -> serde_json::Value {
+    for _ in 0..500 {
+        let seen = portal.received_requests().await.unwrap_or_default();
+        if let Some(request) = seen.iter().find(|request| request.url.path() == on) {
+            return serde_json::from_slice(&request.body).expect("a JSON body");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("nothing reached the Portal on {on}");
+}
+
+/// T-3065, AG-96: a key the provider refuses (401) or that has no credit left (402) is reported
+/// to the Portal as the key's state at once, and the refusal still reaches the caller unchanged.
+#[tokio::test]
+async fn a_refused_key_is_reported_to_the_portal_as_its_state() {
+    for (status, state) in [(401, "invalid"), (402, "out_of_credit")] {
+        let provider = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(status).set_body_json(
+                serde_json::json!({ "error": { "message": "No auth credentials found", "code": status } }),
+            ))
+            .mount(&provider)
+            .await;
+        let portal = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/internal/model-key"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&portal)
+            .await;
+
+        let response = proxy_asking(&provider.uri(), &portal)
+            .oneshot(
+                authed("POST", "/v1/llm/v1/chat/completions")
+                    .body(body(r#"{"model":"m","messages":[]}"#))
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        assert_eq!(response.status().as_u16(), status);
+
+        let reported = received_on(&portal, "/internal/model-key").await;
+        assert_eq!(reported["state"], state);
+        assert_eq!(reported["source"], "call");
+        assert!(
+            !reported.to_string().contains("mock-model-key"),
+            "{reported}"
+        );
+    }
+}
+
+/// T-3065, AG-97: the call after the assistant's daily cap is reached is refused with a sentence
+/// the person can act on, and the provider is asked only for the calls within it.
+#[tokio::test]
+async fn a_call_past_the_assistants_daily_cap_is_refused_before_the_provider_is_asked() {
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "usage": { "prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120, "cost": 0.0042 }
+        })))
+        .expect(1)
+        .mount(&provider)
+        .await;
+    let portal = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/internal/agent-runs/events"))
+        .respond_with(ResponseTemplate::new(202).set_body_json(serde_json::json!({ "seq": 1 })))
+        .mount(&portal)
+        .await;
+    let mut run = sample_run(false);
+    run.kind = "conversation".to_owned();
+    let state = common::state(
+        run,
+        common::Bases {
+            model: provider.uri(),
+            portal: portal.uri(),
+            ..common::Bases::default()
+        },
+    );
+    let mut config = (*state.config).clone();
+    config.daily_caps.assistant = 100;
+    let state = std::sync::Arc::new(agent_proxy::ProxyState {
+        config: std::sync::Arc::new(config),
+        ..(*state).clone()
+    });
+    let app = agent_proxy::router(state);
+    let ask = || {
+        authed("POST", "/v1/llm/v1/chat/completions")
+            .body(body(r#"{"model":"m","messages":[]}"#))
+            .expect("a request")
+    };
+
+    let first = app.clone().oneshot(ask()).await.expect("an answer");
+    assert_eq!(first.status(), StatusCode::OK);
+    body_of(first).await;
+    // The usage is counted beside the answer; the frame says what the provider charged.
+    let usage = received_on(&portal, "/internal/agent-runs/events").await;
+    assert_eq!(usage["payload"]["costUsd"], 0.0042);
+
+    let second = app.oneshot(ask()).await.expect("an answer");
+    assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+    let said = body_of(second).await;
+    assert!(said.contains("daily-budget"), "{said}");
+    assert!(
+        said.contains("Today's model budget for the assistant is spent"),
+        "{said}"
+    );
+    provider.verify().await;
+}
+
+/// T-3065, AG-96: the probe asks the provider's /key and /credits with the key, makes no
+/// completion, and reports the key's limit with what the account can still spend.
+#[tokio::test]
+async fn the_probe_reports_the_keys_limit_and_what_the_account_can_still_spend() {
+    use wiremock::matchers::header;
+    let provider = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/key"))
+        .and(header("authorization", "Bearer mock-model-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": { "limit": 50, "usage": 4.2, "limit_remaining": 45.8 }
+        })))
+        .expect(1)
+        .mount(&provider)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/credits"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": { "total_credits": 109.16, "total_usage": 103.15 }
+        })))
+        .expect(1)
+        .mount(&provider)
+        .await;
+    let state = common::state(
+        sample_run(false),
+        common::Bases {
+            model: provider.uri(),
+            ..common::Bases::default()
+        },
+    );
+
+    let report = agent_proxy::model_key::probe(&state).await;
+    assert_eq!(report.state, agent_proxy::model_key::KeyState::Valid);
+    assert_eq!(report.limit, Some(50.0));
+    let left = report.remaining.expect("what is left");
+    assert!((left - 6.01).abs() < 0.001, "{left}");
+    provider.verify().await;
+    let asked = provider.received_requests().await.unwrap_or_default();
+    assert!(
+        asked.iter().all(|request| request.method.as_str() == "GET"),
+        "no completion"
+    );
+}
+
+/// F-PLT1-006: the provider is asked for the run's profile model, whichever model the workspace
+/// named, so a run on a cheap profile cannot buy time on a dearer model.
+#[tokio::test]
+async fn the_provider_is_asked_for_the_profiles_model_alone() {
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 }
+        })))
+        .mount(&provider)
+        .await;
+    let portal = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(202).set_body_json(serde_json::json!({ "seq": 1 })))
+        .mount(&portal)
+        .await;
+    let response = proxy_asking(&provider.uri(), &portal)
+        .oneshot(
+            authed("POST", "/v1/llm/v1/chat/completions")
+                .body(body(r#"{"model":"openai/o3-pro","messages":[]}"#))
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::OK);
+    let seen = provider.received_requests().await.unwrap_or_default();
+    let sent: serde_json::Value =
+        serde_json::from_slice(&seen.first().expect("the provider was asked").body)
+            .expect("a JSON body");
+    assert_eq!(sent["model"], "google/gemini-3.8-flash");
+}
+
+/// F-R2PLT1-006: the budget was only checked before the call, so one call asking a large
+/// `max_tokens` could answer far past it. The forwarded output is capped at what is left, and a
+/// body naming no output cap gets one when what is left is small.
+#[tokio::test]
+async fn one_call_cannot_answer_past_the_runs_token_budget() {
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"choices":[]}"#))
+        .mount(&provider)
+        .await;
+    let app = proxy(&provider.uri(), 10, 10);
+    for (sent, field) in [
+        (r#"{"model":"m","max_tokens":100000}"#, "max_tokens"),
+        (
+            r#"{"model":"m","max_completion_tokens":100000}"#,
+            "max_completion_tokens",
+        ),
+        (r#"{"model":"m"}"#, "max_tokens"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                authed("POST", "/v1/llm/v1/chat/completions")
+                    .body(body(sent))
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        assert_eq!(response.status(), StatusCode::OK, "{sent}");
+        let seen = provider
+            .received_requests()
+            .await
+            .expect("the mock recorded");
+        let last: serde_json::Value =
+            serde_json::from_slice(&seen.last().expect("a request").body).expect("JSON reached");
+        assert_eq!(last[field], 10, "{sent}");
+    }
+}

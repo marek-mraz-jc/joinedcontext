@@ -1,0 +1,1220 @@
+//! The model, reached only through `jc-agent-proxy` (ADR-N-040 §3.4, AG-109…AG-111): the
+//! service's own client-credentials token, the deployment named in a header, one OpenAI-compatible
+//! chat completion per call. The service holds no model key.
+
+use std::time::{Duration, Instant};
+
+use serde_json::{json, Value};
+use tokio::sync::mpsc::Sender;
+use tokio::sync::Mutex;
+
+use super::agent::Event;
+
+/// What a model call came back with.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Completion {
+    /// The answer's text, empty when the model only asked for tools.
+    pub text: String,
+    /// The tools it asked for: id, name and the arguments as it wrote them.
+    pub calls: Vec<(String, String, String)>,
+    /// The tokens the call cost, as the provider counted them: in total, read and written.
+    pub tokens: u64,
+    pub input: u64,
+    pub output: u64,
+    /// What the provider says the call cost, in millionths of a US dollar (OpenRouter's
+    /// `usage.cost`, T-4149); `None` when it says nothing, which is not the same as free (T-4178).
+    pub cost_micros: Option<u64>,
+    /// The provider OpenRouter served the call on (its `provider` field, T-4360), when it names
+    /// one in bounds: at most 64 characters of letters, digits, space and `. _ / -`.
+    pub provider: Option<String>,
+    /// The reasoning tokens the call spent (`usage.completion_tokens_details.reasoning_tokens`,
+    /// T-4360), when the provider reports them.
+    pub reasoning: Option<u64>,
+    /// Why the call ended (`choices[0].finish_reason`: `stop`, `length`, `content_filter`, …),
+    /// when the provider says (T-4370).
+    pub finish: Option<String>,
+    /// The prompt tokens the provider read from its cache
+    /// (`usage.prompt_tokens_details.cached_tokens`, T-4681), when it reports them.
+    pub cached: Option<u64>,
+    /// The model's reasoning text as the provider returned it (`reasoning`, else the texts of
+    /// `reasoning_details`), at most [`THOUGHT_BYTES`]; `None` when it returned none (T-4681).
+    pub thought: Option<String>,
+    /// The call's reasoning effort as sent (`low`, `none`, …) and the first 12 hex digits of the
+    /// SHA-256 of its system message, which names the prompt's version (T-4681).
+    pub effort: Option<String>,
+    pub prompt: Option<String>,
+}
+
+/// The most bytes of a call's reasoning text kept (T-4681).
+pub const THOUGHT_BYTES: usize = 64 * 1024;
+
+impl Completion {
+    /// This completion with the effort and the prompt version of the request `body` it answers.
+    fn of(mut self, body: &Value) -> Self {
+        self.effort = match body.get("reasoning") {
+            Some(r) if r.get("enabled") == Some(&Value::Bool(false)) => Some("none".to_owned()),
+            Some(r) => r.get("effort").and_then(Value::as_str).map(str::to_owned),
+            None => None,
+        };
+        self.prompt = body
+            .pointer("/messages/0")
+            .filter(|m| m.get("role").and_then(Value::as_str) == Some("system"))
+            .and_then(|m| m.get("content"))
+            .map(|content| {
+                use sha2::Digest;
+                let text = content
+                    .as_str()
+                    .map_or_else(|| content.to_string(), str::to_owned);
+                let digest = sha2::Sha256::digest(text.as_bytes());
+                digest.iter().take(6).map(|b| format!("{b:02x}")).collect()
+            });
+        self
+    }
+
+    /// Whether the provider stopped the answer for its content (a safety stop, T-4370).
+    pub fn declined(&self) -> bool {
+        self.finish.as_deref() == Some("content_filter")
+    }
+
+    /// Whether the call ended on its own: a normal stop, or no reason given (T-4370).
+    pub fn whole(&self) -> bool {
+        matches!(self.finish.as_deref(), None | Some("stop"))
+    }
+}
+
+/// `choices[0].finish_reason`, at most 32 characters of `a-z _`; anything else is not kept.
+fn finish_reason(chunk: &Value) -> Option<String> {
+    let reason = chunk.pointer("/choices/0/finish_reason")?.as_str()?;
+    (!reason.is_empty()
+        && reason.len() <= 32
+        && reason.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+    .then(|| reason.to_owned())
+}
+
+/// `usage.prompt_tokens_details.cached_tokens`, when reported.
+fn cached_tokens(usage: &Value) -> Option<u64> {
+    usage
+        .pointer("/prompt_tokens_details/cached_tokens")?
+        .as_u64()
+}
+
+/// The reasoning text of a message or a stream delta: its `reasoning`, else the `text` (or
+/// `summary`) of each `reasoning_details` entry, joined.
+fn reasoning_text(message: &Value) -> Option<String> {
+    if let Some(text) = message.get("reasoning").and_then(Value::as_str) {
+        return (!text.is_empty()).then(|| text.to_owned());
+    }
+    let joined: String = message
+        .get("reasoning_details")?
+        .as_array()?
+        .iter()
+        .filter_map(|d| d.get("text").or_else(|| d.get("summary"))?.as_str())
+        .collect();
+    (!joined.is_empty()).then_some(joined)
+}
+
+/// `text` with `more` appended, the whole held to [`THOUGHT_BYTES`] on a character boundary.
+fn append_thought(text: &mut String, more: &str) {
+    for c in more.chars() {
+        if text.len() + c.len_utf8() > THOUGHT_BYTES {
+            return;
+        }
+        text.push(c);
+    }
+}
+
+/// `usage.completion_tokens_details.reasoning_tokens`, when reported.
+fn reasoning_tokens(usage: &Value) -> Option<u64> {
+    usage
+        .pointer("/completion_tokens_details/reasoning_tokens")?
+        .as_u64()
+}
+
+/// The served provider as OpenRouter names it, `Google Vertex` or `DeepInfra`: at most 64
+/// characters of letters, digits, space and `. _ / -`; anything else is not kept (T-4360).
+fn provider_name(chunk: &Value) -> Option<String> {
+    let name = chunk.get("provider")?.as_str()?;
+    (!name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || " ._/-".contains(c)))
+    .then(|| name.to_owned())
+}
+
+/// `usage.cost` in millionths of a US dollar; `None` when absent, negative or not a number.
+fn cost_micros(usage: &Value) -> Option<u64> {
+    let cost = usage.get("cost")?.as_f64()?;
+    (cost.is_finite() && cost >= 0.0).then(|| (cost * 1_000_000.0).round() as u64)
+}
+
+/// Why a call gave no completion, in words a person reads (AG-104).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallError {
+    /// The deployment's day is spent (the proxy's `429`).
+    DaySpent(String),
+    /// The proxy, the realm or the provider failed or answered something unreadable.
+    Unavailable(String),
+}
+
+impl std::fmt::Display for CallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CallError::DaySpent(why) | CallError::Unavailable(why) => f.write_str(why),
+        }
+    }
+}
+
+/// How the service reaches the model.
+#[derive(Debug, Clone)]
+pub struct ModelConfig {
+    /// `jc-agent-proxy`, scheme and authority.
+    pub proxy: String,
+    /// The realm's token endpoint.
+    pub token_url: String,
+    /// The service's Keycloak client.
+    pub client_id: String,
+    /// How it proves that client: the pod's projected token, or a secret read from the file the
+    /// deployment mounts (PF-47).
+    pub credential: jc_core::ClientCredential,
+    /// The model the completions name.
+    pub model: String,
+}
+
+/// Calls the model; holds the service's token until shortly before it expires.
+pub struct Model {
+    config: ModelConfig,
+    http: reqwest::Client,
+    token: Mutex<Option<(String, Instant)>>,
+    /// How long the realm may take to answer a token request, [`TOKEN_DEADLINE`].
+    token_deadline: Duration,
+}
+
+/// The token request's own deadline. The renewal holds the one token lock, and every question
+/// waits on it, so a stalled realm must fail it in seconds, not in the client's 120 s (T-4325).
+const TOKEN_DEADLINE: Duration = Duration::from_secs(10);
+
+/// The waits before the token request is asked again (T-4809).
+const TOKEN_RETRIES: [Duration; 2] = [Duration::from_millis(500), Duration::from_millis(1500)];
+
+/// The wait before a completion is sent again after the proxy refused the connection: nothing
+/// reached it, so nothing is spent twice (T-4809).
+const PROXY_RETRY: Duration = Duration::from_millis(500);
+
+/// The longest answer one call may write. A reasoning model counts its thinking inside it, so
+/// a `low` reasoning effort keeps the thinking short and the room is the answer's (T-3203).
+pub const MAX_ANSWER_TOKENS: u64 = 3_000;
+
+impl Model {
+    pub fn new(config: ModelConfig, http: reqwest::Client) -> Self {
+        Self {
+            config,
+            http,
+            token: Mutex::new(None),
+            token_deadline: TOKEN_DEADLINE,
+        }
+    }
+
+    /// The service's own token, held until shortly before it expires; its audience names the
+    /// agent proxy and `jc-functions`.
+    pub async fn token(&self) -> Result<String, CallError> {
+        let mut held = self.token.lock().await;
+        if let Some((token, until)) = held.as_ref() {
+            if Instant::now() < *until {
+                return Ok(token.clone());
+            }
+        }
+        let unavailable = |why: String| {
+            tracing::error!(%why, "no service token for the model");
+            CallError::Unavailable(MODEL_UNREACHABLE.into())
+        };
+        let mut form = self
+            .config
+            .credential
+            .form(&self.config.client_id)
+            .map_err(unavailable)?;
+        form.push(("grant_type", "client_credentials".to_owned()));
+        // A send error, a 5xx or a 429 is asked again after a short wait, inside the one deadline;
+        // any other refusal, a 401 above all, fails at once (T-4809: a rollout's dropped call).
+        let deadline = Instant::now() + self.token_deadline;
+        let mut attempt = 0;
+        let answer = loop {
+            let why = match self
+                .http
+                .post(&self.config.token_url)
+                .timeout(deadline.saturating_duration_since(Instant::now()))
+                .form(&form)
+                .send()
+                .await
+            {
+                Ok(answer) if answer.status().is_success() => break answer,
+                Ok(answer) => {
+                    let status = answer.status();
+                    let why = format!("the realm answered {status}");
+                    if !(status.is_server_error() || status.as_u16() == 429) {
+                        return Err(unavailable(why));
+                    }
+                    why
+                }
+                Err(err) => err.without_url().to_string(),
+            };
+            match TOKEN_RETRIES.get(attempt) {
+                Some(wait) if Instant::now() + *wait < deadline => {
+                    attempt += 1;
+                    tracing::warn!(attempt, %why, "the service token request failed; asking again");
+                    tokio::time::sleep(*wait).await;
+                }
+                _ => return Err(unavailable(why)),
+            }
+        };
+        let body: Value = answer
+            .json()
+            .await
+            .map_err(|err| unavailable(err.without_url().to_string()))?;
+        let token = body
+            .get("access_token")
+            .and_then(Value::as_str)
+            .ok_or_else(|| unavailable("the realm's answer has no access_token".into()))?
+            .to_owned();
+        let lives = body.get("expires_in").and_then(Value::as_u64).unwrap_or(60);
+        // Renewed a minute early, or at half its life when it lives less than two minutes.
+        let keep = if lives > 120 { lives - 60 } else { lives / 2 };
+        *held = Some((token.clone(), Instant::now() + Duration::from_secs(keep)));
+        Ok(token)
+    }
+
+    /// Whether `bearer` is an active token of `client`'s own service account whose audience names
+    /// this service (AG-113): the realm is asked with the service's own credentials, so a token
+    /// it revoked is refused at once.
+    pub async fn is_service_account(&self, bearer: &str, client: &str) -> Result<bool, CallError> {
+        let unavailable = |why: String| {
+            tracing::error!(%why, "a caller's token could not be judged");
+            CallError::Unavailable("The realm could not be reached; try again shortly.".into())
+        };
+        let mut form = self
+            .config
+            .credential
+            .form(&self.config.client_id)
+            .map_err(unavailable)?;
+        form.push(("token", bearer.to_owned()));
+        let answer = self
+            .http
+            .post(format!("{}/introspect", self.config.token_url))
+            .form(&form)
+            .send()
+            .await
+            .map_err(|err| unavailable(err.without_url().to_string()))?;
+        if !answer.status().is_success() {
+            return Err(unavailable(format!(
+                "introspection answered {}",
+                answer.status()
+            )));
+        }
+        let seen: Value = answer
+            .json()
+            .await
+            .map_err(|err| unavailable(err.without_url().to_string()))?;
+        let audience = match seen.get("aud") {
+            Some(Value::String(one)) => vec![one.as_str()],
+            Some(Value::Array(many)) => many.iter().filter_map(Value::as_str).collect(),
+            _ => Vec::new(),
+        };
+        Ok(seen.get("active").and_then(Value::as_bool) == Some(true)
+            && seen.get("azp").and_then(Value::as_str) == Some(client)
+            && seen
+                .get("username")
+                .and_then(Value::as_str)
+                .is_some_and(|u| u.eq_ignore_ascii_case(&format!("service-account-{client}")))
+            && audience.contains(&self.config.client_id.as_str()))
+    }
+
+    /// The service's model, which a call asks when it names none.
+    pub fn name(&self) -> &str {
+        &self.config.model
+    }
+
+    /// One completion for `deployment` (`{project}/{name}`) under its day's `tokens_per_day`.
+    pub async fn complete(
+        &self,
+        deployment: &str,
+        tokens_per_day: u64,
+        messages: &[Value],
+        tools: &[Value],
+        allow_tools: bool,
+    ) -> Result<Completion, CallError> {
+        let mut body = json!({
+            "model": self.config.model,
+            "messages": messages,
+            "max_tokens": MAX_ANSWER_TOKENS,
+            "reasoning": jc_core::kinds::ReasoningEffort::default().openrouter(),
+        });
+        if !tools.is_empty() {
+            body["tools"] = Value::Array(tools.to_vec());
+            if !allow_tools {
+                body["tool_choice"] = json!("none");
+            }
+        }
+        let answer = self.send(deployment, tokens_per_day, &body).await?;
+        let reply = reply(deployment, answer).await?;
+        parse(&reply).map(|c| c.of(&body)).ok_or_else(|| {
+            unavailable(deployment, "the provider's answer is not a chat completion")
+        })
+    }
+
+    /// One call without tools on `call.model` (the service's model when `None`), its output held
+    /// to `call.max_tokens`; a router call asks for a JSON object (T-4139, AG-107).
+    pub async fn ask(
+        &self,
+        deployment: &str,
+        tokens_per_day: u64,
+        call: &Call<'_>,
+        messages: &[Value],
+    ) -> Result<Completion, CallError> {
+        let body = self.body(call, messages, false);
+        let answer = self.send(deployment, tokens_per_day, &body).await?;
+        let reply = reply(deployment, answer).await?;
+        parse(&reply).map(|c| c.of(&body)).ok_or_else(|| {
+            unavailable(deployment, "the provider's answer is not a chat completion")
+        })
+    }
+
+    /// One step of the data loop (T-4294): [`Model::ask`]'s call with `tools` offered, or shown
+    /// with `tool_choice: none` when `allow_tools` is false, so a history of tool calls stays valid.
+    pub async fn step(
+        &self,
+        deployment: &str,
+        tokens_per_day: u64,
+        call: &Call<'_>,
+        messages: &[Value],
+        tools: &[Value],
+        allow_tools: bool,
+    ) -> Result<Completion, CallError> {
+        let mut body = self.body(call, messages, false);
+        if !tools.is_empty() {
+            body["tools"] = Value::Array(tools.to_vec());
+            if !allow_tools {
+                body["tool_choice"] = json!("none");
+            }
+        }
+        let answer = self.send(deployment, tokens_per_day, &body).await?;
+        let reply = reply(deployment, answer).await?;
+        parse(&reply).map(|c| c.of(&body)).ok_or_else(|| {
+            unavailable(deployment, "the provider's answer is not a chat completion")
+        })
+    }
+
+    /// The same call streamed: each piece of the answer goes to `deltas` as a `delta` event the
+    /// moment the model writes it, and the whole completion, with the stream's `usage`, comes back
+    /// at the end with the instant its first piece arrived (API/05 §1.3).
+    pub async fn stream(
+        &self,
+        deployment: &str,
+        tokens_per_day: u64,
+        call: &Call<'_>,
+        messages: &[Value],
+        deltas: &Sender<Event>,
+    ) -> Result<(Completion, Option<Instant>), CallError> {
+        let body = self.body(call, messages, true);
+        let answer = self.send(deployment, tokens_per_day, &body).await?;
+        let mut reader = StreamReader::default();
+        let mut first = None;
+        let mut bytes = answer.bytes_stream();
+        while let Some(chunk) = futures_util::StreamExt::next(&mut bytes).await {
+            let chunk =
+                chunk.map_err(|err| unavailable(deployment, &err.without_url().to_string()))?;
+            for piece in reader.feed(&chunk) {
+                first.get_or_insert_with(Instant::now);
+                // A reader who left stops reading; the call is let finish so it is counted.
+                let _ = deltas.send(Event::Delta(piece)).await;
+            }
+        }
+        let completion = reader.finish().ok_or_else(|| {
+            unavailable(deployment, "the provider's stream ended without an answer")
+        })?;
+        Ok((completion.of(&body), first))
+    }
+
+    fn body(&self, call: &Call<'_>, messages: &[Value], stream: bool) -> Value {
+        let mut body = json!({
+            "model": call.model.unwrap_or(&self.config.model),
+            "messages": messages,
+            "max_tokens": call.max_tokens,
+            "reasoning": call.reasoning.openrouter(),
+            "provider": call.provider.map_or_else(
+                || jc_core::kinds::ProviderRouting::fastest().openrouter(),
+                jc_core::kinds::ProviderRouting::openrouter,
+            ),
+        });
+        if call.json {
+            body["response_format"] = json!({"type": "json_object"});
+            // The router and the judge decide what is read: the same question picks the same
+            // dataset every time (T-4680, a population answered from another cube on each ask).
+            body["temperature"] = json!(0);
+        }
+        if stream {
+            // The proxy adds `stream_options.include_usage`, so the last chunk carries `usage`.
+            body["stream"] = json!(true);
+        }
+        body
+    }
+
+    /// Sends one chat completion through the proxy; a refusal becomes the sentence a person reads.
+    async fn send(
+        &self,
+        deployment: &str,
+        tokens_per_day: u64,
+        body: &Value,
+    ) -> Result<reqwest::Response, CallError> {
+        let token = self.token().await?;
+        let post = || {
+            self.http
+                .post(format!("{}/v1/llm/chat/completions", self.config.proxy))
+                .bearer_auth(&token)
+                .header("x-jc-assistant-deployment", deployment)
+                .header("x-jc-assistant-tokens-per-day", tokens_per_day.to_string())
+                .json(body)
+                .send()
+        };
+        // Only a refused connection is sent again: once the proxy has the call, a second send
+        // could pay the model twice.
+        let answer = match post().await {
+            Err(err) if err.is_connect() => {
+                tracing::warn!(%deployment, why = %err.without_url(), "the model proxy refused the connection; sending once more");
+                tokio::time::sleep(PROXY_RETRY).await;
+                post().await
+            }
+            sent => sent,
+        }
+        .map_err(|err| unavailable(deployment, &err.without_url().to_string()))?;
+        let status = answer.status();
+        if status.as_u16() == 429 {
+            return Err(CallError::DaySpent(DAY_SPENT.into()));
+        }
+        if status.as_u16() == 401 {
+            // The held token was refused: the next question asks the realm again.
+            *self.token.lock().await = None;
+        }
+        if !status.is_success() {
+            return Err(unavailable(
+                deployment,
+                &format!("the proxy answered {status}"),
+            ));
+        }
+        Ok(answer)
+    }
+}
+
+// What a visitor reads when the model fails (T-4192): in Slovak, like every sentence the public
+// chat says itself (the 504, the switched-off assistant); the status and title stay English.
+pub const MODEL_UNREACHABLE: &str =
+    "Asistent sa teraz nevie spojiť so svojím modelom. Skúste to o minútu znova.";
+pub const MODEL_DID_NOT_ANSWER: &str = "Model asistenta neodpovedal. Skúste to o minútu znova.";
+/// Why the proxy refused, for the log: a visitor never reads it, they read the day's limit
+/// (T-4671).
+pub const DAY_SPENT: &str = "the model proxy refused the deployment's day (budget.tokensPerDay)";
+/// A conversation past its tokens (T-4737): it is long, and a new one carries the question on;
+/// never that the visitor used up a share.
+pub const CONVERSATION_SPENT: &str =
+    "Tento rozhovor je už dlhý. Pokračujte v novom rozhovore, otázku v ňom položím znova.";
+
+/// The most of one unstreamed model answer the assistant holds (T-5510): ample for
+/// [`MAX_ANSWER_TOKENS`], and a provider that answers without end is cut off here.
+pub const MAX_REPLY_BYTES: usize = 1 << 20;
+
+/// An unstreamed answer as JSON, read only up to [`MAX_REPLY_BYTES`]; a body that is not JSON is
+/// `null`, which [`parse`] refuses as no chat completion.
+async fn reply(deployment: &str, answer: reqwest::Response) -> Result<Value, CallError> {
+    let body = jc_core::outbound::read_capped(answer, MAX_REPLY_BYTES)
+        .await
+        .map_err(|err| unavailable(deployment, &err.to_string()))?;
+    Ok(serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+
+fn unavailable(deployment: &str, why: &str) -> CallError {
+    tracing::warn!(%deployment, %why, "a model call failed");
+    CallError::Unavailable(MODEL_DID_NOT_ANSWER.into())
+}
+
+/// What one call of [`Model::ask`] or [`Model::stream`] asks for.
+#[derive(Debug, Clone, Copy)]
+pub struct Call<'a> {
+    /// `vendor/name`; the service's configured model when `None`.
+    pub model: Option<&'a str>,
+    /// The most tokens the call may write, its thinking included.
+    pub max_tokens: u64,
+    /// Whether the answer must be one JSON object.
+    pub json: bool,
+    /// The OpenRouter providers to ask, sent as its `provider` field (T-4292); the fastest when
+    /// `None` (T-4360).
+    pub provider: Option<&'a jc_core::kinds::ProviderRouting>,
+    /// The call's reasoning effort (T-4360). Left to the provider, gemini-3.8-flash thought
+    /// through 1,438 of 1,500 tokens and the call came back empty, so the default is `low` (T-3203).
+    pub reasoning: jc_core::kinds::ReasoningEffort,
+}
+
+/// Reads an OpenAI-compatible completion stream (`data: {chunk}` lines, `data: [DONE]` last) as
+/// its bytes arrive, in pieces that may cut a line, or a character, anywhere.
+#[derive(Debug, Default)]
+pub struct StreamReader {
+    pending: Vec<u8>,
+    text: String,
+    input: u64,
+    output: u64,
+    total: Option<u64>,
+    cost_micros: Option<u64>,
+    provider: Option<String>,
+    reasoning: Option<u64>,
+    finish: Option<String>,
+    cached: Option<u64>,
+    thought: String,
+    chunks: usize,
+}
+
+/// The longest line the reader keeps; a longer one is dropped unread.
+const STREAM_LINE_MAX: usize = 1 << 20;
+
+impl StreamReader {
+    /// Takes the next bytes; returns the answer's pieces they complete, in order.
+    pub fn feed(&mut self, bytes: &[u8]) -> Vec<String> {
+        self.pending.extend_from_slice(bytes);
+        let mut pieces = Vec::new();
+        while let Some(end) = self.pending.iter().position(|b| *b == b'\n') {
+            let line: Vec<u8> = self.pending.drain(..=end).collect();
+            if let Some(piece) = self.line(&line) {
+                pieces.push(piece);
+            }
+        }
+        if self.pending.len() > STREAM_LINE_MAX {
+            self.pending.clear();
+        }
+        pieces
+    }
+
+    fn line(&mut self, line: &[u8]) -> Option<String> {
+        let line = std::str::from_utf8(line).ok()?.trim();
+        let data = line.strip_prefix("data:")?.trim();
+        if data == "[DONE]" {
+            return None;
+        }
+        let chunk: Value = serde_json::from_str(data).ok()?;
+        self.chunks += 1;
+        if self.provider.is_none() {
+            self.provider = provider_name(&chunk);
+        }
+        self.finish = finish_reason(&chunk).or(self.finish.take());
+        if let Some(usage) = chunk.get("usage").filter(|u| u.is_object()) {
+            let count = |key: &str| usage.get(key).and_then(Value::as_u64);
+            self.input = count("prompt_tokens").unwrap_or(self.input);
+            self.output = count("completion_tokens").unwrap_or(self.output);
+            self.total = count("total_tokens").or(self.total);
+            self.cost_micros = cost_micros(usage).or(self.cost_micros);
+            self.reasoning = reasoning_tokens(usage).or(self.reasoning);
+            self.cached = cached_tokens(usage).or(self.cached);
+        }
+        if let Some(thought) = chunk.pointer("/choices/0/delta").and_then(reasoning_text) {
+            append_thought(&mut self.thought, &thought);
+        }
+        let piece = chunk.pointer("/choices/0/delta/content")?.as_str()?;
+        if piece.is_empty() {
+            return None;
+        }
+        self.text.push_str(piece);
+        Some(piece.to_owned())
+    }
+
+    /// The whole completion, or `None` when the stream carried no chunk at all.
+    pub fn finish(mut self) -> Option<Completion> {
+        if !self.pending.is_empty() {
+            let rest = std::mem::take(&mut self.pending);
+            self.line(&rest);
+        }
+        (self.chunks > 0).then(|| Completion {
+            tokens: self.total.unwrap_or(self.input + self.output),
+            text: self.text,
+            calls: Vec::new(),
+            input: self.input,
+            output: self.output,
+            cost_micros: self.cost_micros,
+            provider: self.provider,
+            reasoning: self.reasoning,
+            finish: self.finish,
+            cached: self.cached,
+            thought: (!self.thought.is_empty()).then_some(self.thought),
+            effort: None,
+            prompt: None,
+        })
+    }
+}
+
+/// The text, the tool calls and the tokens of an OpenAI-compatible chat completion.
+pub fn parse(body: &Value) -> Option<Completion> {
+    let message = body.pointer("/choices/0/message")?;
+    let text = message
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let calls = message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .map(|calls| {
+            calls
+                .iter()
+                .filter_map(|call| {
+                    Some((
+                        call.get("id")?.as_str()?.to_owned(),
+                        call.pointer("/function/name")?.as_str()?.to_owned(),
+                        call.pointer("/function/arguments")
+                            .and_then(Value::as_str)
+                            .unwrap_or("{}")
+                            .to_owned(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let usage = body.get("usage");
+    let count = |key: &str| usage.and_then(|u| u.get(key)).and_then(Value::as_u64);
+    let input = count("prompt_tokens").unwrap_or(0);
+    let output = count("completion_tokens").unwrap_or(0);
+    Some(Completion {
+        text,
+        calls,
+        tokens: count("total_tokens").unwrap_or(input + output),
+        input,
+        output,
+        cost_micros: usage.and_then(cost_micros),
+        provider: provider_name(body),
+        reasoning: usage.and_then(reasoning_tokens),
+        finish: finish_reason(body),
+        cached: usage.and_then(cached_tokens),
+        thought: reasoning_text(message).map(|t| {
+            let mut kept = String::new();
+            append_thought(&mut kept, &t);
+            kept
+        }),
+        effort: None,
+        prompt: None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// T-5510: a provider that answers without end is cut off at [`MAX_REPLY_BYTES`].
+    #[tokio::test]
+    async fn an_endless_reply_is_refused_at_the_cap() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port");
+        let addr = listener.local_addr().expect("an address");
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut socket, _) = listener.accept().await.expect("a connection");
+            let _ = socket.read(&mut [0u8; 4096]).await;
+            let head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+            if socket.write_all(head.as_bytes()).await.is_err() {
+                return;
+            }
+            let chunk = format!("10000\r\n{}\r\n", "x".repeat(0x10000));
+            while socket.write_all(chunk.as_bytes()).await.is_ok() {}
+        });
+        let answer = reqwest::get(format!("http://{addr}/"))
+            .await
+            .expect("an answer");
+        let refused = reply("helsinki/assistant", answer).await;
+        assert!(
+            matches!(refused, Err(CallError::Unavailable(_))),
+            "{refused:?}"
+        );
+    }
+
+    /// T-4681: the cached prompt tokens and the reasoning text are kept as the provider sent
+    /// them, in a reply and in a stream; none sent is `None`, never invented.
+    #[test]
+    fn a_call_keeps_its_cached_tokens_and_its_reasoning_text() {
+        let usage = json!({"prompt_tokens": 900, "completion_tokens": 40,
+            "prompt_tokens_details": {"cached_tokens": 640}});
+        let reply = parse(
+            &json!({"choices": [{"message": {"content": "Áno.", "reasoning": "Hľadám PM10."}}],
+            "usage": usage}),
+        )
+        .expect("a completion");
+        assert_eq!(reply.cached, Some(640));
+        assert_eq!(reply.thought.as_deref(), Some("Hľadám PM10."));
+        let details = parse(&json!({"choices": [{"message": {"content": "a",
+            "reasoning_details": [{"type": "reasoning.text", "text": "prvé "}, {"type": "reasoning.summary", "summary": "druhé"}]}}]}))
+        .expect("a completion");
+        assert_eq!(details.thought.as_deref(), Some("prvé druhé"));
+        let bare =
+            parse(&json!({"choices": [{"message": {"content": "a"}}]})).expect("a completion");
+        assert_eq!((bare.cached, bare.thought), (None, None));
+        let mut reader = StreamReader::default();
+        reader.feed(b"data: {\"choices\":[{\"delta\":{\"reasoning\":\"Mysl\\u00edm\"}}]}\n");
+        reader.feed(
+            b"data: {\"choices\":[{\"delta\":{\"reasoning\":\".\",\"content\":\"Od 9.\"}}]}\n",
+        );
+        reader.feed(b"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"prompt_tokens_details\":{\"cached_tokens\":3}}}\n");
+        let streamed = reader.finish().expect("a completion");
+        assert_eq!(streamed.thought.as_deref(), Some("Myslím."));
+        assert_eq!(
+            (streamed.text.as_str(), streamed.cached),
+            ("Od 9.", Some(3))
+        );
+        let mut long = String::new();
+        append_thought(&mut long, &"ž".repeat(THOUGHT_BYTES));
+        assert!(long.len() <= THOUGHT_BYTES && long.len() > THOUGHT_BYTES - 2);
+    }
+
+    /// T-4681: the effort sent and the system message's hash travel with the completion.
+    #[test]
+    fn a_completion_names_its_effort_and_its_prompt_version() {
+        let body = json!({"reasoning": {"effort": "low"},
+            "messages": [{"role": "system", "content": "Odpovedaj stručne."}, {"role": "user", "content": "x"}]});
+        let done = Completion::default().of(&body);
+        assert_eq!(done.effort.as_deref(), Some("low"));
+        let version = done.prompt.expect("a version");
+        assert_eq!(version.len(), 12);
+        let other =
+            Completion::default().of(&json!({"messages": [{"role": "system", "content": "Iný."}]}));
+        assert_ne!(other.prompt.as_deref(), Some(version.as_str()));
+        let off = Completion::default().of(&json!({"reasoning": {"enabled": false}, "messages": [{"role": "user", "content": "x"}]}));
+        assert_eq!((off.effort.as_deref(), off.prompt), (Some("none"), None));
+    }
+
+    /// T-4370: the reason a call ended is read from the stream's last chunk that names one and
+    /// from a reply; only a normal stop (or none said) is whole, `content_filter` is declined.
+    #[test]
+    fn the_finish_reason_says_whether_an_answer_is_whole() {
+        let mut reader = StreamReader::default();
+        reader.feed(b"data: {\"choices\":[{\"delta\":{\"content\":\"I cannot\"},\"finish_reason\":null}]}\n");
+        reader.feed(b"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"content_filter\"}]}\n");
+        reader.feed(
+            b"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}\n",
+        );
+        let cut = reader.finish().expect("a completion");
+        assert_eq!(cut.finish.as_deref(), Some("content_filter"));
+        assert!(cut.declined() && !cut.whole());
+        let reply = |reason: Value| {
+            parse(&json!({"choices": [{"message": {"content": "Od 9:00."}, "finish_reason": reason}]}))
+                .expect("a completion")
+        };
+        assert!(reply(json!("stop")).whole());
+        assert!(reply(Value::Null).whole(), "no reason said is not a cut");
+        let long = reply(json!("length"));
+        assert!(!long.whole() && !long.declined());
+        assert_eq!(
+            reply(json!("Stop; DROP")).finish,
+            None,
+            "out of bounds is not kept"
+        );
+    }
+
+    /// T-4360: the served provider is kept as OpenRouter names it, from a reply or the first
+    /// stream chunk that names one; a name out of bounds is not kept.
+    #[test]
+    fn the_served_provider_is_kept_only_in_its_bounds() {
+        let named = |provider: Value| provider_name(&json!({ "provider": provider }));
+        assert_eq!(named(json!("Google Vertex")), Some("Google Vertex".into()));
+        assert_eq!(named(json!("deepinfra/fp8")), Some("deepinfra/fp8".into()));
+        for bad in [
+            json!(""),
+            json!("a".repeat(65)),
+            json!("x\ny"),
+            json!("<b>"),
+            json!(7),
+        ] {
+            assert_eq!(named(bad.clone()), None, "{bad}");
+        }
+        let mut reader = StreamReader::default();
+        reader.feed(b"data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n");
+        reader
+            .feed(b"data: {\"provider\":\"Groq\",\"choices\":[{\"delta\":{\"content\":\"b\"}}]}\n");
+        reader.feed(b"data: {\"provider\":\"Cerebras\",\"choices\":[],\"usage\":{\"completion_tokens_details\":{\"reasoning_tokens\":12}}}\n");
+        let streamed = reader.finish().expect("a completion");
+        assert_eq!(
+            (streamed.provider.as_deref(), streamed.reasoning),
+            (Some("Groq"), Some(12))
+        );
+        let reply = |usage: Value| {
+            parse(&json!({"choices": [{"message": {"content": "a"}}], "usage": usage}))
+                .and_then(|c| c.reasoning)
+        };
+        assert_eq!(
+            reply(json!({"completion_tokens_details": {"reasoning_tokens": 3}})),
+            Some(3)
+        );
+        assert_eq!(reply(json!({"completion_tokens": 3})), None);
+    }
+
+    /// T-4325: a realm that never answers holds the token lock for the token request's own
+    /// deadline, not for the model client's 120 s, and a question waiting on the lock meanwhile
+    /// is answered within that deadline too.
+    #[tokio::test]
+    async fn a_silent_realm_holds_the_token_lock_only_for_the_token_deadline() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(30)))
+            .mount(&realm)
+            .await;
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(120))
+            .build()
+            .expect("a client");
+        let mut model = Model::new(
+            ModelConfig {
+                proxy: "http://127.0.0.1:9".into(),
+                token_url: format!("{}/token", realm.uri()),
+                client_id: "jc-assistant".into(),
+                credential: jc_core::ClientCredential::Secret(jc_core::Secret::new("s3cret")),
+                model: "m".into(),
+            },
+            http,
+        );
+        model.token_deadline = Duration::from_millis(300);
+        let started = Instant::now();
+        let (first, second) = tokio::join!(model.token(), model.token());
+        assert!(matches!(first, Err(CallError::Unavailable(_))), "{first:?}");
+        assert!(
+            matches!(second, Err(CallError::Unavailable(_))),
+            "{second:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "both waited {:?}",
+            started.elapsed()
+        );
+    }
+
+    fn a_model(realm: &str, proxy: &str) -> Model {
+        Model::new(
+            ModelConfig {
+                proxy: proxy.into(),
+                token_url: format!("{realm}/token"),
+                client_id: "jc-assistant".into(),
+                credential: jc_core::ClientCredential::Secret(jc_core::Secret::new("s3cret")),
+                model: "m".into(),
+            },
+            reqwest::Client::new(),
+        )
+    }
+
+    /// The log lines written while `run` runs on this thread.
+    ///
+    /// Every test that reaches a log line another test asserts on captures its own log too
+    /// (T-5633). While a single dispatcher is live, tracing-core judges a callsite's first hit by
+    /// the hitting thread's own dispatcher alone; a test without one caches `Interest::never` for
+    /// the whole process, and the capturing test sees no line.
+    #[derive(Clone, Default)]
+    struct Log(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Log {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("the log").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl Log {
+        fn capture() -> (Self, tracing::subscriber::DefaultGuard) {
+            let log = Self::default();
+            let writer = log.clone();
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(move || writer.clone())
+                .with_ansi(false)
+                .finish();
+            (log, tracing::subscriber::set_default(subscriber))
+        }
+        fn text(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().expect("the log")).into_owned()
+        }
+    }
+
+    fn token_answer() -> wiremock::ResponseTemplate {
+        wiremock::ResponseTemplate::new(200)
+            .set_body_json(json!({"access_token": "tok-123", "expires_in": 300}))
+    }
+
+    /// A free port nobody listens on yet.
+    fn a_free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|l| l.local_addr())
+            .expect("a port")
+            .port()
+    }
+
+    /// A mock server that starts listening on `port` 150 ms from now, inside a retry's wait.
+    async fn listening_soon(port: u16) -> wiremock::MockServer {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let listener = std::net::TcpListener::bind(("127.0.0.1", port)).expect("the port");
+        wiremock::MockServer::builder()
+            .listener(listener)
+            .start()
+            .await
+    }
+
+    /// A realm on a port bound from the start that closes its first connection unanswered (a send
+    /// error) and answers the second with a token: no freed port another test can take and no
+    /// head start a loaded runner can overrun (T-5633).
+    async fn a_realm_dropping_the_first_connection() -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port");
+        let uri = format!("http://{}", listener.local_addr().expect("the port"));
+        let realm = tokio::spawn(async move {
+            drop(listener.accept().await.expect("the first connection"));
+            let (mut second, _) = listener.accept().await.expect("the second connection");
+            // The whole form arrives before the answer, so the client never sees a reset.
+            let mut asked = Vec::new();
+            let mut buf = [0u8; 1024];
+            while !String::from_utf8_lossy(&asked).contains("grant_type=client_credentials") {
+                let n = second.read(&mut buf).await.expect("the request");
+                assert_ne!(n, 0, "the request ended early");
+                asked.extend_from_slice(buf.get(..n).expect("read bytes"));
+            }
+            let body = json!({"access_token": "tok-123", "expires_in": 300}).to_string();
+            let answer = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            second
+                .write_all(answer.as_bytes())
+                .await
+                .expect("the answer");
+        });
+        (uri, realm)
+    }
+
+    /// T-4809: a realm unreachable once (a rollout) is asked again, with one WARN that names the
+    /// attempt and holds no credential.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_token_request_whose_send_fails_once_is_asked_again() {
+        let (uri, realm) = a_realm_dropping_the_first_connection().await;
+        let model = a_model(&uri, "http://127.0.0.1:9");
+        let (log, _guard) = Log::capture();
+        assert_eq!(model.token().await.expect("a token"), "tok-123");
+        realm.await.expect("the realm answered");
+        let text = log.text();
+        assert_eq!(text.matches(" WARN ").count(), 1, "{text}");
+        assert!(text.contains("attempt=1"), "{text}");
+        assert!(
+            !text.contains("s3cret") && !text.contains("tok-123"),
+            "{text}"
+        );
+    }
+
+    /// T-4809: a 503 is asked again and the 200 after it is the token.
+    #[tokio::test]
+    async fn a_token_request_answered_503_is_asked_again() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .mount(&realm)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(token_answer())
+            .mount(&realm)
+            .await;
+        let model = a_model(&realm.uri(), "http://127.0.0.1:9");
+        let (log, _guard) = Log::capture();
+        assert_eq!(model.token().await.expect("a token"), "tok-123");
+        assert_eq!(realm.received_requests().await.map(|r| r.len()), Some(2));
+        let text = log.text();
+        assert_eq!(text.matches(" WARN ").count(), 1, "{text}");
+    }
+
+    /// T-4809: a 401 is the realm's verdict on the credential; it is never asked again.
+    #[tokio::test]
+    async fn a_token_request_answered_401_is_not_asked_again() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401))
+            .expect(1)
+            .mount(&realm)
+            .await;
+        let model = a_model(&realm.uri(), "http://127.0.0.1:9");
+        let got = model.token().await;
+        assert!(
+            matches!(&got, Err(CallError::Unavailable(why)) if why == MODEL_UNREACHABLE),
+            "{got:?}"
+        );
+    }
+
+    /// T-4809: three failed attempts are the visitor's MODEL_UNREACHABLE.
+    #[tokio::test]
+    async fn a_token_request_failing_every_attempt_is_model_unreachable() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(502))
+            .expect(3)
+            .mount(&realm)
+            .await;
+        let model = a_model(&realm.uri(), "http://127.0.0.1:9");
+        let (log, _guard) = Log::capture();
+        let got = model.token().await;
+        let text = log.text();
+        assert_eq!(text.matches(" WARN ").count(), 2, "{text}");
+        assert!(
+            matches!(&got, Err(CallError::Unavailable(why)) if why == MODEL_UNREACHABLE),
+            "{got:?}"
+        );
+    }
+
+    /// T-4809: a proxy that refuses the connection (a rollout) gets the call once more, and the
+    /// model is called once.
+    #[tokio::test]
+    async fn a_completion_the_proxy_refused_to_connect_is_sent_once_more() {
+        use wiremock::{matchers::method, matchers::path, Mock, MockServer, ResponseTemplate};
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(token_answer())
+            .mount(&realm)
+            .await;
+        // The proxy comes up during the retry's wait.
+        let port = a_free_port();
+        let model = a_model(&realm.uri(), &format!("http://127.0.0.1:{port}"));
+        let proxy = tokio::spawn(async move {
+            let proxy = listening_soon(port).await;
+            Mock::given(method("POST"))
+                .and(path("/v1/llm/chat/completions"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}
+                })))
+                .expect(1)
+                .mount(&proxy)
+                .await;
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            proxy
+        });
+        let answer = model
+            .send("data", 1000, &json!({"messages": []}))
+            .await
+            .expect("an answer");
+        assert!(answer.status().is_success());
+        let proxy = proxy.await.expect("the proxy");
+        assert_eq!(proxy.received_requests().await.map(|r| r.len()), Some(1));
+    }
+
+    #[test]
+    fn a_completion_reads_its_text_its_tool_calls_and_its_tokens() {
+        let body = json!({
+            "choices": [{"message": {"role": "assistant", "content": null, "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "search", "arguments": "{\"query\":\"knižnica\"}"}},
+                {"id": "c2", "type": "function", "function": {"name": "x"}},
+                {"type": "function", "function": {"name": "no-id"}}
+            ]}}],
+            "usage": {"prompt_tokens": 90, "completion_tokens": 10}
+        });
+        let completion = parse(&body).expect("a completion");
+        assert_eq!(completion.text, "");
+        assert_eq!(
+            completion.calls,
+            vec![
+                (
+                    "c1".into(),
+                    "search".into(),
+                    "{\"query\":\"knižnica\"}".into()
+                ),
+                ("c2".into(), "x".into(), "{}".into())
+            ]
+        );
+        assert_eq!(
+            (completion.tokens, completion.input, completion.output),
+            (100, 90, 10)
+        );
+        assert_eq!(parse(&json!({"error": "x"})), None);
+    }
+
+    /// T-4149, T-4178: the provider's `usage.cost` is read in millionths of a dollar, from a
+    /// whole completion and from a stream's last chunk; a cost that is absent, negative or not a
+    /// number is `None`, never a free call.
+    #[test]
+    fn a_call_s_cost_is_read_from_its_usage() {
+        let with = |cost: Value| {
+            parse(&json!({
+                "choices": [{"message": {"role": "assistant", "content": "a"}}],
+                "usage": {"prompt_tokens": 9, "completion_tokens": 1, "cost": cost}
+            }))
+            .expect("a completion")
+            .cost_micros
+        };
+        assert_eq!(with(json!(0.0042)), Some(4_200));
+        assert_eq!(with(json!(3)), Some(3_000_000));
+        assert_eq!(with(json!(-1.0)), None);
+        assert_eq!(with(json!("lots")), None);
+        assert_eq!(with(Value::Null), None);
+        let without = parse(&json!({
+            "choices": [{"message": {"role": "assistant", "content": "a"}}],
+            "usage": {"prompt_tokens": 9, "completion_tokens": 1}
+        }));
+        assert_eq!(without.expect("a completion").cost_micros, None);
+        let mut reader = StreamReader::default();
+        reader.feed(concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":1,\"cost\":0.000125}}\n\n",
+        ).as_bytes());
+        assert_eq!(
+            reader.finish().expect("a completion").cost_micros,
+            Some(125)
+        );
+        let mut silent = StreamReader::default();
+        silent.feed(
+            concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":1}}\n\n",
+        )
+            .as_bytes(),
+        );
+        assert_eq!(silent.finish().expect("a completion").cost_micros, None);
+    }
+
+    /// T-4139: the pieces come out as they complete, wherever the bytes were cut, and the usage
+    /// of the last chunk is what the call cost.
+    #[test]
+    fn a_stream_is_read_in_pieces_cut_anywhere() {
+        let stream = concat!(
+            ": keep-alive\n\n",
+            "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Knižnica \"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"je otvorená [1].\"}}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1200,\"completion_tokens\":40,\"total_tokens\":1240}}\n\n",
+            "data: [DONE]\n\n",
+        )
+        .as_bytes();
+        for cut in [1, 7, 33, 100] {
+            let mut reader = StreamReader::default();
+            let mut pieces = Vec::new();
+            for bytes in stream.chunks(cut) {
+                pieces.extend(reader.feed(bytes));
+            }
+            assert_eq!(
+                pieces,
+                ["Knižnica ", "je otvorená [1]."],
+                "cut every {cut} bytes"
+            );
+            let completion = reader.finish().expect("a completion");
+            assert_eq!(completion.text, "Knižnica je otvorená [1].");
+            assert_eq!(
+                (completion.tokens, completion.input, completion.output),
+                (1240, 1200, 40)
+            );
+        }
+        // A stream with no chunk at all is no completion; one without usage counts nothing.
+        assert_eq!(StreamReader::default().finish(), None);
+        let mut reader = StreamReader::default();
+        reader.feed(b"data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}");
+        assert_eq!(
+            reader.finish().map(|c| (c.text, c.tokens)),
+            Some(("a".into(), 0))
+        );
+    }
+}
