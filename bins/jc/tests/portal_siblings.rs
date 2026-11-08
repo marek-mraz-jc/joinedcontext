@@ -659,6 +659,18 @@ async fn the_portal_runs_on_its_sibling_modules() {
                 .unwrap();
             let log = String::from_utf8_lossy(&log.stdout).into_owned();
             assert!(log.contains("e2e-editors"), "shako has the commit: {log}");
+            // First-start provisioning seeded the Organization and the steward Role.
+            let org = std::fs::read_to_string(clone.path().join("config/org.yaml")).unwrap();
+            assert!(
+                org.contains("kind: Organization") && org.contains("installation: true"),
+                "{org}"
+            );
+            assert!(
+                clone
+                    .path()
+                    .join("config/users/roles/steward.yaml")
+                    .is_file()
+            );
             let group_id = eventually("the group in kaisatsu", 60, || {
                 let token = admin_token.clone();
                 let jc = &jc;
