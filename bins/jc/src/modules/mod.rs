@@ -22,10 +22,10 @@ mod daiya;
 mod dataroom;
 #[cfg(feature = "ekiben")]
 mod ekiben;
-#[cfg(feature = "gateway")]
-pub mod gateway;
 #[cfg(feature = "ekiben")]
 mod ekiben_pg;
+#[cfg(feature = "gateway")]
+pub mod gateway;
 #[cfg(feature = "kaisatsu")]
 mod kaisatsu;
 #[cfg(feature = "portal")]

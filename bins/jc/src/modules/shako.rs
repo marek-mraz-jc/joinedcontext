@@ -20,7 +20,6 @@ use shako_store_pg::PgStore;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-
 fn err(e: impl std::fmt::Display) -> StartError {
     StartError::module(Module::Shako, e)
 }
@@ -122,4 +121,3 @@ pub fn build(state: ShakoState, mount: Mount) -> (Router, Router) {
     let v2_router = registry_router(state, mount);
     (main_router, v2_router)
 }
-

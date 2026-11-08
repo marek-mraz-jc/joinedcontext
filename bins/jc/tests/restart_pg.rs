@@ -200,6 +200,10 @@ fn start(config: &Path, state: &Path, port: u16) -> Jc {
         .arg(state)
         // One jc process serves the database.
         .env("ANTARES_ALLOW_SHARED_LOCAL", "1")
+        // This test proves storage: the Entity is written and read back with the admin token
+        // (a request without a subject the gateway names needs it), which jc's default engine
+        // (`joinedcontext`) refuses on data routes; tests/gateway_endpoints.rs proves that engine.
+        .env("ANTARES_POLICY", "allow-all")
         .env("JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR", "false")
         .env("RUST_LOG", "info,sqlx=warn")
         .stdout(Stdio::null())
@@ -354,6 +358,7 @@ async fn write_everything(jc: &Jc) {
     ok(
         "antares entity",
         http.post(jc.url("/broker/ngsi-ld/v1/entities"))
+            .bearer_auth(jc.secret("antares-admin-token"))
             .header("content-type", "application/json")
             .json(&json!({
                 "id": ENTITY,
@@ -428,7 +433,8 @@ async fn read_everything(jc: &Jc) {
 
     let entity = ok(
         "antares entity after the restart",
-        http.get(jc.url(&format!("/broker/ngsi-ld/v1/entities/{ENTITY}"))),
+        http.get(jc.url(&format!("/broker/ngsi-ld/v1/entities/{ENTITY}")))
+            .bearer_auth(jc.secret("antares-admin-token")),
     )
     .await;
     assert_eq!(entity["pm10"]["value"], 17, "{entity}");

@@ -79,4 +79,3 @@ pub async fn build(
         .with_mount_prefix(mount.path_prefix);
     Ok(dataroom_api::router(state))
 }
-
