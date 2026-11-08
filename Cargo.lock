@@ -1835,8 +1835,11 @@ name = "dataroom-mcp"
 version = "0.1.0"
 dependencies = [
  "dataroom-core",
+ "dataroom-store-memory",
  "serde",
  "serde_json",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
