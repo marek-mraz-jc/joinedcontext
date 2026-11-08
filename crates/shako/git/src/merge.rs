@@ -93,6 +93,9 @@ pub fn check_mergeability(
     })
 }
 
+/// Merged tree as flat `path -> (kind, blob id, new blob bytes when written by the merge)`.
+type MergedTree = BTreeMap<String, (EntryKind, ObjectId, Option<Vec<u8>>)>;
+
 /// Performs a 3-way tree merge in memory between `ancestor_oid`, `our_oid`, and `their_oid`,
 /// first attempting `gix::Repository::merge_trees` and verifying path-by-path 3-way resolution.
 fn merge_trees_in_memory(
@@ -100,10 +103,7 @@ fn merge_trees_in_memory(
     ancestor_oid: Option<ObjectId>,
     our_oid: ObjectId,
     their_oid: ObjectId,
-) -> ShakoResult<(
-    BTreeMap<String, (EntryKind, ObjectId, Option<Vec<u8>>)>,
-    Vec<String>,
-)> {
+) -> ShakoResult<(MergedTree, Vec<String>)> {
     let mut base_files = BTreeMap::new();
     if let Some(anc) = ancestor_oid
         && let Ok(c) = repo.find_commit(anc)
@@ -205,24 +205,38 @@ fn merge_trees_in_memory(
     Ok((merged, conflicts))
 }
 
+/// How [`execute_pr_merge`] writes the merge: the head the reviewer saw, the style, and the commit
+/// message and identities.
+#[derive(Debug, Clone, Copy)]
+pub struct MergeOptions<'a> {
+    pub expected_head_sha: Option<&'a str>,
+    pub style: MergeStyle,
+    pub message: &'a str,
+    pub author: &'a CommitAuthor,
+    pub committer: &'a CommitAuthor,
+}
+
 /// Merges `head_branch` into `base_branch` with `style` (`Merge`, `Squash`, or `FastForwardOnly`),
 /// enforcing `expected_head_sha` when provided (Contract S10, Row 39, Threat T10).
 pub fn execute_pr_merge(
     repo_path: &Path,
     base_branch: &str,
     head_branch: &str,
-    expected_head_sha: Option<&str>,
-    style: MergeStyle,
-    message: &str,
-    author: &CommitAuthor,
-    committer: &CommitAuthor,
+    opts: &MergeOptions<'_>,
 ) -> ShakoResult<String> {
+    let MergeOptions {
+        expected_head_sha,
+        style,
+        message,
+        author,
+        committer,
+    } = *opts;
     let repo = open_isolated(repo_path)?;
     let base_oid = resolve_commit_oid(&repo, base_branch)?;
     let head_oid = resolve_commit_oid(&repo, head_branch)?;
 
     if let Some(expected) = expected_head_sha.filter(|s| !s.is_empty())
-        && head_oid.to_hex().to_string() != expected
+        && head_oid.to_hex() != expected
     {
         return Err(ShakoError::Conflict(
             "head commit has moved since review".into(),
@@ -375,11 +389,13 @@ pub fn update_pr_branch(
         repo_path,
         head_branch,
         base_branch,
-        None,
-        MergeStyle::Merge,
-        &msg,
-        author,
-        author,
+        &MergeOptions {
+            expected_head_sha: None,
+            style: MergeStyle::Merge,
+            message: &msg,
+            author,
+            committer: author,
+        },
     )
 }
 
@@ -463,7 +479,7 @@ pub fn diff_refs_files(
         }
     }
 
-    for (del_path, _) in &deleted {
+    for del_path in deleted.keys() {
         if !matched_deleted.contains(del_path) {
             out.push(DiffFileEntry {
                 filename: del_path.clone(),

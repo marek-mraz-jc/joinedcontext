@@ -18,8 +18,8 @@ use axum::routing::{get, post};
 use serde::Deserialize;
 use shako_core::{Action, PACK_OPERATION_WEIGHT_BYTES, ShakoError, remaining_storage_allowance};
 use shako_git::{
-    advertise_receive_pack, advertise_upload_pack, compute_repo_size_bytes, handle_receive_pack,
-    handle_upload_pack, push_mirror_over_https,
+    PushGuard, advertise_receive_pack, advertise_upload_pack, compute_repo_size_bytes,
+    handle_receive_pack, handle_upload_pack, push_mirror_over_https,
 };
 
 #[derive(Debug, Deserialize)]
@@ -240,13 +240,15 @@ async fn handle_post_receive_pack(
         let _hold = permit;
         handle_receive_pack(
             &disk_clone,
-            &ctx_clone,
-            authz.as_ref(),
-            &owner_clone,
-            &name_clone,
-            &policy,
+            &PushGuard {
+                ctx: &ctx_clone,
+                authorizer: authz.as_ref(),
+                owner: &owner_clone,
+                repo_name: &name_clone,
+                policy: &policy,
+                secret_scan_enabled: secret_scan,
+            },
             max_push_bytes,
-            secret_scan,
             &req_bytes,
         )
     })

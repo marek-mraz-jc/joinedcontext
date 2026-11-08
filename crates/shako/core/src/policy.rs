@@ -60,6 +60,17 @@ fn compile_glob_list(patterns_semicolon_or_comma: &str) -> Option<GlobSet> {
     builder.build().ok()
 }
 
+/// One ref move checked by [`RefPolicy::check_ref_update`]: the full ref name, what kind of move it
+/// is, and the paths the new tip changes.
+#[derive(Debug, Clone, Copy)]
+pub struct RefUpdate<'a> {
+    pub refname: &'a str,
+    pub is_delete: bool,
+    pub is_create: bool,
+    pub is_fast_forward: bool,
+    pub changed_paths: &'a [String],
+}
+
 impl RefPolicy {
     /// Validates a `BranchProtectionRule` before saving it:
     /// - Deploy keys and bypass allowlists must be `false` (R§3.3).
@@ -151,12 +162,15 @@ impl RefPolicy {
         authorizer: &dyn Authorizer,
         owner: &str,
         repo: &str,
-        refname: &str,
-        is_delete: bool,
-        is_create: bool,
-        is_fast_forward: bool,
-        changed_paths: &[String],
+        update: RefUpdate<'_>,
     ) -> ShakoResult<()> {
+        let RefUpdate {
+            refname,
+            is_delete,
+            is_create,
+            is_fast_forward,
+            changed_paths,
+        } = update;
         let target = ObjectTarget::Repository {
             instance_id: ctx.instance_id,
             org_id: ctx.org_id,
@@ -505,11 +519,13 @@ mod tests {
                     &authz,
                     "jc",
                     "cfg",
-                    "refs/heads/main",
-                    false,
-                    false,
-                    true,
-                    &[]
+                    RefUpdate {
+                        refname: "refs/heads/main",
+                        is_delete: false,
+                        is_create: false,
+                        is_fast_forward: true,
+                        changed_paths: &[]
+                    }
                 )
                 .is_err()
         );
@@ -520,11 +536,13 @@ mod tests {
                     &authz,
                     "jc",
                     "cfg",
-                    "refs/heads/main",
-                    false,
-                    false,
-                    true,
-                    &[]
+                    RefUpdate {
+                        refname: "refs/heads/main",
+                        is_delete: false,
+                        is_create: false,
+                        is_fast_forward: true,
+                        changed_paths: &[]
+                    }
                 )
                 .is_err()
         );
@@ -536,11 +554,13 @@ mod tests {
                     &authz,
                     "jc",
                     "cfg",
-                    "refs/heads/main",
-                    false,
-                    false,
-                    true,
-                    &["a.yaml".into()]
+                    RefUpdate {
+                        refname: "refs/heads/main",
+                        is_delete: false,
+                        is_create: false,
+                        is_fast_forward: true,
+                        changed_paths: &["a.yaml".into()]
+                    }
                 )
                 .is_ok()
         );
@@ -551,11 +571,13 @@ mod tests {
                     &authz,
                     "jc",
                     "cfg",
-                    "refs/heads/main",
-                    false,
-                    false,
-                    false,
-                    &[]
+                    RefUpdate {
+                        refname: "refs/heads/main",
+                        is_delete: false,
+                        is_create: false,
+                        is_fast_forward: false,
+                        changed_paths: &[]
+                    }
                 )
                 .is_err()
         );
@@ -566,11 +588,13 @@ mod tests {
                     &authz,
                     "jc",
                     "cfg",
-                    "refs/heads/main",
-                    true,
-                    false,
-                    true,
-                    &[]
+                    RefUpdate {
+                        refname: "refs/heads/main",
+                        is_delete: true,
+                        is_create: false,
+                        is_fast_forward: true,
+                        changed_paths: &[]
+                    }
                 )
                 .is_err()
         );
@@ -581,11 +605,13 @@ mod tests {
                     &authz,
                     "jc",
                     "cfg",
-                    "refs/heads/main",
-                    false,
-                    false,
-                    true,
-                    &[".gitea/workflows/build.yml".into()]
+                    RefUpdate {
+                        refname: "refs/heads/main",
+                        is_delete: false,
+                        is_create: false,
+                        is_fast_forward: true,
+                        changed_paths: &[".gitea/workflows/build.yml".into()]
+                    }
                 )
                 .is_err()
         );

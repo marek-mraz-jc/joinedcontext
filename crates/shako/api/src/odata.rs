@@ -32,12 +32,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use shako_core::{
     Action, BranchProtectionRule, MergePolicyInput, ObjectTarget, ProtectionRuleRecord, RefPolicy,
-    RepoId, RepoRecord, RequestCtx, ReviewRecord, ReviewVerdict, ShakoError, ShakoResult,
-    check_repo_count_quota, repo_disk_path, scope_for_context, validate_branch_name,
+    RefUpdate, RepoId, RepoRecord, RequestCtx, ReviewRecord, ReviewVerdict, ShakoError,
+    ShakoResult, check_repo_count_quota, repo_disk_path, scope_for_context, validate_branch_name,
     validate_repo_or_owner_name, validate_tree_path,
 };
 use shako_git::{
-    CommitAuthor, FileChangeOp, MergeStyle, check_mergeability, commit_file_changes,
+    CommitAuthor, FileChangeOp, MergeOptions, MergeStyle, check_mergeability, commit_file_changes,
     compute_repo_size_bytes, create_branch, delete_branch, diff_refs_files, execute_pr_merge,
     init_bare_repo, list_branches, list_commits, list_tags, list_tree_entries, read_file_at_ref,
     update_pr_branch,
@@ -1454,11 +1454,13 @@ pub async fn exec_odata_operation(
                 state.authorizer.as_ref(),
                 &repo.owner,
                 &repo.name,
-                &format!("refs/heads/{branch}"),
-                true,
-                false,
-                true,
-                &[],
+                RefUpdate {
+                    refname: &format!("refs/heads/{branch}"),
+                    is_delete: true,
+                    is_create: false,
+                    is_fast_forward: true,
+                    changed_paths: &[],
+                },
             )?;
             let _guard = state.repo_locks.lock(repo.id).await;
             let deleted = tokio::task::spawn_blocking(move || delete_branch(&disk_path, &branch))
@@ -1509,11 +1511,13 @@ pub async fn exec_odata_operation(
                 state.authorizer.as_ref(),
                 &repo.owner,
                 &repo.name,
-                &format!("refs/heads/{branch}"),
-                false,
-                false,
-                true,
-                &paths,
+                RefUpdate {
+                    refname: &format!("refs/heads/{branch}"),
+                    is_delete: false,
+                    is_create: false,
+                    is_fast_forward: true,
+                    changed_paths: &paths,
+                },
             )?;
 
             let _guard = state.repo_locks.lock(repo.id).await;
@@ -1697,11 +1701,13 @@ pub async fn exec_odata_operation(
                     &disk_path,
                     &b_ref2,
                     &h_ref2,
-                    head_cid.as_deref(),
-                    style,
-                    &msg,
-                    &author,
-                    &author,
+                    &MergeOptions {
+                        expected_head_sha: head_cid.as_deref(),
+                        style,
+                        message: &msg,
+                        author: &author,
+                        committer: &author,
+                    },
                 )
             })
             .await

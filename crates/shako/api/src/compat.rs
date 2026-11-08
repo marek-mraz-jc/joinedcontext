@@ -27,16 +27,16 @@ use serde_json::{Value, json};
 use shako_core::{
     ARCHIVE_OPERATION_WEIGHT_BYTES, Action, BranchProtectionRule, CommitStatusRecord,
     MERGE_OPERATION_WEIGHT_BYTES, MergePolicyInput, ObjectTarget, ProtectionRuleRecord,
-    PullRequestRecord, PushMirrorRecord, RefPolicy, RepoId, RepoRecord, ReviewRecord,
+    PullRequestRecord, PushMirrorRecord, RefPolicy, RefUpdate, RepoId, RepoRecord, ReviewRecord,
     ReviewVerdict, ShakoError, WebhookId, WebhookRecord, check_repo_count_quota,
     validate_branch_name, validate_repo_or_owner_name, validate_tree_path,
 };
 use shako_git::{
-    ArchiveFormat, CommitAuthor, FileChangeOp, FileOpKind, MergeStyle, check_mergeability,
-    commit_file_changes, compute_repo_size_bytes, copy_bare_repo, create_archive, create_branch,
-    create_single_ref_bundle, delete_branch, diff_refs_files, execute_pr_merge, init_bare_repo,
-    list_commits, list_tags, list_tree_entries, open_isolated, read_commit_info, read_file_at_ref,
-    set_ref_direct, update_pr_branch,
+    ArchiveFormat, CommitAuthor, FileChangeOp, FileOpKind, MergeOptions, MergeStyle,
+    check_mergeability, commit_file_changes, compute_repo_size_bytes, copy_bare_repo,
+    create_archive, create_branch, create_single_ref_bundle, delete_branch, diff_refs_files,
+    execute_pr_merge, init_bare_repo, list_commits, list_tags, list_tree_entries, open_isolated,
+    read_commit_info, read_file_at_ref, set_ref_direct, update_pr_branch,
 };
 
 fn default_main() -> String {
@@ -1301,11 +1301,13 @@ async fn compat_create_branch(
         state.authorizer.as_ref(),
         &repo.owner,
         &repo.name,
-        &format!("refs/heads/{}", req.new_branch_name),
-        false,
-        true,
-        true,
-        &[],
+        RefUpdate {
+            refname: &format!("refs/heads/{}", req.new_branch_name),
+            is_delete: false,
+            is_create: true,
+            is_fast_forward: true,
+            changed_paths: &[],
+        },
     ) {
         return gitea_error_response(&state, &e);
     }
@@ -1361,11 +1363,13 @@ async fn compat_delete_branch(
         state.authorizer.as_ref(),
         &repo.owner,
         &repo.name,
-        &format!("refs/heads/{branch}"),
-        true,
-        false,
-        true,
-        &[],
+        RefUpdate {
+            refname: &format!("refs/heads/{branch}"),
+            is_delete: true,
+            is_create: false,
+            is_fast_forward: true,
+            changed_paths: &[],
+        },
     ) {
         return gitea_error_response(&state, &e);
     }
@@ -1597,11 +1601,13 @@ async fn compat_put_contents(
         state.authorizer.as_ref(),
         &repo.owner,
         &repo.name,
-        &format!("refs/heads/{branch}"),
-        false,
-        false,
-        true,
-        std::slice::from_ref(&clean_path),
+        RefUpdate {
+            refname: &format!("refs/heads/{branch}"),
+            is_delete: false,
+            is_create: false,
+            is_fast_forward: true,
+            changed_paths: std::slice::from_ref(&clean_path),
+        },
     ) {
         return gitea_error_response(&state, &e);
     }
@@ -1757,11 +1763,13 @@ async fn compat_delete_contents(
         state.authorizer.as_ref(),
         &repo.owner,
         &repo.name,
-        &format!("refs/heads/{branch}"),
-        false,
-        false,
-        true,
-        std::slice::from_ref(&clean_path),
+        RefUpdate {
+            refname: &format!("refs/heads/{branch}"),
+            is_delete: false,
+            is_create: false,
+            is_fast_forward: true,
+            changed_paths: std::slice::from_ref(&clean_path),
+        },
     ) {
         return gitea_error_response(&state, &e);
     }
@@ -1913,11 +1921,13 @@ async fn compat_post_contents_multi(
         state.authorizer.as_ref(),
         &repo.owner,
         &repo.name,
-        &format!("refs/heads/{branch}"),
-        false,
-        false,
-        true,
-        &changed_paths,
+        RefUpdate {
+            refname: &format!("refs/heads/{branch}"),
+            is_delete: false,
+            is_create: false,
+            is_fast_forward: true,
+            changed_paths: &changed_paths,
+        },
     ) {
         return gitea_error_response(&state, &e);
     }
@@ -3015,11 +3025,13 @@ async fn compat_merge_pull(
             &disk_clone2,
             &base_ref2,
             &head_ref2,
-            expected_head.as_deref(),
-            style,
-            &message,
-            &author,
-            &author,
+            &MergeOptions {
+                expected_head_sha: expected_head.as_deref(),
+                style,
+                message: &message,
+                author: &author,
+                committer: &author,
+            },
         )
     })
     .await

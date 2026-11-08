@@ -32,7 +32,7 @@ pub use ops::{
     scope_for_context, shako_odata_service,
 };
 pub use outbound::{MAX_OUTBOUND_RESPONSE_BYTES, OUTBOUND_TIMEOUT, OutboundGuard, OutboundPolicy};
-pub use policy::{MergePolicyInput, RefPolicy};
+pub use policy::{MergePolicyInput, RefPolicy, RefUpdate};
 pub use quota::{
     ARCHIVE_OPERATION_WEIGHT_BYTES, DEFAULT_MEMORY_SEMAPHORE_BYTES, MAX_DELTA_CHAIN_DEPTH,
     MAX_PKT_LINE_LEN, MAX_REFS_PER_PUSH, MAX_REFS_PER_REPO, MAX_SINGLE_OBJECT_BYTES,

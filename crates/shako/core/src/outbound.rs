@@ -27,13 +27,16 @@ pub const OUTBOUND_TIMEOUT: Duration = Duration::from_secs(5);
 pub type MockOutboundHandler =
     Arc<dyn Fn(&str, &str, &[(String, String)], &[u8]) -> Option<(u16, Vec<u8>)> + Send + Sync>;
 
+/// Canned responses keyed by URL, consulted before any network call (tests only).
+pub type MockResponses = Arc<RwLock<HashMap<String, (u16, Vec<u8>)>>>;
+
 #[derive(Clone)]
 pub struct OutboundPolicy {
     pub in_cluster_hosts: Vec<String>,
     pub allowed_hosts: Option<Vec<String>>,
     /// Test-only allowance for `127.0.0.1` / `localhost` so local integration tests can run.
     pub allow_loopback_for_tests: bool,
-    pub mock_responses: Arc<RwLock<HashMap<String, (u16, Vec<u8>)>>>,
+    pub mock_responses: MockResponses,
     pub mock_handler: Option<MockOutboundHandler>,
 }
 

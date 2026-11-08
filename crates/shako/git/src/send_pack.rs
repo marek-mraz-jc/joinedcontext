@@ -135,10 +135,13 @@ fn parse_remote_receive_pack_advertisement(
     Ok(map)
 }
 
+/// One ref command of a push: `(old id, new id, ref name)`.
+type SendPackCommand = (ObjectId, ObjectId, String);
+
 fn build_send_pack_payload(
     repo_path: &Path,
     remote_refs: &BTreeMap<String, ObjectId>,
-) -> ShakoResult<(Vec<(ObjectId, ObjectId, String)>, Vec<u8>)> {
+) -> ShakoResult<(Vec<SendPackCommand>, Vec<u8>)> {
     let repo = open_isolated(repo_path)?;
     let (_, local_refs) = collect_advertised_refs(&repo, false)?;
     let zero = ObjectId::null(gix_hash::Kind::Sha1);

@@ -20,13 +20,13 @@ pub use compact::{
     compact_repository, fsck_repository, has_active_quarantine,
 };
 pub use merge::{
-    DiffFileEntry, MergeStyle, MergeabilityOutcome, check_mergeability, diff_refs_files,
-    execute_pr_merge, update_pr_branch,
+    DiffFileEntry, MergeOptions, MergeStyle, MergeabilityOutcome, check_mergeability,
+    diff_refs_files, execute_pr_merge, update_pr_branch,
 };
 pub use pktline::{PktLine, parse_all_pkt_lines, read_pkt_line, write_flush, write_text_line};
 pub use receive_pack::{
-    RECEIVE_PACK_CAPABILITIES, ReceivePackOutcome, RefUpdateCommand, advertise_receive_pack,
-    handle_receive_pack, scan_blob_for_secrets,
+    PushGuard, RECEIVE_PACK_CAPABILITIES, ReceivePackOutcome, RefUpdateCommand,
+    advertise_receive_pack, handle_receive_pack, scan_blob_for_secrets,
 };
 pub use repo::{
     CommitAuthor, CommitInfo, FileChangeOp, FileOpKind, RepoLocks, SAFE_BARE_REPO_CONFIG,
@@ -115,11 +115,13 @@ mod tests {
             &repo_path,
             "main",
             "feature/b1",
-            Some("0000000000000000000000000000000000000000"),
-            MergeStyle::Squash,
-            "Squash PR #1",
-            &author,
-            &author,
+            &MergeOptions {
+                expected_head_sha: Some("0000000000000000000000000000000000000000"),
+                style: MergeStyle::Squash,
+                message: "Squash PR #1",
+                author: &author,
+                committer: &author,
+            },
         )
         .expect_err("moved head must fail");
         assert_eq!(moved_err.status_code(), 409);
@@ -128,11 +130,13 @@ mod tests {
             &repo_path,
             "main",
             "feature/b1",
-            Some(&sha2),
-            MergeStyle::Squash,
-            "Squash PR #1",
-            &author,
-            &author,
+            &MergeOptions {
+                expected_head_sha: Some(&sha2),
+                style: MergeStyle::Squash,
+                message: "Squash PR #1",
+                author: &author,
+                committer: &author,
+            },
         )
         .expect("squash merge");
         assert_eq!(merged_sha.len(), 40);
@@ -195,13 +199,15 @@ mod tests {
         );
         let rp_out = handle_receive_pack(
             &dest_path,
-            &ctx,
-            &authz,
-            "helsinki",
-            "dest",
-            &RefPolicy::default(),
+            &PushGuard {
+                ctx: &ctx,
+                authorizer: &authz,
+                owner: "helsinki",
+                repo_name: "dest",
+                policy: &RefPolicy::default(),
+                secret_scan_enabled: true,
+            },
             10 * 1024 * 1024,
-            true,
             &rp_body,
         )
         .expect("receive-pack");
@@ -211,20 +217,11 @@ mod tests {
 
         // Verify quarantine is clean and quota refusal leaves no quarantine behind
         assert!(!has_active_quarantine(&dest_path));
-        let over_quota = handle_receive_pack(
-            &dest_path,
-            &ctx,
-            &authz,
-            "helsinki",
-            "dest",
-            &RefPolicy {
+        let over_quota = handle_receive_pack(&dest_path, &PushGuard { ctx: &ctx, authorizer: &authz, owner: "helsinki", repo_name: "dest", policy: &RefPolicy {
                 branch_rules: vec![BranchProtectionRule::default()],
                 tag_rules: vec![],
-            },
-            10, // 10 bytes max_push_bytes -> refused with unpack error quota
-            true,
-            &rp_body,
-        )
+            }, secret_scan_enabled: // 10 bytes max_push_bytes -> refused with unpack error quota
+            true }, 10, &rp_body)
         .expect("quota refusal");
         assert!(String::from_utf8_lossy(&over_quota.response_bytes).contains("unpack error quota"));
         assert!(!has_active_quarantine(&dest_path));

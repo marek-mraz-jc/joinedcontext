@@ -43,8 +43,10 @@ use std::sync::LazyLock;
 pub const MAX_OCI_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_PACKAGE_BLOB_BYTES: usize = 256 * 1024 * 1024;
 
-static CHUNKED_UPLOADS: LazyLock<RwLock<BTreeMap<String, (String, String, Vec<u8>)>>> =
-    LazyLock::new(|| RwLock::new(BTreeMap::new()));
+/// Open chunked upload sessions: upload id -> `(owner, image, bytes received so far)`.
+type ChunkedUploads = RwLock<BTreeMap<String, (String, String, Vec<u8>)>>;
+
+static CHUNKED_UPLOADS: LazyLock<ChunkedUploads> = LazyLock::new(|| RwLock::new(BTreeMap::new()));
 
 fn oci_error_response(
     status: StatusCode,
@@ -264,12 +266,18 @@ async fn oci_get_token(
                         allowed_actions.push("pull");
                     }
                 }
-                "push" => {
-                    if authorize_package(&state, &ctx, owner, "container", image, Action::Publish)
-                        .is_ok()
-                    {
-                        allowed_actions.push("push");
-                    }
+                "push"
+                    if authorize_package(
+                        &state,
+                        &ctx,
+                        owner,
+                        "container",
+                        image,
+                        Action::Publish,
+                    )
+                    .is_ok() =>
+                {
+                    allowed_actions.push("push");
                 }
                 _ => {}
             }
@@ -896,7 +904,6 @@ async fn oci_put_manifest(
             &owner,
             &image,
             &computed_digest,
-            &hex_digest,
         )
         .await;
     }
@@ -934,8 +941,8 @@ async fn store_cosign_signature_tag(
     owner: &str,
     image: &str,
     image_digest: &str,
-    hex_digest: &str,
 ) -> ShakoResult<()> {
+    let hex_digest = image_digest.strip_prefix("sha256:").unwrap_or(image_digest);
     let simple_signing_payload = json!({
         "critical": {
             "identity": {

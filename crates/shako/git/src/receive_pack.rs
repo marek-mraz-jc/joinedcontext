@@ -18,7 +18,7 @@ use gix_ref::{
 use regex::Regex;
 use shako_core::{
     Authorizer, MAX_DELTA_CHAIN_DEPTH, MAX_REFS_PER_PUSH, MAX_SINGLE_OBJECT_BYTES, RefPolicy,
-    RequestCtx, ShakoError, ShakoResult, validate_full_ref_name, validate_tree_path,
+    RefUpdate, RequestCtx, ShakoError, ShakoResult, validate_full_ref_name, validate_tree_path,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -153,16 +153,21 @@ pub fn scan_blob_for_secrets(path: &str, bytes: &[u8]) -> Option<String> {
     None
 }
 
+/// Who pushes into which repository, and the rules every ref command of the push must pass.
+pub struct PushGuard<'a> {
+    pub ctx: &'a RequestCtx,
+    pub authorizer: &'a dyn Authorizer,
+    pub owner: &'a str,
+    pub repo_name: &'a str,
+    pub policy: &'a RefPolicy,
+    pub secret_scan_enabled: bool,
+}
+
 /// Processes a `POST {repo}.git/git-receive-pack` request (S4, S5, T5, T7, T9).
 pub fn handle_receive_pack(
     repo_path: &Path,
-    ctx: &RequestCtx,
-    authorizer: &dyn Authorizer,
-    owner: &str,
-    repo_name: &str,
-    policy: &RefPolicy,
+    guard: &PushGuard<'_>,
     max_push_bytes: u64,
-    secret_scan_enabled: bool,
     body: &[u8],
 ) -> ShakoResult<ReceivePackOutcome> {
     // 1. Parse command list up to Flush (0000), leaving `rest` at the start of the raw PACK stream
@@ -213,11 +218,11 @@ pub fn handle_receive_pack(
                     refname: ref_s.to_owned(),
                 });
                 if commands.len() > MAX_REFS_PER_PUSH {
-                    return Ok(format_unpack_error(
+                    return format_unpack_error(
                         &format!("too many refs in push (limit {MAX_REFS_PER_PUSH})"),
                         &commands,
                         &caps,
-                    )?);
+                    );
                 }
             }
             _ => {}
@@ -235,7 +240,7 @@ pub fn handle_receive_pack(
 
     // 2. Enforce streaming push byte limit / quota BEFORE storing anything (S4, S6, Threat T5)
     if pack_data.len() as u64 > max_push_bytes {
-        return Ok(format_unpack_error("quota", &commands, &caps)?);
+        return format_unpack_error("quota", &commands, &caps);
     }
 
     let has_non_delete = commands.iter().any(|c| !c.is_delete());
@@ -246,11 +251,7 @@ pub fn handle_receive_pack(
     // 3. Unpack and validate incoming packfile in quarantine (`objects/incoming-<uuid>/`)
     if has_non_delete || !pack_data.is_empty() {
         if !pack_data.starts_with(b"PACK") {
-            return Ok(format_unpack_error(
-                "missing PACK header",
-                &commands,
-                &caps,
-            )?);
+            return format_unpack_error("missing PACK header", &commands, &caps);
         }
         if let Err(reason) = validate_and_index_pack_in_quarantine(
             repo_path,
@@ -259,7 +260,7 @@ pub fn handle_receive_pack(
             &mut written_pack_path,
             &mut written_idx_path,
         ) {
-            return Ok(format_unpack_error(&reason, &commands, &caps)?);
+            return format_unpack_error(&reason, &commands, &caps);
         }
     }
 
@@ -290,16 +291,7 @@ pub fn handle_receive_pack(
         Vec::with_capacity(commands.len());
 
     for cmd in &commands {
-        let res = evaluate_single_command(
-            &repo,
-            ctx,
-            authorizer,
-            owner,
-            repo_name,
-            policy,
-            secret_scan_enabled,
-            cmd,
-        );
+        let res = evaluate_single_command(&repo, guard, cmd);
         cmd_results.push((cmd.clone(), res));
     }
 
@@ -330,7 +322,7 @@ pub fn handle_receive_pack(
                     gix::lock::acquire::Fail::Immediately,
                     gix::lock::acquire::Fail::Immediately,
                 )
-                .and_then(|tx| tx.commit(None).map_err(Into::into))
+                .and_then(|tx| tx.commit(None))
             {
                 Ok(_) => {
                     for (c, _) in cmd_results {
@@ -368,7 +360,7 @@ pub fn handle_receive_pack(
                             gix::lock::acquire::Fail::Immediately,
                             gix::lock::acquire::Fail::Immediately,
                         )
-                        .and_then(|tx| tx.commit(None).map_err(Into::into))
+                        .and_then(|tx| tx.commit(None))
                     {
                         Ok(_) => {
                             updated_refs.push(c.clone());
@@ -480,14 +472,17 @@ fn validate_and_index_pack_in_quarantine(
 
 fn evaluate_single_command(
     repo: &gix::Repository,
-    ctx: &RequestCtx,
-    authorizer: &dyn Authorizer,
-    owner: &str,
-    repo_name: &str,
-    policy: &RefPolicy,
-    secret_scan_enabled: bool,
+    guard: &PushGuard<'_>,
     cmd: &RefUpdateCommand,
 ) -> Result<(), String> {
+    let PushGuard {
+        ctx,
+        authorizer,
+        owner,
+        repo_name,
+        policy,
+        secret_scan_enabled,
+    } = *guard;
     if cmd.refname == "HEAD"
         || !(cmd.refname.starts_with("refs/heads/") || cmd.refname.starts_with("refs/tags/"))
     {
@@ -532,11 +527,13 @@ fn evaluate_single_command(
             authorizer,
             owner,
             repo_name,
-            &cmd.refname,
-            cmd.is_delete(),
-            cmd.is_create(),
-            is_ff,
-            &changed_paths,
+            RefUpdate {
+                refname: &cmd.refname,
+                is_delete: cmd.is_delete(),
+                is_create: cmd.is_create(),
+                is_fast_forward: is_ff,
+                changed_paths: &changed_paths,
+            },
         )
         .map_err(|e| e.public_detail())?;
 

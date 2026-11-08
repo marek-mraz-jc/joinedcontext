@@ -56,8 +56,11 @@ struct TestWorld {
     org_b: OrgId,
     app: Router,
     webhook_hits: Arc<AtomicUsize>,
-    last_webhook_sig: Arc<parking_lot::Mutex<Option<(String, Vec<u8>)>>>,
+    last_webhook_sig: LastWebhook,
 }
+
+/// The last webhook delivery the mock receiver saw: `(X-Gitea-Signature, body)`.
+type LastWebhook = Arc<parking_lot::Mutex<Option<(String, Vec<u8>)>>>;
 
 fn setup_world() -> TestWorld {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -835,7 +838,7 @@ async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
     let world = setup_world();
 
     // Create repo in org_a and another in org_b
-    send_json(
+    let (st, body) = send_json(
         &world.app,
         "POST",
         "/api/v1/orgs/joinedcontext/repos",
@@ -843,7 +846,8 @@ async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
         Some(json!({ "name": "helsinki", "auto_init": true })),
     )
     .await;
-    send_json(
+    assert_eq!(st, StatusCode::CREATED, "{body}");
+    let (st, body) = send_json(
         &world.app,
         "POST",
         "/api/v1/orgs/bbsk/repos",
@@ -851,6 +855,22 @@ async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
         Some(json!({ "name": "secret-b", "auto_init": true })),
     )
     .await;
+    assert_eq!(st, StatusCode::CREATED, "{body}");
+    // The cross-organization checks below are only meaningful if Org B's repository exists.
+    assert!(
+        world
+            .state
+            .store()
+            .get_repo_by_name(
+                world.state.default_instance_id,
+                world.org_b,
+                "bbsk",
+                "secret-b"
+            )
+            .await
+            .unwrap()
+            .is_some()
+    );
 
     // Threat T1: Hostile path traversal names are refused on REST, OData, contents, and archives,
     // touching zero files outside repo_root

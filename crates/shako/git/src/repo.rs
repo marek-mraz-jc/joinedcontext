@@ -335,14 +335,14 @@ pub fn write_objects_as_pack(
     let mut pack_bytes = Vec::new();
     let num_entries = u32::try_from(entries.len())
         .map_err(|_| ShakoError::BadRequest("too many objects in commit".into()))?;
-    let mut iter = output::bytes::FromEntriesIter::new(
+    let iter = output::bytes::FromEntriesIter::new(
         std::iter::once(gix::Result::Ok(entries)),
         &mut pack_bytes,
         num_entries,
         gix_pack::data::Version::V2,
         gix_hash::Kind::Sha1,
     );
-    while let Some(res) = iter.next() {
+    for res in iter {
         res.map_err(|e| ShakoError::Git(format!("pack encode failed: {e}")))?;
     }
 
@@ -394,12 +394,12 @@ fn hash_blob_bytes(bytes: &[u8]) -> ShakoResult<ObjectId> {
 /// Resolves a ref/branch/tag/SHA string to its peeled commit `ObjectId`.
 pub fn resolve_commit_oid(repo: &gix::Repository, git_ref: &str) -> ShakoResult<ObjectId> {
     let trimmed = git_ref.trim();
-    if trimmed.len() == 40 && trimmed.bytes().all(|b| b.is_ascii_hexdigit()) {
-        if let Ok(oid) = ObjectId::from_hex(trimmed.as_bytes()) {
-            if repo.find_commit(oid).is_ok() {
-                return Ok(oid);
-            }
-        }
+    if trimmed.len() == 40
+        && trimmed.bytes().all(|b| b.is_ascii_hexdigit())
+        && let Ok(oid) = ObjectId::from_hex(trimmed.as_bytes())
+        && repo.find_commit(oid).is_ok()
+    {
+        return Ok(oid);
     }
     for candidate in [
         trimmed.to_owned(),
@@ -410,18 +410,17 @@ pub fn resolve_commit_oid(repo: &gix::Repository, git_ref: &str) -> ShakoResult<
         let Ok(partial) = <&gix_ref::PartialNameRef>::try_from(candidate.as_str()) else {
             continue;
         };
-        if let Ok(Some(mut r)) = repo.try_find_reference(partial) {
-            if let Ok(commit) = r.peel_to_commit() {
-                return Ok(commit.id);
-            }
-        }
-    }
-    if let Ok(id) = repo.rev_parse_single(trimmed) {
-        if let Ok(obj) = id.object()
-            && let Ok(commit) = obj.peel_to_kind(gix_object::Kind::Commit)
+        if let Ok(Some(mut r)) = repo.try_find_reference(partial)
+            && let Ok(commit) = r.peel_to_commit()
         {
             return Ok(commit.id);
         }
+    }
+    if let Ok(id) = repo.rev_parse_single(trimmed)
+        && let Ok(obj) = id.object()
+        && let Ok(commit) = obj.peel_to_kind(gix_object::Kind::Commit)
+    {
+        return Ok(commit.id);
     }
     Err(ShakoError::NotFound(format!("ref '{git_ref}' not found")))
 }
@@ -495,7 +494,7 @@ pub fn commit_file_changes(
                         "update of '{clean_path}' requires blob sha"
                     )));
                 };
-                if cur_oid.to_hex().to_string() != expected_sha {
+                if cur_oid.to_hex() != expected_sha {
                     return Err(ShakoError::Conflict(format!(
                         "file '{clean_path}' sha mismatch: expected {expected_sha}, found {cur_oid}"
                     )));
@@ -512,7 +511,7 @@ pub fn commit_file_changes(
                             "file '{clean_path}' does not exist (expected sha {expected_sha})"
                         )));
                     };
-                    if cur_oid.to_hex().to_string() != expected_sha {
+                    if cur_oid.to_hex() != expected_sha {
                         return Err(ShakoError::Conflict(format!(
                             "file '{clean_path}' sha mismatch: expected {expected_sha}, found {cur_oid}"
                         )));
@@ -534,7 +533,7 @@ pub fn commit_file_changes(
                         "delete of '{clean_path}' requires blob sha"
                     )));
                 };
-                if cur_oid.to_hex().to_string() != expected_sha {
+                if cur_oid.to_hex() != expected_sha {
                     return Err(ShakoError::Conflict(format!(
                         "file '{clean_path}' sha mismatch: expected {expected_sha}, found {cur_oid}"
                     )));

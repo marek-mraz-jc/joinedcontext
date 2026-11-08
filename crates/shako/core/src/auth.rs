@@ -494,10 +494,11 @@ impl Authorizer for LocalAuthorizer {
         let bindings = self.bindings.read();
         let mut out = Vec::new();
         for b in bindings.iter() {
-            if b.org_id == org_id && b.repo.as_deref().is_none_or(|r| r == repo) {
-                if let Some(&highest) = b.actions.iter().max() {
-                    out.push((b.principal.clone(), highest));
-                }
+            if b.org_id == org_id
+                && b.repo.as_deref().is_none_or(|r| r == repo)
+                && let Some(&highest) = b.actions.iter().max()
+            {
+                out.push((b.principal.clone(), highest));
             }
         }
         out
@@ -789,12 +790,11 @@ impl TokenVerifier {
 
     pub fn insert_jwk(&self, kid: impl Into<String>, jwk: Value) {
         let mut state = self.jwks.write();
-        if state.keys.len() >= 64 {
-            if let Some(first_key) = state.keys.keys().next().cloned() {
-                if first_key != self.signing_key.kid {
-                    state.keys.remove(&first_key);
-                }
-            }
+        if state.keys.len() >= 64
+            && let Some(first_key) = state.keys.keys().next().cloned()
+            && first_key != self.signing_key.kid
+        {
+            state.keys.remove(&first_key);
         }
         state.keys.insert(kid.into(), jwk);
     }

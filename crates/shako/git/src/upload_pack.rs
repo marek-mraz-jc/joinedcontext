@@ -152,8 +152,9 @@ pub fn advertise_upload_pack(repo_path: &Path, git_protocol: Option<&str>) -> Sh
     Ok(out)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ObjectFilter {
+    #[default]
     None,
     BlobNone,
     BlobLimit(u64),
@@ -378,12 +379,6 @@ struct FetchParams {
     done: bool,
     wait_for_done: bool,
     sideband_all: bool,
-}
-
-impl Default for ObjectFilter {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 fn handle_v2_fetch(repo_path: &Path, args: &[String]) -> ShakoResult<Vec<u8>> {
@@ -958,8 +953,10 @@ pub fn build_pack_bytes(
 
     let should_interrupt = AtomicBool::new(false);
     let progress = gix::progress::Discard;
+    // The counter wants a `'static` iterator, so it owns its copy of the ids.
+    let owned_ids: Vec<ObjectId> = object_ids.to_vec();
     let oid_iter: Box<dyn Iterator<Item = gix::Result<ObjectId>> + Send> =
-        Box::new(object_ids.to_vec().into_iter().map(Ok));
+        Box::new(owned_ids.into_iter().map(Ok));
 
     let (counts, _outcome) = output::count::objects(
         odb.clone(),
@@ -994,14 +991,14 @@ pub fn build_pack_bytes(
     let ordered = gix::parallel::InOrderIter::from(entries_iter);
 
     let mut pack_bytes = Vec::new();
-    let mut bytes_iter = output::bytes::FromEntriesIter::new(
+    let bytes_iter = output::bytes::FromEntriesIter::new(
         ordered,
         &mut pack_bytes,
         num_entries,
         gix_pack::data::Version::V2,
         gix_hash::Kind::Sha1,
     );
-    while let Some(res) = bytes_iter.next() {
+    for res in bytes_iter {
         res.map_err(|e| ShakoError::Git(format!("pack byte encoding failed: {e}")))?;
     }
 
