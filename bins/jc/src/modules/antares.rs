@@ -212,6 +212,72 @@ mod tests {
         assert!(d["ANTARES_API_SURFACES"].split(',').any(|s| s == "views"));
     }
 
+    /// The `l5d-client-id` a request reaches the broker with, behind `guard`.
+    async fn seen_by_the_broker(
+        guard: Router,
+        headers: &[(&str, &str)],
+    ) -> (StatusCode, Option<String>) {
+        use tower::ServiceExt;
+        let mut req = Request::builder().uri("/ngsi-ld/v1/types");
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        let resp = guard
+            .oneshot(req.body(axum::body::Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let seen = String::from_utf8(body.to_vec()).unwrap();
+        (status, (!seen.is_empty()).then_some(seen))
+    }
+
+    fn echo() -> Router {
+        Router::new().fallback(|req: Request| async move {
+            req.headers()
+                .get("l5d-client-id")
+                .map(|v| v.to_str().unwrap().to_owned())
+                .unwrap_or_default()
+        })
+    }
+
+    #[tokio::test]
+    async fn only_the_hop_with_its_secret_names_the_gateway_to_the_broker() {
+        let id = crate::modules::GATEWAY_IDENTITY;
+        let hop = crate::modules::GATEWAY_HOP_HEADER;
+        let public = echo().layer(axum::middleware::from_fn(public_guard));
+        // Outside callers: a claimed mesh identity is dropped, with or without a guessed secret.
+        for headers in [
+            vec![("l5d-client-id", id)],
+            vec![("l5d-client-id", id), (hop, "hop-secret")],
+        ] {
+            assert_eq!(
+                seen_by_the_broker(public.clone(), &headers).await,
+                (StatusCode::OK, None)
+            );
+        }
+        let secret: Arc<str> = "hop-secret".into();
+        let guarded = echo().layer(axum::middleware::from_fn(move |req, next| {
+            hop_guard(Arc::clone(&secret), req, next)
+        }));
+        // The hop without its secret, or with a wrong one, is 403 and the broker is not asked.
+        for headers in [
+            vec![("l5d-client-id", id)],
+            vec![(hop, "hop-secreT")],
+            vec![(hop, "")],
+        ] {
+            assert_eq!(
+                seen_by_the_broker(guarded.clone(), &headers).await,
+                (StatusCode::FORBIDDEN, None)
+            );
+        }
+        // With it, the broker sees the gateway's identity, whatever the caller claimed.
+        assert_eq!(
+            seen_by_the_broker(guarded, &[(hop, "hop-secret"), ("l5d-client-id", "x.y")]).await,
+            (StatusCode::OK, Some(id.to_owned()))
+        );
+    }
+
     #[test]
     fn a_hop_never_prints_its_secret() {
         let hop = Hop {

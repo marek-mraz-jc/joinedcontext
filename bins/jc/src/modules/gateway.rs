@@ -63,18 +63,20 @@ pub fn work_dir(setup: &Setup) -> PathBuf {
 /// The gateway settings `jc` fills from its siblings, for the keys `env` (given the names of
 /// [`env_key`]) leaves unset. Like the Portal's rows, a group is filled only when its first key is
 /// unset and every secret it needs is held, so a generated credential never goes to an address the
-/// operator chose.
+/// operator chose. With `wire` off (`portal_siblings = false`) only the broker and the addresses
+/// are filled: no realm and no forge.
 ///
 /// | settings | from |
 /// |---|---|
 /// | `JC_GATEWAY_BROKER_URL` | Antares' hop |
 /// | `JC_GATEWAY_ORG_DOMAIN`, `JC_GATEWAY_PUBLIC_URL`, `JC_GATEWAY_PREVIEWS_DIR` | the mounts, the state dir |
-/// | `JC_OIDC_ISSUER`, `_JWKS_URL`, `_TOKEN_URL`, `_CLIENT_ID`, `_CLIENT_SECRET`, `JC_GATEWAY_REVOCATIONS_URL`, `_CONNECTORS_URL`, `_USAGE_URL` | kaisatsu and the Portal |
+/// | `JC_OIDC_ISSUER`, `_JWKS_URL`, `_CLIENT_ID`, `_CLIENT_SECRET`, `JC_GATEWAY_REVOCATIONS_URL`, `_CONNECTORS_URL`, `_USAGE_URL` | kaisatsu and the Portal |
 /// | `JC_GATEWAY_REPO_DIR`, `_PROJECTS_DIR`, `_ASSEMBLY_DIR` | shako, checked out by [`follow_forge`] |
 #[must_use]
 pub fn vars(
     siblings: &Siblings,
     setup: &Setup,
+    wire: bool,
     mount: &Mount,
     hop: Option<&Hop>,
     env: impl Fn(&str) -> Option<String>,
@@ -111,11 +113,18 @@ pub fn vars(
     )]);
     group(vec![("JC_GATEWAY_PUBLIC_URL", Some(mount.public_base()))]);
     group(vec![("JC_GATEWAY_PREVIEWS_DIR", path("previews"))]);
+    if !wire {
+        return out;
+    }
     if let (Some(id), Some(_), Some(internal)) = (
         siblings.get(Module::Kaisatsu),
         siblings.get(Module::Portal),
         portal_internal(&|k: &str| env(k)),
     ) {
+        // No `JC_OIDC_TOKEN_URL`: the gateway's own token comes from the issuer's public
+        // endpoint, as the Portal's sign-in does, because kaisatsu names the issuer by the host a
+        // request reached it on and the Portal's internal listener checks it. The keys are read
+        // on the listener (`JC_OIDC_JWKS_URL`).
         let realm = format!("/realms/{}", setup::PORTAL_REALM);
         group(vec![
             ("JC_OIDC_ISSUER", Some(format!("{}{realm}", id.public))),
@@ -123,13 +132,6 @@ pub fn vars(
                 "JC_OIDC_JWKS_URL",
                 Some(format!(
                     "{}{realm}/protocol/openid-connect/certs",
-                    id.internal
-                )),
-            ),
-            (
-                "JC_OIDC_TOKEN_URL",
-                Some(format!(
-                    "{}{realm}/protocol/openid-connect/token",
                     id.internal
                 )),
             ),
@@ -257,11 +259,12 @@ pub fn at_root(router: Router) -> Router {
 
 pub async fn build(
     ctx: BuildCtx<'_>,
+    wire: bool,
     mount: Mount,
     hop: Option<Hop>,
 ) -> Result<Router, StartError> {
     let env = |key: &str| std::env::var(key).ok();
-    let filled = vars(ctx.siblings, ctx.setup, &mount, hop.as_ref(), env);
+    let filled = vars(ctx.siblings, ctx.setup, wire, &mount, hop.as_ref(), env);
     tracing::info!(
         keys = ?filled.keys().collect::<Vec<_>>(),
         "gateway: settings filled from sibling modules"
@@ -304,6 +307,77 @@ pub async fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{Cli, Config as JcConfig, FileConfig};
+
+    /// The siblings and secrets of `--role all` in slug mode, and the gateway's mount.
+    fn fixture() -> (Siblings, Setup, Mount, tempfile::TempDir) {
+        let cfg = JcConfig::merge(
+            Cli {
+                role: Some("all".into()),
+                base_host: Some("city.example".into()),
+                scheme: Some("https".into()),
+                ..Cli::default()
+            },
+            FileConfig::default(),
+        )
+        .unwrap();
+        let plans = crate::app::plan_mounts(&cfg).unwrap();
+        let mount = plans
+            .iter()
+            .find(|p| p.module == Module::Gateway)
+            .map(|p| p.mount.clone())
+            .unwrap();
+        let siblings = Siblings::new(&plans, "0.0.0.0:8443".parse().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), &Module::ALL).unwrap();
+        (siblings, setup, mount, dir)
+    }
+
+    #[test]
+    fn the_siblings_fill_the_realm_the_forge_and_the_hop_and_an_explicit_key_wins() {
+        let (siblings, setup, mount, _d) = fixture();
+        let hop = Hop {
+            addr: "127.0.0.1:4242".parse().unwrap(),
+            secret: "s".into(),
+        };
+        let none = |_: &str| None;
+        let v = vars(&siblings, &setup, true, &mount, Some(&hop), none);
+        assert_eq!(v["JC_GATEWAY_BROKER_URL"], "http://127.0.0.1:4242");
+        assert_eq!(v["JC_GATEWAY_PUBLIC_URL"], "https://city.example");
+        assert_eq!(v["JC_OIDC_ISSUER"], "https://city.example/id/realms/jc");
+        assert_eq!(
+            v["JC_OIDC_JWKS_URL"],
+            "http://127.0.0.1:8443/id/realms/jc/protocol/openid-connect/certs"
+        );
+        assert_eq!(v["JC_OIDC_CLIENT_ID"], setup::GATEWAY_CLIENT);
+        assert_eq!(
+            v["JC_OIDC_CLIENT_SECRET"],
+            setup.value(Secret::GatewayClientSecret).unwrap()
+        );
+        assert_eq!(
+            v["JC_GATEWAY_REVOCATIONS_URL"],
+            "http://127.0.0.1:9090/internal/revocations"
+        );
+        assert!(v["JC_GATEWAY_REPO_DIR"].ends_with("gateway/repo/current"));
+        // Without the wiring: the broker and the addresses only, no realm and no forge.
+        let bare = vars(&siblings, &setup, false, &mount, Some(&hop), none);
+        assert_eq!(
+            bare.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "JC_GATEWAY_BROKER_URL",
+                "JC_GATEWAY_ORG_DOMAIN",
+                "JC_GATEWAY_PREVIEWS_DIR",
+                "JC_GATEWAY_PUBLIC_URL"
+            ]
+        );
+        // An issuer the operator set keeps the whole realm row, the generated secret included,
+        // out of the fill; the hop without its secret is not offered.
+        let env =
+            |k: &str| (k == "JC_GATEWAY_OIDC_ISSUER").then(|| "https://idp.example/r".to_owned());
+        let v = vars(&siblings, &setup, true, &mount, None, env);
+        assert!(!v.contains_key("JC_OIDC_CLIENT_SECRET"));
+        assert!(!v.contains_key("JC_GATEWAY_BROKER_URL"));
+    }
 
     #[test]
     fn the_oidc_keys_are_read_under_the_gateways_own_names() {

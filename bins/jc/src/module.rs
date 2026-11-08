@@ -77,7 +77,8 @@ impl Module {
                 "/catalog.ttl",
                 "/oauth",
                 "/.well-known/oauth-authorization-server",
-                "/.well-known/oauth-protected-resource/api",
+                "/.well-known/oauth-protected-resource/api/mcp",
+                "/.well-known/oauth-protected-resource/api/endpoint",
             ],
             _ => &[],
         }

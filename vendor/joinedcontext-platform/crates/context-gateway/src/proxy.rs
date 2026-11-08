@@ -453,6 +453,23 @@ mod tests {
     use axum::http::HeaderValue;
 
     #[test]
+    fn the_hop_header_replaces_a_clients_and_never_prints() {
+        let name = HeaderName::from_static("x-jc-gateway-hop");
+        let broker = Broker::new("http://127.0.0.1:1")
+            .with_hop_header(name.clone(), HeaderValue::from_static("hop-secret-value"));
+        let mut headers = HeaderMap::new();
+        headers.insert(name.clone(), HeaderValue::from_static("a client's guess"));
+        broker.stamp(&mut headers);
+        assert_eq!(headers.get_all(&name).iter().count(), 1);
+        assert_eq!(headers[&name], "hop-secret-value");
+        assert!(!format!("{broker:?}").contains("hop-secret-value"));
+        // Without a hop header nothing is added.
+        let mut headers = HeaderMap::new();
+        Broker::new("http://127.0.0.1:1").stamp(&mut headers);
+        assert!(headers.is_empty());
+    }
+
+    #[test]
     fn hop_by_hop_headers_do_not_cross_the_gateway() {
         let mut from = HeaderMap::new();
         from.insert(

@@ -59,11 +59,19 @@ const SECONDS: &[f64] = &[
 fn handle() -> &'static PrometheusHandle {
     static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
     HANDLE.get_or_init(|| {
-        let handle = PrometheusBuilder::new()
+        let builder = PrometheusBuilder::new()
             .set_buckets(SECONDS)
-            .expect("the bucket list is not empty")
-            .install_recorder()
-            .expect("this process installs the one recorder");
+            .expect("the bucket list is not empty");
+        // A host that installed the process's recorder before (`jc`, which serves every
+        // module's series on its admin listener) keeps it: the series go there, and this
+        // handle, of a recorder never installed, renders nothing.
+        let recorder = builder.build_recorder();
+        let handle = recorder.handle();
+        if metrics::set_global_recorder(recorder).is_err() {
+            tracing::info!(
+                "the process has a metrics recorder already: the gateway's series go to it"
+            );
+        }
         describe();
         handle
     })

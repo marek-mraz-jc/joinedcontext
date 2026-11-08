@@ -88,7 +88,9 @@ pub async fn build(
             .await
             .map(|built| built.router),
         #[cfg(feature = "gateway")]
-        Module::Gateway => gateway::build(ctx, mount, None).await.map(gateway::at_root),
+        Module::Gateway => gateway::build(ctx, cfg.portal_siblings, mount, None)
+            .await
+            .map(gateway::at_root),
         #[cfg(feature = "portal")]
         Module::Portal => portal::build(ctx, cfg.portal_siblings, mount, shutdown).await,
         #[cfg(feature = "shako")]

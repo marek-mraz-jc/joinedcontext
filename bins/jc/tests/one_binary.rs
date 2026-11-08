@@ -97,7 +97,9 @@ fn probe(module: Module) -> (&'static str, &'static str) {
         Module::Dataroom => ("/api/3/action/status_show", "\"success\""),
         Module::Daiya => ("/api/health", "\"database\""),
         Module::Ekiben => ("/ping", "pong"),
-        Module::Antares => ("/ngsi-ld/v1/info/sourceIdentity", "antares"),
+        // The broker's data routes answer only the gateway's subjects or its admin token, as on
+        // dev (the joinedcontext engine); health stays open.
+        Module::Antares => ("/q/health", "\"UP\""),
         Module::Portal => ("/api/v1/health", "\"status\":\"ok\""),
         Module::Shako => ("/api/healthz", "\"status\":\"ok\""),
         // The gateway's slug is "api" and it answers at its root paths: "/api/endpoints".

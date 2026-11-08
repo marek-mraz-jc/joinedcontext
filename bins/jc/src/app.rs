@@ -434,7 +434,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         return Err(e);
     }
     if let Some(late) = built.gateway {
-        match build_gateway(ctx, late.mount, late.hop).await {
+        match build_gateway(ctx, cfg.portal_siblings, late.mount, late.hop).await {
             Ok(router) => late.slot.set(router),
             Err(e) => {
                 let _ = running.stop().await;
@@ -469,16 +469,17 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
 /// Builds the gateway, over Antares' hop when Antares runs beside it.
 async fn build_gateway(
     ctx: modules::BuildCtx<'_>,
+    wire: bool,
     mount: Mount,
     hop: Option<modules::Hop>,
 ) -> Result<Router, StartError> {
     #[cfg(feature = "gateway")]
     {
-        modules::gateway::build(ctx, mount, hop).await
+        modules::gateway::build(ctx, wire, mount, hop).await
     }
     #[cfg(not(feature = "gateway"))]
     {
-        let _ = (ctx, mount, hop);
+        let _ = (ctx, wire, mount, hop);
         Err(StartError::module(
             Module::Gateway,
             "not compiled into this jc binary",
