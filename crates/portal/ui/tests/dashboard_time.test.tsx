@@ -9,8 +9,8 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "../src/i18n";
 import { panelQuery, toggled } from "../src/pages/grafana/DashboardPage";
-import { overrideWords, RefreshPicker, rangeWords, TimePicker } from "../src/components/panels/TimePicker";
-import { absoluteWords, panelRange, QUICK_RANGES, REFRESHES, refreshMs, resolveTime, roundInterval } from "../src/components/panels/timeRange";
+import { overrideWords, RefreshPicker, rangeWords, TimePicker, TimeRangeControls } from "../src/components/panels/TimePicker";
+import { absoluteWords, panelRange, QUICK_RANGES, REFRESHES, refreshMs, resolveTime, roundInterval, shiftedRange, zoomedOutRange } from "../src/components/panels/timeRange";
 import timePicker from "./fixtures/grafana-reference/time-picker.json";
 import refreshPicker from "./fixtures/grafana-reference/refresh-picker.json";
 import i18n from "../src/i18n";
@@ -122,6 +122,32 @@ describe("Grafana's time words", () => {
     expect(refreshMs("auto", 7 * 86_400_000, 1440)).toBe(300_000);
     expect(refreshMs("auto", 5 * 60_000, 1440)).toBe(5000);
     expect([refreshMs("1d"), refreshMs("30s"), refreshMs(""), refreshMs("soon")]).toEqual([86_400_000, 30_000, 0, 0]);
+  });
+});
+
+describe("Grafana's range steps", () => {
+  const H = 3_600_000;
+  // Grafana 12.4.14 getShiftedTimeRange and getZoomedTimeRange (public/build 7457, 2674).
+  it("moves a half span either way, stops a later step at now, and zooms out to twice the span", () => {
+    expect(shiftedRange(-1, 10 * H, 16 * H, 100 * H)).toEqual([7 * H, 13 * H]);
+    expect(shiftedRange(1, 10 * H, 16 * H, 100 * H)).toEqual([13 * H, 19 * H]);
+    // A step past now ends at now and keeps the start, as Grafana's does.
+    expect(shiftedRange(1, 10 * H, 16 * H, 17 * H)).toEqual([10 * H, 17 * H]);
+    expect(zoomedOutRange(10 * H, 16 * H)).toEqual([7 * H, 19 * H]);
+    expect(zoomedOutRange(5, 5)).toEqual([5 - 15_000, 5 + 15_000]);
+  });
+
+  it("sets an absolute range from each button", async () => {
+    const user = userEvent.setup();
+    const changes: [string, string][] = [];
+    render(<TimeRangeControls from={String(10 * H)} to={String(16 * H)} now={100 * H} onChange={(from, to) => changes.push([from, to])} />);
+    await user.click(screen.getByRole("button", { name: "Move time range backwards" }));
+    await user.click(screen.getByRole("button", { name: "Zoom out time range" }));
+    expect(changes).toEqual([
+      [String(7 * H), String(13 * H)],
+      [String(7 * H), String(19 * H)],
+    ]);
+    expect(within(screen.getByRole("group", { name: "Time range" })).getByRole("button", { name: "Move time range forwards" })).toBeInTheDocument();
   });
 });
 

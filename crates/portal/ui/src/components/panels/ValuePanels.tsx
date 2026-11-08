@@ -3,13 +3,13 @@
  * with a sparkline), `gauge` (Vega's arc) and `bargauge` (one bar per field, as long as its share
  * of min to max). Each reduces the frames as `options.reduceOptions` says.
  */
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
 import type { Frame, Reduced } from "./frames";
 import { reducedOf } from "./frames";
-import type { FieldConfigSource, FieldSettings } from "./fieldConfig";
+import type { FieldConfigSource, FieldSettings, Thresholds } from "./fieldConfig";
 import { colorOf, displayValue, settingsFor, stepFor } from "./fieldConfig";
 import { gaugeSpec } from "./specs";
 import { chartTheme, VegaChart } from "./VegaChart";
@@ -41,18 +41,38 @@ interface Shown {
   max: number;
 }
 
+/** Grafana's thresholds for a value panel whose dashboard saves none: green, red from 80. */
+export const DEFAULT_THRESHOLDS: Thresholds = { mode: "absolute", steps: [{ color: "green", value: null }, { color: "red", value: 80 }] };
+
+/**
+ * The lowest and highest of every number in the frames, every row of every numeric field: the
+ * range Grafana scales a stat, gauge or bar gauge to when the field sets no min or max.
+ */
+export function globalRange(frames: Frame[]): { min: number; max: number } | undefined {
+  let [min, max] = [Infinity, -Infinity];
+  for (const field of frames.flatMap((frame) => frame.fields)) {
+    if (field.type !== "number") continue;
+    for (const value of field.values) {
+      if (typeof value !== "number" || !Number.isFinite(value)) continue;
+      min = Math.min(min, value);
+      max = Math.max(max, value);
+    }
+  }
+  return min <= max ? { min, max } : undefined;
+}
+
 /** Each field's reduced value, its text, its threshold colour and its share of the range. */
 export function shownValues(frames: Frame[], fieldConfig: FieldConfigSource | undefined, options: Record<string, unknown> | undefined, locale: string): Shown[] {
   const reduceOptions = (options?.reduceOptions ?? {}) as ReduceOptions;
   const reduced = reducedOf(frames, reduceOptions.calcs?.[0] ?? "lastNotNull", reduceOptions.values === true);
   const limited = reduceOptions.limit ? reduced.slice(0, reduceOptions.limit) : reduced;
-  const values = limited.map((one) => one.value).filter((value): value is number => value !== null);
+  const range = globalRange(frames) ?? { min: 0, max: 100 };
   return limited.map((reduced) => {
     const settings = settingsFor(fieldConfig, reduced.field);
-    const min = settings.min ?? Math.min(0, ...values);
-    const max = settings.max ?? Math.max(...values, min + 1);
+    const min = settings.min ?? range.min;
+    const max = settings.max ?? (range.max > min ? range.max : min + 1);
     const shown = displayValue(settings, reduced.value, locale);
-    const step = stepFor(settings.thresholds, reduced.value, min, max);
+    const step = settings.color?.mode === "fixed" ? undefined : stepFor(settings.thresholds ?? DEFAULT_THRESHOLDS, reduced.value, min, max);
     const name = settings.displayName ?? reduced.name;
     return {
       reduced: { ...reduced, name },
@@ -169,42 +189,111 @@ export function GaugePanel({ title, frames, fieldConfig, options, height, locale
   );
 }
 
-/** A `bargauge` panel: one bar per value, its length the value's share of min to max. */
+/**
+ * The CSS gradient of a bar gauge in `gradient` mode, as Grafana's BarGauge draws it: the base
+ * colour up to halfway between the previous threshold and the next one the value passed, then
+ * blended into that threshold's colour. Stops sit at their place on the whole scale, so a short bar shows only
+ * its first colours; `share` (0 to 1) is the filled bar's length on that scale.
+ */
+export function barGradient(thresholds: Thresholds, value: number, min: number, max: number, share: number, vertical: boolean): string {
+  const percent = thresholds.mode === "percentage";
+  const along = (at: number): number => Math.min(1, Math.max(0, (at - min) / (max - min || 1)));
+  const stops: string[] = [];
+  let last = 0;
+  for (const step of thresholds.steps) {
+    const color = colorOf(step.color);
+    if (stops.length === 0) {
+      stops.push(color, color);
+      continue;
+    }
+    const place = step.value === null ? 0 : percent ? Math.min(1, Math.max(0, step.value / 100)) : along(step.value);
+    const starts = step.value === null ? -Infinity : percent ? min + (max - min) * place : step.value;
+    if (value < starts) break;
+    const offset = place - (place - last) / 2;
+    last = place;
+    // Grafana appends the blend's start to the colour before it, and the new colour ends the bar.
+    stops[stops.length - 1] += ` ${share > 0 ? ((offset / share) * 100).toFixed(1) : "0"}%`;
+    stops.push(color);
+  }
+  return `linear-gradient(${vertical ? "to top" : "to right"}, ${stops.join(", ")})`;
+}
+
+/** The panel's width, read once it is laid out and again when it changes. */
+function useWidth(): [(element: HTMLElement | null) => (() => void) | undefined, number] {
+  const [width, setWidth] = useState(0);
+  const ref = useCallback((element: HTMLElement | null) => {
+    if (!element) return;
+    setWidth(element.clientWidth);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setWidth(element.clientWidth));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, width];
+}
+
+/**
+ * A `bargauge` panel: one bar per value, its length the value's share of min to max, the value in
+ * its threshold's colour. As Grafana's: `orientation` auto stands the bars up when the panel is
+ * wider than tall, and `displayMode` gradient (the default) blends the threshold colours the
+ * value passed, `basic` and `lcd` fill in the value's colour.
+ */
 export function BarGaugePanel({ title, frames, fieldConfig, options, height, locale }: ValuePanelProps): JSX.Element {
   const shown = useMemo(() => shownValues(frames, fieldConfig, options, locale), [frames, fieldConfig, options, locale]);
-  const vertical = options?.orientation === "vertical";
+  const [measure, width] = useWidth();
+  const vertical = options?.orientation === "vertical" || ((options?.orientation ?? "auto") === "auto" && width > height);
+  const gradient = (options?.displayMode ?? "gradient") === "gradient";
+  const paint = (one: Shown): string | undefined =>
+    gradient && one.reduced.value !== null ? barGradient(one.settings.thresholds ?? DEFAULT_THRESHOLDS, one.reduced.value, one.min, one.max, one.share, vertical) : undefined;
+  const meter = (one: Shown) => ({
+    role: "meter",
+    "aria-label": one.reduced.name,
+    "aria-valuemin": one.min,
+    "aria-valuemax": one.max,
+    "aria-valuenow": one.reduced.value ?? undefined,
+    "aria-valuetext": one.text,
+  });
+  // A key only for thresholds the dashboard saved; Grafana's defaults need none.
+  const key = shown[0]?.settings.thresholds ? <ThresholdKey settings={shown[0].settings} locale={locale} /> : null;
   if (vertical) {
     return (
-      <ul aria-label={title} className="flex h-full items-end gap-3 overflow-x-auto">
-        {shown.map((one) => (
-          <li key={one.reduced.name} className="flex h-full min-w-12 flex-1 flex-col items-center justify-end gap-1">
-            <span className="text-caption font-medium tabular-nums">{one.text}</span>
-            <span className="flex w-full flex-1 items-end rounded-sm bg-surface-muted">
-              <Fill share={one.share} color={one.color} vertical />
-            </span>
-            <span className="max-w-full truncate text-caption text-fg-muted">{one.reduced.name}</span>
-          </li>
-        ))}
-      </ul>
+      <div ref={measure} className="flex h-full flex-col gap-2">
+        <ul aria-label={title} className="flex min-h-0 flex-1 items-stretch gap-2 overflow-x-auto">
+          {shown.map((one) => (
+            <li key={one.reduced.name} className="flex min-w-12 flex-1 flex-col items-center gap-1">
+              <Tinted color={one.color} className="text-title font-medium tabular-nums">
+                {one.text}
+              </Tinted>
+              <span className="flex w-full flex-1 items-end overflow-hidden rounded-sm bg-surface-muted" {...meter(one)}>
+                <Fill share={one.share} color={one.color} paint={paint(one)} vertical />
+              </span>
+              <span className="max-w-full truncate text-caption">{one.reduced.name}</span>
+            </li>
+          ))}
+        </ul>
+        {key}
+      </div>
     );
   }
   // The bars share the panel's height, as Grafana's do: thicker when there are few of them.
   const room = height / Math.max(1, shown.length);
   const thickness = room >= 64 ? "h-8" : room >= 40 ? "h-5" : "h-3";
   return (
-    <div className="flex h-full flex-col gap-2">
+    <div ref={measure} className="flex h-full flex-col gap-2">
       <ul aria-label={title} className="flex min-h-0 flex-1 flex-col justify-around gap-2">
         {shown.map((one) => (
           <li key={one.reduced.name} className="grid grid-cols-[minmax(0,10rem)_1fr_auto] items-center gap-2 max-sm:grid-cols-[1fr_auto]">
-            <span className="truncate text-caption text-fg-muted max-sm:col-span-2">{one.reduced.name}</span>
-            <span className={clsx(thickness, "overflow-hidden rounded-sm bg-surface-muted")} role="meter" aria-label={one.reduced.name} aria-valuemin={one.min} aria-valuemax={one.max} aria-valuenow={one.reduced.value ?? undefined} aria-valuetext={one.text}>
-              <Fill share={one.share} color={one.color} />
+            <span className="truncate text-caption max-sm:col-span-2">{one.reduced.name}</span>
+            <span className={clsx(thickness, "overflow-hidden rounded-sm bg-surface-muted")} {...meter(one)}>
+              <Fill share={one.share} color={one.color} paint={paint(one)} />
             </span>
-            <span className="text-caption font-medium tabular-nums">{one.text}</span>
+            <Tinted color={one.color} className="text-body font-medium tabular-nums">
+              {one.text}
+            </Tinted>
           </li>
         ))}
       </ul>
-      {shown[0] ? <ThresholdKey settings={shown[0].settings} locale={locale} /> : null}
+      {key}
     </div>
   );
 }

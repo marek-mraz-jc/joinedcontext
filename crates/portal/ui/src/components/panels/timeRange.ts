@@ -178,3 +178,21 @@ export function panelRange(
   }
   return { from, to, ...(ownFrom && relative ? { timeFrom: panel.timeFrom } : {}), ...(ownShift ? { timeShift: panel.timeShift } : {}) };
 }
+
+/**
+ * The range `direction` half a span earlier (-1) or later (1), as Grafana's « and » move it; a
+ * step later that would pass `now` ends at now and keeps its start (Grafana's getShiftedTimeRange).
+ */
+export function shiftedRange(direction: -1 | 1, from: number, to: number, now: number): [number, number] {
+  const half = (to - from) / 2;
+  if (direction === -1) return [from - half, to - half];
+  return to + half > now && to < now ? [from, now] : [from + half, to + half];
+}
+
+/** The range twice as long around its middle, as Grafana's zoom out; an empty range opens to 30 s. */
+export function zoomedOutRange(from: number, to: number): [number, number] {
+  const span = to - from;
+  const middle = to - span / 2;
+  const next = span === 0 ? 30_000 : span * 2;
+  return [middle - next / 2, middle + next / 2];
+}

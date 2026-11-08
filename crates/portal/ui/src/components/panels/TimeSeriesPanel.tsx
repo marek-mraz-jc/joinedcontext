@@ -47,6 +47,8 @@ export interface LegendProps {
 /** A series' swatch, its name and its calcs; a click shows or hides it on the chart. */
 export function Legend({ series, colors, fieldConfig, legend, locale, hidden, onToggle }: LegendProps): JSX.Element | null {
   const { t } = useTranslation();
+  // A phone's card grows with its legend, so every series stays in sight without a scroll inside the card.
+  const phone = useIsPhone();
   if (legend.showLegend === false || legend.displayMode === "hidden" || series.length === 0) return null;
   const calcs = (legend.calcs ?? []).map(reducerId).filter((calc) => calc in REDUCERS);
   const rows = series.map((one, index) => {
@@ -82,7 +84,7 @@ export function Legend({ series, colors, fieldConfig, legend, locale, hidden, on
   );
   if (legend.displayMode === "table" && calcs.length > 0) {
     return (
-      <Table caption={t("dashboardView.legend")} zebra={false} maxHeight={legend.placement === "right" ? "max-h-80" : "max-h-48"} className="text-caption [&_td]:py-1 [&_td]:align-middle [&_th]:py-1.5">
+      <Table caption={t("dashboardView.legend")} zebra={false} maxHeight={phone ? undefined : legend.placement === "right" ? "max-h-80" : "max-h-48"} className="text-caption [&_td]:py-1 [&_td]:align-middle [&_th]:py-1.5">
         <TableHead>
           <TableHeaderCell>{t("dashboardView.series")}</TableHeaderCell>
           {calcs.map((calc) => (
@@ -142,7 +144,7 @@ export function TimeSeriesPanel({ title, frames, fieldConfig, options, from, to,
   const phone = useIsPhone();
   const right = asked.placement === "right" && !phone;
   const legend = right ? asked : { ...asked, placement: "bottom" };
-  const rows = legend.showLegend === false || legend.displayMode === "hidden" ? 0 : legend.displayMode === "table" ? 30 + 26 * Math.min(count, 6) : 36;
+  const rows = legend.showLegend === false || legend.displayMode === "hidden" ? 0 : legend.displayMode === "table" ? 30 + 26 * (phone ? count : Math.min(count, 6)) : 36;
   const chartHeight = Math.max(120, right ? height : height - rows);
   const built = useMemo(
     () => timeSeriesSpec(frames, { fieldConfig, options, from, to, locale, theme: chartTheme(), height: chartHeight, hidden }),

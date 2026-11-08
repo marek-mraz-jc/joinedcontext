@@ -17,7 +17,7 @@ import { bodyHeight, DashboardGrid } from "../../components/panels/DashboardGrid
 import type { Frame } from "../../components/panels/frames";
 import type { PanelData, PanelDefinition } from "../../components/panels/PanelView";
 import { PanelView } from "../../components/panels/PanelView";
-import { overrideWords, RefreshPicker, rangeWords, TimePicker } from "../../components/panels/TimePicker";
+import { overrideWords, RefreshPicker, rangeWords, TimeRangeControls } from "../../components/panels/TimePicker";
 import { panelRange, QUICK_RANGES, refreshMs, resolveTime } from "../../components/panels/timeRange";
 
 type View = components["schemas"]["DashboardView"];
@@ -301,18 +301,15 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
         ))}
         {data.timePickerHidden ? null : (
           <>
-            <div role="group" aria-label={t("dashboardView.rangeLabel")} className="flex flex-wrap items-start gap-1 sm:ml-auto">
-              <TimePicker
-                key={`${from}|${to}`}
-                from={from}
-                to={to}
-                now={at}
-                onChange={(nextFrom, nextTo) => {
-                  setAt(Date.now());
-                  link({ from: nextFrom, to: nextTo });
-                }}
-              />
-            </div>
+            <TimeRangeControls
+              from={from}
+              to={to}
+              now={at}
+              onChange={(nextFrom, nextTo) => {
+                setAt(Date.now());
+                link({ from: nextFrom, to: nextTo });
+              }}
+            />
             <RefreshPicker value={refresh} onChange={(next) => link({ refresh: next || undefined })} onRefresh={refreshNow} />
           </>
         )}

@@ -25,6 +25,9 @@ const PATHS = {
   chevronDown: "m6 9 6 6 6-6",
   chevronRight: "m9 6 6 6-6 6",
   chevronLeft: "m15 6-6 6 6 6",
+  // Two chevrons: a time range one step earlier or later.
+  chevronsLeft: "m11 6-6 6 6 6M18 6l-6 6 6 6",
+  chevronsRight: "m13 6 6 6-6 6M6 6l6 6-6 6",
   user: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0",
   plus: "M12 5v14M5 12h14",
   external: "M14 4h6v6M20 4l-9 9M18 13v6H5V6h6",
@@ -38,6 +41,7 @@ const PATHS = {
   info: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 11v5M12 8v.5",
   error: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM9 9l6 6M15 9l-6 6",
   search: "M10 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12zM20 20l-5.5-5.5",
+  zoomOut: "M10 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12zM20 20l-5.5-5.5M7 10h6",
   refresh: "M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5",
   folder: "M3 6h6l2 2h10v11H3z",
   clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2",

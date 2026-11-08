@@ -9,7 +9,7 @@ import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
 import { ToolbarPopover } from "../entities/GridToolbar";
 import { Button, Field, Icon, Input } from "../ui";
-import { absoluteWords, quickRange, QUICK_RANGES, REFRESHES, resolveTime, spanParts } from "./timeRange";
+import { absoluteWords, quickRange, QUICK_RANGES, REFRESHES, resolveTime, shiftedRange, spanParts, zoomedOutRange } from "./timeRange";
 
 type T = (key: string, options?: Record<string, unknown>) => string;
 
@@ -62,7 +62,7 @@ export function TimePicker({ from, to, now, onChange }: TimePickerProps): JSX.El
   const quick = QUICK_RANGES.filter((range) => t(`dashboardView.quick.${range.key}`).toLowerCase().includes(search.trim().toLowerCase()));
   return (
     // At the toolbar's right end, as Grafana's: the panel opens leftwards and stays on the screen.
-    <ToolbarPopover label={rangeWords(from, to, now, t)} outlined wide end tall closeLabel={t("dashboardView.timePicker.close")}>
+    <ToolbarPopover label={rangeWords(from, to, now, t)} icon="clock" chevron outlined wide end tall closeLabel={t("dashboardView.timePicker.close")}>
       <div className="flex flex-col gap-4 sm:flex-row">
         <form
           className="flex min-w-56 flex-col gap-3"
@@ -143,7 +143,7 @@ export function RefreshPicker({ value, onChange, onRefresh }: { value: string; o
         <Icon name="refresh" className="size-4" />
         {t("dashboardView.refreshNow")}
       </Button>
-      <ToolbarPopover label={words(value)} outlined end closeLabel={t("dashboardView.timePicker.close")}>
+      <ToolbarPopover label={words(value)} chevron outlined end closeLabel={t("dashboardView.timePicker.close")}>
         <ul role="menu" aria-label={t("dashboardView.refreshEvery")} className="flex flex-col">
           {choices.map((every) => (
             <li key={every} role="none">
@@ -164,6 +164,31 @@ export function RefreshPicker({ value, onChange, onRefresh }: { value: string; o
           ))}
         </ul>
       </ToolbarPopover>
+    </div>
+  );
+}
+
+/**
+ * Grafana's range controls: « a half span earlier, the picker, » a half span later, and zoom out
+ * to twice the span. Each step sets an absolute range, as Grafana's buttons do.
+ */
+export function TimeRangeControls({ from, to, now, onChange }: TimePickerProps): JSX.Element {
+  const { t } = useTranslation();
+  const start = resolveTime(from, now) ?? now;
+  const end = resolveTime(to, now, true) ?? now;
+  const go = ([nextFrom, nextTo]: [number, number]) => onChange(String(Math.round(nextFrom)), String(Math.round(nextTo)));
+  return (
+    <div role="group" aria-label={t("dashboardView.rangeLabel")} className="flex flex-wrap items-start gap-1 sm:ml-auto">
+      <Button variant="secondary" aria-label={t("dashboardView.shiftBack")} title={t("dashboardView.shiftBack")} onClick={() => go(shiftedRange(-1, start, end, Date.now()))}>
+        <Icon name="chevronsLeft" className="size-4" />
+      </Button>
+      <TimePicker key={`${from}|${to}`} from={from} to={to} now={now} onChange={onChange} />
+      <Button variant="secondary" aria-label={t("dashboardView.shiftForward")} title={t("dashboardView.shiftForward")} onClick={() => go(shiftedRange(1, start, end, Date.now()))}>
+        <Icon name="chevronsRight" className="size-4" />
+      </Button>
+      <Button variant="secondary" aria-label={t("dashboardView.zoomOut")} title={t("dashboardView.zoomOut")} onClick={() => go(zoomedOutRange(start, end))}>
+        <Icon name="zoomOut" className="size-4" />
+      </Button>
     </div>
   );
 }

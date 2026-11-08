@@ -1453,7 +1453,7 @@
     },
     "src/components/panels/TimePicker.tsx": {
       "controls": {
-        "Button": 4
+        "Button": 7
       },
       "tests": [
         "dashboard_time.test.tsx"

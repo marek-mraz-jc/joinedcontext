@@ -14,10 +14,12 @@ import { barChartSpec, gaugeSpec, heatmapSpec, histogramSpec, pieChartSpec, stat
 import { FALLBACK } from "../src/components/panels/palette";
 import { PanelView } from "../src/components/panels/PanelView";
 import type { PanelDefinition } from "../src/components/panels/PanelView";
-import { BarGaugePanel, shownValues, StatPanel } from "../src/components/panels/ValuePanels";
+import { barGradient, BarGaugePanel, DEFAULT_THRESHOLDS, globalRange, shownValues, StatPanel } from "../src/components/panels/ValuePanels";
 import { tableOf, TablePanel } from "../src/components/panels/TablePanel";
 import { Legend } from "../src/components/panels/TimeSeriesPanel";
-import { displayValue, formatDate, formatUnit, settingsFor } from "../src/components/panels/fieldConfig";
+import type { LegendOptions } from "../src/components/panels/TimeSeriesPanel";
+import { colorOf, displayValue, formatDate, formatUnit, settingsFor } from "../src/components/panels/fieldConfig";
+import type { Frame } from "../src/components/panels/frames";
 import { ordered, sections } from "../src/components/panels/DashboardGrid";
 import { ColourKey } from "../src/components/panels/ChartPanels";
 import { Fill, Swatch } from "../src/components/panels/paint";
@@ -112,6 +114,23 @@ describe("timeseries", () => {
     render(<Legend series={built.series} colors={built.colors} legend={{ displayMode: "list" }} locale="en" hidden={new Set()} onToggle={(name) => toggled.push(name)} />);
     await user.click(screen.getByRole("button", { name: /500/ }));
     expect(toggled).toEqual(["500"]);
+  });
+
+  it("keeps a bottom table legend in a scroll box on a desktop, and every row in sight on a phone", () => {
+    const built = timeSeriesSpec(frames.requestRate, { options: {}, locale: "en", theme, height: 200, from: frames.FROM, to: frames.TO });
+    const legend: LegendOptions = { displayMode: "table", placement: "bottom", calcs: ["max"] };
+    const { container, unmount } = render(<Legend series={built.series} colors={built.colors} legend={legend} locale="en" hidden={new Set()} onToggle={() => undefined} />);
+    expect(container.querySelector(".max-h-48")).not.toBeNull();
+    unmount();
+    const before = window.matchMedia;
+    window.matchMedia = ((query: string) => ({ matches: query.includes("max-width"), addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia;
+    try {
+      const phone = render(<Legend series={built.series} colors={built.colors} legend={legend} locale="en" hidden={new Set()} onToggle={() => undefined} />);
+      expect(phone.container.querySelector(".max-h-48, .overflow-y-auto")).toBeNull();
+      expect(screen.getAllByRole("row")).toHaveLength(built.series.length + 1);
+    } finally {
+      window.matchMedia = before;
+    }
   });
 
   it("heads its calcs with Grafana's reducer names and sorts by the name Grafana saved", () => {
@@ -224,6 +243,46 @@ describe("bargauge", () => {
     render(<BarGaugePanel title="Memory" frames={frames.memory} fieldConfig={{ defaults: { unit: "bytes", thresholds }, overrides: [] }} options={{}} height={120} locale="en" />);
     const key = screen.getByRole("list", { name: "Colours by value" });
     expect(within(key).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["below 715 MiB", "from 715 MiB"]);
+  });
+});
+
+describe("Grafana's value scale", () => {
+  // Grafana 12.4.14's assistant board: lastNotNull 131, 134 and 163 over series ranging 29 to 212
+  // fill 56, 57 and 73 % of their bars, all red past the default threshold of 80.
+  const statuses: Frame[] = ["2xx", "4xx", "5xx"].map((name, at) => ({
+    name,
+    fields: [
+      { name: "Time", type: "time", values: [1, 2, 3] },
+      { name: "Value", type: "number", values: [[29, 33, 30][at], [208, 212, 209][at], [131, 134, 163][at]] },
+    ],
+  }));
+
+  it("scales to every value of every series and colours by the default thresholds", () => {
+    const shown = shownValues(statuses, { defaults: { unit: "short" }, overrides: [] }, {}, "en");
+    expect(shown.map((one) => [one.min, one.max, Math.round(one.share * 100)])).toEqual([
+      [29, 212, 56],
+      [29, 212, 57],
+      [29, 212, 73],
+    ]);
+    expect(new Set(shown.map((one) => one.color))).toEqual(new Set([colorOf("red")]));
+    expect(globalRange([])).toBeUndefined();
+  });
+
+  it("holds green to halfway to the threshold, then blends into red, as Grafana's gradient bars do", () => {
+    // 80 sits at 28 % of 29..212; the blend starts halfway there, 14 % of the scale, 25 % of a 56 % bar.
+    expect(barGradient(DEFAULT_THRESHOLDS, 131, 29, 212, (131 - 29) / 183, true)).toBe(`linear-gradient(to top, ${colorOf("green")}, ${colorOf("green")} 25.0%, ${colorOf("red")})`);
+    // A value under the threshold stays in the base colour.
+    expect(barGradient(DEFAULT_THRESHOLDS, 50, 0, 100, 0.5, false)).toBe(`linear-gradient(to right, ${colorOf("green")}, ${colorOf("green")})`);
+  });
+
+  it("stands the bars up in a panel wider than tall, the value in its colour above each", () => {
+    render(<BarGaugePanel title="Runs" frames={statuses} fieldConfig={{ defaults: {}, overrides: [] }} options={{ orientation: "vertical" }} height={200} locale="en" />);
+    const meter = screen.getByRole("meter", { name: "5xx" });
+    expect(meter).toHaveAttribute("aria-valuemin", "29");
+    expect(meter.firstElementChild).toHaveStyle({ height: "73%" });
+    expect(screen.getByText("163")).toHaveStyle({ color: colorOf("red") });
+    // Grafana's default thresholds need no key.
+    expect(screen.queryByRole("list", { name: "Colours by value" })).toBeNull();
   });
 });
 
