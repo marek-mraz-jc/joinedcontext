@@ -321,7 +321,8 @@ impl HarvestEngine {
         accept: &str,
     ) -> Result<(Option<String>, String)> {
         let mut current_url = url.to_owned();
-        for hop in 0..=MAX_REDIRECT_HOPS {
+        let mut hops = 0;
+        loop {
             let resolver_ref = self
                 .custom_dns
                 .as_ref()
@@ -350,11 +351,12 @@ impl HarvestEngine {
                     return Ok((content_type, body));
                 }
                 FetchResponse::Redirect { location, .. } => {
-                    if hop >= MAX_REDIRECT_HOPS {
+                    if hops == MAX_REDIRECT_HOPS {
                         return Err(DataroomError::OutboundRefused(format!(
                             "redirect limit of {MAX_REDIRECT_HOPS} hops exceeded from {url}"
                         )));
                     }
+                    hops += 1;
                     let next_url = target
                         .url
                         .join(&location)
@@ -368,9 +370,6 @@ impl HarvestEngine {
                 }
             }
         }
-        Err(DataroomError::OutboundRefused(format!(
-            "redirect limit of {MAX_REDIRECT_HOPS} hops exceeded"
-        )))
     }
 
     async fn gather_items(

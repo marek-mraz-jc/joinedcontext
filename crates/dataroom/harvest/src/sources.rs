@@ -16,41 +16,94 @@ use unicode_normalization::char::is_combining_mark;
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
-/// Strips HTML markup into plain paragraphs (`plain_text` in `ours/deployment/harvest-hub.py`).
+/// Strips HTML markup into plain paragraphs (`plain_text` in `ours/deployment/harvest-hub.py`,
+/// an `HTMLParser` with `convert_charrefs`): block tags break lines, character references are
+/// decoded, and a `<` that opens no tag stays text.
 pub fn plain_text_from_html(markup: &str) -> String {
     let mut out = String::new();
-    let mut in_tag = false;
-    let mut tag_buf = String::new();
-    for c in markup.chars() {
-        if c == '<' {
-            in_tag = true;
-            tag_buf.clear();
-        } else if c == '>' && in_tag {
-            in_tag = false;
-            let tag_name = tag_buf
-                .trim_start_matches('/')
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_ascii_lowercase();
-            if matches!(
-                tag_name.as_str(),
-                "p" | "div" | "br" | "li" | "tr" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
-            ) {
-                out.push('\n');
-            }
-        } else if in_tag {
-            tag_buf.push(c);
-        } else {
-            out.push(c);
+    let mut rest = markup;
+    while let Some(i) = rest.find('<') {
+        out.push_str(&decode_char_refs(&rest[..i]));
+        let after = &rest[i + 1..];
+        let opens_tag = after
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || matches!(c, '/' | '!' | '?'));
+        if !opens_tag {
+            out.push('<');
+            rest = after;
+            continue;
         }
+        let (tag, tail) = if let Some(comment) = after.strip_prefix("!--") {
+            let end = comment.find("-->").map_or(comment.len(), |e| e + 3);
+            ("", &comment[end..])
+        } else {
+            let end = after.find('>').map_or(after.len(), |e| e + 1);
+            (&after[..end], &after[end..])
+        };
+        let name: String = tag
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric())
+            .collect::<String>()
+            .to_ascii_lowercase();
+        if matches!(
+            name.as_str(),
+            "p" | "div" | "br" | "li" | "tr" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+        ) {
+            out.push('\n');
+        }
+        rest = tail;
     }
+    out.push_str(&decode_char_refs(rest));
     let lines: Vec<String> = out
         .lines()
         .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
         .filter(|l| !l.is_empty())
         .collect();
     lines.join("\n\n").chars().take(10_000).collect()
+}
+
+/// Decodes numeric and the common named character references.
+/// ponytail: six names, not the whole HTML5 table; an unknown name stays as written.
+fn decode_char_refs(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        let decoded = rest.find(';').filter(|&e| e <= 10).and_then(|e| {
+            let name = &rest[1..e];
+            let c = match name {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "nbsp" => Some('\u{a0}'),
+                _ => {
+                    let num = name.strip_prefix('#')?;
+                    let code = match num.strip_prefix(['x', 'X']) {
+                        Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                        None => num.parse().ok()?,
+                    };
+                    char::from_u32(code)
+                }
+            }?;
+            Some((c, e + 1))
+        });
+        match decoded {
+            Some((c, len)) => {
+                out.push(c);
+                rest = &rest[len..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Converts text into a lowercase ASCII slug (`slug` in `harvest-hub.py` and `harvest-nkod.py`).
@@ -126,7 +179,7 @@ pub fn parse_arcgis_hub_items(
         ),
     ]);
 
-    let mut kept_raw: Vec<(&Value, String)> = Vec::new();
+    let mut kept_raw: Vec<(&Value, String, (&str, &str))> = Vec::new();
     let mut skipped: Vec<HarvestSkippedItem> = Vec::new();
 
     for feature in features {
@@ -171,14 +224,14 @@ pub fn parse_arcgis_hub_items(
         }
 
         let lic = item.get("license").and_then(Value::as_str).unwrap_or("");
-        if !open_licences.contains_key(lic) {
+        let Some(&licence) = open_licences.get(lic) else {
             skipped.push(HarvestSkippedItem {
                 item_id,
                 title,
                 reason: format!("no open licence ({lic})"),
             });
             continue;
-        }
+        };
 
         if item_type == "Feature Service" {
             let service_url = item.get("url").and_then(Value::as_str).unwrap_or("");
@@ -194,12 +247,12 @@ pub fn parse_arcgis_hub_items(
             }
         }
 
-        kept_raw.push((item, title));
+        kept_raw.push((item, title, licence));
     }
 
     // Deduplicate by title: newest `modified` wins (`harvest-hub.py` lines 106-115).
     let mut newest_by_title: BTreeMap<String, (&Value, i64)> = BTreeMap::new();
-    for (item, title) in &kept_raw {
+    for (item, title, _) in &kept_raw {
         let mod_ms = item.get("modified").and_then(Value::as_i64).unwrap_or(0);
         match newest_by_title.get(title) {
             Some((_, prev_ms)) if *prev_ms >= mod_ms => {}
@@ -210,7 +263,7 @@ pub fn parse_arcgis_hub_items(
     }
 
     let mut datasets = Vec::new();
-    for (item, title) in kept_raw {
+    for (item, title, (licence_id, licence_url)) in kept_raw {
         let item_id = item
             .get("id")
             .and_then(Value::as_str)
@@ -230,10 +283,6 @@ pub fn parse_arcgis_hub_items(
             continue;
         }
 
-        let lic_code = item.get("license").and_then(Value::as_str).unwrap_or("");
-        let Some(&(licence_id, licence_url)) = open_licences.get(lic_code) else {
-            continue;
-        };
         let hub_base = source.url.trim_end_matches('/');
         let source_url = format!("{hub_base}/datasets/{item_id}");
         let fixed_uuid = Uuid::new_v5(&Uuid::NAMESPACE_URL, source_url.as_bytes()).to_string();
@@ -246,23 +295,36 @@ pub fn parse_arcgis_hub_items(
             short_id.to_ascii_lowercase()
         );
 
-        let desc_raw = item
-            .get("description")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .or_else(|| item.get("snippet").and_then(Value::as_str))
-            .unwrap_or(&title);
-        let notes = plain_text_from_html(desc_raw);
-
-        let mut tags = BTreeSet::new();
-        if let Some(arr) = item.get("tags").and_then(Value::as_array) {
-            for t in arr.iter().filter_map(Value::as_str) {
-                let clean = t.trim();
-                if (2..=100).contains(&clean.chars().count()) {
-                    tags.insert(clean.to_owned());
-                }
-            }
+        // `plain_text(description) or plain_text(snippet)`: a description of empty markup
+        // falls through to the snippet.
+        let text_of =
+            |key: &str| plain_text_from_html(item.get(key).and_then(Value::as_str).unwrap_or(""));
+        let mut notes = text_of("description");
+        if notes.is_empty() {
+            notes = text_of("snippet");
         }
+        if notes.is_empty() {
+            notes = title.clone();
+        }
+
+        // Tags and the last segment of each category, kept when they match `[\w .-]{2,100}`.
+        let strs = |key: &str| {
+            item.get(key)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+        };
+        let tags: BTreeSet<String> = strs("tags")
+            .map(str::trim)
+            .chain(strs("categories").map(|c| c.rsplit('/').next().unwrap_or(c).trim()))
+            .filter(|t| {
+                (2..=100).contains(&t.chars().count())
+                    && t.chars()
+                        .all(|c| c.is_alphanumeric() || matches!(c, '_' | ' ' | '.' | '-'))
+            })
+            .map(str::to_owned)
+            .collect();
 
         let service_url = item
             .get("url")
@@ -389,6 +451,22 @@ pub fn parse_arcgis_hub_items(
     }
 
     (datasets, skipped)
+}
+
+/// `url` with its host (and port) moved when `rewrites` names exactly that host
+/// (`corrected_url` in `harvest-nkod.py`); the path and query stay as they are.
+fn rewrite_host(url: &str, rewrites: &BTreeMap<String, String>) -> String {
+    let url = url.trim();
+    let Some(start) = url.find("://").map(|i| i + 3) else {
+        return url.to_owned();
+    };
+    let end = url[start..]
+        .find(['/', '?', '#'])
+        .map_or(url.len(), |i| start + i);
+    match rewrites.get(&url[start..end]) {
+        Some(host) => format!("{}{host}{}", &url[..start], &url[end..]),
+        None => url.to_owned(),
+    }
 }
 
 /// Parses NKOD SPARQL JSON bindings (`ours/deployment/harvest-nkod.py` `datasets` & `licence`).
@@ -535,15 +613,15 @@ pub fn parse_nkod_sparql_bindings(
 
         let mut dists = Vec::new();
         for (idx, d) in raw.distributions.values().enumerate() {
-            let mut url_str = d.url.clone();
-            for (old_host, new_host) in &source.rewrite_hosts {
-                url_str = url_str.replace(old_host, new_host);
-            }
-            if validate_outbound_url(&url_str, &source.allowed_hosts, cat_allowed_hosts, false)
-                .is_err()
-            {
+            let Ok(url) = validate_outbound_url(
+                &rewrite_host(&d.url, &source.rewrite_hosts),
+                &source.allowed_hosts,
+                cat_allowed_hosts,
+                false,
+            ) else {
                 continue;
-            }
+            };
+            let url_str = url.to_string();
             dists.push(Distribution {
                 id: format!("res-{}-{idx}", ascii_slug(&raw.title)),
                 dataset_id: String::new(),
