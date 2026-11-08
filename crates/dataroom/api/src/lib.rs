@@ -1738,7 +1738,14 @@ async fn dispatch_ui_route(
         }
         // A topic's page is its dataset search (CKAN's `/group/{name}`).
         ["group", code] => {
-            let enc: String = url::form_urlencoded::byte_serialize(code.as_bytes()).collect();
+            // The path segment arrives percent-encoded: decode it once (a `+` stays a `+`),
+            // then encode it as one query value.
+            let raw = format!("v={}", code.replace('+', "%2B"));
+            let decoded = url::form_urlencoded::parse(raw.as_bytes())
+                .next()
+                .map(|(_, v)| v.into_owned())
+                .unwrap_or_default();
+            let enc: String = url::form_urlencoded::byte_serialize(decoded.as_bytes()).collect();
             let prefix = if had_url_prefix {
                 format!("{}/{lang}", state.mount_prefix)
             } else {
