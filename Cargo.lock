@@ -4504,6 +4504,7 @@ dependencies = [
  "kaisatsu-oidc",
  "kaisatsu-store-memory",
  "kaisatsu-store-pg",
+ "odata-table",
  "serde",
  "serde_json",
  "sha2 0.11.1",

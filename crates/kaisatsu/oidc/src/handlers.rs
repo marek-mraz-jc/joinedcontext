@@ -1225,39 +1225,60 @@ async fn mint_tokens_for_principal(
                 .and_then(|s| s.parse::<i64>().ok())
                 .unwrap_or(realm.sso_session_idle_timeout.max(3600))
         };
-        let refresh_exp = now + refresh_ttl;
-        let refresh_jti = uuid::Uuid::now_v7().to_string();
-        let family = match existing_family {
+        // W2: the refresh token is an opaque handle `{family id}.{256-bit random}`; only its
+        // SHA-256 is stored. The family id finds the family; the hash proves the handle.
+        let family_id = existing_family
+            .as_ref()
+            .map(|f| f.id.clone())
+            .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+        let refresh_token = format!("{family_id}.{}", random_handle_256());
+        let refresh_hash = sha256_hex(&refresh_token);
+        match existing_family {
             Some(mut fam) => {
+                let expected = std::mem::replace(&mut fam.current_jti_hash, refresh_hash);
+                fam.previous_hashes.push(expected.clone());
+                let excess = fam
+                    .previous_hashes
+                    .len()
+                    .saturating_sub(MAX_PREVIOUS_REFRESH_HASHES);
+                fam.previous_hashes.drain(..excess);
                 fam.rotation_counter += 1;
-                fam.current_jti_hash = sha256_hex(&refresh_jti);
                 fam.expires_at = Utc::now() + Duration::seconds(refresh_ttl);
                 if let Some(jkt) = dpop_jkt {
                     fam.dpop_jkt = Some(jkt.to_owned());
                 }
-                fam
+                // Two requests with the same handle: only the first rotates.
+                if !state.store.rotate_refresh_family(fam, &expected).await? {
+                    return Err(KaisatsuError::invalid_grant(
+                        "Refresh token was already used",
+                    ));
+                }
             }
-            None => RefreshTokenFamily {
-                id: uuid::Uuid::now_v7().to_string(),
-                realm_id: realm.id.clone(),
-                org_id: user.org_id.clone(),
-                sso_session_id: sso_session_id.unwrap_or("offline").to_owned(),
-                user_id: user.id.clone(),
-                client_id: client.client_id.clone(),
-                scope: granted_scope_str.to_owned(),
-                acr: acr.to_owned(),
-                amr: amr.to_vec(),
-                auth_time: auth_time.unwrap_or(now),
-                rotation_counter: 1,
-                current_jti_hash: sha256_hex(&refresh_jti),
-                dpop_jkt: dpop_jkt.map(str::to_owned),
-                offline: is_offline,
-                revoked: false,
-                expires_at: Utc::now() + Duration::seconds(refresh_ttl),
-            },
-        };
-        let family_id = family.id.clone();
-        state.store.upsert_refresh_family(family).await?;
+            None => {
+                state
+                    .store
+                    .upsert_refresh_family(RefreshTokenFamily {
+                        id: family_id.clone(),
+                        realm_id: realm.id.clone(),
+                        org_id: user.org_id.clone(),
+                        sso_session_id: sso_session_id.unwrap_or("offline").to_owned(),
+                        user_id: user.id.clone(),
+                        client_id: client.client_id.clone(),
+                        scope: granted_scope_str.to_owned(),
+                        acr: acr.to_owned(),
+                        amr: amr.to_vec(),
+                        auth_time: auth_time.unwrap_or(now),
+                        rotation_counter: 1,
+                        current_jti_hash: refresh_hash,
+                        previous_hashes: Vec::new(),
+                        dpop_jkt: dpop_jkt.map(str::to_owned),
+                        offline: is_offline,
+                        revoked: false,
+                        expires_at: Utc::now() + Duration::seconds(refresh_ttl),
+                    })
+                    .await?;
+            }
+        }
 
         if is_offline {
             state
@@ -1281,20 +1302,6 @@ async fn mint_tokens_for_principal(
                 .await?;
         }
 
-        let refresh_claims = json!({
-            "iss": issuer,
-            "sub": user.id,
-            "aud": issuer,
-            "azp": client.client_id,
-            "typ": if is_offline { "Offline" } else { "Refresh" },
-            "jti": refresh_jti,
-            "sid": sso_session_id.unwrap_or(&family_id),
-            "fid": family_id,
-            "iat": now,
-            "exp": refresh_exp,
-            "scope": granted_scope_str,
-        });
-        let refresh_token = sign_jwt(access_key, &state.kek, Some("JWT"), &refresh_claims)?;
         response["refresh_token"] = Value::String(refresh_token);
         response["refresh_expires_in"] = if is_offline {
             json!(0)
@@ -1581,6 +1588,37 @@ async fn handle_authorization_code_grant(
     .await
 }
 
+/// Rotated-away refresh handle hashes kept per family for reuse detection.
+const MAX_PREVIOUS_REFRESH_HASHES: usize = 64;
+
+/// Finds the family of an opaque refresh handle `{family id}.{secret}`. `Some((family, true))`
+/// when the handle is the family's current one, `Some((family, false))` when it is a handle the
+/// family rotated away; `None` for anything else (unknown family or a forged secret, which must
+/// not let a guesser revoke someone's session).
+async fn find_refresh_family(
+    state: &OidcState,
+    realm_id: &str,
+    raw: &str,
+) -> Result<Option<(RefreshTokenFamily, bool)>> {
+    let Some((fid, secret)) = raw.split_once('.') else {
+        return Ok(None);
+    };
+    if fid.is_empty() || secret.is_empty() {
+        return Ok(None);
+    }
+    let Some(family) = state.store.get_refresh_family(realm_id, fid).await? else {
+        return Ok(None);
+    };
+    let presented = sha256_hex(raw);
+    if constant_time_str_eq(&presented, &family.current_jti_hash) {
+        return Ok(Some((family, true)));
+    }
+    let rotated = family.previous_hashes.iter().fold(false, |found, h| {
+        found | constant_time_str_eq(&presented, h)
+    });
+    Ok(rotated.then_some((family, false)))
+}
+
 async fn handle_refresh_token_grant(
     state: &OidcState,
     mount: &Mount,
@@ -1594,51 +1632,22 @@ async fn handle_refresh_token_grant(
         .get("refresh_token")
         .filter(|s| !s.is_empty())
         .ok_or_else(|| KaisatsuError::invalid_request("missing refresh_token"))?;
-    let keys = state.store.list_signing_keys(&realm.id).await?;
-    let issuer = mount.realm_issuer(&realm.realm);
-    let (_, claims): (_, Value) = verify_jwt(raw_refresh, &keys, Some(&issuer), None)
-        .map_err(|_| KaisatsuError::invalid_grant("Invalid refresh token"))?;
-
-    let typ = claims
-        .get("typ")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if !matches!(typ, "Refresh" | "Offline") {
-        return Err(KaisatsuError::invalid_grant("Token is not a refresh token"));
-    }
-    // Regression check for Rauthy GHSA-7qh2-3hc5-2vqp: verify `azp` == authenticated client_id
-    let azp = claims
-        .get("azp")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if azp != client.client_id {
+    let (family, is_current) = find_refresh_family(state, &realm.id, raw_refresh)
+        .await?
+        .ok_or_else(|| KaisatsuError::invalid_grant("Invalid refresh token"))?;
+    // Regression check for Rauthy GHSA-7qh2-3hc5-2vqp: the family belongs to the authenticated client
+    if family.client_id != client.client_id {
         return Err(KaisatsuError::invalid_grant(
             "Refresh token was issued to another client",
         ));
     }
-    let jti = claims
-        .get("jti")
-        .and_then(Value::as_str)
-        .ok_or_else(|| KaisatsuError::invalid_grant("Refresh token missing jti"))?;
-    let fid = claims
-        .get("fid")
-        .and_then(Value::as_str)
-        .ok_or_else(|| KaisatsuError::invalid_grant("Refresh token missing family id"))?;
-
-    let family = state
-        .store
-        .get_refresh_family(&realm.id, fid)
-        .await?
-        .ok_or_else(|| KaisatsuError::invalid_grant("Session not active"))?;
-
     if family.revoked || family.expires_at <= Utc::now() {
         return Err(KaisatsuError::invalid_grant("Session not active"));
     }
 
-    // W1, W12: Refresh token rotation and reuse detection. If a rotated/older JTI is presented,
-    // revoke the entire refresh token family and SSO session!
-    let presented_jti_hash = sha256_hex(jti);
-    if !constant_time_str_eq(&presented_jti_hash, &family.current_jti_hash) {
+    // W1, W12: Refresh token rotation and reuse detection. A rotated-away handle presented
+    // again revokes the entire refresh token family and the SSO session.
+    if !is_current {
         let mut revoked_fam = family.clone();
         revoked_fam.revoked = true;
         state.store.upsert_refresh_family(revoked_fam).await?;
@@ -2323,6 +2332,31 @@ async fn introspect_endpoint(
     let Some(token) = form.get("token").filter(|s| !s.is_empty()) else {
         return Ok(Json(json!({ "active": false })));
     };
+    if let Some((family, current)) = find_refresh_family(&state, &realm.id, token).await? {
+        let session_alive = family.offline
+            || state
+                .store
+                .get_sso_session(&realm.id, &family.sso_session_id)
+                .await?
+                .is_some();
+        if !current || family.revoked || family.expires_at <= Utc::now() || !session_alive {
+            return Ok(Json(json!({ "active": false })));
+        }
+        let mut out = json!({
+            "active": true,
+            "typ": if family.offline { "Offline" } else { "Refresh" },
+            "iss": mount.realm_issuer(&realm.realm),
+            "sub": family.user_id,
+            "azp": family.client_id,
+            "client_id": family.client_id,
+            "scope": family.scope,
+            "exp": family.expires_at.timestamp(),
+        });
+        if !family.offline {
+            out["sid"] = Value::String(family.sso_session_id.clone());
+        }
+        return Ok(Json(out));
+    }
     let keys = state.store.list_signing_keys(&realm.id).await?;
     let issuer = mount.realm_issuer(&realm.realm);
     let Ok((_, mut claims)): Result<(_, Map<String, Value>)> =
@@ -2372,6 +2406,34 @@ async fn revoke_endpoint(
     let Some(token) = form.get("token").filter(|s| !s.is_empty()) else {
         return Ok(StatusCode::OK);
     };
+    if let Some((family, _)) = find_refresh_family(&state, &realm.id, token).await? {
+        // Only the client the refresh token was issued to may revoke it (RFC 7009 §2.1).
+        if family.client_id == client.client_id {
+            let mut revoked = family.clone();
+            revoked.revoked = true;
+            state.store.upsert_refresh_family(revoked).await?;
+            if family.offline {
+                state
+                    .store
+                    .delete_user_client_offline_sessions(
+                        &realm.id,
+                        &family.user_id,
+                        &client.client_id,
+                    )
+                    .await?;
+            } else {
+                state
+                    .store
+                    .revoke_refresh_families_for_session(
+                        &realm.id,
+                        &family.sso_session_id,
+                        Some(&client.client_id),
+                    )
+                    .await?;
+            }
+        }
+        return Ok(StatusCode::OK);
+    }
     let keys = state.store.list_signing_keys(&realm.id).await?;
     let issuer = mount.realm_issuer(&realm.realm);
     if let Ok((_, claims)) = verify_jwt::<Value>(token, &keys, Some(&issuer), None)

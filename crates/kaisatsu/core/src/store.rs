@@ -322,6 +322,14 @@ pub trait Store: Send + Sync {
         realm_id: &'a str,
         family_id: &'a str,
     ) -> StoreFuture<'a, Option<RefreshTokenFamily>>;
+    /// Replaces `family` only while the stored family is not revoked and its current handle hash
+    /// is still `expected_hash` (rotation compare-and-swap). `false` means another request
+    /// rotated or revoked it first.
+    fn rotate_refresh_family<'a>(
+        &'a self,
+        family: RefreshTokenFamily,
+        expected_hash: &'a str,
+    ) -> StoreFuture<'a, bool>;
     fn revoke_refresh_families_for_session<'a>(
         &'a self,
         realm_id: &'a str,

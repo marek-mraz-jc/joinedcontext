@@ -61,6 +61,7 @@ fn family(id: &str, session: &str, user: &str, client: &str) -> RefreshTokenFami
         auth_time: 1,
         rotation_counter: 0,
         current_jti_hash: format!("hash-{id}"),
+        previous_hashes: Vec::new(),
         dpop_jkt: None,
         offline: false,
         revoked: false,
@@ -1267,6 +1268,76 @@ async fn sessions_and_tokens(store: &dyn Store) {
         .upsert_refresh_family(family("f5", "sso-y", "u3", "portal"))
         .await
         .expect("family");
+    // Rotation is a compare-and-swap on the current handle hash: one winner per handle.
+    store
+        .upsert_refresh_family(family("f6", "sso-z", "u4", "portal"))
+        .await
+        .expect("family");
+    let mut next = family("f6", "sso-z", "u4", "portal");
+    next.current_jti_hash = "hash-f6-2".into();
+    next.previous_hashes = vec!["hash-f6".into()];
+    next.rotation_counter = 1;
+    assert!(
+        !store
+            .rotate_refresh_family(next.clone(), "stale-hash")
+            .await
+            .expect("rotate"),
+        "a stale expected hash loses"
+    );
+    assert!(
+        store
+            .rotate_refresh_family(next.clone(), "hash-f6")
+            .await
+            .expect("rotate")
+    );
+    let stored = store
+        .get_refresh_family(R, "f6")
+        .await
+        .expect("get")
+        .expect("f6");
+    assert_eq!(stored.current_jti_hash, "hash-f6-2");
+    assert_eq!(stored.previous_hashes, ["hash-f6"]);
+    assert_eq!(stored.rotation_counter, 1);
+    let mut again = next.clone();
+    again.current_jti_hash = "hash-f6-3".into();
+    assert!(
+        !store
+            .rotate_refresh_family(again.clone(), "hash-f6")
+            .await
+            .expect("rotate"),
+        "the same handle never rotates twice"
+    );
+    let mut revoked = next.clone();
+    revoked.revoked = true;
+    assert!(
+        store
+            .rotate_refresh_family(revoked, "hash-f6-2")
+            .await
+            .expect("revoke by rotation")
+    );
+    assert!(
+        !store
+            .rotate_refresh_family(again, "hash-f6-2")
+            .await
+            .expect("rotate"),
+        "a revoked family never rotates"
+    );
+    let mut missing = family("f-missing", "sso-z", "u4", "portal");
+    missing.current_jti_hash = "h2".into();
+    assert!(
+        !store
+            .rotate_refresh_family(missing, "hash-f-missing")
+            .await
+            .expect("rotate")
+    );
+    assert!(
+        store
+            .get_refresh_family(R, "f-missing")
+            .await
+            .expect("get")
+            .is_none(),
+        "rotation never creates a family"
+    );
     let removed = store
         .delete_sso_session(R, "sso1")
         .await

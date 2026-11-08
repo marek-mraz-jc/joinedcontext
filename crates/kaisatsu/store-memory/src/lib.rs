@@ -1920,6 +1920,28 @@ impl Store for MemoryStore {
         })
     }
 
+    fn rotate_refresh_family<'a>(
+        &'a self,
+        family: RefreshTokenFamily,
+        expected_hash: &'a str,
+    ) -> StoreFuture<'a, bool> {
+        Box::pin(async move {
+            let mut st = self.inner.write();
+            let Some(current) = st
+                .refresh_families
+                .iter_mut()
+                .find(|f| f.realm_id == family.realm_id && f.id == family.id)
+            else {
+                return Ok(false);
+            };
+            if current.revoked || current.current_jti_hash != expected_hash {
+                return Ok(false);
+            }
+            *current = family;
+            Ok(true)
+        })
+    }
+
     fn revoke_refresh_families_for_session<'a>(
         &'a self,
         realm_id: &'a str,

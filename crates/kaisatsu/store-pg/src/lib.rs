@@ -2867,6 +2867,33 @@ impl Store for PgStore {
         })
     }
 
+    fn rotate_refresh_family<'a>(
+        &'a self,
+        family: RefreshTokenFamily,
+        expected_hash: &'a str,
+    ) -> StoreFuture<'a, bool> {
+        Box::pin(async move {
+            let mut tx = self.begin(&family.realm_id, None).await?;
+            let res = sqlx::query(
+                "UPDATE kaisatsu.refresh_token_family
+                 SET token_hash = $4, revoked = $5, doc = $6, expires_at = $7
+                 WHERE realm_id = $1 AND id = $2 AND token_hash = $3 AND NOT revoked",
+            )
+            .bind(&family.realm_id)
+            .bind(&family.id)
+            .bind(expected_hash)
+            .bind(&family.current_jti_hash)
+            .bind(family.revoked)
+            .bind(to_doc(&family)?)
+            .bind(family.expires_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            Ok(res.rows_affected() == 1)
+        })
+    }
+
     fn revoke_refresh_families_for_session<'a>(
         &'a self,
         realm_id: &'a str,
