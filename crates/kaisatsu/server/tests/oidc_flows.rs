@@ -105,6 +105,42 @@ fn auth_cookie(h: &HeaderMap) -> String {
         .expect("auth cookie")
 }
 
+/// K5: logout without `id_token_hint` shows the confirmation page; this submits its form (the
+/// single-use `logout_csrf_token` and the echoed hidden fields) as the browser would.
+async fn confirm_logout(
+    app: &Router,
+    query: &str,
+    cookie: Option<&str>,
+) -> (StatusCode, HeaderMap, String) {
+    let logout = "/realms/dev/protocol/openid-connect/logout";
+    let (st, h, html) = get(app, &format!("{logout}{query}"), cookie, None).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert!(html.contains("login-logout-confirm"), "{html}");
+    assert!(
+        h[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap()
+            .contains("nonce-")
+    );
+    let mut pairs = vec![(
+        "logout_csrf_token".to_owned(),
+        extract_hidden_input(&html, "logout_csrf_token"),
+    )];
+    for name in ["client_id", "post_logout_redirect_uri", "state"] {
+        if html.contains(&format!("name=\"{name}\" value=\"")) {
+            pairs.push((
+                name.to_owned(),
+                extract_hidden_input(&html, name).replace("&amp;", "&"),
+            ));
+        }
+    }
+    let refs: Vec<(&str, &str)> = pairs
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    post_form(app, logout, &refs, cookie).await
+}
+
 fn auth_query(extra: &str) -> String {
     format!(
         "{AUTH}?client_id=edge&redirect_uri={}&response_type=code&scope=openid&state=st-1&nonce=n-1&code_challenge={}&code_challenge_method=S256{extra}",
@@ -612,13 +648,7 @@ async fn userinfo_needs_a_live_access_token() {
     store.update_user(user).await.unwrap();
 
     // After logout the token's session is gone, and so are its claims.
-    let (st, _, _) = get(
-        &app,
-        "/realms/dev/protocol/openid-connect/logout",
-        Some(&sso),
-        None,
-    )
-    .await;
+    let (st, _, _) = confirm_logout(&app, "", Some(&sso)).await;
     assert_eq!(st, StatusCode::OK);
     let (st, _, _) = get(&app, ui, None, Some(&format!("Bearer {access}"))).await;
     assert_eq!(st, StatusCode::UNAUTHORIZED);
@@ -704,10 +734,9 @@ async fn rp_initiated_logout_and_back_channel_logout() {
         .as_str()
         .unwrap()
         .to_owned();
-    let (st, h, _) = get(
+    let (st, h, _) = confirm_logout(
         &app,
-        &format!("{logout}?client_id=edge&post_logout_redirect_uri={signed_out}"),
-        None,
+        &format!("?client_id=edge&post_logout_redirect_uri={signed_out}"),
         None,
     )
     .await;
@@ -717,9 +746,9 @@ async fn rp_initiated_logout_and_back_channel_logout() {
         store.get_sso_session("dev", &sid).await.unwrap().is_some(),
         "no hint, no cookie: no session to end"
     );
-    let (st, _, body) = post_form(&app, logout, &[], None).await;
-    assert_eq!(st, StatusCode::OK);
-    assert!(body.contains("Signed out"));
+    // K5: a POST without the confirmation token ends nothing.
+    let (st, _, _) = post_form(&app, logout, &[], None).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
 
     // A hint without `sid` ends the person's session found by `sub`.
     let key = store.list_signing_keys("dev").await.unwrap().remove(0);
@@ -921,4 +950,70 @@ async fn an_empty_in_memory_state_knows_no_realm() {
     let app = router(state, mount());
     let (st, _, _) = get(&app, "/realms/dev", None, None).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+/// K5 (OIDC RP-Initiated Logout 1.0 §2, §6): without `id_token_hint` the logout endpoint shows a
+/// confirmation page and leaves the session alive; only a POST carrying the single-use token
+/// minted for that session ends it. Red before K5: the GET ended the session at once.
+#[tokio::test]
+async fn k5_logout_without_hint_needs_a_confirmed_single_use_token() {
+    let (app, store, _, _) = app().await;
+    let logout = "/realms/dev/protocol/openid-connect/logout";
+    let (code, sso) = browser_login(&app).await;
+    let tokens = exchange(&app, &code).await;
+    let sid = decode_jwt_payload(tokens["id_token"].as_str().unwrap())["sid"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let alive = || async { store.get_sso_session("dev", &sid).await.unwrap().is_some() };
+
+    for lang in ["en", "sk", "cs", "de", "hu"] {
+        let (st, _, html) = get(
+            &app,
+            &format!("{logout}?ui_locales={lang}"),
+            Some(&sso),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(html.contains(&format!("lang=\"{lang}\"")), "{lang}: {html}");
+    }
+    assert!(alive().await, "the confirmation page ends nothing");
+
+    let (_, _, html) = get(&app, logout, Some(&sso), None).await;
+    let token = extract_hidden_input(&html, "logout_csrf_token");
+    // A forged token, and a POST without one, are refused.
+    for pairs in [vec![("logout_csrf_token", "Zm9yZ2Vk")], vec![]] {
+        let (st, _, _) = post_form(&app, logout, &pairs, Some(&sso)).await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+    }
+    // A token minted for no session (another browser) does not end this one.
+    let (_, _, anon) = get(&app, logout, None, None).await;
+    let anon_token = extract_hidden_input(&anon, "logout_csrf_token");
+    let (st, _, _) = post_form(
+        &app,
+        logout,
+        &[("logout_csrf_token", &anon_token)],
+        Some(&sso),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    assert!(alive().await);
+
+    let (st, h, body) = post_form(&app, logout, &[("logout_csrf_token", &token)], Some(&sso)).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(body.contains("Signed out"));
+    assert!(
+        h[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0")
+    );
+    assert!(!alive().await, "the confirmed POST ends the session");
+
+    // Single use: the anonymous token works once, then is refused.
+    let (st, _, _) = post_form(&app, logout, &[("logout_csrf_token", &anon_token)], None).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _, _) = post_form(&app, logout, &[("logout_csrf_token", &anon_token)], None).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
 }

@@ -25,8 +25,12 @@ pub async fn open_kaisatsu_store(
 ) -> Result<Arc<dyn Store>, StartError> {
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
     if let Some(url_file) = &cfg.database_url_file {
-        let raw_url = std::fs::read_to_string(url_file)
-            .map_err(|e| err(&format!("cannot read database_url_file {}: {e}", url_file.display())))?;
+        let raw_url = std::fs::read_to_string(url_file).map_err(|e| {
+            err(&format!(
+                "cannot read database_url_file {}: {e}",
+                url_file.display()
+            ))
+        })?;
         let trimmed = raw_url.trim().to_owned();
         if trimmed.is_empty() {
             return Err(err(&format!(
@@ -76,7 +80,8 @@ mod tests {
     use crate::config::{Cli, Config};
 
     #[tokio::test]
-    async fn k16_config_parses_database_url_file_refuses_unknown_fields_and_refuses_inline_password() {
+    async fn k16_config_parses_database_url_file_refuses_unknown_fields_and_refuses_inline_password()
+     {
         let dir = tempfile::tempdir().unwrap();
         let kek_path = dir.path().join("kek");
         std::fs::write(&kek_path, "07".repeat(32)).unwrap();
@@ -90,7 +95,11 @@ mod tests {
 
         // Valid database_url_file is parsed and merged.
         let url_file = dir.path().join("db_url");
-        std::fs::write(&url_file, "postgresql://kaisatsu_app:leaked@localhost:5432/db\n").unwrap();
+        std::fs::write(
+            &url_file,
+            "postgresql://kaisatsu_app:leaked@localhost:5432/db\n",
+        )
+        .unwrap();
         let good_toml = format!(
             "role = \"kaisatsu\"\n[kaisatsu]\nkek_file = {:?}\ndatabase_url_file = {:?}\n",
             kek_path, url_file

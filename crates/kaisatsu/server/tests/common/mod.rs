@@ -128,3 +128,16 @@ pub fn extract_hidden_input(html: &str, name: &str) -> String {
     let end = html[start..].find('"').expect("find input quote") + start;
     html[start..end].to_owned()
 }
+
+/// The `name=value` pair of the auth session cookie set by `authorize` (K1: every login step
+/// sends it back, as a browser does).
+pub fn auth_cookie(headers: &axum::http::HeaderMap) -> String {
+    headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|v| v.contains("wk_auth="))
+        .and_then(|v| v.split(';').next())
+        .expect("authorize sets the auth session cookie")
+        .to_owned()
+}

@@ -350,7 +350,9 @@ fn scim_error_response(status: StatusCode, scim_type: Option<&str>, detail: &str
         .into_response()
 }
 
-fn parse_scim_body<T: serde::de::DeserializeOwned>(bytes: &Bytes) -> std::result::Result<T, Response> {
+fn parse_scim_body<T: serde::de::DeserializeOwned>(
+    bytes: &Bytes,
+) -> std::result::Result<T, Response> {
     if bytes.len() > MAX_SCIM_BODY_BYTES {
         return Err(scim_error_response(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -370,7 +372,12 @@ fn parse_scim_body<T: serde::de::DeserializeOwned>(bytes: &Bytes) -> std::result
 fn user_etag(u: &UserRepresentation) -> String {
     let material = format!(
         "{}:{}:{}:{:?}:{:?}:{:?}:{}",
-        u.id, u.username, u.enabled, u.email, u.first_name, u.last_name,
+        u.id,
+        u.username,
+        u.enabled,
+        u.email,
+        u.first_name,
+        u.last_name,
         u.attributes
             .get("externalId")
             .and_then(|v| v.first())
@@ -587,9 +594,15 @@ async fn scim_create_user(
         let mut u = user;
         u.attributes.insert("externalId".into(), vec![ext]);
         let u = state.oidc.store.update_user(u).await?;
-        return Ok(scim_json_with_etag(StatusCode::CREATED, to_scim_user_json(&u)));
+        return Ok(scim_json_with_etag(
+            StatusCode::CREATED,
+            to_scim_user_json(&u),
+        ));
     }
-    Ok(scim_json_with_etag(StatusCode::CREATED, to_scim_user_json(&user)))
+    Ok(scim_json_with_etag(
+        StatusCode::CREATED,
+        to_scim_user_json(&user),
+    ))
 }
 
 async fn scim_get_user(
@@ -610,7 +623,10 @@ async fn scim_get_user(
         // Same answer as a missing person: no probing who exists (W5).
         return Err(KaisatsuError::NotFound("user not found".into()));
     }
-    Ok(scim_json_with_etag(StatusCode::OK, to_scim_user_json(&user)))
+    Ok(scim_json_with_etag(
+        StatusCode::OK,
+        to_scim_user_json(&user),
+    ))
 }
 
 /// RFC 7644 §3.5.1 `PUT /Users/{id}` (K14): replaces mutable attributes, enforces `If-Match`
@@ -697,7 +713,10 @@ async fn scim_put_user(
         None,
     )
     .await?;
-    Ok(scim_json_with_etag(StatusCode::OK, to_scim_user_json(&updated)))
+    Ok(scim_json_with_etag(
+        StatusCode::OK,
+        to_scim_user_json(&updated),
+    ))
 }
 
 /// RFC 7644 §3.5.2 `PATCH /Users/{id}` (K14): applies `add`, `remove`, and `replace` operations
@@ -766,7 +785,10 @@ async fn scim_patch_user(
         None,
     )
     .await?;
-    Ok(scim_json_with_etag(StatusCode::OK, to_scim_user_json(&updated)))
+    Ok(scim_json_with_etag(
+        StatusCode::OK,
+        to_scim_user_json(&updated),
+    ))
 }
 
 fn apply_user_patch_op(
@@ -921,17 +943,13 @@ fn apply_user_patch_op(
             user.username = s.trim().to_ascii_lowercase();
         }
         "active" => {
-            let b = op
-                .value
-                .as_ref()
-                .and_then(Value::as_bool)
-                .ok_or_else(|| {
-                    scim_error_response(
-                        StatusCode::BAD_REQUEST,
-                        Some("invalidValue"),
-                        "active must be a boolean",
-                    )
-                })?;
+            let b = op.value.as_ref().and_then(Value::as_bool).ok_or_else(|| {
+                scim_error_response(
+                    StatusCode::BAD_REQUEST,
+                    Some("invalidValue"),
+                    "active must be a boolean",
+                )
+            })?;
             user.enabled = b;
         }
         "name.givenname" | "givenname" => {
@@ -1443,7 +1461,9 @@ async fn scim_patch_group(
                     .and_then(|v| v.get("displayName"))
                     .and_then(Value::as_str)
             };
-            let Some(name) = name_val.map(str::trim).filter(|s| !s.is_empty() && !s.contains('/'))
+            let Some(name) = name_val
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && !s.contains('/'))
             else {
                 return Ok(scim_error_response(
                     StatusCode::BAD_REQUEST,

@@ -525,18 +525,31 @@ pub fn kaisatsu_odata_service() -> Service {
             EntityDef {
                 set: "WebAuthnCredentials".into(),
                 type_name: "WebAuthnCredential".into(),
-                description: "Registered WebAuthn passkeys and security keys (metadata only).".into(),
+                description: "Registered WebAuthn passkeys and security keys (metadata only)."
+                    .into(),
                 key: "id".into(),
                 fields: vec![
                     req_field("id", FieldKind::String, "Credential record ID."),
                     req_field("realm_id", FieldKind::String, "Realm ID."),
                     opt_field("org_id", FieldKind::String, "Organization ID."),
                     req_field("user_id", FieldKind::String, "Owner user ID."),
-                    req_field("credentialId", FieldKind::String, "Base64url credential ID."),
+                    req_field(
+                        "credentialId",
+                        FieldKind::String,
+                        "Base64url credential ID.",
+                    ),
                     req_field("coseAlg", FieldKind::Integer, "COSE algorithm identifier."),
                     req_field("signCount", FieldKind::Integer, "Signature counter."),
-                    req_field("uvInitialized", FieldKind::Boolean, "User verification initialized."),
-                    req_field("backupEligible", FieldKind::Boolean, "Backup eligibility (BE)."),
+                    req_field(
+                        "uvInitialized",
+                        FieldKind::Boolean,
+                        "User verification initialized.",
+                    ),
+                    req_field(
+                        "backupEligible",
+                        FieldKind::Boolean,
+                        "Backup eligibility (BE).",
+                    ),
                     req_field("backupState", FieldKind::Boolean, "Backup state (BS)."),
                     req_field("attestationType", FieldKind::String, "Attestation type."),
                     req_field("rpId", FieldKind::String, "Relying Party ID."),

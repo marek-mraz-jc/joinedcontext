@@ -41,10 +41,7 @@ impl AdminState {
     }
 
     #[must_use]
-    pub fn with_dns_resolver(
-        mut self,
-        dns_resolver: Arc<dyn crate::domain::DnsResolver>,
-    ) -> Self {
+    pub fn with_dns_resolver(mut self, dns_resolver: Arc<dyn crate::domain::DnsResolver>) -> Self {
         self.dns_resolver = dns_resolver;
         self
     }
@@ -232,10 +229,7 @@ pub struct ReqInfo {
     pub path: String,
 }
 
-async fn attach_req_info(
-    req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> Response {
+async fn attach_req_info(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
     let info = ReqInfo {
         method: req.method().as_str().to_owned(),
         path: req.uri().path().to_owned(),
@@ -250,11 +244,10 @@ async fn attach_req_info(
     let (mut parts, body) = req.into_parts();
     parts.headers = headers;
     parts.extensions.insert(info);
-    let mut resp = next.run(axum::extract::Request::from_parts(parts, body)).await;
-    if let Some(nonce) = resp
-        .extensions()
-        .get::<String>()
-        .cloned()
+    let mut resp = next
+        .run(axum::extract::Request::from_parts(parts, body))
+        .await;
+    if let Some(nonce) = resp.extensions().get::<String>().cloned()
         && let Ok(val) = header::HeaderValue::from_str(&nonce)
     {
         resp.headers_mut()

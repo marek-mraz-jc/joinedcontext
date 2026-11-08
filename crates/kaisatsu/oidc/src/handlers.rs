@@ -284,9 +284,7 @@ pub async fn resolve_scopes_for_client(
                 .get_organization(&realm.id, org_alias)
                 .await?
                 .filter(|o| o.enabled)
-                .ok_or_else(|| {
-                    KaisatsuError::invalid_scope(format!("Invalid scopes: {token}"))
-                })?;
+                .ok_or_else(|| KaisatsuError::invalid_scope(format!("Invalid scopes: {token}")))?;
             let canonical = format!("organization:{}", org.alias);
             if !granted_tokens.iter().any(|t| t == &canonical) {
                 granted_tokens.push(canonical);
@@ -1370,7 +1368,9 @@ pub async fn user_is_member_of_org(
     if user.org_id.as_deref().is_some_and(matches_org) {
         return Ok(Some(org.alias));
     }
-    let memberships = store.list_memberships_for_person(realm_id, &user.id).await?;
+    let memberships = store
+        .list_memberships_for_person(realm_id, &user.id)
+        .await?;
     if memberships.iter().any(|m| matches_org(&m.org_id)) {
         return Ok(Some(org.alias));
     }
@@ -1448,10 +1448,9 @@ async fn token_endpoint(
         let full_htu = crate::dpop_guard::external_htu(&mount, orig_uri.path());
         let proof = verify_dpop_proof(dpop_hdr.trim(), "POST", &full_htu, None, None)?;
         if crate::dpop::realm_requires_dpop_nonce(&realm) {
-            let valid_nonce = proof
-                .nonce
-                .as_deref()
-                .is_some_and(|n| crate::dpop::verify_dpop_nonce(&state.kek, &realm.id, "as", n, now_unix));
+            let valid_nonce = proof.nonce.as_deref().is_some_and(|n| {
+                crate::dpop::verify_dpop_nonce(&state.kek, &realm.id, "as", n, now_unix)
+            });
             if !valid_nonce {
                 let err_body = serde_json::to_string(&OAuthErrorResponse {
                     error: "use_dpop_nonce".into(),

@@ -2245,9 +2245,11 @@ impl Store for MemoryStore {
                 cred.id = uuid::Uuid::now_v7().to_string();
             }
             let mut st = self.inner.write();
-            if st.webauthn_credentials.iter().any(|w| {
-                w.realm_id == cred.realm_id && w.credential_id == cred.credential_id
-            }) {
+            if st
+                .webauthn_credentials
+                .iter()
+                .any(|w| w.realm_id == cred.realm_id && w.credential_id == cred.credential_id)
+            {
                 return Err(KaisatsuError::Conflict(
                     "WebAuthn credential_id is already registered in this realm".into(),
                 ));
@@ -2391,9 +2393,7 @@ impl Store for MemoryStore {
                 if claimed.len() >= cap {
                     break;
                 }
-                if row.realm_id == realm_id
-                    && row.status == "pending"
-                    && row.next_attempt_at <= now
+                if row.realm_id == realm_id && row.status == "pending" && row.next_attempt_at <= now
                 {
                     row.status = "sending".into();
                     row.attempts = row.attempts.saturating_add(1);

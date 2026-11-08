@@ -421,10 +421,12 @@ async fn browser_code(app: &Router) -> String {
     .await
     .unwrap();
     let login = resp.headers()["location"].to_str().unwrap().to_owned();
+    let ck = auth_cookie(resp.headers());
     let resp = tower::ServiceExt::oneshot(
         app.clone(),
         axum::http::Request::builder()
             .uri(&login)
+            .header(axum::http::header::COOKIE, &ck)
             .body(axum::body::Body::empty())
             .unwrap(),
     )
@@ -447,7 +449,7 @@ async fn browser_code(app: &Router) -> String {
             ("username", "demo.orgmember@hel.fi"),
             ("password", "MemberPass123!Valid"),
         ],
-        None,
+        Some(&ck),
     )
     .await;
     let loc = h["location"].to_str().unwrap();

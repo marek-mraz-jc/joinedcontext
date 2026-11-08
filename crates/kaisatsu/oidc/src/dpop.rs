@@ -34,7 +34,12 @@ pub const DPOP_NONCE_SLOT_SECS: i64 = 60;
 
 /// Mints a stateless HMAC-SHA256 DPoP nonce for `(realm_id, purpose)` at `now_unix` (RFC 9449 §8 & §9, K6).
 #[must_use]
-pub fn issue_dpop_nonce(kek: &kaisatsu_crypto::Kek, realm_id: &str, purpose: &str, now_unix: i64) -> String {
+pub fn issue_dpop_nonce(
+    kek: &kaisatsu_crypto::Kek,
+    realm_id: &str,
+    purpose: &str,
+    now_unix: i64,
+) -> String {
     let slot = now_unix / DPOP_NONCE_SLOT_SECS;
     compute_dpop_nonce_for_slot(kek, realm_id, purpose, slot)
 }
@@ -45,17 +50,11 @@ fn compute_dpop_nonce_for_slot(
     purpose: &str,
     slot: i64,
 ) -> String {
-    use sha2::Digest;
-    let subkey = kek.derive_subkey("kaisatsu:dpop-nonce:v1");
-    let mut hasher = Sha256::new();
-    hasher.update(subkey);
-    hasher.update(b":");
-    hasher.update(purpose.as_bytes());
-    hasher.update(b":");
-    hasher.update(realm_id.as_bytes());
-    hasher.update(b":");
-    hasher.update(slot.to_be_bytes());
-    let tag = URL_SAFE_NO_PAD.encode(hasher.finalize());
+    let tag_bytes = kek.mac(
+        "kaisatsu:dpop-nonce:v1",
+        format!("{purpose}:{realm_id}:{slot}").as_bytes(),
+    );
+    let tag = URL_SAFE_NO_PAD.encode(tag_bytes);
     format!("{slot}.{tag}")
 }
 

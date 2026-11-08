@@ -618,9 +618,19 @@ pub async fn execute(
             check_decision(authz.check(ctx, Action::SelfService, &person_target(ctx, &user)))?;
             let realm_cfg = store.get_realm(realm).await?.unwrap_or_default();
             let Some(cred_json) = params.get("credential").filter(|v| v.is_object()) else {
-                // Step 1: issue a single-use challenge and creation options.
-                let challenge = kaisatsu_crypto::random_handle_256();
-                let rp_id = if !realm_cfg.web_authn_policy_passwordless_rp_id.trim().is_empty() {
+                // Step 1: issue a single-use challenge and creation options. The challenge is
+                // MAC'd for this realm and person, so step 2 accepts only one we issued.
+                let challenge = kaisatsu_crypto::issue_registration_challenge(
+                    &state.oidc.kek,
+                    realm,
+                    &user.id,
+                    Utc::now().timestamp(),
+                );
+                let rp_id = if !realm_cfg
+                    .web_authn_policy_passwordless_rp_id
+                    .trim()
+                    .is_empty()
+                {
                     realm_cfg
                         .web_authn_policy_passwordless_rp_id
                         .trim()
@@ -643,9 +653,15 @@ pub async fn execute(
                 })));
             };
             let challenge = str_param(params, "challenge").unwrap_or_default();
-            if challenge.len() < 16 {
+            if !kaisatsu_crypto::verify_registration_challenge(
+                &state.oidc.kek,
+                realm,
+                &user.id,
+                challenge,
+                Utc::now().timestamp(),
+            ) {
                 return Err(KaisatsuError::BadRequest(
-                    "challenge is required for passkey registration".into(),
+                    "unknown or expired WebAuthn challenge".into(),
                 ));
             }
             // Enforce single-use challenge via `revoked_token`.
@@ -665,7 +681,11 @@ pub async fn execute(
                 serde_json::from_value(cred_json.clone()).map_err(|e| {
                     KaisatsuError::BadRequest(format!("invalid WebAuthn credential: {e}"))
                 })?;
-            let rp_id = if !realm_cfg.web_authn_policy_passwordless_rp_id.trim().is_empty() {
+            let rp_id = if !realm_cfg
+                .web_authn_policy_passwordless_rp_id
+                .trim()
+                .is_empty()
+            {
                 realm_cfg
                     .web_authn_policy_passwordless_rp_id
                     .trim()
@@ -747,7 +767,32 @@ pub async fn execute(
         }
         "passkey_delete" => {
             let cred_id = required_key(key)?;
-            let allowed = ctx.allowed_orgs();
+            // A person deletes their own passkeys; anyone else needs the right to update people
+            // of the organization. A passkey outside both answers 404 like a missing one.
+            let own = match ctx.principal.subject.as_deref() {
+                Some(sub) => store
+                    .list_webauthn_credentials(realm, sub)
+                    .await?
+                    .iter()
+                    .any(|c| c.id == cred_id),
+                None => false,
+            };
+            if !own {
+                let decision = authz.check(
+                    ctx,
+                    Action::Update,
+                    &ObjectTarget::Person {
+                        realm_id: realm.to_owned(),
+                        org_id: ctx.active_org_id.clone(),
+                        person_id: "*".into(),
+                    },
+                );
+                if !decision.allowed {
+                    return Err(KaisatsuError::NotFound("passkey not found".into()));
+                }
+            }
+            // One's own passkey is found without the organization scope, as `visible_person` does.
+            let allowed = if own { None } else { ctx.allowed_orgs() };
             let deleted = store
                 .delete_webauthn_credential(realm, allowed.as_deref(), cred_id)
                 .await?;

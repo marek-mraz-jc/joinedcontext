@@ -92,12 +92,20 @@ fn read_auth_cookie(headers: &HeaderMap, mount: &Mount) -> Option<String> {
     None
 }
 
-fn verify_auth_cookie(headers: &HeaderMap, mount: &Mount, auth_session: &AuthSession) -> Result<()> {
+fn verify_auth_cookie(
+    headers: &HeaderMap,
+    mount: &Mount,
+    auth_session: &AuthSession,
+) -> Result<()> {
     let Some(raw) = read_auth_cookie(headers, mount) else {
-        return Err(KaisatsuError::BadRequest("missing auth session cookie".into()));
+        return Err(KaisatsuError::BadRequest(
+            "missing auth session cookie".into(),
+        ));
     };
     if !constant_time_str_eq(&sha256_hex(&raw), &auth_session.handle_hash) {
-        return Err(KaisatsuError::BadRequest("mismatched auth session cookie".into()));
+        return Err(KaisatsuError::BadRequest(
+            "mismatched auth session cookie".into(),
+        ));
     }
     Ok(())
 }
@@ -160,8 +168,7 @@ async fn broker_login_get(
         pending_claims: None,
         pending_existing_user_id: None,
     };
-    auth_session.broker_state_json =
-        Some(serde_json::to_string(&pending).unwrap_or_default());
+    auth_session.broker_state_json = Some(serde_json::to_string(&pending).unwrap_or_default());
     state.store.put_auth_session(auth_session).await?;
 
     Ok((
@@ -226,7 +233,9 @@ async fn broker_endpoint_get(
         .code
         .as_deref()
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| KaisatsuError::BadRequest("missing authorization code from upstream".into()))?;
+        .ok_or_else(|| {
+            KaisatsuError::BadRequest("missing authorization code from upstream".into())
+        })?;
 
     let idp = state
         .store
@@ -308,7 +317,11 @@ async fn broker_endpoint_get(
     let claims = verified_claims.ok_or_else(|| {
         KaisatsuError::Unauthorized("upstream ID token did not verify against JWKS".into())
     })?;
-    if claims.nonce.as_deref().is_none_or(|n| !constant_time_str_eq(n, &pending.nonce)) {
+    if claims
+        .nonce
+        .as_deref()
+        .is_none_or(|n| !constant_time_str_eq(n, &pending.nonce))
+    {
         return Err(KaisatsuError::Unauthorized(
             "upstream ID token nonce mismatch".into(),
         ));
@@ -371,12 +384,14 @@ async fn broker_endpoint_get(
         }
         // Existing account is not yet linked: require explicit link confirmation (POST + CSRF),
         // and require local password verification when the existing account has a password.
-        let creds = state.store.list_credentials(&realm.id, &existing.id).await?;
+        let creds = state
+            .store
+            .list_credentials(&realm.id, &existing.id)
+            .await?;
         let needs_password = creds.iter().any(|c| c.credential_type == "password");
         pending.pending_claims = Some(claims);
         pending.pending_existing_user_id = Some(existing.id.clone());
-        auth_session.broker_state_json =
-            Some(serde_json::to_string(&pending).unwrap_or_default());
+        auth_session.broker_state_json = Some(serde_json::to_string(&pending).unwrap_or_default());
         state.store.put_auth_session(auth_session.clone()).await?;
         return Ok(render_broker_link_confirm_page(
             &mount,
@@ -476,7 +491,10 @@ async fn broker_endpoint_confirm_post(
         .filter(|u| u.enabled)
         .ok_or_else(|| KaisatsuError::Unauthorized("account not found".into()))?;
 
-    let creds = state.store.list_credentials(&realm.id, &existing.id).await?;
+    let creds = state
+        .store
+        .list_credentials(&realm.id, &existing.id)
+        .await?;
     if let Some(pw_cred) = creds.iter().find(|c| c.credential_type == "password") {
         let submitted = form.password.as_deref().unwrap_or_default();
         let outcome = verify_and_maybe_rehash(submitted, pw_cred)?;
@@ -514,8 +532,7 @@ async fn broker_endpoint_confirm_post(
         })
         .await?;
 
-    issue_broker_session_and_code(&state, &mount, &realm, auth_session, &existing, &client_ip)
-        .await
+    issue_broker_session_and_code(&state, &mount, &realm, auth_session, &existing, &client_ip).await
 }
 
 fn render_broker_link_confirm_page(
@@ -662,9 +679,7 @@ async fn issue_broker_session_and_code(
     let cookie_path = mount.realm_cookie_path(&realm.realm);
     let ttl = realm.sso_session_max_lifespan.max(3600);
     let set_cookie = if mount.path_prefix.is_empty() {
-        format!(
-            "{cookie_name}={sso_handle}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={ttl}"
-        )
+        format!("{cookie_name}={sso_handle}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={ttl}")
     } else {
         format!(
             "{cookie_name}={sso_handle}; Path={cookie_path}; HttpOnly; Secure; SameSite=Lax; Max-Age={ttl}"

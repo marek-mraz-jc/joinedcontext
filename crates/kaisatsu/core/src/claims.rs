@@ -598,9 +598,7 @@ pub fn compute_pairwise_sub(
         })?;
         parsed
             .host_str()
-            .ok_or_else(|| {
-                KaisatsuError::BadRequest("sectorIdentifierUri has no host".into())
-            })?
+            .ok_or_else(|| KaisatsuError::BadRequest("sectorIdentifierUri has no host".into()))?
             .to_ascii_lowercase()
     } else {
         let mut hosts = BTreeSet::new();

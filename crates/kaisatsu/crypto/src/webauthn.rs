@@ -294,7 +294,12 @@ pub fn decode_cbor_prefix(bytes: &[u8]) -> Result<(CborValue, usize)> {
 #[serde(tag = "kty", rename_all = "UPPERCASE")]
 pub enum CosePublicKey {
     /// kty=2 (EC2), crv=1 (P-256), alg=-7 (ES256).
-    Ec2 { alg: i64, crv: i64, x: String, y: String },
+    Ec2 {
+        alg: i64,
+        crv: i64,
+        x: String,
+        y: String,
+    },
     /// kty=1 (OKP), crv=6 (Ed25519), alg=-8 (EdDSA).
     Okp { alg: i64, crv: i64, x: String },
     /// kty=3 (RSA), alg=-257 (RS256).
@@ -325,7 +330,9 @@ impl CosePublicKey {
                 let crv = map
                     .map_get_int(-1)
                     .and_then(CborValue::as_i64)
-                    .ok_or_else(|| KaisatsuError::BadRequest("EC2 COSE_Key missing crv (-1)".into()))?;
+                    .ok_or_else(|| {
+                        KaisatsuError::BadRequest("EC2 COSE_Key missing crv (-1)".into())
+                    })?;
                 if crv != 1 {
                     return Err(KaisatsuError::BadRequest(
                         "EC2 COSE_Key must use P-256 curve (crv=1)".into(),
@@ -356,7 +363,9 @@ impl CosePublicKey {
                 let crv = map
                     .map_get_int(-1)
                     .and_then(CborValue::as_i64)
-                    .ok_or_else(|| KaisatsuError::BadRequest("OKP COSE_Key missing crv (-1)".into()))?;
+                    .ok_or_else(|| {
+                        KaisatsuError::BadRequest("OKP COSE_Key missing crv (-1)".into())
+                    })?;
                 if crv != 6 {
                     return Err(KaisatsuError::BadRequest(
                         "OKP COSE_Key must use Ed25519 curve (crv=6)".into(),
@@ -416,25 +425,27 @@ impl CosePublicKey {
                     .decode(y)
                     .map_err(|_| KaisatsuError::Crypto("invalid stored EC2 y".into()))?;
                 if xb.len() != 32 || yb.len() != 32 {
-                    return Err(KaisatsuError::Crypto("invalid stored EC2 key length".into()));
+                    return Err(KaisatsuError::Crypto(
+                        "invalid stored EC2 key length".into(),
+                    ));
                 }
                 let mut uncompressed = Vec::with_capacity(65);
                 uncompressed.push(0x04);
                 uncompressed.extend_from_slice(&xb);
                 uncompressed.extend_from_slice(&yb);
                 let pub_key = UnparsedPublicKey::new(&ECDSA_P256_SHA256_ASN1, &uncompressed);
-                pub_key
-                    .verify(signed_bytes, signature)
-                    .map_err(|_| KaisatsuError::Unauthorized("WebAuthn ECDSA signature invalid".into()))
+                pub_key.verify(signed_bytes, signature).map_err(|_| {
+                    KaisatsuError::Unauthorized("WebAuthn ECDSA signature invalid".into())
+                })
             }
             Self::Okp { x, .. } => {
                 let xb = URL_SAFE_NO_PAD
                     .decode(x)
                     .map_err(|_| KaisatsuError::Crypto("invalid stored OKP x".into()))?;
                 let pub_key = UnparsedPublicKey::new(&ED25519, &xb);
-                pub_key
-                    .verify(signed_bytes, signature)
-                    .map_err(|_| KaisatsuError::Unauthorized("WebAuthn Ed25519 signature invalid".into()))
+                pub_key.verify(signed_bytes, signature).map_err(|_| {
+                    KaisatsuError::Unauthorized("WebAuthn Ed25519 signature invalid".into())
+                })
             }
             Self::Rsa { n, e, .. } => {
                 let nb = URL_SAFE_NO_PAD
@@ -446,7 +457,9 @@ impl CosePublicKey {
                 let components = RsaPublicKeyComponents { n: &nb, e: &eb };
                 components
                     .verify(&RSA_PKCS1_2048_8192_SHA256, signed_bytes, signature)
-                    .map_err(|_| KaisatsuError::Unauthorized("WebAuthn RSA signature invalid".into()))
+                    .map_err(|_| {
+                        KaisatsuError::Unauthorized("WebAuthn RSA signature invalid".into())
+                    })
             }
         }
     }
@@ -508,9 +521,11 @@ impl ParsedAuthData {
 
         let mut offset = 37usize;
         let attested = if (flags & AUTH_DATA_FLAG_AT) != 0 {
-            let at_head = bytes.get(offset..offset.saturating_add(18)).ok_or_else(|| {
-                KaisatsuError::BadRequest("truncated attestedCredentialData header".into())
-            })?;
+            let at_head = bytes
+                .get(offset..offset.saturating_add(18))
+                .ok_or_else(|| {
+                    KaisatsuError::BadRequest("truncated attestedCredentialData header".into())
+                })?;
             let mut aaguid = [0u8; 16];
             aaguid.copy_from_slice(&at_head[..16]);
             let cred_len = usize::from(u16::from_be_bytes([at_head[16], at_head[17]]));
@@ -521,18 +536,18 @@ impl ParsedAuthData {
                 ));
             }
             offset = offset.saturating_add(18);
-            let cred_end = offset.checked_add(cred_len).ok_or_else(|| {
-                KaisatsuError::BadRequest("credentialId offset overflow".into())
-            })?;
+            let cred_end = offset
+                .checked_add(cred_len)
+                .ok_or_else(|| KaisatsuError::BadRequest("credentialId offset overflow".into()))?;
             let credential_id = bytes
                 .get(offset..cred_end)
                 .ok_or_else(|| KaisatsuError::BadRequest("truncated credentialId".into()))?
                 .to_vec();
             offset = cred_end;
 
-            let rest = bytes.get(offset..).ok_or_else(|| {
-                KaisatsuError::BadRequest("missing credentialPublicKey".into())
-            })?;
+            let rest = bytes
+                .get(offset..)
+                .ok_or_else(|| KaisatsuError::BadRequest("missing credentialPublicKey".into()))?;
             let (cose_cbor, consumed) = decode_cbor_prefix(rest)?;
             let public_key = CosePublicKey::from_cbor(&cose_cbor)?;
             offset = offset.saturating_add(consumed);
@@ -608,6 +623,7 @@ pub struct RegistrationClientResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AuthenticatorAttestationResponsePayload {
+    #[serde(rename = "clientDataJSON")]
     pub client_data_json: String,
     pub attestation_object: String,
     #[serde(default)]
@@ -633,6 +649,7 @@ pub struct AuthenticationClientResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AuthenticatorAssertionResponsePayload {
+    #[serde(rename = "clientDataJSON")]
     pub client_data_json: String,
     pub authenticator_data: String,
     pub signature: String,
@@ -694,7 +711,10 @@ fn parse_client_data(
         ));
     }
     // Step 9 / 12: Verify C.origin is in allowed_origins
-    if !allowed_origins.iter().any(|o| o.eq_ignore_ascii_case(&c.origin)) {
+    if !allowed_origins
+        .iter()
+        .any(|o| o.eq_ignore_ascii_case(&c.origin))
+    {
         return Err(KaisatsuError::BadRequest(
             "clientDataJSON origin is not permitted".into(),
         ));
@@ -756,7 +776,9 @@ pub fn verify_registration_response(
     // Step 14: Verify rpIdHash == SHA-256(expected_rp_id)
     let expected_rp_hash = Sha256::digest(expected_rp_id.as_bytes());
     if !constant_time_eq(&auth_data.rp_id_hash, &expected_rp_hash) {
-        return Err(KaisatsuError::BadRequest("WebAuthn rpIdHash mismatch".into()));
+        return Err(KaisatsuError::BadRequest(
+            "WebAuthn rpIdHash mismatch".into(),
+        ));
     }
 
     // Step 15: Verify UP bit is set
@@ -926,4 +948,78 @@ pub fn verify_authentication_response(
         backup_state: auth_data.backup_state(),
         user_handle: payload.response.user_handle.clone(),
     })
+}
+
+/// Lifetime of a stateless registration challenge (WebAuthn L3 §13.4.3 asks for a challenge the
+/// Relying Party generated and remembers; the MAC is how it remembers without storage).
+pub const REGISTRATION_CHALLENGE_SECS: i64 = 300;
+const REG_CHALLENGE_PURPOSE: &str = "kaisatsu:webauthn-reg-challenge:v1";
+const REG_CHALLENGE_LEN: usize = 16 + 8 + 32;
+
+fn registration_challenge_mac(
+    kek: &crate::Kek,
+    realm_id: &str,
+    user_id: &str,
+    body: &[u8],
+) -> [u8; 32] {
+    let mut msg = Vec::with_capacity(realm_id.len() + user_id.len() + 2 + body.len());
+    msg.extend_from_slice(realm_id.as_bytes());
+    msg.push(0);
+    msg.extend_from_slice(user_id.as_bytes());
+    msg.push(0);
+    msg.extend_from_slice(body);
+    kek.mac(REG_CHALLENGE_PURPOSE, &msg)
+}
+
+/// Issues a registration challenge for `(realm_id, user_id)`: 16 random bytes, the expiry and an
+/// HMAC under a KEK subkey, base64url. Only [`verify_registration_challenge`] accepts it, so a
+/// caller cannot pick its own challenge (WebAuthn L3 §7.1 step 8).
+#[must_use]
+pub fn issue_registration_challenge(
+    kek: &crate::Kek,
+    realm_id: &str,
+    user_id: &str,
+    now_unix: i64,
+) -> String {
+    use rand::Rng as _;
+    let mut body = [0u8; 24];
+    rand::rng().fill_bytes(&mut body[..16]);
+    body[16..].copy_from_slice(
+        &now_unix
+            .saturating_add(REGISTRATION_CHALLENGE_SECS)
+            .to_be_bytes(),
+    );
+    let mac = registration_challenge_mac(kek, realm_id, user_id, &body);
+    let mut out = Vec::with_capacity(REG_CHALLENGE_LEN);
+    out.extend_from_slice(&body);
+    out.extend_from_slice(&mac);
+    URL_SAFE_NO_PAD.encode(out)
+}
+
+/// True when `challenge` was issued by [`issue_registration_challenge`] for this realm and user
+/// and has not expired. Single use is the caller's job (record it as revoked).
+#[must_use]
+pub fn verify_registration_challenge(
+    kek: &crate::Kek,
+    realm_id: &str,
+    user_id: &str,
+    challenge: &str,
+    now_unix: i64,
+) -> bool {
+    let Ok(raw) = URL_SAFE_NO_PAD.decode(challenge.trim()) else {
+        return false;
+    };
+    let (Some(body), Some(mac)) = (raw.get(..24), raw.get(24..)) else {
+        return false;
+    };
+    if raw.len() != REG_CHALLENGE_LEN {
+        return false;
+    }
+    let expected = registration_challenge_mac(kek, realm_id, user_id, body);
+    if !constant_time_eq(mac, &expected) {
+        return false;
+    }
+    let mut exp = [0u8; 8];
+    exp.copy_from_slice(body.get(16..24).unwrap_or(&[0u8; 8]));
+    i64::from_be_bytes(exp) > now_unix
 }

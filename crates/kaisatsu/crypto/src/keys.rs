@@ -101,6 +101,21 @@ impl Kek {
         out
     }
 
+    /// HMAC-SHA256 of `msg` under the subkey derived for `purpose` (stateless server tokens:
+    /// DPoP nonces, WebAuthn registration challenges). The key never leaves the KEK.
+    #[must_use]
+    pub fn mac(&self, purpose: &str, msg: &[u8]) -> [u8; 32] {
+        use hmac::{Hmac, KeyInit, Mac};
+        use sha2::Sha256;
+        let subkey = self.derive_subkey(purpose);
+        let mut mac =
+            Hmac::<Sha256>::new_from_slice(&subkey).expect("32-byte key is valid for HMAC");
+        mac.update(msg);
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&mac.finalize().into_bytes());
+        out
+    }
+
     /// Encrypts `plaintext` with AES-256-GCM using `aad` (e.g. `realm_id:kid`), returning `nonce || ciphertext || tag`.
     pub fn encrypt(&self, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
         let unbound = UnboundKey::new(&AES_256_GCM, &self.bytes)

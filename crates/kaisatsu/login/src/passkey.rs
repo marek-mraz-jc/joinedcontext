@@ -127,7 +127,9 @@ pub async fn complete_passkey_registration(
     require_uv: bool,
 ) -> Result<WebAuthnCredentialRecord> {
     let parsed: RegistrationClientResponse = serde_json::from_value(response_json.clone())
-        .map_err(|e| KaisatsuError::BadRequest(format!("invalid WebAuthn registration JSON: {e}")))?;
+        .map_err(|e| {
+            KaisatsuError::BadRequest(format!("invalid WebAuthn registration JSON: {e}"))
+        })?;
     let rp_id = effective_rp_id(realm, mount, true);
     let origins = allowed_origins_for_realm(realm, mount);
     let verified = verify_registration_response(

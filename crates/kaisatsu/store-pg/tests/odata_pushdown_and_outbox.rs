@@ -183,14 +183,7 @@ async fn assert_outbox_and_webauthn_contract(store: Arc<dyn Store>) {
         .await
         .unwrap();
     store
-        .complete_outbox_row(
-            "dev",
-            "ob-2",
-            false,
-            Some("SMTP timeout".into()),
-            None,
-            1,
-        )
+        .complete_outbox_row("dev", "ob-2", false, Some("SMTP timeout".into()), None, 1)
         .await
         .unwrap();
     let rows = store.list_outbox_rows("dev", None).await.unwrap();
@@ -233,7 +226,10 @@ async fn assert_outbox_and_webauthn_contract(store: Arc<dyn Store>) {
         created_at: Utc::now(),
         last_used_at: None,
     };
-    store.insert_webauthn_credential(cred.clone()).await.unwrap();
+    store
+        .insert_webauthn_credential(cred.clone())
+        .await
+        .unwrap();
     let dup = store.insert_webauthn_credential(cred.clone()).await;
     assert!(matches!(dup, Err(KaisatsuError::Conflict(_))));
     let fetched = store
@@ -302,8 +298,7 @@ async fn pg_scoped_table_matches_memory_table_and_binds_filter_values() {
     ];
 
     for uri_str in cases {
-        let parsed =
-            odata_url::parse(uri_str, &edm, &odata_url::Limits::strict()).expect(uri_str);
+        let parsed = odata_url::parse(uri_str, &edm, &odata_url::Limits::strict()).expect(uri_str);
         let odata_url::ODataUri::Resource { options, .. } = parsed else {
             panic!("not a resource");
         };

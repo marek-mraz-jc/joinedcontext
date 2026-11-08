@@ -849,12 +849,7 @@ impl Store for PgStore {
                     "{set_name} not accessible"
                 )));
             }
-            let table = PgScopedTable::new(
-                self,
-                info,
-                ctx.realm_id.clone(),
-                ctx.allowed_orgs(),
-            );
+            let table = PgScopedTable::new(self, info, ctx.realm_id.clone(), ctx.allowed_orgs());
             let _ = MemoryTable::new;
             let _ = Self::entity_rows;
             Ok(query(&table, options, &scope, max_page).await?)

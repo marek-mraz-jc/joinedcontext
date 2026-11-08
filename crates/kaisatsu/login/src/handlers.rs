@@ -597,10 +597,7 @@ pub(crate) fn auth_cookie_matches(
     constant_time_str_eq(&presented_hash, &auth_session.handle_hash)
 }
 
-pub(crate) fn render_expired_session_page(
-    realm: &RealmConfig,
-    status: StatusCode,
-) -> Response {
+pub(crate) fn render_expired_session_page(realm: &RealmConfig, status: StatusCode) -> Response {
     let bundle = Bundle::for_locale(&realm.default_locale);
     let tpl = LoginPageTemplate {
         lang: bundle.locale.to_owned(),
@@ -783,7 +780,9 @@ async fn authenticate_page_post(
         .filter(|s| !s.trim().is_empty())
     {
         let Some(challenge) = auth_session.webauthn_challenge.clone() else {
-            return Err(KaisatsuError::BadRequest("no WebAuthn challenge in session".into()));
+            return Err(KaisatsuError::BadRequest(
+                "no WebAuthn challenge in session".into(),
+            ));
         };
         let assertion_json: serde_json::Value = serde_json::from_str(assertion_str)
             .map_err(|_| KaisatsuError::BadRequest("invalid WebAuthn assertion JSON".into()))?;
@@ -1337,15 +1336,16 @@ async fn authenticate_page_post(
             )
             .await;
         };
-        let mut stored_hashes: Vec<String> = serde_json::from_str::<serde_json::Value>(&rec_cred.secret_data)
-            .ok()
-            .and_then(|v| v.get("hashes")?.as_array().cloned())
-            .map(|arr| {
-                arr.into_iter()
-                    .filter_map(|x| x.as_str().map(str::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let mut stored_hashes: Vec<String> =
+            serde_json::from_str::<serde_json::Value>(&rec_cred.secret_data)
+                .ok()
+                .and_then(|v| v.get("hashes")?.as_array().cloned())
+                .map(|arr| {
+                    arr.into_iter()
+                        .filter_map(|x| x.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default();
         let Some(idx) = verify_recovery_code(submitted, &stored_hashes) else {
             let _ = bf
                 .record_failure(&realm, Some(&user.id), client_ip.as_deref())
@@ -2086,7 +2086,11 @@ async fn action_token_post(
             .unwrap_or(&realm.default_locale),
     );
 
-    if auth_session.scope.split_whitespace().any(|a| a == "UPDATE_PASSWORD") {
+    if auth_session
+        .scope
+        .split_whitespace()
+        .any(|a| a == "UPDATE_PASSWORD")
+    {
         let new_password = form
             .get("new_password")
             .map(String::as_str)
@@ -2122,7 +2126,11 @@ async fn action_token_post(
         user.required_actions.retain(|a| a != "UPDATE_PASSWORD");
     }
 
-    if auth_session.scope.split_whitespace().any(|a| a == "CONFIGURE_TOTP") {
+    if auth_session
+        .scope
+        .split_whitespace()
+        .any(|a| a == "CONFIGURE_TOTP")
+    {
         let secret = auth_session
             .pending_totp_secret
             .as_deref()
@@ -2147,8 +2155,13 @@ async fn action_token_post(
             temporary: false,
         };
         let now_secs = u64::try_from(Utc::now().timestamp()).unwrap_or_default();
-        if verify_totp_code(&cred, otp_code, realm.otp_policy_look_ahead_window, now_secs)?
-            .is_none()
+        if verify_totp_code(
+            &cred,
+            otp_code,
+            realm.otp_policy_look_ahead_window,
+            now_secs,
+        )?
+        .is_none()
         {
             return Err(KaisatsuError::BadRequest("invalid TOTP code".into()));
         }
@@ -2162,7 +2175,8 @@ async fn action_token_post(
         .delete_auth_session(&realm.id, &auth_session.id)
         .await?;
 
-    let redirect = (!auth_session.redirect_uri.is_empty()).then_some(auth_session.redirect_uri.as_str());
+    let redirect =
+        (!auth_session.redirect_uri.is_empty()).then_some(auth_session.redirect_uri.as_str());
     finish_action_token_response(&realm, &bundle, redirect)
 }
 

@@ -20,7 +20,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tower::ServiceExt;
 
-async fn setup() -> (axum::Router, Arc<MemoryStore>, Arc<HickoryDnsResolver>, String, String) {
+async fn setup() -> (
+    axum::Router,
+    Arc<MemoryStore>,
+    Arc<HickoryDnsResolver>,
+    String,
+    String,
+) {
     let kek = Kek::generate_for_tests();
     let store = Arc::new(MemoryStore::new(kek.clone()));
     store
@@ -112,8 +118,8 @@ async fn setup() -> (axum::Router, Arc<MemoryStore>, Arc<HickoryDnsResolver>, St
         guard: OutboundGuard::default(),
         default_mount: Mount::default(),
     };
-    let state = AdminState::new(oidc, Arc::new(LocalAuthorizer))
-        .with_dns_resolver(resolver.clone());
+    let state =
+        AdminState::new(oidc, Arc::new(LocalAuthorizer)).with_dns_resolver(resolver.clone());
     (odata_router(state), store, resolver, hel_tok, esp_tok)
 }
 
@@ -170,7 +176,11 @@ async fn k13_domain_verification_happy_path_failures_and_cross_org_404() {
     assert!(txt_value.starts_with("kaisatsu-verify="));
 
     // Stored domain holds only the hash, not the plaintext token.
-    let org_hel = store.get_organization("dev", "helsinki").await.unwrap().unwrap();
+    let org_hel = store
+        .get_organization("dev", "helsinki")
+        .await
+        .unwrap()
+        .unwrap();
     assert!(org_hel.domains[0].challenge_hash.is_some());
     assert_ne!(
         org_hel.domains[0].challenge_hash.as_deref(),
@@ -201,7 +211,11 @@ async fn k13_domain_verification_happy_path_failures_and_cross_org_404() {
     assert_eq!(st_wrong, StatusCode::BAD_REQUEST);
 
     // 5. Expired challenge -> 400.
-    let mut expired_org = store.get_organization("dev", "helsinki").await.unwrap().unwrap();
+    let mut expired_org = store
+        .get_organization("dev", "helsinki")
+        .await
+        .unwrap()
+        .unwrap();
     expired_org.domains[0].challenge_expires_at = Some(Utc::now() - Duration::minutes(1));
     store.upsert_organization(expired_org).await.unwrap();
     resolver.insert_mock_txt("_kaisatsu-challenge.hel.fi", vec![txt_value.clone()]);
@@ -230,6 +244,10 @@ async fn k13_domain_verification_happy_path_failures_and_cross_org_404() {
     .await;
     assert_eq!(st_ok, StatusCode::OK, "{body_ok}");
     assert_eq!(body_ok["value"]["verified"], true);
-    let verified_org = store.get_organization("dev", "helsinki").await.unwrap().unwrap();
+    let verified_org = store
+        .get_organization("dev", "helsinki")
+        .await
+        .unwrap()
+        .unwrap();
     assert!(verified_org.domains[0].verified);
 }

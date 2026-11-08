@@ -437,9 +437,7 @@ impl<'a> PgScopedTable<'a> {
                 };
                 match value {
                     Value::String(s) => self.push_typed_cmp(qb, path, "string", |qb| {
-                        qb.push(" COLLATE \"C\"")
-                            .push(op_sql)
-                            .push_bind(s.clone());
+                        qb.push(" COLLATE \"C\"").push(op_sql).push_bind(s.clone());
                         Ok(())
                     })?,
                     Value::Number(n) => self.push_typed_cmp(qb, path, "number", |qb| {
@@ -475,11 +473,7 @@ impl<'a> PgScopedTable<'a> {
         Ok(())
     }
 
-    fn push_order(
-        &self,
-        qb: &mut QueryBuilder<Postgres>,
-        key: &SortKey,
-    ) -> Result<(), TableError> {
+    fn push_order(&self, qb: &mut QueryBuilder<Postgres>, key: &SortKey) -> Result<(), TableError> {
         let dir = if key.descending { " DESC" } else { " ASC" };
         qb.push("CASE jsonb_typeof(");
         self.push_json_path(qb, &key.path)?;
@@ -600,11 +594,7 @@ impl<'a> PgScopedTable<'a> {
 
     /// Keyset-paged fallback inside the RLS transaction for composite sets (`OrganizationDomains`,
     /// `ProtocolMappers`) so we never load more than `MAX_FALLBACK_SCAN_ROWS` rows.
-    async fn run_keyset_fallback(
-        &self,
-        plan: &Plan,
-        scope: &Scope,
-    ) -> Result<Fetched, TableError> {
+    async fn run_keyset_fallback(&self, plan: &Plan, scope: &Scope) -> Result<Fetched, TableError> {
         let failed = |e: sqlx::Error| TableError::Source(e.to_string());
         let mut tx = self.store.pool.begin().await.map_err(failed)?;
         set_scope(&mut tx, &self.realm_id, self.allowed_orgs.as_deref())
@@ -712,8 +702,7 @@ impl<'a> PgScopedTable<'a> {
             if !plan.count
                 && plan.order.len() == 1
                 && !plan.order[0].descending
-                && u64::try_from(kept.len()).unwrap_or(0)
-                    >= plan.offset.saturating_add(plan.fetch)
+                && u64::try_from(kept.len()).unwrap_or(0) >= plan.offset.saturating_add(plan.fetch)
             {
                 break;
             }

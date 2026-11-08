@@ -550,17 +550,124 @@ async fn self_service_actions_and_honest_not_implemented() {
         .unwrap();
     assert!(!rc.secret_data.contains(list[0].as_str().unwrap()));
 
-    // Passkeys are declared but not built: 501 with the slug, not a fake success.
+    // K11 passkeys: step 1 hands out a server-made challenge; a challenge the caller made up is
+    // refused before any credential is parsed (red before: any 16+ character string passed).
+    let (st, _, opts, raw) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/People('{ANALYST}')/RegisterPasskey"),
+            &me,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{raw}");
+    let issued = opts["value"]["challenge"].as_str().unwrap().to_owned();
     let (st, _, err, _) = api
         .call(
             Method::POST,
             &format!("{BASE}/People('{ANALYST}')/RegisterPasskey"),
             &me,
-            Some(json!({ "credential": {} })),
+            Some(json!({ "credential": {}, "challenge": "caller-chosen-challenge-value" })),
         )
         .await;
-    assert_eq!(st, StatusCode::NOT_IMPLEMENTED);
-    assert_eq!(err["error"]["code"], "not-supported");
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert!(
+        err["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("challenge"),
+        "{err}"
+    );
+    // The issued challenge passes the challenge check and fails on the empty credential.
+    let (st, _, err, _) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/People('{ANALYST}')/RegisterPasskey"),
+            &me,
+            Some(json!({ "credential": {}, "challenge": issued })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert!(
+        err["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("credential"),
+        "{err}"
+    );
+
+    // DeletePasskey: a person deletes their own passkey; another person's answers 404 and stays
+    // (red before: any caller in scope deleted any passkey).
+    let steward = api
+        .store
+        .get_user_by_id("dev", None, STEWARD)
+        .await
+        .unwrap()
+        .unwrap();
+    let analyst = api
+        .store
+        .get_user_by_id("dev", None, ANALYST)
+        .await
+        .unwrap()
+        .unwrap();
+    for (id, user) in [("pk-steward", &steward), ("pk-analyst", &analyst)] {
+        api.store
+            .insert_webauthn_credential(WebAuthnCredentialRecord {
+                id: id.into(),
+                realm_id: "dev".into(),
+                org_id: user.org_id.clone(),
+                user_id: user.id.clone(),
+                user_handle: format!("handle-{id}"),
+                credential_id: format!("cred-{id}"),
+                public_key_cose_json: "{}".into(),
+                cose_alg: -7,
+                sign_count: 0,
+                uv_initialized: false,
+                backup_eligible: false,
+                backup_state: false,
+                transports: Vec::new(),
+                attestation_type: "none".into(),
+                rp_id: "idm.dev.example.test".into(),
+                user_label: None,
+                created_at: chrono::Utc::now(),
+                last_used_at: None,
+            })
+            .await
+            .unwrap();
+    }
+    let (st, _, _, raw) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/WebAuthnCredentials('pk-steward')/DeletePasskey"),
+            &me,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{raw}");
+    assert_eq!(
+        api.store
+            .list_webauthn_credentials("dev", STEWARD)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    let (st, _, _, raw) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/WebAuthnCredentials('pk-analyst')/DeletePasskey"),
+            &me,
+            None,
+        )
+        .await;
+    assert!(st.is_success(), "{st} {raw}");
+    assert!(
+        api.store
+            .list_webauthn_credentials("dev", ANALYST)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     // Unknown operation on a set.
     let (st, _, err, _) = api
         .call(

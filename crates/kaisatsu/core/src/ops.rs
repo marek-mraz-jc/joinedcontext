@@ -268,9 +268,17 @@ impl OperationRegistry {
             ("SigningKeys", "signing_key", "realm-admin"),
             ("RequiredActions", "required_action", "realm-admin"),
             ("BrandingBlocks", "branding", "org-admin"),
-            ("WebAuthnCredentials", "webauthn_credential", "people-manager"),
+            (
+                "WebAuthnCredentials",
+                "webauthn_credential",
+                "people-manager",
+            ),
             ("EmailOutbox", "email_outbox", "people-manager"),
-            ("IdentityProviderLinks", "identity_provider_link", "people-manager"),
+            (
+                "IdentityProviderLinks",
+                "identity_provider_link",
+                "people-manager",
+            ),
         ] {
             ops.push(OperationDef {
                 name: Box::leak(format!("wk_{singular}_list").into_boxed_str()),

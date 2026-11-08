@@ -73,9 +73,10 @@ impl HickoryDnsResolver {
     }
 
     pub fn insert_mock_txt(&self, fqdn: impl Into<String>, records: Vec<String>) {
-        self.mocks
-            .write()
-            .insert(fqdn.into().trim_end_matches('.').to_ascii_lowercase(), records);
+        self.mocks.write().insert(
+            fqdn.into().trim_end_matches('.').to_ascii_lowercase(),
+            records,
+        );
     }
 }
 
@@ -97,7 +98,9 @@ impl DnsResolver for HickoryDnsResolver {
             let response = resolver
                 .txt_lookup(format!("{clean}."))
                 .await
-                .map_err(|_| KaisatsuError::BadRequest("DNS TXT lookup returned no records".into()))?;
+                .map_err(|_| {
+                    KaisatsuError::BadRequest("DNS TXT lookup returned no records".into())
+                })?;
             let mut out = Vec::new();
             for record in response.answers() {
                 if let hickory_resolver::proto::rr::RData::TXT(txt) = &record.data {
@@ -180,9 +183,9 @@ pub async fn verify_organization_domain(
             )
         })?
         .to_owned();
-    let expires_at = dom.challenge_expires_at.ok_or_else(|| {
-        KaisatsuError::BadRequest("verification challenge has no expiry".into())
-    })?;
+    let expires_at = dom
+        .challenge_expires_at
+        .ok_or_else(|| KaisatsuError::BadRequest("verification challenge has no expiry".into()))?;
     if expires_at <= Utc::now() {
         return Err(KaisatsuError::BadRequest(
             "domain verification challenge has expired".into(),

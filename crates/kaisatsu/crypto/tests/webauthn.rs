@@ -80,7 +80,13 @@ fn cose_rsa_cbor(n: &[u8], e: &[u8]) -> Vec<u8> {
     out
 }
 
-fn build_attestation_object(rp_id: &str, flags: u8, sign_count: u32, cred_id: &[u8], cose_key: &[u8]) -> String {
+fn build_attestation_object(
+    rp_id: &str,
+    flags: u8,
+    sign_count: u32,
+    cred_id: &[u8],
+    cose_key: &[u8],
+) -> String {
     let mut auth_data = Vec::new();
     auth_data.extend_from_slice(&Sha256::digest(rp_id.as_bytes()));
     auth_data.push(flags);
@@ -178,7 +184,9 @@ fn registration_and_authentication_ceremonies_verify_and_reject_every_violation(
     .expect("valid registration");
     assert_eq!(verified_reg.credential_id_b64, cred_id_b64);
     assert_eq!(verified_reg.sign_count, 1);
-    assert!(verified_reg.uv_initialized && verified_reg.backup_eligible && !verified_reg.backup_state);
+    assert!(
+        verified_reg.uv_initialized && verified_reg.backup_eligible && !verified_reg.backup_state
+    );
 
     // Registration refusals: wrong challenge, wrong origin, wrong rpId, missing UP, missing UV, BS=1 with BE=0, unoffered alg.
     assert!(
@@ -281,10 +289,8 @@ fn registration_and_authentication_ceremonies_verify_and_reject_every_violation(
         }
     };
 
-    let good_assertion = make_assertion(
-        AUTH_DATA_FLAG_UP | AUTH_DATA_FLAG_UV | AUTH_DATA_FLAG_BE,
-        2,
-    );
+    let good_assertion =
+        make_assertion(AUTH_DATA_FLAG_UP | AUTH_DATA_FLAG_UV | AUTH_DATA_FLAG_BE, 2);
     let verified_assertion = verify_authentication_response(
         &good_assertion,
         &auth_challenge,
@@ -363,7 +369,11 @@ fn ed25519_and_rsa256_cose_keys_verify_signatures() {
     let ed_cose = CosePublicKey::from_cbor(&ed_cbor).unwrap();
     let ed_sig = ed_pair.sign(msg);
     ed_cose.verify_signature(msg, ed_sig.as_ref()).unwrap();
-    assert!(ed_cose.verify_signature(b"tampered", ed_sig.as_ref()).is_err());
+    assert!(
+        ed_cose
+            .verify_signature(b"tampered", ed_sig.as_ref())
+            .is_err()
+    );
 
     // RS256 (RSA 2048)
     let rsa_pair = RsaKeyPair::generate(KeySize::Rsa2048).unwrap();
@@ -378,4 +388,63 @@ fn ed25519_and_rsa256_cose_keys_verify_signatures() {
         .unwrap();
     rsa_cose.verify_signature(msg, &rsa_sig).unwrap();
     assert!(rsa_cose.verify_signature(b"tampered", &rsa_sig).is_err());
+}
+
+/// The registration challenge verifies only for the realm and person it was issued to, untampered
+/// and before it expires (K11, WebAuthn L3 §7.1 step 8).
+#[test]
+fn registration_challenge_is_bound_to_realm_person_and_time() {
+    let kek = kaisatsu_crypto::Kek::generate_for_tests();
+    let now = 1_700_000_000;
+    let c = issue_registration_challenge(&kek, "dev", "u1", now);
+    assert!(verify_registration_challenge(&kek, "dev", "u1", &c, now));
+    assert!(verify_registration_challenge(
+        &kek,
+        "dev",
+        "u1",
+        &c,
+        now + 299
+    ));
+    assert!(
+        !verify_registration_challenge(&kek, "dev", "u1", &c, now + 300),
+        "expired"
+    );
+    assert!(
+        !verify_registration_challenge(&kek, "dev", "u2", &c, now),
+        "other person"
+    );
+    assert!(
+        !verify_registration_challenge(&kek, "prod", "u1", &c, now),
+        "other realm"
+    );
+    let other_kek = kaisatsu_crypto::Kek::generate_for_tests();
+    assert!(
+        !verify_registration_challenge(&other_kek, "dev", "u1", &c, now),
+        "other key"
+    );
+    assert_ne!(
+        c,
+        issue_registration_challenge(&kek, "dev", "u1", now),
+        "random part"
+    );
+    let mut raw = URL_SAFE_NO_PAD.decode(&c).unwrap();
+    raw[20] ^= 1; // push the expiry
+    assert!(!verify_registration_challenge(
+        &kek,
+        "dev",
+        "u1",
+        &URL_SAFE_NO_PAD.encode(&raw),
+        now
+    ));
+    for bad in [
+        "",
+        "not base64 !",
+        "c2hvcnQ",
+        &URL_SAFE_NO_PAD.encode([0u8; 57]),
+    ] {
+        assert!(
+            !verify_registration_challenge(&kek, "dev", "u1", bad, now),
+            "{bad}"
+        );
+    }
 }

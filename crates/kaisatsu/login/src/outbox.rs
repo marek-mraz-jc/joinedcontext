@@ -14,8 +14,8 @@ use futures_core::future::BoxFuture;
 use jc_router::Mount;
 use kaisatsu_core::{EmailOutboxRecord, KaisatsuError, Result, Store};
 use kaisatsu_crypto::{Kek, sign_jwt};
-use std::sync::Mutex;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 pub const DEFAULT_OUTBOX_MAX_ATTEMPTS: u32 = 5;
 pub const MAX_OUTBOX_BATCH: usize = 50;
@@ -145,7 +145,11 @@ impl OutboxDispatcher {
     }
 
     /// Mints the signed action link for `row` using its stored `action_jti`.
-    pub async fn mint_link_for_row(&self, mount: &Mount, row: &EmailOutboxRecord) -> Result<String> {
+    pub async fn mint_link_for_row(
+        &self,
+        mount: &Mount,
+        row: &EmailOutboxRecord,
+    ) -> Result<String> {
         let keys = self.store.list_signing_keys(&row.realm_id).await?;
         let key = keys
             .iter()
@@ -225,7 +229,14 @@ impl OutboxDispatcher {
             {
                 Ok(()) => {
                     self.store
-                        .complete_outbox_row(&row.realm_id, &row.id, true, None, None, self.max_attempts)
+                        .complete_outbox_row(
+                            &row.realm_id,
+                            &row.id,
+                            true,
+                            None,
+                            None,
+                            self.max_attempts,
+                        )
                         .await?;
                     sent_count += 1;
                 }

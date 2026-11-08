@@ -78,6 +78,7 @@ async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backch
         .to_str()
         .unwrap()
         .to_owned();
+    let auth_ck = auth_cookie(resp1.headers());
 
     // 2. GET login page: verify Slovak translation (`Prihlásenie: Portál`) and strict CSP
     let resp2 = app
@@ -85,6 +86,7 @@ async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backch
         .oneshot(
             Request::builder()
                 .uri(&login_loc)
+                .header(header::COOKIE, &auth_ck)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -124,7 +126,7 @@ async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backch
             ("username", "demo.steward@hel.fi"),
             ("password", "StewardPass123!Valid"),
         ],
-        None,
+        Some(&auth_ck),
     )
     .await;
     assert_eq!(st3, StatusCode::OK);
@@ -142,7 +144,7 @@ async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backch
             ("session_code", &session_code),
             ("otp", &totp_code),
         ],
-        None,
+        Some(&auth_ck),
     )
     .await;
     assert_eq!(st4, StatusCode::SEE_OTHER);
@@ -393,6 +395,7 @@ async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
         .to_str()
         .unwrap()
         .to_owned();
+    let auth_ck = auth_cookie(resp1.headers());
 
     // Load login page, submit credentials for `demo.analyst@hel.fi` (in `/helsinki/members` and `/helsinki/traffic-analysts`)
     let resp2 = app
@@ -400,6 +403,7 @@ async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
         .oneshot(
             Request::builder()
                 .uri(&login_loc)
+                .header(header::COOKIE, &auth_ck)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -428,7 +432,7 @@ async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
             ("username", "demo.analyst@hel.fi"),
             ("password", "AnalystPass123!Valid"),
         ],
-        None,
+        Some(&auth_ck),
     )
     .await;
     assert_eq!(st3, StatusCode::OK);
@@ -439,7 +443,7 @@ async fn e2e_cimd_connector_with_parameterized_scope_and_offline_access() {
         &app,
         &login_loc,
         &[("csrf_token", &csrf_token), ("session_code", &session_code)],
-        None,
+        Some(&auth_ck),
     )
     .await;
     assert_eq!(st4, StatusCode::SEE_OTHER);

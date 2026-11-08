@@ -642,7 +642,7 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
 
     // Next combined submit with the right OTP succeeds from the same step.
     let valid_otp = steward_totp(&store, chrono::Utc::now().timestamp()).await;
-    let (st_next, _, html_next) = comb
+    let (st_next, h_next, html_next) = comb
         .post(
             &app,
             &[
@@ -652,8 +652,11 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
             ],
         )
         .await;
-    assert_eq!(st_next, StatusCode::OK);
-    assert_eq!(page_id(&html_next), "org-choice");
+    // Signed in: the code redirect, or the organization picker when several apply.
+    assert!(
+        is_code(st_next, &h_next) || page_id(&html_next) == "org-choice",
+        "{st_next} {html_next}"
+    );
 
     // --- K7: Recovery code step (once ok, twice refused, wrong code counted) ---
     let (plain_codes, code_hashes) = generate_recovery_codes();
@@ -697,11 +700,13 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
 
     // Valid recovery code works once
     let first_code = &plain_codes[0];
-    let (st_ok_rc, _, html_ok_rc) = rec_attempt
+    let (st_ok_rc, h_ok_rc, html_ok_rc) = rec_attempt
         .post(&app, &[("recovery_code", first_code)])
         .await;
-    assert_eq!(st_ok_rc, StatusCode::OK);
-    assert_eq!(page_id(&html_ok_rc), "org-choice");
+    assert!(
+        is_code(st_ok_rc, &h_ok_rc) || page_id(&html_ok_rc) == "org-choice",
+        "{st_ok_rc} {html_ok_rc}"
+    );
 
     // Using the same recovery code a second time is refused
     let rec_attempt2 = start(&app, "").await;
@@ -917,10 +922,10 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
     })
     .to_string();
 
-    let (st_reg_ok, h_reg_ok, _) = pk_attempt
+    let (st_reg_ok, h_reg_ok, html_reg_ok) = pk_attempt
         .post(&app, &[("webauthn_register_response", &reg_json)])
         .await;
-    assert!(is_code(st_reg_ok, &h_reg_ok));
+    assert!(is_code(st_reg_ok, &h_reg_ok), "{st_reg_ok} {html_reg_ok}");
 
     // Now sign in passwordlessly using the registered passkey!
     let pk_login = start(&app, "").await;
