@@ -325,6 +325,7 @@ pub fn parse_datasources_yaml(
         let json_data = m
             .get("jsonData")
             .or_else(|| m.get("json_data"))
+            .filter(|v| v.is_object())
             .cloned()
             .unwrap_or_else(|| json!({}));
 

@@ -7,19 +7,23 @@ use serde_json::{Map, Value};
 
 #[derive(Debug, Clone)]
 struct Line<'a> {
+    /// 1-based line number in the file, for errors (which never quote a line: it may hold a
+    /// credential).
+    number: usize,
     indent: usize,
     content: &'a str,
 }
 
 fn preprocess_lines(input: &str) -> Vec<Line<'_>> {
     let mut out = Vec::new();
-    for raw in input.lines() {
+    for (idx, raw) in input.lines().enumerate() {
         let stripped = strip_yaml_comment(raw).trim_end();
         if stripped.trim().is_empty() || stripped.trim() == "---" {
             continue;
         }
         let indent = stripped.len() - stripped.trim_start().len();
         out.push(Line {
+            number: idx + 1,
             indent,
             content: stripped.trim_start(),
         });
@@ -58,14 +62,26 @@ pub fn parse_yaml_to_json(input: &str) -> CrResult<Value> {
         return Ok(Value::Object(Map::new()));
     }
     let mut pos = 0usize;
-    parse_block(&lines, &mut pos, lines[0].indent)
+    let value = parse_block(&lines, &mut pos, lines[0].indent)?;
+    // Whatever the grammar did not consume is an error, never silently dropped configuration.
+    if let Some(rest) = lines.get(pos) {
+        return Err(CrError::BadRequest(format!(
+            "invalid YAML: unexpected content at line {} (indentation {})",
+            rest.number, rest.indent
+        )));
+    }
+    Ok(value)
+}
+
+fn is_sequence_item(content: &str) -> bool {
+    content.starts_with("- ") || content == "-"
 }
 
 fn parse_block(lines: &[Line<'_>], pos: &mut usize, base_indent: usize) -> CrResult<Value> {
     if *pos >= lines.len() {
         return Ok(Value::Null);
     }
-    if lines[*pos].content.starts_with("- ") || lines[*pos].content == "-" {
+    if is_sequence_item(lines[*pos].content) {
         parse_sequence(lines, pos, base_indent)
     } else {
         parse_mapping(lines, pos, base_indent)
@@ -76,14 +92,12 @@ fn parse_sequence(lines: &[Line<'_>], pos: &mut usize, base_indent: usize) -> Cr
     let mut arr = Vec::new();
     while *pos < lines.len() {
         let line = &lines[*pos];
-        if line.indent < base_indent {
-            break;
-        }
-        if !line.content.starts_with('-') {
+        if line.indent != base_indent || !is_sequence_item(line.content) {
             break;
         }
         let after_dash = line.content[1..].trim_start();
-        let item_indent = line.indent + 2;
+        // The column of the item's first key: its sibling keys align with it.
+        let item_indent = line.indent + (line.content.len() - after_dash.len());
         *pos += 1;
 
         if after_dash.is_empty() {
@@ -95,43 +109,41 @@ fn parse_sequence(lines: &[Line<'_>], pos: &mut usize, base_indent: usize) -> Cr
             }
         } else if let Some((k, v)) = split_key_value(after_dash) {
             let mut map = Map::new();
+            let key = unquote_key(k)?;
             let val = if v.is_empty() {
-                if *pos < lines.len() && lines[*pos].indent >= item_indent {
-                    let child_indent = lines[*pos].indent;
-                    parse_block(lines, pos, child_indent)?
-                } else {
-                    Value::Null
-                }
+                nested_value(lines, pos, item_indent)?
             } else {
-                parse_scalar(v)
+                parse_scalar(v)?
             };
-            map.insert(unquote(k), val);
+            map.insert(key, val);
 
             while *pos < lines.len() && lines[*pos].indent >= item_indent {
-                if lines[*pos].indent == line.indent && lines[*pos].content.starts_with('-') {
+                let sub_line = &lines[*pos];
+                if sub_line.indent > item_indent {
+                    return Err(CrError::BadRequest(format!(
+                        "invalid YAML: unexpected indentation at line {}",
+                        sub_line.number
+                    )));
+                }
+                if is_sequence_item(sub_line.content) {
                     break;
                 }
-                let sub_line = &lines[*pos];
                 let Some((sk, sv)) = split_key_value(sub_line.content) else {
                     break;
                 };
                 let sub_indent = sub_line.indent;
+                let sub_key = unquote_key(sk)?;
                 *pos += 1;
                 let sub_val = if sv.is_empty() {
-                    if *pos < lines.len() && lines[*pos].indent > sub_indent {
-                        let next_indent = lines[*pos].indent;
-                        parse_block(lines, pos, next_indent)?
-                    } else {
-                        Value::Object(Map::new())
-                    }
+                    nested_value(lines, pos, sub_indent)?
                 } else {
-                    parse_scalar(sv)
+                    parse_scalar(sv)?
                 };
-                map.insert(unquote(sk), sub_val);
+                map.insert(sub_key, sub_val);
             }
             arr.push(Value::Object(map));
         } else {
-            arr.push(parse_scalar(after_dash));
+            arr.push(parse_scalar(after_dash)?);
         }
     }
     Ok(Value::Array(arr))
@@ -141,33 +153,57 @@ fn parse_mapping(lines: &[Line<'_>], pos: &mut usize, base_indent: usize) -> CrR
     let mut map = Map::new();
     while *pos < lines.len() {
         let line = &lines[*pos];
-        if line.indent < base_indent {
+        if line.indent < base_indent || is_sequence_item(line.content) {
             break;
         }
-        if line.content.starts_with('-') {
-            break;
+        if line.indent > base_indent {
+            return Err(CrError::BadRequest(format!(
+                "invalid YAML: unexpected indentation at line {}",
+                line.number
+            )));
         }
         let Some((k, v)) = split_key_value(line.content) else {
             return Err(CrError::BadRequest(format!(
-                "invalid YAML mapping line: '{}'",
-                line.content
+                "invalid YAML mapping line {}: expected 'key: value'",
+                line.number
             )));
         };
         let cur_indent = line.indent;
+        let key = unquote_key(k)?;
         *pos += 1;
         let val = if v.is_empty() {
-            if *pos < lines.len() && lines[*pos].indent > cur_indent {
-                let child_indent = lines[*pos].indent;
-                parse_block(lines, pos, child_indent)?
-            } else {
-                Value::Object(Map::new())
-            }
+            nested_value(lines, pos, cur_indent)?
         } else {
-            parse_scalar(v)
+            parse_scalar(v)?
         };
-        map.insert(unquote(k), val);
+        map.insert(key, val);
     }
     Ok(Value::Object(map))
+}
+
+/// The value of a key written with nothing after its colon: a block indented below the key,
+/// a sequence written at the key's own indentation (`key:\n- a`, as YAML allows), or null.
+fn nested_value(lines: &[Line<'_>], pos: &mut usize, key_indent: usize) -> CrResult<Value> {
+    match lines.get(*pos) {
+        Some(next) if next.indent > key_indent => {
+            let child_indent = next.indent;
+            parse_block(lines, pos, child_indent)
+        }
+        Some(next) if next.indent == key_indent && is_sequence_item(next.content) => {
+            parse_sequence(lines, pos, key_indent)
+        }
+        _ => Ok(Value::Null),
+    }
+}
+
+/// A mapping key; YAML merge keys (`<<`) need anchors, which this subset does not have.
+fn unquote_key(k: &str) -> CrResult<String> {
+    if k == "<<" {
+        return Err(CrError::BadRequest(
+            "YAML merge keys ('<<') are not supported in provisioning files".into(),
+        ));
+    }
+    Ok(unquote(k))
 }
 
 fn split_key_value(s: &str) -> Option<(&str, &str)> {
@@ -200,17 +236,80 @@ fn unquote(s: &str) -> String {
     }
 }
 
-fn parse_scalar(s: &str) -> Value {
+/// Decodes a double-quoted YAML scalar's escapes (`\\`, `\"`, `\n`, `\t`, `\r`, `\/`, `\0`,
+/// `\uXXXX`).
+fn decode_double_quoted(inner: &str) -> CrResult<String> {
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('\\') => out.push('\\'),
+            Some('"') => out.push('"'),
+            Some('/') => out.push('/'),
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('0') => out.push('\0'),
+            Some('u') => {
+                let hex: String = chars.by_ref().take(4).collect();
+                let ch = u32::from_str_radix(&hex, 16)
+                    .ok()
+                    .filter(|_| hex.len() == 4)
+                    .and_then(char::from_u32)
+                    .ok_or_else(|| {
+                        CrError::BadRequest(format!("invalid YAML escape '\\u{hex}'"))
+                    })?;
+                out.push(ch);
+            }
+            other => {
+                return Err(CrError::BadRequest(format!(
+                    "invalid YAML escape '\\{}'",
+                    other.map(String::from).unwrap_or_default()
+                )));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn parse_scalar(s: &str) -> CrResult<Value> {
     let t = s.trim();
-    if (t.starts_with('"') && t.ends_with('"')) || (t.starts_with('\'') && t.ends_with('\'')) {
-        return Value::String(unquote(t));
+    if t.len() >= 2 && t.starts_with('"') && t.ends_with('"') {
+        return decode_double_quoted(&t[1..t.len() - 1]).map(Value::String);
     }
-    if (t.starts_with('[') || t.starts_with('{'))
-        && let Ok(v) = serde_json::from_str::<Value>(t)
-    {
-        return v;
+    if t.len() >= 2 && t.starts_with('\'') && t.ends_with('\'') {
+        // In single quotes the only escape is a doubled quote.
+        return Ok(Value::String(t[1..t.len() - 1].replace("''", "'")));
     }
-    match t {
+    if t.starts_with('[') || t.starts_with('{') {
+        // Flow collections are read as JSON; anything else would be stored as a string and
+        // silently lose its structure (a `secureJsonData: {password: x}` would slip past the
+        // raw-credential refusal).
+        return serde_json::from_str::<Value>(t).map_err(|e| {
+            CrError::BadRequest(format!(
+                "invalid YAML: a flow collection must be written as JSON: {e}"
+            ))
+        });
+    }
+    if let Some(first) = t.chars().next() {
+        let what = match first {
+            '&' => Some("anchors"),
+            '*' => Some("aliases"),
+            '!' => Some("tags"),
+            '|' | '>' => Some("block scalars"),
+            _ => None,
+        };
+        if let Some(what) = what {
+            return Err(CrError::BadRequest(format!(
+                "YAML {what} are not supported in provisioning files"
+            )));
+        }
+    }
+    Ok(match t {
         "true" | "True" | "TRUE" => Value::Bool(true),
         "false" | "False" | "FALSE" => Value::Bool(false),
         "null" | "Null" | "~" => Value::Null,
@@ -224,5 +323,5 @@ fn parse_scalar(s: &str) -> Value {
                 Value::String(t.to_owned())
             }
         }
-    }
+    })
 }
