@@ -477,3 +477,43 @@ fn ckan_pages_need_success_and_give_source_scoped_ids() {
     let err = parse_ckan_search_page(org, cat, &b, "<html>", "sk").unwrap_err();
     assert!(err.to_string().contains("invalid CKAN JSON"), "{err}");
 }
+
+#[test]
+fn nkod_names_the_target_publisher_and_refuses_a_url_without_a_scheme() {
+    let (org, cat) = ids();
+    let src = with(
+        source(
+            "nkod-sparql",
+            "nkod",
+            "https://data.gov.cz/sparql",
+            &["www.brno.cz"],
+        ),
+        |s| {
+            s.target_publisher_iri = Some("https://data.gov.cz/zdroj/ovm/44992785".into());
+            s.rewrite_hosts
+                .insert("brno.cz".into(), "www.brno.cz".into());
+        },
+    );
+    let rows = json!({"results": {"bindings": [
+        binding(&[("ds", "https://d/a"), ("title", "A"), ("description", "Popis A"),
+                  ("dist", "https://d/a/1"), ("url", "https://www.brno.cz/a.csv"), ("work", "CC0")]),
+        binding(&[("ds", "https://d/b"), ("title", "B"), ("dist", "https://d/b/1"),
+                  ("url", "brno.cz/b.csv"), ("work", "CC0")]),
+    ]}});
+    let (kept, skipped) = parse_nkod_sparql_bindings(org, cat, &src, &[], &rows, "cs");
+    assert_eq!(
+        reasons(&skipped),
+        [(
+            "https://d/b".into(),
+            "all distribution URLs refused by host allowlist".into()
+        )]
+    );
+    let ds = &kept[0].1;
+    assert_eq!(ds.description["cs"], "Popis A");
+    let publisher = ds.publisher.as_ref().expect("publisher");
+    assert_eq!(
+        publisher.uri.as_deref(),
+        Some("https://data.gov.cz/zdroj/ovm/44992785")
+    );
+    assert_eq!(publisher.name["cs"], "city");
+}
