@@ -153,7 +153,12 @@ async fn opened(state: &AppState) {
 /// The copy changed the sandbox space and wrote the grant beside it; main moved neither.
 async fn a_grant_beside_a_space(server: &MockServer) {
     branch(server, "workspace/air-v2", "ws1").await;
-    tree(server, "ws1", &[(AIR, "s-ours"), (GRANT, "g-ours")]).await;
+    tree(
+        server,
+        "workspace/air-v2",
+        &[(AIR, "s-ours"), (GRANT, "g-ours")],
+    )
+    .await;
     tree(server, "base1", &[(AIR, "s-base")]).await;
     tree(server, "main", &[(AIR, "s-base")]).await;
     file(server, "workspace/air-v2", AIR, &space(12)).await;
@@ -244,7 +249,7 @@ async fn a_grant_deleted_in_a_copy_comes_back_as_a_removal_and_stays_red() {
     let (server, state) = world().await;
     opened(&state).await;
     branch(&server, "workspace/air-v2", "ws1").await;
-    tree(&server, "ws1", &[(AIR, "s-ours")]).await;
+    tree(&server, "workspace/air-v2", &[(AIR, "s-ours")]).await;
     tree(&server, "base1", &[(AIR, "s-base"), (GRANT, "g-base")]).await;
     tree(&server, "main", &[(AIR, "s-base"), (GRANT, "g-base")]).await;
     file(&server, "workspace/air-v2", AIR, &space(12)).await;

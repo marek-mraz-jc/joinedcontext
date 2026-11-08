@@ -467,7 +467,9 @@ fn five_apps(builds: &[(&str, u64)]) -> Mirror {
 fn minted(requests: &[Request]) -> usize {
     requests
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/registration-token"))
+        .filter(|r| {
+            r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.RunnerRegistrationToken")
+        })
         .count()
 }
 

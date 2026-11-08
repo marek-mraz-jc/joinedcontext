@@ -697,7 +697,7 @@ async fn change_holds(shako: &MockServer, paths: &[&str]) {
         .collect();
     Mock::given(method("GET"))
         .and(path(format!("{}/PullRequests(9)/Files", common::REPO)))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!(files)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": files })))
         .mount(shako)
         .await;
 }
@@ -712,7 +712,7 @@ async fn merges(shako: &MockServer) -> Vec<String> {
         .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.Merge"))
         .filter_map(|r| {
             let body: Value = serde_json::from_slice(&r.body).ok()?;
-            Some(body.get("merge_message_field")?.as_str()?.to_owned())
+            Some(body.get("Message")?.as_str()?.to_owned())
         })
         .collect()
 }
@@ -1027,7 +1027,11 @@ async fn the_lanes_rule_writes_the_build_of_an_app_on_main_and_nothing_else() {
     assert!(
         commits
             .iter()
-            .all(|c| c["files"].as_array().is_none_or(Vec::is_empty)),
+            .flat_map(|c| c["Files"].as_array().cloned().unwrap_or_default())
+            .all(|file| {
+                let path = file["path"].as_str().unwrap_or_default();
+                !path.contains("/endpoints/") && !path.contains("/policies/")
+            }),
         "a build write carries no Endpoint or Policy: {commits:?}"
     );
 }

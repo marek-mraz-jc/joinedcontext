@@ -1262,8 +1262,8 @@ routes:
   - route: GET /tools/sdm-catalog
     rule: "signed-in"
     expect: [401, allow, allow, allow, allow, allow, allow, allow]
-  - route: POST /webhooks/gitea
-    rule: "signature:gitea-webhook"
+  - route: POST /webhooks/shako
+    rule: "signature:shako-webhook"
     expect: [401, 401, 401, 401, 401, 401, 401, 401]
   - route: POST /webhooks/sync/{project}/{name}
     rule: "signature:sync-source-webhook"

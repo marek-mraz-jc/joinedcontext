@@ -109,7 +109,7 @@ async fn pr_merged_event_accepted_and_triggers_sync() {
 
     let pr_payload = json!({
         "action": "closed",
-        "pull_request": {
+        "pullRequest": {
             "merged": true
         }
     });
@@ -173,7 +173,7 @@ async fn wrong_signature_returns_401_and_calls_no_gitea_endpoints() {
 
     let pr_payload = json!({
         "action": "closed",
-        "pull_request": {
+        "pullRequest": {
             "merged": true
         }
     });
@@ -219,7 +219,7 @@ async fn missing_signature_header_returns_401() {
 
     let pr_payload = json!({
         "action": "closed",
-        "pull_request": {
+        "pullRequest": {
             "merged": true
         }
     });
@@ -263,7 +263,7 @@ async fn invalid_hex_signature_returns_401() {
 
     let pr_payload = json!({
         "action": "closed",
-        "pull_request": {
+        "pullRequest": {
             "merged": true
         }
     });
@@ -342,7 +342,7 @@ async fn unhandled_event_returns_204_and_triggers_no_sync() {
 
     let opened_payload = json!({
         "action": "opened",
-        "pull_request": {
+        "pullRequest": {
             "merged": false
         }
     });

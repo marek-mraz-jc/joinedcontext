@@ -132,7 +132,22 @@ async fn touched(shako: &MockServer) -> Vec<String> {
         .await
         .unwrap_or_default()
         .iter()
-        .map(|request| format!("{} {}", request.method, request.url.path()))
+        .map(|request| {
+            // The ref a read names travels in the query and a branch a write names in the body,
+            // so both are part of what was asked.
+            let query: Vec<String> = request
+                .url
+                .query_pairs()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect();
+            format!(
+                "{} {} {} {}",
+                request.method,
+                request.url.path(),
+                query.join("&"),
+                String::from_utf8_lossy(&request.body)
+            )
+        })
         .collect()
 }
 
@@ -325,7 +340,7 @@ async fn a_name_the_store_refuses_is_read_from_the_forge_before_it_is_refused() 
     // The two reads that happened before each of those refusals, and no write.
     let calls = touched(&shako).await;
     assert!(
-        calls.iter().any(|call| call.ends_with("/Branches('main')")),
+        calls.iter().any(|call| call.contains("/Branches('main') ")),
         "the forge was not read at all, so the order has changed: {calls:?}",
     );
     let writes: Vec<String> = calls
@@ -772,7 +787,7 @@ async fn a_second_discard_and_a_name_nobody_has_are_the_same_answer() {
     let deleted: Vec<String> = touched(&shako)
         .await
         .into_iter()
-        .filter(|call| call.starts_with("DELETE "))
+        .filter(|call| call.starts_with("POST ") && call.contains("/Shako.DeleteBranch"))
         .collect();
     assert!(
         deleted.iter().any(|call| call.contains("workspace/air-v2")),
@@ -799,7 +814,7 @@ async fn a_second_discard_and_a_name_nobody_has_are_the_same_answer() {
     let deleted: Vec<String> = touched(&shako)
         .await
         .into_iter()
-        .filter(|call| call.starts_with("DELETE ") && call.contains("workspace/"))
+        .filter(|call| call.contains("/Shako.DeleteBranch") && call.contains("workspace/"))
         .collect();
     assert_eq!(
         deleted.len(),

@@ -63,7 +63,7 @@ async fn forge() -> MockServer {
         .and(path(
             "/odata/Repositories(Owner='bb',Name='org')/Shako.CreateBranch",
         ))
-        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "name": "portal/rename" })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Name": "portal/rename" })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
@@ -243,11 +243,11 @@ async fn one_click_proposes_one_change_renaming_every_old_shape_and_nothing_else
         .collect();
     assert_eq!(pulls.len(), 1, "one Change for the project");
     assert_eq!(
-        pulls[0]["title"],
+        pulls[0]["Title"],
         format!("rename the App shapes of {PROJECT} (AP-124)")
     );
     assert!(
-        pulls[0]["head"]
+        pulls[0]["Head"]
             .as_str()
             .is_some_and(|h| h.starts_with(&format!("portal/rename-app-shapes-{PROJECT}-"))),
         "{}",

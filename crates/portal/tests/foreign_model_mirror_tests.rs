@@ -163,7 +163,7 @@ async fn forge(files: &[(&str, String)]) -> (MockServer, Arc<Forge>) {
                     .unwrap_or_default()
                     .to_owned(),
             );
-            ResponseTemplate::new(201).set_body_json(json!({"name": "branch"}))
+            ResponseTemplate::new(201).set_body_json(json!({ "Name": "branch" }))
         })
         .mount(&server)
         .await;

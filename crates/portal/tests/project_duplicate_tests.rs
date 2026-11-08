@@ -81,7 +81,7 @@ async fn world(exists: bool) -> (MockServer, AppState) {
         .await;
     Mock::given(method("POST"))
         .and(path("/odata/ImportRepository"))
-        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "name": "doprava" })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Name": "doprava" })))
         .mount(&server)
         .await;
     for (verb, route) in [
@@ -311,7 +311,7 @@ async fn an_undeclared_parameter_copies_nothing() {
 #[tokio::test]
 async fn a_repository_that_is_already_there_is_not_overwritten() {
     let (server, state) = world(true).await;
-    let (status, text) = duplicate(&state, "nobody", json!({ "name": "doprava" })).await;
+    let (status, text) = duplicate(&state, "nobody", json!({ "Name": "doprava" })).await;
     assert_eq!(status, StatusCode::CONFLICT, "{text}");
     assert!(received(&server, "POST", "/odata/ImportRepository")
         .await
@@ -329,7 +329,7 @@ async fn a_failed_registration_removes_the_copy() {
         .with_priority(1)
         .mount(&server)
         .await;
-    let (status, text) = duplicate(&state, "nobody", json!({ "name": "doprava" })).await;
+    let (status, text) = duplicate(&state, "nobody", json!({ "Name": "doprava" })).await;
     assert!(status.is_server_error(), "{status}: {text}");
     assert_eq!(received(&server, "DELETE", COPY).await.len(), 1);
     assert!(origin_writes(&server).await.is_empty());
@@ -340,7 +340,7 @@ async fn a_failed_registration_removes_the_copy() {
 #[tokio::test]
 async fn a_project_the_caller_may_not_read_is_not_duplicated() {
     let (server, state) = world(false).await;
-    let (status, text) = duplicate(&state, "stranger", json!({ "name": "doprava" })).await;
+    let (status, text) = duplicate(&state, "stranger", json!({ "Name": "doprava" })).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{text}");
     assert!(received(&server, "POST", "/odata/ImportRepository")
         .await
@@ -352,7 +352,7 @@ async fn a_project_the_caller_may_not_read_is_not_duplicated() {
 async fn layout_one_answers_with_the_import() {
     let (server, state) = world(false).await;
     state.mirror.set_layout(1);
-    let (status, text) = duplicate(&state, "nobody", json!({ "name": "doprava" })).await;
+    let (status, text) = duplicate(&state, "nobody", json!({ "Name": "doprava" })).await;
     assert_eq!(status, StatusCode::CONFLICT, "{text}");
     assert!(text.contains("MF-45"), "{text}");
     assert!(received(&server, "POST", "/odata/ImportRepository")

@@ -126,14 +126,14 @@ async fn forge_with_workspace() -> MockServer {
             "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
             common::REPO
         )))
-        .and(query_param("@r", format!("'{branch_head}'")))
+        .and(query_param("@r", format!("'workspace/{WORKSPACE}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "Tree": [{ "Path": BINDING_PATH, "Type": "blob", "Sha": "blob-binding" }],
             "Truncated": false,
         })))
         .mount(&shako)
         .await;
-    for git_ref in ["base-sha", "main-sha"] {
+    for git_ref in ["base-sha", "main"] {
         Mock::given(method("GET"))
             .and(path(format!(
                 "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",

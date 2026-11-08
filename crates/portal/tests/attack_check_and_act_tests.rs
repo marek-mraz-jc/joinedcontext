@@ -187,7 +187,7 @@ async fn the_approval_pins_the_merge_to_the_commit_it_reviewed() {
         .await
         .expect("the merge was asked for");
     assert_eq!(
-        payload.get("head_commit_id").and_then(Value::as_str),
+        payload.get("HeadCommitId").and_then(Value::as_str),
         Some(REVIEWED),
         "the merge was not pinned to the reviewed commit: {payload}"
     );
@@ -283,7 +283,11 @@ async fn behind_forge(update_status: u16, manifest_after: &str) -> MockServer {
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{}/Branches('{BRANCH}')", common::REPO)))
+        .and(path(format!(
+            "{}/Branches('{}')",
+            common::REPO,
+            BRANCH.replace('/', "%2F")
+        )))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": UPDATED })))
         .mount(&shako)
         .await;
@@ -340,7 +344,7 @@ async fn a_branch_that_fell_behind_is_updated_and_merged_when_its_own_files_are_
         "one refused merge, one after the update: {merges:?}"
     );
     assert_eq!(
-        merges[1].get("head_commit_id").and_then(Value::as_str),
+        merges[1].get("HeadCommitId").and_then(Value::as_str),
         Some(UPDATED),
         "the second merge was not pinned to the updated head: {:?}",
         merges[1]

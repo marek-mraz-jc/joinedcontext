@@ -113,8 +113,8 @@ impl Forge {
     /// A reviewer's answer to the one open merge request.
     fn answer(&self, merged: bool) {
         for pull in self.pulls.lock().expect("the pull log").iter_mut() {
-            pull["state"] = json!("closed");
-            pull["merged"] = json!(merged);
+            pull["State"] = json!("closed");
+            pull["Merged"] = json!(merged);
         }
     }
 }
@@ -225,7 +225,7 @@ async fn forge(files: &[(&str, String)]) -> (MockServer, Arc<Forge>) {
                     .unwrap_or_default()
                     .to_owned(),
             );
-            ResponseTemplate::new(201).set_body_json(json!({"name": "branch"}))
+            ResponseTemplate::new(201).set_body_json(json!({ "Name": "branch" }))
         })
         .mount(&server)
         .await;

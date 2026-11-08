@@ -1476,7 +1476,7 @@ mod under_identity {
             .and(path(format!(
                 "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
             )))
-            .and(query_param("@r", "'ws1'"))
+            .and(query_param("@r", "'workspace/mobility-v2'"))
             .respond_with(tree(vec![(space, "s1"), (new, "n1")]))
             .mount(&forge)
             .await;

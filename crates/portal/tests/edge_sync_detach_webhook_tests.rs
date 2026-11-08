@@ -1,5 +1,5 @@
 //! Edge cases of the three doors that are opened without a session: `detach`, the sync webhook and
-//! the Gitea webhook (T-2043, T-2044, T-2045; PF-51, PF-57, AG-59, CC-03, CC-08, CC-18).
+//! the shako webhook (T-2043, T-2044, T-2045; PF-51, PF-57, AG-59, CC-03, CC-08, CC-18).
 //!
 //! **The contract, in one sentence:** detaching a source is a `delete` in its project and the person
 //! doing it is signed in, while the two webhooks have no session at all and are authorised by one
@@ -49,7 +49,7 @@ const GITEA: &str = "the-forges-own-webhook-secret";
 const STATUS: &str = "/api/v1/projects/bb/syncsources/regional/status";
 const DETACH: &str = "/api/v1/projects/bb/syncsources/regional/detach";
 const HOOK: &str = "/api/v1/webhooks/sync/bb/regional";
-const GITEA_HOOK: &str = "/api/v1/webhooks/shako";
+const SHAKO_HOOK: &str = "/api/v1/webhooks/shako";
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -71,7 +71,7 @@ impl SyncRemote for Unreachable {
     }
 }
 
-/// The hex HMAC-SHA256 a caller presents, as Gitea computes it.
+/// The hex HMAC-SHA256 a caller presents, as shako computes it.
 fn sign(secret: &str, body: &str) -> String {
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac key");
     mac.update(body.as_bytes());
@@ -375,7 +375,7 @@ async fn the_sync_webhook_refuses_before_it_reads_the_project_or_the_source() {
 #[tokio::test]
 async fn a_source_is_run_by_its_own_secret_and_by_nobody_elses() {
     let shako = forge().await;
-    // The platform's own Gitea secret is a third value here, so an answer that took it would show.
+    // The platform's own shako secret is a third value here, so an answer that took it would show.
     let state = state_with(&shako, &["read", "propose", "delete"], Some(GITEA), None);
     state
         .webhook_secrets
@@ -414,13 +414,13 @@ async fn a_source_is_run_by_its_own_secret_and_by_nobody_elses() {
     }
 
     // And the forge's own webhook secret, which used to open every source, opens none of them —
-    // while the Gitea hook it belongs to still takes it.
+    // while the shako hook it belongs to still takes it.
     let forge_signed = sign(GITEA, body);
     let (status, text) = hook(&state, HOOK, &[(SIGNATURE_HEADER, &forge_signed)], body).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{text}");
     let (status, text) = hook(
         &state,
-        GITEA_HOOK,
+        SHAKO_HOOK,
         &[(SIGNATURE_HEADER, &forge_signed), (EVENT_HEADER, "ping")],
         body,
     )
@@ -519,18 +519,18 @@ async fn every_refusal_at_the_sync_webhook_is_the_same_answer() {
 }
 
 // -------------------------------------------------------------------------------------------------
-// T-2045 the Gitea webhook
+// T-2045 the shako webhook
 // -------------------------------------------------------------------------------------------------
 
-/// CC-03, CC-08: the Gitea hook's signature is checked before the body is parsed, and what it accepts
+/// CC-03, CC-08: the shako hook's signature is checked before the body is parsed, and what it accepts
 /// as a signature is exactly one HMAC of exactly these bytes. Mixed-case hex and a padded value are
 /// the same signature; a truncated, lengthened or re-spaced one is not; and a body that is not JSON is
 /// refused only after the signature was good, so an unauthorised caller never reaches the parser.
 #[tokio::test]
-async fn the_gitea_hook_takes_one_signature_of_these_bytes_and_parses_nothing_before_it() {
+async fn the_shako_hook_takes_one_signature_of_these_bytes_and_parses_nothing_before_it() {
     let shako = MockServer::start().await;
     let state = portal_on(&shako, Some(SECRET), None);
-    let body = r#"{"ref":"refs/heads/main"}"#;
+    let body = r#"{"event":"push","ref":"refs/heads/main"}"#;
     let signature = sign(SECRET, body);
 
     // Mixed case and surrounding whitespace are the same signature: `decode_hex` reads either case
@@ -542,7 +542,7 @@ async fn the_gitea_hook_takes_one_signature_of_these_bytes_and_parses_nothing_be
         format!("  {signature} "),
     ] {
         let (status, text) =
-            hook(&state, GITEA_HOOK, &[(SIGNATURE_HEADER, &presented)], body).await;
+            hook(&state, SHAKO_HOOK, &[(SIGNATURE_HEADER, &presented)], body).await;
         assert_eq!(status, StatusCode::ACCEPTED, "{presented}: {text}");
     }
 
@@ -552,13 +552,13 @@ async fn the_gitea_hook_takes_one_signature_of_these_bytes_and_parses_nothing_be
         signature[..62].to_owned(),
         format!("{signature}ab"),
         signature.replace('a', "g"),
-        sign(SECRET, r#"{"ref":"refs/heads/other"}"#),
+        sign(SECRET, r#"{"event":"push","ref":"refs/heads/other"}"#),
         "00".repeat(32),
     ];
     for presented in malformed {
         for sent in [body, "not json at all", ""] {
             let (status, text) =
-                hook(&state, GITEA_HOOK, &[(SIGNATURE_HEADER, &presented)], sent).await;
+                hook(&state, SHAKO_HOOK, &[(SIGNATURE_HEADER, &presented)], sent).await;
             assert_eq!(
                 status,
                 StatusCode::UNAUTHORIZED,
@@ -575,7 +575,7 @@ async fn the_gitea_hook_takes_one_signature_of_these_bytes_and_parses_nothing_be
     for sent in ["not json at all", "", "[", "{\"ref\":}"] {
         let presented = sign(SECRET, sent);
         let (status, text) =
-            hook(&state, GITEA_HOOK, &[(SIGNATURE_HEADER, &presented)], sent).await;
+            hook(&state, SHAKO_HOOK, &[(SIGNATURE_HEADER, &presented)], sent).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{sent:?}: {text}");
     }
 
@@ -599,12 +599,12 @@ async fn a_signed_event_that_changes_nothing_is_accepted_and_syncs_nothing() {
             "a side branch",
             "push",
             json!({ "ref": "refs/heads/feature/x",
-                    "repository": { "default_branch": "main" } }),
+                    "repository": { "defaultBranch": "main" } }),
         ),
         (
             "a branch whose name is main's with a space",
             "push",
-            json!({ "ref": "refs/heads/main ", "repository": { "default_branch": "main" } }),
+            json!({ "ref": "refs/heads/main ", "repository": { "defaultBranch": "main" } }),
         ),
         (
             "a ref that is not a string",
@@ -616,22 +616,22 @@ async fn a_signed_event_that_changes_nothing_is_accepted_and_syncs_nothing() {
         (
             "a pull request that was closed unmerged",
             "pull_request",
-            json!({ "action": "closed", "pull_request": { "merged": false } }),
+            json!({ "action": "closed", "pullRequest": { "merged": false } }),
         ),
         (
             "a pull request that was merged but not closed",
             "pull_request",
-            json!({ "action": "reopened", "pull_request": { "merged": true } }),
+            json!({ "action": "reopened", "pullRequest": { "merged": true } }),
         ),
         (
             "an event nobody handles, carrying a merged pull request",
             "issue_comment",
-            json!({ "action": "closed", "pull_request": { "merged": true } }),
+            json!({ "action": "closed", "pullRequest": { "merged": true } }),
         ),
         (
             "a release, carrying a push to main",
             "release",
-            json!({ "ref": "refs/heads/main", "repository": { "default_branch": "main" } }),
+            json!({ "ref": "refs/heads/main", "repository": { "defaultBranch": "main" } }),
         ),
     ];
 
@@ -640,7 +640,7 @@ async fn a_signed_event_that_changes_nothing_is_accepted_and_syncs_nothing() {
         let presented = sign(SECRET, &body);
         let (status, text) = hook(
             &state,
-            GITEA_HOOK,
+            SHAKO_HOOK,
             &[(SIGNATURE_HEADER, &presented), (EVENT_HEADER, event)],
             &body,
         )
@@ -655,7 +655,7 @@ async fn a_signed_event_that_changes_nothing_is_accepted_and_syncs_nothing() {
     );
 }
 
-/// CC-08: with no `x-shako-event` header the payload's own shape decides, and a header the Portal
+/// CC-08: with no `x-shako-event` header the payload's own `event` decides, and a header the Portal
 /// cannot read as text is the same as none. The event name is read case-insensitively, so `PUSH` and
 /// `Push` are the event `push` — worth pinning, because the branch a push carries decides whether the
 /// mirror is read again.
@@ -666,8 +666,9 @@ async fn the_event_header_is_read_case_insensitively_and_its_absence_reads_the_p
 
     // No syncer is configured, so an accepted event is a 202 that reads nothing: this case is about
     // which events are accepted, and `webhook_tests.rs` is about the sync one of them triggers.
-    let main = json!({ "ref": "refs/heads/main", "repository": { "default_branch": "main" } });
-    let merged = json!({ "action": "closed", "pull_request": { "merged": true } });
+    let main = json!({ "event": "push", "ref": "refs/heads/main", "repository": { "defaultBranch": "main" } });
+    let merged =
+        json!({ "event": "pull_request", "action": "closed", "pullRequest": { "merged": true } });
 
     let accepted: Vec<(&str, Option<&str>, &Value)> = vec![
         ("PUSH", Some("PUSH"), &main),
@@ -683,14 +684,14 @@ async fn the_event_header_is_read_case_insensitively_and_its_absence_reads_the_p
         if let Some(event) = event {
             headers.push((EVENT_HEADER, event));
         }
-        let (status, text) = hook(&state, GITEA_HOOK, &headers, &body).await;
+        let (status, text) = hook(&state, SHAKO_HOOK, &headers, &body).await;
         assert_eq!(status, StatusCode::ACCEPTED, "{what}: {text}");
     }
 
     // A payload that carries neither a ref nor a pull request, with no header: nothing to do.
     let body = json!({ "commits": [] }).to_string();
     let presented = sign(SECRET, &body);
-    let (status, text) = hook(&state, GITEA_HOOK, &[(SIGNATURE_HEADER, &presented)], &body).await;
+    let (status, text) = hook(&state, SHAKO_HOOK, &[(SIGNATURE_HEADER, &presented)], &body).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{text}");
 
     assert!(

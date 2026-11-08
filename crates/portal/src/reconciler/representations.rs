@@ -421,7 +421,7 @@ mod tests {
             .find(|r| r.method.as_str() == "POST")
             .expect("one commit");
         let body: serde_json::Value = serde_json::from_slice(&commit.body).expect("json");
-        let files = body["files"].as_array().expect("files");
+        let files = body["Files"].as_array().expect("files");
         assert_eq!(files.len(), 1, "the clean file is not in the commit");
         assert_eq!(files[0]["path"], "a.yaml");
         assert_eq!(

@@ -66,8 +66,8 @@ async fn world(file: Option<ResponseTemplate>) -> (AppState, MockServer) {
 fn file_answer() -> ResponseTemplate {
     use base64::Engine as _;
     ResponseTemplate::new(200).set_body_json(json!({
-        "sha": "sha-bento-1",
-        "content": base64::engine::general_purpose::STANDARD.encode(FILE),
+        "Sha": "sha-bento-1",
+        "Content": base64::engine::general_purpose::STANDARD.encode(FILE),
     }))
 }
 

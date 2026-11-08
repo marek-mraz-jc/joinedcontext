@@ -72,7 +72,7 @@ async fn setup_mock_gitea() -> (MockServer, ShakoClient) {
             "/odata/Repositories(Owner='owner',Name='repo')",
         ))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
+            "DefaultBranch": "main"
         })))
         .mount(&server)
         .await;
@@ -82,7 +82,7 @@ async fn setup_mock_gitea() -> (MockServer, ShakoClient) {
             "/odata/Repositories(Owner='owner',Name='repo')/Shako.CreateBranch",
         ))
         .respond_with(wiremock::ResponseTemplate::new(201).set_body_json(json!({
-            "name": "portal/create-datasource-feed-strict-12345678"
+            "Name": "portal/create-datasource-feed-strict-12345678"
         })))
         .mount(&server)
         .await;

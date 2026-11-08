@@ -173,7 +173,7 @@ async fn forge() -> MockServer {
         .and(path(
             "/odata/Repositories(Owner='bb',Name='org')/Shako.CreateBranch",
         ))
-        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "name": "portal/import" })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Name": "portal/import" })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))

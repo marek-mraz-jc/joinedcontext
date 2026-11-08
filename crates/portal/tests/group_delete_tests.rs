@@ -131,7 +131,7 @@ async fn committed(shako: &MockServer) -> Vec<(String, String, String)> {
         .filter_map(|r| serde_json::from_slice(&r.body).ok())
         .collect();
     assert_eq!(commits.len(), 1, "one commit for the whole removal");
-    commits[0]["files"]
+    commits[0]["Files"]
         .as_array()
         .expect("files")
         .iter()
