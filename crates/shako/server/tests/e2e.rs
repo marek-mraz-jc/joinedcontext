@@ -498,6 +498,24 @@ async fn s3_s4_git_client_matrix_v0_v2_and_portal_push_bundle() {
         String::from_utf8_lossy(&st.stderr)
     );
 
+    // Partial clone (`--filter=blob:none`), promised by the module doc and S3's `filter` capability
+    let partial_dir = work_dir.path().join("partial");
+    let st = git_cmd()
+        .args([
+            "clone",
+            "--filter=blob:none",
+            &repo_url,
+            partial_dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        st.status.success(),
+        "partial clone failed: {}",
+        String::from_utf8_lossy(&st.stderr)
+    );
+    assert!(partial_dir.join("org.yaml").is_file());
+
     // 4. Export `.bundle` (Row 32), verify with `git bundle verify`, and push_bundle into an empty repo (Row 4)
     let resp = world
         .app

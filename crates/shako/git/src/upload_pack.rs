@@ -473,7 +473,7 @@ fn handle_v2_fetch(repo_path: &Path, args: &[String]) -> ShakoResult<Vec<u8>> {
         ));
     }
 
-    let reachable_pool = collect_reachable_objects_for_check(&repo)?;
+    let reachable_pool = collect_reachable_objects_for_check(&repo, &params.wants)?;
     for w in &params.wants {
         if !repo.has_object(*w) || !reachable_pool.contains(w) {
             let mut err_out = Vec::new();
@@ -631,7 +631,7 @@ fn handle_upload_pack_v0(repo_path: &Path, lines: &[PktLine]) -> ShakoResult<Vec
         return Ok(Vec::new());
     }
 
-    let reachable_pool = collect_reachable_objects_for_check(&repo)?;
+    let reachable_pool = collect_reachable_objects_for_check(&repo, &params.wants)?;
     for w in &params.wants {
         if !repo.has_object(*w) || !reachable_pool.contains(w) {
             return Err(ShakoError::BadRequest(format!(
@@ -745,7 +745,10 @@ fn handle_upload_pack_v0(repo_path: &Path, lines: &[PktLine]) -> ShakoResult<Vec
 
 /// Computes the set of reachable objects from all references (`HEAD`, `refs/heads/*`, `refs/tags/*`, `refs/pull/*`)
 /// to validate `allow-reachable-sha1-in-want` and reject unreachable object probes (S3).
-fn collect_reachable_objects_for_check(repo: &gix::Repository) -> ShakoResult<BTreeSet<ObjectId>> {
+fn collect_reachable_objects_for_check(
+    repo: &gix::Repository,
+    wants: &[ObjectId],
+) -> ShakoResult<BTreeSet<ObjectId>> {
     let (_, refs) = collect_advertised_refs(repo, true)?;
     let mut reachable = BTreeSet::new();
     let mut commit_tips = Vec::new();
@@ -765,6 +768,22 @@ fn collect_reachable_objects_for_check(repo: &gix::Repository) -> ShakoResult<BT
     {
         for info in walk.flatten() {
             reachable.insert(info.id);
+        }
+    }
+
+    // A partial clone fetches missing trees and blobs by id later; those count as ours when a
+    // reachable commit's tree holds them (git's `allowReachableSHA1InWant`), never otherwise.
+    if wants
+        .iter()
+        .any(|w| !reachable.contains(w) && repo.has_object(*w))
+    {
+        let commits: Vec<ObjectId> = reachable.iter().copied().collect();
+        for c in commits {
+            if let Ok(commit) = repo.find_commit(c)
+                && let Ok(tree) = commit.tree()
+            {
+                collect_filtered_tree_objects(repo, &tree, 0, ObjectFilter::None, &mut reachable)?;
+            }
         }
     }
     Ok(reachable)

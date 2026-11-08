@@ -241,5 +241,25 @@ mod tests {
         let fsck_out = fsck_repository(&repo_path).expect("fsck");
         assert_eq!(fsck_out.verified_packs, 1);
         assert!(fsck_out.verified_refs >= 2);
+
+        // 6. A want for a blob no ref reaches is refused, even though the object is on disk
+        let orphan = b"dropped secret\n";
+        let orphan_oid =
+            gix_object::compute_hash(gix_hash::Kind::Sha1, gix_object::Kind::Blob, orphan)
+                .expect("hash");
+        repo::write_objects_as_pack(
+            &repo_path,
+            &[(orphan_oid, gix_object::Kind::Blob, orphan.to_vec())],
+        )
+        .expect("write orphan");
+        let mut orphan_req = Vec::new();
+        write_text_line(&mut orphan_req, "command=fetch").unwrap();
+        pktline::write_delim(&mut orphan_req).unwrap();
+        write_text_line(&mut orphan_req, &format!("want {orphan_oid}")).unwrap();
+        write_text_line(&mut orphan_req, "done").unwrap();
+        write_flush(&mut orphan_req).unwrap();
+        let refused = handle_upload_pack(&repo_path, Some("version=2"), &orphan_req)
+            .expect_err("unreachable blob must not be served");
+        assert_eq!(refused.status_code(), 400);
     }
 }
