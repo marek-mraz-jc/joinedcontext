@@ -49,15 +49,22 @@ impl Default for OutboundPolicy {
     }
 }
 
+/// Test-only record of the forms posted to a mocked URL, by URL.
+pub type MockPosts = Arc<RwLock<HashMap<String, Vec<Vec<(String, String)>>>>>;
+
 #[derive(Clone, Default)]
 pub struct OutboundGuard {
     pub policy: OutboundPolicy,
+    mock_posts: MockPosts,
 }
 
 impl OutboundGuard {
     #[must_use]
     pub fn new(policy: OutboundPolicy) -> Self {
-        Self { policy }
+        Self {
+            policy,
+            mock_posts: MockPosts::default(),
+        }
     }
 
     pub fn insert_mock(&self, url: impl Into<String>, status: u16, body: impl Into<Vec<u8>>) {
@@ -65,6 +72,12 @@ impl OutboundGuard {
             .mock_responses
             .write()
             .insert(url.into(), (status, body.into()));
+    }
+
+    /// The forms [`Self::post_form`] sent to the mocked `url`, oldest first (tests read what a
+    /// back-channel logout carried).
+    pub fn posted_forms(&self, url: &str) -> Vec<Vec<(String, String)>> {
+        self.mock_posts.read().get(url).cloned().unwrap_or_default()
     }
 
     fn is_in_cluster_host(&self, host: &str) -> bool {
@@ -296,6 +309,15 @@ impl OutboundGuard {
     pub async fn post_form(&self, raw_url: &str, form: &[(&str, &str)]) -> Result<(u16, Vec<u8>)> {
         let url = self.validate_url(raw_url, None)?;
         if let Some((status, body)) = self.policy.mock_responses.read().get(url.as_str()).cloned() {
+            self.mock_posts
+                .write()
+                .entry(url.as_str().to_owned())
+                .or_default()
+                .push(
+                    form.iter()
+                        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                        .collect(),
+                );
             return Ok((status, body));
         }
         let host = url.host_str().unwrap_or_default().to_owned();

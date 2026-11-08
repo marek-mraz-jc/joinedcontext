@@ -2820,7 +2820,9 @@ pub async fn dispatch_backchannel_logout(
                 "http://schemas.openid.net/event/backchannel-logout": {}
             }
         });
-        let logout_token = sign_jwt(key, &state.kek, Some("Logout"), &logout_claims)?;
+        // The header says `JWT`, as Keycloak's does: the `Logout` type is the claim's. A relying
+        // party on `openidconnect` (the Portal) refuses any other header type.
+        let logout_token = sign_jwt(key, &state.kek, Some("JWT"), &logout_claims)?;
         let _ = state
             .guard
             .post_form(logout_url, &[("logout_token", &logout_token)])
