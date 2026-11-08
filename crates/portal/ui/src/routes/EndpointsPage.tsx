@@ -63,6 +63,8 @@ import type { FilterDraft } from "../pages/endpoints/FilterProof";
 import { spaceSegment } from "../components/endpoints/policyBinding";
 import { catalogForm, catalogOf, prefillFromOrganization } from "../pages/endpoints/catalog";
 import type { CatalogForm, CatalogManifest } from "../pages/endpoints/catalog";
+import { useModelSource } from "../components/entities/filters";
+import { isAnyClass, parseModel } from "../pages/models/linkml";
 import type { ModelPickerState } from "../pages/endpoints/ModelPicker";
 import { EndpointDataView } from "../components/entities/EndpointDataView";
 import { CodeBlock,
@@ -873,6 +875,29 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
   const tickedClassNames = Object.keys(pickerState.classes).filter(
     (c) => pickerState.classes[c]?.ticked,
   );
+  // The types a catalogue dataset may name (EP-175): the ticked classes when the form projects,
+  // else every class of the space's model; a type an entry already names stays offered.
+  const spaceModel = editedSpace
+    ? asManifests(modelsQuery.data?.items ?? []).find(
+        (m) => (m.spec as { contextSpaceRef?: string })?.contextSpaceRef === editedSpace,
+      )
+    : undefined;
+  const spaceModelSource = useModelSource(project, spaceModel);
+  const modelClasses = useMemo(() => {
+    try {
+      return spaceModelSource
+        ? parseModel(spaceModelSource).classes.filter((klass) => !isAnyClass(klass)).map((klass) => klass.name)
+        : [];
+    } catch {
+      return [];
+    }
+  }, [spaceModelSource]);
+  const datasetTypes = [
+    ...new Set([
+      ...(tickedClassNames.length > 0 ? tickedClassNames : modelClasses),
+      ...(editing?.catalog?.datasets ?? []).flatMap((dataset) => dataset.types ?? []),
+    ]),
+  ].filter((type) => type !== "");
   // In a space with a model a new endpoint publishes the ticked classes as its own projection
   // and policies, and so does an existing one whose classes are ticked; otherwise the endpoint is
   // proposed alone, with the projection it already names.
@@ -1247,6 +1272,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
     editing?.rateLimits?.requestsPerMinute,
     catalogues,
     pipelineNames,
+    datasetTypes,
   );
   const audienceSchema =
     editing?.audience === "project-list" ? baseSchema : withoutAllowedProjects(baseSchema);

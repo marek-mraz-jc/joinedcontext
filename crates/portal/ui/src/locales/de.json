@@ -1530,7 +1530,16 @@
         "sourceTitle": "Name des Ursprungsdatensatzes",
         "sourceDescription": "Beschreibung des Ursprungsdatensatzes",
         "pipeline": "Gefüllt von Pipeline",
-        "legislation": "Geltendes Recht"
+        "legislation": "Geltendes Recht",
+        "harvest": "Im Katalog führen",
+        "datasets": "Datensätze dieses Endpunkts",
+        "datasetName": "Name des Datensatzes",
+        "datasetTitle": "Titel",
+        "datasetDescription": "Beschreibung",
+        "datasetTypes": "Entitätstypen",
+        "datasetQuery": "Eingrenzende Abfrage",
+        "datasetKeywords": "Schlagwörter",
+        "datasetLicense": "Lizenz"
       }
     },
     "rateClass": {

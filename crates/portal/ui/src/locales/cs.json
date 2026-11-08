@@ -1553,7 +1553,16 @@
         "sourceTitle": "Název původní datové sady",
         "sourceDescription": "Popis původní datové sady",
         "pipeline": "Plní tok dat",
-        "legislation": "Příslušný právní předpis"
+        "legislation": "Příslušný právní předpis",
+        "harvest": "Uvést v katalogu",
+        "datasets": "Datasety tohoto rozhraní",
+        "datasetName": "Název datasetu",
+        "datasetTitle": "Název",
+        "datasetDescription": "Popis",
+        "datasetTypes": "Typy entit",
+        "datasetQuery": "Zužující dotaz",
+        "datasetKeywords": "Klíčová slova",
+        "datasetLicense": "Licence"
       }
     },
     "rateClass": {

@@ -1553,7 +1553,16 @@
         "sourceTitle": "Názov pôvodného datasetu",
         "sourceDescription": "Popis pôvodného datasetu",
         "pipeline": "Plní tok údajov",
-        "legislation": "Príslušný právny predpis"
+        "legislation": "Príslušný právny predpis",
+        "harvest": "Uviesť v katalógu",
+        "datasets": "Datasety tohto endpointu",
+        "datasetName": "Názov datasetu",
+        "datasetTitle": "Názov",
+        "datasetDescription": "Popis",
+        "datasetTypes": "Typy entít",
+        "datasetQuery": "Zužujúci dotaz",
+        "datasetKeywords": "Kľúčové slová",
+        "datasetLicense": "Licencia"
       }
     },
     "rateClass": {

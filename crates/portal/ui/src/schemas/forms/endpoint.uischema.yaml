@@ -299,3 +299,58 @@ spec:
         sk: "Právny predpis, ktorý sa na údaje vzťahuje, ako adresa ELI; pri súboroch vysokej hodnoty ich nariadenie."
         cs: "Právní předpis, který se na data vztahuje, jako adresa ELI; u datových sad vysoké hodnoty jejich nařízení."
         de: "Das Gesetz, das für die Daten gilt, als ELI-Adresse; für hochwertige Datensätze deren Verordnung."
+    catalog.harvest:
+      help:
+        en: "Checked, a public endpoint becomes one dataset of the catalogue by itself; unchecked, no catalogue lists it."
+        sk: "Ak je začiarknuté, verejný endpoint sa sám stane jedným datasetom katalógu; ak nie, žiadny katalóg ho neuvádza."
+        cs: "Je-li zaškrtnuto, veřejné rozhraní se samo stane jedním datasetem katalogu; jinak jej žádný katalog neuvádí."
+        de: "Angehakt wird ein öffentlicher Endpunkt von selbst ein Datensatz des Katalogs; sonst führt ihn kein Katalog."
+    catalog.datasets:
+      help:
+        en: "Empty, a public endpoint is one dataset under its own name; each entry here is a dataset of its own, holding only the types and rows it names."
+        sk: "Ak je prázdne, verejný endpoint je jeden dataset pod vlastným názvom; každý záznam tu je samostatný dataset len s typmi a riadkami, ktoré uvádza."
+        cs: "Je-li prázdné, veřejný endpoint je jeden dataset pod vlastním názvem; každý záznam zde je samostatný dataset jen s typy a řádky, které uvádí."
+        de: "Leer ist ein öffentlicher Endpunkt ein Datensatz unter eigenem Namen; jeder Eintrag hier ist ein eigener Datensatz mit nur den Typen und Zeilen, die er nennt."
+    catalog.datasets[].name:
+      help:
+        en: "The dataset's name in the catalogue and its address, unique there: lowercase letters, digits, - and _, such as air-quality-stations."
+        sk: "Názov datasetu v katalógu a v jeho adrese, v katalógu jedinečný: malé písmená, číslice, - a _, napríklad kvalita-ovzdusia-stanice."
+        cs: "Název datasetu v katalogu a v jeho adrese, v katalogu jedinečný: malá písmena, číslice, - a _, například kvalita-ovzdusi-stanice."
+        de: "Der Name des Datensatzes im Katalog und in seiner Adresse, dort eindeutig: Kleinbuchstaben, Ziffern, - und _, etwa luftqualitaet-stationen."
+    catalog.datasets[].title:
+      help:
+        en: "The title a person reads in the catalogue, such as Air quality at the measuring stations."
+        sk: "Názov, ktorý človek číta v katalógu, napríklad Kvalita ovzdušia na meracích staniciach."
+        cs: "Název, který člověk čte v katalogu, například Kvalita ovzduší na měřicích stanicích."
+        de: "Der Titel, den Menschen im Katalog lesen, etwa Luftqualität an den Messstationen."
+    catalog.datasets[].description:
+      help:
+        en: "One or two sentences on what this dataset holds and how it differs from the endpoint's other datasets."
+        sk: "Jedna či dve vety o tom, čo dataset obsahuje a čím sa líši od ostatných datasetov endpointu."
+        cs: "Jedna či dvě věty o tom, co dataset obsahuje a čím se liší od ostatních datasetů rozhraní."
+        de: "Ein, zwei Sätze dazu, was der Datensatz enthält und worin er sich von den anderen Datensätzen des Endpunkts unterscheidet."
+    catalog.datasets[].types:
+      widget: checkboxes
+      help:
+        en: "The entity types this dataset holds, picked from the types the endpoint serves."
+        sk: "Typy entít, ktoré dataset obsahuje, vybrané z typov, ktoré endpoint poskytuje."
+        cs: "Typy entit, které dataset obsahuje, vybrané z typů, které rozhraní poskytuje."
+        de: "Die Entitätstypen dieses Datensatzes, gewählt aus den Typen, die der Endpunkt liefert."
+    catalog.datasets[].q:
+      help:
+        en: "An optional NGSI-LD query that narrows the rows further, such as category==\"school\"; it can only narrow."
+        sk: "Voliteľný dotaz NGSI-LD, ktorý ďalej zužuje riadky, napríklad category==\"school\"; môže iba zužovať."
+        cs: "Volitelný dotaz NGSI-LD, který dále zužuje řádky, například category==\"school\"; může pouze zužovat."
+        de: "Eine optionale NGSI-LD-Abfrage, die die Zeilen weiter eingrenzt, etwa category==\"school\"; sie grenzt nur ein."
+    catalog.datasets[].keywords:
+      help:
+        en: "Search words for this dataset alone, in place of the endpoint's keywords, one per entry."
+        sk: "Slová na vyhľadávanie iba pre tento dataset, namiesto kľúčových slov endpointu, jedno na záznam."
+        cs: "Slova pro vyhledávání jen pro tento dataset, místo klíčových slov rozhraní, jedno na záznam."
+        de: "Suchwörter nur für diesen Datensatz statt der Schlagwörter des Endpunkts, eines je Eintrag."
+    catalog.datasets[].license:
+      help:
+        en: "A licence for this dataset alone; empty means the endpoint's licence."
+        sk: "Licencia iba pre tento dataset; prázdna znamená licenciu endpointu."
+        cs: "Licence jen pro tento dataset; prázdná znamená licenci rozhraní."
+        de: "Eine Lizenz nur für diesen Datensatz; leer heißt die Lizenz des Endpunkts."
