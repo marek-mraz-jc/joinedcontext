@@ -449,12 +449,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19fe8d6cb13c4714962c072ea496f3392015f0989b1a2847bb4b2d9effd71d83"
 dependencies = [
  "askama_parser",
- "basic-toml",
  "mime",
  "mime_guess",
  "proc-macro2",
  "quote",
- "serde",
  "syn 2.0.119",
 ]
 
@@ -7061,7 +7059,7 @@ dependencies = [
  "json-event-parser",
  "oxiri",
  "oxrdf",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -7073,7 +7071,7 @@ dependencies = [
  "oxilangtag",
  "oxiri",
  "rand 0.8.8",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -7097,7 +7095,7 @@ dependencies = [
  "oxilangtag",
  "oxiri",
  "oxrdf",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -7225,12 +7223,6 @@ dependencies = [
  "getrandom 0.4.3",
  "phc",
 ]
-
-[[package]]
-name = "paste"
-version = "1.0.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pbkdf2"
@@ -8964,7 +8956,7 @@ dependencies = [
  "odata-csdl",
  "odata-table",
  "odata-url",
- "p256 0.13.2",
+ "p256 0.14.0",
  "parking_lot",
  "rand 0.9.5",
  "regex",
@@ -9048,7 +9040,6 @@ dependencies = [
  "http",
  "http-body-util",
  "jc-router",
- "p256 0.13.2",
  "parking_lot",
  "serde",
  "serde_json",
@@ -9758,11 +9749,8 @@ dependencies = [
 [[package]]
 name = "tikv-jemalloc-ctl"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a184c43b8ab2f41df2733b55556e3f5f632f4aeaa205b1bb018f574b7f5f142"
 dependencies = [
  "libc",
- "paste",
  "tikv-jemalloc-sys",
 ]
 

@@ -8,7 +8,8 @@ publish = false
 
 [dependencies]
 base64 = "0.22.1"
-askama = "0.12.1"
+# Without `config`: askama.toml support pulls basic-toml (RUSTSEC-2026-0374, unmaintained).
+askama = { version = "0.12.1", default-features = false, features = ["humansize", "num-traits", "urlencode"] }
 chrono = { version = "0.4.38", features = ["serde"] }
 dataroom-core = { path = "../core" }
 dataroom-search = { path = "../search" }
