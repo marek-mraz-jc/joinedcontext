@@ -151,7 +151,7 @@
                 <summary><span class="jc-table-name">{{ labels.map }}</span></summary>
                 <link rel="stylesheet" href="{{ chrome.mount_prefix }}/maplibre-gl-6.14.0/maplibre-gl.css">
                 <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/pmtiles-4.5.0.js"></script>
-                <div class="jc-map" data-jc-map='{{ map_json|safe }}'>
+                <div class="jc-map" data-jc-map='{{ map_json }}'>
                   <div class="jc-map-area" role="application" aria-label="{{ labels.map_title }}: {{ dataset_title }}" aria-describedby="jc-map-keys"></div>
                   <p class="jc-map-note" role="status"></p>
                   <p id="jc-map-keys" class="visually-hidden">{{ labels.map_keys }}</p>
@@ -293,7 +293,7 @@
                             {% if !item.what.is_empty() %}<p>{{ item.what }}</p>{% endif %}
                           </div>
                           <div class="jc-resource-actions">
-                            <a class="btn btn-sm btn-outline-primary resource-url-analytics" href="{{ item.url }}" rel="noreferrer">{{ item.action_label }}<span class="visually-hidden"> {{ item.label }}</span></a>
+                            {% if !item.url.is_empty() %}<a class="btn btn-sm btn-outline-primary resource-url-analytics" href="{{ item.url }}" rel="noreferrer">{{ item.action_label }}<span class="visually-hidden"> {{ item.label }}</span></a>{% endif %}
                           </div>
                         </li>
                         {% endfor %}
@@ -313,7 +313,7 @@
                             {% if !item.what.is_empty() %}<p>{{ item.what }}</p>{% endif %}
                           </div>
                           <div class="jc-resource-actions">
-                            <a class="btn btn-sm btn-outline-primary resource-url-analytics" href="{{ item.url }}" rel="noreferrer">{{ item.action_label }}<span class="visually-hidden"> {{ item.label }}</span></a>
+                            {% if !item.url.is_empty() %}<a class="btn btn-sm btn-outline-primary resource-url-analytics" href="{{ item.url }}" rel="noreferrer">{{ item.action_label }}<span class="visually-hidden"> {{ item.label }}</span></a>{% endif %}
                           </div>
                         </li>
                         {% endfor %}

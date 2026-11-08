@@ -1076,6 +1076,14 @@ pub fn string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'static 
         "Böngéssze, töltse le őket, vagy kérdezze róluk az asszisztenst.",
     );
     add(
+        "no_publishers",
+        "No publisher matches.",
+        "Žiadny vydavateľ nezodpovedá.",
+        "Žádný vydavatel neodpovídá.",
+        "Kein Herausgeber passt.",
+        "Nincs megfelelő kiadó.",
+    );
+    add(
         "no_datasets",
         "No dataset is published yet.",
         "Zatiaľ nie je zverejnený žiadny dataset.",
@@ -1817,6 +1825,24 @@ pub fn format_date_localized(year: i32, month: u32, day: u32, lang: &str) -> Str
                 _ => "",
             };
             format!("{year}. {m} {day}.")
+        }
+        "de" => {
+            let m = match month {
+                1 => "Januar",
+                2 => "Februar",
+                3 => "März",
+                4 => "April",
+                5 => "Mai",
+                6 => "Juni",
+                7 => "Juli",
+                8 => "August",
+                9 => "September",
+                10 => "Oktober",
+                11 => "November",
+                12 => "Dezember",
+                _ => "",
+            };
+            format!("{day}. {m} {year}")
         }
         _ => {
             let m = match month {

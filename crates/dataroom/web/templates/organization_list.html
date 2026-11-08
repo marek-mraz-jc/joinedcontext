@@ -116,6 +116,7 @@
                   </li>
                   {% endfor %}
                 </ul>
+                {% if publishers.is_empty() %}<p class="empty jc-empty">{{ labels.empty_publishers }}</p>{% endif %}
               </div>
             </div>
           </article>
