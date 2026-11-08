@@ -558,3 +558,53 @@ def test_people_come_with_ids_groups_and_roles_and_never_a_credential():
     text = json.dumps(realm)
     for leak in ("credentials", "secretData", "hash", "federatedIdentities", "totp", "access", "$("):
         assert leak not in text, leak
+
+
+def test_datasources_are_provisioned_on_the_exact_own_address_in_org_1(tmp_path):
+    src = tmp_path / "dash"
+    src.mkdir()
+    (src / "bbsk.datasource.bbsk-kpi.json").write_text(json.dumps({
+        "name": "bbsk-kpi", "uid": "bbsk-kpi", "type": "ngsild-grafana-datasource", "access": "proxy",
+        "url": "http://context-gateway.dev.svc.cluster.local:8080/api/endpoint/qfhhh5no5wz4lk3rfjisdtx3chiyfig3",
+        "jsonData": {"tenant": "x"}}))
+    out = tmp_path / "prov"
+    assert rh.provisioning_files(src, 42101, out) == 1
+    doc = json.loads((out / "datasources" / "rehearsal.yaml").read_text())
+    (ds,) = doc["datasources"]
+    assert ds["url"] == "http://127.0.0.1:42101/api/endpoint/qfhhh5no5wz4lk3rfjisdtx3chiyfig3"
+    assert ds["orgId"] == 1 and ds["uid"] == "bbsk-kpi" and ds["jsonData"] == {"tenant": "x"}
+    assert (out / "dashboards").is_dir()
+    (src / "x.datasource.bad.json").write_text(json.dumps({"name": "b", "uid": "b", "type": "t",
+                                                            "url": "http://evil.example/other"}))
+    with pytest.raises(SystemExit):
+        rh.provisioning_files(src, 42101, out)
+
+
+def test_org_1_panels_count_data_and_red_apart(tmp_path):
+    class Daiya(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            q = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            uid = q["queries"][0]["datasource"]["uid"]
+            body = {"results": {"A": {"status": 200, "frames": []}}} if uid == "good" else \
+                {"message": "disallowed URL scheme 'http' (https required)"}
+            raw = json.dumps(body).encode()
+            self.send_response(200 if uid == "good" else 502)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Daiya)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    (tmp_path / "p.dashboard.json").write_text(json.dumps({"dashboard": {"panels": [
+        {"id": 1, "type": "timeseries", "datasource": {"uid": "good"}, "targets": [{"refId": "A"}]},
+        {"id": 2, "type": "row", "panels": [
+            {"id": 3, "type": "stat", "datasource": "bad", "targets": [{"refId": "A"}]}]},
+        {"id": 4, "type": "text"}]}}))
+    try:
+        o = rh.org1_panels(rh.Http(f"http://127.0.0.1:{server.server_port}"), {}, tmp_path)
+    finally:
+        server.shutdown()
+    assert (o["data"], o["red"]) == (1, 1) and [r["panel"] for r in o["rows"]] == [1, 3]

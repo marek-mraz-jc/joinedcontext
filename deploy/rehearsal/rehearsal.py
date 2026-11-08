@@ -1277,8 +1277,16 @@ def cmd_smoke(a):
               f"{su['openInPortal']} open; {su['panels']} panels", "GET /api/v1/projects/{p}/grafana/dashboards/{uid}")
         # kept apart: a panel refused by daiya's guard on jc's own listener is expected until
         # jc-portal-integrate lets file-provisioned datasources reach it by exact address
-        checks.append({"check": "panels: expected, outbound to own listener", "result": "expected",
+        checks.append({"check": "panels: expected, outbound to own listener (project org awaits per-org "
+                                "provisioning, jc-grafana-parity)", "result": "expected",
                        "detail": f"{su['panels_expected']} of {su['panels']}"})
+        # the same panels on the datasources file-provisioned into organization 1, counted apart
+        o1 = org1_panels(h, dauth, dashdir)
+        if o1["rows"]:
+            check("panels on org-1 provisioned datasources answer data", o1["red"] == 0,
+                  f"{o1['data']} data, {o1['red']} red of {len(o1['rows'])}: "
+                  + "; ".join(f"{r['dashboard']}#{r['panel']} {r['detail'][:60]}" for r in o1["rows"] if r["class"] == "red")[:300],
+                  "POST /dashboards/api/ds/query (organization 1)")
         check("panels: no real red", su["panels_red"] == 0,
               f"{su['panels_red']} red, {su['panels_data']} with data",
               "GET /api/v1/projects/{p}/grafana/dashboards/{uid}/panels/{id}")
@@ -1348,6 +1356,57 @@ def panel_class(status: int, answer, datasource_url: str, base: str) -> str:
     own = datasource_url.startswith(base.rstrip("/") + "/api/endpoint/")
     guard = any(r in text for r in OWN_LISTENER_REFUSALS) and any(c in text for c in OWN_LISTENER_CODES)
     return "expected" if own and guard else "red"
+
+
+def provisioning_files(dashboards: Path, port: int, out: Path) -> int:
+    """daiya provisioning (`[daiya] provisioning_dir`): every project datasource of the Grafana
+    files, on jc's own listener by its exact address (127.0.0.1:<port>), the one way jc's daiya
+    lets a datasource reach it. daiya provisions organization 1 only, so the project orgs keep
+    their API copies (refused by the guard) until per-org provisioning lands (jc-grafana-parity).
+    Returns the number of datasources written."""
+    rows = []
+    for f in sorted(dashboards.glob("*.datasource.*.json")):
+        d = json.loads(f.read_text())
+        slug = urllib.parse.urlparse(d.get("url", "")).path.rstrip("/").rsplit("/api/endpoint/", 1)[-1]
+        if not re.fullmatch(r"[a-z2-7]{26,}", slug):
+            raise SystemExit(f"{f.name}: no Endpoint slug in {d.get('url')!r}")
+        rows.append({"name": d["name"], "uid": d["uid"], "type": d["type"], "access": "proxy", "orgId": 1,
+                     "url": f"http://127.0.0.1:{port}/api/endpoint/{slug}", "editable": False,
+                     "jsonData": d.get("jsonData") or {}})
+    (out / "datasources").mkdir(parents=True, exist_ok=True)
+    (out / "dashboards").mkdir(parents=True, exist_ok=True)
+    # JSON is YAML: daiya reads the file as YAML.
+    (out / "datasources" / "rehearsal.yaml").write_text(json.dumps({"apiVersion": 1, "datasources": rows}, indent=1))
+    return len(rows)
+
+
+def cmd_provisioning(a):
+    n = provisioning_files(Path(a.dashboards), a.port, Path(a.out))
+    print(f"daiya provisioning: {n} datasources into organization 1 ({a.out})")
+
+
+def org1_panels(h: Http, auth: dict, dashboards: Path) -> dict:
+    """Each project panel's queries run against its datasource as file-provisioned into
+    organization 1 (POST /dashboards/api/ds/query, no org header): whether the data path holds
+    while the project's own organization still waits for per-org provisioning."""
+    out = {"data": 0, "red": 0, "rows": []}
+    for f in sorted(dashboards.glob("*.dashboard.json")):
+        for p in json.loads(f.read_text())["dashboard"].get("panels", []):
+            for q in [p, *p.get("panels", [])]:
+                ds = q.get("datasource")
+                uid = ds.get("uid") if isinstance(ds, dict) else ds
+                if q.get("type") == "row" or not q.get("targets") or not uid:
+                    continue
+                queries = [{**t, "refId": t.get("refId") or "A", "datasource": {"uid": uid}} for t in q["targets"]]
+                st, ans = h.json("POST", "/dashboards/api/ds/query", body={"from": "now-24h", "to": "now",
+                                                                            "queries": queries}, headers=auth)
+                res = (ans or {}).get("results", {}) if isinstance(ans, dict) else {}
+                ok = st == 200 and bool(res) and all(isinstance(r, dict) and r.get("frames") is not None
+                                                     and not r.get("error") for r in res.values())
+                out["data" if ok else "red"] += 1
+                out["rows"].append({"dashboard": f.name, "panel": q.get("id"), "datasource": uid, "status": st,
+                                    "class": "data" if ok else "red", "detail": "" if ok else str(ans)[:160]})
+    return out
 
 
 def portal_dashboards(h: Http, dashboards: Path) -> dict:
@@ -1472,9 +1531,11 @@ def main(argv=None):
     s.add_argument("--dashboards", help="the Grafana files imported into daiya (rehearsal.py dashboards)")
     s = sub.add_parser("portal-dashboards"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     s.add_argument("--dashboards", required=True); s.add_argument("--report", required=True)
+    s = sub.add_parser("provisioning"); s.add_argument("--dashboards", required=True)
+    s.add_argument("--port", type=int, required=True); s.add_argument("--out", required=True)
     s = sub.add_parser("policy-check"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     a = p.parse_args(argv)
-    return {"portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import,
+    return {"provisioning": cmd_provisioning, "portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import,
             "retain": cmd_retain, "smoke": cmd_smoke}[a.cmd](a) or 0
 
 
