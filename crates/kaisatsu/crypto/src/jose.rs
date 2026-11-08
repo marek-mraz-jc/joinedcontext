@@ -128,10 +128,15 @@ pub fn verify_jwt_with_jwk<T: DeserializeOwned>(
     let decoding_key = DecodingKey::from_jwk(&jwk)
         .map_err(|_| KaisatsuError::Unauthorized("cannot build decoding key from JWK".into()))?;
     let mut validation = Validation::new(header.alg);
+    // jsonwebtoken checks `iss` and `aud` only when the token carries them; a token that leaves
+    // out a claim the caller expects is refused (RFC 7519 section 4.1.1/4.1.3, RFC 7523 section 3).
+    let mut required = vec!["exp"];
     if let Some(iss) = expected_issuer {
         validation.set_issuer(&[iss]);
+        required.push("iss");
     }
     if let Some(aud) = expected_audience {
+        required.push("aud");
         validation.set_audience(&[aud]);
     } else {
         validation.validate_aud = false;
@@ -139,6 +144,7 @@ pub fn verify_jwt_with_jwk<T: DeserializeOwned>(
     validation.validate_exp = true;
     validation.validate_nbf = true;
     validation.leeway = 30;
+    validation.set_required_spec_claims(&required);
     let data = decode::<T>(token, &decoding_key, &validation).map_err(|_| {
         KaisatsuError::Unauthorized("JWT signature or claim validation failed".into())
     })?;
