@@ -493,11 +493,11 @@ mod tests {
         // a number), kept for the link back, while the *name* is the derived one above. Setting it
         // twice keeps the last, so a re-poll cannot leave two.
         let status = pending_status()
-            .with_merge_request("https://gitea.example/org/repo/pulls/17")
-            .with_merge_request("https://gitea.example/org/repo/pulls/18");
+            .with_merge_request("https://shako.example/org/repo/pulls/17")
+            .with_merge_request("https://shako.example/org/repo/pulls/18");
         assert_eq!(
             status.merge_request.as_deref(),
-            Some("https://gitea.example/org/repo/pulls/18"),
+            Some("https://shako.example/org/repo/pulls/18"),
         );
         // An empty string is still a value, not an absence: a caller that has no merge request does
         // not call this, and a `Some("")` that came back from a forge is visible rather than hidden.

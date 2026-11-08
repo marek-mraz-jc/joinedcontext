@@ -27,7 +27,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
@@ -52,16 +52,18 @@ fn org(kind: &str, name: &str, spec: Value) -> ResourceEnvelope {
 
 fn pull_request(number: u64, branch: &str, title: &str) -> Value {
     json!({
-        "number": number,
-        "html_url": format!("https://gitea.example.sk/pulls/{number}"),
-        "state": "open",
-        "title": title,
-        "head": { "ref": branch },
-        "base": { "ref": "main" },
-        "created_at": "2026-09-06T09:14:22Z",
-        "user": { "login": "jana.kovacova", "full_name": "Jana Kováčová", "email": AUTHOR },
-        "mergeable": true,
-        "merged": false
+        "Number": number,
+        "HtmlUrl": format!("https://shako.example.sk/pulls/{number}"),
+        "State": "open",
+        "Title": title,
+        "Head": branch,
+        "Base": "main",
+        "CreatedAt": "2026-09-06T09:14:22Z",
+        "Author": "jana.kovacova",
+        "AuthorName": "Jana Kováčová",
+        "AuthorEmail": AUTHOR,
+        "Mergeable": true,
+        "Merged": false
     })
 }
 
@@ -70,15 +72,17 @@ fn pull_request(number: u64, branch: &str, title: &str) -> Value {
 /// never asked for one.
 async fn world() -> (MockServer, AppState) {
     let forge = MockServer::start().await;
-    let repo = "/api/v1/repos/test-owner/test-repo";
+    let repo = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
 
     Mock::given(method("GET"))
-        .and(path(format!("{repo}/pulls")))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            pull_request(1, BRANCH, "create ContextSpace mobility"),
-            pull_request(2, GHOST_BRANCH, "create ContextSpace ghost"),
-        ])))
+        .and(path(format!("{repo}/PullRequests")))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                pull_request(1, BRANCH, "create ContextSpace mobility"),
+                pull_request(2, GHOST_BRANCH, "create ContextSpace ghost")
+            ]
+        })))
         .mount(&forge)
         .await;
     for (number, branch, title) in [
@@ -86,46 +90,52 @@ async fn world() -> (MockServer, AppState) {
         (2, GHOST_BRANCH, "create ContextSpace ghost"),
     ] {
         Mock::given(method("GET"))
-            .and(path(format!("{repo}/pulls/{number}")))
+            .and(path(format!("{repo}/PullRequests({number})")))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(pull_request(number, branch, title)),
             )
             .mount(&forge)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{repo}/pulls/{number}/files")))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-                { "filename": format!("projects/{PROJECT}/spaces/mobility/space.yaml"),
-                  "status": "added" }
-            ])))
+            .and(path(format!("{repo}/PullRequests({number})/Files")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "value": [
+                    {
+                        "Filename": format!("projects/{PROJECT}/spaces/mobility/space.yaml"),
+                        "Status": "added"
+                    }
+                ]
+            })))
             .mount(&forge)
             .await;
     }
     // The first change's manifest. The second one's is nowhere: wiremock answers 404 for every path
     // nobody mounted, which is what a manifest deleted from the branch looks like.
     Mock::given(method("GET"))
-        .and(path(format!(
-            "{repo}/contents/projects/{PROJECT}/spaces/mobility/space.yaml"
-        )))
-        .and(query_param("ref", BRANCH))
+        .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param(
+            "@p",
+            format!("'projects/{PROJECT}/spaces/mobility/space.yaml'"),
+        ))
+        .and(query_param("@r", format!("'{}'", BRANCH)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": STANDARD.encode(
+            "Sha": "blob-1",
+            "Content": STANDARD.encode(
                 "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  \
                  name: mobility\n  namespace: ovzdusie\nspec:\n  isSandbox: true\n",
-            ),
+            )
         })))
         .mount(&forge)
         .await;
 
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         forge.uri().parse().expect("a url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("a client");
-    let state = AppState::new(Config::for_tests(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(client));
 
     // A reader of spaces everywhere in the organization, and an approver of them.
     state.mirror.upsert(org(

@@ -357,7 +357,7 @@ async fn fixture() -> AppState {
             "JC_PORTAL_AGENT_PROXY_CLIENT_ID" => Some(common::AGENT_PROXY_CLIENT),
             "JC_PORTAL_PIPELINE_RUNNER_CLIENT_ID" => Some(common::PIPELINE_RUNNER_CLIENT),
             "JC_PORTAL_GATEWAY_CLIENT_ID" => Some("context-gateway"),
-            "JC_GITEA_WEBHOOK_SECRET" => Some("webhook-secret-of-the-fixture"),
+            "JC_SHAKO_WEBHOOK_SECRET" => Some("webhook-secret-of-the-fixture"),
             "JC_AGENTS_NAMESPACE" => Some("agents"),
             "JC_AGENT_PROXY_BASE" => Some("http://jc-agent-proxy.agents.svc.cluster.local:8080"),
             _ => None,
@@ -367,14 +367,14 @@ async fn fixture() -> AppState {
     .expect("config");
     // A forge that takes every write, so a route gets past "no forge" to the caller's check.
     let forge = common::forge().await;
-    let client = joinedcontext_portal::git::GiteaClient::new(
+    let client = joinedcontext_portal::forge::ShakoClient::new(
         forge.uri().parse().expect("mock url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    let state = AppState::new(config, None).with_gitea(std::sync::Arc::new(client));
+    let state = AppState::new(config, None).with_shako(std::sync::Arc::new(client));
     // The mock forge answers for as long as the test binary runs.
     std::mem::forget(forge);
     if let Some(bearer) = &state.bearer {

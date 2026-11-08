@@ -13,8 +13,8 @@ use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::API_VERSION;
 use joinedcontext_portal::state::AppState;
 
-fn state(gitea: &wiremock::MockServer, public: &str) -> AppState {
-    let state = common::state_on(gitea);
+fn state(shako: &wiremock::MockServer, public: &str) -> AppState {
+    let state = common::state_on(shako);
     state.mirror.upsert(envelope(
         "Organization",
         "hel",
@@ -85,8 +85,8 @@ async fn propose(state: &AppState, visibility: &str) -> common::Answer {
 
 #[tokio::test]
 async fn a_public_app_is_refused_before_a_change_exists_while_the_organization_refuses_them() {
-    let gitea = forge().await;
-    let state = state(&gitea, "refused");
+    let shako = forge().await;
+    let state = state(&shako, "refused");
     let answer = propose(&state, "public").await;
     assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
     for part in [
@@ -100,16 +100,16 @@ async fn a_public_app_is_refused_before_a_change_exists_while_the_organization_r
 
 #[tokio::test]
 async fn an_app_kept_to_its_project_is_proposed_while_public_apps_are_refused() {
-    let gitea = forge().await;
-    let state = state(&gitea, "refused");
+    let shako = forge().await;
+    let state = state(&shako, "refused");
     let answer = propose(&state, "project").await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
 }
 
 #[tokio::test]
 async fn a_public_app_is_proposed_while_the_organization_allows_them() {
-    let gitea = forge().await;
-    let state = state(&gitea, "allowed");
+    let shako = forge().await;
+    let state = state(&shako, "allowed");
     let answer = propose(&state, "public").await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
 }

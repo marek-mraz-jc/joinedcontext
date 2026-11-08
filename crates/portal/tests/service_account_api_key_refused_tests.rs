@@ -11,7 +11,7 @@ use http_body_util::BodyExt;
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
@@ -87,11 +87,11 @@ async fn post(query: &str, payload: &Value) -> (StatusCode, String, usize) {
 
 /// One request against a Portal whose mirror already holds `vendorx` with an OAuth client.
 async fn send(method: &str, uri: &str, payload: &Value) -> (StatusCode, String, usize) {
-    let gitea = MockServer::start().await;
+    let shako = MockServer::start().await;
     let client =
-        GiteaClient::new(gitea.uri().parse().expect("url"), "o", "r", "token-xyz").expect("client");
+        ShakoClient::new(shako.uri().parse().expect("url"), "o", "r", "token-xyz").expect("client");
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     let existing = account("oauth-client");
     state.mirror.upsert(ResourceEnvelope {
         api_version: API_VERSION.to_string(),
@@ -124,7 +124,7 @@ async fn send(method: &str, uri: &str, payload: &Value) -> (StatusCode, String, 
         .await
         .expect("body")
         .to_bytes();
-    let sent = gitea.received_requests().await.expect("requests").len();
+    let sent = shako.received_requests().await.expect("requests").len();
     (status, String::from_utf8_lossy(&body).into_owned(), sent)
 }
 

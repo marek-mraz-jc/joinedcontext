@@ -20,8 +20,8 @@ use serde_json::{json, Value};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const PROJECT: &str = "/api/v1/repos/test-owner/sharing";
-const APP_REPO: &str = "/api/v1/repos/test-owner/sharing_board";
+const PROJECT: &str = "/odata/Repositories(Owner='test-owner',Name='sharing')";
+const APP_REPO: &str = "/odata/Repositories(Owner='test-owner',Name='sharing_board')";
 const ROUTE: &str = "/api/v1/projects/sharing/apps/board/dashboard";
 const SERVED: &str = "5d0f3c1f6a3e2b9d8c7a6b5e4d3c2b1a0f9e8d7c";
 
@@ -47,10 +47,12 @@ async fn world() -> (MockServer, AppState) {
     mount_repository(&server, APP_REPO).await;
     let text = serde_json::to_string_pretty(&file()).expect("json") + "\n";
     Mock::given(method("GET"))
-        .and(path(format!("{APP_REPO}/contents/src/dashboard.json")))
-        .and(query_param("ref", "main"))
+        .and(path(format!("{APP_REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", "'src/dashboard.json'"))
+        .and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "d1", "content": STANDARD.encode(text),
+            "Sha": "d1",
+            "Content": STANDARD.encode(text)
         })))
         .with_priority(1)
         .mount(&server)
@@ -299,17 +301,17 @@ async fn an_edit_is_committed_on_its_branch_and_proposed_as_the_apps_change_at_t
             .map(|r| serde_json::from_slice::<Value>(&r.body).unwrap_or(Value::Null))
             .collect::<Vec<_>>()
     };
-    let branch = posted(format!("{APP_REPO}/branches"));
+    let branch = posted(format!("{APP_REPO}/Shako.CreateBranch"));
     assert_eq!(branch.len(), 1);
-    let name = branch[0]["new_branch_name"]
+    let name = branch[0]["NewBranchName"]
         .as_str()
         .unwrap_or_default()
         .to_owned();
     assert!(name.starts_with("dashboard/"), "{name}");
-    let commit = posted(format!("{APP_REPO}/contents"));
+    let commit = posted(format!("{APP_REPO}/Shako.CommitFiles"));
     assert_eq!(commit.len(), 1);
-    assert_eq!(commit[0]["branch"], name.as_str());
-    let files = commit[0]["files"].as_array().expect("files");
+    assert_eq!(commit[0]["Branch"], name.as_str());
+    let files = commit[0]["Files"].as_array().expect("files");
     assert_eq!(files.len(), 1, "only the dashboard file changes");
     assert_eq!(files[0]["path"], "src/dashboard.json");
     let text = String::from_utf8(
@@ -322,10 +324,10 @@ async fn an_edit_is_committed_on_its_branch_and_proposed_as_the_apps_change_at_t
         serde_json::from_str::<Value>(&text).expect("json"),
         edited()
     );
-    let pulls = posted(format!("{APP_REPO}/pulls"));
+    let pulls = posted(format!("{APP_REPO}/Shako.OpenPullRequest"));
     assert_eq!(pulls.len(), 1);
     assert_eq!(
-        (pulls[0]["head"].as_str(), pulls[0]["base"].as_str()),
+        (pulls[0]["Head"].as_str(), pulls[0]["Base"].as_str()),
         (Some(name.as_str()), Some("main"))
     );
 
@@ -333,20 +335,17 @@ async fn an_edit_is_committed_on_its_branch_and_proposed_as_the_apps_change_at_t
     let manifest = requests
         .iter()
         .filter(|r| {
-            r.url.path().starts_with(&format!("{PROJECT}/contents"))
-                && matches!(r.method.as_str(), "POST" | "PUT")
+            r.url.path() == format!("{PROJECT}/Shako.CommitFiles") && r.method.as_str() == "POST"
         })
         .flat_map(|r| {
             let body: Value = serde_json::from_slice(&r.body).unwrap_or(Value::Null);
-            let mut texts: Vec<String> = body["files"]
+            body["Files"]
                 .as_array()
                 .into_iter()
                 .flatten()
                 .filter_map(|f| f["content"].as_str())
                 .map(String::from)
-                .collect();
-            texts.extend(body["content"].as_str().map(String::from));
-            texts
+                .collect::<Vec<String>>()
         })
         .map(|one| String::from_utf8_lossy(&STANDARD.decode(one).unwrap_or_default()).into_owned())
         .find(|text| text.contains("kind: App"))
@@ -537,16 +536,27 @@ async fn without_propose_or_without_a_readable_space_nothing_is_proposed() {
 async fn an_approved_app_change_merges_the_dashboard_branch_at_its_commit_and_nothing_else() {
     let (server, state) = world().await;
     let pull = |number: u64, branch: &str, sha: &str| {
-        json!({ "number": number, "html_url": "", "state": "open", "title": "t", "body": "",
-                "head": { "ref": branch, "sha": sha }, "base": { "ref": "main", "sha": "b" } })
+        json!({
+            "Number": number,
+            "HtmlUrl": "",
+            "State": "open",
+            "Title": "t",
+            "Body": "",
+            "Head": branch,
+            "HeadSha": sha,
+            "Base": "main",
+            "BaseSha": "b"
+        })
     };
     Mock::given(method("GET"))
-        .and(path(format!("{APP_REPO}/pulls")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            pull(4, "dashboard/1", "aaa"),
-            pull(5, "agent/app-board/run", "bbb"),
-            pull(6, "dashboard/2", "bbb"),
-        ])))
+        .and(path(format!("{APP_REPO}/PullRequests")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                pull(4, "dashboard/1", "aaa"),
+                pull(5, "agent/app-board/run", "bbb"),
+                pull(6, "dashboard/2", "bbb")
+            ]
+        })))
         .with_priority(1)
         .mount(&server)
         .await;
@@ -567,7 +577,7 @@ async fn an_approved_app_change_merges_the_dashboard_branch_at_its_commit_and_no
         .await
         .expect("requests")
         .into_iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/merge"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.Merge"))
         .map(|r| {
             (
                 r.url.path().to_owned(),
@@ -576,8 +586,11 @@ async fn an_approved_app_change_merges_the_dashboard_branch_at_its_commit_and_no
         })
         .collect();
     assert_eq!(merges.len(), 1, "{merges:?}");
-    assert_eq!(merges[0].0, format!("{APP_REPO}/pulls/6/merge"));
-    assert_eq!(merges[0].1["head_commit_id"], "bbb");
+    assert_eq!(
+        merges[0].0,
+        format!("{APP_REPO}/PullRequests(6)/Shako.Merge")
+    );
+    assert_eq!(merges[0].1["HeadCommitId"], "bbb");
 
     // An App Change at a commit no dashboard branch holds merges nothing.
     approved.spec["source"]["git"]["ref"] = json!(SERVED);
@@ -593,7 +606,7 @@ async fn an_approved_app_change_merges_the_dashboard_branch_at_its_commit_and_no
         .await
         .expect("requests")
         .iter()
-        .filter(|r| r.url.path().ends_with("/merge"))
+        .filter(|r| r.url.path().ends_with("/Shako.Merge"))
         .count();
     assert_eq!(count, 1);
 }

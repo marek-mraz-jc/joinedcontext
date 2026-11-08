@@ -123,13 +123,13 @@ mod tests {
             "http://127.0.0.1:9/broker".to_owned(),
         );
         siblings.insert(
-            "JC_GITEA_URL_TEST_ONLY".to_owned(),
+            "JC_SHAKO_URL_TEST_ONLY".to_owned(),
             "http://127.0.0.1:9/git".to_owned(),
         );
         let cfg = config(&mount, |_| None, siblings.clone()).unwrap();
         assert_eq!(cfg.broker_url.as_deref(), Some("http://127.0.0.1:9/broker"));
         assert_eq!(
-            cfg.forge_var("JC_GITEA_URL_TEST_ONLY").as_deref(),
+            cfg.forge_var("JC_SHAKO_URL_TEST_ONLY").as_deref(),
             Some("http://127.0.0.1:9/git")
         );
         // The environment wins over the sibling.

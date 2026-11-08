@@ -80,19 +80,19 @@ pub async fn stored(
     state: &AppState,
     project: &str,
 ) -> Result<BTreeMap<String, StoredSecret>, ApiError> {
-    let gitea = state
+    let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("this Portal has no forge".into()))?;
-    let base = gitea.default_branch().await?;
+    let base = shako.default_branch().await?;
     let folder = format!("projects/{project}/secrets/");
     let mut found = BTreeMap::new();
-    for (path, _) in gitea.list_tree_blobs(&base).await? {
+    for (path, _) in shako.list_tree_blobs(&base).await? {
         if !path.starts_with(&folder)
             || !jcctl::secrets::sops::is_encrypted_file(path.rsplit('/').next().unwrap_or_default())
         {
             continue;
         }
-        let Some(file) = gitea.get_file(&path, &base).await? else {
+        let Some(file) = shako.get_file(&path, &base).await? else {
             continue;
         };
         for (name, keys) in secret_files::names(&file.content).unwrap_or_default() {
@@ -288,11 +288,11 @@ pub(crate) async fn propose_secret(
         }
     }
 
-    let gitea = state
+    let shako = state
         .forge_for(&project)
         .ok_or_else(|| ApiError::Unavailable("this Portal has no forge".into()))?;
-    let base = gitea.default_branch().await?;
-    let existing = gitea.get_file(&path, &base).await?;
+    let base = shako.default_branch().await?;
+    let existing = shako.get_file(&path, &base).await?;
     let recipients = recipients(own, existing.as_ref().map(|f| f.content.as_str()));
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let values: BTreeMap<String, Zeroizing<String>> = std::mem::take(&mut body.values)
@@ -304,26 +304,26 @@ pub(crate) async fn propose_secret(
     drop(values);
 
     let branch = format!("portal/secret-{project}-{}", body.name);
-    let held = crate::api::mutate::turn(&gitea, &branch).await;
+    let held = crate::api::mutate::turn(&shako, &branch).await;
     if let Some(pending) =
-        crate::api::mutate::open_change_on(&state, &gitea, &branch, &project).await?
+        crate::api::mutate::open_change_on(&state, &shako, &branch, &project).await?
     {
         return Err(ApiError::Conflict(format!(
             "a change of secret '{}' is open already: {}; approve or reject it first",
             body.name, pending.name
         )));
     }
-    let branch = crate::api::mutate::create_or_reuse_branch(&gitea, &held, &base).await?;
+    let branch = crate::api::mutate::create_or_reuse_branch(&shako, &held, &base).await?;
     let (author_name, author_email) = crate::api::mutate::author_credentials(identity, &project);
     let verb = if existing.is_some() { "replace" } else { "add" };
-    gitea
-        .put_file(&crate::git::FileWrite {
+    shako
+        .put_file(&crate::forge::FileWrite {
             path: &path,
             branch: &branch,
             message: &format!("{verb} secret {}", body.name),
             content: &content,
             sha: existing.as_ref().map(|f| f.sha.as_str()),
-            author: crate::git::Author {
+            author: crate::forge::Author {
                 name: &author_name,
                 email: &author_email,
             },
@@ -334,7 +334,7 @@ pub(crate) async fn propose_secret(
          in no plain text anywhere; a `secretRef` with name `{}` reads them once this merges.",
         body.name, body.name
     );
-    let pull = gitea
+    let pull = shako
         .create_pull_request(
             &branch,
             &base,
@@ -346,7 +346,7 @@ pub(crate) async fn propose_secret(
     let mut response = (
         StatusCode::ACCEPTED,
         Json(crate::change::Change::new(
-            crate::api::changes::change_meta(&state, &gitea, pull.number, &project),
+            crate::api::changes::change_meta(&state, &shako, pull.number, &project),
             crate::change::ChangeStatus::new(
                 crate::change::Lane::Yellow,
                 crate::change::ChangePhase::PendingApproval,

@@ -24,8 +24,8 @@ use crate::provisioning::{
 use crate::{DashboardImportInput, ImportReport, import_dashboards};
 use chrono::Utc;
 use daiya_model::{
-    CrError, CrResult, DaiyaStore, FolderRecord, InputLimits, InstallationId, InstanceId, OrgId,
-    Verdict,
+    CrError, CrResult, DaiyaStore, DatasourceRecord, FolderRecord, InputLimits, InstallationId,
+    InstanceId, OrgId, Verdict,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -46,7 +46,7 @@ pub struct ProvisioningTarget {
 }
 
 /// What one provisioning run wrote.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProvisioningLoadReport {
     pub datasources_upserted: usize,
@@ -55,6 +55,9 @@ pub struct ProvisioningLoadReport {
     pub dashboards: usize,
     pub dashboards_deleted: usize,
     pub reports: Vec<ImportReport>,
+    /// The datasources as the files wrote them (left out of the printed report).
+    #[serde(skip)]
+    pub datasources: Vec<DatasourceRecord>,
 }
 
 fn io_err(path: &Path, e: &std::io::Error) -> CrError {
@@ -252,7 +255,8 @@ pub async fn load_provisioning_dir(
             }
         }
         for ds in outcome.datasources {
-            store.upsert_datasource(ds).await?;
+            store.upsert_datasource(ds.clone()).await?;
+            report.datasources.push(ds);
             report.datasources_upserted += 1;
         }
     }

@@ -6,7 +6,7 @@
 
 use crate::app::StartError;
 use crate::module::Module;
-use crate::setup::{FORGE_OWNER, FORGE_REPO, Secret, Setup};
+use crate::setup::{FORGE_OWNER, ForgeRepo, Secret, Setup, forge_repo};
 use crate::siblings::{Siblings, portal_vars};
 use base64::Engine as _;
 use reqwest::StatusCode;
@@ -16,22 +16,24 @@ fn err(e: impl std::fmt::Display) -> StartError {
     StartError::module(Module::Shako, e)
 }
 
-/// Creates `{FORGE_OWNER}/{FORGE_REPO}` in shako (Gitea `POST /api/v1/orgs/{owner}/repos`, with
+/// Creates the organization repository ([`forge_repo`]) in shako (Gitea `POST /api/v1/orgs/{owner}/repos`, with
 /// `auto_init`) when `jc` points the Portal at shako. Errors name the call and the status, never
 /// the token.
 pub async fn forge(siblings: &Siblings, setup: &Setup) -> Result<(), StartError> {
-    let vars = portal_vars(siblings, setup, |key| std::env::var(key).ok());
-    let (Some(base), Some(token)) = (vars.get("JC_GITEA_URL"), setup.value(Secret::ShakoToken))
+    let env = |key: &str| std::env::var(key).ok();
+    let vars = portal_vars(siblings, setup, env);
+    let (Some(base), Some(token)) = (vars.get("JC_SHAKO_URL"), setup.value(Secret::ShakoToken))
     else {
         return Ok(());
     };
+    let ForgeRepo { owner, repo: name } = forge_repo(env).map_err(err)?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(err)?;
     let auth = format!("token {token}");
-    let repo = format!("{base}/api/v1/repos/{FORGE_OWNER}/{FORGE_REPO}");
+    let repo = format!("{base}/api/v1/repos/{owner}/{name}");
     let status = client
         .get(&repo)
         .header("authorization", &auth)
@@ -45,12 +47,12 @@ pub async fn forge(siblings: &Siblings, setup: &Setup) -> Result<(), StartError>
     if status != StatusCode::NOT_FOUND {
         return Err(err(format!("GET {repo} answered {status}")));
     }
-    let create = format!("{base}/api/v1/orgs/{FORGE_OWNER}/repos");
+    let create = format!("{base}/api/v1/orgs/{owner}/repos");
     let status = client
         .post(&create)
         .header("authorization", &auth)
         .json(&serde_json::json!({
-            "name": FORGE_REPO,
+            "name": name,
             "auto_init": true,
             "default_branch": "main",
             "private": true,
@@ -62,7 +64,7 @@ pub async fn forge(siblings: &Siblings, setup: &Setup) -> Result<(), StartError>
     if !(status.is_success() || status == StatusCode::CONFLICT) {
         return Err(err(format!("POST {create} answered {status}")));
     }
-    tracing::info!(repo = %format!("{FORGE_OWNER}/{FORGE_REPO}"), "shako: the Portal's repository is ready");
+    tracing::info!(repo = %format!("{owner}/{name}"), "shako: the Portal's repository is ready");
     let org = organization_manifest(&domain(siblings.portal_base().as_deref()));
     seed(&client, &auth, &repo, "org.yaml", &org).await?;
     seed(&client, &auth, &repo, "users/roles/steward.yaml", STEWARD).await

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::reconciler::Syncer;
 use joinedcontext_portal::resource::{ObjectMeta, Phase, ResourceEnvelope, Status, API_VERSION};
 use joinedcontext_portal::store::Mirror;
@@ -17,44 +17,46 @@ async fn sync_fills_mirror_from_tree_with_live_status_and_observed_revision() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
     let client =
-        Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+        Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
     let mirror = Arc::new(Mirror::new());
     let syncer = Syncer::new(Arc::clone(&client), Arc::clone(&mirror));
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
-        })))
-        .mount(&server)
-        .await;
-
-    Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches/main"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "name": "main",
-            "commit": { "id": "c0ffee123456" }
+            "DefaultBranch": "main"
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/git/trees/c0ffee123456",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
         ))
-        .and(query_param("recursive", "true"))
-        .and(query_param("per_page", "1000"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "tree-sha-1",
-            "truncated": false,
-            "tree": [
+            "Name": "main",
+            "HeadSha": "c0ffee123456"
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+        )).and(query_param("@r", "'c0ffee123456'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "tree-sha-1",
+            "Truncated": false,
+            "Tree": [
                 {
-                    "path": "projects/ovzdusie/spaces/mobility/space.yaml",
-                    "type": "blob"
+                    "Path": "projects/ovzdusie/spaces/mobility/space.yaml",
+                    "Type": "blob"
                 },
                 {
-                    "path": "projects/ovzdusie/spaces/mobility/endpoints/air.yaml",
-                    "type": "blob"
+                    "Path": "projects/ovzdusie/spaces/mobility/endpoints/air.yaml",
+                    "Type": "blob"
                 }
             ]
         })))
@@ -66,12 +68,16 @@ async fn sync_fills_mirror_from_tree_with_live_status_and_observed_revision() {
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "c0ffee123456"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
+        ))
+        .and(query_param("@r", "'c0ffee123456'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": space_b64
+            "Sha": "blob-1",
+            "Content": space_b64
         })))
         .mount(&server)
         .await;
@@ -81,12 +87,16 @@ async fn sync_fills_mirror_from_tree_with_live_status_and_observed_revision() {
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/endpoints/air.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "c0ffee123456"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/endpoints/air.yaml'",
+        ))
+        .and(query_param("@r", "'c0ffee123456'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-2",
-            "content": endpoint_b64
+            "Sha": "blob-2",
+            "Content": endpoint_b64
         })))
         .mount(&server)
         .await;
@@ -143,48 +153,50 @@ async fn sync_skips_unparseable_yaml_and_unknown_kinds_while_loading_valid_manif
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
     let client =
-        Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+        Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
     let mirror = Arc::new(Mirror::new());
     let syncer = Syncer::new(Arc::clone(&client), Arc::clone(&mirror));
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
-        })))
-        .mount(&server)
-        .await;
-
-    Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches/main"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "name": "main",
-            "commit": { "id": "rev-test-skip" }
+            "DefaultBranch": "main"
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/git/trees/rev-test-skip",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
         ))
-        .and(query_param("recursive", "true"))
-        .and(query_param("per_page", "1000"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "tree-sha-2",
-            "truncated": false,
-            "tree": [
+            "Name": "main",
+            "HeadSha": "rev-test-skip"
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+        )).and(query_param("@r", "'rev-test-skip'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "tree-sha-2",
+            "Truncated": false,
+            "Tree": [
                 {
-                    "path": "projects/ovzdusie/spaces/mobility/space.yaml",
-                    "type": "blob"
+                    "Path": "projects/ovzdusie/spaces/mobility/space.yaml",
+                    "Type": "blob"
                 },
                 {
-                    "path": "projects/ovzdusie/spaces/mobility/broken.yaml",
-                    "type": "blob"
+                    "Path": "projects/ovzdusie/spaces/mobility/broken.yaml",
+                    "Type": "blob"
                 },
                 {
-                    "path": "projects/ovzdusie/spaces/mobility/unknown.yaml",
-                    "type": "blob"
+                    "Path": "projects/ovzdusie/spaces/mobility/unknown.yaml",
+                    "Type": "blob"
                 }
             ]
         })))
@@ -196,12 +208,16 @@ async fn sync_skips_unparseable_yaml_and_unknown_kinds_while_loading_valid_manif
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "rev-test-skip"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
+        ))
+        .and(query_param("@r", "'rev-test-skip'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-valid",
-            "content": valid_b64
+            "Sha": "blob-valid",
+            "Content": valid_b64
         })))
         .mount(&server)
         .await;
@@ -211,12 +227,16 @@ async fn sync_skips_unparseable_yaml_and_unknown_kinds_while_loading_valid_manif
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/broken.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "rev-test-skip"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/broken.yaml'",
+        ))
+        .and(query_param("@r", "'rev-test-skip'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-broken",
-            "content": broken_b64
+            "Sha": "blob-broken",
+            "Content": broken_b64
         })))
         .mount(&server)
         .await;
@@ -226,12 +246,16 @@ async fn sync_skips_unparseable_yaml_and_unknown_kinds_while_loading_valid_manif
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/unknown.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "rev-test-skip"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/unknown.yaml'",
+        ))
+        .and(query_param("@r", "'rev-test-skip'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-unknown",
-            "content": unknown_b64
+            "Sha": "blob-unknown",
+            "Content": unknown_b64
         })))
         .mount(&server)
         .await;
@@ -250,40 +274,42 @@ async fn sync_replaces_untrusted_status_block_from_manifest_file() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
     let client =
-        Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+        Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
     let mirror = Arc::new(Mirror::new());
     let syncer = Syncer::new(Arc::clone(&client), Arc::clone(&mirror));
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
-        })))
-        .mount(&server)
-        .await;
-
-    Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches/main"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "name": "main",
-            "commit": { "id": "commit-head-rev-777" }
+            "DefaultBranch": "main"
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/git/trees/commit-head-rev-777",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
         ))
-        .and(query_param("recursive", "true"))
-        .and(query_param("per_page", "1000"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "tree-sha-3",
-            "truncated": false,
-            "tree": [
+            "Name": "main",
+            "HeadSha": "commit-head-rev-777"
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+        )).and(query_param("@r", "'commit-head-rev-777'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "tree-sha-3",
+            "Truncated": false,
+            "Tree": [
                 {
-                    "path": "projects/ovzdusie/spaces/mobility/space.yaml",
-                    "type": "blob"
+                    "Path": "projects/ovzdusie/spaces/mobility/space.yaml",
+                    "Type": "blob"
                 }
             ]
         })))
@@ -310,12 +336,16 @@ status:
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "commit-head-rev-777"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
+        ))
+        .and(query_param("@r", "'commit-head-rev-777'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-status-fake",
-            "content": b64
+            "Sha": "blob-status-fake",
+            "Content": b64
         })))
         .mount(&server)
         .await;
@@ -341,7 +371,7 @@ async fn failed_tree_listing_preserves_mirror_and_records_error_in_sync_status()
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
     let client =
-        Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+        Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
     let mirror = Arc::new(Mirror::new());
 
     mirror.upsert(ResourceEnvelope {
@@ -370,26 +400,30 @@ async fn failed_tree_listing_preserves_mirror_and_records_error_in_sync_status()
     let syncer = Arc::new(Syncer::new(Arc::clone(&client), Arc::clone(&mirror)));
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
-        })))
-        .mount(&server)
-        .await;
-
-    Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches/main"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "name": "main",
-            "commit": { "id": "failing-rev" }
+            "DefaultBranch": "main"
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/git/trees/failing-rev",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
         ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Name": "main",
+            "HeadSha": "failing-rev"
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+        )).and(query_param("@r", "'failing-rev'"))
         .respond_with(ResponseTemplate::new(500).set_body_string("tree database corrupted"))
         .mount(&server)
         .await;
@@ -421,52 +455,58 @@ async fn sync_loads_the_groups_of_users_groups_into_the_mirror() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
     let client =
-        Arc::new(GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
+        Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
     let mirror = Arc::new(Mirror::new());
     let syncer = Syncer::new(Arc::clone(&client), Arc::clone(&mirror));
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
-        })))
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches/main"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "name": "main",
-            "commit": { "id": "rev-groups" }
+            "DefaultBranch": "main"
         })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/git/trees/rev-groups",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
         ))
-        .and(query_param("recursive", "true"))
-        .and(query_param("per_page", "1000"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "tree-groups",
-            "truncated": false,
-            "tree": [
-                { "path": "users/groups/helsinki-alerts-steward.yaml", "type": "blob" },
-                { "path": "users/groups/README.md", "type": "blob" },
+            "Name": "main",
+            "HeadSha": "rev-groups"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+        )).and(query_param("@r", "'rev-groups'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "tree-groups",
+            "Truncated": false,
+            "Tree": [
+                { "Path": "users/groups/helsinki-alerts-steward.yaml", "Type": "blob" },
+                { "Path": "users/groups/README.md", "Type": "blob" }
             ]
         })))
         .mount(&server)
         .await;
 
-    // The seed's own file (deployment components/gitea/apps/helsinki-alerts/grants/).
+    // The seed's own file (deployment components/shako/apps/helsinki-alerts/grants/).
     let group = "apiVersion: joinedcontext.com/v1alpha1\nkind: Group\nmetadata:\n  name: helsinki-alerts-steward\n  namespace: org\n  annotations:\n    joinedcontext.com/app: helsinki/helsinki-alerts\nspec:\n  description: The stewards of helsinki-alerts, its default group (AP-118).\n  members:\n  - user: demo.steward@hel.fi\n";
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/users/groups/helsinki-alerts-steward.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "rev-groups"))
+        .and(query_param(
+            "@p",
+            "'users/groups/helsinki-alerts-steward.yaml'",
+        ))
+        .and(query_param("@r", "'rev-groups'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-group",
-            "content": STANDARD.encode(group.as_bytes())
+            "Sha": "blob-group",
+            "Content": STANDARD.encode(group.as_bytes())
         })))
         .mount(&server)
         .await;

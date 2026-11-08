@@ -180,6 +180,10 @@ pub struct ShakoSection {
 #[serde(deny_unknown_fields)]
 pub struct DaiyaSection {
     pub database: Option<DatabaseSection>,
+    /// Grafana provisioning root (`datasources/`, `dashboards/`) loaded at every start, with
+    /// `DAIYA_VAR_*` for its `$NAME` values. Its datasources alone may reach `jc`'s own
+    /// listener, named by its exact address (`http://127.0.0.1:<port>/...`).
+    pub provisioning_dir: Option<PathBuf>,
 }
 
 /// `[dataroom]` section (a key left out keeps its default).

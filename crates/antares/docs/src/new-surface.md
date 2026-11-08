@@ -26,7 +26,7 @@ backticks: the crate denies `clippy::doc_markdown`).
 
 It also adds the crate to the workspace members and dependencies, a release
 profile, the broker's optional dependency and feature, the `SURFACE_SHELF`
-entry in `crates/antares-broker/src/main.rs`, the `ARCHITECTURE.md` row, the
+entry in `crates/antares-broker/src/lib.rs`, the `ARCHITECTURE.md` row, the
 row of the feature table in `docs/src/surfaces.md` and the vanilla-build gate
 in `dev/check-no-addon.sh`. Each edit anchors on one
 line; when an anchor has moved the script stops before writing anything.

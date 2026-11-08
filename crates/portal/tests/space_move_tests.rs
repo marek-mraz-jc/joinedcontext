@@ -10,12 +10,12 @@ use std::time::Duration;
 use axum::http::StatusCode;
 use base64::Engine as _;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{envelope, forge, person, send, REPO};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::space_move::Moves;
 use joinedcontext_portal::state::AppState;
@@ -50,10 +50,11 @@ async fn world(held: bool, target_digest: Value, on_main: &str) -> World {
 async fn world_with(held: bool, target_digest: Value, on_main: &str, empty_first: bool) -> World {
     let forge = forge().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/{MANIFEST}")))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{MANIFEST}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": base64::engine::general_purpose::STANDARD.encode(on_main),
+            "Sha": "blob-1",
+            "Content": base64::engine::general_purpose::STANDARD.encode(on_main)
         })))
         .with_priority(1)
         .mount(&forge)
@@ -120,14 +121,14 @@ async fn world_with(held: bool, target_digest: Value, on_main: &str, empty_first
     config.broker_url_template = Some(format!("http://{{broker}}:{port}"));
     config.broker_admin_token_file = Some(token);
     config.gateway_url = Some(gateway.uri());
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         forge.uri().parse().expect("mock url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    let mut state = AppState::new(config, None).with_gitea(Arc::new(client));
+    let mut state = AppState::new(config, None).with_shako(Arc::new(client));
     state.space_moves = Arc::new(Moves::new(
         Duration::from_millis(20),
         Duration::from_millis(300),
@@ -209,11 +210,17 @@ async fn commits(forge: &MockServer) -> Vec<String> {
         .await
         .unwrap_or_default()
         .into_iter()
-        .filter(|r| r.method.as_str() == "PUT" && r.url.path().ends_with(MANIFEST))
-        .map(|r| {
-            let body: Value = serde_json::from_slice(&r.body).expect("a contents write");
+        .filter(|r| {
+            r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/Shako.CommitFiles")
+        })
+        .flat_map(|r| {
+            let body: Value = serde_json::from_slice(&r.body).expect("a commit");
+            body["Files"].as_array().cloned().unwrap_or_default()
+        })
+        .filter(|file| file["path"] == MANIFEST)
+        .map(|file| {
             let content = base64::engine::general_purpose::STANDARD
-                .decode(body["content"].as_str().expect("content"))
+                .decode(file["content"].as_str().expect("content"))
                 .expect("base64");
             String::from_utf8(content).expect("utf-8")
         })

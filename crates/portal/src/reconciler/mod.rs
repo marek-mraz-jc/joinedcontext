@@ -22,7 +22,6 @@ pub mod leader;
 pub mod mcp_clients;
 pub mod mqtt_brokers;
 pub mod pipeline_authors;
-pub mod project_teams;
 pub mod realm;
 pub mod registrations;
 pub mod representations;

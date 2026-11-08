@@ -15,11 +15,11 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use jc_core::kinds::SyncOrigin;
 use jcctl::sync::{RemoteError, SyncRemote};
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::sync::driver::{Driver, Remote};
 use joinedcontext_portal::sync::state::States;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path, path_regex, query_param};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 /// The head of the repository the Portal reconciles.
@@ -113,8 +113,8 @@ impl Forge {
     /// A reviewer's answer to the one open merge request.
     fn answer(&self, merged: bool) {
         for pull in self.pulls.lock().expect("the pull log").iter_mut() {
-            pull["state"] = json!("closed");
-            pull["merged"] = json!(merged);
+            pull["State"] = json!("closed");
+            pull["Merged"] = json!(merged);
         }
     }
 }
@@ -147,44 +147,43 @@ async fn forge(files: &[(&str, String)]) -> (MockServer, Arc<Forge>) {
     let recorded = Arc::new(Forge::default());
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"default_branch": "main"})))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches/main"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
+        ))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({"name": "main", "commit": {"id": HEAD}})),
+            ResponseTemplate::new(200).set_body_json(json!({ "Name": "main", "HeadSha": HEAD })),
         )
         .mount(&server)
         .await;
 
     let tree: Vec<Value> = files
         .iter()
-        .map(|(p, _)| json!({"path": p, "type": "blob"}))
+        .map(|(p, _)| json!({ "Path": p, "Type": "blob" }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!(
-            "/api/v1/repos/test-owner/test-repo/git/trees/{HEAD}"
-        )))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")).and(query_param("@r", format!("'{HEAD}'")))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!({"sha": "tree-sha", "truncated": false, "tree": tree})),
+                .set_body_json(json!({ "Sha": "tree-sha", "Truncated": false, "Tree": tree })),
         )
         .mount(&server)
         .await;
 
     for (file_path, content) in files {
         Mock::given(method("GET"))
-            .and(path(format!(
-                "/api/v1/repos/test-owner/test-repo/contents/{file_path}"
-            )))
-            .and(query_param("ref", HEAD))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{file_path}'")))
+            .and(query_param("@r", format!("'{}'", HEAD)))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "blob-sha",
-                "content": STANDARD.encode(content.as_bytes()),
+                "Sha": "blob-sha",
+                "Content": STANDARD.encode(content.as_bytes())
             })))
             .mount(&server)
             .await;
@@ -193,8 +192,8 @@ async fn forge(files: &[(&str, String)]) -> (MockServer, Arc<Forge>) {
     // Anything else a run reads from the branch it is building: the branch is new, so the file
     // is not there yet and the write is a create.
     Mock::given(method("GET"))
-        .and(path_regex(
-            r"^/api/v1/repos/test-owner/test-repo/contents/.*",
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
         .respond_with(ResponseTemplate::new(404))
         .mount(&server)
@@ -202,68 +201,78 @@ async fn forge(files: &[(&str, String)]) -> (MockServer, Arc<Forge>) {
 
     let listing = Arc::clone(&recorded);
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+        ))
         .respond_with(move |_: &Request| {
-            ResponseTemplate::new(200)
-                .set_body_json(listing.pulls.lock().expect("the pull log").clone())
+            ResponseTemplate::new(200).set_body_json(
+                json!({ "value": listing.pulls.lock().expect("the pull log").clone() }),
+            )
         })
         .mount(&server)
         .await;
 
     let branches = Arc::clone(&recorded);
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(move |request: &Request| {
             let body: Value = request.body_json().unwrap_or_default();
             branches.branches.lock().expect("the branch log").push(
-                body["new_branch_name"]
+                body["NewBranchName"]
                     .as_str()
                     .unwrap_or_default()
                     .to_owned(),
             );
-            ResponseTemplate::new(201).set_body_json(json!({"name": "branch"}))
+            ResponseTemplate::new(201).set_body_json(json!({ "Name": "branch" }))
         })
         .mount(&server)
         .await;
 
     let writes = Arc::clone(&recorded);
-    Mock::given(method("PUT"))
-        .and(path_regex(
-            r"^/api/v1/repos/test-owner/test-repo/contents/.*",
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
         ))
         .respond_with(move |request: &Request| {
             let body: Value = request.body_json().unwrap_or_default();
-            let file = request.url.path().rsplit("/contents/").next().unwrap_or("");
-            writes.writes.lock().expect("the write log").push((
-                file.to_owned(),
-                body["branch"].as_str().unwrap_or_default().to_owned(),
-            ));
-            ResponseTemplate::new(201)
-                .set_body_json(json!({"commit": {"sha": "commit-sha"}, "sha": "new-sha"}))
+            // One commit names every file it writes in its body.
+            let branch = body["Branch"].as_str().unwrap_or_default().to_owned();
+            let mut log = writes.writes.lock().expect("the write log");
+            for file in body["Files"].as_array().into_iter().flatten() {
+                log.push((
+                    file["path"].as_str().unwrap_or_default().to_owned(),
+                    branch.clone(),
+                ));
+            }
+            ResponseTemplate::new(201).set_body_json(json!({ "Sha": "commit-sha" }))
         })
         .mount(&server)
         .await;
 
     let pulls = Arc::clone(&recorded);
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(move |request: &Request| {
             let body: Value = request.body_json().unwrap_or_default();
-            let head = body["head"].as_str().unwrap_or_default().to_owned();
-            let base = body["base"].as_str().unwrap_or_default().to_owned();
+            let head = body["Head"].as_str().unwrap_or_default().to_owned();
+            let base = body["Base"].as_str().unwrap_or_default().to_owned();
             pulls
                 .created
                 .lock()
                 .expect("the pull log")
                 .push((head.clone(), base.clone()));
             let opened = json!({
-                "number": 7,
-                "html_url": "https://forge.example/pulls/7",
-                "state": "open",
-                "title": body["title"],
-                "head": { "ref": head },
-                "base": { "ref": base },
-                "merged": false,
+                "Number": 7,
+                "HtmlUrl": "https://forge.example/pulls/7",
+                "State": "open",
+                "Title": body["Title"],
+                "Head": head,
+                "Base": base,
+                "Merged": false
             });
             pulls
                 .pulls
@@ -278,9 +287,9 @@ async fn forge(files: &[(&str, String)]) -> (MockServer, Arc<Forge>) {
     (server, recorded)
 }
 
-fn client(server: &MockServer) -> Arc<GiteaClient> {
+fn client(server: &MockServer) -> Arc<ShakoClient> {
     Arc::new(
-        GiteaClient::new(
+        ShakoClient::new(
             server.uri().parse().expect("a url"),
             "test-owner",
             "test-repo",

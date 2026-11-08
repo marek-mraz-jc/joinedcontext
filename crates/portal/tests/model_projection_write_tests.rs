@@ -9,7 +9,7 @@ use axum::http::StatusCode;
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, ResponseTemplate};
 
 const PROJECT: &str = "ovzdusie";
@@ -37,19 +37,20 @@ fn admin() -> Identity {
 /// The Portal against a forge that holds the model's LinkML, and a mirror holding the space and
 /// the model at `version`.
 async fn portal(version: &str) -> (AppState, wiremock::MockServer) {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     Mock::given(method("GET"))
-        .and(path(format!(
-            "{}/contents/projects/{PROJECT}/spaces/mobility/datamodels/air-quality.linkml.yaml",
-            common::REPO
-        )))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .and(query_param(
+            "@p",
+            format!("'projects/{PROJECT}/spaces/mobility/datamodels/air-quality.linkml.yaml'"),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-linkml-1",
-            "content": common::encode(LINKML)
+            "Sha": "sha-linkml-1",
+            "Content": common::encode(LINKML)
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = common::state_on(&gitea);
+    let state = common::state_on(&shako);
     state.mirror.upsert(common::envelope(
         "ContextSpace",
         "mobility",
@@ -68,7 +69,7 @@ async fn portal(version: &str) -> (AppState, wiremock::MockServer) {
             "classes": ["AirQualityObserved"]
         }),
     ));
-    (state, gitea)
+    (state, shako)
 }
 
 fn projection(model: &str, version: &str, classes: Value) -> Value {

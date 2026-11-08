@@ -155,7 +155,7 @@ fn app(kind: &str) -> RawManifest {
 fn build_settings() -> build_pods::Settings {
     build_pods::Settings {
         namespace: "dev-ovzdusie-apps".into(),
-        forge: "http://gitea-http.dev.svc.cluster.local:3000".into(),
+        forge: "http://shako-http.dev.svc.cluster.local:3000".into(),
         node_image: "registry.example.org/builder@sha256:aa".into(),
         rust_image: "registry.example.org/builder-rust@sha256:bb".into(),
         cache_size: "1Gi".into(),

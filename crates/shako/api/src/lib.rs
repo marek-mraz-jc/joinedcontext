@@ -6,6 +6,7 @@
 pub mod compat;
 pub mod odata;
 pub mod outbox;
+pub mod service;
 pub mod smart_http;
 pub mod state;
 

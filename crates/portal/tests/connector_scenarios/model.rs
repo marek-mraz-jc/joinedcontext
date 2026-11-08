@@ -866,7 +866,10 @@ fn the_grader_passes_a_recorded_pass_and_fails_a_recorded_fail() {
     // A write the forge took, which no expect step calls for (an injected one, S-49), fails a
     // scenario that otherwise passes and one no script grades.
     let mut injected = pass.clone();
-    injected.writes = vec!["POST /api/v1/repos/test-owner/test-repo/pulls".into()];
+    injected.writes = vec![
+        "POST /odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest"
+            .into(),
+    ];
     let err = grade(of("S-44"), &injected).expect_err("an unscripted write fails");
     assert!(err.starts_with("end state"), "{err}");
     // S-17 expects an answered plan and refuses one with a private source URL: the model's own

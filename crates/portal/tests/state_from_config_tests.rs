@@ -12,8 +12,8 @@
 
 use joinedcontext_portal::auth::session::{now_unix, Identity, Session};
 use joinedcontext_portal::config::{Config, ConfigError};
-use joinedcontext_portal::git::github_mirror::GithubMirror;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::github_mirror::GithubMirror;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::state::AppState;
 use serde_json::json;
 use wiremock::matchers::{method, path};
@@ -135,10 +135,10 @@ async fn a_realm_whose_key_set_is_down_stops_the_portal_at_discovery() {
 #[test]
 fn a_half_configured_gitea_is_a_startup_error_not_a_portal_without_a_forge() {
     let all = [
-        ("JC_GITEA_URL", "http://gitea:3000"),
-        ("JC_GITEA_OWNER", "owner"),
-        ("JC_GITEA_REPO", "config"),
-        ("JC_GITEA_TOKEN", "forge-token"),
+        ("JC_SHAKO_URL", "http://shako:3000"),
+        ("JC_SHAKO_OWNER", "owner"),
+        ("JC_SHAKO_REPO", "config"),
+        ("JC_SHAKO_TOKEN", "forge-token"),
     ];
     for missing in 0..all.len() {
         let lookup = |key: &str| {
@@ -147,19 +147,19 @@ fn a_half_configured_gitea_is_a_startup_error_not_a_portal_without_a_forge() {
                 .find(|(i, (k, _))| *i != missing && *k == key)
                 .map(|(_, (_, v))| (*v).to_owned())
         };
-        let err = match GiteaClient::from_env(lookup) {
+        let err = match ShakoClient::from_env(lookup) {
             Ok(_) => panic!("{} missing and the forge was accepted", all[missing].0),
             Err(err) => err.to_string(),
         };
         assert!(!err.contains("forge-token"), "the token is in: {err}");
     }
-    assert!(GiteaClient::from_env(|_| None).expect("off").is_none());
+    assert!(ShakoClient::from_env(|_| None).expect("off").is_none());
     let whole = |key: &str| {
         all.iter()
             .find(|(k, _)| *k == key)
             .map(|(_, v)| (*v).to_owned())
     };
-    assert!(GiteaClient::from_env(whole).expect("on").is_some());
+    assert!(ShakoClient::from_env(whole).expect("on").is_some());
 }
 
 /// A WASM shard count that is no positive number stops the Portal instead of turning into 2.

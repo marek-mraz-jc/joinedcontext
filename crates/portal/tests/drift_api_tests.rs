@@ -277,7 +277,7 @@ async fn a_resolution_without_a_space_surface_refuses_instead_of_writing_nowhere
 /// file is untouched.
 #[tokio::test]
 async fn adopting_proposes_the_seed_file_with_the_live_values_as_a_change() {
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, ResponseTemplate};
 
     let forge = common::forge().await;
@@ -290,9 +290,11 @@ async fn adopting_proposes_the_seed_file_with_the_live_values_as_a_change() {
         { "id": other, "type": "AirQualityObserved" }
     ]);
     Mock::given(method("GET"))
-        .and(path(format!("{}/contents/{source}", common::REPO)))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .and(query_param("@p", format!("'{source}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1", "content": common::encode(&file.to_string())
+            "Sha": "blob-1",
+            "Content": common::encode(&file.to_string())
         })))
         .mount(&forge)
         .await;
@@ -324,14 +326,14 @@ async fn adopting_proposes_the_seed_file_with_the_live_values_as_a_change() {
         .map(str::to_owned)
     })
     .expect("config");
-    let client = joinedcontext_portal::git::GiteaClient::new(
+    let client = joinedcontext_portal::forge::ShakoClient::new(
         forge_url.parse().expect("mock url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    let mut state = AppState::new(config, None).with_gitea(Arc::new(client));
+    let mut state = AppState::new(config, None).with_shako(Arc::new(client));
     state.drift = scanned();
     let answer = common::send(
         &state,
@@ -404,7 +406,7 @@ async fn adopting_proposes_the_seed_file_with_the_live_values_as_a_change() {
     );
     let branch = sent
         .iter()
-        .find(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/branches"))
+        .find(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.CreateBranch"))
         .expect("a branch");
     assert!(
         String::from_utf8_lossy(&branch.body).contains("portal/adopt-"),
@@ -413,10 +415,10 @@ async fn adopting_proposes_the_seed_file_with_the_live_values_as_a_change() {
     );
     let commit = sent
         .iter()
-        .find(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/contents"))
+        .find(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.CommitFiles"))
         .expect("one commit");
     let commit: Value = serde_json::from_slice(&commit.body).expect("a json commit");
-    let written = &commit["files"][0];
+    let written = &commit["Files"][0];
     assert_eq!(written["path"], source);
     assert_eq!(written["operation"], "update");
     assert_eq!(written["sha"], "blob-1");
@@ -435,5 +437,5 @@ async fn adopting_proposes_the_seed_file_with_the_live_values_as_a_change() {
     );
     assert!(sent
         .iter()
-        .any(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/pulls")));
+        .any(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.OpenPullRequest")));
 }

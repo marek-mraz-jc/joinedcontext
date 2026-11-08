@@ -510,7 +510,7 @@ async fn resolved_address(
 }
 
 /// Whether `host` names something inside the cluster or the pod's own network rather than the
-/// public internet: one label (`gitea`), or a cluster or local suffix.
+/// public internet: one label (`shako`), or a cluster or local suffix.
 fn cluster_name(host: &str) -> bool {
     let host = host.trim_end_matches('.').to_ascii_lowercase();
     !host.contains('.')
@@ -1262,7 +1262,7 @@ mod tests {
     #[test]
     fn a_cluster_name_is_never_a_public_host() {
         for host in [
-            "gitea",
+            "shako",
             "portal.portal.svc",
             "portal.portal.svc.cluster.local.",
             "metadata.google.internal",
@@ -1282,7 +1282,7 @@ mod tests {
         for url in [
             "http://127.0.0.1/a.csv",
             "http://10.0.0.5/a.csv",
-            "http://gitea:3000/a.csv",
+            "http://shako:3000/a.csv",
         ] {
             match sample_address(url, "/sample/url").await {
                 Err(OpError::InvalidInput { path, .. }) => assert_eq!("/sample/url", path, "{url}"),

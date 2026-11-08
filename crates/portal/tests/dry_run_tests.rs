@@ -10,7 +10,7 @@ use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::Lane;
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::error::ProblemDetails;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
@@ -63,10 +63,10 @@ async fn post_dry_run_all_returns_200_and_makes_zero_git_requests() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     let app = server::app(state);
 
     let payload = json!({
@@ -120,10 +120,10 @@ async fn put_dry_run_all_returns_200_and_makes_zero_git_requests() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
 
     state.mirror.upsert(ResourceEnvelope {
         api_version: API_VERSION.to_string(),
@@ -190,10 +190,10 @@ async fn delete_dry_run_all_returns_200_and_makes_zero_git_requests() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
 
     state.mirror.upsert(ResourceEnvelope {
         api_version: API_VERSION.to_string(),
@@ -245,10 +245,10 @@ async fn invalid_dry_run_query_value_returns_400() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
-        GiteaClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
+        ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
 
     state.mirror.upsert(ResourceEnvelope {
         api_version: API_VERSION.to_string(),
@@ -433,7 +433,7 @@ fn manifest(kind: &str, name: &str, spec: serde_json::Value) -> serde_json::Valu
 #[tokio::test]
 async fn validate_only_answers_what_dry_run_answers_and_writes_nothing() {
     let server = MockServer::start().await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         server.uri().parse().expect("url"),
         "test-owner",
         "test-repo",
@@ -441,7 +441,7 @@ async fn validate_only_answers_what_dry_run_answers_and_writes_nothing() {
     )
     .expect("client");
     let config = Config::for_tests();
-    let state = AppState::new(config.clone(), None).with_gitea(Arc::new(client));
+    let state = AppState::new(config.clone(), None).with_shako(Arc::new(client));
     state.mirror.upsert(ResourceEnvelope {
         api_version: API_VERSION.to_string(),
         kind: "ContextSpace".to_string(),

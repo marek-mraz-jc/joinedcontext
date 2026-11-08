@@ -80,7 +80,7 @@ pub async fn build(
         #[cfg(feature = "dataroom")]
         Module::Dataroom => dataroom::build(&cfg.dataroom, ctx.setup, mount).await,
         #[cfg(feature = "daiya")]
-        Module::Daiya => daiya::build(&cfg.daiya, ctx.setup, mount)
+        Module::Daiya => daiya::build(&cfg.daiya, ctx.setup, ctx.siblings.listener, mount)
             .await
             .map_err(|e| StartError::module(Module::Daiya, e)),
         #[cfg(feature = "ekiben")]

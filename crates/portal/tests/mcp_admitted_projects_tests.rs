@@ -41,8 +41,8 @@ fn server(name: &str, admitted: &[&str]) -> Value {
 
 #[tokio::test]
 async fn an_mcp_server_admits_only_projects_its_proposer_reads() {
-    let gitea = forge().await;
-    let state = common::state_on(&gitea);
+    let shako = forge().await;
+    let state = common::state_on(&shako);
     state.mirror.upsert(envelope(
         "Role",
         "mcp-editor",

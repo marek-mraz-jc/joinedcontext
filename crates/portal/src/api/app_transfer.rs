@@ -97,11 +97,11 @@ pub async fn export_app(
         .mirror
         .get(&project, "App", &name)
         .ok_or_else(not_found)?;
-    let gitea = state
-        .gitea
+    let shako = state
+        .shako
         .as_deref()
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let repository = application_repository(&app, gitea)?.ok_or_else(|| {
+    let repository = application_repository(&app, shako)?.ok_or_else(|| {
         ApiError::Conflict(format!(
             "the App '{name}' names no source.git repository; an App export carries its \
              repository (AP-72)"
@@ -109,7 +109,7 @@ pub async fn export_app(
     })?;
 
     let (envelope, text) = manifest(&state, &project, &name).await?;
-    let (bundle, head, tags) = take(&name, &gitea.for_application(repository)).await?;
+    let (bundle, head, tags) = take(&name, &shako.for_application(repository)).await?;
     let file = format!("{name}.bundle");
     let mut entries = vec![(file.clone(), bundle)];
     if !tags.is_empty() {
@@ -270,8 +270,8 @@ pub async fn import(
     {
         return Err(ApiError::NotFound(format!("project '{project}' not found")));
     }
-    let gitea = state
-        .gitea
+    let shako = state
+        .shako
         .as_deref()
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
     let Checked { index, files, app } = check(bytes)?;
@@ -295,7 +295,7 @@ pub async fn import(
     }
     let bundled = &index.spec.repositories[0];
     let target = crate::agents::repository::name(project, &name);
-    let client = gitea.for_application(target.clone());
+    let client = shako.for_application(target.clone());
     if client.default_branch().await.is_ok() {
         return Err(ApiError::Conflict(format!(
             "a repository named '{target}' is already in the forge; an import lands only in a \
@@ -377,7 +377,7 @@ struct Landing<'a> {
     index: &'a Bundle,
     files: &'a std::collections::BTreeMap<String, Vec<u8>>,
     app: ResourceEnvelope,
-    client: &'a crate::git::GiteaClient,
+    client: &'a crate::forge::ShakoClient,
 }
 
 /// Fills and verifies the new repository and proposes the App that builds from it.

@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, ResponseTemplate};
 
 const PROJECT: &str = "kultura";
@@ -62,19 +62,20 @@ async fn portal(linkml: &str) -> (AppState, wiremock::MockServer) {
 
 /// The Portal with the space's model in `lifecycle`.
 async fn portal_at(linkml: &str, lifecycle: &str) -> (AppState, wiremock::MockServer) {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     Mock::given(method("GET"))
-        .and(path(format!(
-            "{}/contents/projects/{PROJECT}/spaces/podujatia/datamodels/model.linkml.yaml",
-            common::REPO
-        )))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .and(query_param(
+            "@p",
+            format!("'projects/{PROJECT}/spaces/podujatia/datamodels/model.linkml.yaml'"),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-linkml-1",
-            "content": common::encode(linkml)
+            "Sha": "sha-linkml-1",
+            "Content": common::encode(linkml)
         })))
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = common::state_on(&gitea);
+    let state = common::state_on(&shako);
     state.mirror.upsert(common::envelope(
         "ContextSpace",
         "podujatia",
@@ -92,7 +93,7 @@ async fn portal_at(linkml: &str, lifecycle: &str) -> (AppState, wiremock::MockSe
             "lifecycle": lifecycle,
         }),
     ));
-    (state, gitea)
+    (state, shako)
 }
 
 fn endpoint(representations: Value) -> Value {
@@ -123,7 +124,7 @@ async fn propose(state: &AppState, manifest: Value) -> common::Answer {
 
 #[tokio::test]
 async fn ical_on_a_space_without_the_event_type_is_refused_with_jcctl_s_sentence() {
-    let (state, gitea) = portal(PLACES).await;
+    let (state, shako) = portal(PLACES).await;
     let answer = propose(
         &state,
         with_outputs(json!({ "ical": [calendar("kalendar")] })),
@@ -143,7 +144,7 @@ async fn ical_on_a_space_without_the_event_type_is_refused_with_jcctl_s_sentence
         "{}",
         answer.text
     );
-    let requests = gitea.received_requests().await.expect("recorded");
+    let requests = shako.received_requests().await.expect("recorded");
     assert!(
         !requests.iter().any(|r| r.method.as_str() == "POST"),
         "no Change was opened"
@@ -232,7 +233,7 @@ fn mapped(mapping: Value) -> Value {
 /// jc-core gives `jcctl validate`, and the form's dry run shows the same lines.
 #[tokio::test]
 async fn a_written_mapping_is_refused_per_gap_and_the_dry_run_says_the_same() {
-    let (state, gitea) = portal(EVENTS).await;
+    let (state, shako) = portal(EVENTS).await;
     let broken = mapped(json!({ "SUMMARY": "name", "DTEND": "name" }));
     let answer = propose(&state, broken.clone()).await;
     assert_eq!(
@@ -263,7 +264,7 @@ async fn a_written_mapping_is_refused_per_gap_and_the_dry_run_says_the_same() {
             dry.text
         );
     }
-    let requests = gitea.received_requests().await.expect("recorded");
+    let requests = shako.received_requests().await.expect("recorded");
     assert!(
         !requests.iter().any(|r| r.method.as_str() == "POST"),
         "no Change was opened"
@@ -286,7 +287,7 @@ async fn a_written_mapping_is_refused_per_gap_and_the_dry_run_says_the_same() {
 #[tokio::test]
 async fn ical_on_a_draft_model_is_refused_until_it_is_published() {
     for lifecycle in ["draft", "retired"] {
-        let (state, gitea) = portal_at(EVENTS, lifecycle).await;
+        let (state, shako) = portal_at(EVENTS, lifecycle).await;
         let answer = propose(&state, endpoint(json!(["ngsi-ld", "ical"]))).await;
         assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
         assert!(
@@ -297,7 +298,7 @@ async fn ical_on_a_draft_model_is_refused_until_it_is_published() {
             "{}",
             answer.text
         );
-        let requests = gitea.received_requests().await.expect("recorded");
+        let requests = shako.received_requests().await.expect("recorded");
         assert!(!requests.iter().any(|r| r.method.as_str() == "POST"));
     }
 }
@@ -330,7 +331,7 @@ fn feed(name: &str) -> Value {
 }
 
 /// Each refusal is a 422 whose `errors` name the output and the member, before a Change exists.
-async fn refused(state: &AppState, gitea: &wiremock::MockServer, manifest: Value, member: &str) {
+async fn refused(state: &AppState, shako: &wiremock::MockServer, manifest: Value, member: &str) {
     let answer = propose(state, manifest).await;
     assert_eq!(
         answer.status,
@@ -345,7 +346,7 @@ async fn refused(state: &AppState, gitea: &wiremock::MockServer, manifest: Value
         "{member} named in {}",
         answer.text
     );
-    let requests = gitea.received_requests().await.expect("recorded");
+    let requests = shako.received_requests().await.expect("recorded");
     assert!(
         !requests.iter().any(|r| r.method.as_str() == "POST"),
         "no Change was opened"
@@ -370,18 +371,18 @@ async fn three_feeds_and_two_calendars_open_a_change() {
 
 #[tokio::test]
 async fn a_duplicate_output_name_is_a_422_naming_it() {
-    let (state, gitea) = portal(EVENTS).await;
+    let (state, shako) = portal(EVENTS).await;
     let manifest = with_outputs(json!({ "ical": [calendar("kalendar"), calendar("kalendar")] }));
-    refused(&state, &gitea, manifest, "kalendar").await;
+    refused(&state, &shako, manifest, "kalendar").await;
 }
 
 #[tokio::test]
 async fn a_21st_output_is_a_422() {
-    let (state, gitea) = portal(EVENTS).await;
+    let (state, shako) = portal(EVENTS).await;
     let feeds: Vec<Value> = (0..21).map(|n| feed(&format!("f{n}"))).collect();
     refused(
         &state,
-        &gitea,
+        &shako,
         with_outputs(json!({ "feed": feeds })),
         "spec.representations.feed",
     )
@@ -390,10 +391,10 @@ async fn a_21st_output_is_a_422() {
 
 #[tokio::test]
 async fn a_name_that_is_no_slug_is_a_422_naming_it() {
-    let (state, gitea) = portal(EVENTS).await;
+    let (state, shako) = portal(EVENTS).await;
     refused(
         &state,
-        &gitea,
+        &shako,
         with_outputs(json!({ "feed": [feed("Kultúra")] })),
         "Kultúra",
     )
@@ -402,12 +403,12 @@ async fn a_name_that_is_no_slug_is_a_422_naming_it() {
 
 #[tokio::test]
 async fn a_filter_the_broker_would_refuse_is_a_422_naming_the_member() {
-    let (state, gitea) = portal(EVENTS).await;
+    let (state, shako) = portal(EVENTS).await;
     let mut output = calendar("sport");
     output["filter"] = json!({ "q": "eventCategory==" });
     refused(
         &state,
-        &gitea,
+        &shako,
         with_outputs(json!({ "ical": [output] })),
         "filter.q",
     )
@@ -416,12 +417,12 @@ async fn a_filter_the_broker_would_refuse_is_a_422_naming_the_member() {
 
 #[tokio::test]
 async fn an_unknown_member_of_an_output_is_a_422_naming_it() {
-    let (state, gitea) = portal(EVENTS).await;
+    let (state, shako) = portal(EVENTS).await;
     let mut output = feed("novinky");
     output["colour"] = json!("red");
     refused(
         &state,
-        &gitea,
+        &shako,
         with_outputs(json!({ "feed": [output] })),
         "colour",
     )
@@ -430,11 +431,11 @@ async fn an_unknown_member_of_an_output_is_a_422_naming_it() {
 
 #[tokio::test]
 async fn a_role_naming_a_slot_the_model_lacks_is_a_422_naming_it() {
-    let (state, gitea) = portal(EVENTS).await;
+    let (state, shako) = portal(EVENTS).await;
     let output = json!({ "name": "novinky", "sources": [{ "type": "Event", "preset": "generic", "mapping": { "title": "headline" } }] });
     refused(
         &state,
-        &gitea,
+        &shako,
         with_outputs(json!({ "feed": [output] })),
         "headline",
     )
@@ -443,11 +444,11 @@ async fn a_role_naming_a_slot_the_model_lacks_is_a_422_naming_it() {
 
 #[tokio::test]
 async fn a_role_of_the_wrong_range_is_a_422_naming_it() {
-    let (state, gitea) = portal(EVENTS).await;
+    let (state, shako) = portal(EVENTS).await;
     let output = json!({ "name": "kalendar", "sources": [{ "type": "Event", "mapping": { "DTSTART": "name", "SUMMARY": "name" } }] });
     refused(
         &state,
-        &gitea,
+        &shako,
         with_outputs(json!({ "ical": [output] })),
         "DTSTART",
     )
@@ -456,11 +457,11 @@ async fn a_role_of_the_wrong_range_is_a_422_naming_it() {
 
 #[tokio::test]
 async fn a_source_type_the_model_lacks_is_a_422_naming_it() {
-    let (state, gitea) = portal(EVENTS).await;
+    let (state, shako) = portal(EVENTS).await;
     let output = json!({ "name": "kalendar", "sources": [{ "type": "CouncilMeeting", "preset": "sdm-event" }] });
     refused(
         &state,
-        &gitea,
+        &shako,
         with_outputs(json!({ "ical": [output] })),
         "CouncilMeeting",
     )
@@ -470,7 +471,7 @@ async fn a_source_type_the_model_lacks_is_a_422_naming_it() {
 /// A person without the Endpoint right is refused before any output is looked at.
 #[tokio::test]
 async fn a_person_without_the_endpoint_right_gets_403() {
-    let (state, gitea) = portal(EVENTS).await;
+    let (state, shako) = portal(EVENTS).await;
     let manifest =
         with_outputs(json!({ "ical": [calendar("kalendar")], "feed": [feed("novinky")] }));
     let answer = common::checked_send(
@@ -482,7 +483,7 @@ async fn a_person_without_the_endpoint_right_gets_403() {
     )
     .await;
     assert_eq!(answer.status, StatusCode::FORBIDDEN, "{}", answer.text);
-    let requests = gitea.received_requests().await.expect("recorded");
+    let requests = shako.received_requests().await.expect("recorded");
     assert!(
         !requests.iter().any(|r| r.method.as_str() == "POST"),
         "no Change was opened"
@@ -532,7 +533,7 @@ async fn map_defaults_that_fit_the_model_open_a_change() {
 /// One 422 per map role, unknown slot and wrong range alike, naming the member.
 #[tokio::test]
 async fn a_map_role_the_model_cannot_fill_is_a_422_naming_the_member() {
-    let (state, gitea) = portal(MAP_EVENTS).await;
+    let (state, shako) = portal(MAP_EVENTS).await;
     for (mapping, member) in [
         (
             json!({ "geometry": "startDate" }),
@@ -556,11 +557,11 @@ async fn a_map_role_the_model_cannot_fill_is_a_422_naming_the_member() {
             "`mapping.popup` names `location`, a GeoProperty",
         ),
     ] {
-        refused(&state, &gitea, map(mapping), member).await;
+        refused(&state, &shako, map(mapping), member).await;
     }
     let mut not_a_flag = map(json!({}));
     not_a_flag["spec"]["representations"]["widget"][0]["sources"][0]["cluster"] = json!("often");
-    refused(&state, &gitea, not_a_flag, "spec.representations").await;
+    refused(&state, &shako, not_a_flag, "spec.representations").await;
 }
 
 fn table(start: Value) -> Value {
@@ -587,7 +588,7 @@ async fn a_table_start_that_fits_the_model_opens_a_change() {
 /// One 422 per table member the widget cannot use, naming the member.
 #[tokio::test]
 async fn a_table_start_the_widget_cannot_use_is_a_422_naming_the_member() {
-    let (state, gitea) = portal(MAP_EVENTS).await;
+    let (state, shako) = portal(MAP_EVENTS).await;
     for (start, member) in [
         (
             json!({ "filter": "startDate>=>today" }),
@@ -614,11 +615,11 @@ async fn a_table_start_the_widget_cannot_use_is_a_422_naming_the_member() {
             "`table.columns` names `name` twice",
         ),
     ] {
-        refused(&state, &gitea, table(start), member).await;
+        refused(&state, &shako, table(start), member).await;
     }
     refused(
         &state,
-        &gitea,
+        &shako,
         table(json!({ "sort": "name" })),
         "spec.representations",
     )
@@ -628,7 +629,7 @@ async fn a_table_start_the_widget_cannot_use_is_a_422_naming_the_member() {
 /// A table start is an Endpoint change: a person without the Endpoint right gets 403.
 #[tokio::test]
 async fn a_person_without_the_endpoint_right_cannot_set_a_table_start() {
-    let (state, gitea) = portal(MAP_EVENTS).await;
+    let (state, shako) = portal(MAP_EVENTS).await;
     let answer = common::checked_send(
         &state,
         common::person("visitor"),
@@ -638,7 +639,7 @@ async fn a_person_without_the_endpoint_right_cannot_set_a_table_start() {
     )
     .await;
     assert_eq!(answer.status, StatusCode::FORBIDDEN, "{}", answer.text);
-    let requests = gitea.received_requests().await.expect("recorded");
+    let requests = shako.received_requests().await.expect("recorded");
     assert!(
         !requests.iter().any(|r| r.method.as_str() == "POST"),
         "no Change was opened"
@@ -648,7 +649,7 @@ async fn a_person_without_the_endpoint_right_cannot_set_a_table_start() {
 /// The map defaults are an Endpoint change: a person without the Endpoint right gets 403.
 #[tokio::test]
 async fn a_person_without_the_endpoint_right_cannot_set_map_defaults() {
-    let (state, gitea) = portal(MAP_EVENTS).await;
+    let (state, shako) = portal(MAP_EVENTS).await;
     let answer = common::checked_send(
         &state,
         common::person("visitor"),
@@ -658,7 +659,7 @@ async fn a_person_without_the_endpoint_right_cannot_set_map_defaults() {
     )
     .await;
     assert_eq!(answer.status, StatusCode::FORBIDDEN, "{}", answer.text);
-    let requests = gitea.received_requests().await.expect("recorded");
+    let requests = shako.received_requests().await.expect("recorded");
     assert!(
         !requests.iter().any(|r| r.method.as_str() == "POST"),
         "no Change was opened"
