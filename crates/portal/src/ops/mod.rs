@@ -14,6 +14,7 @@ use std::sync::OnceLock;
 
 pub mod access_tools;
 pub mod admin;
+pub mod administration;
 pub(crate) mod bounds;
 pub mod changes;
 pub mod compute;
@@ -211,6 +212,7 @@ impl Caller {
         // (AG-11). Their refusal used to live in the body alone, which left `listing` — and so
         // `GET …/ops` and `tools/list` — offering a run an operation it would always be denied.
         runs::refuse_agent(self, op.name)?;
+        administration::refuse_agent(self, op.name)?;
         self.grants(op)
     }
 }
@@ -770,6 +772,7 @@ fn init_registry() -> Vec<Operation> {
     operations.extend(model_catalog::operations());
     operations.extend(access_tools::operations());
     operations.extend(space_reads::operations());
+    operations.extend(administration::operations());
     operations
 }
 
