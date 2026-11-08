@@ -486,6 +486,14 @@ pub(crate) async fn ensure_may_map_client_roles(
             "admin client roles are granted by a realm admin only".into(),
         ));
     }
+    // Keycloak lets a `manage-users` holder map any non-admin role (RolePermissions.canMapRole);
+    // here only the roles of a platform-managed client, which is what the Portal's member
+    // credential maps (app_clients.rs converge_grants, `portal-reconciler`).
+    if ctx.principal.has_realm_mgmt_role("manage-users")
+        && client.attributes.get("managed-by").map(String::as_str) == Some("joinedcontext")
+    {
+        return Ok(());
+    }
     check_decision(state.authorizer.check(
         ctx,
         Action::Update,
@@ -1965,10 +1973,19 @@ async fn compat_create_client(
     Path(realm): Path<String>,
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
-    Json(mut client): Json<ClientRepresentation>,
+    Json(body): Json<Value>,
 ) -> Result<Response> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
+    // As Keycloak: a client created without `defaultClientScopes` gets the realm's default
+    // scopes (`roles`, `profile`, `email`, ...), an explicit list is kept as sent. The realm's
+    // default optional scopes are not linked (T-6301: they carry the connectors' audience).
+    let default_scopes = body.get("defaultClientScopes").is_none();
+    let mut client: ClientRepresentation = serde_json::from_value(body)
+        .map_err(|e| KaisatsuError::BadRequest(format!("invalid client: {e}")))?;
+    if default_scopes {
+        client.default_client_scopes = ClientRepresentation::default().default_client_scopes;
+    }
     client.realm_id = realm.clone();
     if client.org_id.is_none() {
         client.org_id = ctx.active_org_id.clone();

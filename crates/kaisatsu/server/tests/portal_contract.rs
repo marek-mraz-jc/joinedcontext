@@ -1186,3 +1186,319 @@ async fn the_group_wave_converges_as_the_reconciler() {
     let made = admin(app, &token, Method::POST, "/clients", Some(json!({ "clientId": "app-sneaky", "attributes": { MANAGED.0: MANAGED.1 } }))).await;
     assert!(made.status.is_client_error(), "portal-reconciler creates a client: {}", made.status);
 }
+
+// ------------------------------------------------------------------------------------------
+// App clients (reconciler/app_clients.rs): `portal-api` writes the client, its mappers, roles and
+// secret; `portal-reconciler` maps the roles to groups and users.
+// ------------------------------------------------------------------------------------------
+
+/// app_clients.rs:163 `desired` for App `bikes` of project helsinki under `apps.jc.localhost`.
+fn app_client() -> Value {
+    let origin = "https://bikes.apps.jc.localhost";
+    let redirect = format!("{origin}/*");
+    json!({
+        "clientId": "app-bikes",
+        "name": "Bikes",
+        "protocol": "openid-connect",
+        "enabled": true,
+        "publicClient": false,
+        "bearerOnly": false,
+        "standardFlowEnabled": true,
+        "implicitFlowEnabled": false,
+        "directAccessGrantsEnabled": false,
+        "serviceAccountsEnabled": false,
+        "frontchannelLogout": true,
+        "redirectUris": [redirect],
+        "webOrigins": [origin],
+        "attributes": {
+            "pkce.code.challenge.method": "S256",
+            "post.logout.redirect.uris": redirect,
+            "access.token.signed.response.alg": "RS256",
+            "id.token.signed.response.alg": "RS256",
+            "access.token.lifespan": "60",
+            MANAGED.0: MANAGED.1,
+            "joinedcontext.app": "helsinki/bikes",
+        },
+    })
+}
+
+/// app_clients.rs:251 `audience_mapper`, :270 `groups_mapper`, :291 `organization_mappers`.
+fn app_mappers(audiences: &[&str]) -> Vec<Value> {
+    let mut mappers: Vec<Value> = audiences
+        .iter()
+        .map(|audience| {
+            json!({
+                "name": format!("audience-{audience}"),
+                "protocol": "openid-connect",
+                "protocolMapper": "oidc-audience-mapper",
+                "config": {
+                    "included.custom.audience": audience,
+                    "access.token.claim": "true",
+                    "id.token.claim": "false",
+                    "introspection.token.claim": "true",
+                },
+            })
+        })
+        .collect();
+    mappers.push(json!({
+        "name": "groups",
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-group-membership-mapper",
+        "consentRequired": false,
+        "config": {
+            "claim.name": "groups", "full.path": "true", "access.token.claim": "true",
+            "id.token.claim": "true", "userinfo.token.claim": "true",
+        },
+    }));
+    for claim in ["jc_org", "jc_groups"] {
+        mappers.push(json!({
+            "name": claim,
+            "protocol": "openid-connect",
+            "protocolMapper": "oidc-usermodel-attribute-mapper",
+            "consentRequired": false,
+            "config": {
+                "user.attribute": claim, "claim.name": claim, "jsonType.label": "String",
+                "multivalued": "true", "aggregate.attrs": "true", "access.token.claim": "true",
+                "id.token.claim": "true", "userinfo.token.claim": "true",
+            },
+        }));
+    }
+    mappers
+}
+
+/// app_clients.rs:655 `converge_mappers`: every held mapper the wave does not want goes, a
+/// missing one is posted, a changed one put back. Answers what the run changed.
+async fn converge_mappers(app: &Router, token: &str, uuid: &str, wanted: &[Value]) -> Vec<String> {
+    let path = format!("/clients/{uuid}/protocol-mappers/models");
+    let held = admin(app, token, Method::GET, &path, None).await;
+    assert_eq!(held.status, StatusCode::OK, "{}", held.text);
+    let held = held.json();
+    let mut changed = Vec::new();
+    for mapper in held.as_array().unwrap() {
+        let ours = wanted
+            .iter()
+            .any(|w| w["protocolMapper"] == mapper["protocolMapper"] && w["name"] == mapper["name"]);
+        if !ours {
+            let gone = admin(app, token, Method::DELETE, &format!("{path}/{}", id_of(mapper)), None).await;
+            assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
+            changed.push(format!("removed {}", mapper["name"]));
+        }
+    }
+    for want in wanted {
+        match held.as_array().unwrap().iter().find(|m| m["name"] == want["name"]) {
+            None => {
+                let made = admin(app, token, Method::POST, &path, Some(want.clone())).await;
+                assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
+                changed.push(format!("added {}", want["name"]));
+            }
+            Some(mapper) => {
+                let differs = want["config"]
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .any(|(k, v)| mapper["config"].get(k) != Some(v));
+                if differs {
+                    let mut body = want.clone();
+                    body["id"] = mapper["id"].clone();
+                    let put = admin(app, token, Method::PUT, &format!("{path}/{}", id_of(mapper)), Some(body)).await;
+                    assert_eq!(put.status, StatusCode::NO_CONTENT, "{}", put.text);
+                    changed.push(format!("rewrote {}", want["name"]));
+                }
+            }
+        }
+    }
+    changed
+}
+
+/// app_clients.rs:620 `drop_optional_scopes`: answers the names it unlinked.
+async fn drop_optional_scopes(app: &Router, token: &str, uuid: &str) -> Vec<String> {
+    let path = format!("/clients/{uuid}/optional-client-scopes");
+    let linked = admin(app, token, Method::GET, &path, None).await;
+    assert_eq!(linked.status, StatusCode::OK, "{}", linked.text);
+    let linked = linked.json();
+    let mut names = Vec::new();
+    for scope in linked.as_array().unwrap() {
+        let gone = admin(app, token, Method::DELETE, &format!("{path}/{}", id_of(scope)), None).await;
+        assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
+        names.push(scope["name"].as_str().unwrap().to_owned());
+    }
+    names
+}
+
+/// Ana's sign-in to App `bikes` through its confidential client, as the App's edge does it;
+/// answers the access token's claims as the edge verifies them (RS256, aud `app-bikes`).
+async fn app_sign_in(app: &Router, api: &str, uuid: &str) -> Value {
+    let secret = admin(app, api, Method::GET, &format!("/clients/{uuid}/client-secret"), None).await.json();
+    let secret = secret["value"].as_str().unwrap().to_owned();
+    let (pkce, verifier) = PkceCodeChallenge::new_random_sha256();
+    let back = "https://bikes.apps.jc.localhost/oauth2/callback";
+    let authorize = format!(
+        "/realms/jc/protocol/openid-connect/auth?client_id=app-bikes&redirect_uri={}\
+         &response_type=code&scope=openid&state=s2&code_challenge={}&code_challenge_method=S256",
+        url::form_urlencoded::byte_serialize(back.as_bytes()).collect::<String>(),
+        pkce.as_str(),
+    );
+    let (landed, _) = sign_in(app, &authorize).await;
+    let code = param(&landed, "code").unwrap_or_else(|| panic!("no code: {landed}"));
+    let answer = post_form(
+        app,
+        TOKEN,
+        &[
+            ("grant_type", "authorization_code"),
+            ("code", &code),
+            ("redirect_uri", back),
+            ("code_verifier", verifier.secret()),
+            ("client_id", "app-bikes"),
+            ("client_secret", &secret),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let access = answer.json()["access_token"].as_str().unwrap().to_owned();
+    assert_eq!(jsonwebtoken9::decode_header(&access).unwrap().alg, jsonwebtoken9::Algorithm::RS256);
+    Bearer::of(app)
+        .await
+        .verify(&access, "app-bikes", "Bearer")
+        .unwrap_or_else(|e| panic!("the App's edge refuses the token: {e}"))
+}
+
+#[tokio::test]
+async fn the_app_wave_converges_an_app_client() {
+    let realm = realm().await;
+    let app = &realm.app;
+    let api = portal_api(app).await;
+    let members = reconciler(app).await;
+    let want = app_client();
+
+    // app_clients.rs:1196 create, :601 find it back.
+    assert!(find_client(app, &api, "app-bikes").await.is_none());
+    let made = admin(app, &api, Method::POST, "/clients", Some(want.clone())).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
+    let held = find_client(app, &api, "app-bikes").await.expect("app-bikes is found");
+    let uuid = id_of(&held);
+    // app_clients.rs:1177 the next run finds nothing to write back.
+    assert_eq!(drift(&want, &held), Vec::<String>::new(), "{held}");
+
+    // T-6301: Keycloak links the realm's default optional scopes, which the wave unlinks;
+    // kaisatsu links none to an admin-made client, which the wave reads as nothing to drop.
+    let dropped = drop_optional_scopes(app, &api, &uuid).await;
+    assert!(dropped.iter().all(|n| n == "connector" || n == "offline_access"), "{dropped:?}");
+    assert_eq!(drop_optional_scopes(app, &api, &uuid).await, Vec::<String>::new());
+
+    // :655 the mappers: added once, then nothing to change.
+    let wanted = app_mappers(&["app-bikes", SLUG]);
+    let first = converge_mappers(app, &api, &uuid, &wanted).await;
+    assert!(first.iter().filter(|c| c.starts_with("added")).count() == wanted.len(), "{first:?}");
+    assert_eq!(converge_mappers(app, &api, &uuid, &wanted).await, Vec::<String>::new());
+    // One Endpoint fewer: its audience mapper goes.
+    let fewer = app_mappers(&["app-bikes"]);
+    assert_eq!(converge_mappers(app, &api, &uuid, &fewer).await, [format!("removed \"audience-{SLUG}\"")]);
+
+    // :870 roles: listed, created by name, read back with an id.
+    let roles = format!("/clients/{uuid}/roles");
+    assert_eq!(admin(app, &api, Method::GET, &roles, None).await.json(), json!([]));
+    for name in ["rider", "dispatcher"] {
+        let made = admin(app, &api, Method::POST, &roles, Some(json!({ "name": name }))).await;
+        assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
+    }
+    let held_roles = admin(app, &api, Method::GET, &roles, None).await.json();
+    let role = |name: &str| {
+        held_roles
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == name)
+            .unwrap_or_else(|| panic!("{held_roles}"))
+            .clone()
+    };
+    let rider = role("rider");
+    let mapping = json!([{ "id": rider["id"], "name": "rider" }]);
+
+    // :799 the group by name and :841 the user by e-mail, as the member credential.
+    let groups = admin(app, &members, Method::GET, "/groups?briefRepresentation=true&max=1000", None).await;
+    assert_eq!(groups.status, StatusCode::OK, "{}", groups.text);
+    let helsinki = groups
+        .json()
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["name"] == "helsinki")
+        .map(id_of)
+        .expect("the root group helsinki");
+    let users = admin(app, &members, Method::GET, &format!("/users?exact=true&email={}", url::form_urlencoded::byte_serialize(ANA.as_bytes()).collect::<String>()), None).await;
+    assert_eq!(users.status, StatusCode::OK, "{}", users.text);
+    let ana = users.json()[0].clone();
+    assert_eq!(ana["email"], json!(ANA), "{ana}");
+    let ana_id = id_of(&ana);
+
+    // :940 the mappings, written by the member credential.
+    for path in [format!("/groups/{helsinki}"), format!("/users/{ana_id}")] {
+        let mapped = admin(app, &members, Method::POST, &format!("{path}/role-mappings/clients/{uuid}"), Some(mapping.clone())).await;
+        assert_eq!(mapped.status, StatusCode::NO_CONTENT, "{path}: {}", mapped.text);
+    }
+    // :908 who holds the role, read by the App-client manager (view-clients + query-*).
+    let by_groups = admin(app, &api, Method::GET, &format!("{roles}/rider/groups?briefRepresentation=true&max=1000"), None).await;
+    assert_eq!(by_groups.status, StatusCode::OK, "{}", by_groups.text);
+    let by_groups = by_groups.json();
+    let names: Vec<&str> = by_groups.as_array().unwrap().iter().map(|g| g["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["helsinki"]);
+    let by_users = admin(app, &api, Method::GET, &format!("{roles}/rider/users?max=1000"), None).await;
+    assert_eq!(by_users.status, StatusCode::OK, "{}", by_users.text);
+    let held_by = by_users.json();
+    assert_eq!(held_by[0]["id"], json!(ana_id), "{held_by}");
+    assert_eq!(held_by[0]["username"], json!(ANA), "{held_by}");
+
+    // A sign-in to the App: the edge verifies RS256 and reads aud, resource_access and groups.
+    let claims = app_sign_in(app, &api, &uuid).await;
+    assert_eq!(claims["resource_access"]["app-bikes"]["roles"], json!(["rider"]), "{claims}");
+    assert_eq!(claims["groups"], json!(["/helsinki/members"]), "{claims}");
+    assert_eq!(claims["jc_org"], json!(["helsinki"]), "{claims}");
+    assert!(claims["exp"].as_i64().unwrap() - claims["iat"].as_i64().unwrap() <= 60, "access.token.lifespan 60: {claims}");
+    // The role held through the root group `helsinki` alone (a group subject of `spec.access`).
+    let gone = admin(app, &members, Method::DELETE, &format!("/users/{ana_id}/role-mappings/clients/{uuid}"), Some(mapping.clone())).await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
+    let claims = app_sign_in(app, &api, &uuid).await;
+    assert_eq!(claims["resource_access"]["app-bikes"]["roles"], json!(["rider"]), "a group's App role: {claims}");
+    let mapped = admin(app, &members, Method::POST, &format!("/users/{ana_id}/role-mappings/clients/{uuid}"), Some(mapping.clone())).await;
+    assert_eq!(mapped.status, StatusCode::NO_CONTENT, "{}", mapped.text);
+
+    // :929 a mapping the App no longer gives is removed by the member credential.
+    for path in [format!("/groups/{helsinki}"), format!("/users/{ana_id}")] {
+        let gone = admin(app, &members, Method::DELETE, &format!("{path}/role-mappings/clients/{uuid}"), Some(mapping.clone())).await;
+        assert_eq!(gone.status, StatusCode::NO_CONTENT, "{path}: {}", gone.text);
+    }
+    assert_eq!(admin(app, &api, Method::GET, &format!("{roles}/rider/users?max=1000"), None).await.json(), json!([]));
+    // A role taken away is gone from the next token (app_clients.rs:181, T-4914).
+    let claims = app_sign_in(app, &api, &uuid).await;
+    assert!(claims["resource_access"]["app-bikes"].is_null(), "{claims}");
+    // :878 a role the App drops.
+    let gone = admin(app, &api, Method::DELETE, &format!("{roles}/dispatcher"), None).await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
+
+    // :1003 the secret the App's edge reads.
+    let secret = admin(app, &api, Method::GET, &format!("/clients/{uuid}/client-secret"), None).await;
+    assert_eq!(secret.status, StatusCode::OK, "{}", secret.text);
+    assert!(secret.json()["value"].as_str().is_some_and(|v| v.len() >= 32), "a secret value");
+
+    // :1181 a field changed by hand is put back, then nothing drifts.
+    let mut changed = held.clone();
+    changed["redirectUris"] = json!(["https://evil.example/*"]);
+    let put = admin(app, &api, Method::PUT, &format!("/clients/{uuid}"), Some(changed)).await;
+    assert_eq!(put.status, StatusCode::NO_CONTENT, "{}", put.text);
+    let held = find_client(app, &api, "app-bikes").await.unwrap();
+    assert_eq!(drift(&want, &held), ["redirectUris: Some(Array [String(\"https://evil.example/*\")]) != [\"https://bikes.apps.jc.localhost/*\"]"]);
+    let put = admin(app, &api, Method::PUT, &format!("/clients/{uuid}"), Some(want.clone())).await;
+    assert_eq!(put.status, StatusCode::NO_CONTENT, "{}", put.text);
+    assert_eq!(drift(&want, &find_client(app, &api, "app-bikes").await.unwrap()), Vec::<String>::new());
+
+    // :1067 the managed app clients, by a clientId search; :1107 one no App names is removed.
+    let listed = admin(app, &api, Method::GET, "/clients?search=true&clientId=app-&max=1000", None).await;
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
+    let listed = listed.json();
+    let ids: Vec<&str> = listed.as_array().unwrap().iter().map(|c| c["clientId"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["app-bikes"]);
+    let gone = admin(app, &api, Method::DELETE, &format!("/clients/{uuid}"), None).await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
+    assert!(find_client(app, &api, "app-bikes").await.is_none());
+}
