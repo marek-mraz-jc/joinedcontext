@@ -57,6 +57,20 @@ pub async fn open_kaisatsu_store(
     }
 }
 
+/// Applies the realm files of `dir` (one realm, merged in file-name order). A directory without
+/// realm files is nothing to apply, not an error: a first start mounts an empty import dir.
+async fn apply_import_dir(store: &Arc<dyn Store>, dir: &std::path::Path) -> Result<(), StartError> {
+    let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
+    let files = load_realm_files_from_path(dir).map_err(|e| err(&e))?;
+    if files.is_empty() {
+        return Ok(());
+    }
+    apply_realm_files(store, &files, &ApplyOptions::default())
+        .await
+        .map(|_| ())
+        .map_err(|e| err(&e))
+}
+
 /// Applies the realm the Portal signs in through (first-start setup), when the Portal runs beside
 /// kaisatsu. Apply mode `no-delete`: a restart updates what changed and removes nothing an
 /// operator added. Secrets reach the importer as `$(env:...)` values from memory.
@@ -105,10 +119,7 @@ pub async fn build(
     let kek = Kek::from_file(kek_file).map_err(|e| err(&e))?;
     let store = open_kaisatsu_store(cfg, kek.clone()).await?;
     if let Some(dir) = &cfg.import_dir {
-        let files = load_realm_files_from_path(dir).map_err(|e| err(&e))?;
-        apply_realm_files(&store, &files, &ApplyOptions::default())
-            .await
-            .map_err(|e| err(&e))?;
+        apply_import_dir(&store, dir).await?;
     }
     apply_portal_realm(&store, ctx).await?;
     let state = KaisatsuState::new(
@@ -124,6 +135,23 @@ pub async fn build(
 mod tests {
     use super::*;
     use crate::config::{Cli, Config};
+
+    /// An empty import dir (first start) applies nothing; a realm file in it is applied.
+    #[tokio::test]
+    async fn an_empty_import_dir_applies_nothing_and_a_realm_file_is_applied() {
+        let dir = tempfile::tempdir().unwrap();
+        let kek = Kek::from_raw_bytes(&[7u8; 32]).unwrap();
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek));
+        apply_import_dir(&store, dir.path()).await.unwrap();
+        assert!(store.list_realms().await.unwrap().is_empty());
+        std::fs::write(
+            dir.path().join("realm.json"),
+            r#"{"realm": "rehearsal", "enabled": true}"#,
+        )
+        .unwrap();
+        apply_import_dir(&store, dir.path()).await.unwrap();
+        assert!(store.get_realm("rehearsal").await.unwrap().is_some());
+    }
 
     #[tokio::test]
     async fn k16_config_parses_database_url_file_refuses_unknown_fields_and_refuses_inline_password()
