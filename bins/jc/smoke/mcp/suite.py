@@ -94,6 +94,9 @@ class Expect:
         for name in self.projects:
             if self.projects[name] is None:
                 self.projects[name] = self.installation
+        # A project is in the rehearsal when its repository is in the export (a slice holds a few).
+        held = {d.name for d in files.glob("*/*") if d.is_dir()}
+        self.projects = {p: o for p, o in self.projects.items() if p in held}
 
     def tenant_types(self, e: ex.Endpoint) -> dict:
         return self.index["tenants"].get(e.tenant, {})
