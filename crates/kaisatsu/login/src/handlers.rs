@@ -353,10 +353,16 @@ async fn render_state_page(
                         }
                     };
                     enrol_secret = Some(secret.clone());
+                    let grouped = secret
+                        .as_bytes()
+                        .chunks(4)
+                        .map(|c| String::from_utf8_lossy(c))
+                        .collect::<Vec<_>>()
+                        .join(" ");
                     bundle.format(
                         "otpEnrolInstruction",
                         &[
-                            &secret,
+                            &grouped,
                             &realm.otp_policy_algorithm,
                             &realm.otp_policy_digits.to_string(),
                             &realm.otp_policy_period.to_string(),
@@ -604,6 +610,25 @@ async fn render_state_page(
             ),
         };
 
+    // On the authenticator and password pages the error belongs to the field it is about, as
+    // Keycloak's templates show it; other pages keep the banner.
+    let mut fields = fields;
+    let mut alert_message = alert_message;
+    let error_field = match page_id.as_str() {
+        "config-totp" => Some("otp"),
+        "update-password" if alert_message == bundle.get("notMatchPasswordMessage") => {
+            Some("password_confirm")
+        }
+        "update-password" => Some("new_password"),
+        _ => None,
+    };
+    if let Some(field) = fields
+        .iter_mut()
+        .find(|f| !alert_message.is_empty() && Some(f.name.as_str()) == error_field)
+    {
+        field.error = alert_message.to_owned();
+        alert_message = "";
+    }
     let qr_svg = match (&enrol_secret, login_state) {
         (Some(secret), LoginState::EnrolTotp { user_id, .. }) => {
             let account = state
@@ -617,7 +642,11 @@ async fn render_state_page(
                 &org_display,
                 &account,
                 secret,
-                bundle.get("otpScanHint"),
+                &format!(
+                    "{} {}",
+                    bundle.get("otpScanHint"),
+                    bundle.get("otpAppsHint")
+                ),
             )
         }
         _ => String::new(),
@@ -696,6 +725,18 @@ fn totp_qr_svg(
 
 /// The label a person gives a new authenticator: trimmed, at most 64 characters, control
 /// characters dropped; "Authenticator" when left empty.
+/// The User-Agent a new SSO session keeps: control characters dropped, at most 256 characters.
+fn user_agent_of(headers: &HeaderMap) -> String {
+    headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(256)
+        .collect()
+}
+
 fn device_label(raw: Option<&String>) -> String {
     let label: String = raw
         .map(|s| s.trim())
@@ -1273,7 +1314,7 @@ async fn authenticate_page_post(
                     &auth_session,
                     &current_state,
                     &headers,
-                    bundle.get("invalidUserMessage"),
+                    bundle.get("invalidTotpMessage"),
                 )
                 .await;
             }
@@ -1877,6 +1918,7 @@ async fn advance_or_render(
             user_id: user.id.clone(),
             username: user.username.clone(),
             ip_address: client_ip.for_audit(),
+            user_agent: user_agent_of(headers),
             start: now.timestamp_millis(),
             last_access: now.timestamp_millis(),
             auth_time: now.timestamp(),

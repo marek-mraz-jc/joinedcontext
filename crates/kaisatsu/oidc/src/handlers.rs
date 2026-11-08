@@ -2525,6 +2525,7 @@ async fn handle_password_grant(
         user_id: user.id.clone(),
         username: user.username.clone(),
         ip_address: client_ip.for_audit(),
+        user_agent: String::new(),
         start: now.timestamp_millis(),
         last_access: now.timestamp_millis(),
         auth_time: now.timestamp(),

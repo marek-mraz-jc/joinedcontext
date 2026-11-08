@@ -563,7 +563,8 @@ async fn browser_totp_enrolment_uses_a_fresh_secret_shown_on_the_page() {
     let at = html.find(marker).expect("enrolment page shows the key") + marker.len();
     let secret: String = html[at..]
         .chars()
-        .take_while(|c| c.is_ascii_uppercase() || ('2'..='7').contains(c))
+        .take_while(|c| c.is_ascii_uppercase() || ('2'..='7').contains(c) || *c == ' ')
+        .filter(|c| *c != ' ')
         .collect();
     assert_eq!(secret.len(), 32);
 

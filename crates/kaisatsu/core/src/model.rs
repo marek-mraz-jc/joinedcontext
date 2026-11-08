@@ -938,6 +938,9 @@ pub struct SsoSession {
     pub user_id: String,
     pub username: String,
     pub ip_address: String,
+    /// The browser's User-Agent at sign-in, capped, for the account console's device list.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub user_agent: String,
     pub start: i64,
     pub last_access: i64,
     pub auth_time: i64,

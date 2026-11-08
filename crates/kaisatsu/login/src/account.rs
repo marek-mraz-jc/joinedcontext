@@ -753,9 +753,13 @@ async fn sessions_get(
                 clients.push(json!({ "clientId": client_id, "clientName": name }));
             }
             clients.sort_by(|a, b| a["clientId"].as_str().cmp(&b["clientId"].as_str()));
+            let (browser, os, mobile) = device_of(&s.user_agent);
             out.push(json!({
                 "id": s.id,
                 "ipAddress": s.ip_address,
+                "browser": browser,
+                "os": os,
+                "mobile": mobile,
                 "started": s.start / 1000,
                 "lastAccess": s.last_access / 1000,
                 "expires": s.max_expires_at.timestamp(),
@@ -951,4 +955,54 @@ async fn render_console(
         html,
     )
         .into_response())
+}
+
+/// Browser, operating system and a mobile flag read from a User-Agent, as Keycloak's
+/// DeviceRepresentation names them; an unknown agent answers "Other".
+fn device_of(ua: &str) -> (&'static str, &'static str, bool) {
+    let browser = [
+        ("Edg/", "Edge"),
+        ("OPR/", "Opera"),
+        ("Firefox/", "Firefox"),
+        ("Chrome/", "Chrome"),
+        ("Safari/", "Safari"),
+    ]
+    .iter()
+    .find(|(needle, _)| ua.contains(needle))
+    .map_or("Other", |(_, name)| name);
+    let os = [
+        ("Android", "Android"),
+        ("iPhone", "iOS"),
+        ("iPad", "iOS"),
+        ("Windows", "Windows"),
+        ("Mac OS X", "macOS"),
+        ("CrOS", "ChromeOS"),
+        ("Linux", "Linux"),
+    ]
+    .iter()
+    .find(|(needle, _)| ua.contains(needle))
+    .map_or("Other", |(_, name)| name);
+    (browser, os, ua.contains("Mobile"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::device_of;
+
+    #[test]
+    fn a_user_agent_names_browser_and_system() {
+        assert_eq!(
+            device_of(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/140.0 Safari/537.36"
+            ),
+            ("Chrome", "Linux", false)
+        );
+        assert_eq!(
+            device_of(
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+            ),
+            ("Safari", "iOS", true)
+        );
+        assert_eq!(device_of(""), ("Other", "Other", false));
+    }
 }

@@ -86,6 +86,7 @@ fn sso(id: &str, user: &str, expires_in: Duration) -> SsoSession {
         user_id: user.into(),
         username: user.into(),
         ip_address: "192.0.2.1".into(),
+        user_agent: String::new(),
         start: now.timestamp(),
         last_access: now.timestamp(),
         auth_time: now.timestamp(),

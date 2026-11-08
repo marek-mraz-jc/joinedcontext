@@ -842,6 +842,9 @@ async fn sessions_sign_out_one_others_or_all_and_never_another_persons() {
     assert_eq!(current.len(), 1);
     assert_eq!(current[0]["id"], a.sid.as_str());
     assert_eq!(current[0]["clients"][0]["clientId"], "account-console");
+    // The device is named from the User-Agent the browser signed in with.
+    assert_eq!(current[0]["browser"], "Firefox");
+    assert_eq!(current[0]["os"], "Linux");
 
     // Another person's session id: 404, it stays alive.
     let (st, _) = rest(
@@ -970,7 +973,12 @@ async fn update_password_is_an_application_initiated_action_with_reauthenticatio
         )
         .await;
     assert_eq!(page_id(&html), "update-password");
-    assert!(html.contains("role=\"alert\""));
+    // The mismatch is shown on the confirmation field, not as a banner.
+    assert!(
+        html.contains("id=\"input-error-password_confirm\""),
+        "{html}"
+    );
+    assert!(!html.contains("input-error-new_password"));
 
     let (st, h, html) = page
         .post(
@@ -1077,6 +1085,12 @@ async fn configure_totp_adds_a_named_authenticator_and_reports_success() {
             r#"{"digits":6,"period":30,"algorithm":"HmacSHA256","secretEncoding":"BASE32"}"#.into(),
         ..Default::default()
     };
+    // A wrong code names the code field, not the password.
+    let (_, _, html) = page.post(&app, &[("otp", "000000")]).await;
+    assert_eq!(page_id(&html), "config-totp");
+    assert!(html.contains("id=\"input-error-otp\""), "{html}");
+    assert!(html.contains("Invalid authenticator code"));
+    assert!(!html.contains("e-mail or password"));
     let code =
         generate_totp_code_for_credential(&cred, chrono::Utc::now().timestamp() as u64).unwrap();
     let (st, h, html) = page

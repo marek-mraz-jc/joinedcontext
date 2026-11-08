@@ -64,6 +64,7 @@ input[readonly] { background: #f0f0f0; border-color: #d2d2d2; }
 input[aria-invalid=true] { border-color: #c9190b; border-bottom-width: 2px; }
 .hint { font-size: 0.875rem; color: #3c3f42; margin-top: 0.25rem; }
 .ferr { font-size: 0.875rem; color: #a30000; margin-top: 0.25rem; }
+.req { color: #a30000; }
 .btn {
     font: inherit; padding: 0.375rem 1rem; min-height: 2.25rem; border-radius: 3px; cursor: pointer;
     border: 1px solid #0066cc; background: #fff; color: #0066cc; text-decoration: none; display: inline-flex; align-items: center;
@@ -155,7 +156,7 @@ function signIn(extra) {
     var verifier = randomString(), state = randomString();
     crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)).then(function (h) {
         var back = location.pathname.indexOf(cfg.base) === 0 ? location.pathname : cfg.base + "/";
-        sessionStorage.setItem("kc-pkce", JSON.stringify({ verifier: verifier, state: state, path: back }));
+        sessionStorage.setItem("kc-pkce", JSON.stringify({ verifier: verifier, state: state, path: back, action: (extra && extra.kc_action) || null }));
         var q = new URLSearchParams({
             client_id: cfg.clientId, redirect_uri: redirectUri(), response_type: "code", scope: "openid",
             state: state, code_challenge: b64url(new Uint8Array(h)), code_challenge_method: "S256", ui_locales: cfg.locale
@@ -172,7 +173,7 @@ function boot() {
     try { saved = JSON.parse(sessionStorage.getItem("kc-pkce") || "null"); } catch (e) { saved = null; }
     sessionStorage.removeItem("kc-pkce");
     var status = q.get("kc_action_status");
-    if (status) { sessionStorage.setItem("kc-flash", status); }
+    if (status) { sessionStorage.setItem("kc-flash", status === "success" && saved && saved.action ? status + ":" + saved.action : status); }
     if (!saved || q.get("state") !== saved.state || !q.has("code")) {
         if (saved && saved.path) { history.replaceState(null, "", saved.path); }
         signIn(); return;
@@ -259,11 +260,14 @@ function route() {
     p.render(page, flash);
 }
 
-function alertBox(kind, key) {
-    return el("div", { "class": "alert " + kind, role: kind === "err" ? "alert" : "status", text: t(key) });
+function alertBox(kind, key) { return alertText(kind, t(key)); }
+function alertText(kind, text) {
+    return el("div", { "class": "alert " + kind, role: kind === "err" ? "alert" : "status", text: text });
 }
 function flashBox(flash) {
-    if (flash === "success") { return alertBox("ok", "accountActionSuccess"); }
+    if (flash === "success:UPDATE_PASSWORD") { return alertBox("ok", "accountPasswordUpdated"); }
+    if (flash === "success:CONFIGURE_TOTP") { return alertBox("ok", "accountOtpAdded"); }
+    if (flash && flash.indexOf("success") === 0) { return alertBox("ok", "accountActionSuccess"); }
     if (flash === "cancelled") { return alertBox("info", "accountActionCancelled"); }
     if (flash === "error") { return alertBox("err", "accountError"); }
     return null;
@@ -282,17 +286,17 @@ function personalInfo(page, flash) {
     var status = el("div", { "aria-live": "polite" });
     var fields = [
         { name: "username", type: "text", label: "accountUsername", ro: true, auto: "username" },
-        { name: "email", type: "email", label: "accountEmail", hint: "accountEmailHint", auto: "email" },
+        { name: "email", type: "email", label: "accountEmail", hint: "accountEmailHint", auto: "email", req: true },
         { name: "firstName", type: "text", label: "accountFirstName", auto: "given-name" },
         { name: "lastName", type: "text", label: "accountLastName", auto: "family-name" }
     ];
     var inputs = {};
     fields.forEach(function (f) {
-        var input = el("input", { id: f.name, name: f.name, type: f.type, value: me[f.name] || "", readonly: !!f.ro, autocomplete: f.auto, "aria-describedby": f.name + "-help" });
+        var input = el("input", { id: f.name, name: f.name, type: f.type, value: me[f.name] || "", readonly: !!f.ro, required: !!f.req, "aria-required": f.req ? "true" : null, autocomplete: f.auto, "aria-describedby": f.name + "-help" });
         inputs[f.name] = input;
         var help = el("div", { id: f.name + "-help" }, [f.hint ? el("div", { "class": "hint", text: t(f.hint) }) : null]);
         if (f.name === "email" && me.email && !me.emailVerified) { help.appendChild(el("div", { "class": "hint", text: t("accountEmailUnverified") })); }
-        form.appendChild(el("div", { "class": "field" }, [el("label", { "for": f.name, text: t(f.label) }), input, help]));
+        form.appendChild(el("div", { "class": "field" }, [el("label", { "for": f.name }, [t(f.label), f.req ? el("span", { "class": "req", "aria-hidden": "true", text: " *" }) : null]), input, help]));
     });
     var save = el("button", { type: "submit", "class": "btn primary", text: t("accountSave") });
     var reset = el("button", { type: "button", "class": "btn link", text: t("doCancel"), on: { click: function () { route(); } } });
@@ -304,7 +308,7 @@ function personalInfo(page, flash) {
         save.disabled = true;
         api("POST", "/", { username: me.username, email: inputs.email.value, firstName: inputs.firstName.value, lastName: inputs.lastName.value })
             .then(function (r) {
-                if (r.ok) { return r.json().then(function (info) { me = info; personalInfo(page, null); page.insertBefore(alertBox("ok", "accountSaved"), page.children[2]); }); }
+                if (r.ok) { return r.json().then(function (info) { me = info; personalInfo(page, null); page.insertBefore(alertBox("ok", "accountProfileSaved"), page.children[2]); }); }
                 return errorKey(r).then(function (e) {
                     var input = inputs[e.field];
                     if (input) {
@@ -312,8 +316,9 @@ function personalInfo(page, flash) {
                         var help = document.getElementById(e.field + "-help");
                         help.insertBefore(el("div", { id: e.field + "-err", "class": "ferr", text: t(e.errorMessage) }), help.firstChild);
                         input.focus();
+                    } else {
+                        status.replaceChildren(alertBox("err", e.errorMessage));
                     }
-                    status.replaceChildren(alertBox("err", e.errorMessage));
                 });
             }).catch(function () { status.replaceChildren(alertBox("err", "accountError")); })
             .then(function () { save.disabled = false; });
@@ -402,7 +407,7 @@ function signingIn(page, flash, notice) {
 function deviceActivity(page, flash, notice) {
     api("GET", "/sessions").then(function (r) { if (!r.ok) { throw new Error(); } return r.json(); }).then(function (sessions) {
         var status = el("div", { "aria-live": "polite" });
-        if (notice) { status.appendChild(alertBox("ok", notice)); }
+        if (notice) { status.appendChild(alertText("ok", notice)); }
         sessions.sort(function (a, b) { return (b.current ? 1 : 0) - (a.current ? 1 : 0) || b.lastAccess - a.lastAccess; });
         var all = el("button", { type: "button", "class": "btn", text: t("accountSignOutAll"), on: { click: function () {
             all.replaceWith(el("span", { "class": "row-actions" }, [
@@ -416,18 +421,20 @@ function deviceActivity(page, flash, notice) {
         var box = el("div", { "class": "sessions" });
         sessions.forEach(function (s) {
             var apps = s.clients.map(function (c) { return c.clientName; }).join(", ");
-            var title = el("h3", {}, [s.ipAddress || "-", s.current ? el("span", { "class": "badge", text: t("accountCurrentSession") }) : null]);
+            var device = fmt("accountDeviceOn", [s.browser === "Other" ? t("accountOtherBrowser") : s.browser, s.os === "Other" ? t("accountOtherSystem") : s.os]);
+            var title = el("h3", {}, [device, s.current ? el("span", { "class": "badge", text: t("accountCurrentSession") }) : null]);
             var top = el("div", { "class": "session-top" }, [title]);
             if (!s.current) {
-                top.appendChild(el("button", { type: "button", "class": "btn", text: t("accountSignOut"), "aria-label": t("accountSignOut") + ": " + (s.ipAddress || "") + " " + when(s.started * 1000), on: { click: function () {
+                top.appendChild(el("button", { type: "button", "class": "btn", text: t("accountSignOut"), "aria-label": t("accountSignOut") + ": " + device + ", " + (s.ipAddress || ""), on: { click: function () {
                     api("DELETE", "/sessions/" + encodeURIComponent(s.id)).then(function (r) {
-                        if (r.ok) { deviceActivity(page, null, "accountSignedOut"); } else { status.replaceChildren(alertBox("err", "accountError")); }
+                        if (r.ok) { deviceActivity(page, null, fmt("accountSignedOutDevice", [device, s.ipAddress || "-"])); } else { status.replaceChildren(alertBox("err", "accountError")); }
                     }).catch(fatal);
                 } } }));
             }
-            box.appendChild(el("section", { "class": "session", "aria-label": s.ipAddress || "" }, [
+            box.appendChild(el("section", { "class": "session", "aria-label": device }, [
                 top,
                 el("dl", { "class": "facts" }, [
+                    el("div", {}, [el("dt", { text: t("accountIpAddress") }), el("dd", { text: s.ipAddress || "-" })]),
                     el("div", {}, [el("dt", { text: t("accountStarted") }), el("dd", { text: when(s.started * 1000) })]),
                     el("div", {}, [el("dt", { text: t("accountLastAccess") }), el("dd", { text: when(s.lastAccess * 1000) })]),
                     el("div", {}, [el("dt", { text: t("accountExpires") }), el("dd", { text: when(s.expires * 1000) })]),

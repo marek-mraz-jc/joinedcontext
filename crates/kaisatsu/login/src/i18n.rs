@@ -144,6 +144,16 @@ accountEmailInvalid=Enter a valid e-mail address, for example name@organization.
 accountEmailInUse=Another account already uses this e-mail address.
 accountAttributeReadOnly=This attribute is managed by your administrator and cannot be changed here.
 otpScanHint=Scan this code with your authenticator app, or type the key below.
+invalidTotpMessage=Invalid authenticator code. Type the code your app shows now.
+otpAppsHint=Install an authenticator app on your phone, for example FreeOTP, Google Authenticator or Microsoft Authenticator.
+accountProfileSaved=Your personal info is saved.
+accountPasswordUpdated=Your password is updated.
+accountOtpAdded=The authenticator application is set up.
+accountDeviceOn={0} on {1}
+accountOtherBrowser=Unknown browser
+accountOtherSystem=unknown system
+accountIpAddress=IP address
+accountSignedOutDevice={0} ({1}) is signed out.
 "#;
 
 const SK_PROPERTIES: &str = r#"
@@ -278,6 +288,16 @@ accountEmailInvalid=Zadajte platnú e-mailovú adresu, napríklad meno@organizac
 accountEmailInUse=Túto e-mailovú adresu už používa iný účet.
 accountAttributeReadOnly=Tento atribút spravuje váš správca a tu ho nemožno zmeniť.
 otpScanHint=Naskenujte tento kód overovacou aplikáciou alebo zadajte kľúč uvedený nižšie.
+invalidTotpMessage=Neplatný kód overovacej aplikácie. Zadajte kód, ktorý aplikácia zobrazuje teraz.
+otpAppsHint=Nainštalujte si do telefónu overovaciu aplikáciu, napríklad FreeOTP, Google Authenticator alebo Microsoft Authenticator.
+accountProfileSaved=Osobné údaje sú uložené.
+accountPasswordUpdated=Heslo je zmenené.
+accountOtpAdded=Overovacia aplikácia je nastavená.
+accountDeviceOn={0} v systéme {1}
+accountOtherBrowser=Neznámy prehliadač
+accountOtherSystem=neznámom
+accountIpAddress=IP adresa
+accountSignedOutDevice={0} ({1}) je odhlásené.
 "#;
 
 const CS_PROPERTIES: &str = r#"
@@ -412,6 +432,16 @@ accountEmailInvalid=Zadejte platnou e-mailovou adresu, například jmeno@organiz
 accountEmailInUse=Tuto e-mailovou adresu už používá jiný účet.
 accountAttributeReadOnly=Tento atribut spravuje váš správce a zde jej nelze změnit.
 otpScanHint=Naskenujte tento kód ověřovací aplikací nebo zadejte klíč uvedený níže.
+invalidTotpMessage=Neplatný kód z ověřovací aplikace. Zadejte kód, který aplikace zobrazuje teď.
+otpAppsHint=Nainstalujte si do telefonu ověřovací aplikaci, například FreeOTP, Google Authenticator nebo Microsoft Authenticator.
+accountProfileSaved=Osobní údaje jsou uloženy.
+accountPasswordUpdated=Heslo je změněno.
+accountOtpAdded=Ověřovací aplikace je nastavena.
+accountDeviceOn={0} v systému {1}
+accountOtherBrowser=Neznámý prohlížeč
+accountOtherSystem=neznámém
+accountIpAddress=IP adresa
+accountSignedOutDevice={0} ({1}) je odhlášeno.
 "#;
 
 const DE_PROPERTIES: &str = r#"
@@ -546,6 +576,16 @@ accountEmailInvalid=Geben Sie eine gültige E-Mail-Adresse ein, zum Beispiel nam
 accountEmailInUse=Ein anderes Konto verwendet diese E-Mail-Adresse bereits.
 accountAttributeReadOnly=Dieses Attribut verwaltet Ihr Administrator; es kann hier nicht geändert werden.
 otpScanHint=Scannen Sie diesen Code mit Ihrer Authenticator-App oder geben Sie den Schlüssel unten ein.
+invalidTotpMessage=Ungültiger Authenticator-Code. Geben Sie den Code ein, den Ihre App jetzt anzeigt.
+otpAppsHint=Installieren Sie eine Authenticator-App auf Ihrem Telefon, zum Beispiel FreeOTP, Google Authenticator oder Microsoft Authenticator.
+accountProfileSaved=Ihre persönlichen Daten sind gespeichert.
+accountPasswordUpdated=Ihr Passwort ist geändert.
+accountOtpAdded=Die Authenticator-App ist eingerichtet.
+accountDeviceOn={0} unter {1}
+accountOtherBrowser=Unbekannter Browser
+accountOtherSystem=unbekanntem System
+accountIpAddress=IP-Adresse
+accountSignedOutDevice={0} ({1}) ist abgemeldet.
 "#;
 
 const HU_PROPERTIES: &str = r#"
@@ -680,6 +720,16 @@ accountEmailInvalid=Adjon meg érvényes e-mail-címet, például nev@szervezet.
 accountEmailInUse=Ezt az e-mail-címet már egy másik fiók használja.
 accountAttributeReadOnly=Ezt az attribútumot a rendszergazda kezeli, itt nem módosítható.
 otpScanHint=Olvassa be ezt a kódot a hitelesítő alkalmazással, vagy írja be az alábbi kulcsot.
+invalidTotpMessage=Érvénytelen hitelesítő kód. Írja be a kódot, amelyet az alkalmazás most mutat.
+otpAppsHint=Telepítsen hitelesítő alkalmazást a telefonjára, például FreeOTP, Google Authenticator vagy Microsoft Authenticator.
+accountProfileSaved=A személyes adatai mentve.
+accountPasswordUpdated=A jelszava megváltozott.
+accountOtpAdded=A hitelesítő alkalmazás be van állítva.
+accountDeviceOn={0}, {1}
+accountOtherBrowser=Ismeretlen böngésző
+accountOtherSystem=ismeretlen rendszer
+accountIpAddress=IP-cím
+accountSignedOutDevice={0} ({1}) kijelentkeztetve.
 "#;
 
 fn parse_properties(raw: &'static str) -> BTreeMap<&'static str, &'static str> {

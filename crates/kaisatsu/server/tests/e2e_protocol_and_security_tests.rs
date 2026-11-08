@@ -613,6 +613,7 @@ async fn e2e_w9_mount_under_slug_and_dedicated_host_and_w12_attack_regression_su
             user_id: "de300000-0000-4000-8000-00000000000f".into(),
             username: "demo.orgmember@hel.fi".into(),
             ip_address: "127.0.0.1".into(),
+            user_agent: String::new(),
             start: 1000,
             last_access: 1000,
             auth_time: 1000,
