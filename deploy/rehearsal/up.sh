@@ -4,8 +4,7 @@
 #   deploy/rehearsal/up.sh <env> <public port> <postgres port>
 #
 # Every secret is a 0600 file under $REHEARSAL_HOME/<env>/secrets (generated once, never printed).
-# kaisatsu, Antares, the Portal, shako, daiya and dataroom keep their state in PostgreSQL; ekiben
-# has no Postgres path in jc and starts empty.
+# kaisatsu, Antares, the Portal, shako, daiya, dataroom and ekiben keep their state in PostgreSQL.
 # The 24 h rule (owner 2026-11-08): `rehearsal.py retain` deletes Antares temporal instances older
 # than 24 h at start and hourly; Antares' own retention (whole days, whole weekly partitions) runs
 # beside it with ANTARES_TEMPORAL_RETENTION_DAYS=1. Current entity state is never deleted.
@@ -20,7 +19,8 @@ jc_bin=${JC_BIN:-${CARGO_TARGET_DIR:-$here/../../target}/debug/jc}
 export_dir=${REHEARSAL_EXPORT:-$home/export}
 bind=${REHEARSAL_BIND:-127.0.0.1}
 
-mkdir -p "$home"/secrets "$home"/state "$home"/import/realms "$home"/repos "$home"/files
+mkdir -p "$home"/secrets "$home"/state/realms "$home"/import "$home"/repos "$home"/files
+chmod 700 "$home/state" "$home/state/realms"
 chmod 700 "$home" "$home"/secrets "$home"/state
 
 secret() { # secret <name>: a random secret file, made once
@@ -66,7 +66,7 @@ database portal portal
 database antares antares
 sql -d antares -c "CREATE EXTENSION IF NOT EXISTS postgis"
 
-# shako, daiya and dataroom: each migration runs as <m>_rh_migrate (owner of its database, member of
+# shako, daiya, dataroom and ekiben: each migration runs as <m>_rh_migrate (owner of its database, member of
 # <m>_migrate) and grants its tables to <m>_app, which the login role <m>_rh holds (NOBYPASSRLS).
 module_db() { # module_db <module>
   local m=$1
@@ -78,33 +78,57 @@ SQL
   role "${m}_rh_migrate" "$(secret "${m}-migrate-pw")" >/dev/null
   sql -c "GRANT ${m}_app TO ${m}_rh" -c "GRANT ${m}_migrate TO ${m}_rh_migrate" >/dev/null
   database "$m" "${m}_rh_migrate" >/dev/null
-  printf 'postgres://%s_rh@127.0.0.1:%s/%s\n' "$m" "$pg_port" "$m" > "$home/secrets/$m-db-url"
-  printf 'postgres://%s_rh_migrate@127.0.0.1:%s/%s\n' "$m" "$pg_port" "$m" > "$home/secrets/$m-db-migrate-url"
   # A [dataroom] section must name its organization and catalogue: jc's defaults.
   [ "$m" = dataroom ] && printf '\n[dataroom]\norg_id = "00000000-0000-7000-8000-000000000001"\ncatalogue_id = "00000000-0000-7000-8000-000000000010"\n'
-  printf '\n[%s.database]\nurl_file = "%s"\npassword_file = "%s"\nmigrate_url_file = "%s"\nmigrate_password_file = "%s"\n' \
-    "$m" "$home/secrets/$m-db-url" "$(secret "${m}-pw")" "$home/secrets/$m-db-migrate-url" "$(secret "${m}-migrate-pw")"
+  # jc reads [<m>.database] (bins/jc/src/pg.rs): the URLs name role, host and database and carry
+  # no password (jc refuses one); each password stays in its 0600 file.
+  printf '\n[%s.database]\nurl = "postgres://%s_rh@127.0.0.1:%s/%s"\npassword_file = "%s"\n' \
+    "$m" "$m" "$pg_port" "$m" "$(secret "${m}-pw")"
+  printf 'migrate_url = "postgres://%s_rh_migrate@127.0.0.1:%s/%s"\nmigrate_password_file = "%s"\n' \
+    "$m" "$pg_port" "$m" "$(secret "${m}-migrate-pw")"
 }
-db_config=$(for m in shako daiya dataroom; do module_db "$m"; done)
+db_config=$(for m in shako daiya dataroom ekiben; do module_db "$m"; done)
+# Antares migrates as its own request role and takes no migrate_url; the section switches it to
+# its Postgres store (ANTARES_STORE).
+db_config+=$(printf '\n[antares.database]\nurl = "postgres://antares@127.0.0.1:%s/antares"\npassword_file = "%s"\n' \
+  "$pg_port" "$(secret antares-pw)")
 
 kaisatsu_bin=$(dirname "$jc_bin")/kaisatsu
 "$kaisatsu_bin" migrate --database-url "postgres://kaisatsu_migrate@127.0.0.1:$pg_port/kaisatsu" \
   --db-password-file "$(secret kaisatsu-migrate-pw)"
 printf 'postgres://kaisatsu_app@127.0.0.1:%s/kaisatsu\n' "$pg_port" > "$home/secrets/kaisatsu-db-url"
 
-# The realm config of the export (no users), applied at start next to jc's own Portal realm.
+# The realm config of the export (no users), applied at start next to jc's own Portal realm. It
+# sits in the 0700 state dir: on dev it also holds people (REHEARSAL_PEOPLE, default
+# <rehearsal home>/people/<env>, the deployer's users-<realm>.jsonl; never on prod), without any
+# credential. Only the personas of REHEARSAL_DEMO_USERS (demo-users.yaml) keep e-mail and names.
+people=${REHEARSAL_PEOPLE:-$(dirname "$home")/people/$env_name}
+demo_users=${REHEARSAL_DEMO_USERS:-$(dirname "$home")/demo-users.yaml}
+people_args=()
+[ -d "$people" ] && people_args+=(--people "$people")
+[ -f "$demo_users" ] && people_args+=(--demo-users "$demo_users")
 if [ -d "$export_dir/keycloak" ]; then
-  python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/import/realms" \
-    --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu"
+  python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/state/realms" \
+    --kaisatsu-bin "$(dirname "$jc_bin")/kaisatsu" "${people_args[@]}"
   # Each secret the realm config names gets a fresh value of the rehearsal (never the old one).
   while read -r name; do
     [ -n "$name" ] && export "$name=$(cat "$(secret "realm-$name")")"
-  done < "$home/import/realm-vars.txt"
+  done < "$home/state/realm-vars.txt"
 fi
 
 url() { printf 'postgres://%s:%s@127.0.0.1:%s/%s' "$1" "$(cat "$(secret "$1-pw")")" "$pg_port" "$2"; }
 JC_PORTAL_DATABASE_URL=$(url portal portal); export JC_PORTAL_DATABASE_URL
-ANTARES_DATABASE_URL=$(url antares antares); export ANTARES_STORE=postgres ANTARES_DATABASE_URL
+# The broker serves on jc's default policy (joinedcontext: an anonymous write answers 401). Only
+# import.sh asks for allow-all, for the import's subject-less writes, and only on a loopback bind;
+# it restarts on the default policy afterwards and checks it.
+if [ "${REHEARSAL_IMPORT_POLICY:-}" = allow-all ]; then
+  case $bind in
+    127.*|::1) export ANTARES_POLICY=allow-all ;;
+    *) echo "refusing allow-all on $bind: the import runs on a loopback-only jc" >&2; exit 1 ;;
+  esac
+else
+  unset ANTARES_POLICY
+fi
 export ANTARES_TEMPORAL_RETENTION_DAYS=1 ANTARES_SWEEP_SECS=${REHEARSAL_SWEEP_SECS:-3600}
 export ANTARES_HISTORY_BACKFILL=on
 # jc is one process: the local notification bus cannot double-fire.
@@ -126,29 +150,34 @@ CKAN_API_TOKEN=$(cat "$home/state/catalogue-token"); export CKAN_API_TOKEN
 export JC_INTERNAL_BIND=127.0.0.1:$((pg_port + 100))
 export RUST_LOG=${RUST_LOG:-info,sqlx=warn}
 # The deployment's configuration repository (defaults/environment/global.yaml configRepo).
-export JC_GITEA_OWNER=${REHEARSAL_CONFIG_OWNER:-joinedcontext} JC_GITEA_REPO=${REHEARSAL_CONFIG_REPO:-configuration}
-export JC_SHAKO_OWNER=$JC_GITEA_OWNER JC_SHAKO_REPO=$JC_GITEA_REPO  # the gateway reads these (setup::forge_repo)
+# jc since 3a64bee5 reads JC_SHAKO_*, earlier builds JC_GITEA_*: both, so either binary starts on it.
+export JC_SHAKO_OWNER=${REHEARSAL_CONFIG_OWNER:-joinedcontext} JC_SHAKO_REPO=${REHEARSAL_CONFIG_REPO:-configuration}
+export JC_GITEA_OWNER=$JC_SHAKO_OWNER JC_GITEA_REPO=$JC_SHAKO_REPO
 
 # A jc of an earlier up.sh of this environment stops first (its memory stores go with it).
 if [ -s "$home/jc.pid" ] && kill "$(cat "$home/jc.pid")" 2>/dev/null; then
   for _ in $(seq 20); do kill -0 "$(cat "$home/jc.pid")" 2>/dev/null || break; sleep 0.5; done
 fi
+# The Grafana files' datasources as daiya provisioning on jc's own address (REHEARSAL_DASHBOARDS,
+# default $home/dashboards: a rehearsal.py dashboards dir); daiya lets only file-provisioned
+# datasources reach it.
+REHEARSAL_DASHBOARDS=${REHEARSAL_DASHBOARDS:-$home/dashboards}
+if compgen -G "$REHEARSAL_DASHBOARDS/*.datasource.*.json" >/dev/null; then
+  python3 -I "$here/rehearsal.py" provisioning --dashboards "$REHEARSAL_DASHBOARDS" --port "$port" \
+    --out "$home/daiya-provisioning"
+  db_config+=$(printf '\n[daiya]\nprovisioning_dir = "%s"\n' "$home/daiya-provisioning")
+fi
 printf '[mounts.portal]\npath_prefix = ""\n%s\n' "$db_config" > "$home/jc.toml"
 nohup "$jc_bin" --role all --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
-  --kaisatsu-import-dir "$home/import/realms" \
+  --kaisatsu-import-dir "$home/state/realms" \
   --kaisatsu-database-url-file "$home/secrets/kaisatsu-db-url" \
   --kaisatsu-db-password-file "$(secret kaisatsu-app-pw)" \
   --shako-repo-root "$home/repos" --ekiben-file-root "$home/files" \
   --admin-listen "127.0.0.1:$((pg_port+200))" --admin-token-file "$(secret metrics-token)" \
   > "$home/jc.log" 2>&1 &
 echo $! > "$home/jc.pid"
-for _ in $(seq 180); do
-  grep -q "jc listening" "$home/jc.log" && break
-  kill -0 "$(cat "$home/jc.pid")" 2>/dev/null || { tail -40 "$home/jc.log" >&2; exit 1; }
-  sleep 1
-done
-grep -q "jc listening" "$home/jc.log" || { tail -40 "$home/jc.log" >&2; exit 1; }
+"$here/wait-jc.sh" "$(cat "$home/jc.pid")" "$home/jc.log" || exit 1
 echo "$env_name: jc on http://localhost:$port (log $home/jc.log)"
 
 

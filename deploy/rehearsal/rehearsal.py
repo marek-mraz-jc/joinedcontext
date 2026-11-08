@@ -22,11 +22,11 @@ import datetime as dt
 import hashlib
 import html
 import ipaddress
-import itertools
 import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import threading
 import sys
@@ -193,6 +193,21 @@ def cmd_render(a):
     print(f"rendered {a.env} into {out}")
 
 
+def cmd_dashboards(a):
+    """The Grafana files a render's dashboards chart provisions (platform models and, per project,
+    folder, datasources and dashboard): what prod's and dev's Grafana load from files, not from
+    their database, so an export bundle holds none of them."""
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    n = 0
+    for doc in _yaml_docs(Path(a.render) / "grafana-dashboards.yaml"):
+        for key, text in (doc.get("data") or {}).items():
+            if key.endswith(".json"):
+                (out / key).write_text(text)
+                n += 1
+    print(f"{n} Grafana files into {out}")
+
+
 def _yaml_docs(path: Path):
     import yaml  # PyYAML is in the CI venv; only render/synth need it
 
@@ -340,6 +355,64 @@ def strip_people(realm: dict) -> dict:
     return out
 
 
+# A person from the deployer's users-<realm>.jsonl (supervisor G14, dev only, owner may
+# override): ids, attributes, groups and realm roles, never a credential.
+PERSON_FIELDS = ("id", "username", "email", "firstName", "lastName", "enabled", "emailVerified",
+                 "createdTimestamp", "attributes", "requiredActions", "groups", "realmRoles")
+# What only a demo or test persona keeps: dev signs people in by e-mail (registrationEmailAsUsername),
+# so for anyone else the username is a pseudonym and the e-mail and names stay out.
+PERSONA_ONLY = ("email", "firstName", "lastName", "emailVerified")
+
+
+def personas(demo_users: Path | None) -> set[str]:
+    """The demo personas of the deployment's demo-users.yaml: their names (`demo.steward`) and ids."""
+    if not demo_users:
+        return set()
+    import yaml  # the CI venv's PyYAML
+    doc = yaml.safe_load(demo_users.read_text()) or {}
+    return {str(k) for k in doc} | {str(v["id"]) for v in doc.values() if isinstance(v, dict) and v.get("id")}
+
+
+def is_persona(u: dict, known: set[str]) -> bool:
+    return str(u.get("id")) in known or str(u.get("username", "")).split("@", 1)[0] in known
+
+
+def person(u: dict, known: set[str] = frozenset()) -> dict | None:
+    """The person as kaisatsu imports it: allow-listed fields only, no credential, and the
+    required actions that make them set a password (and OTP where they had one) at first sign-in.
+    A service account is the realm file's, not a person: None."""
+    if u.get("serviceAccountClientId") or not u.get("username") or not u.get("id"):
+        return None
+    out = {k: u[k] for k in PERSON_FIELDS if k in u}
+    if not is_persona(u, known):
+        out = {k: v for k, v in out.items() if k not in PERSONA_ONLY}
+        out["username"] = f"person-{u['id']}"
+    # kaisatsu resolves $(env:...) and $(file:...) in imported text: no person's text may name one.
+    out["attributes"] = {k: [v for v in vs if "$(" not in str(v)]
+                         for k, vs in (u.get("attributes") or {}).items() if "$(" not in k}
+    actions = [a for a in out.get("requiredActions") or [] if a not in ("UPDATE_PASSWORD", "CONFIGURE_TOTP")]
+    out["requiredActions"] = actions + ["UPDATE_PASSWORD"] + (["CONFIGURE_TOTP"] if u.get("totp") else [])
+    return out
+
+
+def add_people(realm: dict, lines, known: set[str] = frozenset()) -> tuple[dict, dict]:
+    """`realm` with the people of a users file added beside its service accounts, and the counts."""
+    people = [p for p in (person(u, known) for u in lines) if p]
+    out = dict(realm)
+    out["users"] = list(realm.get("users") or []) + people
+    n_persona = sum(1 for p in people if not p["username"].startswith("person-"))
+    return out, {"people": len(people), "personas": n_persona, "pseudonymous": len(people) - n_persona,
+                 "credentials": 0}
+
+
+def write_private(path: Path, text: str) -> None:
+    """A file only this user reads (0600), whatever the umask."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.chmod(path, 0o600)
+
+
 def add_tester(realm: dict) -> dict:
     """The rehearsal's own test person, its password a secret variable up.sh fills."""
     out = dict(realm)
@@ -438,13 +511,22 @@ def kaisatsu_check(kaisatsu_bin: str, tmp: Path):
 def cmd_realms(a):
     src, dst = Path(a.export) / "keycloak", Path(a.out)
     dst.mkdir(parents=True, exist_ok=True)
+    os.chmod(dst, 0o700)  # the realm files may hold people
+    if a.people and Path(a.people).exists() and Path(a.people).stat().st_mode & 0o077:
+        raise SystemExit(f"{a.people}: people are read only from a directory no one else can read (0700)")
     taken = []
     for f in sorted(src.glob("realm-*.json")):
         realm = json.loads(f.read_text())
         name = realm.get("realm", "")
         if name in SKIPPED_REALMS:
             continue
-        clean = add_tester(strip_people(realm))
+        clean = strip_people(realm)
+        people_file = Path(a.people) / f"users-{name}.jsonl" if a.people else None
+        if people_file and people_file.exists():
+            clean, counts = add_people(clean, _jsonl(people_file), personas(Path(a.demo_users) if a.demo_users else None))
+            (dst.parent / f"realm-{name}-people.json").write_text(json.dumps(counts))
+            print(f"realm {name}: {counts}")
+        clean = add_tester(clean)
         if a.kaisatsu_bin:
             tmp = dst.parent / f".check-{name}.json"
             clean, dropped = drop_refused_mappers(clean, kaisatsu_check(a.kaisatsu_bin, tmp))
@@ -453,7 +535,7 @@ def cmd_realms(a):
             if dropped:
                 print(f"realm {name}: {len(dropped)} parts kaisatsu refuses left out "
                       f"(realm-{name}-left-out.json): {sorted({d['kind'] for d in dropped})}")
-        (dst / f"{name}.json").write_text(json.dumps(clean, indent=1))
+        write_private(dst / f"{name}.json", json.dumps(clean, indent=1))
         taken.append(name)
         # The secret variables the realm names ($(env:NAME)): up.sh makes a value for each.
         names = sorted(set(re.findall(r"\$\((?:env:)?([A-Z][A-Z0-9_]*)\)", json.dumps(clean))))
@@ -569,15 +651,16 @@ def split_by_cutoff(lines, cutoff: dt.datetime):
     for t in lines:
         at = t.get("instance", {}).get("observedAt")
         if not at:
-            refused.append({**_key(t), "reason": "no observedAt"})
+            refused.append({**_key(t), "kind": "no-observedAt", "reason": "no observedAt"})
             continue
         try:
             when = parse_time(at)
         except ValueError:
-            refused.append({**_key(t), "reason": f"bad observedAt {at!r}"})
+            refused.append({**_key(t), "kind": "bad-observedAt", "reason": f"bad observedAt {at!r}"})
             continue
         if when < cutoff:
-            refused.append({**_key(t), "observedAt": at, "reason": f"older than the cut-off {iso(cutoff)}"})
+            refused.append({**_key(t), "kind": "cut-off", "observedAt": at,
+                            "reason": f"older than the cut-off {iso(cutoff)}"})
         else:
             kept.append(t)
     return kept, refused
@@ -630,11 +713,35 @@ def _tenant_batches(lines):
             yield tenant, batch
 
 
-def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict):
+# The one temporal refusal an import may hold: the 24-hour rule (owner, amendment 5). Any other
+# refused instance, a refused broker call or an entity short of the export fails the import.
+ACCEPTED_TEMPORAL_REFUSALS = {"cut-off"}
+
+
+def antares_problems(out: dict) -> list[str]:
+    """Why an Antares import is not a copy of the bundle; empty when it is."""
+    problems = []
+    if out["entities"] < out["exportEntities"]:
+        problems.append(f"{out['entities']:,} of {out['exportEntities']:,} exported entities imported")
+    if out["refusedCallCount"]:
+        problems.append(f"{out['refusedCallCount']:,} broker calls refused")
+    if out["temporal"] < out["temporalKept"]:
+        problems.append(f"{out['temporal']:,} of {out['temporalKept']:,} temporal instances in the window imported")
+    other = {k: n for k, n in out["temporalRefusedByKind"].items() if k not in ACCEPTED_TEMPORAL_REFUSALS}
+    if other:
+        problems.append(f"temporal instances refused for reasons not accepted: {other}")
+    return problems
+
+
+def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict, admin_token: str):
     base = "/broker/ngsi-ld/v1"
-    out = {"entities": 0, "entityCalls": 0, "refusedCalls": [], "refusedCallCount": 0,
-           "temporal": 0, "temporalRefused": [], "temporalRefusedCount": 0}
+    out = {"entities": 0, "exportEntities": 0, "entityCalls": 0, "refusedCalls": [], "refusedCallCount": 0,
+           "temporal": 0, "temporalExport": 0, "temporalKept": 0, "temporalRefused": [], "temporalRefusedCount": 0,
+           "temporalRefusedByKind": {}}
     lock = threading.Lock()
+    # jc's broker serves a call without a subject only with its admin bearer token (T-5032),
+    # whatever the policy engine; the import's writes carry no subject.
+    auth = {"Authorization": f"Bearer {admin_token}"}
 
     def refused(row):
         with lock:
@@ -645,7 +752,7 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict):
     def upsert(job):
         tenant, batch = job
         st, body = h.json("POST", f"{base}/entityOperations/upsert?options=update", body=batch,
-                          headers={"NGSILD-Tenant": tenant})
+                          headers={"NGSILD-Tenant": tenant, **auth})
         ok = len(batch) if st in (200, 201, 204) else \
             len(body.get("success", [])) if st == 207 and isinstance(body, dict) else 0
         with lock:
@@ -659,7 +766,7 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict):
 
     def temporal(job):
         (tenant, eid), ent = job
-        st, body = h.json("POST", f"{base}/temporal/entities", body=ent, headers={"NGSILD-Tenant": tenant})
+        st, body = h.json("POST", f"{base}/temporal/entities", body=ent, headers={"NGSILD-Tenant": tenant, **auth})
         if st in (200, 201, 204):
             with lock:
                 out["temporal"] += sum(len(v) for k, v in ent.items() if k not in ("id", "type"))
@@ -670,7 +777,11 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict):
     with ThreadPoolExecutor(IMPORT_WORKERS) as pool:
         # bounded: at most a few batches in flight, never the whole file in memory
         pending = set()
-        for job in _tenant_batches(_jsonl(export / "antares" / "entities.jsonl")):
+        def lines():  # counted as read, so an entity a batch cap drops still counts as exported
+            for line in _jsonl(export / "antares" / "entities.jsonl"):
+                out["exportEntities"] += 1
+                yield line
+        for job in _tenant_batches(lines()):
             pending.add(pool.submit(upsert, job))
             if len(pending) >= IMPORT_WORKERS * 2:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
@@ -681,6 +792,9 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict):
         kept, refused_old = split_by_cutoff(_jsonl(export / "antares" / "temporal.jsonl"), cutoff)
         out["temporalRefusedCount"] = len(refused_old)
         out["temporalRefused"] = refused_old[:MAX_REPORTED]
+        out["temporalExport"], out["temporalKept"] = len(kept) + len(refused_old), len(kept)
+        for r in refused_old:
+            out["temporalRefusedByKind"][r["kind"]] = out["temporalRefusedByKind"].get(r["kind"], 0) + 1
         grouped: dict[tuple, dict] = {}
         for t in kept:
             ent = grouped.setdefault((t["tenant"], t["id"]), {"id": t["id"], "type": t["type"]})
@@ -688,6 +802,7 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict):
         for f in [pool.submit(temporal, job) for job in sorted(grouped.items())]:
             f.result()
     report["antares"] = out
+    report["problems"] = antares_problems(out)
 
 
 def _daiya_kind(name: str) -> str:
@@ -700,15 +815,50 @@ def _daiya_kind(name: str) -> str:
     return "model"
 
 
-def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, report: dict):
+def rehearsal_endpoint_url(url: str, base: str) -> str:
+    """A datasource's Endpoint URL (`<gateway>/api/endpoint/<slug>[/...]`) on the rehearsal's own
+    gateway: the same slug, the rehearsal's base. Any other URL is left as it is."""
+    head, sep, rest = url.partition("/api/endpoint/")
+    return f"{base.rstrip('/')}/api/endpoint/{rest}" if sep and head and rest else url
+
+
+def daiya_org(h: Http, auth: dict, project: str) -> int:
+    """The project's daiya organization, made when missing (provision.sh's POST /orgs, 409 ->
+    GET /orgs/name/{project}); the Portal's provisioning loop may have made it first."""
+    st, body = h.json("POST", "/dashboards/api/orgs", headers=auth, body={"name": project})
+    if st == 409:
+        st, body = h.json("GET", f"/dashboards/api/orgs/name/{urllib.parse.quote(project)}", headers=auth)
+    org = (body or {}).get("orgId") or (body or {}).get("id") if isinstance(body, dict) else None
+    if st not in (200, 201) or not org:
+        raise RuntimeError(f"organization {project}: {st} {str(body)[:200]}")
+    return int(org)
+
+
+def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, report: dict,
+                 dashboards: Path | None = None):
+    """The deployment's Grafana provisioning into daiya, as provision.sh does it: each project's
+    files in its own organization (folder, datasources on the rehearsal's Endpoints, dashboard),
+    the plain dashboard models in the main organization."""
     pw = read_secret(state, "dashboards-password")
     auth = {"Authorization": "Basic " + base64.b64encode(f"portal:{pw}".encode()).decode()}
     order = {"folder": 0, "datasource": 1, "dashboard": 2, "model": 2}
-    files = sorted((export / "grafana" / "dashboards").glob("*.json"), key=lambda f: (order[_daiya_kind(f.name)], f.name))
-    rows = []
+    src = dashboards or export / "grafana" / "dashboards"
+    files = sorted(src.glob("*.json"), key=lambda f: (order[_daiya_kind(f.name)], f.name))
+    rows, orgs = [], {}
     for f in files:
         kind = _daiya_kind(f.name)
         row = {"file": f.name, "kind": kind}
+        hdrs = dict(auth)
+        if kind != "model":
+            project = f.name.split(".", 1)[0]
+            try:
+                if project not in orgs:
+                    orgs[project] = daiya_org(h, auth, project)
+            except RuntimeError as e:
+                rows.append({**row, "result": "refused", "reason": str(e)})
+                continue
+            hdrs["X-Grafana-Org-Id"] = str(orgs[project])
+            row.update(project=project, org=orgs[project])
         try:
             doc = json.loads(f.read_text())
         except ValueError as e:
@@ -718,8 +868,10 @@ def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, repo
             call, body = "POST /dashboards/api/folders", {"uid": doc.get("uid"), "title": doc.get("title")}
             row.update(uid=doc.get("uid"), title=doc.get("title"))
         elif kind == "datasource":
+            mapped = rehearsal_endpoint_url(doc.get("url", ""), h.base)
+            doc = {**doc, "url": mapped}
             call, body = "POST /dashboards/api/datasources", doc
-            row.update(uid=doc.get("uid"), title=doc.get("name"))
+            row.update(uid=doc.get("uid"), title=doc.get("name"), url=mapped)
         else:
             dash = doc.get("dashboard", doc) if kind == "dashboard" else doc
             body = {"dashboard": {k: v for k, v in dash.items() if k != "id"}, "overwrite": True,
@@ -742,11 +894,14 @@ def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, repo
                                                         if str(x.get("verdict")).lower() not in ("supports", "supported")})}
                 except ValueError:
                     row["check"] = {"exit": r.returncode, "stderr": r.stderr[-300:]}
-        st, answer = h.json("POST", call.split(" ", 1)[1], headers=auth, body=body)
+        st, answer = h.json("POST", call.split(" ", 1)[1], headers=hdrs, body=body)
+        if st == 409 and kind == "datasource":  # provision.sh: an existing one is replaced
+            st, answer = h.json("PUT", f"/dashboards/api/datasources/uid/{urllib.parse.quote(doc['uid'])}",
+                                headers=hdrs, body=body)
         if st in (200, 201):
             changed = bool(row.get("check", {}).get("findings"))
             row.update(result="changed" if changed else "imported", status=st)
-        elif st == 409 and kind in ("folder", "datasource"):
+        elif st in (409, 412) and kind == "folder":
             row.update(result="unchanged", status=st)
         else:
             row.update(result="refused", call=call, status=st, detail=answer)
@@ -767,11 +922,32 @@ def bundle_settled(export: Path) -> str:
     return f"written after manifest.json: {newer[:3]}" if newer else ""
 
 
+# Measured on the prod import of 2026-11-08: 31.7 GB of pgdata for 1,669,431 entities.
+DB_BYTES_PER_ENTITY = 19_000
+DISK_MARGIN = 1.25
+DISK_RESERVE = 25 * 10**9  # left free for the other agents on the shared disk
+
+
+def disk_problem(entity_lines: int, free_bytes: int) -> str:
+    """Why an import of this many entities must not start on a disk with this much free, or "":
+    the estimated database plus a margin, and a reserve kept for everyone else."""
+    need = int(entity_lines * DB_BYTES_PER_ENTITY * DISK_MARGIN)
+    if free_bytes - need < DISK_RESERVE:
+        return (f"{entity_lines:,} entities need about {need / 1e9:.1f} GB and "
+                f"{DISK_RESERVE / 1e9:.0f} GB must stay free; {free_bytes / 1e9:.1f} GB are free")
+    return ""
+
+
 def cmd_import(a):
     loopback_only(a.base)
     export, state = Path(a.export), Path(a.state)
     if why := bundle_settled(export):
         raise SystemExit(f"the bundle is not settled ({why}): import after the exporter finishes")
+    if not a.only or "antares" in a.only.split(","):
+        with open(export / "antares" / "entities.jsonl", "rb") as f:
+            lines = sum(1 for _ in f)
+        if why := disk_problem(lines, shutil.disk_usage(Path(a.state).resolve().parent).free):
+            raise SystemExit(f"not importing: {why}")
     now = parse_time(a.now) if a.now else utcnow()
     manifest = json.loads((export / "manifest.json").read_text())
     # Only the last day: observed at most 24 h before the export, and at most 24 h before now (the
@@ -787,17 +963,22 @@ def cmd_import(a):
     if "shako" in steps:
         import_shako(h, read_secret(state, "shako-token"), export, report)
     if "antares" in steps:
-        import_antares(h, export, cutoff, report)
+        import_antares(h, export, cutoff, report, read_secret(state, "antares-admin-token"))
     if "daiya" in steps:
-        import_daiya(h, state, export, a.daiya_bin, report)
+        import_daiya(h, state, export, a.daiya_bin, report, Path(a.dashboards) if a.dashboards else None)
     Path(a.report).write_text(json.dumps(report, indent=1))
     summary = {
         "cutoff": report["cutoff"],
         "shako": _count(report.get("shako", []), "result"),
         "antares": {k: (len(v) if isinstance(v, list) else v) for k, v in report.get("antares", {}).items()},
         "daiya": _count(report.get("daiya", []), "result"),
+        "problems": report.get("problems", []),
     }
     print(json.dumps(summary))
+    if report.get("problems"):
+        print("import FAILED: " + "; ".join(report["problems"]), file=sys.stderr)
+        return 1
+    return 0
 
 
 def _count(rows, key):
@@ -840,6 +1021,55 @@ def retain_once(a, now: dt.datetime) -> dict:
     deleted = [int(x) for x in re.findall(r"^DELETE (\d+)$", r.stdout, re.M)]
     return {"at": iso(now), "cutoff": iso(cutoff), "deleted": sum(deleted),
             **({} if r.returncode == 0 else {"failed": r.stderr.strip()[-300:]})}
+
+
+def old_history_sql(cutoff: dt.datetime) -> str:
+    """Counts the history rows older than `cutoff` that retain would delete (audit rows aside)."""
+    stmts = ["BEGIN;", "SELECT set_config('antares.service', 'on', true) \\g /dev/null"]
+    for table in HISTORY_TABLES:
+        stmts.append(
+            f"SELECT to_regclass('public.{table}') IS NOT NULL AS has \\gset\n"
+            f"\\if :has\n"
+            f"SELECT 'old {table} ' || count(*) FROM public.{table} WHERE observed_at < '{iso(cutoff)}' "
+            f"AND NOT coalesce(provenance @> '{{\"audit\": true}}', false);\n"
+            f"\\endif")
+    stmts.append("COMMIT;")
+    return "\n".join(stmts) + "\n"
+
+
+def _psql(host, port, user, db, password_file, sql: str) -> str:
+    """`sql` through psql (password from its file, never argv); raises when psql fails, so a
+    check that cannot look never passes."""
+    env = dict(os.environ, PGPASSWORD=Path(password_file).read_text().strip())
+    psql = ["psql", "-AXt", "-v", "ON_ERROR_STOP=1", "-h", host, "-p", str(port), "-U", user, "-d", db]
+    r = subprocess.run(psql, input=sql, env=env, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip()[-300:])
+    return r.stdout
+
+
+def old_history(host, port, user, db, password_file, cutoff: dt.datetime) -> int:
+    """History rows older than `cutoff` in the rehearsal's Antares database."""
+    out = _psql(host, port, user, db, password_file, old_history_sql(cutoff))
+    return sum(int(x) for x in re.findall(r"^old \w+ (\d+)$", out, re.M))
+
+
+STORED_ENTITIES_SQL = ("BEGIN;\nSELECT set_config('antares.service', 'on', true) \\g /dev/null\n"
+                       "SELECT 'stored ' || count(*) FROM public.entities;\nCOMMIT;\n")
+
+
+def stored_entities(host, port, user, db, password_file) -> int:
+    """Entities in the rehearsal's Antares database, every Tenant."""
+    out = _psql(host, port, user, db, password_file, STORED_ENTITIES_SQL)
+    m = re.search(r"^stored (\d+)$", out, re.M)
+    if not m:
+        raise RuntimeError(f"no count in {out[-200:]!r}")
+    return int(m.group(1))
+
+
+def exported_entities(export: Path) -> int:
+    with open(export / "antares" / "entities.jsonl", "rb") as f:
+        return sum(1 for _ in f)
 
 
 def cmd_retain(a):
@@ -1046,11 +1276,52 @@ def cmd_smoke(a):
     # 7. dashboards in daiya
     pw = read_secret(state, "dashboards-password")
     dauth = {"Authorization": "Basic " + base64.b64encode(f"portal:{pw}".encode()).decode()}
-    st, found = h.json("GET", "/dashboards/api/search?type=dash-db", headers=dauth)
-    want = sum(1 for f in (export / "grafana" / "dashboards").glob("*.json")
-               if _daiya_kind(f.name) in ("dashboard", "model"))
-    check(f"daiya: {want} dashboards", st == 200 and isinstance(found, list) and len(found) >= want,
-          f"{st} {len(found) if isinstance(found, list) else found}", "GET /dashboards/api/search")
+    dashdir = Path(a.dashboards) if a.dashboards else export / "grafana" / "dashboards"
+    files = sorted(dashdir.glob("*.json"))
+    # each project's dashboard sits in its own organization, the platform models in the main one
+    orgs = {f.name.split(".", 1)[0] for f in files if _daiya_kind(f.name) == "dashboard"}
+    found_uids, missing = set(), []
+    for org in [None, *sorted(orgs)]:
+        hdrs = dict(dauth)
+        if org:
+            ost, o = h.json("GET", f"/dashboards/api/orgs/name/{urllib.parse.quote(org)}", headers=dauth)
+            if ost != 200 or not isinstance(o, dict):
+                missing.append(f"organization {org}: {ost}")
+                continue
+            hdrs["X-Grafana-Org-Id"] = str(o.get("id"))
+        st, found = h.json("GET", "/dashboards/api/search?type=dash-db", headers=hdrs)
+        found_uids |= {d.get("uid") for d in found} if st == 200 and isinstance(found, list) else set()
+    for f in files:
+        kind = _daiya_kind(f.name)
+        if kind in ("dashboard", "model"):
+            doc = json.loads(f.read_text())
+            uid = (doc.get("dashboard", doc) if kind == "dashboard" else doc).get("uid")
+            if uid not in found_uids:
+                missing.append(f"{f.name} ({uid})")
+    want = sum(1 for f in files if _daiya_kind(f.name) in ("dashboard", "model"))
+    check(f"daiya: {want} dashboards in their organizations", not missing and want > 0,
+          "; ".join(missing[:8]) or f"{want} found", "GET /dashboards/api/search (per organization)")
+    if any(_daiya_kind(f.name) == "dashboard" for f in files):
+        pd = portal_dashboards(h, dashdir)
+        su = pd["summary"]
+        check(f"Portal opens {su['projectDashboards']} project dashboards",
+              su["openInPortal"] == su["projectDashboards"],
+              f"{su['openInPortal']} open; {su['panels']} panels", "GET /api/v1/projects/{p}/grafana/dashboards/{uid}")
+        # kept apart: a panel refused by daiya's guard on jc's own listener is expected until
+        # jc-portal-integrate lets file-provisioned datasources reach it by exact address
+        checks.append({"check": "panels: expected, outbound to own listener (project org awaits per-org "
+                                "provisioning, jc-grafana-parity)", "result": "expected",
+                       "detail": f"{su['panels_expected']} of {su['panels']}"})
+        # the same panels on the datasources file-provisioned into organization 1, counted apart
+        o1 = org1_panels(h, dauth, dashdir)
+        if o1["rows"]:
+            check("panels on org-1 provisioned datasources answer data", o1["red"] == 0,
+                  f"{o1['data']} data, {o1['red']} red of {len(o1['rows'])}: "
+                  + "; ".join(f"{r['dashboard']}#{r['panel']} {r['detail'][:60]}" for r in o1["rows"] if r["class"] == "red")[:300],
+                  "POST /dashboards/api/ds/query (organization 1)")
+        check("panels: no real red", su["panels_red"] == 0,
+              f"{su['panels_red']} red, {su['panels_data']} with data",
+              "GET /api/v1/projects/{p}/grafana/dashboards/{uid}/panels/{id}")
     # 8. every public Endpoint answers a query
     eps = []
     root = export / "gitea" / "files"
@@ -1066,20 +1337,206 @@ def cmd_smoke(a):
             bad.append(f"{slug}: {st} {ctype} {body[:80]!r}")
     check(f"{len(set(eps))} public Endpoints answer a query", not bad and bool(eps),
           f"{len(bad)} failed: {'; '.join(bad[:5])}", "GET /api/endpoint/{slug}/ngsi-ld/v1/types")
-    # 9. the 24 h rule holds in the broker: no instance older than the window
-    old = []
-    for t in itertools.islice(_jsonl(export / "antares" / "temporal.jsonl"), 50):
-        st, body = h.json("GET", f"/broker/ngsi-ld/v1/temporal/entities/{urllib.parse.quote(t['id'], safe='')}"
-                                 f"?attrs={t['attr']}&timerel=before&timeAt={iso(cutoff_for(utcnow()) - SWEEP)}",
-                          headers={"NGSILD-Tenant": t["tenant"]})
-        if st == 200 and isinstance(body, dict) and body.get(t["attr"]):
-            old.append(t["id"])
-    check("broker holds no history older than 24 h", not old, f"{len(old)} entities with old instances",
-          "GET /broker/ngsi-ld/v1/temporal/entities/{id}?timerel=before")
+    # 9. the 24 h rule holds in the broker: no instance older than the window (+ one sweep), read
+    # in its database (the broker's reads need a subject on its default policy)
+    # 10. the broker holds every exported entity (an import refused call by call stores none)
+    if a.pg_port and a.antares_password_file:
+        try:
+            want = exported_entities(Path(a.export))
+            have = stored_entities("127.0.0.1", a.pg_port, "antares", "antares", a.antares_password_file)
+            check("broker holds every exported entity", have >= want, f"{have:,} stored, {want:,} exported",
+                  "SELECT count(*) FROM entities vs wc -l antares/entities.jsonl")
+        except (OSError, RuntimeError) as e:
+            check("broker holds every exported entity", False, f"cannot read: {e}", "psql antares")
+    else:
+        check("broker holds every exported entity", False, "not checked: no --pg-port/--antares-password-file",
+              "psql antares")
+    if a.pg_port and a.antares_password_file:
+        try:
+            n = old_history("127.0.0.1", a.pg_port, "antares", "antares", a.antares_password_file,
+                            cutoff_for(utcnow()) - SWEEP)
+            check("broker holds no history older than 24 h", n == 0, f"{n} history rows older than the window",
+                  "SELECT count(*) FROM attr_instances, attr_rows WHERE observed_at < now() - 25 h")
+        except RuntimeError as e:
+            check("broker holds no history older than 24 h", False, f"cannot read: {e}", "psql antares")
+    else:
+        check("broker holds no history older than 24 h", False, "not checked: no --pg-port/--antares-password-file",
+              "psql antares")
     Path(a.report).write_text(json.dumps({"base": a.base, "at": iso(utcnow()), "checks": checks}, indent=1))
     for c in checks:
         print(f"{c['result']:4}  {c['check']}  {c['detail'][:160]}")
-    return 0 if all(c["result"] == "pass" for c in checks) else 1
+    return 0 if all(c["result"] in ("pass", "expected") for c in checks) else 1
+
+
+
+# ---- dashboards in the Portal ---------------------------------------------------------------------
+
+# daiya's outbound guard (crates/daiya/query/src/guard.rs) refusing a datasource on jc's own
+# listener: http is refused before the host, a loopback address after it.
+OWN_LISTENER_REFUSALS = ("disallowed URL scheme 'http'", "blocked loopback address")
+OWN_LISTENER_CODES = ("cr.ssrf_blocked", "Outbound Request Blocked")
+
+
+def panel_class(status: int, answer, datasource_url: str, base: str) -> str:
+    """`data`, `expected` (daiya's guard refusing a file-provisioned datasource that points at this
+    rehearsal's own listener: jc-portal-integrate owns the fix, the policy stays as it is) or
+    `red` (anything else)."""
+    if status == 200 and isinstance(answer, dict) and answer.get("frames") is not None \
+            and not answer.get("error"):
+        return "data"
+    text = json.dumps(answer) if not isinstance(answer, str) else answer
+    own = datasource_url.startswith(base.rstrip("/") + "/api/endpoint/")
+    guard = any(r in text for r in OWN_LISTENER_REFUSALS) and any(c in text for c in OWN_LISTENER_CODES)
+    return "expected" if own and guard else "red"
+
+
+def provisioning_files(dashboards: Path, port: int, out: Path) -> int:
+    """daiya provisioning (`[daiya] provisioning_dir`): every project datasource of the Grafana
+    files, on jc's own listener by its exact address (127.0.0.1:<port>), the one way jc's daiya
+    lets a datasource reach it. daiya provisions organization 1 only, so the project orgs keep
+    their API copies (refused by the guard) until per-org provisioning lands (jc-grafana-parity).
+    Returns the number of datasources written."""
+    rows = []
+    for f in sorted(dashboards.glob("*.datasource.*.json")):
+        d = json.loads(f.read_text())
+        slug = urllib.parse.urlparse(d.get("url", "")).path.rstrip("/").rsplit("/api/endpoint/", 1)[-1]
+        if not re.fullmatch(r"[a-z2-7]{26,}", slug):
+            raise SystemExit(f"{f.name}: no Endpoint slug in {d.get('url')!r}")
+        rows.append({"name": d["name"], "uid": d["uid"], "type": d["type"], "access": "proxy", "orgId": 1,
+                     "url": f"http://127.0.0.1:{port}/api/endpoint/{slug}", "editable": False,
+                     "jsonData": d.get("jsonData") or {}})
+    (out / "datasources").mkdir(parents=True, exist_ok=True)
+    (out / "dashboards").mkdir(parents=True, exist_ok=True)
+    # JSON is YAML: daiya reads the file as YAML.
+    (out / "datasources" / "rehearsal.yaml").write_text(json.dumps({"apiVersion": 1, "datasources": rows}, indent=1))
+    return len(rows)
+
+
+def cmd_provisioning(a):
+    n = provisioning_files(Path(a.dashboards), a.port, Path(a.out))
+    print(f"daiya provisioning: {n} datasources into organization 1 ({a.out})")
+
+
+def org1_panels(h: Http, auth: dict, dashboards: Path) -> dict:
+    """Each project panel's queries run against its datasource as file-provisioned into
+    organization 1 (POST /dashboards/api/ds/query, no org header): whether the data path holds
+    while the project's own organization still waits for per-org provisioning."""
+    out = {"data": 0, "red": 0, "rows": []}
+    for f in sorted(dashboards.glob("*.dashboard.json")):
+        for p in json.loads(f.read_text())["dashboard"].get("panels", []):
+            for q in [p, *p.get("panels", [])]:
+                ds = q.get("datasource")
+                uid = ds.get("uid") if isinstance(ds, dict) else ds
+                if q.get("type") == "row" or not q.get("targets") or not uid:
+                    continue
+                queries = [{**t, "refId": t.get("refId") or "A", "datasource": {"uid": uid}} for t in q["targets"]]
+                st, ans = h.json("POST", "/dashboards/api/ds/query", body={"from": "now-24h", "to": "now",
+                                                                            "queries": queries}, headers=auth)
+                res = (ans or {}).get("results", {}) if isinstance(ans, dict) else {}
+                ok = st == 200 and bool(res) and all(isinstance(r, dict) and r.get("frames") is not None
+                                                     and not r.get("error") for r in res.values())
+                out["data" if ok else "red"] += 1
+                out["rows"].append({"dashboard": f.name, "panel": q.get("id"), "datasource": uid, "status": st,
+                                    "class": "data" if ok else "red", "detail": "" if ok else str(ans)[:160]})
+    return out
+
+
+def portal_dashboards(h: Http, dashboards: Path) -> dict:
+    """Per project with a dashboard file: whether the Portal lists it, opens it, and what each
+    panel answers (GET /api/v1/projects/{p}/grafana/dashboards[/{uid}[/panels/{id}]]), as the
+    signed-in person `h` holds. Platform models have no project page and are counted apart."""
+    out = {"projects": {}, "platformModels": sorted(f.name for f in dashboards.glob("*.json")
+                                                      if _daiya_kind(f.name) == "model")}
+    for f in sorted(dashboards.glob("*.dashboard.json")):
+        project = f.name.split(".", 1)[0]
+        uid = json.loads(f.read_text())["dashboard"]["uid"]
+        base = f"/api/v1/projects/{project}/grafana/dashboards"
+        st, listed = h.json("GET", base)
+        items = listed if isinstance(listed, list) else (listed or {}).get("items", []) if isinstance(listed, dict) else []
+        row = {"uid": uid, "list": st, "listed": any((i or {}).get("uid") == uid for i in items if isinstance(i, dict))}
+        st, dash = h.json("GET", f"{base}/{urllib.parse.quote(uid)}")
+        row["open"] = st
+        panels = []
+        # each panel's datasource as the import left it (file panels carry the uid; the Portal's
+        # answer leaves the targets out)
+        urls = {json.loads(d.read_text()).get("uid"): rehearsal_endpoint_url(json.loads(d.read_text()).get("url", ""), h.base)
+                for d in dashboards.glob(f"{project}.datasource.*.json")}
+        file_panels = {}
+        for p in json.loads(f.read_text())["dashboard"].get("panels", []):
+            for q in [p, *p.get("panels", [])]:
+                if "id" in q:
+                    file_panels[q["id"]] = ((q.get("datasource") or {}).get("uid") if isinstance(q.get("datasource"), dict) else q.get("datasource"))
+        if st == 200 and isinstance(dash, dict):
+            body = dash.get("dashboard", dash)
+            flat = []
+            for p in body.get("panels", []):
+                flat.extend([p, *p.get("panels", [])])
+            for p in flat:
+                if p.get("type") == "row" or "id" not in p:
+                    continue
+                pst, ans = h.json("GET", f"{base}/{urllib.parse.quote(uid)}/panels/{p['id']}")
+                state = (ans.get("state") or ans.get("status") or ans.get("error") or
+                         ("frames" if ans.get("frames") is not None else "")) if isinstance(ans, dict) else ""
+                detail = (ans.get("message") or ans.get("detail") or "") if isinstance(ans, dict) else str(ans)[:120]
+                ds = file_panels.get(p["id"]) or ""
+                panels.append({"id": p["id"], "title": p.get("title"), "status": pst, "state": str(state)[:60],
+                               "datasource": ds, "class": panel_class(pst, ans, urls.get(ds, ""), h.base),
+                               "detail": str(detail)[:160]})
+        row["panels"] = panels
+        out["projects"][project] = row
+    opened = sum(1 for r in out["projects"].values() if r["open"] == 200)
+    out["summary"] = {"projectDashboards": len(out["projects"]), "openInPortal": opened,
+                      "panels": sum(len(r["panels"]) for r in out["projects"].values()),
+                      **{f"panels_{k}": sum(1 for r in out["projects"].values() for p in r["panels"] if p["class"] == k)
+                         for k in ("data", "expected", "red")}}
+    return out
+
+
+def cmd_portal_dashboards(a):
+    loopback_only(a.base)
+    h, state = Http(a.base), Path(a.state)
+    tok = admin_token(h, state)
+    _, pw = make_person(h, tok, "jc", "rehearsal-dashboards", groups=["/platform-admins"])
+    ok, detail = sign_in(h, "rehearsal-dashboards", pw)
+    if not ok:
+        raise SystemExit(f"sign-in failed: {detail}")
+    out = portal_dashboards(h, Path(a.dashboards))
+    Path(a.report).write_text(json.dumps(out, indent=1))
+    print(json.dumps(out["summary"]))
+
+
+# ---- policy after the import ---------------------------------------------------------------------
+
+PROBE_TENANT = "rehearsal-probe"
+PROBE = {"id": "urn:ngsi-ld:RehearsalProbe:anonymous", "type": "RehearsalProbe"}
+
+
+def policy_problems(write_status: int, engine) -> list[str]:
+    """What is wrong with a broker that should serve on its default policy: an anonymous write
+    must answer 401 and /q/health must name the joinedcontext engine."""
+    problems = []
+    if write_status != 401:
+        problems.append(f"an anonymous write answered {write_status}, not 401")
+    if engine != "joinedcontext":
+        problems.append(f"the broker's policy engine is {engine!r}, not 'joinedcontext'")
+    return problems
+
+
+def cmd_policy_check(a):
+    """After an import under allow-all: the restarted broker refuses an anonymous write."""
+    loopback_only(a.base)
+    h = Http(a.base)
+    st, _ = h.json("POST", "/broker/ngsi-ld/v1/entities", body=PROBE,
+                   headers={"NGSILD-Tenant": PROBE_TENANT})
+    if 200 <= st < 300:  # the probe got in: take it out again
+        h.call("DELETE", f"/broker/ngsi-ld/v1/entities/{urllib.parse.quote(PROBE['id'], safe='')}",
+               headers={"NGSILD-Tenant": PROBE_TENANT})
+    hst, health = h.json("GET", "/broker/q/health", headers={
+        "Authorization": f"Bearer {read_secret(Path(a.state), 'antares-admin-token')}"})
+    engine = (health or {}).get("policy", {}).get("engine") if hst == 200 and isinstance(health, dict) else f"unknown ({hst})"
+    problems = policy_problems(st, engine)
+    print(json.dumps({"anonymousWrite": st, "engine": engine, "problems": problems}))
+    return 1 if problems else 0
 
 
 def main(argv=None):
@@ -1091,17 +1548,28 @@ def main(argv=None):
     s.add_argument("--env", required=True); s.add_argument("--out", required=True)
     s = sub.add_parser("realms"); s.add_argument("--export", required=True); s.add_argument("--out", required=True)
     s.add_argument("--kaisatsu-bin", help="leave out the mappers this kaisatsu refuses (named in the report)")
+    s.add_argument("--people", help="a 0700 dir holding users-<realm>.jsonl (dev only): people without credentials")
+    s.add_argument("--demo-users", help="the deployment's demo-users.yaml: the personas that keep e-mail and names")
     s = sub.add_parser("import"); s.add_argument("--export", required=True); s.add_argument("--base", required=True)
     s.add_argument("--state", required=True); s.add_argument("--report", required=True)
     s.add_argument("--now"); s.add_argument("--only"); s.add_argument("--daiya-bin")
+    s.add_argument("--dashboards", help="Grafana provisioning files (rehearsal.py dashboards) instead of the bundle's")
+    s = sub.add_parser("dashboards"); s.add_argument("--render", required=True); s.add_argument("--out", required=True)
     s = sub.add_parser("retain"); s.add_argument("--host", default="127.0.0.1"); s.add_argument("--port", required=True)
     s.add_argument("--user", default="antares"); s.add_argument("--db", default="antares")
     s.add_argument("--password-file", required=True); s.add_argument("--now")
     s.add_argument("--every", type=int, default=0, help="repeat every N seconds (0: once)")
     s = sub.add_parser("smoke"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     s.add_argument("--export", required=True); s.add_argument("--report", required=True); s.add_argument("--realms")
+    s.add_argument("--pg-port"); s.add_argument("--antares-password-file")
+    s.add_argument("--dashboards", help="the Grafana files imported into daiya (rehearsal.py dashboards)")
+    s = sub.add_parser("portal-dashboards"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
+    s.add_argument("--dashboards", required=True); s.add_argument("--report", required=True)
+    s = sub.add_parser("provisioning"); s.add_argument("--dashboards", required=True)
+    s.add_argument("--port", type=int, required=True); s.add_argument("--out", required=True)
+    s = sub.add_parser("policy-check"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     a = p.parse_args(argv)
-    return {"render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import,
+    return {"provisioning": cmd_provisioning, "portal-dashboards": cmd_portal_dashboards, "policy-check": cmd_policy_check, "dashboards": cmd_dashboards, "render": cmd_render, "synth": cmd_synth, "realms": cmd_realms, "import": cmd_import,
             "retain": cmd_retain, "smoke": cmd_smoke}[a.cmd](a) or 0
 
 
