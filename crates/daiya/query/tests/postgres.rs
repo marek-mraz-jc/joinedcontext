@@ -142,6 +142,21 @@ fn the_checker_refuses_malformed_and_foreign_sql_with_a_reason() {
             "SELECT now()::numeric(2) FROM metrics WHERE f(1)",
             "function 'f'",
         ),
+        // A quoted name is the same function or keyword to Postgres; TABLE has no FROM.
+        (
+            "SELECT \"query_to_xml\"('SELECT * FROM other', true, false, '')::text",
+            "quoted function call",
+        ),
+        (
+            "SELECT \"set_config\"('role', 'x', true)",
+            "quoted function call",
+        ),
+        ("SELECT \"pg_sleep\" FROM metrics", "forbidden SQL keyword"),
+        (
+            "SELECT * FROM metrics UNION ALL TABLE other",
+            "TABLE is refused",
+        ),
+        ("SELECT * FROM (TABLE other) s", "TABLE is refused"),
     ] {
         let err = validate_readonly_select("A", sql, &v).unwrap_err();
         assert!(

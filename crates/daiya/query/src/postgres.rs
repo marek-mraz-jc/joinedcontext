@@ -787,6 +787,23 @@ pub fn validate_readonly_select(
     }
 
     for (idx, t) in toks.iter().enumerate() {
+        // A double-quoted name is the same name to Postgres: `"pg_read_file"(..)` calls the
+        // function, so a quoted call is refused and a quoted forbidden word is still forbidden.
+        if let SqlTok::Quoted(q) = t {
+            if toks.get(idx + 1) == Some(&SqlTok::Open) {
+                return Err(sql_refuse(
+                    ref_id,
+                    format!("quoted function call '\"{q}\"' is refused"),
+                ));
+            }
+            if FORBIDDEN_SQL_KEYWORDS.contains(&q.to_ascii_lowercase().as_str()) {
+                return Err(sql_refuse(
+                    ref_id,
+                    format!("forbidden SQL keyword or function '{q}'"),
+                ));
+            }
+            continue;
+        }
         let SqlTok::Word(w) = t else { continue };
         if FORBIDDEN_SQL_KEYWORDS.contains(&w.as_str()) || w == "into" {
             return Err(sql_refuse(
@@ -860,6 +877,17 @@ pub fn validate_readonly_select(
         .count();
     if with_count > usize::from(word_at(&toks, 0) == Some("with")) {
         return Err(sql_refuse(ref_id, "nested WITH clauses are refused"));
+    }
+
+    // `TABLE rel` reads a relation with no FROM for the view check to see.
+    if toks
+        .iter()
+        .any(|t| matches!(t, SqlTok::Word(w) if w == "table"))
+    {
+        return Err(sql_refuse(
+            ref_id,
+            "TABLE is refused: write SELECT * FROM the view",
+        ));
     }
 
     let relation_ok = |tok: &SqlTok, name: &str| -> bool {
