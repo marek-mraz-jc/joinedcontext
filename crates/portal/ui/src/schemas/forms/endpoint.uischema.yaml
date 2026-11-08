@@ -313,10 +313,10 @@ spec:
         de: "Jeder Eintrag ist ein eigener Katalog-Datensatz mit nur den Typen und Zeilen, die er nennt; ohne Eintrag ist ein öffentlicher Endpunkt ein Datensatz unter eigenem Namen."
     catalog.datasets[].name:
       help:
-        en: "The dataset's name in the catalogue and its address, unique there: lowercase letters, digits, - and _, such as air-quality-stations."
-        sk: "Názov datasetu v katalógu a v jeho adrese, v katalógu jedinečný: malé písmená, číslice, - a _, napríklad kvalita-ovzdusia-stanice."
-        cs: "Název datasetu v katalogu a v jeho adrese, v katalogu jedinečný: malá písmena, číslice, - a _, například kvalita-ovzdusi-stanice."
-        de: "Der Name des Datensatzes im Katalog und in seiner Adresse, dort eindeutig: Kleinbuchstaben, Ziffern, - und _, etwa luftqualitaet-stationen."
+        en: "The dataset's name in the catalogue and its address, unique there: lowercase letters, digits, hyphens and underscores, no spaces or capitals, such as air-quality-stations."
+        sk: "Názov datasetu v katalógu a v jeho adrese, v katalógu jedinečný: malé písmená, číslice, spojovníky a podčiarkovníky, bez medzier a veľkých písmen, napríklad kvalita-ovzdusia-stanice."
+        cs: "Název datasetu v katalogu a v jeho adrese, v katalogu jedinečný: malá písmena, číslice, spojovníky a podtržítka, bez mezer a velkých písmen, například kvalita-ovzdusi-stanice."
+        de: "Der Name des Datensatzes im Katalog und in seiner Adresse, dort eindeutig: Kleinbuchstaben, Ziffern, Binde- und Unterstriche, ohne Leerzeichen und Großbuchstaben, etwa luftqualitaet-stationen."
     catalog.datasets[].title:
       help:
         en: "The title a person reads in the catalogue, such as Air quality at the measuring stations."
@@ -345,10 +345,10 @@ spec:
         de: "Eine optionale NGSI-LD-Abfrage, die die Zeilen weiter eingrenzt, etwa category==\"school\"; sie grenzt nur ein."
     catalog.datasets[].keywords:
       help:
-        en: "Search words for this dataset alone, in place of the endpoint's keywords, one per entry."
-        sk: "Slová na vyhľadávanie iba pre tento dataset, namiesto kľúčových slov endpointu, jedno na záznam."
-        cs: "Slova pro vyhledávání jen pro tento dataset, místo klíčových slov rozhraní, jedno na záznam."
-        de: "Suchwörter nur für diesen Datensatz statt der Schlagwörter des Endpunkts, eines je Eintrag."
+        en: "Search words for this dataset alone, in place of the endpoint's keywords, one word or phrase per item."
+        sk: "Slová na vyhľadávanie iba pre tento dataset, namiesto kľúčových slov endpointu, jedno slovo alebo fráza na položku."
+        cs: "Slova pro vyhledávání jen pro tento dataset, místo klíčových slov rozhraní, jedno slovo nebo fráze na položku."
+        de: "Suchwörter nur für diesen Datensatz statt der Schlagwörter des Endpunkts, ein Wort oder eine Wendung je Element."
     catalog.datasets[].license:
       help:
         en: "A licence for this dataset alone; empty means the endpoint's licence."
