@@ -518,7 +518,10 @@ fn the_portal_publisher_token_is_long_read_from_its_file_and_never_echoed() {
     let file = dir.join("token");
     std::fs::write(&file, format!("{TOKEN}\n")).expect("write");
     let (binding, grant) = portal_publisher_from_file(&file, org_id, cat_id).expect("read");
-    assert!(!format!("{binding:?}").contains(TOKEN), "the token must not print");
+    assert!(
+        !format!("{binding:?}").contains(TOKEN),
+        "the token must not print"
+    );
     assert_eq!(binding.token, TOKEN);
     assert_eq!(grant.actions, [Action::Read, Action::Propose]);
     assert_eq!(grant.catalogue_id, Some(cat_id));
