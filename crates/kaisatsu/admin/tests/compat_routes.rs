@@ -33,6 +33,7 @@ struct Fixture {
     store: Arc<MemoryStore>,
     admin: String,
     hel_admin: String,
+    kek: Kek,
     revoked: String,
     foreign: String,
 }
@@ -234,6 +235,7 @@ async fn fixture() -> Fixture {
         ),
     );
 
+    let oidc_kek = kek.clone();
     let oidc = OidcState {
         store: store.clone(),
         kek,
@@ -247,6 +249,7 @@ async fn fixture() -> Fixture {
         store,
         admin,
         hel_admin,
+        kek: oidc_kek,
         revoked,
         foreign,
     }
@@ -1989,4 +1992,148 @@ async fn reset_password_follows_the_policy_and_required_actions_need_smtp() {
     )
     .await;
     assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// POST /users with `groups` joins each named group, as Keycloak does: an unknown path answers
+/// 404, and a group the caller may not manage members of answers as PUT /users/{id}/groups/{gid}
+/// does; in both cases nobody is created.
+#[tokio::test]
+async fn create_user_joins_the_groups_its_body_names() {
+    let f = fixture().await;
+    f.store
+        .upsert_group(GroupRepresentation {
+            id: "admins-group".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            name: "platform-admins".into(),
+            path: "/platform-admins".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let user = |name: &str, groups: Value| json!({"username": name, "email": format!("{name}@example.test"), "enabled": true, "groups": groups});
+    let created = |name: &'static str| {
+        let store = f.store.clone();
+        async move {
+            !store
+                .list_users("dev", None, None, None, Some(name), true, 0, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        }
+    };
+    let users = format!("{R}/users");
+    let (status, headers, _) = call(
+        &f.app,
+        &Method::POST,
+        &users,
+        Some(&f.admin),
+        Some(&user(
+            "joiner",
+            json!(["/platform-admins", "/helsinki/members"]),
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let id = headers[header::LOCATION]
+        .to_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_owned();
+    let (status, _, groups) = call(
+        &f.app,
+        &Method::GET,
+        &format!("{R}/users/{id}/groups"),
+        Some(&f.admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let mut paths: Vec<&str> = groups
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["path"].as_str().unwrap())
+        .collect();
+    paths.sort_unstable();
+    assert_eq!(paths, ["/helsinki/members", "/platform-admins"], "{groups}");
+
+    let (status, _, _) = call(
+        &f.app,
+        &Method::POST,
+        &users,
+        Some(&f.admin),
+        Some(&user("ghost", json!(["/no/such/group"]))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(!created("ghost").await, "nobody is created");
+
+    // A caller its authorizer refuses group writes to is refused as on the PUT route, before
+    // the person exists.
+    let refusing = admin_router(AdminState::new(
+        OidcState {
+            store: f.store.clone(),
+            kek: f.kek.clone(),
+            guard: OutboundGuard::default(),
+            default_mount: Mount::default(),
+        },
+        Arc::new(NoGroupWrites),
+    ))
+    .layer(Extension(Mount::default()));
+    let (put_status, _, _) = call(
+        &refusing,
+        &Method::PUT,
+        &format!("{R}/users/hel-user/groups/admins-group"),
+        Some(&f.admin),
+        None,
+    )
+    .await;
+    assert_eq!(put_status, StatusCode::FORBIDDEN);
+    let (status, _, _) = call(
+        &refusing,
+        &Method::POST,
+        &users,
+        Some(&f.admin),
+        Some(&user("climber", json!(["/platform-admins"]))),
+    )
+    .await;
+    assert_eq!(status, put_status, "the same answer as the PUT route");
+    assert!(!created("climber").await, "nobody is created");
+    // An organization admin does not reach a realm-wide group either.
+    let (status, _, _) = call(
+        &f.app,
+        &Method::POST,
+        &users,
+        Some(&f.hel_admin),
+        Some(&user("riser", json!(["/platform-admins"]))),
+    )
+    .await;
+    assert!(status.is_client_error(), "{status}");
+    assert!(!created("riser").await, "nobody is created");
+    // Another organization's group is not found, as on the PUT route.
+    let (status, _, _) = call(
+        &f.app,
+        &Method::POST,
+        &users,
+        Some(&f.hel_admin),
+        Some(&user("wanderer", json!(["/espoo/members"]))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(!created("wanderer").await, "nobody is created");
+}
+
+/// The local rules, except that no group may be written.
+struct NoGroupWrites;
+
+impl Authorizer for NoGroupWrites {
+    fn check(&self, ctx: &RequestCtx, action: Action, object: &ObjectTarget) -> Decision {
+        if action.is_write() && matches!(object, ObjectTarget::Group { .. }) {
+            return Decision::deny_visible("no group writes");
+        }
+        LocalAuthorizer.check(ctx, action, object)
+    }
 }

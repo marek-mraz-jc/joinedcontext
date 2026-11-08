@@ -205,6 +205,98 @@ impl PgStore {
         Ok(())
     }
 
+    /// Loads one tenant's persisted instance and repositories into the read mirror, so a restart
+    /// keeps them, and sets its quota usage from the stored repositories. Reads run inside the
+    /// tenant's RLS context: forced RLS lets the request role see no tenant it was not given, so
+    /// the caller names each tenant it serves. Returns the number of repositories loaded.
+    ///
+    /// Only the instance and repository rows are written to PostgreSQL today; protection rules,
+    /// pull requests, webhooks, packages and the dispatch marks live in memory only.
+    pub async fn hydrate_tenant(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+    ) -> ShakoResult<usize> {
+        let storage = |e: sqlx::Error| ShakoError::Storage(format!("hydrate failed: {e}"));
+        let mut tx = self.begin_tenant_tx(instance_id, org_id).await?;
+        let instance = sqlx::query(
+            "SELECT host, path_prefix, max_repos, max_storage_bytes, max_push_bytes, secret_scan_enabled, created_at, updated_at
+             FROM shako.instance WHERE instance_id = $1 AND org_id = $2",
+        )
+        .bind(instance_id.as_uuid())
+        .bind(org_id.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(storage)?;
+        let repos = sqlx::query(
+            "SELECT id, project_id, owner, name, description, default_branch, private, archived, size_bytes, next_pr_number, created_at, updated_at
+             FROM shako.repo WHERE instance_id = $1 AND org_id = $2 ORDER BY created_at, id",
+        )
+        .bind(instance_id.as_uuid())
+        .bind(org_id.as_uuid())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(storage)?;
+        tx.commit().await.map_err(storage)?;
+
+        let unsigned = |v: i64| u64::try_from(v).unwrap_or(0);
+        if let Some(r) = instance {
+            self.mirror
+                .upsert_instance(InstanceRecord {
+                    instance_id,
+                    org_id,
+                    host: r.get("host"),
+                    path_prefix: r.get("path_prefix"),
+                    max_repos: unsigned(r.get("max_repos")),
+                    max_storage_bytes: unsigned(r.get("max_storage_bytes")),
+                    max_push_bytes: unsigned(r.get("max_push_bytes")),
+                    secret_scan_enabled: r.get("secret_scan_enabled"),
+                    created_at: r.get("created_at"),
+                    updated_at: r.get("updated_at"),
+                })
+                .await?;
+        }
+        let mut git_bytes: i64 = 0;
+        for r in &repos {
+            let repo = RepoRecord {
+                id: RepoId::from(r.get::<uuid::Uuid, _>("id")),
+                instance_id,
+                org_id,
+                project_id: r.get("project_id"),
+                owner: r.get("owner"),
+                name: r.get("name"),
+                description: r.get("description"),
+                default_branch: r.get("default_branch"),
+                private: r.get("private"),
+                archived: r.get("archived"),
+                size_bytes: unsigned(r.get("size_bytes")),
+                next_pr_number: unsigned(r.get("next_pr_number")),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+            };
+            git_bytes = git_bytes.saturating_add(r.get::<i64, _>("size_bytes"));
+            match self.mirror.create_repo(repo.clone()).await {
+                Ok(_) => {}
+                Err(ShakoError::Conflict(_)) => {
+                    self.mirror.update_repo(repo).await?;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        let held = self.mirror.get_quota_usage(instance_id, org_id).await?;
+        let count = i64::try_from(repos.len()).unwrap_or(i64::MAX);
+        self.mirror
+            .adjust_quota_usage(
+                instance_id,
+                org_id,
+                count.saturating_sub(i64::try_from(held.repo_count).unwrap_or(i64::MAX)),
+                git_bytes.saturating_sub(i64::try_from(held.git_bytes).unwrap_or(i64::MAX)),
+                0,
+            )
+            .await?;
+        Ok(repos.len())
+    }
+
     /// Begins a transaction with `SET LOCAL` tenant context (`shako.instance` and `shako.org`).
     pub async fn begin_tenant_tx(
         &self,
