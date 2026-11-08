@@ -504,6 +504,7 @@ async fn delete_datasources_removes_a_provisioned_read_only_datasource() {
         },
         &scratch.0.join("prov"),
         &built.state.limits,
+        &std::collections::BTreeMap::new(),
     )
     .await
     .unwrap();
@@ -681,4 +682,17 @@ fn the_tokens_file_cannot_name_the_server_admin() {
         .to_string(),
     );
     assert!(read_tokens_file(&tokens).is_err());
+}
+
+/// Only `DAIYA_VAR_*` variables reach provisioning, without their prefix.
+#[test]
+fn provisioning_variables_come_only_from_the_daiya_var_prefix() {
+    let vars = daiya_server::config::provisioning_vars_from([
+        ("DAIYA_VAR_HOST".to_owned(), "prom".to_owned()),
+        ("DAIYA_VAR_".to_owned(), "empty name".to_owned()),
+        ("JC_SECRET".to_owned(), "no".to_owned()),
+        ("HOME".to_owned(), "/root".to_owned()),
+    ]);
+    assert_eq!(vars.len(), 1);
+    assert_eq!(vars["HOST"], "prom");
 }
