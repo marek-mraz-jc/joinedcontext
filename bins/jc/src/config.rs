@@ -95,6 +95,15 @@ pub struct Cli {
     /// environment, as for the standalone broker.
     #[arg(long, env = "JCBIN_ANTARES_ADMIN_TOKEN_FILE")]
     pub antares_admin_token_file: Option<PathBuf>,
+    /// shako: directory holding bare Git repositories and package blobs.
+    #[arg(long, env = "JCBIN_SHAKO_REPO_ROOT")]
+    pub shako_repo_root: Option<PathBuf>,
+    /// shako: file holding the ES256 signing key for registry tokens and image signatures.
+    #[arg(long, env = "JCBIN_SHAKO_SIGNING_KEY_FILE")]
+    pub shako_signing_key_file: Option<PathBuf>,
+    /// shako: optional file holding a static service bearer token.
+    #[arg(long, env = "JCBIN_SHAKO_TOKEN_FILE")]
+    pub shako_token_file: Option<PathBuf>,
 }
 
 /// Log output format.
@@ -140,6 +149,15 @@ pub struct AntaresSection {
     pub admin_token_file: Option<PathBuf>,
 }
 
+/// `[shako]` section.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShakoSection {
+    pub repo_root: Option<PathBuf>,
+    pub signing_key_file: Option<PathBuf>,
+    pub token_file: Option<PathBuf>,
+}
+
 /// `[dataroom]` section. dataroom runs on its in-memory store inside `jc` for now.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -181,6 +199,8 @@ pub struct FileConfig {
     pub ekiben: EkibenSection,
     #[serde(default)]
     pub antares: AntaresSection,
+    #[serde(default)]
+    pub shako: ShakoSection,
 }
 
 /// Errors while assembling the configuration.
@@ -232,6 +252,7 @@ pub struct Config {
     pub dataroom: DataroomSection,
     pub ekiben: EkibenSection,
     pub antares: AntaresSection,
+    pub shako: ShakoSection,
 }
 
 impl Config {
@@ -329,6 +350,11 @@ impl Config {
         if roles.contains(&Module::Antares) && antares.admin_token_file.is_none() {
             return Err(ConfigError::AntaresToken);
         }
+        let shako = ShakoSection {
+            repo_root: cli.shako_repo_root.or(file.shako.repo_root),
+            signing_key_file: cli.shako_signing_key_file.or(file.shako.signing_key_file),
+            token_file: cli.shako_token_file.or(file.shako.token_file),
+        };
         let admin_listen = cli.admin_listen.or(file.admin_listen);
         let admin_token_file = cli.admin_token_file.or(file.admin_token_file);
         if admin_listen.is_some() && admin_token_file.is_none() {
@@ -353,6 +379,7 @@ impl Config {
             dataroom: file.dataroom.unwrap_or_default(),
             ekiben,
             antares,
+            shako,
         })
     }
 }

@@ -118,6 +118,26 @@ pub async fn build_router(
         builder = builder.trust_proxy(*net);
     }
     for plan in plans {
+        #[cfg(feature = "shako")]
+        if plan.module == Module::Shako {
+            let state = modules::shako::build_state(&cfg.shako)?;
+            let (main_router, v2_router) = modules::shako::build(state, plan.mount.clone());
+            tracing::info!(
+                module = plan.module.name(),
+                host = plan.spec.host.as_deref().unwrap_or("*"),
+                prefix = plan.spec.path_prefix.as_deref().unwrap_or("/"),
+                "mounted"
+            );
+            builder = builder.mount(plan.spec.clone(), main_router);
+            // S1: mount `/v2/` at the host root in both one-domain and host modes
+            let v2_spec = MountSpec {
+                module: "shako-registry".into(),
+                host: None,
+                path_prefix: Some("/v2".into()),
+            };
+            builder = builder.mount(v2_spec, v2_router);
+            continue;
+        }
         let router = modules::build(plan.module, cfg, plan.mount, shutdown, tasks).await?;
         tracing::info!(
             module = plan.module.name(),

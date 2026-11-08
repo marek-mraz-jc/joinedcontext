@@ -14,7 +14,12 @@ name = "jc"
 path = "src/main.rs"
 
 [features]
-default = ["kaisatsu", "dataroom", "daiya", "ekiben", "antares", "portal", "jemalloc"]
+default = ["kaisatsu", "dataroom", "daiya", "ekiben", "antares", "portal", "shako", "jemalloc"]
+shako = [
+  "dep:shako-server",
+  "dep:shako-core",
+  "dep:shako-store-memory",
+]
 kaisatsu = [
   "dep:kaisatsu-server",
   "dep:kaisatsu-core",
@@ -80,6 +85,10 @@ ekiben-core = { path = "../../crates/ekiben/crates/ekiben-core", optional = true
 antares-broker = { path = "../../crates/antares/crates/antares-broker", optional = true }
 
 joinedcontext-portal = { path = "../../crates/portal", optional = true }
+
+shako-server = { path = "../../crates/shako/server", optional = true }
+shako-core = { path = "../../crates/shako/core", optional = true }
+shako-store-memory = { path = "../../crates/shako/store-memory", optional = true }
 
 [dev-dependencies]
 http-body-util = "0.1"

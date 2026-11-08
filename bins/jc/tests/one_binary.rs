@@ -95,6 +95,7 @@ fn probe(module: Module) -> (&'static str, &'static str) {
         Module::Ekiben => ("/ping", "pong"),
         Module::Antares => ("/ngsi-ld/v1/info/sourceIdentity", "antares"),
         Module::Portal => ("/api/v1/health", "\"status\":\"ok\""),
+        Module::Shako => ("/api/healthz", "\"status\":\"ok\""),
     }
 }
 
