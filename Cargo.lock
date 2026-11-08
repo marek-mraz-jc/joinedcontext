@@ -2343,18 +2343,30 @@ name = "ekiben-io-http"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "base64 0.23.1",
  "bytes",
  "ekiben-bloblang",
  "ekiben-core",
  "futures",
+ "hex",
+ "hmac 0.13.0",
  "reqwest 0.13.5",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
  "serde",
  "serde_json",
+ "sha1 0.11.0",
+ "sha2 0.11.1",
+ "subtle",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-rustls",
+ "tokio-websockets 0.13.3",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -2369,11 +2381,35 @@ dependencies = [
  "ekiben-core",
  "futures",
  "nkeys",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "ekiben-io-ngsild"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.23.1",
+ "bytes",
+ "chrono",
+ "ekiben-bloblang",
+ "ekiben-core",
+ "ekiben-io-http",
+ "futures",
+ "hex",
+ "reqwest 0.13.5",
+ "serde_json",
+ "sha2 0.11.1",
+ "subtle",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -2440,14 +2476,17 @@ dependencies = [
  "ekiben-io-file",
  "ekiben-io-http",
  "ekiben-io-nats",
+ "ekiben-io-ngsild",
  "ekiben-parquet",
  "ekiben-processors",
  "ekiben-protobuf",
  "futures",
+ "hex",
  "regex",
  "serde",
  "serde_json",
  "serde_norway",
+ "sha2 0.11.1",
  "subtle",
  "thiserror 2.0.21",
  "tokio",
