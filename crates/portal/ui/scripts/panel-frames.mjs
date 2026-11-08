@@ -9,7 +9,7 @@
 //   node scripts/panel-frames.mjs        writes tests/fixtures/frames/<dashboard>-<panel>.json
 //
 // A frame's `served` member, when present, is what daiya answers after the panel's
-// transformations (crates/daiya/api/tests/panel_fixtures.rs writes and checks it).
+// transformations (crates/daiya/expr/tests/panel_fixtures.rs writes and checks it).
 import { readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

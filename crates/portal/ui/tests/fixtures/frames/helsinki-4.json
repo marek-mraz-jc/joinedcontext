@@ -1,18 +1,12 @@
 {
  "dashboard": "project-helsinki",
- "panel": 4,
- "title": "City bikes, members",
- "from": 1793512800000,
- "to": 1794117600000,
  "frames": [
   {
-   "name": "A",
-   "refId": "A",
    "fields": [
     {
+     "labels": {},
      "name": "id",
      "type": "string",
-     "labels": {},
      "values": [
       "urn:ngsi-ld:BikeHireDockingStation:kaivopuisto",
       "urn:ngsi-ld:BikeHireDockingStation:laivasillankatu",
@@ -23,9 +17,9 @@
      ]
     },
     {
+     "labels": {},
      "name": "type",
      "type": "string",
-     "labels": {},
      "values": [
       "BikeHireDockingStation",
       "BikeHireDockingStation",
@@ -36,10 +30,10 @@
      ]
     },
     {
+     "labels": {},
      "name": "observedAt",
      "type": "time",
      "unit": "dateTimeAsIso",
-     "labels": {},
      "values": [
       1794117360000,
       1794117120000,
@@ -50,9 +44,9 @@
      ]
     },
     {
+     "labels": {},
      "name": "name",
      "type": "string",
-     "labels": {},
      "values": [
       "Kaivopuisto",
       "Laivasillankatu",
@@ -63,9 +57,9 @@
      ]
     },
     {
+     "labels": {},
      "name": "availableBikeNumber",
      "type": "number",
-     "labels": {},
      "values": [
       8,
       19,
@@ -76,9 +70,9 @@
      ]
     },
     {
+     "labels": {},
      "name": "freeSlotNumber",
      "type": "number",
-     "labels": {},
      "values": [
       14,
       6,
@@ -89,9 +83,9 @@
      ]
     },
     {
+     "labels": {},
      "name": "status",
      "type": "string",
-     "labels": {},
      "values": [
       "working",
       "outOfService",
@@ -101,7 +95,74 @@
       "working"
      ]
     }
-   ]
+   ],
+   "name": "A",
+   "refId": "A"
   }
- ]
+ ],
+ "from": 1793512800000,
+ "panel": 4,
+ "served": [
+  {
+   "fields": [
+    {
+     "displayName": "Station",
+     "name": "Station",
+     "type": "string",
+     "values": [
+      "Kaivopuisto",
+      "Laivasillankatu",
+      "Kapteeninpuistikko",
+      "Viiskulma",
+      "Sepänkatu",
+      "Hietalahdentori"
+     ]
+    },
+    {
+     "displayName": "Bikes",
+     "name": "Bikes",
+     "type": "number",
+     "values": [
+      8,
+      19,
+      15,
+      8,
+      20,
+      18
+     ]
+    },
+    {
+     "displayName": "Free",
+     "name": "Free",
+     "type": "number",
+     "values": [
+      14,
+      6,
+      8,
+      1,
+      10,
+      9
+     ]
+    },
+    {
+     "displayName": "Status",
+     "name": "Status",
+     "type": "string",
+     "values": [
+      "working",
+      "outOfService",
+      "working",
+      "withIncidence",
+      "working",
+      "working"
+     ]
+    }
+   ],
+   "meta": {},
+   "name": "A",
+   "refId": "A"
+  }
+ ],
+ "title": "City bikes, members",
+ "to": 1794117600000
 }

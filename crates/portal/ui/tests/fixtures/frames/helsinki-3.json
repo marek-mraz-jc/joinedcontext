@@ -1,18 +1,12 @@
 {
  "dashboard": "project-helsinki",
- "panel": 3,
- "title": "Air quality now, µg/m³",
- "from": 1793512800000,
- "to": 1794117600000,
  "frames": [
   {
-   "name": "A",
-   "refId": "A",
    "fields": [
     {
+     "labels": {},
      "name": "id",
      "type": "string",
-     "labels": {},
      "values": [
       "urn:ngsi-ld:AirQualityObserved:m-kel-nkatu",
       "urn:ngsi-ld:AirQualityObserved:kallio-2",
@@ -21,9 +15,9 @@
      ]
     },
     {
+     "labels": {},
      "name": "type",
      "type": "string",
-     "labels": {},
      "values": [
       "AirQualityObserved",
       "AirQualityObserved",
@@ -32,10 +26,10 @@
      ]
     },
     {
+     "labels": {},
      "name": "observedAt",
      "type": "time",
      "unit": "dateTimeAsIso",
-     "labels": {},
      "values": [
       1794117360000,
       1794117120000,
@@ -44,9 +38,9 @@
      ]
     },
     {
+     "labels": {},
      "name": "name",
      "type": "string",
-     "labels": {},
      "values": [
       "Mäkelänkatu",
       "Kallio 2",
@@ -55,9 +49,9 @@
      ]
     },
     {
+     "labels": {},
      "name": "pm25",
      "type": "number",
-     "labels": {},
      "values": [
       27.4,
       12.06,
@@ -66,9 +60,9 @@
      ]
     },
     {
+     "labels": {},
      "name": "pm10",
      "type": "number",
-     "labels": {},
      "values": [
       41,
       19.6,
@@ -76,7 +70,55 @@
       null
      ]
     }
-   ]
+   ],
+   "name": "A",
+   "refId": "A"
   }
- ]
+ ],
+ "from": 1793512800000,
+ "panel": 3,
+ "served": [
+  {
+   "fields": [
+    {
+     "displayName": "Station",
+     "name": "Station",
+     "type": "string",
+     "values": [
+      "Mäkelänkatu",
+      "Kallio 2",
+      "Vartiokylä Huivipolku",
+      "Länsisatama 4"
+     ]
+    },
+    {
+     "displayName": "PM2.5",
+     "name": "PM2.5",
+     "type": "number",
+     "values": [
+      27.4,
+      12.06,
+      6.3,
+      48.75
+     ]
+    },
+    {
+     "displayName": "PM10",
+     "name": "PM10",
+     "type": "number",
+     "values": [
+      41,
+      19.6,
+      11.24,
+      null
+     ]
+    }
+   ],
+   "meta": {},
+   "name": "A",
+   "refId": "A"
+  }
+ ],
+ "title": "Air quality now, µg/m³",
+ "to": 1794117600000
 }
