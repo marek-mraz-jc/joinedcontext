@@ -843,7 +843,9 @@ def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, repo
     auth = {"Authorization": "Basic " + base64.b64encode(f"portal:{pw}".encode()).decode()}
     order = {"folder": 0, "datasource": 1, "dashboard": 2, "model": 2}
     src = dashboards or export / "grafana" / "dashboards"
-    files = sorted(src.glob("*.json"), key=lambda f: (order[_daiya_kind(f.name)], f.name))
+    # source-database files (org<N>-project-*, org<N>-pv-*) go through import_portal_made, not here
+    files = sorted((f for f in src.glob("*.json") if not SOURCE_ORG_FILE.match(f.name)),
+                   key=lambda f: (order[_daiya_kind(f.name)], f.name))
     rows, orgs = [], {}
     for f in files:
         kind = _daiya_kind(f.name)
@@ -906,7 +908,51 @@ def import_daiya(h: Http, state: Path, export: Path, daiya_bin: str | None, repo
         else:
             row.update(result="refused", call=call, status=st, detail=answer)
         rows.append(row)
+    rows.extend(import_portal_made(h, auth, export, orgs))
     report["daiya"] = rows
+
+
+SOURCE_ORG_FILE = re.compile(r"^org(\d+)-(project-(?P<project>[a-z0-9-]+)|pv-[0-9a-f]+)\.json$")
+
+
+def portal_made(export: Path) -> list[tuple[Path, str | None]]:
+    """The dev bundle's Portal-made dashboards (`org<N>-pv-<id>.json`, read from the source Grafana's
+    database), each with the project of source organization N: the one `org<N>-project-<p>.json`
+    names. None when no such file names N."""
+    src = export / "grafana" / "dashboards"
+    projects, made = {}, []
+    for f in sorted(src.glob("org*.json")) if src.is_dir() else []:
+        m = SOURCE_ORG_FILE.match(f.name)
+        if m and m.group("project"):
+            projects[m.group(1)] = m.group("project")
+        elif m:
+            made.append((f, m.group(1)))
+    return [(f, projects.get(n)) for f, n in made]
+
+
+def import_portal_made(h: Http, auth: dict, export: Path, orgs: dict) -> list[dict]:
+    """Each Portal-made dashboard into the daiya organization of its project, as the Portal
+    would save it there (POST /dashboards/api/dashboards/db, overwrite)."""
+    rows = []
+    for f, project in portal_made(export):
+        row = {"file": f.name, "kind": "portal-made", "project": project}
+        if not project:
+            rows.append({**row, "result": "refused", "reason": "its source organization names no project"})
+            continue
+        try:
+            if project not in orgs:
+                orgs[project] = daiya_org(h, auth, project)
+            doc = json.loads(f.read_text())
+        except (RuntimeError, ValueError) as e:
+            rows.append({**row, "result": "refused", "reason": str(e)})
+            continue
+        dash = {k: v for k, v in doc.get("dashboard", doc).items() if k != "id"}
+        st, answer = h.json("POST", "/dashboards/api/dashboards/db", body={"dashboard": dash, "overwrite": True},
+                            headers={**auth, "X-Grafana-Org-Id": str(orgs[project])})
+        row.update(org=orgs[project], uid=dash.get("uid"), status=st,
+                   result="imported" if st in (200, 201) else "refused", **({} if st in (200, 201) else {"detail": answer}))
+        rows.append(row)
+    return rows
 
 
 def bundle_settled(export: Path) -> str:

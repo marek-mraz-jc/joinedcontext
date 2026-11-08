@@ -642,3 +642,66 @@ def test_org_1_panels_count_data_and_red_apart(tmp_path):
     finally:
         server.shutdown()
     assert (o["data"], o["red"]) == (1, 1) and [r["panel"] for r in o["rows"]] == [1, 3]
+
+
+def test_a_portal_made_dashboard_goes_into_the_org_of_its_source_project(tmp_path):
+    seen = []
+
+    class Daiya(http.server.BaseHTTPRequestHandler):
+        def answer(self, st, body):
+            raw = json.dumps(body).encode()
+            self.send_response(st)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_POST(self):  # noqa: N802
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if self.path == "/dashboards/api/orgs":
+                return self.answer(409, {"message": "exists"})
+            seen.append((self.headers.get("X-Grafana-Org-Id"), body["dashboard"]["uid"], "id" in body["dashboard"]))
+            self.answer(200, {"status": "success"})
+
+        def do_GET(self):  # noqa: N802
+            self.answer(200, {"id": 6, "name": self.path.rsplit("/", 1)[-1]})
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Daiya)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    src = tmp_path / "grafana" / "dashboards"
+    src.mkdir(parents=True)
+    (src / "org3-project-helsinki.json").write_text(json.dumps({"uid": "project-helsinki"}))
+    (src / "org3-pv-ab12.json").write_text(json.dumps({"id": 41, "uid": "pv-ab12", "title": "Air"}))
+    (src / "org9-pv-cd34.json").write_text(json.dumps({"uid": "pv-cd34"}))
+    try:
+        rows = rh.import_portal_made(rh.Http(f"http://127.0.0.1:{server.server_port}"), {}, tmp_path, {})
+    finally:
+        server.shutdown()
+    assert seen == [("6", "pv-ab12", False)]
+    assert [(r["file"], r["project"], r["result"]) for r in rows] == [
+        ("org3-pv-ab12.json", "helsinki", "imported"), ("org9-pv-cd34.json", None, "refused")]
+
+
+@pytest.mark.parametrize("dist_age, bin_age, ok", [(-10, -5, False), (10, 20, True), (10, 5, False)])
+def test_a_jc_with_a_stale_portal_ui_does_not_start(tmp_path, dist_age, bin_age, ok):
+    """ui-fresh.sh: ui/dist older than the last UI commit, or a jc linked before ui/dist, fails."""
+    clone = tmp_path / "clone"
+    ui = clone / "crates/portal/ui"
+    (ui / "src").mkdir(parents=True)
+    (ui / "src" / "App.tsx").write_text("x")
+    g = ["git", "-C", str(clone), "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run([*g, "init", "-q"], check=True)
+    subprocess.run([*g, "add", "-A"], check=True)
+    at = int(time.time()) - 1000
+    subprocess.run([*g, "commit", "-qm", "ui"], check=True,
+                   env=dict(os.environ, GIT_COMMITTER_DATE=f"@{at} +0000", GIT_AUTHOR_DATE=f"@{at} +0000"))
+    (ui / "dist").mkdir()
+    (ui / "dist" / "index.html").write_text("<html>")
+    os.utime(ui / "dist" / "index.html", (at + dist_age, at + dist_age))
+    jc = tmp_path / "jc"
+    jc.write_text("")
+    os.utime(jc, (at + bin_age, at + bin_age))
+    r = subprocess.run([str(HERE / "ui-fresh.sh"), str(clone), str(jc)], capture_output=True, text=True)
+    assert (r.returncode == 0) == ok, r.stderr
