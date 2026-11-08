@@ -80,6 +80,17 @@ enum Commands {
     },
 }
 
+/// The exit code for a failed command (R2): a stale plan is 3; a store, I/O or quota failure
+/// is 4; anything the input itself caused (bad JSON, refused, not found, denied) is 1.
+fn exit_code_for(err: &CrError) -> i32 {
+    match err {
+        CrError::StalePlan(_) => ExitCode::StalePlan.code(),
+        CrError::QuotaExceeded { .. } => ExitCode::StoreOrIoError.code(),
+        e if e.status_code() >= 500 => ExitCode::StoreOrIoError.code(),
+        _ => ExitCode::Refused.code(),
+    }
+}
+
 async fn load_dashboard_inputs(path: &Path) -> Result<Vec<DashboardImportInput>, CrError> {
     let mut inputs = Vec::new();
     if path.is_dir() {
@@ -255,7 +266,7 @@ async fn main() {
             }
             Err(e) => {
                 eprintln!("{e}");
-                ExitCode::StoreOrIoError.code()
+                exit_code_for(&e)
             }
         },
         Commands::Import {
@@ -294,13 +305,13 @@ async fn main() {
                     }
                     Err(e) => {
                         eprintln!("import failed: {e}");
-                        ExitCode::Refused.code()
+                        exit_code_for(&e)
                     }
                 }
             }
             Err(e) => {
                 eprintln!("{e}");
-                ExitCode::StoreOrIoError.code()
+                exit_code_for(&e)
             }
         },
         Commands::Export { uid } => {
@@ -311,7 +322,7 @@ async fn main() {
                 }
                 Err(e) => {
                     eprintln!("export failed: {e}");
-                    ExitCode::StoreOrIoError.code()
+                    exit_code_for(&e)
                 }
             }
         }
@@ -341,7 +352,7 @@ async fn main() {
                     }
                     Err(e) => {
                         eprintln!("plan failed: {e}");
-                        ExitCode::Refused.code()
+                        exit_code_for(&e)
                     }
                 }
             }
@@ -357,15 +368,15 @@ async fn main() {
                     {
                         Ok(rep) => {
                             println!("{}", serde_json::to_string_pretty(&rep).unwrap_or_default());
-                            ExitCode::Ok.code()
-                        }
-                        Err(CrError::StalePlan(msg)) => {
-                            eprintln!("stale plan: {msg}");
-                            ExitCode::StalePlan.code()
+                            // The applied import's own verdict: refused dashboards are 1.
+                            rep["exitCode"]
+                                .as_i64()
+                                .and_then(|c| i32::try_from(c).ok())
+                                .unwrap_or(ExitCode::Ok.code())
                         }
                         Err(e) => {
                             eprintln!("apply failed: {e}");
-                            ExitCode::StoreOrIoError.code()
+                            exit_code_for(&e)
                         }
                     }
                 }
@@ -398,7 +409,7 @@ async fn main() {
                 }
                 Err(e) => {
                     eprintln!("{e}");
-                    ExitCode::Refused.code()
+                    exit_code_for(&e)
                 }
             }
         }

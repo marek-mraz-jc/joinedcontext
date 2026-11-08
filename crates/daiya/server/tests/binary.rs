@@ -43,8 +43,29 @@ struct Server {
     base: String,
 }
 
+impl Server {
+    /// Stops the server the way an operator does (SIGINT / Ctrl-C) and returns its exit code.
+    fn interrupt(&mut self) -> Option<i32> {
+        let status = Command::new("kill")
+            .args(["-INT", &self.child.id().to_string()])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        for _ in 0..100 {
+            if let Some(exit) = self.child.try_wait().unwrap() {
+                return exit.code();
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!("daiya did not stop on SIGINT");
+    }
+}
+
 impl Drop for Server {
     fn drop(&mut self) {
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.interrupt();
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -52,8 +73,14 @@ impl Drop for Server {
 
 /// Starts `daiya --config <cfg> serve` and waits for its "listening on" line.
 fn serve(cfg: &Path) -> Server {
+    serve_with(&["--config", cfg.to_str().unwrap(), "serve"]).0
+}
+
+/// Starts `daiya <args>` and waits for its "listening on" line; also returns what it wrote
+/// to stderr before that line.
+fn serve_with(args: &[&str]) -> (Server, Vec<String>) {
     let mut child = Command::new(BIN)
-        .args(["--config", cfg.to_str().unwrap(), "serve"])
+        .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -72,10 +99,13 @@ fn serve(cfg: &Path) -> Server {
         seen.push(line);
     };
     std::thread::spawn(move || for _ in lines {});
-    Server {
-        child,
-        base: format!("http://{addr}"),
-    }
+    (
+        Server {
+            child,
+            base: format!("http://{addr}"),
+        },
+        seen,
+    )
 }
 
 async fn prometheus_mock() -> String {
@@ -257,6 +287,8 @@ async fn the_binary_serves_provisioned_dashboards_and_queries_with_a_configured_
         .await
         .unwrap();
     assert_eq!(saved.status(), 200);
+    let mut server = server;
+    assert_eq!(server.interrupt(), Some(0), "a graceful stop exits 0");
     drop(server);
 
     // The CLI acts on the configured store.
@@ -303,6 +335,55 @@ async fn the_binary_serves_provisioned_dashboards_and_queries_with_a_configured_
             assert_eq!(got.status(), 200, "{uid}");
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn serve_flags_override_the_mount_and_a_taken_port_is_a_start_failure() {
+    let (mut server, early) = serve_with(&[
+        "serve",
+        "--listen",
+        "127.0.0.1:0",
+        "--scheme",
+        "https",
+        "--host",
+        "dash.example.org",
+        "--path-prefix",
+        "/dash",
+    ]);
+    assert!(
+        early.iter().any(|l| l.contains("no API tokens configured")),
+        "{early:?}"
+    );
+    let info: Value = http()
+        .get(format!("{}/mount-info", server.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        info["publicBase"], "https://dash.example.org/dash",
+        "{info}"
+    );
+    assert_eq!(
+        info["odataUrl"], "https://dash.example.org/dash/odata/v4",
+        "{info}"
+    );
+
+    // Another daiya on the same address cannot bind it.
+    let taken = server.base.trim_start_matches("http://").to_owned();
+    let out = Command::new(BIN)
+        .args(["serve", "--listen", &taken])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(4));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("failed to bind"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(server.interrupt(), Some(0));
 }
 
 #[test]
