@@ -181,7 +181,7 @@ export function TimeSeriesPanel({ title, frames, fieldConfig, options, from, to,
         className="min-w-0 flex-1"
         spec={built.spec}
         height={chartHeight}
-        label={t("dashboardView.chartLabel", { title, count: built.series.length })}
+        label={t("dashboardView.chartLabel", { title, n: built.series.length })}
         tooltip={tooltip}
       />
       <div className={clsx("min-w-0", right && "sm:w-2/5 sm:shrink-0")}>

@@ -77,7 +77,7 @@ export function BarChartPanel({ title, frames, fieldConfig, options, height, loc
       <VegaChart
         spec={built.spec}
         height={Math.max(120, height - 28)}
-        label={t("dashboardView.chartLabel", { title, count: built.names.length })}
+        label={t("dashboardView.chartLabel", { title, n: built.names.length })}
         tooltip={(datum) => datumLines(datum, [["x", t("dashboardView.category")], ["s", t("dashboardView.series")], ["v", t("dashboardView.value")]], dateTime)}
       />
       {built.names.length > 1 ? (
@@ -103,7 +103,7 @@ export function PieChartPanel({ title, frames, fieldConfig, options, height, loc
         className="sm:flex-1"
         spec={built.spec}
         height={chartHeight}
-        label={t("dashboardView.chartLabel", { title, count: built.slices.length })}
+        label={t("dashboardView.chartLabel", { title, n: built.slices.length })}
         tooltip={(datum) => datumLines(datum, [["name", t("dashboardView.series")], ["value", t("dashboardView.value")]], dateTime)}
       />
       <ColourKey
@@ -125,7 +125,7 @@ export function HeatmapPanel({ title, frames, fieldConfig, options, height, loca
     <VegaChart
       spec={built.spec}
       height={height}
-      label={t("dashboardView.chartLabel", { title, count: built.buckets.length })}
+      label={t("dashboardView.chartLabel", { title, n: built.buckets.length })}
       tooltip={(datum) => datumLines(datum, [["t", t("dashboardView.time")], ["b", t("dashboardView.bucket")], ["v", t("dashboardView.value")]], dateTime)}
     />
   );
@@ -144,7 +144,7 @@ export function StateTimelinePanel({ title, frames, fieldConfig, options, height
       <VegaChart
         spec={built.spec}
         height={chartHeight}
-        label={t("dashboardView.chartLabel", { title, count: built.states.length })}
+        label={t("dashboardView.chartLabel", { title, n: built.states.length })}
         tooltip={(datum) =>
           datumLines(datum, [["row", t("dashboardView.series")], ["text", t("dashboardView.state")], ["t", t("dashboardView.since")], ["t2", t("dashboardView.until")]], dateTime)
         }
@@ -157,5 +157,5 @@ export function StateTimelinePanel({ title, frames, fieldConfig, options, height
 export function HistogramPanel({ title, frames, fieldConfig, options, height, locale }: ChartPanelProps): JSX.Element {
   const { t } = useTranslation();
   const spec = useMemo(() => histogramSpec(frames, { fieldConfig, options, locale, theme: chartTheme(), height }), [frames, fieldConfig, options, locale, height]);
-  return <VegaChart spec={spec} height={height} label={t("dashboardView.chartLabel", { title, count: 1 })} />;
+  return <VegaChart spec={spec} height={height} label={t("dashboardView.chartLabel", { title, n: 1 })} />;
 }

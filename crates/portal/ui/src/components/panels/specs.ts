@@ -312,7 +312,9 @@ export interface TimeOptions extends CategoryOptions {
 export function heatmapSpec(frames: Frame[], opts: TimeOptions): { spec: Spec; buckets: string[] } {
   const series = seriesOf(frames);
   const bucketOf = (one: Series): string => one.field.labels?.le ?? one.name;
-  const sorted = [...series].sort((a, b) => (Number(bucketOf(a)) || 0) - (Number(bucketOf(b)) || 0));
+  // Prometheus writes the last bucket as `+Inf`, which Number() reads as NaN.
+  const bound = (one: Series): number => (/^\+?inf$/i.test(bucketOf(one)) ? Infinity : Number(bucketOf(one)) || 0);
+  const sorted = [...series].sort((a, b) => bound(a) - bound(b));
   const buckets = sorted.map(bucketOf);
   const values = sorted.flatMap((one) => spans(one.points, opts.to).map((span) => ({ ...span, b: bucketOf(one) })));
   const scheme = ((opts.options?.color as { scheme?: string } | undefined)?.scheme ?? "Oranges").toLowerCase();

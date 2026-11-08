@@ -1,0 +1,275 @@
+/**
+ * Each panel type the dashboard page draws, over frames in daiya's shape: the Vega-Lite spec of a
+ * chart compiled and run headless to SVG (axis labels in the field's unit, a mark per datum), the
+ * DOM of the panels drawn without Vega (stat, bargauge, table), and every state of a panel card.
+ */
+import { describe, expect, it } from "vitest";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { TopLevelSpec } from "vega-lite";
+import "../src/i18n";
+import { loadVega } from "../src/components/panels/VegaChart";
+import type { Spec } from "../src/components/panels/specs";
+import { barChartSpec, gaugeSpec, heatmapSpec, histogramSpec, pieChartSpec, stateTimelineSpec, timeSeriesSpec } from "../src/components/panels/specs";
+import { FALLBACK } from "../src/components/panels/palette";
+import { PanelView } from "../src/components/panels/PanelView";
+import type { PanelDefinition } from "../src/components/panels/PanelView";
+import { BarGaugePanel, shownValues, StatPanel } from "../src/components/panels/ValuePanels";
+import { tableOf, TablePanel } from "../src/components/panels/TablePanel";
+import { Legend } from "../src/components/panels/TimeSeriesPanel";
+import { formatUnit, settingsFor } from "../src/components/panels/fieldConfig";
+import { ordered, sections } from "../src/components/panels/DashboardGrid";
+import { panelQuery } from "../src/pages/grafana/DashboardPage";
+import { resolveTime } from "../src/components/panels/timeRange";
+import * as frames from "./fixtures/panel_frames";
+
+const theme = { ...FALLBACK, font: "sans-serif" };
+
+/** The chart as SVG text, drawn headless the way the page draws it (interpreter, no loads). */
+async function svgOf(spec: Spec): Promise<string> {
+  const [vega, vegaLite, interpreter] = await loadVega();
+  const compiled = vegaLite.compile({ ...spec, width: 600 } as unknown as TopLevelSpec).spec;
+  const view = new vega.View(vega.parse(compiled, undefined, { ast: true }), { expr: interpreter.expressionInterpreter, renderer: "none" });
+  const svg = await view.toSVG();
+  view.finalize();
+  return svg;
+}
+
+function count(text: string, pattern: RegExp): number {
+  return [...text.matchAll(new RegExp(pattern.source, "g"))].length;
+}
+
+describe("timeseries", () => {
+  it("draws one line per label set of the context-broker request rate, its axis in req/s", async () => {
+    const built = timeSeriesSpec(frames.requestRate, {
+      fieldConfig: { defaults: { unit: "reqps", decimals: 1 }, overrides: [] },
+      options: { legend: { displayMode: "list", placement: "bottom" } },
+      locale: "en",
+      theme,
+      height: 200,
+      from: frames.FROM,
+      to: frames.TO,
+    });
+    expect(built.series.map((one) => one.name)).toEqual(["200", "500"]);
+    const svg = await svgOf(built.spec);
+    expect(count(svg, /class="mark-line/)).toBeGreaterThanOrEqual(1);
+    expect(svg).toMatch(/\d+(\.\d)? req\/s/);
+  });
+
+  it("draws the helsinki pm25 history with a threshold line and a table legend of its calcs", async () => {
+    const fieldConfig = {
+      defaults: { unit: "suffix: µg/m³", thresholds: { mode: "absolute", steps: [{ color: "green", value: null }, { color: "red", value: 15 }] }, custom: { thresholdsStyle: { mode: "line" } } },
+      overrides: [],
+    };
+    const built = timeSeriesSpec(frames.pm25History, { fieldConfig, options: {}, locale: "en", theme, height: 200, from: frames.FROM, to: frames.TO });
+    const svg = await svgOf(built.spec);
+    expect(svg).toContain("µg/m³");
+    expect(svg).toMatch(/class="mark-rule/);
+    render(
+      <Legend
+        series={built.series}
+        colors={built.colors}
+        legend={{ displayMode: "table", placement: "bottom", calcs: ["mean", "max"] }}
+        fieldConfig={fieldConfig}
+        locale="en"
+        hidden={new Set()}
+        onToggle={() => undefined}
+      />,
+    );
+    const table = screen.getByRole("table");
+    expect(within(table).getByRole("columnheader", { name: "Mean" })).toBeInTheDocument();
+    expect(within(table).getByRole("row", { name: /Mannerheimintie.*16\.1 µg\/m³/ })).toBeInTheDocument();
+  });
+
+  it("hides a series its legend entry turns off", async () => {
+    const user = userEvent.setup();
+    const toggled: string[] = [];
+    const built = timeSeriesSpec(frames.requestRate, { options: {}, locale: "en", theme, height: 200, from: frames.FROM, to: frames.TO });
+    render(<Legend series={built.series} colors={built.colors} legend={{ displayMode: "list" }} locale="en" hidden={new Set()} onToggle={(name) => toggled.push(name)} />);
+    await user.click(screen.getByRole("button", { name: /500/ }));
+    expect(toggled).toEqual(["500"]);
+  });
+});
+
+describe("table", () => {
+  const fieldConfig = {
+    defaults: {},
+    overrides: [
+      { matcher: { id: "byName", options: "pm25" }, properties: [{ id: "unit", value: "suffix: µg/m³" }, { id: "decimals", value: 1 }, { id: "custom.width", value: 120 }] },
+      {
+        matcher: { id: "byName", options: "airQualityLevel" },
+        properties: [
+          { id: "displayName", value: "Level" },
+          { id: "mappings", value: [{ type: "value", options: { poor: { text: "Poor", color: "red" } } }] },
+        ],
+      },
+    ],
+  };
+
+  it("names its columns by the overrides and gives the grid one entity per row", () => {
+    const table = tableOf(frames.stations, fieldConfig);
+    expect(table.columns.map((column) => column.label)).toEqual(["name", "pm25", "Level", "dateObserved"]);
+    expect(table.entities).toHaveLength(3);
+    expect(table.columns[1].settings.custom.width).toBe(120);
+  });
+
+  it("draws the helsinki stations in the SDK grid, each cell in its unit and mapping", async () => {
+    render(<TablePanel title="Stations" frames={frames.stations} fieldConfig={fieldConfig} locale="en" />);
+    expect(await screen.findByText("26.3 µg/m³", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByText("Poor")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /Level/ })).toBeInTheDocument();
+  });
+});
+
+describe("stat", () => {
+  it("shows each instance's last value, coloured by its threshold, named when there are several", () => {
+    const fieldConfig = { defaults: { thresholds: { mode: "absolute", steps: [{ color: "red", value: null }, { color: "green", value: 1 }] } }, overrides: [] };
+    const shown = shownValues(frames.up, fieldConfig, { reduceOptions: { calcs: ["lastNotNull"] } }, "en");
+    expect(shown.map((one) => [one.reduced.name, one.text])).toEqual([
+      ["antares-0", "1"],
+      ["antares-1", "0"],
+    ]);
+    expect(shown[0].color).not.toBe(shown[1].color);
+    render(<StatPanel title="Up" frames={frames.up} fieldConfig={fieldConfig} options={{ reduceOptions: { calcs: ["lastNotNull"] } }} height={120} locale="en" />);
+    expect(screen.getByText("antares-1")).toBeInTheDocument();
+    expect(screen.getAllByRole("img", { name: /Trend of/ })).toHaveLength(2);
+  });
+});
+
+describe("gauge", () => {
+  it("draws the value's arc and prints it in the middle", async () => {
+    const svg = await svgOf(gaugeSpec(812e6, formatUnit(812e6, "bytes", 0, "en"), { min: 0, max: 1e9, thresholds: { mode: "absolute", steps: [{ color: "green", value: null }, { color: "red", value: 8e8 }] } }, { theme, height: 160, showThresholdMarkers: true }));
+    expect(count(svg, /class="mark-arc/)).toBeGreaterThanOrEqual(1);
+    expect(svg).toContain("774 MiB");
+  });
+});
+
+describe("bargauge", () => {
+  it("gives each pod a meter as long as its share, labelled in bytes", () => {
+    render(<BarGaugePanel title="Memory" frames={frames.memory} fieldConfig={{ defaults: { unit: "bytes", min: 0, max: 1e9 }, overrides: [] }} options={{}} height={120} locale="en" />);
+    const meter = screen.getByRole("meter", { name: "portal" });
+    expect(meter).toHaveAttribute("aria-valuenow", "812000000");
+    expect(meter).toHaveAttribute("aria-valuetext", "774 MiB");
+  });
+});
+
+describe("barchart and piechart", () => {
+  it("draws one bar per route", async () => {
+    const built = barChartSpec(frames.routes, { options: {}, locale: "en", theme, height: 200 });
+    const svg = await svgOf(built.spec);
+    expect(count(svg, /<path [^>]*role="graphics-symbol"/)).toBeGreaterThanOrEqual(3);
+    expect(svg).toContain("/q/health");
+  });
+
+  it("draws one slice per route and keeps their values for the key", async () => {
+    const built = pieChartSpec(frames.routes, { options: { reduceOptions: { values: true } }, locale: "en", theme, height: 200 });
+    expect(built.slices.map((slice) => slice.value)).toEqual([5120, 830, 2400]);
+    const svg = await svgOf(built.spec);
+    expect(count(svg, /class="mark-arc/)).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("heatmap", () => {
+  it("draws the duration buckets as rows, smallest at the bottom", async () => {
+    const built = heatmapSpec(frames.durationBuckets, { options: {}, locale: "en", theme, height: 200, from: frames.FROM, to: frames.TO });
+    expect(built.buckets).toEqual(["0.05", "0.1", "0.5", "1", "+Inf"]);
+    const svg = await svgOf(built.spec);
+    expect(count(svg, /<path [^>]*role="graphics-symbol"/)).toBe(20);
+  });
+});
+
+describe("state-timeline", () => {
+  it("draws each state from its time to the next, one colour per state", async () => {
+    const built = stateTimelineSpec(frames.runState, {
+      fieldConfig: { defaults: { mappings: [{ type: "value", options: { failing: { text: "Failing", color: "red" } } }] }, overrides: [] },
+      options: {},
+      locale: "en",
+      theme,
+      height: 100,
+      from: frames.FROM,
+      to: frames.TO,
+    });
+    expect(built.states.map((state) => state.text)).toEqual(["ok", "Failing", "running"]);
+    const svg = await svgOf(built.spec);
+    expect(count(svg, /<path [^>]*role="graphics-symbol"/)).toBe(4);
+  });
+});
+
+describe("histogram", () => {
+  it("bins every value of the frames", async () => {
+    const svg = await svgOf(histogramSpec(frames.pm25History, { options: { bucketCount: 5 }, locale: "en", theme, height: 160 }));
+    expect(count(svg, /<path [^>]*role="graphics-symbol"/)).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("a panel card", () => {
+  const panel: PanelDefinition = { id: 2, type: "stat", title: "Up", gridPos: { x: 0, y: 0, w: 6, h: 4 } };
+  const common = { from: frames.FROM, to: frames.TO, locale: "en", height: 120 };
+
+  it("announces its read while it loads", () => {
+    render(<PanelView panel={panel} loading {...common} />);
+    expect(screen.getByRole("status", { name: "Reading Up" })).toBeInTheDocument();
+  });
+
+  it("says a range with no readings is empty, in the panel's own noValue when it has one", () => {
+    render(<PanelView panel={{ ...panel, fieldConfig: { defaults: { noValue: "No readings" }, overrides: [] } }} data={{ frames: frames.empty }} {...common} />);
+    expect(screen.getByText("No readings")).toBeInTheDocument();
+  });
+
+  it("names the datasource's failure and offers a retry", async () => {
+    const user = userEvent.setup();
+    let retried = 0;
+    render(<PanelView panel={panel} data={{ frames: [], error: "prometheus answered 502" }} onRetry={() => (retried += 1)} {...common} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("prometheus answered 502");
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(retried).toBe(1);
+  });
+
+  it("says why a source the person may not read shows nothing", () => {
+    render(<PanelView panel={panel} data={{ frames: [], accessDenied: "You cannot read the source of this panel: helsinki-air" }} {...common} />);
+    expect(screen.getByText("You cannot read this panel's data")).toBeInTheDocument();
+  });
+
+  it("draws a type it does not know as a table and says so", async () => {
+    render(<PanelView panel={{ ...panel, type: "geomap" }} data={{ frames: frames.stations }} {...common} />);
+    expect(screen.getByText("geomap, shown as a table")).toBeInTheDocument();
+    expect(await screen.findByText("Vartiokylä", {}, { timeout: 5000 })).toBeInTheDocument();
+  });
+
+  it("shows a text panel's words without markup", () => {
+    render(<PanelView panel={{ ...panel, type: "text", options: { content: "## About\n**Air** quality" } }} {...common} />);
+    expect(screen.getByText(/About\s+Air quality/)).toBeInTheDocument();
+  });
+});
+
+describe("the dashboard around the panels", () => {
+  it("orders panels by row then column, and folds each row's own panels under it", () => {
+    const panels: PanelDefinition[] = [
+      { id: 3, type: "stat", gridPos: { x: 12, y: 0, w: 12, h: 4 } },
+      { id: 1, type: "stat", gridPos: { x: 0, y: 0, w: 12, h: 4 } },
+      { id: 9, type: "row", title: "Details", collapsed: true, gridPos: { x: 0, y: 4, w: 24, h: 1 }, panels: [{ id: 10, type: "table", gridPos: { x: 0, y: 5, w: 24, h: 8 } }] },
+    ];
+    expect(ordered(panels).map((panel) => panel.id)).toEqual([1, 3, 9]);
+    expect(sections(panels).map((section) => [section.row?.id, section.panels.map((panel) => panel.id)])).toEqual([
+      [undefined, [1, 3]],
+      [9, [10]],
+    ]);
+  });
+
+  it("asks a panel for the range and each variable, and nothing else", () => {
+    expect(panelQuery({ from: "now-6h", to: "now", vars: { station: "Kallio", testid: "$__all" } }, 500)).toBe("from=now-6h&to=now&maxDataPoints=500&var-station=Kallio&var-testid=%24__all");
+  });
+
+  it("reads Grafana's time words", () => {
+    const now = Date.UTC(2026, 10, 8, 12, 0, 0);
+    expect(resolveTime("now-6h", now)).toBe(now - 6 * 3_600_000);
+    expect(resolveTime("1700000000000", now)).toBe(1_700_000_000_000);
+    expect(resolveTime("yesterday", now)).toBeNull();
+  });
+
+  it("keeps an override's unit for its field only", () => {
+    const config = { defaults: { unit: "percent" }, overrides: [{ matcher: { id: "byName", options: "pm25" }, properties: [{ id: "unit", value: "bytes" }] }] };
+    expect(settingsFor(config, { name: "pm25", type: "number", values: [] }).unit).toBe("bytes");
+    expect(settingsFor(config, { name: "no2", type: "number", values: [] }).unit).toBe("percent");
+  });
+});
