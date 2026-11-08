@@ -1375,14 +1375,22 @@ def cmd_smoke(a):
         text = f.read_text()
         if re.search(r"(?m)^  audience: public", text) and (m := re.search(r"(?m)^  slug: ([a-z2-7]+)", text)):
             eps.append(m.group(1))
-    bad = []
+    # The source's own anonymous answer, where it is not 200, recorded read-only (--source-answers):
+    # an `audience: public` Endpoint no Policy grants answers 403 on the source too, and the
+    # rehearsal must answer the same, not 200.
+    source = json.loads(Path(a.source_answers).read_text()) if a.source_answers else {}
+    bad, same_as_source = [], []
     for slug in sorted(set(eps)):
         st, hdrs, body = Http(a.base).call("GET", f"/api/endpoint/{slug}/ngsi-ld/v1/types")
         ctype = hdrs.get("Content-Type") or hdrs.get("content-type") or ""
-        if st != 200 or "json" not in ctype:
-            bad.append(f"{slug}: {st} {ctype} {body[:80]!r}")
-    check(f"{len(set(eps))} public Endpoints answer a query", not bad and bool(eps),
-          f"{len(bad)} failed: {'; '.join(bad[:5])}", "GET /api/endpoint/{slug}/ngsi-ld/v1/types")
+        if why := endpoint_answer_problem(slug, st, ctype, body, source):
+            bad.append(why)
+        elif st != 200:
+            same_as_source.append(f"{slug} {st}")
+    check(f"{len(set(eps))} public Endpoints answer a query as the source does", not bad and bool(eps),
+          f"{len(bad)} failed: {'; '.join(bad[:5])}" + (f"; as the source, not 200: {', '.join(same_as_source)}"
+                                                        if same_as_source else ""),
+          "GET /api/endpoint/{slug}/ngsi-ld/v1/types")
     # 9. the 24 h rule holds in the broker: no instance older than the window (+ one sweep), read
     # in its database (the broker's reads need a subject on its default policy)
     # 10. the broker holds every exported entity (an import refused call by call stores none)
@@ -1485,6 +1493,15 @@ def org1_panels(h: Http, auth: dict, dashboards: Path) -> dict:
                 out["rows"].append({"dashboard": f.name, "panel": q.get("id"), "datasource": uid, "status": st,
                                     "class": "data" if ok else "red", "detail": "" if ok else str(ans)[:160]})
     return out
+
+
+def endpoint_answer_problem(slug: str, status: int, ctype: str, body: bytes, source: dict) -> str:
+    """Why a public Endpoint's anonymous answer differs from the source's, or "": 200 JSON unless
+    the source answered otherwise (recorded read-only, `source[slug]["status"]`)."""
+    want = (source.get(slug) or {}).get("status", 200)
+    if status == want and "json" in ctype:
+        return ""
+    return f"{slug}: {status} {ctype} {body[:80]!r}" + (f" (source {want})" if want != 200 else "")
 
 
 def portal_dashboards(h: Http, dashboards: Path) -> dict:
@@ -1609,6 +1626,7 @@ def main(argv=None):
     s.add_argument("--export", required=True); s.add_argument("--report", required=True); s.add_argument("--realms")
     s.add_argument("--pg-port"); s.add_argument("--antares-password-file")
     s.add_argument("--dashboards", help="the Grafana files imported into daiya (rehearsal.py dashboards)")
+    s.add_argument("--source-answers", help="JSON {slug: {status, ...}}: the source's own anonymous answer where not 200")
     s = sub.add_parser("portal-dashboards"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     s.add_argument("--dashboards", required=True); s.add_argument("--report", required=True)
     s = sub.add_parser("provisioning"); s.add_argument("--dashboards", required=True)

@@ -705,3 +705,14 @@ def test_a_jc_with_a_stale_portal_ui_does_not_start(tmp_path, dist_age, bin_age,
     os.utime(jc, (at + bin_age, at + bin_age))
     r = subprocess.run([str(HERE / "ui-fresh.sh"), str(clone), str(jc)], capture_output=True, text=True)
     assert (r.returncode == 0) == ok, r.stderr
+
+
+def test_a_public_endpoint_answers_as_the_source_did():
+    src = {"efkkw7pka4bhc3igujpzhrs2ra": {"status": 403}}
+    j = "application/json"
+    assert rh.endpoint_answer_problem("aaaa", 200, j, b"[]", src) == ""
+    assert "aaaa: 403" in rh.endpoint_answer_problem("aaaa", 403, j, b"{}", src)
+    assert rh.endpoint_answer_problem("efkkw7pka4bhc3igujpzhrs2ra", 403, j, b"{}", src) == ""
+    # the source refused it: a 200 in the rehearsal is a difference too (a grant opened)
+    assert "(source 403)" in rh.endpoint_answer_problem("efkkw7pka4bhc3igujpzhrs2ra", 200, j, b"[]", src)
+    assert rh.endpoint_answer_problem("aaaa", 200, "text/html", b"<html>", src)
