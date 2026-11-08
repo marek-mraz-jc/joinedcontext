@@ -634,3 +634,51 @@ async fn a_postgres_store_from_configuration_migrates_checks_rls_and_keeps_data(
     };
     assert!(open_store(&inline).await.is_err());
 }
+
+/// `serverAdmin`: Grafana's local administrator from a password file, as `provision.sh` and
+/// the Portal sign in; it creates a project organization. A missing or weak password refuses
+/// the start without repeating the password.
+#[tokio::test]
+async fn the_server_admin_password_comes_from_its_file() {
+    let scratch = Scratch::new("admin");
+    let file = scratch.write("secrets/admin", "server-admin-password-0123\n");
+    let cfg = config(json!({ "serverAdmin": { "user": "admin", "passwordFile": file } })).unwrap();
+    let state = build_state(&cfg).await.unwrap().state;
+    let app = standalone_router(state, cfg.mount().unwrap());
+    let create = |auth: &str| {
+        Request::post("/api/orgs")
+            .header("authorization", auth)
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"name":"helsinki"}"#))
+            .unwrap()
+    };
+    // base64("admin:server-admin-password-0123")
+    let (status, body) = send(
+        &app,
+        create("Basic YWRtaW46c2VydmVyLWFkbWluLXBhc3N3b3JkLTAxMjM="),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["orgId"], 2);
+
+    let weak = scratch.write("secrets/weak", "weak-password\n");
+    let cfg = config(json!({ "serverAdmin": { "user": "admin", "passwordFile": weak } })).unwrap();
+    let err = build_state(&cfg).await.err().expect("refused");
+    assert!(!err.to_string().contains("weak-password"), "{err}");
+    let cfg = config(json!({ "serverAdmin": { "user": "admin",
+                                              "passwordFile": scratch.0.join("none") } }))
+    .unwrap();
+    assert!(build_state(&cfg).await.is_err());
+}
+
+#[test]
+fn the_tokens_file_cannot_name_the_server_admin() {
+    let scratch = Scratch::new("reserved");
+    let tokens = scratch.write(
+        "tokens.json",
+        &json!([{ "tokenSha256": sha256_hex(b"x"), "actor": daiya_model::SERVER_ADMIN_ACTOR,
+                  "role": "Admin" }])
+        .to_string(),
+    );
+    assert!(read_tokens_file(&tokens).is_err());
+}

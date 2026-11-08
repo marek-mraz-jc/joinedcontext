@@ -1589,6 +1589,7 @@ name = "daiya-api"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "daiya-expr",
@@ -1849,9 +1850,12 @@ dependencies = [
  "dataroom-store-memory",
  "dataroom-web",
  "http-body-util",
+ "jc-core",
+ "jcctl",
  "odata-csdl",
  "odata-table",
  "odata-url",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tokio",
