@@ -48,7 +48,8 @@ class Suite:
         self.state = Path(a.state) if a.state else None
         self.export = Path(a.export)
         self.people: dict[str, dict] = {}
-        self.dashboards: dict[str, tuple[str, str]] = {}  # org -> (project, name) the suite committed
+        self.dashboards: dict[str, tuple[str, str]] = {}
+        self.exchange_ok = False  # an own control exchange succeeded: a foreign refusal then counts  # org -> (project, name) the suite committed
 
     # ---- results
     def row(self, id_, target, call, expected, actual, ok, reason=""):
@@ -310,8 +311,13 @@ class Suite:
             emails = {i.get("email", "") for i in (body or {}).get("items", [])} if st == 200 else set()
             own = {f"mo-{org}-admin@rehearsal.invalid", f"mo-{org}-member@rehearsal.invalid"}
             foreign = sorted(x for x in emails if (m := re.match(r"mo-(.+)-(admin|member)@", x)) and m.group(1) != org)
+            # The list is realm-wide (people.rs list_people asks read on Person at the installation):
+            # an admin of another Organization is refused it and has no list of its own members.
+            gap = org != self.installation and st in DENIED
             self.row(f"people.{org}-admin.own", org, "GET /api/v1/organization/people", f"{sorted(own)} listed",
-                     f"{st}, missing {sorted(own - emails)}", st == 200 and own <= emails)
+                     f"{st}, missing {sorted(own - emails)}", None if gap else (st == 200 and own <= emails),
+                     "gap: the Portal has no per-Organization people list; the realm-wide one is the "
+                     "installation's (ADR-N-058 2.2), so this admin cannot list its own members" if gap else "")
             if org == self.installation:
                 self.row(f"people.{org}-admin.no-foreign", org, "GET /api/v1/organization/people",
                          "nobody of another org", f"{st}, foreign {foreign}", None if foreign else st == 200,
@@ -439,7 +445,7 @@ class Suite:
             own = sorted(e["projects"])[0]
             h = self.session(f"{org}-admin")
             st, body = h.json("POST", "/api/v1/connectors", body={
-                "name": f"mo-{org}", "segments": ["data-read", "context"], "expiresAt": expires,
+                "name": f"mo-{org}-{int(time.time())}", "segments": ["data-read", "context"], "expiresAt": expires,
                 "scope": [{"project": own, "access": "read"}]})
             cid = (body or {}).get("id") if isinstance(body, dict) else None
             self.row(f"connectors.{org}-admin.create", org, "POST /api/v1/connectors", "201 with id",
@@ -522,31 +528,51 @@ class Suite:
                          "no closed Endpoint of another org", f"{st}, {len(slugs)} listed, foreign {seen[:4]}",
                          st == 200 and not seen)
                 if own_org:
-                    missing = sorted(own_org - slugs)
+                    # `audience: organization` admits the Organization; a Policy still has to name the
+                    # caller, and the export's name project groups, not these persons: at least one.
+                    got = own_org & slugs
                     self.row(f"data.{key}.readable.own-organization", org, "GET /api/v1/catalogue/readable",
-                             f"its {len(own_org)} organization Endpoints", f"{st}, missing {len(missing)}",
-                             st == 200 and not missing)
-                tok = self.bearer(key, "gateway-hub", client=("portal-api", "portal-client-secret"))
-                aud = claims(tok).get("aud") if tok else None
-                if "mcp-hub" not in (aud if isinstance(aud, list) else [aud]):
-                    self.row(f"data.{key}.hub", org, "POST /api/mcp", "a token with audience mcp-hub",
-                             f"aud {aud}", None, "kaisatsu gave portal-api no gateway-hub scope (aud mcp-hub): "
-                             "the hub and direct Endpoint reads by a person's token are not checked")
-                    continue
-                auth = {"Authorization": f"Bearer {tok}", "Accept": "application/json, text/event-stream"}
-                st, res = self.client().json("POST", "/api/mcp", headers=auth, body={
-                    "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                    "params": {"name": "list_endpoints", "arguments": {}}})
-                text = json.dumps(res, ensure_ascii=False)
-                seen = sorted(f"{v[0]}/{v[1]}" for x, v in foreign.items() if x in text)
-                self.row(f"data.{key}.hub.list_endpoints", org, "POST /api/mcp tools/call list_endpoints",
-                         "answers, no closed Endpoint of another org", f"{st}, foreign {seen[:4]}",
-                         st == 200 and "result" in (res or {}) and not seen)
+                             f">= 1 of its {len(own_org)} organization Endpoints (the rest are Policy-gated)",
+                             f"{st}, {len(got)} listed", st == 200 and bool(got))
+                # The Portal's data path for a person (auth/oidc.rs exchange_for_endpoint): the
+                # person's token exchanged for one Endpoint, audience mcp-hub, scope endpoint:{slug}.
+                # Another Organization's closed Endpoint: the realm refuses the exchange or the
+                # gateway the read. An own readable one is the control.
+                control = sorted(got)[:1] if own_org else []
+                for slug in control:
+                    st, tok = self.exchange(key, slug)
+                    code = self.client().call("GET", f"/api/endpoint/{slug}/ngsi-ld/v1/types",
+                                              headers={"Authorization": f"Bearer {tok}"})[0] if tok else st
+                    self.exchange_ok = self.exchange_ok or tok is not None
+                    self.row(f"data.{key}.read.own", org, f"exchange endpoint:{slug}, GET /api/endpoint/{slug}/ngsi-ld/v1/types",
+                             "200 (an own Endpoint the readable list names)", f"exchange {st}, read {code}", code == 200 if tok else None,
+                             "" if tok else "the realm refused the exchange: no endpoint:{slug} scope linked to "
+                             "portal-api (dev links them by its admin-permissions CronJob; jc has none)")
                 for slug, (p, name, aud) in sorted(foreign.items())[:6]:
-                    st, _, _ = self.client().call("GET", f"/api/endpoint/{slug}/ngsi-ld/v1/types",
-                                                  headers={"Authorization": f"Bearer {tok}"})
-                    self.row(f"data.{key}.read.{p}/{name}", org, f"GET /api/endpoint/{slug}/ngsi-ld/v1/types",
-                             f"401/403/404 ({aud} Endpoint of another org)", f"{st}", st in (401, *DENIED))
+                    st, tok = self.exchange(key, slug)
+                    code = self.client().call("GET", f"/api/endpoint/{slug}/ngsi-ld/v1/types",
+                                              headers={"Authorization": f"Bearer {tok}"})[0] if tok else None
+                    self.row(f"data.{key}.read.{p}/{name}", org,
+                             f"exchange endpoint:{slug}, GET /api/endpoint/{slug}/ngsi-ld/v1/types",
+                             f"exchange refused or read 401/403/404 ({aud} Endpoint of another org)",
+                             f"exchange {st}, read {code}",
+                             (code in (401, *DENIED)) if tok else (True if self.exchange_ok else None),
+                             "" if tok or self.exchange_ok else "the realm refuses every exchange here, the own "
+                             "control too: a refusal proves nothing")
+
+    def exchange(self, key, slug):
+        """(status, token) of the Portal's token exchange of the person's mcp:portal token for one
+        Endpoint; token None when the realm refused."""
+        subject = self.bearer(key)
+        if not subject:
+            return None, None
+        st, tok = self.client().json("POST", "/id/realms/jc/protocol/openid-connect/token", form={
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "client_id": "portal-api", "client_secret": R.read_secret(self.state, "portal-client-secret"),
+            "subject_token": subject, "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "audience": "mcp-hub", "scope": f"gateway-hub endpoint:{slug}"})
+        return st, (tok.get("access_token") if st == 200 and isinstance(tok, dict) else None)
 
     def check_catalogue(self):
         """Each Organization's CKAN organisations hold only its datasets, in search, page and feed."""
@@ -580,8 +606,53 @@ class Suite:
                     other_names = {r.get("name") for r in results
                                    if (r.get("organization") or {}).get("name") in others}
                     leaked = sorted(n for n in other_names if n and re.search(rf"dataset/{re.escape(n)}(?![\w-])", text))
+                    empty = st == 404 and not names and not leaked
                     self.row(f"catalogue.{org}.{c}.{kind}", org, f"GET {path}", "200, no dataset of another org",
-                             f"{st}, {len(names)} own, leaked {leaked[:3]}", st == 200 and not leaked)
+                             f"{st}, {len(names)} own, leaked {leaked[:3]}",
+                             None if empty else (st == 200 and not leaked),
+                             f"no dataset published to {c} yet: dataroom has no such organisation" if empty else "")
+
+    GLOBAL_READS = ["/api/v1/endpoints", "/api/v1/shared-apps", "/api/v1/connectors", "/api/v1/connectors/pending",
+                    "/api/v1/blueprints", "/api/v1/alerts", "/api/v1/alerts/notices", "/api/v1/notifications",
+                    "/api/v1/organization/agents", "/api/v1/organization/agents/activity",
+                    "/api/v1/organization/brokers", "/api/v1/organization/connectors", "/api/v1/organization/costs",
+                    "/api/v1/organization/data-access", "/api/v1/organization/datamodels",
+                    "/api/v1/organization/feedback", "/api/v1/organization/health",
+                    "/api/v1/organization/health-checks", "/api/v1/organization/limits",
+                    "/api/v1/organization/setup"]
+
+    def check_global(self):
+        """The routes without a project (every parameterless GET of the Portal's OpenAPI that lists
+        objects): a person of one Organization gets 403/404 or an answer naming nothing of another.
+        The installation's administrator holds the realm-wide kinds (ADR-N-058 2.2): a foreign name
+        in its answer is a skip naming the owner decision, never a pass."""
+        st, body = self.session("platform").json("GET", "/api/v1/endpoints")
+        text = json.dumps(body, ensure_ascii=False)
+        def names_of(o):  # the marks that name Organization o, as another Organization sees them
+            other = next(x for x in self.exp if x != o)
+            return {m for m, v in self.foreign_marks(other).items() if v == o and not m.startswith("mo-")}
+        orgs_seen = sorted(o for o in self.exp if any(m in text for m in names_of(o)))
+        self.row("global.platform./api/v1/endpoints", "all", "GET /api/v1/endpoints as the platform admin",
+                 "200 naming Endpoints of every Organization (the marks work)", f"{st}, orgs {orgs_seen}",
+                 st == 200 and orgs_seen == sorted(self.exp))
+        for org in self.exp:
+            marks = self.foreign_marks(org)
+            for kind in ("admin", "member"):
+                key = f"{org}-{kind}"
+                for path in self.GLOBAL_READS:
+                    st, body = self.session(key).json("GET", path)
+                    text = json.dumps(body, ensure_ascii=False)
+                    hits = sorted(m for m in marks if m in text) if st == 200 else []
+                    ok = st in DENIED or (st == 200 and not hits)
+                    reason = ""
+                    if st == 503:  # a dependency this jc lacks: nothing answered, nothing leaked
+                        ok, reason = None, f"503: {str((body or {}).get('detail', ''))[:120]}"
+                    if hits and org == self.installation and kind == "admin":
+                        ok, reason = None, ("installation admin: realm-wide kinds (ADR-N-058 2.2) name other "
+                                            "Organizations' objects; owner decision")
+                    self.row(f"global.{key}.{path}", org, f"GET {path} as mo-{key}",
+                             "403/404, or 200 naming no object of another Organization",
+                             f"{st}, foreign {hits[:4]}", ok, reason)
 
     def check_dashboards(self):
         """Each Organization's Dashboards (the export's and the suite's own) are listed for its
@@ -675,7 +746,7 @@ class Suite:
             self.row("setup", "all", "persons and bindings", "made", str(ex)[:300], False)
             return
         steps = (self.check_projects, self.check_project_reads, self.check_writes, self.check_people,
-                 self.check_mcp, self.check_connectors, self.check_data, self.check_catalogue, self.check_dashboards)
+                 self.check_mcp, self.check_connectors, self.check_data, self.check_catalogue, self.check_dashboards, self.check_global)
         if self.a.shots:
             steps += (self.check_ui,)
         for step in steps:
@@ -713,7 +784,7 @@ def main(argv):
     ap.add_argument("--state", help="the rehearsal's state dir (realm admin client, forge token)")
     ap.add_argument("--admin-token-file", help="unused: persons are made through --state")
     ap.add_argument("--person-token-file", help="unused: persons are made through --state")
-    ap.add_argument("--only", help="comma list of check groups: projects,project_reads,writes,people,mcp,connectors,data,catalogue,dashboards,ui")
+    ap.add_argument("--only", help="comma list of check groups: projects,project_reads,writes,people,mcp,connectors,data,catalogue,dashboards,global,ui")
     ap.add_argument("--shots", action="store_true", help="browser shots 1440/400 per persona (Playwright)")
     ap.add_argument("--sync-timeout", type=int, default=180)
     a = ap.parse_args(argv)
