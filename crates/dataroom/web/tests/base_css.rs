@@ -86,6 +86,11 @@ fn the_base_layout_comes_before_the_theme_so_the_theme_wins() {
         ".list-unstyled",
         ".breadcrumb {",
         ".visually-hidden-focusable:not(:focus)",
+        // Buttons, fields and the pager keep Bootstrap's box; the brand never shrinks (the logo was cut).
+        ".btn { display: inline-block",
+        ".form-control, .form-select { display: block",
+        ".page-link { display: block",
+        ".jc-brand { flex-shrink: 0",
     ] {
         assert!(css.contains(rule), "{rule}");
     }
