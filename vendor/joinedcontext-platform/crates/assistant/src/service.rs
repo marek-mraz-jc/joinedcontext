@@ -266,9 +266,12 @@ mod tests {
         assert_eq!(config.functions, None);
     }
 
+    /// A change that spoils one setting, the setting and the problem it gets.
+    type Case = (fn(&mut ChatSettings), Setting, Problem);
+
     #[test]
     fn a_refused_setting_names_its_field() {
-        let cases: [(fn(&mut ChatSettings), Setting, Problem); 6] = [
+        let cases: [Case; 6] = [
             (
                 |s| s.gateway_url = "http://gw/mcp".into(),
                 Setting::GatewayUrl,

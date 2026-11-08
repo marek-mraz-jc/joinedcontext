@@ -4,7 +4,7 @@
 //! claim, crawl a website or read a catalogue (T-3054), extract, index, done or retried.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use jc_core::kinds::assistant::{AssistantDeploymentSpec, KnowledgeSourceSpec, SourceType};
 use jc_core::kinds::catalog::DataTheme;

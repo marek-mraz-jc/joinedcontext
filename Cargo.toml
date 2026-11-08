@@ -50,7 +50,7 @@ members = [
 ]
 # Joined repositories keep their own workspace (lockfile, lints, standalone binaries) for now; jc
 # depends on their crates by path. Making them members is a later step (bins/jc/STATUS.md).
-exclude = ["crates/ekiben", "crates/antares", "crates/portal", "vendor/joinedcontext-platform", "vendor/ngsild", "vendor/oxrdfxml", "vendor/tikv-jemalloc-ctl"]
+exclude = ["crates/ekiben", "crates/antares", "crates/portal", "vendor/joinedcontext-platform", "vendor/ngsild", "vendor/oxrdfxml", "vendor/tikv-jemalloc-ctl", "vendor/paste"]
 
 # Antares pins rumqttc 0.25.1 with rustls-webpki 0.103 (crates/antares/vendor/rumqttc/README.md); a
 # patch only takes effect from the root manifest.
@@ -64,6 +64,8 @@ tikv-jemalloc-ctl = { path = "vendor/tikv-jemalloc-ctl" }
 # GHSA-m665-v7pm-7grj, critical; vendor/joinedcontext-platform/vendor/kreuzberg.patch), as the
 # platform workspace patches it.
 kreuzberg = { path = "vendor/joinedcontext-platform/vendor/kreuzberg" }
+# paste 1.0.15 as a re-export of pastey 0.1.1 (RUSTSEC-2024-0436; vendor/SOURCES.md).
+paste = { path = "vendor/paste" }
 
 [workspace.package]
 edition = "2024"

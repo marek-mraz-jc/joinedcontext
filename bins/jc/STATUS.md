@@ -477,6 +477,11 @@ Root `deny.toml` and `cargo audit` carry no ignore. Fixed on branch `jc-ship`:
 
 Still red, with no fixed release to take:
 
+- RUSTSEC-2026-0444 `astral-tl 0.8.0` (unmaintained since 2026-10-05, no patched release) <-
+  `html-to-markdown-rs 3.17.1` (its HTML parser, not optional) <- `kreuzberg 4.10.4` feature `html` <-
+  `assistant` (vendor/joinedcontext-platform/crates/assistant), which reads every crawled page through it
+  (`extract::extract`). The platform workspace carries the same finding. Clears with a kreuzberg whose
+  html-to-markdown-rs moves to `astral-html`, or an owner decision (no ignore is added here).
 - RUSTSEC-2026-0387 `crypto-bigint 0.5.5` <- `elliptic-curve 0.13.8` <- `p256 0.13.2` (and `hpke 0.12.0`,
   `ecdsa`, `primeorder`) <- `age-core 0.12.0` / `age 0.12.1` <- `jcctl` (vendor/joinedcontext-platform) and
   `joinedcontext-portal` <- `jc`. age 0.12.1 (2026-07-14) is the newest release and requires hpke 0.12 with p256;

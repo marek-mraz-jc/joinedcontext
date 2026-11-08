@@ -1020,7 +1020,10 @@ version = "1.0.151"
 version = "0.1"
 
 [dependencies.serde_yaml_ng]
-version = "0.10.0"
+# serde_norway under serde_yaml_ng's name: serde_yaml_ng links unsafe-libyaml, unmaintained
+# (RUSTSEC-2024-0449); serde_norway, the maintained fork, links unsafe-libyaml-norway (jc root).
+version = "0.9.42"
+package = "serde_norway"
 
 [dependencies.sevenz-rust2]
 version = "0.20.2"

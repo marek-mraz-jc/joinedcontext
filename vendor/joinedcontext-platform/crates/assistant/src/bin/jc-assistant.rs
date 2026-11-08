@@ -350,6 +350,7 @@ fn embed_threads(env: &impl Fn(&str) -> Option<String>) -> Result<usize, String>
 }
 
 /// A service address from `key`: scheme and authority only, returned without its last `/`.
+#[cfg(test)]
 fn base(env: &impl Fn(&str) -> Option<String>, key: &str) -> Result<String, String> {
     let value = env(key).ok_or_else(|| format!("{key} is required"))?;
     service::base(&value).map_err(|problem| problem.named(key))
