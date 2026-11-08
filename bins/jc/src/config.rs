@@ -164,14 +164,27 @@ pub struct ShakoSection {
     pub repo_root: Option<PathBuf>,
     pub signing_key_file: Option<PathBuf>,
     pub token_file: Option<PathBuf>,
+    /// PostgreSQL; without it shako runs on its in-memory store.
+    pub database: Option<crate::pg::Database>,
 }
 
-/// `[dataroom]` section. dataroom runs on its in-memory store inside `jc` for now.
+/// `[daiya]` section.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DaiyaSection {
+    /// PostgreSQL; without it daiya runs on its in-memory store.
+    pub database: Option<crate::pg::Database>,
+}
+
+/// `[dataroom]` section.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DataroomSection {
     pub org_id: String,
     pub catalogue_id: String,
+    /// PostgreSQL; without it dataroom runs on its in-memory store.
+    #[serde(default)]
+    pub database: Option<crate::pg::Database>,
 }
 
 impl Default for DataroomSection {
@@ -179,6 +192,7 @@ impl Default for DataroomSection {
         Self {
             org_id: "00000000-0000-7000-8000-000000000001".into(),
             catalogue_id: "00000000-0000-7000-8000-000000000010".into(),
+            database: None,
         }
     }
 }
@@ -205,6 +219,8 @@ pub struct FileConfig {
     pub kaisatsu: KaisatsuSection,
     #[serde(default)]
     pub dataroom: Option<DataroomSection>,
+    #[serde(default)]
+    pub daiya: DaiyaSection,
     #[serde(default)]
     pub ekiben: EkibenSection,
     #[serde(default)]
@@ -252,6 +268,7 @@ pub struct Config {
     pub mounts: BTreeMap<Module, MountOverride>,
     pub kaisatsu: KaisatsuSection,
     pub dataroom: DataroomSection,
+    pub daiya: DaiyaSection,
     pub ekiben: EkibenSection,
     pub antares: AntaresSection,
     pub shako: ShakoSection,
@@ -349,6 +366,7 @@ impl Config {
             repo_root: cli.shako_repo_root.or(file.shako.repo_root),
             signing_key_file: cli.shako_signing_key_file.or(file.shako.signing_key_file),
             token_file: cli.shako_token_file.or(file.shako.token_file),
+            database: file.shako.database,
         };
         let admin_listen = cli.admin_listen.or(file.admin_listen);
         let admin_token_file = cli.admin_token_file.or(file.admin_token_file);
@@ -377,6 +395,7 @@ impl Config {
             mounts,
             kaisatsu,
             dataroom: file.dataroom.unwrap_or_default(),
+            daiya: file.daiya,
             ekiben,
             antares,
             shako,

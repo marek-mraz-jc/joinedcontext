@@ -37,13 +37,32 @@ fn repo_root(configured: Option<&Path>) -> Result<PathBuf, StartError> {
     Ok(dir)
 }
 
-pub fn build_state(
+/// shako's store: PostgreSQL when `[shako.database]` is set (migrations first when it names a
+/// migration role; `connect_with` refuses an app role that bypasses RLS), else memory.
+async fn store(cfg: &ShakoSection) -> Result<Arc<dyn shako_core::Store>, StartError> {
+    let Some(db) = &cfg.database else {
+        return Ok(Arc::new(MemoryStore::new()));
+    };
+    if let Some(pool) = db.migrate_pool().await.map_err(err)? {
+        shako_store_pg::PgStore::run_migrations(&pool)
+            .await
+            .map_err(err)?;
+        pool.close().await;
+    }
+    let opts = crate::pg::options(&db.url_file, db.password_file.as_deref()).map_err(err)?;
+    let pg = shako_store_pg::PgStore::connect_with(opts, db.max_connections.unwrap_or(5))
+        .await
+        .map_err(err)?;
+    Ok(Arc::new(pg))
+}
+
+pub async fn build_state(
     cfg: &ShakoSection,
     setup: &crate::setup::Setup,
 ) -> Result<ShakoState, StartError> {
     let root = repo_root(cfg.repo_root.as_deref())?;
     let org_id = OrgId::from_u128(1);
-    let store = Arc::new(MemoryStore::new());
+    let store = store(cfg).await?;
     let authz = Arc::new(LocalAuthorizer::new(vec![RoleBinding {
         org_id,
         principal: "admin".into(),

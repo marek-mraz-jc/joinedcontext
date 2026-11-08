@@ -171,7 +171,7 @@ pub async fn build_router(
         );
         #[cfg(feature = "shako")]
         if plan.module == Module::Shako {
-            let state = modules::shako::build_state(&cfg.shako, ctx.setup)?;
+            let state = modules::shako::build_state(&cfg.shako, ctx.setup).await?;
             let (main_router, v2_router) = modules::shako::build(state, plan.mount.clone());
             builder = builder.mount(plan.spec.clone(), main_router);
             // S1: mount `/v2/` at the host root in both one-domain and host modes

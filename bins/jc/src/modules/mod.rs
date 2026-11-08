@@ -51,9 +51,9 @@ pub async fn build(
         #[cfg(feature = "dataroom")]
         Module::Dataroom => dataroom::build(&cfg.dataroom, ctx.setup, mount).await,
         #[cfg(feature = "daiya")]
-        Module::Daiya => {
-            daiya::build(ctx.setup, mount).map_err(|e| StartError::module(Module::Daiya, e))
-        }
+        Module::Daiya => daiya::build(&cfg.daiya, ctx.setup, mount)
+            .await
+            .map_err(|e| StartError::module(Module::Daiya, e)),
         #[cfg(feature = "ekiben")]
         Module::Ekiben => ekiben::build(&cfg.ekiben, ctx.setup),
         #[cfg(feature = "antares")]
@@ -62,7 +62,7 @@ pub async fn build(
         Module::Portal => portal::build(ctx, cfg.portal_siblings, mount, shutdown).await,
         #[cfg(feature = "shako")]
         Module::Shako => {
-            let state = shako::build_state(&cfg.shako, ctx.setup)?;
+            let state = shako::build_state(&cfg.shako, ctx.setup).await?;
             Ok(shako::build(state, mount).0)
         }
         #[allow(unreachable_patterns)]
