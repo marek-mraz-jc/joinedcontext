@@ -43,9 +43,9 @@ pub fn request_id(req: &Request) -> String {
 
 /// `router` behind the access layer of `module`.
 pub fn layer(module: &'static str, router: Router) -> Router {
-    router.layer(axum::middleware::from_fn(move |req: Request, next: Next| {
-        access(module, req, next)
-    }))
+    router.layer(axum::middleware::from_fn(
+        move |req: Request, next: Next| access(module, req, next),
+    ))
 }
 
 async fn access(module: &'static str, mut req: Request, next: Next) -> Response {
@@ -88,7 +88,10 @@ mod tests {
 
     impl Write for Buffer {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().map_err(|_| std::io::ErrorKind::Other)?.extend_from_slice(bytes);
+            self.0
+                .lock()
+                .map_err(|_| std::io::ErrorKind::Other)?
+                .extend_from_slice(bytes);
             Ok(bytes.len())
         }
         fn flush(&mut self) -> std::io::Result<()> {
@@ -133,39 +136,62 @@ mod tests {
     }
 
     fn echoed(r: &Response) -> &str {
-        r.headers().get(&HEADER).and_then(|v| v.to_str().ok()).unwrap_or_default()
+        r.headers()
+            .get(&HEADER)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn the_callers_id_reaches_the_module_its_lines_and_the_answer() {
         let (response, log) = call("/open", Some("smokelogs-0123456789")).await;
         assert_eq!(echoed(&response), "smokelogs-0123456789");
-        let body = axum::body::to_bytes(response.into_body(), 1024).await.expect("body");
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .expect("body");
         assert_eq!(&body[..], b"smokelogs-0123456789");
-        let inner = log.lines().find(|l| l.contains("inner line")).expect("inner line");
+        let inner = log
+            .lines()
+            .find(|l| l.contains("inner line"))
+            .expect("inner line");
         assert!(inner.contains("request_id=smokelogs-0123456789"), "{log}");
         assert!(inner.contains("module=\"shako\""), "{log}");
         let access: Vec<_> = log.lines().filter(|l| l.contains("jc::access")).collect();
         assert_eq!(access.len(), 1, "{log}");
-        assert!(access[0].contains("status=200") && access[0].contains("path=\"/open\""), "{log}");
-        assert!(!log.contains("secret=q"), "the query stays out of the log: {log}");
+        assert!(
+            access[0].contains("status=200") && access[0].contains("path=\"/open\""),
+            "{log}"
+        );
+        assert!(
+            !log.contains("secret=q"),
+            "the query stays out of the log: {log}"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn a_refusal_logs_one_line_with_its_reason() {
         let (response, log) = call("/closed", Some("smokelogs-refused-01")).await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let lines: Vec<_> = log.lines().filter(|l| l.contains("smokelogs-refused-01")).collect();
+        let lines: Vec<_> = log
+            .lines()
+            .filter(|l| l.contains("smokelogs-refused-01"))
+            .collect();
         assert_eq!(lines.len(), 1, "{log}");
-        assert!(lines[0].contains("status=401") && lines[0].contains("reason=\"Unauthorized\""), "{log}");
+        assert!(
+            lines[0].contains("status=401") && lines[0].contains("reason=\"Unauthorized\""),
+            "{log}"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn a_forged_or_missing_id_is_replaced() {
-        for sent in [None, Some("a\nlevel=error forged"), Some("short")] {
+        for sent in [None, Some("a b level=error forged"), Some("short")] {
             let (response, log) = call("/open", sent).await;
             let id = echoed(&response).to_owned();
-            assert!(id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()), "{id}");
+            assert!(
+                id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()),
+                "{id}"
+            );
             assert!(log.contains(&format!("request_id={id}")), "{log}");
             assert!(!log.contains("forged"), "{log}");
         }

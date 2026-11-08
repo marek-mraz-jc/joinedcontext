@@ -265,9 +265,12 @@ def judge_refused(res: Results, probe: dict, records) -> None:
               echoed or "(none)", echoed == probe["rid"],
               "" if echoed == probe["rid"] else "the module answers without the caller's request id")
     tagged = lines_with(records, probe["rid"])
-    res.check(f"refused.{pid}.logged", m, call, "exactly one log line carries the request id",
-              f"{len(tagged)} line(s)" + (f": {tagged[0].target}: {tagged[0].message[:80]}" if tagged else ""),
-              len(tagged) == 1,
+    # One access line per door; the module may add lines of its own in the same request span.
+    access = [r for r in tagged if r.target == "jc::access"] or tagged
+    res.check(f"refused.{pid}.logged", m, call, "exactly one access line carries the request id",
+              f"{len(access)} access line(s), {len(tagged)} with the id" +
+              (f": {tagged[0].target}: {tagged[0].message[:80]}" if tagged else ""),
+              len(access) == 1,
               "" if tagged else "no log line names the request id")
     if tagged:
         line = tagged[0]

@@ -79,14 +79,21 @@ mod tests {
     #[tokio::test]
     async fn a_call_made_while_answering_a_request_carries_its_id() {
         let client = reqwest::Client::new();
-        let outside = forward(client.get("http://127.0.0.1:9/")).build().expect("request");
+        let outside = forward(client.get("http://127.0.0.1:9/"))
+            .build()
+            .expect("request");
         assert!(outside.headers().get(&HEADER).is_none());
         let inside = CURRENT
             .scope("3f2c1a9e-6b1d-4c3e".to_owned(), async {
-                forward(client.get("http://127.0.0.1:9/")).build().expect("request")
+                forward(client.get("http://127.0.0.1:9/"))
+                    .build()
+                    .expect("request")
             })
             .await;
-        assert_eq!(inside.headers().get(&HEADER).map(|v| v.to_str().ok()), Some(Some("3f2c1a9e-6b1d-4c3e")));
+        assert_eq!(
+            inside.headers().get(&HEADER).map(|v| v.to_str().ok()),
+            Some(Some("3f2c1a9e-6b1d-4c3e"))
+        );
     }
 
     #[test]
