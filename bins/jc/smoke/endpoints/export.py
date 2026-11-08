@@ -117,6 +117,15 @@ def _grant(name: str, spec: dict) -> Grant:
                  ", ".join(sorted(set(narrowed))))
 
 
+def own_grant(spec: dict, project: str, endpoint: str) -> bool:
+    """Portal views.rs own_grant: assignee role `endpoint:{project}/{endpoint}` or `.../{role}`."""
+    a = spec.get("assignee") or {}
+    own = f"endpoint:{project}/{endpoint}"
+    rest = str(a.get("id", ""))[len(own):] if str(a.get("id", "")).startswith(own) else None
+    return a.get("kind") == "role" and rest is not None and (
+        rest == "" or (rest.startswith("/") and len(rest) > 1 and "/" not in rest[1:]))
+
+
 def load_endpoints(files: Path) -> list[Endpoint]:
     """Every Endpoint under gitea/files/<owner>/<project>/spaces/<space>/endpoints/*.yaml."""
     spaces, policies = {}, {}
@@ -133,6 +142,11 @@ def load_endpoints(files: Path) -> list[Endpoint]:
                 ref = s.get("contextSpaceRef")
                 space = ref.get("name") if isinstance(ref, dict) else ref or f.parts[-3]
                 policies.setdefault((project, space), []).append((d["metadata"]["name"], s))
+    apps = set()
+    for f in list(files.glob("*/*/apps/*/app.yaml")) + list(files.glob("*/*/apps/*.yaml")):
+        for d in _load_yaml(f):
+            if d.get("kind") == "App":
+                apps.add((d["metadata"].get("namespace") or f.relative_to(files).parts[1], d["metadata"]["name"]))
     out = []
     for f in sorted(files.glob("*/*/spaces/*/endpoints/*.yaml")):
         for d in _load_yaml(f):
@@ -148,6 +162,10 @@ def load_endpoints(files: Path) -> list[Endpoint]:
             for pname, pspec in policies.get((project, space), []):
                 if refs is not None and not any(
                         str(r).split(":")[-2:] == [tenant, pname] for r in refs):
+                    continue
+                # An App's Endpoint keeps only the App's own grants (Portal views.rs bound(), AP-139).
+                if meta["name"].startswith("app-") and (project, meta["name"][4:]) in apps \
+                        and not own_grant(pspec, project, meta["name"]):
                     continue
                 bound.append(_grant(pname, pspec))
             catalog = s.get("catalog") or {}

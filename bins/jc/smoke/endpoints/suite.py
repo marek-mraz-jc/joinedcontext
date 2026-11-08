@@ -75,6 +75,12 @@ def instances(entity) -> int:
     return n
 
 
+def base64_json(d: dict) -> str:
+    """A JWT part (tests build tokens with it)."""
+    import base64
+    return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+
+
 class Person:
     """What --person-token-file is, read from its unverified claims to pick each expectation."""
 
@@ -403,11 +409,14 @@ def main(argv=None) -> int:
                           log=lambda m: print(m, file=sys.stderr))
     s = Suite(a, index, Person(read_token(a.person_token_file)))
     s.listing(eps)
+    # Closed Endpoints first: a person token lives minutes, the whole run longer.
+    eps = sorted(eps, key=lambda e: not e.closed)
     with cf.ThreadPoolExecutor(max_workers=a.workers) as pool:
         list(pool.map(s.endpoint, eps))
     s.r.write(out, {"export": str(export), "exportedAt": index.get("exportedAt"), "endpoints": len(eps),
                     "closed": sum(1 for e in eps if e.closed),
-                    "person token": "given" if s.person.token else "none"})
+                    "person token": "given" if s.person.token else "none",
+                    "person audience": len(s.person.aud), "person groups": sorted(s.person.groups)[:20]})
     t = s.r.totals()
     print(f"endpoints: {t['pass']} pass, {t['fail']} fail, {t['skip']} skip -> {out}/REPORT.md")
     return 0 if t["fail"] == 0 else 1
