@@ -259,6 +259,11 @@ pub async fn deliver_webhook_with_retries(
                     delivered = true;
                     break;
                 }
+                // A receiver's 4xx (a refused signature, a gone route) is its verdict on this
+                // body; sending the same body again only repeats it.
+                if (400..500).contains(&code) {
+                    break;
+                }
             }
             Err(ShakoError::SsrfBlocked(_)) => {
                 // SSRF block is permanent: do not retry

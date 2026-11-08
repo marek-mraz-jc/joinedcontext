@@ -303,7 +303,7 @@ async fn repository_branches_contents_and_history() {
             author: AUTHOR,
         })
         .await;
-    assert!(stale.is_err(), "a stale sha must be refused: {stale:?}");
+    assert!(matches!(stale, Err(GitError::Conflict(_))), "a stale sha is a 409: {stale:?}");
 
     // update_files refuses the whole commit when one blob moved.
     let head_before = forge.branch_head(ws).await.unwrap();
@@ -382,7 +382,10 @@ async fn repository_branches_contents_and_history() {
             author: AUTHOR,
         })
         .await;
-    assert!(direct.is_err(), "a protected branch must refuse a write: {direct:?}");
+    assert!(
+        matches!(direct, Err(GitError::Api { status: 403, .. })),
+        "a protected branch refuses a write with 403: {direct:?}"
+    );
     let (st, rules) = w.raw("GET", "api/v1/repos/joinedcontext/config/branch_protections", None).await;
     assert_eq!(st, 200);
     assert_eq!(rules[0]["rule_name"], "main", "{rules}");
@@ -506,7 +509,7 @@ async fn merge_requests_reviews_merge_and_webhooks() {
     let stale = forge
         .merge(b.number, MergeStyle::Merge, "Merge b", Some(&main0))
         .await;
-    assert!(stale.is_err(), "a moved head must be refused: {stale:?}");
+    assert!(matches!(stale, Err(GitError::Conflict(_))), "a moved head is a 409: {stale:?}");
     forge.update_pull_request(b.number).await.unwrap();
     let b2 = forge.pull_request(b.number).await.unwrap();
     assert_ne!(b2.head_sha, b.head_sha);
@@ -516,11 +519,24 @@ async fn merge_requests_reviews_merge_and_webhooks() {
     let c = forge
         .create_pull_request("portal/b", "main", "Duplicate", "")
         .await;
-    assert!(c.is_err(), "a second open request for one head is refused: {c:?}");
+    assert!(matches!(c, Err(GitError::Conflict(_))), "a second open request for one head is a 409: {c:?}");
+    // The approval page squashes (changes.rs approve).
     forge
-        .merge(b.number, MergeStyle::Merge, "Merge b", Some(&b2.head_sha))
+        .merge(b.number, MergeStyle::Squash, "Add b\n\nApproved-by: bob", Some(&b2.head_sha))
         .await
         .unwrap();
+    let squashed = forge.pull_request(b.number).await.unwrap();
+    assert!(squashed.merged);
+    assert_eq!(forge.branch_head("main").await.unwrap(), squashed.merge_commit_sha);
+    assert!(forge.get_file("spaces/s/endpoints/b.yaml", "main").await.unwrap().is_some());
+    assert!(forge.get_file("spaces/s/endpoints/a.yaml", "main").await.unwrap().is_some());
+    assert!(
+        forge
+            .commit_message(&squashed.merge_commit_sha)
+            .await
+            .unwrap()
+            .contains("Approved-by: bob")
+    );
 
     // close_pull_request: closed, not merged, is a rejection.
     forge.create_branch("portal/c", "main").await.unwrap();
@@ -572,9 +588,9 @@ async fn a_webhook_signed_with_another_secret_is_refused_by_the_portal() {
         .write_files("main", "Direct", AUTHOR, &[("a.txt".into(), "a\n".into(), None)])
         .await
         .unwrap();
+    // One push, one delivery: a refusal is not retried.
     let seen = w.deliveries.lock().clone();
-    assert!(!seen.is_empty());
-    assert!(seen.iter().all(|(_, st)| *st == 401), "{seen:?}");
+    assert_eq!(seen, vec![("push".to_owned(), 401)]);
 }
 
 /// A hook without a secret is refused at creation, and a hook whose stored secret is gone is
