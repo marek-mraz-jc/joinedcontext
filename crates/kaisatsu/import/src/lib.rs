@@ -289,6 +289,11 @@ pub const KNOWN_AUTHENTICATORS: &[&str] = &[
     "direct-grant-validate-otp",
     "conditional-user-configured",
     "webauthn-authenticator",
+    // Client authentication (the `clients` flow): the methods kaisatsu implements at its token
+    // endpoint. Keycloak's `client-secret-jwt` and `client-x509` stay unknown.
+    "client-secret",
+    "client-jwt",
+    "federated-jwt",
 ];
 
 pub const KNOWN_FLOW_ALIASES: &[&str] = &[
