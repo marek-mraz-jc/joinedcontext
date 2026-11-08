@@ -64,15 +64,16 @@ const quoted = (text: string): string => `'${text.replace(/\\/g, "\\\\").replace
 
 /** A y axis whose labels are in the field's unit. */
 function valueAxis(key: string, title?: string, height = 200): Spec {
-  // A tick per 40 px at most: six labels on a 60 px bar chart could not be read.
-  return { title: title ?? null, labelExpr: `jcFormat(datum.value, ${quoted(key)})`, tickCount: Math.max(2, Math.min(5, Math.floor(height / 40))) };
+  // A tick per 30 px, as Grafana's uPlot axes space them, at least two.
+  return { title: title ?? null, labelExpr: `jcFormat(datum.value, ${quoted(key)})`, tickCount: Math.max(2, Math.min(10, Math.floor(height / 30))) };
 }
 
-/** A time axis over the asked range, in one clock: hours within a day, days within a week, dates beyond. */
+/** A time axis over the asked range in Grafana's words: `10/10` past ten days, `11/02 00:00` past one, `01:00` within it. */
 function timeAxis(from?: number, to?: number): Spec {
   const span = from !== undefined && to !== undefined ? to - from : 0;
-  const format = span > 7 * 86_400_000 ? "%b %d" : span > 86_400_000 ? "%a %d" : "%H:%M";
-  return { title: null, labelOverlap: true, labelFlush: true, tickCount: 6, grid: false, format };
+  const format = span > 10 * 86_400_000 ? "%m/%d" : span > 86_400_000 ? "%m/%d %H:%M" : "%H:%M";
+  // Grafana draws a vertical grid line at each time tick.
+  return { title: null, labelOverlap: true, labelFlush: true, tickCount: 6, grid: true, format };
 }
 
 /** Rules at each threshold step, when the panel draws its thresholds (`custom.thresholdsStyle`). */

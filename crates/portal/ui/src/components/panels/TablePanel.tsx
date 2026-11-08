@@ -40,14 +40,35 @@ export function attrOf(name: string, index: number, taken: Set<string>): string 
   return attr;
 }
 
+/** Grafana's saved table sort (`options.sortBy`): a column by its display name, descending or not. */
+export type SortBy = { displayName?: string; desc?: boolean }[];
+
+/** Rows in Grafana's saved order: numbers by value, text by locale, an empty cell last either way. */
+function sorted(rows: Record<string, unknown>[], key: string | undefined, desc: boolean): Record<string, unknown>[] {
+  if (key === undefined) return rows;
+  const order = desc ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const x = a[key];
+    const y = b[key];
+    if (x === null || x === undefined) return y === null || y === undefined ? 0 : 1;
+    if (y === null || y === undefined) return -1;
+    if (typeof x === "number" && typeof y === "number") return order * (x - y);
+    return order * String(x).localeCompare(String(y));
+  });
+}
+
 /** The frames as grid entities, one attribute per column, and the columns that name them. */
-export function tableOf(frames: Frame[], fieldConfig: FieldConfigSource | undefined): { columns: TableColumn[]; entities: Record<string, unknown>[] } {
-  const { columns: fields, names, rows } = rowsOf(frames);
+export function tableOf(frames: Frame[], fieldConfig: FieldConfigSource | undefined, sortBy?: SortBy): { columns: TableColumn[]; entities: Record<string, unknown>[] } {
+  const { columns: fields, names, rows: read } = rowsOf(frames);
   const taken = new Set<string>();
   const columns = names.map((name, index) => {
     const settings = settingsFor(fieldConfig, fields[index]);
     return { attr: attrOf(name, index, taken), label: settings.displayName ?? name, settings, hidden: settings.custom.hidden === true };
   });
+  // Grafana sorts by its first sortBy entry, named by the column's display name.
+  const first = sortBy?.[0];
+  const at = first?.displayName === undefined ? -1 : columns.findIndex((column) => column.label === first.displayName || names[columns.indexOf(column)] === first.displayName);
+  const rows = sorted(read, at < 0 ? undefined : names[at], first?.desc === true);
   const entities = rows.map((row, at) => {
     const entity: Record<string, unknown> = { id: `urn:ngsi-ld:${ROW_TYPE}:${at + 1}`, type: ROW_TYPE };
     names.forEach((name, index) => {
@@ -91,16 +112,18 @@ export interface TablePanelProps {
   title: string;
   frames: Frame[];
   fieldConfig?: FieldConfigSource;
+  options?: Record<string, unknown>;
   locale: string;
 }
 
-export function TablePanel({ title, frames, fieldConfig, locale }: TablePanelProps): JSX.Element {
+export function TablePanel({ title, frames, fieldConfig, options, locale }: TablePanelProps): JSX.Element {
   const { t } = useTranslation();
   // Several frames are one table each, picked below the grid, as Grafana's table panel does.
   const [picked, setPicked] = useState(0);
   const at = picked < frames.length ? picked : 0;
   const shown = useMemo(() => (frames.length > 1 ? [frames[at]] : frames), [frames, at]);
-  const table = useMemo(() => tableOf(shown, fieldConfig), [shown, fieldConfig]);
+  const sortBy = Array.isArray(options?.sortBy) ? (options.sortBy as SortBy) : undefined;
+  const table = useMemo(() => tableOf(shown, fieldConfig, sortBy), [shown, fieldConfig, sortBy]);
   const parsed = useMemo(
     () =>
       parseGridConfig({

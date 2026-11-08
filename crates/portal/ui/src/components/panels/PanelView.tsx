@@ -95,7 +95,7 @@ function Body({ panel, data, from, to, locale, height }: Required<Pick<PanelView
     case "state-timeline":
       return <StateTimelinePanel {...common} from={from} to={to} />;
     default:
-      return <TablePanel title={title} frames={data.frames} fieldConfig={panel.fieldConfig} locale={locale} />;
+      return <TablePanel title={title} frames={data.frames} fieldConfig={panel.fieldConfig} options={panel.options} locale={locale} />;
   }
 }
 

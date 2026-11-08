@@ -103,10 +103,11 @@ export function StatPanel({ title, frames, fieldConfig, options, height, locale 
           <Tinted
             color={background || options?.colorMode !== "none" ? one.color : undefined}
             background={background}
-            className={clsx("flex h-full min-w-0 flex-col justify-center rounded-md p-3", !background && "bg-surface-subtle")}
+            className="flex h-full min-w-0 flex-col items-center justify-center rounded-md p-3 text-center"
           >
-            {showName ? <span className={clsx("truncate text-caption", !background && "text-fg-muted")}>{one.reduced.name}</span> : null}
-            <span className="truncate text-display font-semibold tabular-nums">{textMode === "name" ? one.reduced.name : one.text}</span>
+            {showName ? <span className={clsx("max-w-full truncate text-caption", !background && "text-fg-muted")}>{one.reduced.name}</span> : null}
+            {/* Grafana centres the value in the panel, in its largest text. */}
+            <span className="max-w-full truncate text-display font-semibold tabular-nums">{textMode === "name" ? one.reduced.name : one.text}</span>
             {graph && one.reduced.trend.length > 1 ? (
               <Sparkline points={one.reduced.trend} color="currentColor" label={t("dashboardView.trend", { name: one.reduced.name })} height={Math.max(24, Math.min(64, height / 4))} />
             ) : null}

@@ -16,6 +16,7 @@ import { displayValue, settingsFor } from "./fieldConfig";
 import { formatWith, timeSeriesSpec } from "./specs";
 import { chartTheme, VegaChart } from "./VegaChart";
 import { Swatch } from "./paint";
+import { useIsPhone } from "../../phone";
 
 export interface LegendOptions {
   displayMode?: string;
@@ -121,9 +122,6 @@ export function Legend({ series, colors, fieldConfig, legend, locale, hidden, on
   );
 }
 
-/** A legend asked on the right needs more series than this to stay there; fewer go below the chart. */
-const FEW = 6;
-
 export interface TimeSeriesPanelProps {
   title: string;
   frames: Frame[];
@@ -140,9 +138,9 @@ export function TimeSeriesPanel({ title, frames, fieldConfig, options, from, to,
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const asked = (options?.legend ?? {}) as LegendOptions;
   const count = useMemo(() => seriesOf(frames).length, [frames]);
-  // A right-hand legend of a few rows leaves the panel's lower half blank beside it: below the
-  // chart it gives the chart the whole width instead.
-  const right = asked.placement === "right" && count > FEW;
+  // On the right where the dashboard asks, as Grafana draws it; below the chart on a phone, as Grafana's.
+  const phone = useIsPhone();
+  const right = asked.placement === "right" && !phone;
   const legend = right ? asked : { ...asked, placement: "bottom" };
   const rows = legend.showLegend === false || legend.displayMode === "hidden" ? 0 : legend.displayMode === "table" ? 30 + 26 * Math.min(count, 6) : 36;
   const chartHeight = Math.max(120, right ? height : height - rows);
@@ -179,7 +177,7 @@ export function TimeSeriesPanel({ title, frames, fieldConfig, options, from, to,
     );
   };
   return (
-    <div className={clsx("flex h-full min-w-0 gap-3", right ? "flex-col sm:flex-row" : "flex-col")}>
+    <div className={clsx("flex h-full min-w-0 gap-3", right ? "flex-row" : "flex-col")}>
       <VegaChart
         className="min-w-0 flex-1"
         spec={built.spec}
@@ -187,7 +185,7 @@ export function TimeSeriesPanel({ title, frames, fieldConfig, options, from, to,
         label={t("dashboardView.chartLabel", { title, n: built.series.length })}
         tooltip={tooltip}
       />
-      <div className={clsx("min-w-0", right && "sm:w-2/5 sm:shrink-0")}>
+      <div className={clsx("min-w-0", right && "w-2/5 shrink-0")}>
         <Legend
           series={built.series}
           colors={built.colors}

@@ -68,6 +68,18 @@ describe("timeseries", () => {
     view.finalize();
   });
 
+  it("labels time ticks in Grafana's words and draws a grid line at each, ticks a value per 30 px", () => {
+    const axis = (span: number) => {
+      const built = timeSeriesSpec(frames.requestRate, { options: {}, locale: "en", theme, height: 200, from: frames.TO - span, to: frames.TO });
+      const layer = (built.spec as { layer?: { encoding?: { x?: { axis?: { format?: string; grid?: boolean } }; y?: { axis?: { tickCount?: number } } } }[] }).layer ?? [];
+      return { x: layer.find((one) => one.encoding?.x?.axis)?.encoding?.x?.axis, y: layer.find((one) => one.encoding?.y?.axis)?.encoding?.y?.axis };
+    };
+    expect(axis(6 * 3_600_000).x).toMatchObject({ format: "%H:%M", grid: true });
+    expect(axis(7 * 86_400_000).x).toMatchObject({ format: "%m/%d %H:%M" });
+    expect(axis(30 * 86_400_000).x).toMatchObject({ format: "%m/%d" });
+    expect(axis(6 * 3_600_000).y?.tickCount).toBe(6);
+  });
+
   it("draws the helsinki pm25 history with a threshold line and a table legend of its calcs", async () => {
     const fieldConfig = {
       defaults: { unit: "suffix: µg/m³", thresholds: { mode: "absolute", steps: [{ color: "green", value: null }, { color: "red", value: 15 }] }, custom: { thresholdsStyle: { mode: "line" } } },
@@ -137,6 +149,19 @@ describe("table", () => {
     expect(table.columns.map((column) => column.label)).toEqual(["name", "pm25", "Level", "dateObserved"]);
     expect(table.entities).toHaveLength(3);
     expect(table.columns[1].settings.custom.width).toBe(120);
+  });
+
+  it("orders rows by Grafana's saved sortBy, by display name, an empty cell last", () => {
+    const air = [{ fields: [
+      { name: "name", type: "string" as const, values: ["Mäkelänkatu", "Kallio 2", "Länsisatama 4", "Vartiokylä"] },
+      { name: "pm25", type: "number" as const, values: [27.4, 12.1, 48.8, null] },
+    ] }];
+    const renamed = { overrides: [{ matcher: { id: "byName", options: "pm25" }, properties: [{ id: "displayName", value: "PM2.5" }] }] };
+    const names = (sortBy?: { displayName?: string; desc?: boolean }[]) => tableOf(air, renamed, sortBy).entities.map((row) => (row.name as { value: string }).value);
+    expect(names([{ displayName: "PM2.5", desc: true }])).toEqual(["Länsisatama 4", "Mäkelänkatu", "Kallio 2", "Vartiokylä"]);
+    expect(names([{ displayName: "PM2.5" }])).toEqual(["Kallio 2", "Mäkelänkatu", "Länsisatama 4", "Vartiokylä"]);
+    expect(names([{ displayName: "no such column", desc: true }])).toEqual(["Mäkelänkatu", "Kallio 2", "Länsisatama 4", "Vartiokylä"]);
+    expect(names()).toEqual(["Mäkelänkatu", "Kallio 2", "Länsisatama 4", "Vartiokylä"]);
   });
 
   it("draws each frame as its own table, picked below the grid as Grafana's frame select does", async () => {
@@ -401,6 +426,9 @@ describe("the dashboard around the panels", () => {
     expect(formatUnit(45, "m")).toBe("45 min");
     expect(formatUnit(30, "h")).toBe("1.25 days");
     expect(formatUnit(2500, "ns")).toBe("2.50 µs");
+    // `locale` is toLocaleString (helsinki cyclists: 1,514), `none` Grafana's toFixed (1514).
+    expect(formatUnit(1514, "locale", 0)).toBe("1,514");
+    expect(formatUnit(1514, "none")).toBe("1514");
   });
 
   it("keeps an override's unit for its field only", () => {

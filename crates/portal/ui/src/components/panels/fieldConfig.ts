@@ -383,7 +383,9 @@ function duration(ms: number, decimals: number | undefined, locale: string): str
 export function formatUnit(value: number | null, unit: string | undefined, decimals?: number, locale = "en"): string {
   if (value === null || !Number.isFinite(value)) return "";
   const shape: UnitShape | undefined = unit ? UNITS[unit] : undefined;
-  if (!unit || unit === "none" || unit === "locale" || unit === "") {
+  // Grafana's `locale` unit is toLocaleString: grouped thousands (1,514).
+  if (unit === "locale") return new Intl.NumberFormat(locale, decimals === undefined ? {} : { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(value);
+  if (!unit || unit === "none" || unit === "") {
     return digits(value, decimals, locale);
   }
   if (!shape) {
