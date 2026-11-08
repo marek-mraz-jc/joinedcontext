@@ -191,7 +191,12 @@ describe("the Organization page", () => {
     });
     expect(await screen.findByText(en.organization.installationOnly)).toBeInTheDocument();
     expect(screen.getByText(en.askAdmins.installationTitle)).toBeInTheDocument();
+    expect(screen.getByText(en.organization.groupLead.platform)).toBeInTheDocument();
     expect(screen.queryByText(en.organization.adminOnly)).toBeNull();
+    // Whom to ask is the installation's contact list, and the way on is to their own sections.
+    expect(await screen.findByText(en.askAdmins.installationContacts)).toBeInTheDocument();
+    expect(screen.getByText(/tietosuoja@hel\.fi/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: en.askAdmins.ownSections })).toHaveAttribute("href", "/organization/members");
     expect(own.requests).not.toContain("GET /api/v1/organization/brokers");
   });
 

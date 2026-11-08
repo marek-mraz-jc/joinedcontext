@@ -51,7 +51,7 @@ export function AskAdmins({
         <p>{message}</p>
         {contacts.length > 0 ? (
           <div className="flex flex-col gap-1">
-            <p className="font-medium">{t("askAdmins.contacts")}</p>
+            <p className="font-medium">{t(installation ? "askAdmins.installationContacts" : "askAdmins.contacts")}</p>
             <ul className="flex flex-col gap-0.5">
               {contacts.map((contact, index) => (
                 <li key={`${contact.email ?? contact.name ?? ""}-${index}`} className="[overflow-wrap:anywhere]">
@@ -61,6 +61,13 @@ export function AskAdmins({
               ))}
             </ul>
           </div>
+        ) : installation && organizations.isSuccess ? (
+          <p>{t("askAdmins.noInstallationContacts")}</p>
+        ) : null}
+        {installation ? (
+          <Link to="/organization/$tab" params={{ tab: "members" }} className="w-fit font-medium underline hover:no-underline">
+            {t("askAdmins.ownSections")}
+          </Link>
         ) : null}
         {back ? (
           <Link to="/projects/$project/home" params={{ project: back }} className="w-fit font-medium underline hover:no-underline">

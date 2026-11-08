@@ -7498,7 +7498,7 @@
     },
     "title": "Administrace",
     "adminOnly": "Tato stránka je pro administrátory organizace. O to, co zde potřebujete, požádejte některého z nich.",
-    "installationOnly": "Tato část patří instalaci: otevírají ji jen její správci. Části vaší organizace jsou v nabídce vlevo.",
+    "installationOnly": "Tato část patří instalaci: otevírají ji jen její správci.",
     "lead": "Co je stejné v každém projektu: nastavení organizace, její členové, role, skupiny a servisní účty a její projekty. Každá změna se zde navrhuje a schvaluje.",
     "tab": {
       "settings": "Nastavení",
@@ -11633,6 +11633,9 @@
   "askAdmins": {
     "title": "Obraťte se na administrátora organizace",
     "installationTitle": "Zeptejte se správců instalace",
+    "ownSections": "Otevřít členy vaší organizace",
+    "installationContacts": "Kontakty instalace",
+    "noInstallationContacts": "Instalace zatím nezveřejňuje žádný kontakt.",
     "contacts": "Kontakty vaší organizace",
     "back": "Zpět na vaše projekty"
   },

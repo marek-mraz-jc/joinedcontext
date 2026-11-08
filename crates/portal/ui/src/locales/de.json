@@ -7498,7 +7498,7 @@
     },
     "title": "Verwaltung",
     "adminOnly": "Diese Seite ist für die Administratoren der Organisation. Bitten Sie einen von ihnen um das, was Sie hier brauchen.",
-    "installationOnly": "Dieser Bereich gehört der Installation: Nur ihre Administratoren öffnen ihn. Die Bereiche Ihrer Organisation finden Sie im Menü links.",
+    "installationOnly": "Dieser Bereich gehört der Installation: Nur ihre Administratoren öffnen ihn.",
     "lead": "Was in jedem Projekt gleich ist: die Einstellungen der Organisation, ihre Mitglieder, Rollen, Gruppen und Dienstkonten und ihre Projekte. Jede Änderung hier wird vorgeschlagen und genehmigt.",
     "tab": {
       "settings": "Einstellungen",
@@ -11633,6 +11633,9 @@
   "askAdmins": {
     "title": "Fragen Sie einen Administrator der Organisation",
     "installationTitle": "Fragen Sie die Administratoren der Installation",
+    "ownSections": "Mitglieder Ihrer Organisation öffnen",
+    "installationContacts": "Kontakte der Installation",
+    "noInstallationContacts": "Die Installation veröffentlicht noch keinen Kontakt.",
     "contacts": "Kontakte Ihrer Organisation",
     "back": "Zurück zu Ihren Projekten"
   },

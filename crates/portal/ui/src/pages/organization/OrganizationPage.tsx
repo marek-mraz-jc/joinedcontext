@@ -319,7 +319,11 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
     return (
       <div className="space-y-6">
         {/* The purpose line a person who cannot administer still reads (T-3852). */}
-        <PageHeader title={t("organization.title")} description={t("organization.lead")} />
+        {/* An Organization's own administrator reads what the refused section is for. */}
+        <PageHeader
+          title={t("organization.title")}
+          description={known && own !== undefined ? t(`organization.groupLead.${groupOf(tab)}`) : t("organization.lead")}
+        />
         {known ? (
           own !== undefined ? (
             // An Organization's own administrator asked for an installation section: their own

@@ -7498,7 +7498,7 @@
     },
     "title": "Administration",
     "adminOnly": "This page is for organization administrators. Ask one of them for what you need here.",
-    "installationOnly": "This section belongs to the installation: only its administrators open it. Your Organization's own sections are in the menu on the left.",
+    "installationOnly": "This section belongs to the installation: only its administrators open it.",
     "lead": "What is the same in every project: the organization's settings, its members, roles, groups and service accounts, and its projects. Every change here is proposed and approved.",
     "tab": {
       "settings": "Settings",
@@ -11633,6 +11633,9 @@
   "askAdmins": {
     "title": "Ask an organization administrator",
     "installationTitle": "Ask the installation's administrators",
+    "ownSections": "Open your Organization's members",
+    "installationContacts": "The installation's contacts",
+    "noInstallationContacts": "The installation publishes no contact yet.",
     "contacts": "Your organization's contacts",
     "back": "Back to your projects"
   },
