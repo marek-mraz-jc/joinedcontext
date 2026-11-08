@@ -730,3 +730,176 @@ async fn rp_initiated_logout_and_back_channel_logout() {
     assert_eq!(st, StatusCode::OK);
     assert!(store.get_sso_session("dev", &sid).await.unwrap().is_none());
 }
+
+async fn admin_token(store: &MemoryStore, kek: &Kek, roles: Value, extra: Value) -> String {
+    let key = store
+        .list_signing_keys("dev")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|k| k.status == "ACTIVE")
+        .unwrap();
+    let now = chrono::Utc::now().timestamp();
+    let mut claims = json!({ "iss": "https://idm.dev.example.test/realms/dev", "sub": "admin-1",
+        "azp": "admin-cli", "typ": "Bearer", "iat": now, "exp": now + 600, "realm_access": { "roles": roles } });
+    for (k, v) in extra.as_object().unwrap() {
+        claims[k] = v.clone();
+    }
+    sign_jwt(&key, kek, Some("JWT"), &claims).unwrap()
+}
+
+#[tokio::test]
+async fn every_entity_set_reads_the_rows_a_login_leaves() {
+    let (app, store, _, kek) = app().await;
+    let (code, _) = browser_login(&app).await;
+    exchange(&app, &code).await;
+    let user = store
+        .get_user_by_username_or_email("dev", None, "demo.orgmember@hel.fi")
+        .await
+        .unwrap()
+        .unwrap();
+    let now = chrono::Utc::now();
+    store
+        .upsert_consent(ConsentRecord {
+            id: "consent-1".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            user_id: user.id.clone(),
+            client_id: "edge".into(),
+            granted_client_scopes: vec!["openid".into()],
+            created_date: 1,
+            last_updated_date: 2,
+        })
+        .await
+        .unwrap();
+    store
+        .upsert_offline_session(OfflineSession {
+            id: "off-1".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            user_id: user.id.clone(),
+            client_id: "edge".into(),
+            scopes: vec!["offline_access".into()],
+            created_at: now,
+            last_access: now,
+            idle_expires_at: now + chrono::Duration::days(1),
+            max_expires_at: now + chrono::Duration::days(2),
+        })
+        .await
+        .unwrap();
+    store
+        .upsert_idp(IdentityProviderRepresentation {
+            internal_id: "idp-1".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            alias: "upstream".into(),
+            provider_id: "oidc".into(),
+            enabled: true,
+            trust_email: false,
+            first_broker_login_flow_alias: "first broker login".into(),
+            config: Default::default(),
+            managed_by: None,
+        })
+        .await
+        .unwrap();
+    store
+        .add_role_mapping(RoleMappingRecord {
+            id: "rm-1".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            principal_kind: "user".into(),
+            principal_id: user.id.clone(),
+            role_id: "role-1".into(),
+            role_name: "auditor".into(),
+            client_uuid: None,
+        })
+        .await
+        .unwrap();
+    let admin = admin_token(&store, &kek, json!(["realm-admin"]), json!({})).await;
+    let expect_rows: &[(&str, &str, &str)] = &[
+        ("Realms", "id", "dev"),
+        ("People", "username", "demo.orgmember@hel.fi"),
+        ("Groups", "", ""),
+        ("Roles", "", ""),
+        ("RoleMappings", "role_name", "auditor"),
+        ("Applications", "clientId", "edge"),
+        ("ClientScopes", "", ""),
+        ("ProtocolMappers", "", ""),
+        ("IdentityProviders", "alias", "upstream"),
+        ("Credentials", "type", "password"),
+        ("Sessions", "username", "demo.orgmember@hel.fi"),
+        ("ClientSessions", "client_id", "edge"),
+        ("OfflineSessions", "id", "off-1"),
+        ("Consents", "clientId", "edge"),
+        ("Events", "", ""),
+        ("SigningKeys", "", ""),
+    ];
+    for (set, field, value) in expect_rows {
+        let req = Request::builder()
+            .uri(format!("/api/v1/realms/dev/odata/{set}"))
+            .header(header::AUTHORIZATION, format!("Bearer {admin}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let st = resp.status();
+        let body: Value =
+            serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+        assert_eq!(st, StatusCode::OK, "{set}: {body}");
+        let rows = body["value"].as_array().unwrap();
+        assert!(!rows.is_empty(), "{set} has rows");
+        for r in rows {
+            assert!(
+                r["realm_id"].as_str().or(r["id"].as_str()).is_some(),
+                "{set}"
+            );
+            for secret in [
+                "secretData",
+                "secret",
+                "encryptedPrivateKey",
+                "handle_hash",
+                "passwordHash",
+            ] {
+                assert!(r.get(secret).is_none(), "{set} leaks {secret}");
+            }
+        }
+        if !field.is_empty() {
+            assert!(
+                rows.iter().any(|r| r[*field] == *value),
+                "{set}: no row with {field} = {value}: {rows:?}"
+            );
+        }
+    }
+    // An organization member sees only its organization's rows, and no realm-level sets.
+    let member = admin_token(
+        &store,
+        &kek,
+        json!([]),
+        json!({ "sub": user.id, "jc_org": ["hel"] }),
+    )
+    .await;
+    for set in [
+        "Realms",
+        "IdentityProviders",
+        "SigningKeys",
+        "Sessions",
+        "Consents",
+    ] {
+        let req = Request::builder()
+            .uri(format!("/api/v1/realms/dev/odata/{set}"))
+            .header(header::AUTHORIZATION, format!("Bearer {member}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let st = resp.status();
+        let body: Value =
+            serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+        if st == StatusCode::OK {
+            assert!(
+                body["value"].as_array().unwrap().is_empty(),
+                "{set} shows a member nothing: {body}"
+            );
+        } else {
+            assert!(st.is_client_error(), "{set}: {st}");
+        }
+    }
+}

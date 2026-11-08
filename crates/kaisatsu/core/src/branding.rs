@@ -246,18 +246,46 @@ pub fn is_safe_svg(svg: &str) -> bool {
         "<object",
         "<handler",
         "<!",
+        "<style",
+        "@import",
         "javascript:",
         "&#",
-        "onload",
-        "onerror",
-        "onclick",
-        "onmouseover",
     ] {
         if lower.contains(forbidden) {
             return false;
         }
     }
-    true
+    // Any event handler attribute (`onload`, `onbegin`, `onfocusin`, ...), not a fixed list.
+    let bytes = lower.as_bytes();
+    for (i, _) in lower.match_indices("on") {
+        let before = if i == 0 { b' ' } else { bytes[i - 1] };
+        if !(before.is_ascii_whitespace() || matches!(before, b'/' | b'"' | b'\'')) {
+            continue;
+        }
+        let rest = &lower[i + 2..];
+        let name_len = rest.bytes().take_while(u8::is_ascii_alphabetic).count();
+        if name_len > 0 && rest[name_len..].trim_start().starts_with('=') {
+            return false;
+        }
+    }
+    // `href`, `xlink:href` and CSS `url()` may point at a fragment of the same SVG only.
+    let local_only = |value: &str| {
+        value
+            .trim_start()
+            .trim_start_matches(['"', '\''])
+            .trim_start()
+            .starts_with('#')
+    };
+    for (i, _) in lower.match_indices("href") {
+        if let Some(value) = lower[i + 4..].trim_start().strip_prefix('=')
+            && !local_only(value)
+        {
+            return false;
+        }
+    }
+    lower
+        .match_indices("url(")
+        .all(|(i, _)| local_only(&lower[i + 4..]))
 }
 
 fn rgb_of(colour: &str) -> Option<[u8; 3]> {
