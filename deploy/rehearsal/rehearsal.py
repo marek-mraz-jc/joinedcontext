@@ -362,7 +362,18 @@ FLOW_BINDINGS = ("browserFlow", "directGrantFlow", "registrationFlow", "resetCre
 def _flow_in_use(realm: dict, alias: str) -> bool:
     """Bound to the realm or a client. A subflow reference does not count: kaisatsu maps each
     flow it knows by its alias, whole, to its own state machine and reads no subflow."""
-    if any(realm.get(b) == alias for b in FLOW_BINDINGS):
+    serves = {
+        # The docker registry flow serves only docker-v2 clients.
+        "dockerAuthenticationFlow": any(c.get("protocol") == "docker-v2" for c in realm.get("clients", [])),
+        # First broker login runs only for a login broker; a `kubernetes` provider is the issuer of
+        # workload client assertions (federated-jwt) and signs in no person.
+        "registrationFlow": bool(realm.get("registrationAllowed")),
+        "firstBrokerLoginFlow": any(i.get("providerId") != "kubernetes" for i in realm.get("identityProviders", [])),
+    }
+    if any(realm.get(b) == alias for b in FLOW_BINDINGS if serves.get(b, True)):
+        return True
+    if any(alias in (i.get("firstBrokerLoginFlowAlias"), i.get("postBrokerLoginFlowAlias"))
+           for i in realm.get("identityProviders", [])):
         return True
     return any(alias in (c.get("authenticationFlowBindingOverrides") or {}).values() for c in realm.get("clients", []))
 
@@ -394,6 +405,9 @@ def drop_refused_mappers(realm: dict, check) -> tuple[dict, list]:
             alias, auth = flow.get("alias", ""), m.group(2)
             if not _flow_in_use(realm, alias):
                 realm["authenticationFlows"].pop(int(m.group(1)))
+                for b in ("dockerAuthenticationFlow", "firstBrokerLoginFlow", "registrationFlow"):
+                    if realm.get(b) == alias:
+                        del realm[b]
                 dropped.append({"in": "authenticationFlows", "flow": alias,
                                 "kind": f"unused flow with unknown authenticator {auth}"})
                 continue
@@ -435,8 +449,8 @@ def cmd_realms(a):
             tmp.unlink(missing_ok=True)
             (dst.parent / f"realm-{name}-left-out.json").write_text(json.dumps(dropped, indent=1))
             if dropped:
-                print(f"realm {name}: {len(dropped)} mappers of kinds kaisatsu does not know left out: "
-                      f"{sorted({d['kind'] for d in dropped})}")
+                print(f"realm {name}: {len(dropped)} parts kaisatsu refuses left out "
+                      f"(realm-{name}-left-out.json): {sorted({d['kind'] for d in dropped})}")
         (dst / f"{name}.json").write_text(json.dumps(clean, indent=1))
         taken.append(name)
         # The secret variables the realm names ($(env:NAME)): up.sh makes a value for each.

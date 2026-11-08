@@ -123,6 +123,27 @@ def test_an_unmapped_flow_is_left_out_only_when_nothing_uses_it():
         {"authenticator": "client-x509", "requirement": "ALTERNATIVE"})
     with pytest.raises(SystemExit):
         rh.drop_refused_mappers(clients, unknown_step)
+    docker = {"dockerAuthenticationFlow": "docker auth", "clients": [],
+              "authenticationFlows": [{"alias": "docker auth", "authenticationExecutions": [
+                  {"authenticator": "client-x509", "requirement": "REQUIRED"}]}]}
+    clean, _ = rh.drop_refused_mappers(docker, unknown_step)
+    assert clean["authenticationFlows"] == [] and "dockerAuthenticationFlow" not in clean
+    docker = {"dockerAuthenticationFlow": "docker auth", "clients": [{"protocol": "docker-v2"}],
+              "authenticationFlows": [{"alias": "docker auth", "authenticationExecutions": [
+                  {"authenticator": "client-x509", "requirement": "REQUIRED"}]}]}
+    with pytest.raises(SystemExit):
+        rh.drop_refused_mappers(docker, unknown_step)
+    broker = {"firstBrokerLoginFlow": "first broker login", "identityProviders": [{"providerId": "kubernetes"}],
+              "clients": [], "authenticationFlows": [{"alias": "first broker login", "authenticationExecutions": [
+                  {"authenticator": "client-x509", "requirement": "REQUIRED"}]}]}
+    clean, _ = rh.drop_refused_mappers(broker, unknown_step)
+    assert clean["authenticationFlows"] == [] and "firstBrokerLoginFlow" not in clean
+    broker["identityProviders"] = [{"providerId": "oidc"}]
+    broker["firstBrokerLoginFlow"] = "first broker login"
+    broker["authenticationFlows"] = [{"alias": "first broker login", "authenticationExecutions": [
+        {"authenticator": "client-x509", "requirement": "REQUIRED"}]}]
+    with pytest.raises(SystemExit):
+        rh.drop_refused_mappers(broker, unknown_step)
     client = {"browserFlow": "custom browser", "clients": [{"authenticationFlowBindingOverrides": {"browser": "x"}}],
               "authenticationFlows": [{"alias": "x"}]}
     with pytest.raises(SystemExit):
