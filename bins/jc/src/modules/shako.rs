@@ -1,5 +1,9 @@
 //! shako (Git forge) inside `jc`: mounts both the forge router (`/{slug}` or `git.{base_host}`)
 //! and the host-root `/v2` container registry router (`shako_server::registry_router`).
+//!
+//! Records live in Postgres when `[shako.database]` is set (`shako_store_pg::PgStore`: boot RLS
+//! check, the store log replayed for jc's one tenant before serving), else in memory. Git data
+//! lives under `repo_root`, by default `<state_dir>/shako`, so it survives a restart too.
 
 use crate::app::StartError;
 use crate::config::ShakoSection;
@@ -12,6 +16,7 @@ use shako_core::{
 };
 use shako_server::{ShakoState, registry_router, router};
 use shako_store_memory::MemoryStore;
+use shako_store_pg::PgStore;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -19,10 +24,10 @@ fn err(e: impl std::fmt::Display) -> StartError {
     StartError::module(Module::Shako, e)
 }
 
-fn repo_root(configured: Option<&Path>) -> Result<PathBuf, StartError> {
+fn repo_root(configured: Option<&Path>, state_dir: &Path) -> Result<PathBuf, StartError> {
     let dir = match configured {
         Some(dir) => dir.to_path_buf(),
-        None => std::env::temp_dir().join(format!("jc-shako-{}", std::process::id())),
+        None => state_dir.join("shako"),
     };
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
@@ -37,13 +42,37 @@ fn repo_root(configured: Option<&Path>) -> Result<PathBuf, StartError> {
     Ok(dir)
 }
 
-pub fn build_state(
+const INSTANCE: shako_core::InstanceId = shako_core::InstanceId::from_u128(1);
+
+/// The configured store: Postgres (migrated first when a migration role is set, boot RLS
+/// check, log replayed for `(INSTANCE, org_id)`), or memory without a database section.
+async fn open_store(
+    cfg: &ShakoSection,
+    org_id: OrgId,
+) -> Result<Arc<dyn shako_core::Store>, StartError> {
+    let Some(db) = &cfg.database else {
+        return Ok(Arc::new(MemoryStore::new()));
+    };
+    if let Some(opts) = db.migrate_options().map_err(err)? {
+        let pool = crate::pg::connect(opts, 1).await.map_err(err)?;
+        PgStore::run_migrations(&pool).await.map_err(err)?;
+        pool.close().await;
+    }
+    let store = PgStore::connect_with(db.app_options().map_err(err)?, db.max_connections())
+        .await
+        .map_err(err)?;
+    let replayed = store.hydrate(INSTANCE, org_id).await.map_err(err)?;
+    tracing::info!(replayed, "shako: records loaded from Postgres");
+    Ok(Arc::new(store))
+}
+
+pub async fn build_state(
     cfg: &ShakoSection,
     setup: &crate::setup::Setup,
 ) -> Result<ShakoState, StartError> {
-    let root = repo_root(cfg.repo_root.as_deref())?;
+    let root = repo_root(cfg.repo_root.as_deref(), &setup.dir)?;
     let org_id = OrgId::from_u128(1);
-    let store = Arc::new(MemoryStore::new());
+    let store = open_store(cfg, org_id).await?;
     let authz = Arc::new(LocalAuthorizer::new(vec![RoleBinding {
         org_id,
         principal: "admin".into(),
@@ -77,7 +106,7 @@ pub fn build_state(
 
     let verifier = TokenVerifier::new(key).with_static_tokens(static_tokens);
     Ok(ShakoState::new(
-        shako_core::InstanceId::from_u128(1),
+        INSTANCE,
         org_id,
         root,
         store,

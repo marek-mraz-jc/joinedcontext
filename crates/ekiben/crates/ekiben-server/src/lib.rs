@@ -16,7 +16,7 @@ pub mod unit_test;
 
 pub use api::{build_router, Caller, ServerAuthConfig, ServerState};
 pub use cron::CronSchedule;
-pub use manager::{StreamEntryStatus, StreamManager};
+pub use manager::{StreamEntryStatus, StreamManager, StreamPersistence};
 pub use metrics_config::load_metrics_config;
 pub use org_vars::OrgVarsDir;
 pub use runner::{run_stream_once, RunningStreamHandle};

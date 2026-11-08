@@ -9,6 +9,7 @@
 pub mod app;
 pub mod config;
 pub mod module;
+pub mod pg;
 mod modules;
 mod provision;
 pub mod runtime;

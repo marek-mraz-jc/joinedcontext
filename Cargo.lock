@@ -5072,8 +5072,10 @@ dependencies = [
  "dataroom-core",
  "dataroom-server",
  "dataroom-store-memory",
+ "dataroom-store-pg",
  "ekiben-core",
  "ekiben-server",
+ "futures",
  "getrandom 0.3.4",
  "hex",
  "http-body-util",
@@ -5097,6 +5099,7 @@ dependencies = [
  "shako-core",
  "shako-server",
  "shako-store-memory",
+ "shako-store-pg",
  "sqlx",
  "tempfile",
  "thiserror 2.0.21",
@@ -5107,6 +5110,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
