@@ -99,7 +99,15 @@ export function DiscardDraft({ onDiscard }: { onDiscard: () => Promise<void> }):
     <div role="group" aria-label={t("drafts.discard.ask")} className="order-last flex basis-full flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-body text-fg">{t("drafts.discard.confirm")}</span>
-        <Button variant="danger" size="sm" loading={pending} onClick={() => void discard()}>
+        <Button
+          variant="danger"
+          size="sm"
+          loading={pending}
+          // A refused draft stays refused until something changes on the server: say so, once.
+          disabled={refused !== null}
+          disabledReason={refused ?? undefined}
+          onClick={() => void discard()}
+        >
           {t("drafts.discard.yes")}
         </Button>
         <Button variant="secondary" size="sm" disabled={pending} disabledReason={t("app.busyReason")} onClick={() => setAsking(false)}>

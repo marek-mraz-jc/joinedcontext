@@ -3356,6 +3356,8 @@
       "inbox": "Access requests",
       "inboxLead": "People asking to read an Endpoint of this space, and pipelines of other spaces asking to read or write it. Approving proposes the grant as a change of this project; another person approves that change.",
       "inboxEmpty": "Nobody has asked for access to this space.",
+      "inboxRefused": "No access request of this project is yours to decide: {reason}",
+      "grantChange": "Its grant is change {change}; access starts once another person approves it.",
       "inboxEmptyProject": "Nobody waits for your decision on access to a space of this project.",
       "inboxFailed": "The access requests did not load: {reason}",
       "inSpace": "· in space {space}",

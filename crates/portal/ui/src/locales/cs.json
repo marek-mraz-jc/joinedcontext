@@ -3356,6 +3356,8 @@
       "inbox": "Žádosti o přístup",
       "inboxLead": "Lidé, kteří žádají o čtení endpointu tohoto prostoru, a pipeline jiných prostorů, které žádají o jeho čtení nebo zápis. Schválení navrhne oprávnění jako změnu tohoto projektu; tuto změnu schválí jiná osoba.",
       "inboxEmpty": "O přístup k tomuto prostoru zatím nikdo nepožádal.",
+      "inboxRefused": "O žádné žádosti o přístup v tomto projektu nerozhodujete: {reason}",
+      "grantChange": "Jeho oprávnění je změna {change}; přístup začne, jakmile ji schválí jiná osoba.",
       "inboxEmptyProject": "Na vaše rozhodnutí o přístupu k prostoru tohoto projektu nikdo nečeká.",
       "inboxFailed": "Žádosti o přístup se nenačetly: {reason}",
       "inSpace": "· v prostoru {space}",

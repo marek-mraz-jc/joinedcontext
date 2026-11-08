@@ -3356,6 +3356,8 @@
       "inbox": "Zugriffsanfragen",
       "inboxLead": "Personen, die einen Endpunkt dieses Bereichs lesen möchten, und Pipelines anderer Bereiche, die ihn lesen oder schreiben möchten. Eine Genehmigung schlägt die Berechtigung als Änderung dieses Projekts vor; eine andere Person genehmigt diese Änderung.",
       "inboxEmpty": "Noch niemand hat Zugriff auf diesen Bereich angefragt.",
+      "inboxRefused": "Über keine Zugriffsanfrage dieses Projekts entscheiden Sie: {reason}",
+      "grantChange": "Die Berechtigung ist die Änderung {change}; der Zugriff beginnt, sobald eine andere Person sie genehmigt.",
       "inboxEmptyProject": "Niemand wartet auf Ihre Entscheidung über den Zugriff auf einen Raum dieses Projekts.",
       "inboxFailed": "Die Zugriffsanfragen wurden nicht geladen: {reason}",
       "inSpace": "· im Raum {space}",

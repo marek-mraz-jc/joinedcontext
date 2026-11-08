@@ -153,6 +153,8 @@ describe("discarding a saved draft (AG-61, jc_draft_drop)", () => {
     const group = screen.getByRole("group", { name: L.ask });
     expect(await within(group).findByRole("alert")).toHaveTextContent("The draft was not discarded: you may not write drafts of helsinki");
     expect(closed).not.toHaveBeenCalled();
+    // Refused stays refused: Discard says why instead of asking the server again.
+    expect(within(group).getByRole("button", { name: L.yes })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("offers nothing to discard when the store holds no draft", async () => {

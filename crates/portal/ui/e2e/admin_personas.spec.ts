@@ -152,7 +152,7 @@ async function stubPortal(page: Page, persona: Persona, world: World = {}): Prom
       writes.push(`POST ${path}`);
       const state = { approve: "approved", decline: "declined", revoke: "revoked" }[decision[2] as "approve" | "decline" | "revoke"];
       world.accessRequests = world.accessRequests.map((one) =>
-        (one as { id: string }).id === decision[1] ? { ...(one as object), state, decidedBy: "petr" } : one,
+        (one as { id: string }).id === decision[1] ? { ...(one as object), state, decidedBy: "petr", change: "chg-0a1b2c3d" } : one,
       );
       return json(CHANGE(project), 202);
     }
@@ -349,6 +349,7 @@ for (const width of [1440, 400]) {
       // The list reads the request again: approved, so it offers Revoke and no second Approve.
       await expect(row.getByText("Approved", { exact: true })).toBeVisible();
       await expect(row.getByRole("button", { name: /^Approve access/ })).toHaveCount(0);
+      await expect(row.getByText("Its grant is change chg-0a1b2c3d; access starts once another person approves it.")).toBeVisible();
       await shot(page, `inbox-access-approved-${width}`);
     });
 
@@ -362,7 +363,7 @@ for (const width of [1440, 400]) {
       await stubPortal(page, "organization", { accessRequests: "refused" });
       await page.goto("/projects/ovzdusie/inbox?lang=en");
       await expect(page.getByTestId("access-inbox-failed")).toContainText(
-        "The access requests did not load: Only the owners of a space of this project decide its access requests.",
+        "No access request of this project is yours to decide: Only the owners of a space of this project decide its access requests.",
       );
       await shot(page, `inbox-access-refused-${width}`);
     });

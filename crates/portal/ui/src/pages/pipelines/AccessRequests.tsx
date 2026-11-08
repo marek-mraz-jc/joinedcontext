@@ -526,15 +526,15 @@ export function AccessRequestInbox({ project, space }: { project: string; space?
   const items = (list.data?.items ?? []).filter((request) => whole || request.space === space);
   if (list.isError) {
     // On an Endpoint's page the section is one of many and stays quiet; the Inbox says why.
-    return whole ? (
-      <Alert
-        tone={list.error instanceof ApiError && (list.error.status === 403 || list.error.status === 404) ? "info" : "danger"}
-        role="alert"
-        data-testid="access-inbox-failed"
-      >
-        {t("pipelines.access.inboxFailed", { reason: problem(list.error, t("app.error.generic")) })}
+    if (!whole) return null;
+    // A refusal is "not yours to decide", said as a notice; anything else is a failure.
+    const refused = list.error instanceof ApiError && (list.error.status === 403 || list.error.status === 404);
+    const reason = problem(list.error, t("app.error.generic"));
+    return (
+      <Alert tone={refused ? "info" : "danger"} role="alert" data-testid="access-inbox-failed">
+        {t(refused ? "pipelines.access.inboxRefused" : "pipelines.access.inboxFailed", { reason })}
       </Alert>
-    ) : null;
+    );
   }
   if (list.isPending && whole) {
     return <p role="status" className="text-body text-fg-muted">{t("app.loading")}</p>;
@@ -571,6 +571,10 @@ export function AccessRequestInbox({ project, space }: { project: string; space?
                 <StateBadge state={request.state} />
               </div>
               <Grant request={request} />
+              {request.state === "approved" && request.change ? (
+                // Approving proposes the grant; access starts once that change is approved (PL-91).
+                <p className="text-caption text-fg-muted">{t("pipelines.access.grantChange", { change: request.change })}</p>
+              ) : null}
               <p className="text-caption text-fg">{request.reason}</p>
               {decidable ? (
                 <div className="flex max-w-prose flex-col gap-2">

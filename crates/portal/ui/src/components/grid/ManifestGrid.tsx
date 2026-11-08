@@ -12,6 +12,7 @@
 import { useId, useMemo, useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { api, queryKeys, unwrap } from "../../api/client";
@@ -24,6 +25,7 @@ import { PageFailed } from "../ui/PageState";
 import { RowActions, RowDetails } from "../ui/RowActions";
 import {
   Button,
+  buttonClass,
   Card,
   Checkbox,
   Dialog,
@@ -219,7 +221,19 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
   if (query.isError) {
     // The page's own header stays above the failure, so a refused or missing project still
     // names the page it is (one h1, T-6048) and says why beneath it.
-    const failed = <PageFailed error={query.error} onRetry={() => void query.refetch()} />;
+    // A list that is not there (a project out of reach answers 404, PF-59) offers the way to
+    // the start page, where the person's own projects are.
+    const failed = (
+      <PageFailed
+        error={query.error}
+        onRetry={() => void query.refetch()}
+        back={
+          <Link to="/" className={buttonClass("secondary", "sm")}>
+            {t("app.notFound.home")}
+          </Link>
+        }
+      />
+    );
     return props.header ? (
       <div className="flex flex-col gap-3" data-manifest-grid={storageKey}>
         {props.header(null)}
