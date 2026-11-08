@@ -204,7 +204,12 @@ async fn a_person_browses_the_projects_repositories_on_shako() {
     let world = World::start().await;
     let org = world.client();
     let forge = org.for_project(CONFIG, PROJECT);
-    assert!(forge.ensure_repository("Air quality configuration").await.unwrap());
+    assert!(
+        forge
+            .ensure_repository("Air quality configuration")
+            .await
+            .unwrap()
+    );
     let readme = "# Ovzdusie\n\n<script>alert(1)</script> [x](javascript:alert(1))\n";
     // auto_init leaves a README of its own: the first commit replaces it.
     let seeded = forge
@@ -219,7 +224,11 @@ async fn a_person_browses_the_projects_repositories_on_shako() {
             AUTHOR,
             &[
                 ("projects/ovzdusie/README.md".into(), readme.into(), seeded),
-                ("projects/ovzdusie/spaces/air/endpoints/air.yaml".into(), "a: 1\nb: 2\n".into(), None),
+                (
+                    "projects/ovzdusie/spaces/air/endpoints/air.yaml".into(),
+                    "a: 1\nb: 2\n".into(),
+                    None,
+                ),
             ],
         )
         .await
@@ -234,7 +243,11 @@ async fn a_person_browses_the_projects_repositories_on_shako() {
             "main",
             "Change b",
             AUTHOR,
-            &[("projects/ovzdusie/spaces/air/endpoints/air.yaml".into(), "a: 1\nb: 3\n".into(), air)],
+            &[(
+                "projects/ovzdusie/spaces/air/endpoints/air.yaml".into(),
+                "a: 1\nb: 3\n".into(),
+                air,
+            )],
         )
         .await
         .unwrap();
@@ -244,7 +257,11 @@ async fn a_person_browses_the_projects_repositories_on_shako() {
             "portal/edit",
             "Propose c",
             AUTHOR,
-            &[("projects/ovzdusie/spaces/air/endpoints/c.yaml".into(), "c: 1\n".into(), None)],
+            &[(
+                "projects/ovzdusie/spaces/air/endpoints/c.yaml".into(),
+                "c: 1\n".into(),
+                None,
+            )],
         )
         .await
         .unwrap();
@@ -259,7 +276,12 @@ async fn a_person_browses_the_projects_repositories_on_shako() {
     // The project's application, another project's application, the organization's shared repo.
     let apps = org.for_application("ovzdusie_dash");
     assert!(apps.ensure_repository("Dashboard").await.unwrap());
-    assert!(org.for_application("doprava_maps").ensure_repository("Maps").await.unwrap());
+    assert!(
+        org.for_application("doprava_maps")
+            .ensure_repository("Maps")
+            .await
+            .unwrap()
+    );
     assert!(org.ensure_repository("Shared").await.unwrap());
 
     let state = portal(&world);
@@ -268,7 +290,9 @@ async fn a_person_browses_the_projects_repositories_on_shako() {
     let stranger = person("eva", "elsewhere");
 
     // The list holds the project's own, never another project's or the shared repository.
-    let list = call(&state, &viewer, "jc_repository_list", json!({})).await.unwrap();
+    let list = call(&state, &viewer, "jc_repository_list", json!({}))
+        .await
+        .unwrap();
     let names: Vec<&str> = list["items"]
         .as_array()
         .unwrap()
@@ -277,29 +301,61 @@ async fn a_person_browses_the_projects_repositories_on_shako() {
         .collect();
     assert_eq!(names, vec![CONFIG, "ovzdusie_dash"], "{list}");
     assert_eq!(list["items"][0]["role"], "configuration");
-    let filtered = call(&state, &viewer, "jc_repository_list", json!({ "filter": "dash" }))
-        .await
-        .unwrap();
+    let filtered = call(
+        &state,
+        &viewer,
+        "jc_repository_list",
+        json!({ "filter": "dash" }),
+    )
+    .await
+    .unwrap();
     assert_eq!(filtered["total"], 1);
 
     // The repository page: clone address, newest commit, the README as text.
-    let repo = call(&state, &viewer, "jc_repository_get", json!({ "repository": CONFIG }))
-        .await
-        .unwrap();
-    assert!(repo["cloneUrl"].as_str().unwrap().ends_with(&format!("/{OWNER}/{CONFIG}.git")), "{repo}");
+    let repo = call(
+        &state,
+        &viewer,
+        "jc_repository_get",
+        json!({ "repository": CONFIG }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        repo["cloneUrl"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("/{OWNER}/{CONFIG}.git")),
+        "{repo}"
+    );
     assert_eq!(repo["lastCommit"]["sha"], c2);
-    assert!(repo["readme"]["text"].as_str().unwrap().contains("<script>"), "{repo}");
+    assert!(
+        repo["readme"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("<script>"),
+        "{repo}"
+    );
     // The project's application, read by its own role; auto_init gave it one commit.
-    let app = call(&state, &viewer, "jc_repository_get", json!({ "repository": "ovzdusie_dash" }))
-        .await
-        .unwrap();
+    let app = call(
+        &state,
+        &viewer,
+        "jc_repository_get",
+        json!({ "repository": "ovzdusie_dash" }),
+    )
+    .await
+    .unwrap();
     assert_eq!(app["role"], "application", "{app}");
     assert_eq!(app["empty"], false, "{app}");
 
     // Folders by path, a file, a missing file, a traversal.
-    let root = call(&state, &viewer, "jc_repository_tree", json!({ "repository": CONFIG }))
-        .await
-        .unwrap();
+    let root = call(
+        &state,
+        &viewer,
+        "jc_repository_tree",
+        json!({ "repository": CONFIG }),
+    )
+    .await
+    .unwrap();
     assert_eq!(root["entries"][0]["type"], "folder", "{root}");
     let deep = call(
         &state,
@@ -309,7 +365,10 @@ async fn a_person_browses_the_projects_repositories_on_shako() {
     )
     .await
     .unwrap();
-    assert_eq!(deep["entries"][0]["path"], "spaces/air/endpoints/air.yaml", "{deep}");
+    assert_eq!(
+        deep["entries"][0]["path"], "spaces/air/endpoints/air.yaml",
+        "{deep}"
+    );
     let file = call(
         &state,
         &viewer,
@@ -337,9 +396,14 @@ async fn a_person_browses_the_projects_repositories_on_shako() {
     assert_eq!(traversal, Err(422));
 
     // Commits, one commit's diff, branches.
-    let commits = call(&state, &viewer, "jc_repository_commits", json!({ "repository": CONFIG }))
-        .await
-        .unwrap();
+    let commits = call(
+        &state,
+        &viewer,
+        "jc_repository_commits",
+        json!({ "repository": CONFIG }),
+    )
+    .await
+    .unwrap();
     assert_eq!(commits["items"][0]["sha"], c2, "{commits}");
     assert_eq!(commits["items"][0]["message"], "Change b");
     let of_path = call(
@@ -351,22 +415,37 @@ async fn a_person_browses_the_projects_repositories_on_shako() {
     .await
     .unwrap();
     assert_eq!(of_path["items"][0]["sha"], c1, "{of_path}");
-    let commit = call(&state, &viewer, "jc_repository_commit", json!({ "repository": CONFIG, "sha": c2 }))
-        .await
-        .unwrap();
+    let commit = call(
+        &state,
+        &viewer,
+        "jc_repository_commit",
+        json!({ "repository": CONFIG, "sha": c2 }),
+    )
+    .await
+    .unwrap();
     assert_eq!(commit["parents"][0], c1, "{commit}");
     let patch = commit["files"][0]["patch"].as_str().unwrap();
     assert!(patch.contains("-b: 2\n+b: 3\n"), "{commit}");
-    let refs = call(&state, &viewer, "jc_repository_refs", json!({ "repository": CONFIG }))
-        .await
-        .unwrap();
+    let refs = call(
+        &state,
+        &viewer,
+        "jc_repository_refs",
+        json!({ "repository": CONFIG }),
+    )
+    .await
+    .unwrap();
     assert_eq!(refs["branches"][0]["name"], "main", "{refs}");
     assert_eq!(refs["branches"][0]["default"], true);
 
     // Pull requests, one with its files, its review and the Change it is.
-    let pulls = call(&state, &viewer, "jc_repository_pulls", json!({ "repository": CONFIG }))
-        .await
-        .unwrap();
+    let pulls = call(
+        &state,
+        &viewer,
+        "jc_repository_pulls",
+        json!({ "repository": CONFIG }),
+    )
+    .await
+    .unwrap();
     assert_eq!(pulls["items"][0]["title"], "Add c", "{pulls}");
     let one = call(
         &state,
@@ -376,24 +455,48 @@ async fn a_person_browses_the_projects_repositories_on_shako() {
     )
     .await
     .unwrap();
-    assert_eq!(one["files"][0]["path"], "spaces/air/endpoints/c.yaml", "{one}");
+    assert_eq!(
+        one["files"][0]["path"], "spaces/air/endpoints/c.yaml",
+        "{one}"
+    );
     assert_eq!(one["reviews"][0]["body"], "Looks right");
     assert_eq!(one["change"], format!("chg-{:08x}", pull.number));
 
     // Settings: a steward reads them, a viewer is refused.
-    let settings = call(&state, &steward, "jc_repository_settings", json!({ "repository": CONFIG }))
-        .await
-        .unwrap();
+    let settings = call(
+        &state,
+        &steward,
+        "jc_repository_settings",
+        json!({ "repository": CONFIG }),
+    )
+    .await
+    .unwrap();
     assert!(settings["webhooks"].is_array(), "{settings}");
     assert_eq!(
-        call(&state, &viewer, "jc_repository_settings", json!({ "repository": CONFIG })).await,
+        call(
+            &state,
+            &viewer,
+            "jc_repository_settings",
+            json!({ "repository": CONFIG })
+        )
+        .await,
         Err(403)
     );
 
     // Another project's repository and a stranger's read are not there.
-    for (caller, name) in [(&viewer, "doprava_maps"), (&viewer, "configuration"), (&stranger, CONFIG)] {
+    for (caller, name) in [
+        (&viewer, "doprava_maps"),
+        (&viewer, "configuration"),
+        (&stranger, CONFIG),
+    ] {
         assert_eq!(
-            call(&state, caller, "jc_repository_get", json!({ "repository": name })).await,
+            call(
+                &state,
+                caller,
+                "jc_repository_get",
+                json!({ "repository": name })
+            )
+            .await,
             Err(404),
             "{name}"
         );
