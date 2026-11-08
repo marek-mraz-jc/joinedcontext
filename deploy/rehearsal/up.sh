@@ -91,6 +91,10 @@ export RUST_LOG=${RUST_LOG:-info,sqlx=warn}
 # The deployment's configuration repository (defaults/environment/global.yaml configRepo).
 export JC_GITEA_OWNER=${REHEARSAL_CONFIG_OWNER:-joinedcontext} JC_GITEA_REPO=${REHEARSAL_CONFIG_REPO:-configuration}
 
+# A jc of an earlier up.sh of this environment stops first (its memory stores go with it).
+if [ -s "$home/jc.pid" ] && kill "$(cat "$home/jc.pid")" 2>/dev/null; then
+  for _ in $(seq 20); do kill -0 "$(cat "$home/jc.pid")" 2>/dev/null || break; sleep 0.5; done
+fi
 printf '[mounts.portal]\npath_prefix = ""\n' > "$home/jc.toml"
 nohup "$jc_bin" --role all --scheme http --log-format text --config "$home/jc.toml" \
   --listen "$bind:$port" --base-host "localhost:$port" --state-dir "$home/state" \
@@ -107,3 +111,9 @@ for _ in $(seq 180); do
 done
 grep -q "jc listening" "$home/jc.log" || { tail -40 "$home/jc.log" >&2; exit 1; }
 echo "$env_name: jc on http://localhost:$port (log $home/jc.log)"
+
+# The 7-day rule for the Portal's history: now and hourly, beside jc (Antares runs its own).
+[ -s "$home/retain.pid" ] && kill "$(cat "$home/retain.pid")" 2>/dev/null || true
+nohup python3 -I "$here/rehearsal.py" retain --port "$pg_port" --password-file "$(secret portal-pw)" \
+  --every "${REHEARSAL_RETAIN_SECS:-3600}" > "$home/retain.log" 2>&1 &
+echo $! > "$home/retain.pid"

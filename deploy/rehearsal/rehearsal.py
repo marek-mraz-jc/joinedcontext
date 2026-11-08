@@ -618,38 +618,61 @@ def _count(rows, key):
 # --------------------------------------------------------------------------------------------
 # retain: the Portal's dated tables of the rehearsal database (Antares runs its own retention)
 
-# (table, time column): rows older than the window are deleted. A table missing in this
-# Portal version is skipped and named in the output.
+# (table, time column): history, activity and run logs of the Portal, deleted once older than
+# the window. Configuration-like rows (drafts, workspaces, comments, people, connectors) stay.
+# A table missing in this Portal version is skipped and named in the output.
 PORTAL_DATED = [
     ("activity", "time"),
-    ("health_log", "sampled_at"),
-    ("pipeline_runs", "started_at"),
-    ("pipeline_log", "time"),
+    ("agent_run_events", "created_at"),
+    ("agent_runs", "finished_at"),
+    ("alert_notices", "created_at"),
+    ("alert_incidents", "recovered_at"),
+    ("connector_calls", "at"),
+    ("entity_trash", "deleted_at"),
+    ("health_check_history", "at"),
+    ("mqtt_capture", "received_at"),
+    ("notifications", "created_at"),
+    ("pipeline_log", "at"),
+    ("pipeline_rejected", "at"),
+    ("pipeline_runs", "last_at"),
+    ("pipeline_source_removed", "at"),
+    ("space_quality", "at"),
+    ("endpoint_usage_daily", "day"),
+    ("app_service_usage", "day"),
 ]
 
 
-def cmd_retain(a):
-    now = parse_time(a.now) if a.now else utcnow()
+def retain_once(a, now: dt.datetime) -> dict:
     cutoff = cutoff_for(now)
-    pw = Path(a.password_file).read_text().strip()
-    env = dict(os.environ, PGPASSWORD=pw)
-    done = {"cutoff": iso(cutoff), "tables": {}}
+    env = dict(os.environ, PGPASSWORD=Path(a.password_file).read_text().strip())
+    psql = ["psql", "-tAX", "-v", "ON_ERROR_STOP=1", "-h", a.host, "-p", str(a.port), "-U", a.user, "-d", a.db]
     q = ("SELECT table_name, column_name FROM information_schema.columns "
-         "WHERE table_schema = current_schema() AND data_type LIKE 'timestamp%'")
-    r = subprocess.run(["psql", "-tAX", "-h", a.host, "-p", str(a.port), "-U", a.user, "-d", a.db,
-                        "-F", "\t", "-c", q], env=env, capture_output=True, text=True, check=True)
+         "WHERE table_schema = current_schema() AND (data_type LIKE 'timestamp%' OR data_type = 'date')")
+    r = subprocess.run(psql + ["-F", "\t", "-c", q], env=env, capture_output=True, text=True, check=True)
     have = {tuple(line.split("\t")) for line in r.stdout.splitlines() if line}
+    done = {"at": iso(now), "cutoff": iso(cutoff), "tables": {}}
     for table, col in PORTAL_DATED:
         if (table, col) not in have:
             done["tables"][table] = "absent"
             continue
-        sql = f'DELETE FROM "{table}" WHERE "{col}" < $1::timestamptz'
-        r = subprocess.run(["psql", "-tAX", "-v", "ON_ERROR_STOP=1", "-h", a.host, "-p", str(a.port),
-                            "-U", a.user, "-d", a.db],
-                           input=f"PREPARE d(text) AS {sql};\nEXECUTE d('{iso(cutoff)}');\n",
-                           env=env, capture_output=True, text=True)
-        done["tables"][table] = r.stdout.strip() or r.stderr.strip()[-200:]
-    print(json.dumps(done))
+        # Identifiers come from the fixed list above; the cut-off is bound as a parameter.
+        sql = (f'PREPARE d(timestamptz) AS DELETE FROM "{table}" WHERE "{col}" < $1;\n'
+               f"EXECUTE d('{iso(cutoff)}');\n")
+        r = subprocess.run(psql, input=sql, env=env, capture_output=True, text=True)
+        out = (r.stdout.strip() or r.stderr.strip())[-200:]
+        done["tables"][table] = out.replace("DELETE ", "deleted ") if r.returncode == 0 else f"failed: {out}"
+    return done
+
+
+def cmd_retain(a):
+    """Deletes the Portal's history older than the window now and then every `--every` seconds
+    (Antares deletes its own history: ANTARES_TEMPORAL_RETENTION_DAYS, see up.sh)."""
+    while True:
+        now = parse_time(a.now) if a.now else utcnow()
+        print(json.dumps(retain_once(a, now)), flush=True)
+        if not a.every:
+            return 0
+        time.sleep(a.every)
 
 
 # --------------------------------------------------------------------------------------------
@@ -877,6 +900,7 @@ def main(argv=None):
     s = sub.add_parser("retain"); s.add_argument("--host", default="127.0.0.1"); s.add_argument("--port", required=True)
     s.add_argument("--user", default="portal"); s.add_argument("--db", default="portal")
     s.add_argument("--password-file", required=True); s.add_argument("--now")
+    s.add_argument("--every", type=int, default=0, help="repeat every N seconds (0: once)")
     s = sub.add_parser("smoke"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)
     s.add_argument("--export", required=True); s.add_argument("--report", required=True); s.add_argument("--realms")
     a = p.parse_args(argv)
