@@ -15,6 +15,7 @@ import { ProjectDashboards } from "../src/pages/grafana/GrafanaPage";
 const BASE = "/api/v1/projects/helsinki/grafana/dashboards";
 const VIEW = {
   uid: "k6",
+  orgId: 4,
   title: "k6 load",
   description: null,
   from: "now-6h",
@@ -126,6 +127,14 @@ describe("the dashboard page", () => {
     const before = asked.length;
     await user.click(screen.getByRole("button", { name: "Try all again" }));
     await waitFor(() => expect(asked.length).toBeGreaterThan(before));
+  });
+
+  it("opens the tables page in the organization that holds the dashboard, over the asked range", async () => {
+    renderAt(() => <DashboardPage project="helsinki" uid="k6" />);
+    const link = await screen.findByRole("link", { name: /Open as tables/ });
+    const href = new URL(link.getAttribute("href") ?? "", "http://portal");
+    expect(href.pathname).toBe("/dashboards/d/k6");
+    expect(Object.fromEntries(href.searchParams)).toEqual({ orgId: "4", from: "now-6h", to: "now" });
   });
 
   it("says a dashboard without panels is empty", async () => {
