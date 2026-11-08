@@ -3356,8 +3356,12 @@
       "inbox": "Zugriffsanfragen",
       "inboxLead": "Personen, die einen Endpunkt dieses Bereichs lesen möchten, und Pipelines anderer Bereiche, die ihn lesen oder schreiben möchten. Eine Genehmigung schlägt die Berechtigung als Änderung dieses Projekts vor; eine andere Person genehmigt diese Änderung.",
       "inboxEmpty": "Noch niemand hat Zugriff auf diesen Bereich angefragt.",
+      "inboxEmptyProject": "Niemand wartet auf Ihre Entscheidung über den Zugriff auf einen Raum dieses Projekts.",
+      "inboxFailed": "Die Zugriffsanfragen wurden nicht geladen: {reason}",
+      "inSpace": "· im Raum {space}",
       "on": "auf {endpoint}, angefragt von {who}",
       "decisionReason": "Begründung für den Anfragenden",
+      "decisionReasonHelp": "Die anfragende Person liest sie, zum Beispiel: Für das Pilotprojekt bis Juni gewährt; für Schreibzugriff bitte erneut anfragen.",
       "approve": "Genehmigen",
       "approveOf": "Zugriff für {account} genehmigen",
       "decline": "Ablehnen",
@@ -6649,6 +6653,13 @@
       "stale": "Der Entwurf hat sich seit der letzten Prüfung geändert; führen Sie die Prüfung erneut aus."
     },
     "laxWarning": "Verhaltene Validierung: Prüfung wurde nicht ausgeführt oder ist fehlgeschlagen.",
+    "discard": {
+      "ask": "Entwurf verwerfen",
+      "confirm": "Den gespeicherten Entwurf verwerfen? Auch Ihre anderen Fenster und der Assistent verlieren ihn.",
+      "yes": "Verwerfen",
+      "keep": "Behalten",
+      "refused": "Der Entwurf wurde nicht verworfen: {reason}"
+    },
     "findings": "Befunde",
     "saveRefused": "Der Entwurf wurde nicht gespeichert: {reason}",
     "elsewhere": {
@@ -10132,9 +10143,10 @@
   },
   "inbox": {
     "title": "Eingang",
-    "lead": "Was auf Sie wartet: die Änderungen, über die Sie in jedem Projekt entscheiden dürfen, und die Kommentare, die Sie erwähnen.",
+    "lead": "Was auf Sie wartet: die Änderungen, über die Sie in jedem Projekt entscheiden dürfen, die Zugriffsanfragen an die Räume dieses Projekts und die Kommentare, die Sie erwähnen.",
     "decisions": "Wartet auf Ihre Entscheidung",
     "decisionsHint": "Eine Änderung der roten Spur verlangt zur Genehmigung ihren Namen, wie auf ihrer eigenen Seite.",
+    "accessLead": "Personen und Pipelines, die einen Raum von {project} lesen oder schreiben möchten. Eine Zustimmung schlägt die Berechtigung als Änderung vor, die eine andere Person genehmigt.",
     "noDecisions": "Nichts wartet auf Ihre Entscheidung.",
     "listFailed": "Die Änderungen von {project} wurden nicht geladen, die Liste kann daher unvollständig sein: {reason} Der Posteingang versucht es in 30 Sekunden erneut.",
     "by": "vorgeschlagen von {author} in {project}",

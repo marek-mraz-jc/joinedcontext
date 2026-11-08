@@ -217,7 +217,17 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
   const opened = panel ? rows.find((row) => rowKey(row) === panel) : undefined;
 
   if (query.isError) {
-    return <PageFailed error={query.error} onRetry={() => void query.refetch()} />;
+    // The page's own header stays above the failure, so a refused or missing project still
+    // names the page it is (one h1, T-6048) and says why beneath it.
+    const failed = <PageFailed error={query.error} onRetry={() => void query.refetch()} />;
+    return props.header ? (
+      <div className="flex flex-col gap-3" data-manifest-grid={storageKey}>
+        {props.header(null)}
+        {failed}
+      </div>
+    ) : (
+      failed
+    );
   }
 
   const typeSearch = (text: string) => {

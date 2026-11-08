@@ -10,7 +10,7 @@ import { Alert, Button, Checkbox, deniedReason as refusal, Tabs, tabPanelProps, 
 import { FormFrame } from "./forms/FormRoute";
 import type { DialogSize } from "./ui";
 import { guideUrl, useBranding } from "../branding";
-import { digestOf } from "../api/drafts";
+import { digestOf, dropDraft } from "../api/drafts";
 import type { Verdict } from "../api/drafts";
 import { ResourceHistory } from "./ResourceHistory";
 import { standingIn } from "../assistant/state";
@@ -346,6 +346,15 @@ export function ResourceFormDialogBody<T>({
     proposeReason,
     lax: isLax,
     error: error ?? check.error,
+    // The draft the store holds can be thrown away, as `jc_draft_drop` does (AG-61); the form
+    // closes on its saved state, so nothing typed is written back afterwards.
+    onDiscard:
+      project && draftKind && activeName && draft.currentDraft
+        ? async () => {
+            await dropDraft(project, draftKind, activeName);
+            handleOpenChange(false);
+          }
+        : undefined,
   };
 
   // A person who may not create the kind is told so at the top, in words, instead of a whole
