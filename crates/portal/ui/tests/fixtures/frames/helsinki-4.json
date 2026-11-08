@@ -1,0 +1,107 @@
+{
+ "dashboard": "project-helsinki",
+ "panel": 4,
+ "title": "City bikes, members",
+ "from": 1793512800000,
+ "to": 1794117600000,
+ "frames": [
+  {
+   "name": "A",
+   "refId": "A",
+   "fields": [
+    {
+     "name": "id",
+     "type": "string",
+     "labels": {},
+     "values": [
+      "urn:ngsi-ld:BikeHireDockingStation:kaivopuisto",
+      "urn:ngsi-ld:BikeHireDockingStation:laivasillankatu",
+      "urn:ngsi-ld:BikeHireDockingStation:kapteeninpuistikko",
+      "urn:ngsi-ld:BikeHireDockingStation:viiskulma",
+      "urn:ngsi-ld:BikeHireDockingStation:sep-nkatu",
+      "urn:ngsi-ld:BikeHireDockingStation:hietalahdentori"
+     ]
+    },
+    {
+     "name": "type",
+     "type": "string",
+     "labels": {},
+     "values": [
+      "BikeHireDockingStation",
+      "BikeHireDockingStation",
+      "BikeHireDockingStation",
+      "BikeHireDockingStation",
+      "BikeHireDockingStation",
+      "BikeHireDockingStation"
+     ]
+    },
+    {
+     "name": "observedAt",
+     "type": "time",
+     "unit": "dateTimeAsIso",
+     "labels": {},
+     "values": [
+      1794117360000,
+      1794117120000,
+      1794116880000,
+      1794116640000,
+      1794116400000,
+      1794116160000
+     ]
+    },
+    {
+     "name": "name",
+     "type": "string",
+     "labels": {},
+     "values": [
+      "Kaivopuisto",
+      "Laivasillankatu",
+      "Kapteeninpuistikko",
+      "Viiskulma",
+      "Sepänkatu",
+      "Hietalahdentori"
+     ]
+    },
+    {
+     "name": "availableBikeNumber",
+     "type": "number",
+     "labels": {},
+     "values": [
+      8,
+      19,
+      15,
+      8,
+      20,
+      18
+     ]
+    },
+    {
+     "name": "freeSlotNumber",
+     "type": "number",
+     "labels": {},
+     "values": [
+      14,
+      6,
+      8,
+      1,
+      10,
+      9
+     ]
+    },
+    {
+     "name": "status",
+     "type": "string",
+     "labels": {},
+     "values": [
+      "working",
+      "outOfService",
+      "working",
+      "withIncidence",
+      "working",
+      "working"
+     ]
+    }
+   ]
+  }
+ ]
+}
