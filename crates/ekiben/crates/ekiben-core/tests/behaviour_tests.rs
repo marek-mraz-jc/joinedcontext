@@ -981,6 +981,23 @@ async fn an_output_batching_period_sends_what_waits() {
     assert_eq!(written(&collected), vec![vec!["a", "b"], vec!["c"]]);
 }
 
+#[tokio::test]
+async fn an_idle_batched_output_waits_for_its_next_period_tick() {
+    // Bento's period ticks from the output's start, flushing empty batches too: a message that
+    // comes two and a half periods after the start waits half a period for the third tick and
+    // goes out with whatever joins it before then.
+    let reg = registry();
+    let (_tx, s) = stream_ctx(reg.clone());
+    let (out, collected) = batched(&reg, &s, json!({"count": 100, "period": "200ms"}));
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    out.write_batch(&s, parts(&["a"])).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    out.write_batch(&s, parts(&["b"])).await.unwrap();
+    assert!(written(&collected).is_empty(), "{:?}", written(&collected));
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    assert_eq!(written(&collected), vec![vec!["a", "b"]]);
+}
+
 /// Refuses every write.
 struct Refuses;
 #[async_trait]

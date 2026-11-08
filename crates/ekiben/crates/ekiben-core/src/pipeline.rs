@@ -407,6 +407,7 @@ impl Output for BatchedOutput {
             state.ctx = Some(ctx.clone());
         }
         for part in batch {
+            state.batcher.skip_idle_periods();
             if state.batcher.add(part) {
                 flush_batched(&self.inner, &mut state, ctx).await?;
             }
@@ -567,6 +568,20 @@ impl Batcher {
 
     pub fn count(&self) -> usize {
         self.parts.len()
+    }
+
+    /// Bento's output batcher flushes on every period tick, an empty batch too
+    /// (`internal/component/output/batcher`): while nothing waits, its period runs on from the
+    /// last flush in whole periods, so a message joining an idle batch waits for the next tick.
+    pub fn skip_idle_periods(&mut self) {
+        let Some(p) = self.period.filter(|_| self.parts.is_empty()) else {
+            return;
+        };
+        let ticks = self.last_batch.elapsed().as_nanos() / p.as_nanos();
+        let step = u32::try_from(ticks).ok().and_then(|n| p.checked_mul(n));
+        if let Some(at) = step.and_then(|s| self.last_batch.checked_add(s)) {
+            self.last_batch = at;
+        }
     }
 
     pub fn until_next(&self) -> Option<Duration> {
