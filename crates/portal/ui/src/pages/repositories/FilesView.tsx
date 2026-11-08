@@ -146,7 +146,11 @@ export function FolderView({
               <TableRow key={entry.path}>
                 <TableCell>
                   <span className="flex min-w-0 items-center gap-2">
-                    <Icon name={entry.type === "folder" ? "flows" : entry.type === "submodule" ? "link" : "pencil"} className="size-4 shrink-0 text-fg-muted" />
+                    {entry.type === "file" ? (
+                      <span aria-hidden="true" className="size-4 shrink-0" />
+                    ) : (
+                      <Icon name={entry.type === "folder" ? "chevronRight" : "link"} className="size-4 shrink-0 text-fg-muted" />
+                    )}
                     {entry.type === "submodule" ? (
                       <span className="break-all font-mono">{entry.name}</span>
                     ) : (
