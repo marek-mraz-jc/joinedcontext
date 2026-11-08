@@ -1,15 +1,16 @@
 # Rehearsal environment
 
 A rehearsal is the new version (`jc --role all` plus PostgreSQL in docker) brought up on one
-environment's config and files from the deployment repo (dev, or prod = smartcity) with synthetic
-test data. It writes nowhere outside itself and copies no data from dev or prod.
+environment's config and files (dev, or prod = smartcity) and the last day of its Antares history.
+It writes nowhere outside itself; the export from dev and prod is read only.
 
 ## 1. Inputs
 
-- No data from dev or prod (owner, 2026-11-08: the data migration is stopped). No Antares entities,
-  no temporal instances and no export bundle from either environment.
-- The only input: a synthetic bundle of the same shape made from the deployment repo's
-  config as code (realm, seeds, CkanInstances, Grafana provisioning):
+- The deployers' export bundle, read only, at `/workspace/evidence/jc-rehearsal/export/{dev,prod}/`
+  (format: EXPORT.md): realm config without people, repository files, entities' current state,
+  temporal instances of the last 24 hours, dashboards.
+- Until it lands: a synthetic bundle of the same shape made from the deployment repo's config as
+  code (realm, seeds, CkanInstances, Grafana provisioning):
 
 ```sh
 python3 -I rehearsal.py render --deployment <joinedcontext-deployment clone> --env dev --out <render>/dev
@@ -22,7 +23,7 @@ python3 -I rehearsal.py synth  --render <render>/dev --env dev --out $REHEARSAL_
 
 ```sh
 export REHEARSAL_HOME=~/rehearsal JC_BIN=<target>/debug/jc
-./up.sh dev 42101 55441
+REHEARSAL_EXPORT=/workspace/evidence/jc-rehearsal/export/dev ./up.sh dev 42101 55441
 python3 -I rehearsal.py import --export <export> --base http://localhost:42101 \
   --state $REHEARSAL_HOME/dev/state --report $REHEARSAL_HOME/dev/import-report.json --daiya-bin <target>/debug/daiya
 python3 -I rehearsal.py smoke  --base http://localhost:42101 --state $REHEARSAL_HOME/dev/state \
@@ -46,16 +47,15 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
 - Test persons: `smoke` and `shots.py` create their own (`rehearsal-*`, random passwords kept in
   memory) in realm `jc`; the imported realm gets `rehearsal-tester`.
 
-## 3. The 7-day rule
+## 3. The 24-hour rule (Antares history only)
 
-- Import: a temporal instance observed before `now - 7 days` is refused; the report holds the
-  cut-off (`cutoff`) and every refused instance.
-- Rolling: Antares deletes history older than 7 days at start and every `REHEARSAL_SWEEP_SECS`
-  (default 3600) through its own retention (`ANTARES_TEMPORAL_RETENTION_DAYS=7`); current entity
-  state is never deleted. `rehearsal.py retain` deletes the Portal's dated rows (activity, run logs,
-  pipeline log, health history, notifications and the rest of `PORTAL_DATED`) older than 7 days at
-  start and hourly (`retain.log`).
-- ekiben run state lives in memory and ends with the process.
+- Import: a temporal instance observed before `exportedAt - 24 h` is refused; the report holds the
+  cut-off (`cutoff`) and every refused instance. Config, files, current entity state and dashboards
+  have no age cut.
+- Rolling: `rehearsal.py retain` (started by up.sh, at start and every `REHEARSAL_RETAIN_SECS`,
+  default 3600) deletes temporal instances older than 24 h from the rehearsal's Antares database,
+  audit rows kept (`retain.log`). Antares' own retention cannot do it: it works in whole days and
+  drops a weekly partition only once all of it is older. Current entity state is never deleted.
 
 ## 4. Tests
 
@@ -64,5 +64,5 @@ python3 -m pytest deploy/rehearsal/tests                    # unit
 REHEARSAL_LIVE=1 python3 -m pytest deploy/rehearsal/tests   # + a live env `rt` on 42119 / 55449
 ```
 
-The live tests insert 8-day and 6-day rows and instances and check that only the 8-day ones go and
-that current state stays.
+The live test writes instances 25 h and 23 h old and a current state observed 25 h ago, and checks
+that only the 25 h instance goes.

@@ -6,7 +6,7 @@ Subcommands (EXPORT.md has the bundle format, REHEARSAL.md the order):
   synth    write a synthetic export bundle from a render (until the deployers' export lands)
   realms   the export's realm config, users and credentials removed, for kaisatsu's import dir
   import   shako repositories, Antares entities and history, daiya dashboards into a running jc
-  retain   delete what is older than the window from the rehearsal's Portal database
+  retain   delete Antares temporal instances older than 24 h from the rehearsal's database
   smoke    sign in as a test person and check every module; a report per check
 
 Nothing here writes to dev or prod: every write goes to the jc given by --base, and the importer
@@ -34,7 +34,11 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-WINDOW_DAYS = 7
+# Owner 2026-11-08: only the last day of Antares history is copied, and the rehearsal keeps only
+# the last day (`retain`, hourly beside jc). Everything else is copied whole.
+WINDOW = dt.timedelta(hours=24)
+# `retain` runs hourly: an instance may outlive the window by up to one run.
+SWEEP = dt.timedelta(hours=1)
 # Realms of the old installation that kaisatsu does not take: Keycloak's own admin realm.
 SKIPPED_REALMS = {"master"}
 # What a realm export may hold that the rehearsal never takes: people and their secrets.
@@ -57,8 +61,9 @@ def parse_time(s: str) -> dt.datetime:
     return t
 
 
-def cutoff_for(now: dt.datetime) -> dt.datetime:
-    return now - dt.timedelta(days=WINDOW_DAYS)
+def cutoff_for(at: dt.datetime) -> dt.datetime:
+    """The oldest observedAt taken: `at` (the export time) minus 24 hours."""
+    return at - WINDOW
 
 
 # --------------------------------------------------------------------------------------------
@@ -240,11 +245,11 @@ def synth_entities(repos, now: dt.datetime):
                         "observationCount": {"type": "Property", "value": 3,
                                               "observedAt": iso(now - dt.timedelta(hours=1))},
                     }})
-                    for days in (1, 6, 8):
+                    for hours in (1, 23, 25):
                         temporal.append({"tenant": tenant, "id": eid, "type": cls,
                                          "attr": "observationCount", "instance": {
-                                             "type": "Property", "value": days,
-                                             "observedAt": iso(now - dt.timedelta(days=days))}})
+                                             "type": "Property", "value": hours,
+                                             "observedAt": iso(now - dt.timedelta(hours=hours))}})
     return entities, temporal
 
 
@@ -600,11 +605,13 @@ def cmd_import(a):
     loopback_only(a.base)
     export, state = Path(a.export), Path(a.state)
     now = parse_time(a.now) if a.now else utcnow()
-    cutoff = cutoff_for(now)
     manifest = json.loads((export / "manifest.json").read_text())
+    # The window ends at the export: an instance observed more than 24 h before it is refused.
+    cutoff = cutoff_for(parse_time(manifest["exportedAt"]) if manifest.get("exportedAt") else now)
     report = {"env": manifest.get("env"), "export": str(export), "exportedAt": manifest.get("exportedAt"),
               "synthetic": manifest.get("synthetic", False), "importedAt": iso(now), "cutoff": iso(cutoff),
-              "rule": f"nothing observed before {iso(cutoff)} ({WINDOW_DAYS} days) is imported"}
+              "rule": f"no temporal instance observed before {iso(cutoff)} (export time - 24 h) is imported; "
+                      "config, files, current entity state and dashboards are copied whole"}
     h = Http(a.base)
     steps = a.only.split(",") if a.only else ["shako", "antares", "daiya"]
     if "shako" in steps:
@@ -631,57 +638,42 @@ def _count(rows, key):
 
 
 # --------------------------------------------------------------------------------------------
-# retain: the Portal's dated tables of the rehearsal database (Antares runs its own retention)
+# retain: Antares temporal instances older than 24 h, in the rehearsal's own database only
 
-# (table, time column): history, activity and run logs of the Portal, deleted once older than
-# the window. Configuration-like rows (drafts, workspaces, comments, people, connectors) stay.
-# A table missing in this Portal version is skipped and named in the output.
-PORTAL_DATED = [
-    ("activity", "time"),
-    ("agent_run_events", "created_at"),
-    ("agent_runs", "finished_at"),
-    ("alert_notices", "created_at"),
-    ("alert_incidents", "recovered_at"),
-    ("connector_calls", "at"),
-    ("entity_trash", "deleted_at"),
-    ("health_check_history", "at"),
-    ("mqtt_capture", "received_at"),
-    ("notifications", "created_at"),
-    ("pipeline_log", "at"),
-    ("pipeline_rejected", "at"),
-    ("pipeline_runs", "last_at"),
-    ("pipeline_source_removed", "at"),
-    ("space_quality", "at"),
-    ("endpoint_usage_daily", "day"),
-    ("app_service_usage", "day"),
-]
+# Antares' own retention (ANTARES_TEMPORAL_RETENTION_DAYS, whole days) drops a weekly partition
+# only once all of it is older, so a 25 h instance in this week's partition stays. This runs its
+# DEFAULT-partition purge statement on the parents instead: the same observed_at condition, audit
+# rows kept, service mode for the forced row-level security. Current state (entities) is never
+# touched: it lives in other tables.
+HISTORY_TABLES = ("attr_instances", "attr_rows")
+
+
+def retain_sql(cutoff: dt.datetime) -> str:
+    stmts = ["BEGIN;", "SELECT set_config('antares.service', 'on', true) \\g /dev/null"]
+    for table in HISTORY_TABLES:
+        stmts.append(
+            f"SELECT to_regclass('public.{table}') IS NOT NULL AS has \\gset\n"
+            f"\\if :has\n"
+            f"PREPARE d_{table}(timestamptz) AS DELETE FROM public.{table} WHERE observed_at < $1 "
+            f"AND NOT coalesce(provenance @> '{{\"audit\": true}}', false);\n"
+            f"EXECUTE d_{table}('{iso(cutoff)}');\n"
+            f"\\endif")
+    stmts.append("COMMIT;")
+    return "\n".join(stmts) + "\n"
 
 
 def retain_once(a, now: dt.datetime) -> dict:
     cutoff = cutoff_for(now)
     env = dict(os.environ, PGPASSWORD=Path(a.password_file).read_text().strip())
-    psql = ["psql", "-tAX", "-v", "ON_ERROR_STOP=1", "-h", a.host, "-p", str(a.port), "-U", a.user, "-d", a.db]
-    q = ("SELECT table_name, column_name FROM information_schema.columns "
-         "WHERE table_schema = current_schema() AND (data_type LIKE 'timestamp%' OR data_type = 'date')")
-    r = subprocess.run(psql + ["-F", "\t", "-c", q], env=env, capture_output=True, text=True, check=True)
-    have = {tuple(line.split("\t")) for line in r.stdout.splitlines() if line}
-    done = {"at": iso(now), "cutoff": iso(cutoff), "tables": {}}
-    for table, col in PORTAL_DATED:
-        if (table, col) not in have:
-            done["tables"][table] = "absent"
-            continue
-        # Identifiers come from the fixed list above; the cut-off is bound as a parameter.
-        sql = (f'PREPARE d(timestamptz) AS DELETE FROM "{table}" WHERE "{col}" < $1;\n'
-               f"EXECUTE d('{iso(cutoff)}');\n")
-        r = subprocess.run(psql, input=sql, env=env, capture_output=True, text=True)
-        out = (r.stdout.strip().splitlines()[-1:] or [r.stderr.strip()])[0][-200:]
-        done["tables"][table] = out.replace("DELETE ", "deleted ") if r.returncode == 0 else f"failed: {out}"
-    return done
+    psql = ["psql", "-AX", "-v", "ON_ERROR_STOP=1", "-h", a.host, "-p", str(a.port), "-U", a.user, "-d", a.db]
+    r = subprocess.run(psql, input=retain_sql(cutoff), env=env, capture_output=True, text=True)
+    deleted = [int(x) for x in re.findall(r"^DELETE (\d+)$", r.stdout, re.M)]
+    return {"at": iso(now), "cutoff": iso(cutoff), "deleted": sum(deleted),
+            **({} if r.returncode == 0 else {"failed": r.stderr.strip()[-300:]})}
 
 
 def cmd_retain(a):
-    """Deletes the Portal's history older than the window now and then every `--every` seconds
-    (Antares deletes its own history: ANTARES_TEMPORAL_RETENTION_DAYS, see up.sh)."""
+    """Deletes temporal instances older than 24 h now and then every `--every` seconds."""
     while True:
         now = parse_time(a.now) if a.now else utcnow()
         print(json.dumps(retain_once(a, now)), flush=True)
@@ -903,15 +895,15 @@ def cmd_smoke(a):
             bad.append(f"{slug}: {st} {ctype} {body[:80]!r}")
     check(f"{len(set(eps))} public Endpoints answer a query", not bad and bool(eps),
           f"{len(bad)} failed: {'; '.join(bad[:5])}", "GET /api/endpoint/{slug}/ngsi-ld/v1/types")
-    # 9. the 7-day rule holds in the broker: no instance older than the window
+    # 9. the 24 h rule holds in the broker: no instance older than the window
     old = []
     for t in _jsonl(export / "antares" / "temporal.jsonl")[:50]:
         st, body = h.json("GET", f"/broker/ngsi-ld/v1/temporal/entities/{urllib.parse.quote(t['id'], safe='')}"
-                                 f"?attrs={t['attr']}&timerel=before&timeAt={iso(cutoff_for(utcnow()))}",
+                                 f"?attrs={t['attr']}&timerel=before&timeAt={iso(cutoff_for(utcnow()) - SWEEP)}",
                           headers={"NGSILD-Tenant": t["tenant"]})
         if st == 200 and isinstance(body, dict) and body.get(t["attr"]):
             old.append(t["id"])
-    check("broker holds no history older than 7 days", not old, f"{len(old)} entities with old instances",
+    check("broker holds no history older than 24 h", not old, f"{len(old)} entities with old instances",
           "GET /broker/ngsi-ld/v1/temporal/entities/{id}?timerel=before")
     Path(a.report).write_text(json.dumps({"base": a.base, "at": iso(utcnow()), "checks": checks}, indent=1))
     for c in checks:
@@ -931,7 +923,7 @@ def main(argv=None):
     s.add_argument("--state", required=True); s.add_argument("--report", required=True)
     s.add_argument("--now"); s.add_argument("--only"); s.add_argument("--daiya-bin")
     s = sub.add_parser("retain"); s.add_argument("--host", default="127.0.0.1"); s.add_argument("--port", required=True)
-    s.add_argument("--user", default="portal"); s.add_argument("--db", default="portal")
+    s.add_argument("--user", default="antares"); s.add_argument("--db", default="antares")
     s.add_argument("--password-file", required=True); s.add_argument("--now")
     s.add_argument("--every", type=int, default=0, help="repeat every N seconds (0: once)")
     s = sub.add_parser("smoke"); s.add_argument("--base", required=True); s.add_argument("--state", required=True)

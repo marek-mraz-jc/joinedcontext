@@ -6,8 +6,9 @@
 # Every secret is a 0600 file under $REHEARSAL_HOME/<env>/secrets (generated once, never printed).
 # kaisatsu, Antares and the Portal keep their state in PostgreSQL; shako, daiya, dataroom and
 # ekiben have no Postgres path in jc yet and start empty, so import.sh runs after every start.
-# The 7-day rule: Antares deletes history older than 7 days at start and hourly
-# (ANTARES_TEMPORAL_RETENTION_DAYS, its own retain_history); retain.py trims the Portal's tables.
+# The 24 h rule (owner 2026-11-08): `rehearsal.py retain` deletes Antares temporal instances older
+# than 24 h at start and hourly; Antares' own retention (whole days, whole weekly partitions) runs
+# beside it with ANTARES_TEMPORAL_RETENTION_DAYS=1. Current entity state is never deleted.
 set -euo pipefail
 
 env_name=${1:?usage: up.sh <env> <public port> <postgres port>}
@@ -82,7 +83,7 @@ fi
 url() { printf 'postgres://%s:%s@127.0.0.1:%s/%s' "$1" "$(cat "$(secret "$1-pw")")" "$pg_port" "$2"; }
 export JC_PORTAL_DATABASE_URL=$(url portal portal)
 export ANTARES_STORE=postgres ANTARES_DATABASE_URL=$(url antares antares)
-export ANTARES_TEMPORAL_RETENTION_DAYS=7 ANTARES_SWEEP_SECS=${REHEARSAL_SWEEP_SECS:-3600}
+export ANTARES_TEMPORAL_RETENTION_DAYS=1 ANTARES_SWEEP_SECS=${REHEARSAL_SWEEP_SECS:-3600}
 export ANTARES_HISTORY_BACKFILL=on
 # jc is one process: the local notification bus cannot double-fire.
 export ANTARES_ALLOW_SHARED_LOCAL=1
@@ -114,8 +115,9 @@ done
 grep -q "jc listening" "$home/jc.log" || { tail -40 "$home/jc.log" >&2; exit 1; }
 echo "$env_name: jc on http://localhost:$port (log $home/jc.log)"
 
-# The 7-day rule for the Portal's history: now and hourly, beside jc (Antares runs its own).
+
+# The 24 h rule, now and hourly, beside jc (rehearsal database only).
 [ -s "$home/retain.pid" ] && kill "$(cat "$home/retain.pid")" 2>/dev/null || true
-nohup python3 -I "$here/rehearsal.py" retain --port "$pg_port" --password-file "$(secret portal-pw)" \
+nohup python3 -I "$here/rehearsal.py" retain --port "$pg_port" --password-file "$(secret antares-pw)" \
   --every "${REHEARSAL_RETAIN_SECS:-3600}" > "$home/retain.log" 2>&1 &
 echo $! > "$home/retain.pid"
