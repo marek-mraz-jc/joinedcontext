@@ -28,6 +28,20 @@ fn fresh() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+tokio::task_local! {
+    /// The id of the request the current task answers, for the calls it makes to the Portal's
+    /// neighbours (the forge, the gateway): theirs log the same reference.
+    static CURRENT: String;
+}
+
+/// `builder` with the current request's id, when the task answers a request.
+pub fn forward(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    match CURRENT.try_with(Clone::clone) {
+        Ok(id) => builder.header(HEADER, id),
+        Err(_) => builder,
+    }
+}
+
 pub async fn middleware(request: Request, next: Next) -> Response {
     let id = request
         .headers()
@@ -36,7 +50,9 @@ pub async fn middleware(request: Request, next: Next) -> Response {
         .filter(|id| plain(id))
         .map_or_else(fresh, str::to_owned);
     let span = tracing::info_span!("request", request_id = %id);
-    let mut response = next.run(request).instrument(span.clone()).await;
+    let mut response = CURRENT
+        .scope(id.clone(), next.run(request).instrument(span.clone()))
+        .await;
     if response.status().is_server_error() {
         span.in_scope(|| tracing::warn!(status = response.status().as_u16(), "request failed"));
     }
@@ -58,6 +74,19 @@ mod tests {
         assert!(!plain("a\nlevel=error msg=forged"));
         assert!(!plain(&"a".repeat(65)));
         assert!(!plain("id with spaces"));
+    }
+
+    #[tokio::test]
+    async fn a_call_made_while_answering_a_request_carries_its_id() {
+        let client = reqwest::Client::new();
+        let outside = forward(client.get("http://127.0.0.1:9/")).build().expect("request");
+        assert!(outside.headers().get(&HEADER).is_none());
+        let inside = CURRENT
+            .scope("3f2c1a9e-6b1d-4c3e".to_owned(), async {
+                forward(client.get("http://127.0.0.1:9/")).build().expect("request")
+            })
+            .await;
+        assert_eq!(inside.headers().get(&HEADER).map(|v| v.to_str().ok()), Some(Some("3f2c1a9e-6b1d-4c3e")));
     }
 
     #[test]

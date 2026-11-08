@@ -316,8 +316,7 @@ struct Endpoint {
 impl Endpoint {
     /// The JSON at `path` below the Endpoint, read anonymously; `None` for anything but a `200`.
     async fn read(&self, path: &str) -> Option<Value> {
-        let response = HTTP
-            .get(format!("{}{path}", self.read))
+        let response = crate::request_id::forward(HTTP.get(format!("{}{path}", self.read)))
             .header(header::ACCEPT, "application/json")
             .send()
             .await
@@ -329,7 +328,10 @@ impl Endpoint {
     }
 
     async fn read_text(&self, path: &str) -> Option<String> {
-        let response = HTTP.get(format!("{}{path}", self.read)).send().await.ok()?;
+        let response = crate::request_id::forward(HTTP.get(format!("{}{path}", self.read)))
+            .send()
+            .await
+            .ok()?;
         if !response.status().is_success() {
             return None;
         }

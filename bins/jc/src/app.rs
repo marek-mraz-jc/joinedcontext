@@ -1,6 +1,7 @@
 //! Assembles the mount table from the configuration, builds every module's router, and serves them
 //! all on one listener through `jc-router` (plus an optional internal admin listener).
 
+use crate::access;
 use crate::config::{Config, MountMode};
 use crate::module::Module;
 use crate::modules;
@@ -275,19 +276,19 @@ pub async fn build_router(
         if plan.module == Module::Shako {
             let state = modules::shako::build_state(&cfg.shako, ctx.setup).await?;
             let (main_router, v2_router) = modules::shako::build(state, plan.mount.clone());
-            builder = builder.mount(plan.spec.clone(), main_router);
+            builder = builder.mount(plan.spec.clone(), access::layer("shako", main_router));
             // S1: mount `/v2/` at the host root in both one-domain and host modes
             let v2_spec = MountSpec {
                 module: "shako-registry".into(),
                 host: None,
                 path_prefix: Some("/v2".into()),
             };
-            builder = builder.mount(v2_spec, v2_router);
+            builder = builder.mount(v2_spec, access::layer("shako", v2_router));
             continue;
         }
         if plan.module == Module::Portal {
             let late = LateRouter::default();
-            builder = builder.mount(plan.spec, late.router());
+            builder = builder.mount(plan.spec, access::layer("portal", late.router()));
             portal = Some((late, plan.mount));
             continue;
         }
@@ -300,7 +301,7 @@ pub async fn build_router(
                 .flatten();
             let built =
                 modules::antares::build(&cfg.antares, ctx.setup, hop_secret, shutdown).await?;
-            builder = builder.mount(plan.spec, built.router);
+            builder = builder.mount(plan.spec, access::layer("antares", built.router));
             hop = built.hop;
             continue;
         }
@@ -314,7 +315,7 @@ pub async fn build_router(
                 } else {
                     router
                 };
-                builder = builder.mount(spec.clone(), router);
+                builder = builder.mount(spec.clone(), access::layer("gateway", router));
             }
             gateway = Some(LateGateway {
                 slot: late,
@@ -324,7 +325,7 @@ pub async fn build_router(
             continue;
         }
         let router = modules::build(plan.module, cfg, ctx, plan.mount, shutdown, tasks).await?;
-        builder = builder.mount(plan.spec, router);
+        builder = builder.mount(plan.spec, access::layer(plan.module.name(), router));
     }
     if let Some(late) = gateway.as_mut() {
         late.hop = hop;
