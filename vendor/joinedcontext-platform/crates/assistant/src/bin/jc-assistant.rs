@@ -22,17 +22,18 @@
 //! maps and charts are drawn on, T-4657; none without it).
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 
-use assistant::chat::model::{Model, ModelConfig};
 use assistant::chat::{self, ChatState};
 use assistant::crawl::Crawler;
 use assistant::embed::{embed_until, Embedder};
 use assistant::fill_terms;
-use assistant::worker::{self, checkout_from_env};
+use assistant::service::{self, ChatConfig, ChatSettings, Setting};
+use assistant::worker;
 use jc_core::ClientCredential;
 use sqlx::PgPool;
 
@@ -147,52 +148,30 @@ async fn run() -> Result<(), Startup> {
     }
 }
 
-/// The chat's shared state and the catalogue reader the crawl worker shares its client with.
+/// The chat's shared state and the catalogue reader the crawl worker shares its client with,
+/// from the environment (the library's [`service::chat_state`]).
 fn chat_state(
     env: &impl Fn(&str) -> Option<String>,
     pool: &PgPool,
     embedder: &Embedder,
     organization: &str,
 ) -> Result<(Arc<ChatState>, assistant::catalogue::Reader), Startup> {
-    let (gateway, model_config) = chat_config(env).map_err(fail("the chat is not configured"))?;
-    // No redirect of its own: a token or a question is never carried to a host nobody named.
-    let http = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(120))
-        .build()
-        .map_err(fail("the HTTP client could not be built"))?;
-    let reader = assistant::catalogue::Reader {
-        http: http.clone(),
-        gateway: url::Url::parse(&format!("{gateway}/")).ok(),
-        endpoint_base: endpoint_base(env)
-            .map_err(fail("the public Endpoint address is not usable"))?,
-        portal: optional_base(env, "JC_ASSISTANT_PORTAL_URL")
-            .map_err(fail("the Portal address is not usable"))?,
-        held: Default::default(),
-    };
-    let chat_state = Arc::new(ChatState {
-        pool: pool.clone(),
-        embedder: embedder.clone(),
-        model: Model::new(model_config, http.clone()),
-        http,
-        gateway,
-        functions: optional_base(env, "JC_ASSISTANT_FUNCTIONS_URL")
-            .map_err(fail("the sandbox address is not usable"))?,
-        portal_client: env("JC_ASSISTANT_PORTAL_CLIENT").unwrap_or_else(|| "portal-api".into()),
-        public_origin: env("JC_ASSISTANT_PUBLIC_ORIGIN")
-            .map(|o| o.trim_end_matches('/').to_owned()),
-        snapshot: RwLock::new(Arc::default()),
-        limits: tokio::sync::Mutex::default(),
-        questions: std::sync::Arc::new(tokio::sync::Semaphore::new(assistant::chat::MAX_QUESTIONS)),
-        answers: Default::default(),
-        endpoint_base: reader.endpoint_base.clone(),
-        viz: viz_url(env).map_err(fail("the chart renderer's address is not usable"))?,
-        organization: organization.to_owned(),
-        contexts: Default::default(),
-        turns: Default::default(),
-    });
-    Ok((chat_state, reader))
+    let config = chat_config(env).map_err(|(what, why)| Startup { what, why })?;
+    service::chat_state(config, pool, embedder, organization)
+        .map_err(fail("the HTTP client could not be built"))
+}
+
+/// The organization checkout of a deployment: `JC_ASSISTANT_REPO_DIR`, `JC_ASSISTANT_PROJECTS_DIR`
+/// and `JC_ASSISTANT_ASSEMBLY_DIR` (default the system temporary directory).
+fn checkout_from_env(lookup: impl Fn(&str) -> Option<String>) -> Option<worker::Checkout> {
+    let organization = PathBuf::from(lookup("JC_ASSISTANT_REPO_DIR")?);
+    Some(worker::Checkout {
+        organization,
+        projects: lookup("JC_ASSISTANT_PROJECTS_DIR").map(PathBuf::from),
+        assembly: lookup("JC_ASSISTANT_ASSEMBLY_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::temp_dir().join("jc-assistant-assembly")),
+    })
 }
 
 /// How long a new pod waits for its first warm-up before it turns ready: past the 20 s a
@@ -373,14 +352,11 @@ fn embed_threads(env: &impl Fn(&str) -> Option<String>) -> Result<usize, String>
 /// A service address from `key`: scheme and authority only, returned without its last `/`.
 fn base(env: &impl Fn(&str) -> Option<String>, key: &str) -> Result<String, String> {
     let value = env(key).ok_or_else(|| format!("{key} is required"))?;
-    let parsed = url::Url::parse(&value).map_err(|err| format!("{key}: {err}"))?;
-    if parsed.path() != "/" || parsed.query().is_some() {
-        return Err(format!("{key} is scheme and authority only"));
-    }
-    Ok(value.trim_end_matches('/').to_owned())
+    service::base(&value).map_err(|problem| problem.named(key))
 }
 
 /// [`base`] for an address the deployment may leave out.
+#[cfg(test)]
 fn optional_base(
     env: &impl Fn(&str) -> Option<String>,
     key: &str,
@@ -392,23 +368,21 @@ fn optional_base(
 }
 
 /// `JC_ASSISTANT_ENDPOINT_URL` as the base a `catalogue` page's Endpoint links join onto.
+#[cfg(test)]
 fn endpoint_base(env: &impl Fn(&str) -> Option<String>) -> Result<Option<url::Url>, String> {
-    optional_base(env, "JC_ASSISTANT_ENDPOINT_URL")?
-        .map(|value| url::Url::parse(&format!("{value}/")).map_err(|e| e.to_string()))
+    let key = "JC_ASSISTANT_ENDPOINT_URL";
+    env(key)
+        .map(|value| service::endpoint_base(&value).map_err(|problem| problem.named(key)))
         .transpose()
 }
 
-/// `JC_ASSISTANT_VIZ_URL`, the chart renderer `https://viz.{domain}` (T-4657): a host that is
-/// not `viz.` of a domain would leave the maps without their basemap's domain.
+/// `JC_ASSISTANT_VIZ_URL`, the chart renderer `https://viz.{domain}` (T-4657).
+#[cfg(test)]
 fn viz_url(env: &impl Fn(&str) -> Option<String>) -> Result<Option<url::Url>, String> {
-    let Some(value) = optional_base(env, "JC_ASSISTANT_VIZ_URL")? else {
-        return Ok(None);
-    };
-    let url = url::Url::parse(&value).map_err(|e| e.to_string())?;
-    match (url.scheme(), assistant::chat::viz::domain(&url)) {
-        ("https", Some(_)) => Ok(Some(url)),
-        _ => Err("JC_ASSISTANT_VIZ_URL is https://viz.{domain}".into()),
-    }
+    let key = "JC_ASSISTANT_VIZ_URL";
+    env(key)
+        .map(|value| service::viz_url(&value).map_err(|problem| problem.named(key)))
+        .transpose()
 }
 
 /// The chat's Keycloak credential: the pod's projected token or the client secret, never both.
@@ -441,19 +415,57 @@ fn credential(env: &impl Fn(&str) -> Option<String>) -> Result<ClientCredential,
     }
 }
 
-/// The connectors' gateway and the model the chat asks through the agent proxy.
-fn chat_config(env: &impl Fn(&str) -> Option<String>) -> Result<(String, ModelConfig), String> {
+/// The environment variable each [`Setting`] is read from.
+fn env_key(setting: Setting) -> &'static str {
+    match setting {
+        Setting::GatewayUrl => "JC_ASSISTANT_GATEWAY_URL",
+        Setting::ProxyUrl => "JC_ASSISTANT_PROXY_URL",
+        Setting::FunctionsUrl => "JC_ASSISTANT_FUNCTIONS_URL",
+        Setting::EndpointUrl => "JC_ASSISTANT_ENDPOINT_URL",
+        Setting::PortalUrl => "JC_ASSISTANT_PORTAL_URL",
+        Setting::VizUrl => "JC_ASSISTANT_VIZ_URL",
+    }
+}
+
+/// The chat's settings as the environment names them: the gateway, the model the chat asks
+/// through the agent proxy and the addresses its answers link to.
+fn chat_settings(env: &impl Fn(&str) -> Option<String>) -> Result<ChatSettings, String> {
     let credential = credential(env)?;
-    Ok((
-        base(env, "JC_ASSISTANT_GATEWAY_URL")?,
-        ModelConfig {
-            proxy: base(env, "JC_ASSISTANT_PROXY_URL")?,
-            token_url: env("JC_ASSISTANT_TOKEN_URL").ok_or("JC_ASSISTANT_TOKEN_URL is required")?,
-            client_id: env("JC_ASSISTANT_CLIENT_ID").unwrap_or_else(|| "jc-assistant".into()),
-            credential,
-            model: env("JC_ASSISTANT_LLM").ok_or("JC_ASSISTANT_LLM is required")?,
-        },
-    ))
+    let required = |setting| {
+        let key = env_key(setting);
+        env(key).ok_or_else(|| format!("{key} is required"))
+    };
+    Ok(ChatSettings {
+        gateway_url: required(Setting::GatewayUrl)?,
+        proxy_url: required(Setting::ProxyUrl)?,
+        token_url: env("JC_ASSISTANT_TOKEN_URL").ok_or("JC_ASSISTANT_TOKEN_URL is required")?,
+        client_id: env("JC_ASSISTANT_CLIENT_ID").unwrap_or_else(|| "jc-assistant".into()),
+        credential,
+        llm: env("JC_ASSISTANT_LLM").ok_or("JC_ASSISTANT_LLM is required")?,
+        functions_url: env(env_key(Setting::FunctionsUrl)),
+        portal_client: env("JC_ASSISTANT_PORTAL_CLIENT").unwrap_or_else(|| "portal-api".into()),
+        public_origin: env("JC_ASSISTANT_PUBLIC_ORIGIN"),
+        endpoint_url: env(env_key(Setting::EndpointUrl)),
+        portal_url: env(env_key(Setting::PortalUrl)),
+        viz_url: env(env_key(Setting::VizUrl)),
+    })
+}
+
+/// [`chat_settings`] checked by the library; a refusal names the variable and what it says.
+fn chat_config(
+    env: &impl Fn(&str) -> Option<String>,
+) -> Result<ChatConfig, (&'static str, String)> {
+    let settings = chat_settings(env).map_err(|why| ("the chat is not configured", why))?;
+    service::chat_config(settings).map_err(|invalid| {
+        let what = match invalid.setting {
+            Setting::GatewayUrl | Setting::ProxyUrl => "the chat is not configured",
+            Setting::FunctionsUrl => "the sandbox address is not usable",
+            Setting::EndpointUrl => "the public Endpoint address is not usable",
+            Setting::PortalUrl => "the Portal address is not usable",
+            Setting::VizUrl => "the chart renderer's address is not usable",
+        };
+        (what, invalid.problem.named(env_key(invalid.setting)))
+    })
 }
 
 #[cfg(test)]
@@ -591,8 +603,56 @@ mod startup_tests {
     }
 
     #[test]
+    fn a_refused_address_names_its_variable_and_what_it_is_for() {
+        for (key, value, what, why) in [
+            (
+                "JC_ASSISTANT_VIZ_URL",
+                "https://charts.city.test",
+                "the chart renderer's address is not usable",
+                "JC_ASSISTANT_VIZ_URL is https://viz.{domain}",
+            ),
+            (
+                "JC_ASSISTANT_PORTAL_URL",
+                "https://portal.city.test/x",
+                "the Portal address is not usable",
+                "JC_ASSISTANT_PORTAL_URL is scheme and authority only",
+            ),
+            (
+                "JC_ASSISTANT_FUNCTIONS_URL",
+                "http://fn/?a=1",
+                "the sandbox address is not usable",
+                "JC_ASSISTANT_FUNCTIONS_URL is scheme and authority only",
+            ),
+            (
+                "JC_ASSISTANT_ENDPOINT_URL",
+                "https://data.city.test/api",
+                "the public Endpoint address is not usable",
+                "JC_ASSISTANT_ENDPOINT_URL is scheme and authority only",
+            ),
+            (
+                "JC_ASSISTANT_GATEWAY_URL",
+                "http://gw/mcp",
+                "the chat is not configured",
+                "JC_ASSISTANT_GATEWAY_URL is scheme and authority only",
+            ),
+        ] {
+            let pairs: Vec<_> = chat_env(&[])
+                .into_iter()
+                .filter(|(k, _)| *k != key)
+                .chain([(key, value)])
+                .collect();
+            assert_eq!(
+                chat_config(&env(&pairs)).err(),
+                Some((what, why.into())),
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
     fn the_chat_config_names_what_is_missing() {
-        let (gateway, model) = chat_config(&env(&chat_env(&[]))).expect("configured");
+        let ChatConfig { gateway, model, .. } =
+            chat_config(&env(&chat_env(&[]))).expect("configured");
         assert_eq!(gateway, "http://gateway:8080");
         assert_eq!(model.proxy, "http://proxy:8080");
         assert_eq!(model.client_id, "jc-assistant");
@@ -608,7 +668,7 @@ mod startup_tests {
                 .collect();
             assert_eq!(
                 chat_config(&env(&pairs)).err(),
-                Some(format!("{key} is required"))
+                Some(("the chat is not configured", format!("{key} is required")))
             );
         }
     }

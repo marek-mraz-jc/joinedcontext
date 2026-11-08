@@ -701,19 +701,6 @@ pub async fn work_one(
     Ok(true)
 }
 
-/// The organization checkout of a deployment: `JC_ASSISTANT_REPO_DIR`, `JC_ASSISTANT_PROJECTS_DIR`
-/// and `JC_ASSISTANT_ASSEMBLY_DIR` (default the system temporary directory).
-pub fn checkout_from_env(lookup: impl Fn(&str) -> Option<String>) -> Option<Checkout> {
-    let organization = PathBuf::from(lookup("JC_ASSISTANT_REPO_DIR")?);
-    Some(Checkout {
-        organization,
-        projects: lookup("JC_ASSISTANT_PROJECTS_DIR").map(PathBuf::from),
-        assembly: lookup("JC_ASSISTANT_ASSEMBLY_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| Path::new(&std::env::temp_dir()).join("jc-assistant-assembly")),
-    })
-}
-
 /// An Endpoint's slug and audience, when its slug is one the platform mints (EP-02, T-3314): the
 /// slug becomes a path segment of the connector's address on the gateway, so a manifest can never
 /// steer the chat's client to another path or host.
