@@ -121,7 +121,7 @@ pub struct CkanSync {
     )>,
     /// What the log last said of each `(project, endpoint, dataset)`, so an outcome is logged
     /// when it changes and not once a sync (T-4065).
-    said: Arc<Mutex<HashMap<(String, String, String), String>>>,
+    said: Arc<Mutex<HashMap<Owner, String>>>,
     /// When each `(catalogue, dataset)` is next published (T-4717, EP-178), and when an
     /// Endpoint that cannot be published is next said to be (EP-174).
     pacing: Arc<Mutex<Pacing>>,
@@ -904,7 +904,10 @@ pub fn claim(target: &Target) -> (String, String) {
 }
 
 /// Who publishes a target: `(project, endpoint, dataset)`, the key [`claimed_twice`] refuses by.
-pub fn owner(target: &Target) -> (String, String, String) {
+pub type Owner = (String, String, String);
+
+/// The [`Owner`] of a target.
+pub fn owner(target: &Target) -> Owner {
     (
         target.id.namespace.clone().unwrap_or_default(),
         target.id.name.clone(),
@@ -917,7 +920,7 @@ pub fn owner(target: &Target) -> (String, String, String) {
 /// CKAN dataset names are one namespace per catalogue, so publishing either would overwrite the
 /// other's dataset (T-6079, EP-177); none of them is written until one takes a name of its own.
 /// Another dataset of the same Endpoint is not refused with it.
-pub fn claimed_twice(wanted: &[Target]) -> HashMap<(String, String, String), String> {
+pub fn claimed_twice(wanted: &[Target]) -> HashMap<Owner, String> {
     let mut claimants: BTreeMap<(String, String), Vec<&Target>> = BTreeMap::new();
     for target in wanted {
         claimants.entry(claim(target)).or_default().push(target);
