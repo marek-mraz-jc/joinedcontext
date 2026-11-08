@@ -965,6 +965,123 @@ mod tests {
             .await;
     }
 
+    fn project_state() -> AppState {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "ContextSpace".into(),
+            metadata: crate::resource::ObjectMeta::new("air", "doprava"),
+            spec: json!({}),
+            status: None,
+        });
+        state
+    }
+
+    fn posted(requests: &[wiremock::Request]) -> Vec<String> {
+        requests
+            .iter()
+            .filter(|request| request.method.as_str() == "POST")
+            .map(|request| request.url.path().to_owned())
+            .collect()
+    }
+
+    /// daiya answers health with `commit: "daiya"`, the only service the Portal makes
+    /// organizations in.
+    async fn daiya_health(server: &wiremock::MockServer) {
+        answer_with(server, "GET", "/api/health", json!({ "commit": "daiya" })).await;
+    }
+
+    #[tokio::test]
+    async fn an_opened_project_gets_its_organization_and_folder() {
+        let server = wiremock::MockServer::start().await;
+        daiya_health(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/api/orgs/name/doprava"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        answer_with(
+            &server,
+            "POST",
+            "/api/orgs",
+            json!({ "orgId": 9, "message": "created" }),
+        )
+        .await;
+        answer_with(
+            &server,
+            "POST",
+            "/api/folders",
+            json!({ "uid": "project-doprava" }),
+        )
+        .await;
+        let config = config(&server);
+        provision_projects(&project_state(), &Client::new(&config)).await;
+        let requests = server.received_requests().await.expect("recorded");
+        assert_eq!(posted(&requests), ["/api/orgs", "/api/folders"]);
+        let orgs = requests
+            .iter()
+            .find(|request| request.url.path() == "/api/orgs")
+            .expect("the organization asked for");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&orgs.body).unwrap(),
+            json!({ "name": "doprava" })
+        );
+        let folder = requests
+            .iter()
+            .find(|request| request.url.path() == "/api/folders")
+            .expect("the folder asked for");
+        assert_eq!(folder.headers["X-Grafana-Org-Id"], "9");
+    }
+
+    #[tokio::test]
+    async fn an_organization_that_exists_is_found_by_name() {
+        let server = wiremock::MockServer::start().await;
+        answer_with(&server, "GET", "/api/orgs/name/doprava", json!({ "id": 4 })).await;
+        Mock::given(method("POST"))
+            .and(path("/api/folders"))
+            .respond_with(ResponseTemplate::new(412))
+            .mount(&server)
+            .await;
+        let config = config(&server);
+        let org = Client::new(&config).provision("doprava").await;
+        assert_eq!(org.expect("the organization"), 4);
+        let requests = server.received_requests().await.expect("recorded");
+        assert_eq!(posted(&requests), ["/api/folders"]);
+    }
+
+    #[tokio::test]
+    async fn a_grafana_that_is_not_daiya_gets_no_organization() {
+        let server = wiremock::MockServer::start().await;
+        answer_with(&server, "GET", "/api/health", json!({ "commit": "abc123" })).await;
+        let config = config(&server);
+        provision_projects(&project_state(), &Client::new(&config)).await;
+        let requests = server.received_requests().await.expect("recorded");
+        assert!(posted(&requests).is_empty(), "{:?}", posted(&requests));
+    }
+
+    #[tokio::test]
+    async fn a_daiya_that_is_away_leaves_the_project_for_the_next_pass() {
+        let server = wiremock::MockServer::start().await;
+        daiya_health(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/api/orgs/name/doprava"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        let config = config(&server);
+        provision_projects(&project_state(), &Client::new(&config)).await;
+        let requests = server.received_requests().await.expect("recorded");
+        assert!(posted(&requests).is_empty(), "{:?}", posted(&requests));
+    }
+
+    #[test]
+    fn without_grafana_no_provisioning_loop_starts() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        assert!(state.config.grafana.is_none());
+        // Returns before it spawns: outside a runtime, a spawn would panic.
+        spawn_provisioning(state);
+    }
+
     #[tokio::test]
     async fn an_answer_past_the_cap_is_refused_unread() {
         let server = wiremock::MockServer::start().await;
