@@ -30,6 +30,8 @@ secret() { # secret <name>: a random secret file, made once
   printf '%s' "$f"
 }
 
+# PostgreSQL 17 with PostGIS (Antares' migrations create the extension's types).
+pg_image=${REHEARSAL_PG_IMAGE:-postgis/postgis:17-3.5@sha256:01a6a70e41e6c4467c8f55f6063555ed72db2d6662cd0d571040d42eadaeb6f6}
 container=rh-pg-$env_name
 if ! docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null | grep -q true; then
   docker rm -f "$container" >/dev/null 2>&1 || true
@@ -38,7 +40,7 @@ if ! docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null | grep -q t
     -e PGPORT="$pg_port" -e POSTGRES_PASSWORD_FILE=/run/rh/superuser \
     -v "$(secret superuser)":/run/rh/superuser:ro \
     -v "$home/pgdata":/var/lib/postgresql/data \
-    postgres:17 >/dev/null
+    "$pg_image" >/dev/null
 fi
 for _ in $(seq 60); do pg_isready -q -h 127.0.0.1 -p "$pg_port" && break; sleep 1; done
 pg_isready -q -h 127.0.0.1 -p "$pg_port"
@@ -61,6 +63,7 @@ role antares "$(secret antares-pw)"
 database kaisatsu kaisatsu_migrate
 database portal portal
 database antares antares
+sql -d antares -c "CREATE EXTENSION IF NOT EXISTS postgis"
 
 kaisatsu_bin=$(dirname "$jc_bin")/kaisatsu
 "$kaisatsu_bin" migrate --database-url "postgres://kaisatsu_migrate@127.0.0.1:$pg_port/kaisatsu" \
@@ -70,6 +73,10 @@ printf 'postgres://kaisatsu_app@127.0.0.1:%s/kaisatsu\n' "$pg_port" > "$home/sec
 # The realm config of the export (no users), applied at start next to jc's own Portal realm.
 if [ -d "$export_dir/keycloak" ]; then
   python3 -I "$here/rehearsal.py" realms --export "$export_dir" --out "$home/import/realms"
+  # Each secret the realm config names gets a fresh value of the rehearsal (never the old one).
+  while read -r name; do
+    [ -n "$name" ] && export "$name=$(cat "$(secret "realm-$name")")"
+  done < "$home/import/realm-vars.txt"
 fi
 
 url() { printf 'postgres://%s:%s@127.0.0.1:%s/%s' "$1" "$(cat "$(secret "$1-pw")")" "$pg_port" "$2"; }
@@ -77,6 +84,8 @@ export JC_PORTAL_DATABASE_URL=$(url portal portal)
 export ANTARES_STORE=postgres ANTARES_DATABASE_URL=$(url antares antares)
 export ANTARES_TEMPORAL_RETENTION_DAYS=7 ANTARES_SWEEP_SECS=${REHEARSAL_SWEEP_SECS:-3600}
 export ANTARES_HISTORY_BACKFILL=on
+# jc is one process: the local notification bus cannot double-fire.
+export ANTARES_ALLOW_SHARED_LOCAL=1
 export JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false JC_PORTAL_SYNC_INTERVAL=10
 export RUST_LOG=${RUST_LOG:-info,sqlx=warn}
 # The deployment's configuration repository (defaults/environment/global.yaml configRepo).
