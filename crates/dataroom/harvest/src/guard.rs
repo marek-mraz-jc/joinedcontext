@@ -2,7 +2,7 @@
 //! Outbound SSRF guard, host allow-list, and IP range validation (C9, Security).
 
 use dataroom_core::{DataroomError, Result};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use url::Url;
 
 /// Maximum response body size read by a harvester (`32 MiB`, matching `ours/deployment/harvest-hub.py`).
@@ -112,8 +112,10 @@ pub fn validate_outbound_url(
     let Some(host_str) = parsed.host_str() else {
         return Err(DataroomError::OutboundRefused("URL has no host".into()));
     };
+    // `localhost.` and `svc.cluster.local.` name the same hosts as without the root dot.
     let host_lower = host_str
         .trim_matches(|c| c == '[' || c == ']')
+        .trim_end_matches('.')
         .to_ascii_lowercase();
 
     if host_lower == "localhost"
@@ -132,12 +134,6 @@ pub fn validate_outbound_url(
         if is_private_or_internal_ip(ip) {
             return Err(DataroomError::OutboundRefused(format!(
                 "internal IP address {ip} is refused"
-            )));
-        }
-    } else if let Ok(v6) = host_lower.parse::<Ipv6Addr>() {
-        if is_private_or_internal_ip(IpAddr::V6(v6)) {
-            return Err(DataroomError::OutboundRefused(format!(
-                "internal IPv6 address {v6} is refused"
             )));
         }
     }

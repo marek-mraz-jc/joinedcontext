@@ -48,13 +48,8 @@ pub trait OutboundFetcher: Send + Sync {
 /// Production HTTPS fetcher backed by `reqwest` with DNS pinning (`resolve_to_addrs`),
 /// `Policy::none()` (so `HarvestEngine` validates every redirect hop), per-source byte cap,
 /// and timeout (A2).
+#[derive(Default)]
 pub struct HttpFetcher;
-
-impl Default for HttpFetcher {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl HttpFetcher {
     pub fn new() -> Self {
