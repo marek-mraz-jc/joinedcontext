@@ -468,8 +468,25 @@ pub fn scope_for_context(
                 .and(&["state"], vec![Value::String("active".into())]);
         }
     }
+    // A distribution is visible exactly when its dataset is: an internal dataset's access URLs
+    // stay as hidden as the dataset itself.
+    else if set_name == "Distributions" {
+        if let Some(ids) = visible_dataset_ids {
+            scope = scope.and(
+                &["dataset_id"],
+                ids.into_iter().map(Value::String).collect(),
+            );
+        } else if !ctx.subject.is_member_of(ctx.org_id) {
+            scope = scope.and(&["dataset_id"], Vec::new());
+        }
+    }
 
-    if matches!(set_name, "HarvestSources" | "HarvestRuns") && !ctx.subject.is_member_of(ctx.org_id)
+    // Harvest state, the activity log and SHACL reports are for members of the organization, as
+    // the `harvest.*` and `catalogue.activity` operations and the editor's SHACL panel are.
+    if matches!(
+        set_name,
+        "HarvestSources" | "HarvestRuns" | "ActivityRows" | "ShaclResults"
+    ) && !ctx.subject.is_member_of(ctx.org_id)
     {
         scope = scope.and(&["id"], Vec::new());
     }

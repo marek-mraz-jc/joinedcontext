@@ -1894,10 +1894,12 @@ dependencies = [
  "dataroom-store-memory",
  "dataroom-store-pg",
  "dataroom-web",
+ "http-body-util",
  "serde",
  "serde_json",
  "sqlx",
  "tokio",
+ "tower",
  "uuid",
 ]
 

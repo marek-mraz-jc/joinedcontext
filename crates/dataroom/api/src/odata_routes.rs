@@ -57,8 +57,9 @@ pub async fn handle_odata(
     let path = rest.trim_start_matches('/');
     let raw_query = orig_uri.query().map(str::to_owned);
 
-    // Compute visible dataset IDs for this caller so `Scope` restricts Datasets before `$filter`.
-    let visible_ds_ids = if path.starts_with("Datasets") {
+    // Compute visible dataset IDs for this caller so `Scope` restricts Datasets (and their
+    // Distributions) before `$filter`.
+    let visible_ds_ids = if path.starts_with("Datasets") || path.starts_with("Distributions") {
         let all_ds = state.store.list_datasets(&ctx).await.unwrap_or_default();
         let all_pubs = state.store.list_publishers(&ctx).await.unwrap_or_default();
         let pub_map: BTreeMap<String, Publisher> = all_pubs
