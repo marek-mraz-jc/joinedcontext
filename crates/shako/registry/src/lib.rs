@@ -608,6 +608,15 @@ async fn oci_patch_blob_upload(
             None,
         );
     }
+    // One blob never grows past the package cap, however many chunks arrive (T5).
+    if buf.len().saturating_add(chunk.len()) > MAX_PACKAGE_BLOB_BYTES {
+        return oci_error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "SIZE_INVALID",
+            "blob exceeds the package size limit",
+            None,
+        );
+    }
     buf.extend_from_slice(&chunk);
     let end = buf.len().saturating_sub(1);
     let loc = format!("/v2/{owner}/{image}/blobs/uploads/{upload_uuid}");
