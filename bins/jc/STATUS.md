@@ -81,7 +81,8 @@ Gates: ekiben workspace `cargo test -p ekiben-server -p ekiben-core -p ekiben-bl
   environment, `/q` admin token file mandatory (`JCBIN_ANTARES_ADMIN_TOKEN_FILE`; the standalone broker serves `/q`
   without a credential when it is unset), no listener of its own (`ANTARES_HTTP_PORT`/`ANTARES_METRICS_PORT` ignored,
   so no clash with the Portal's 9090), mounted with `Router::fallback_service(served.app)` (axum 0.8 refuses
-  `nest_service("/")`; the jc-router already strips the slug). Default features only (`mqtt`), not `full`.
+  `nest_service("/")`; the jc-router already strips the slug). Since stage 8 built as dev builds it (`full`,
+  `jc-policy`, `linkml`, `ical`, `feed`; not `parquet`, `tabular`).
 - One Antares per process: its statics (memory budget, WebSocket hub, caches, 153 statics per the feasibility
   report) are process-wide. The jc tests serialize every start with one lock for this reason.
 - Differences when hosted, not verified against the ETSI suite: responses go through axum's server (lower-case
@@ -192,7 +193,8 @@ turns it all off.
 | pipeline runner | ekiben | `JC_PIPELINE_RUNNER_URL` | wired, refused: no runner credential (gap d) |
 | CKAN | dataroom | `JC_CKAN_URL`, `JC_CKAN_API_URL`, only when the public URL is https (EP-67) | wired for https installs; the http e2e leaves it unset (gap e) |
 | Grafana | daiya | `JC_GRAFANA_URL`, `_PUBLIC_URL`, `_USER=portal`, `_PASSWORD` | works as server admin; nothing creates the org per project (gap f) |
-| broker | antares | `JC_BROKER_URL`, `JC_BROKER_ADMIN_TOKEN_FILE` | wired; the gateway between Portal and broker is no jc module (gap d) |
+| broker | antares | `JC_PORTAL_BROKER_URL`, `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE` | works: views, rule documents and space views written and loaded (stage 8) |
+| gateway | gateway | `JC_PORTAL_GATEWAY_URL`, `JC_PORTAL_GATEWAY_CLIENT_ID=context-gateway` | works: the internal listener admits the gateway's revocation poll (stage 8) |
 
 The Portal's forge client reads its `JC_GITEA_*` through `Config::forge_var` (environment first, then the values jc
 filled), so the process environment is never written.
@@ -249,8 +251,7 @@ set (run both ways). `JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false` is a test-on
 
 - d, ekiben: `GET/PUT/POST/DELETE /streams/streams[/{id}]` without Authorization -> 401. The Portal has no runner
   credential setting (owner: jc-ekiben-portal).
-- d, Antares: jc builds Antares without the `views` and `jc-policy` features, so `/broker/q/views` is not served.
-  The Portal's Endpoint writes go through context-gateway, which is not a jc module.
+- d, Antares: closed in stage 8 (views and `jc-policy` built, context-gateway a jc module).
 - e, Portal: the CKAN URL must be https (EP-67); a CkanInstance token comes only from a `CKAN_*` env var named by
   `apiTokenRef` (no file). dataroom answers `help`/`uri` links with https on an http install.
 - f, jc: nothing runs provision.sh's per-project steps (`POST /dashboards/api/orgs`, `POST /api/folders`), so the
@@ -282,6 +283,107 @@ uses `dataroom_api::portal_publisher` and `DaiyaState::with_server_admin` from t
 - Host mode with the Portal on its own host.
 - Postgres for modules other than kaisatsu.
 - Disk: the sandbox had ~14 GB free; builds ran with debuginfo off.
+
+## Stage 8: context-gateway inside jc (jc-gateway)
+
+Branch `jc-gateway` from `jc-portal-1`. Endpoints answer inside `jc` as on dev: `/api/endpoint/{slug}/...`,
+`/api/endpoints`, `/api/mcp[/...]`, `/cs/...`, `/catalog*`, `/oauth/*` and the gateway's two `oauth-*` discovery
+documents. The Portal keeps `/`, `/api/v1/*` and `/.well-known/oauth-protected-resource[/api/v1/mcp]`.
+
+- Library: `context-gateway` gained `serve::{broker_of, build}` (main's wiring, errors returned instead of
+  `exit(1)`), `Config::from_vars(lookup)` (`from_env` is `from_vars(std::env::var)`), `Broker::with_hop_header` /
+  `stamp` (HTTP and WebSocket), and a metrics recorder that yields to an installed one. The standalone binary's
+  behaviour is unchanged.
+- Module `src/modules/gateway.rs` (feature `gateway`, default on). In slug mode the gateway is mounted at each path of
+  `Module::root_paths` (jc-router matches whole segments, so `/catalog` is not `/catalogue`) and `whole_path` puts the
+  stripped prefix back; in host mode it owns `api.{base_host}`. Settings: environment first (`JC_GATEWAY_*`, the
+  shared `JC_OIDC_*` read as `JC_GATEWAY_OIDC_*`), then `vars()` from the siblings, a group filled only when its first
+  key is unset and its secret is held; `portal_siblings = false` leaves the realm and the forge unfilled.
+
+| gateway setting | from |
+|---|---|
+| `JC_GATEWAY_BROKER_URL` + hop header | Antares' loopback hop (below) |
+| `JC_OIDC_ISSUER` (public), `JC_OIDC_JWKS_URL` (listener), `JC_OIDC_CLIENT_ID=context-gateway`, secret | kaisatsu; realm file `30-jc-gateway.json`: client_credentials only, `fullScopeAllowed` false, audience `portal-internal` |
+| `JC_GATEWAY_REVOCATIONS_URL`, `_CONNECTORS_URL`, `_USAGE_URL` | the Portal's internal listener (`JC_INTERNAL_BIND`, default `0.0.0.0:9090`, reached on loopback) |
+| `JC_GATEWAY_REPO_DIR`, `_PROJECTS_DIR`, `_ASSEMBLY_DIR` | shako `jc/config`, checked out under `{state}/gateway` with jc-manifest `GitCheckouts` every 10 s (`repo/current` swapped by one rename; layout 2 projects through `jcctl checkouts`) |
+| `JC_GATEWAY_ORG_DOMAIN`, `_PUBLIC_URL`, `_PREVIEWS_DIR` | the mounts and the state dir |
+
+- The gateway's own token comes from the issuer's public token endpoint, as the Portal's sign-in does: kaisatsu
+  names the issuer by the Host a request reached it on, and the Portal's internal listener checks it (a token from
+  the listener address was refused 401).
+- Antares: `BrokerConfig::defaults` holds keys the host supplies when the environment leaves them unset (unknown or
+  non-`ANTARES_` keys refused): `ANTARES_API_SURFACES` (dev's list without parquet/tabular), `ANTARES_POLICY=
+  joinedcontext`, `ANTARES_POLICY_SUBJECT_HEADERS` (a `OnceLock` default behind the env `LazyLock`, no `set_var`),
+  `ANTARES_PROVENANCE_FROM` and `ANTARES_POLICY_SUBJECT_FROM` = `context-gateway.jc`.
+- Trust: on dev Linkerd sets `l5d-client-id`. Here the public `/broker` mount drops every `l5d-*` header and the hop
+  header; the gateway reaches the broker through a second listener on `127.0.0.1:0` (`modules::Hop`) that answers 403
+  without the per-installation secret `gateway-hop-token` (constant-time compare) and then sets `l5d-client-id` itself.
+  The secret is a 0600 file, `Sensitive` in the gateway's headers, redacted in `Hop`'s Debug.
+- Under the `joinedcontext` engine the broker answers data routes only to a believed subject: the admin token reads
+  no Entity (`GET /broker/ngsi-ld/v1/entities/{id}` with it: 403 "a request without a subject reaches the Context
+  Source operations only"), anonymous `/broker/ngsi-ld/v1/info/sourceIdentity` is 401, as on dev; `/q/health` stays
+  open (the one_binary probe moved there).
+
+### End-to-end (`tests/gateway_endpoints.rs`, child binary, `--role all`)
+
+A realm file in kaisatsu's import directory adds a person in `e2e-readers` and `e2e-writers`, a client whose tokens
+name the closed Endpoint and one naming another slug (password grant, secrets through `$(env:...)`). The test writes
+project `e2e` (layout 1: project, space `things`, a `public` and a `project-list` Endpoint, Policies `public-read`
+(role public), `readers`, `writers`) to shako's `jc/config` through the contents API, then:
+
+| step | result |
+|---|---|
+| public Endpoint `GET .../ngsi-ld/v1/types` and `entities?type=Thing` anonymous | 200 |
+| closed Endpoint anonymous | 401 |
+| closed Endpoint with the person's token | 200, the Entity |
+| `POST .../entities` of a granted type by a writer | 201, tenant `things` in `/broker/q/tenants` |
+| `POST` of a type the Policy does not grant | 403 |
+| the person's token for another Endpoint | 401 |
+| `/broker/ngsi-ld/v1/entities` with `l5d-client-id: context-gateway.jc`, `x-jc-client`, `x-jc-subject`, `x-jc-groups` | no Entity |
+| `POST /api/mcp` `tools/list`, `tools/call query_entities` anonymous | 200, the Entity |
+| the gateway's revocation poll | admitted (no 401 in 25 s) |
+
+### Guards and their red proofs (stage 8)
+
+| guard | test | red (reverted once) |
+|---|---|---|
+| public mount drops `l5d-*` and the hop header | `modules::antares::tests` (2) | both failed |
+| hop answers 403 without its secret | `only_the_hop_with_its_secret_names_the_gateway_to_the_broker` | failed at antares.rs:269 |
+| public mount layer in place | `gateway_endpoints` | "the broker believed a claimed identity: 200 OK [Thing:one]" |
+| anonymous only on a public Endpoint | `gateway_endpoints` | closed Endpoint answered 200 anonymous |
+| a token for another Endpoint | `gateway_endpoints` | answered 200 |
+| hop header replaces a client's | `proxy::tests::the_hop_header_replaces_a_clients_and_never_prints` | failed at proxy.rs:464 |
+| outbound guard refuses jc's listener | `tests/outbound_guard.rs` | unchanged, green |
+
+### Gates (stage 8)
+
+- `jc`: fmt, clippy `--all-targets -D warnings --locked`, tests: lib 47, binary 4, one_binary 12, outbound_guard 1,
+  gateway_endpoints 1, portal_siblings 1 (kaisatsu on Postgres 17 and on memory): green.
+- context-gateway: the vendored copy cannot build its own tests (no `tools/model-tools`, dev-dependencies outside
+  the root lock), so its gates ran in a clone of joinedcontext-platform at `e59ceb9f` with the same patch (files
+  compared byte for byte): fmt, clippy `--all-targets -D warnings --locked`, `cargo test --locked`: 1839 passed,
+  0 failed, 4 ignored.
+- Antares workspace (`antares-broker`, `antares-api`): fmt, clippy `--all-targets --all-features -D warnings`
+  (the preflight lints), `cargo doc --document-private-items -D warnings`, tests: 1555 passed in 53 binaries, 0
+  failed (Postgres tests skip without `ANTARES_TEST_DATABASE_URL`; no store code changed).
+
+### Gaps left (stage 8)
+
+- Portal UI reads of a closed Endpoint: the UI calls `GET /api/endpoint/{slug}/ngsi-ld/v1/...` with its session
+  cookie only; the gateway reads `Authorization` alone (`auth/subject.rs` `admit_on`), so in jc that call is
+  anonymous: 401 on a closed Endpoint. On dev APISIX's openid-connect plugin turns the session into a bearer.
+- No Portal-made token names an Endpoint: the Portal logs `hub scopes wait for the realm scope=endpoint:{slug}
+  ... when the realm's admin-permissions CronJob links it to the hub`; no jc step links them, and kaisatsu has no
+  per-Endpoint audience mapper. A person's Portal token on a closed Endpoint is 401; the e2e uses an imported client
+  with an audience mapper.
+- The gateway's own token comes from the public issuer URL: a jc whose public origin the process cannot reach
+  (no hairpin through the TLS proxy) gets no token, and the Portal's internal listener refuses its polls (401).
+- Not filled from siblings: `JC_GATEWAY_PREVIEWS_URL` (workspace previews), `_ACTIVITY_URL`, `_ASSISTANT_URL`,
+  `_DOMAIN_VERIFICATIONS_URL`, `_INTERNAL_BIND` (no `/internal/mqtt/auth`; jc runs no MQTT broker).
+- OGC `f=parquet|csv|zip`: features `parquet` and `tabular` are not built.
+- Layout 2 organizations: `jcctl checkouts` runs after the org checkout but is unexercised (shako's project
+  repository creation, jc-portal-integrate report).
+- Host mode e2e: only the one_binary probe (`api.city.test/api/endpoints`).
 
 ## Release binary
 
