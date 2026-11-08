@@ -113,6 +113,29 @@ impl Grafana {
             .await
     }
 
+    /// A browser GET of the page the Portal links (`api/grafana.rs:214`): status, CSP, HTML.
+    async fn page(&self, uri: &str, auth: Option<&str>) -> (StatusCode, String, String) {
+        let mut req = Request::builder().uri(uri);
+        if let Some(auth) = auth {
+            req = req.header("authorization", auth);
+        }
+        let res = self
+            .app
+            .clone()
+            .oneshot(req.body(Body::empty()).expect("request"))
+            .await
+            .expect("answer");
+        let status = res.status();
+        let csp = res
+            .headers()
+            .get("content-security-policy")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        let bytes = res.into_body().collect().await.expect("body").to_bytes();
+        (status, csp, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
     /// `provision.sh` for one project: organization, closed Endpoint datasource, folder,
     /// project dashboard. Answers the organization's number.
     async fn provision(&self, project: &str) -> i64 {
@@ -285,6 +308,39 @@ async fn the_portal_saves_and_removes_a_visualization_in_a_provisioned_project()
         assert_eq!(status, StatusCode::OK, "{body}");
     }
 
+    // The link the Portal shows (`{public_url}/d/{uid}?orgId={org}`) opens the dashboard page
+    // for a member of the organization, and for nobody else.
+    let link = format!("/d/{uid}?orgId={helsinki}");
+    let (status, csp, page) = grafana.page(&link, Some(&basic(USER, PASSWORD))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(csp.starts_with("default-src 'none'"), "{csp}");
+    assert!(page.contains("<h1>NO2 over time</h1>"), "{page}");
+    assert!(page.contains("<section><h2>NO2 over time</h2>"), "{page}");
+    assert!(!page.contains("<script"), "{page}");
+    let (status, _, _) = grafana
+        .page(
+            &format!("/d/{uid}/no2-over-time?orgId={helsinki}"),
+            Some(&basic(USER, PASSWORD)),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    for auth in [None, Some("Bearer viewer-token")] {
+        let (status, _, page) = grafana.page(&link, auth).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{auth:?}");
+        assert!(!page.contains("NO2"), "{page}");
+    }
+    let (status, _, _) = grafana
+        .page(
+            &format!("/d/{uid}?orgId={bbsk}"),
+            Some(&basic(USER, PASSWORD)),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, _) = grafana
+        .page(&format!("/d/{uid}?orgId=99"), Some(&basic(USER, PASSWORD)))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
     // `holds`: GET /dashboards/uid/{uid} 200 in its organization, 404 in another.
     let (status, held) = grafana
         .admin(
@@ -449,4 +505,42 @@ fn a_weak_server_admin_is_refused_without_echoing_the_password() {
     assert!(!err.to_string().contains(short), "{err}");
     assert!(state().with_server_admin("", PASSWORD).is_err());
     assert!(state().with_server_admin("a:b", PASSWORD).is_err());
+}
+
+#[tokio::test]
+async fn the_dashboard_page_escapes_what_a_dashboard_holds() {
+    let grafana = Grafana::new(Arc::new(FlakyStore::default()), None);
+    let org = grafana.provision("helsinki").await;
+    let (status, body) = grafana
+        .admin(
+            "POST",
+            "/dashboards/db",
+            Some(org),
+            Some(json!({
+                "dashboard": {
+                    "uid": "hostile", "title": "<script>alert(1)</script>", "schemaVersion": 39,
+                    "panels": [{
+                        "id": 1, "type": "text", "title": "<img src=x onerror=alert(2)>",
+                        "options": { "content": "<script>alert(3)</script> **bold**" },
+                    }],
+                },
+                "folderUid": "project-helsinki",
+                "overwrite": true,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _, page) = grafana
+        .page(
+            &format!("/d/hostile?orgId={org}"),
+            Some(&basic(USER, PASSWORD)),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(!page.contains("<script>"), "{page}");
+    assert!(!page.contains("<img"), "{page}");
+    assert!(
+        page.contains("&lt;script&gt;alert(1)&lt;/script&gt;"),
+        "{page}"
+    );
 }

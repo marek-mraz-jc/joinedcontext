@@ -8,9 +8,11 @@
 //! - Public dashboards with 256-bit hashed tokens, strict query/variable lock-down, range/interval
 //!   caps, per-IP rate limiting, and metadata sanitization (R7).
 //! - Thin Grafana HTTP API compatibility adapters for `provision.sh` and `src/grafana.rs` (R2).
+//! - The dashboard page `/d/{uid}` the Portal links a person to.
 
 pub mod compat;
 pub mod odata;
+pub mod page;
 pub mod public;
 pub mod render;
 pub mod state;
@@ -33,6 +35,7 @@ use jc_router::Mount;
 pub fn api_router(state: DaiyaState, _mount: Mount) -> Router {
     Router::new()
         .merge(odata::odata_router())
+        .merge(page::page_router())
         .merge(compat::compat_router())
         .merge(public::public_router())
         .with_state(state)
