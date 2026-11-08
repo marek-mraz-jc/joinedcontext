@@ -1,21 +1,37 @@
 #!/bin/sh
 # Starts the jc image as the cluster runs it (nonroot, read-only root filesystem, every capability
-# dropped, /tmp and the state dir writable) with `--role all`, then checks that the admin
-# listener answers /healthz, refuses /metrics without its token, and that a health or discovery
-# route of every module answers on the public listener.
+# dropped, /tmp and the state dir writable) with `--role all` in the config shape of deployment
+# components/jc (slug mode, the Portal at the root), then checks that the admin listener answers
+# /healthz, refuses /metrics without its token, and that a health or discovery route of every
+# module answers on the public listener. base_host is an address jc reaches itself on: the
+# Portal reads kaisatsu's discovery at the public issuer before it serves (the cluster sends that
+# read through the edge, deployment components/jc/apisix-routes.yaml jc-identity).
 #   sh image-smoke.sh <image>
 set -eu
 image=$1
 dir=$(mktemp -d)
 head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$dir/admin-token"
 chmod 0644 "$dir/admin-token"
+cat > "$dir/jc.toml" <<'TOML'
+role = "all"
+listen = "0.0.0.0:8080"
+admin_listen = "0.0.0.0:9091"
+admin_token_file = "/run/secrets/jc/admin-token"
+mode = "slug"
+base_host = "localhost:8080"
+scheme = "http"
+state_dir = "/var/lib/jc"
+
+[mounts.portal]
+path_prefix = ""
+TOML
+chmod 0644 "$dir/jc.toml"
 docker volume create jc-smoke-state >/dev/null
 docker run -d --name jc-smoke -p 18080:8080 -p 19091:9091 \
   --read-only --tmpfs /tmp:rw,size=256m --cap-drop ALL --security-opt no-new-privileges \
   -v jc-smoke-state:/var/lib/jc -v "$dir/admin-token:/run/secrets/jc/admin-token:ro" \
-  -e JCBIN_ADMIN_LISTEN=0.0.0.0:9091 -e JCBIN_ADMIN_TOKEN_FILE=/run/secrets/jc/admin-token \
-  -e JCBIN_SCHEME=http \
-  "$image" --role all >/dev/null
+  -v "$dir/jc.toml:/etc/jc/jc.toml:ro" \
+  "$image" --config /etc/jc/jc.toml >/dev/null
 cleanup() { docker rm -f jc-smoke >/dev/null 2>&1 || true; docker volume rm jc-smoke-state >/dev/null 2>&1 || true; rm -rf "$dir"; }
 trap cleanup EXIT
 fail() { echo "SMOKE: $1"; docker logs jc-smoke 2>&1 | tail -60; exit 1; }
