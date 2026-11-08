@@ -325,6 +325,127 @@ impl Input for InputWithProcessors {
     }
 }
 
+/// An output's `batching` policy (`internal/component/output/batched_send.go` with
+/// `internal/batch/policy`): messages gather across writes in Bento's batcher (`count`,
+/// `byte_size`, `check`, then the policy's `processors`) and go out when it triggers, when
+/// `period` passes since the first one waiting, or when the output closes.
+///
+/// ponytail: the runner awaits each write before the next, so a write that waited for its batch
+/// would stall the stream; a message that joins a batch is acknowledged at once. A batch whose
+/// later write fails is logged and counted (`output_error`) and the next write answers that error,
+/// where Bento would nack the messages. The Portal's outcome post, the one batched output the seed
+/// uses, sits in a `fallback` whose next output is `drop`, which acks them in Bento too. Upgrade
+/// path: let the runner hold acks per transaction until its batch is written.
+pub struct BatchedOutput {
+    inner: Arc<dyn Output>,
+    state: Arc<tokio::sync::Mutex<BatchState>>,
+}
+
+struct BatchState {
+    batcher: Batcher,
+    timer: bool,
+    failed: Option<CoreError>,
+    /// The stream the writes came from: `close` writes what still waits with it.
+    ctx: Option<StreamContext>,
+}
+
+impl BatchedOutput {
+    pub fn new(inner: Arc<dyn Output>, batcher: Batcher) -> Self {
+        Self {
+            inner,
+            state: Arc::new(tokio::sync::Mutex::new(BatchState {
+                batcher,
+                timer: false,
+                failed: None,
+                ctx: None,
+            })),
+        }
+    }
+}
+
+/// Flushes what waits and writes it.
+async fn flush_batched(
+    inner: &Arc<dyn Output>,
+    state: &mut BatchState,
+    ctx: &StreamContext,
+) -> Result<(), CoreError> {
+    match state.batcher.flush().await? {
+        Some(b) if !b.is_empty() => inner.write_batch(ctx, b).await,
+        _ => Ok(()),
+    }
+}
+
+/// A flush nobody awaits: its failure is logged, counted and answered by the next write.
+fn deferred_failure(state: &mut BatchState, ctx: &StreamContext, e: CoreError) {
+    tracing::warn!(stream = %ctx.stream_id, error = %e, "a batched output's write failed");
+    ctx.metrics
+        .output_error
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    state.failed.get_or_insert(e);
+}
+
+#[async_trait]
+impl Output for BatchedOutput {
+    fn output_type(&self) -> &'static str {
+        self.inner.output_type()
+    }
+
+    fn label(&self) -> &str {
+        self.inner.label()
+    }
+
+    async fn connect(&self, ctx: &StreamContext) -> Result<(), CoreError> {
+        self.inner.connect(ctx).await
+    }
+
+    async fn write_batch(&self, ctx: &StreamContext, batch: Batch) -> Result<(), CoreError> {
+        let mut state = self.state.lock().await;
+        if let Some(e) = state.failed.take() {
+            return Err(e);
+        }
+        if state.ctx.is_none() {
+            state.ctx = Some(ctx.clone());
+        }
+        for part in batch {
+            state.batcher.skip_idle_periods();
+            if state.batcher.add(part) {
+                flush_batched(&self.inner, &mut state, ctx).await?;
+            }
+        }
+        if state.batcher.count() > 0 && !state.timer {
+            if let Some(wait) = state.batcher.until_next() {
+                state.timer = true;
+                let (inner, shared, ctx) = (self.inner.clone(), self.state.clone(), ctx.clone());
+                tokio::spawn(async move {
+                    tokio::time::sleep(wait).await;
+                    let mut state = shared.lock().await;
+                    state.timer = false;
+                    if let Err(e) = flush_batched(&inner, &mut state, &ctx).await {
+                        deferred_failure(&mut state, &ctx, e);
+                    }
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn is_connected(&self) -> bool {
+        self.inner.is_connected()
+    }
+
+    async fn close(&self) -> Result<(), CoreError> {
+        let mut state = self.state.lock().await;
+        let flushed = match state.ctx.clone() {
+            Some(ctx) => flush_batched(&self.inner, &mut state, &ctx).await,
+            None => Ok(()),
+        };
+        let closed = self.inner.close().await;
+        flushed
+            .and(closed)
+            .and(state.failed.take().map_or(Ok(()), Err))
+    }
+}
+
 /// Wraps an `Output` with output-level `processors` (`internal/component/output/wrap_with_pipeline.go`).
 pub struct OutputWithProcessors {
     inner: Arc<dyn Output>,
@@ -447,6 +568,20 @@ impl Batcher {
 
     pub fn count(&self) -> usize {
         self.parts.len()
+    }
+
+    /// Bento's output batcher flushes on every period tick, an empty batch too
+    /// (`internal/component/output/batcher`): while nothing waits, its period runs on from the
+    /// last flush in whole periods, so a message joining an idle batch waits for the next tick.
+    pub fn skip_idle_periods(&mut self) {
+        let Some(p) = self.period.filter(|_| self.parts.is_empty()) else {
+            return;
+        };
+        let ticks = self.last_batch.elapsed().as_nanos() / p.as_nanos();
+        let step = u32::try_from(ticks).ok().and_then(|n| p.checked_mul(n));
+        if let Some(at) = step.and_then(|s| self.last_batch.checked_add(s)) {
+            self.last_batch = at;
+        }
     }
 
     pub fn until_next(&self) -> Option<Duration> {

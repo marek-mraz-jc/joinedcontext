@@ -223,6 +223,13 @@ impl Part {
     }
 
     /// Lazily parses raw bytes as a single JSON document if not already structured (`Part.AsStructured`).
+    /// Whether the part holds a structured value (a mapping's result) rather than only bytes a
+    /// structured read would parse: Go's `%T` of a number tells the two apart (int64 or
+    /// float64, json.Number).
+    pub fn holds_structured(&self) -> bool {
+        self.structured.is_some()
+    }
+
     pub fn as_structured(&mut self) -> Result<Value, String> {
         if let Some(ref s) = self.structured {
             return Ok((**s).clone());

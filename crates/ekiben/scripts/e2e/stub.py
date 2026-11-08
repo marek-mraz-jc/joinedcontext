@@ -87,6 +87,8 @@ class Handler(BaseHTTPRequestHandler):
             if "entityOperations/upsert" in route:
                 return self.answer(204)
             return self.answer(200, b"[]")
+        if route.startswith("internal/"):
+            return self.answer(200, b"{}")
         if not route.startswith("up/"):
             return self.answer(404)
         scheme, _, rest = route[3:].partition("/")

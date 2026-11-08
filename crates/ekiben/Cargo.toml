@@ -57,6 +57,10 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order", "float_roundtrip"] }
 serde_norway = "0.9"
 bytes = "1.12"
+# The client half reqwest runs on: its ReasonPhrase extension carries a response's own phrase.
+hyper = { version = "1.12", default-features = false }
+jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc_rs"] }
+aws-lc-rs = "1.19"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "form", "json", "gzip", "brotli", "stream", "multipart", "http2"] }
 regex = "1.13"
 chrono = { version = "0.4.45", features = ["serde"] }

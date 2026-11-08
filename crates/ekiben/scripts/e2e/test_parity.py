@@ -27,6 +27,21 @@ def test_the_first_difference_names_the_field_and_place():
     assert parity.first_difference(run, other).startswith("messages[0] at char 12")
 
 
+def test_a_portal_render_keeps_its_output_and_reaches_the_stub_for_internal_posts():
+    case = {"project": "p", "name": "n", "resources": {}, "stream": {
+        "input": {"generate": {"count": 1, "interval": "1h", "mapping": "root = {}"}},
+        "pipeline": {"processors": [
+            {"http": {"url": "https://example.org/a?b=1"}},
+            {"http": {"url": "http://portal-internal.test/internal/pipelines/p/n/rejected"}}]},
+        "output": {"broker": {"pattern": "fan_out_sequential_fail_fast", "outputs": []}}}}
+    stream = parity.prepare(case, "http://127.0.0.1:1", "r")
+    urls = [p["http"]["url"] for p in stream["pipeline"]["processors"]]
+    assert urls == ["http://127.0.0.1:1/r/up/https/example.org/a?b=1",
+                    "http://127.0.0.1:1/r/internal/pipelines/p/n/rejected"]
+    assert stream["output"] == case["stream"]["output"]
+    assert stream["input"]["generate"]["interval"] == ""
+
+
 if __name__ == "__main__":
     for name, test in list(globals().items()):
         if name.startswith("test_"):

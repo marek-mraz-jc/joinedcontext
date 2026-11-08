@@ -1080,8 +1080,16 @@ fn exec_statement(stmt: &Statement, ctx: &mut EvalContext<'_, '_>) -> Result<(),
                         continue;
                     }
                 }
+                // Bento wraps a failure once, at the top-level statement (`mapping.Executor`):
+                // one inside an `if` block carries the line of the outermost statement.
                 for s in stmts {
-                    exec_statement(s, ctx)?;
+                    exec_statement(s, ctx).map_err(|e| match e {
+                        BloblangError::Assignment { message, .. } => BloblangError::Assignment {
+                            line: *line,
+                            message,
+                        },
+                        other => other,
+                    })?;
                 }
                 return Ok(());
             }

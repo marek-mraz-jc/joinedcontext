@@ -1082,9 +1082,11 @@ async fn archive_and_unarchive_every_format() {
     assert_eq!(flat(&out), vec![r#"{"a":{"b":1}}"#]);
 
     for (fmt, input, want) in [
-        ("json_array", "{}", "invalid type 'object'"),
+        ("json_array", "{}", "invalid type 'map[string]interface {}'"),
+        ("json_array", "5", "invalid type 'json.Number'"),
+        ("json_array", "null", "invalid type '<nil>'"),
         ("json_array", "nope", "failed to parse message into JSON array"),
-        ("json_map", "[]", "invalid type 'array'"),
+        ("json_map", "[]", "invalid type '[]interface {}'"),
         ("json_map", "nope", "failed to parse message into JSON map"),
         ("json_documents", "1 {", "EOF"),
         ("binary", "\u{0}\u{0}\u{0}\u{9}x", ""),

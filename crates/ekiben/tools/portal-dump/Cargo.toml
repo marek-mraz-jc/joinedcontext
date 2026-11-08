@@ -1,0 +1,39 @@
+# Dumps every deployment seed pipeline exactly as the Portal (crates/portal) hands it to its
+# runner: the Portal's own StreamDeployer converges a Mirror loaded from the seed against a
+# capture server, which writes each PUT/POST /streams/{id} body as one JSON line. Outside the
+# ekiben workspace on purpose (it links the whole Portal); ekiben's build, deny and audit never
+# see it. Cargo.lock is the Portal's own, so the render is the Portal's at that commit.
+[package]
+name = "portal-dump"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+joinedcontext-portal = { path = "../../../portal" }
+jc-core = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a" }
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+serde = "1"
+serde_json = "1"
+serde_norway = "0.9"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[profile.dev]
+debug = false
+[profile.dev.package."*"]
+opt-level = 1
+debug = false
+
+[patch."https://github.com/marek-mraz-jc/joinedcontext-platform.git"]
+jc-core = { path = "../../../../vendor/joinedcontext-platform/crates/jc-core" }
+jcctl = { path = "../../../../vendor/joinedcontext-platform/crates/jcctl" }
+context-gateway = { path = "../../../../vendor/joinedcontext-platform/crates/context-gateway" }
+
+[patch."https://github.com/marek-mraz-jc/ngsild"]
+ngsild-ql = { path = "../../../../vendor/ngsild/crates/antares-ql" }
+ngsild-jsonld = { path = "../../../../vendor/ngsild/crates/antares-jsonld" }
+ngsild-matcher = { path = "../../../../vendor/ngsild/crates/antares-matcher" }
+ngsild-model = { path = "../../../../vendor/ngsild/crates/antares-model" }

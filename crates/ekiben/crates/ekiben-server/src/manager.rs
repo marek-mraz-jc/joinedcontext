@@ -158,6 +158,42 @@ impl StreamManager {
         StreamConfig::parse_str_with_env(raw, chilled, |k| access.resolve(&vars, k))
     }
 
+    /// Registers the shared resources of a resources file (Bento's `streams -r`) in `org`'s
+    /// namespace: every cache, rate limit, processor, input and output it declares becomes visible
+    /// to each stream of that organization, and of no other. `${VAR}` is filled as in a posted
+    /// config; any other section of the file (`metrics`) is ignored here. Returns how many
+    /// resources were registered.
+    pub fn register_resources(&self, org: &OrgId, raw: &str) -> Result<usize, CoreError> {
+        let vars = self.resources.get_or_create_org(org).secrets_snapshot();
+        let access = self.env_access;
+        let (mut conf, _) =
+            StreamConfig::parse_str_with_env(raw, false, |k| access.resolve(&vars, k))?;
+        conf.org = org.clone();
+        let r = &conf.resources;
+        let count = r.cache_resources.len()
+            + r.rate_limit_resources.len()
+            + r.processor_resources.len()
+            + r.input_resources.len()
+            + r.output_resources.len();
+        let (_shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
+        let org_ctx = self.resources.get_or_create_org(org);
+        let sctx = ekiben_core::StreamContext {
+            stream_id: "resources".to_string(),
+            org: org_ctx,
+            resources: self.resources.clone(),
+            registry: self.registry.clone(),
+            blobl_env: ekiben_core::config::build_blobl_env_for_stream(&vars, access),
+            metrics: StreamMetrics::new("resources", &org.0),
+            label: String::new(),
+            path: "resources".to_string(),
+            file_root: self.file_root.clone(),
+            env_vars: Arc::new(vars),
+            shutdown_rx,
+        };
+        crate::runner::register_inline_resources(&conf, &self.registry, &sctx)?;
+        Ok(count)
+    }
+
     /// Creates and starts a new stream under `id` in the organization `conf.org`.
     /// If `conf.run == RunMode::Once`, runs the stream to completion, freezes its uptime,
     /// stores its `last_run` summary, and drops its runtime state (`Section 6`).

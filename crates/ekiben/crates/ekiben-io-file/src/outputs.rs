@@ -284,6 +284,11 @@ impl Output for RejectErroredOutput {
         "reject_errored"
     }
 
+    /// Bento closes a composite output's children with it (a batched child flushes).
+    async fn close(&self) -> Result<(), CoreError> {
+        close_all(std::iter::once(&self.child)).await
+    }
+
     async fn write_batch(&self, ctx: &StreamContext, batch: Batch) -> Result<(), CoreError> {
         let mut clean = Vec::new();
         let mut errored_indices = Vec::new();
@@ -360,6 +365,11 @@ impl Output for DropOnOutput {
         "drop_on"
     }
 
+    /// Bento closes a composite output's children with it (a batched child flushes).
+    async fn close(&self) -> Result<(), CoreError> {
+        close_all(std::iter::once(&self.child)).await
+    }
+
     async fn write_batch(&self, ctx: &StreamContext, batch: Batch) -> Result<(), CoreError> {
         match self.child.write_batch(ctx, batch).await {
             Ok(()) => Ok(()),
@@ -421,6 +431,11 @@ impl Output for RetryOutput {
         "retry"
     }
 
+    /// Bento closes a composite output's children with it (a batched child flushes).
+    async fn close(&self) -> Result<(), CoreError> {
+        close_all(std::iter::once(&self.child)).await
+    }
+
     async fn write_batch(&self, ctx: &StreamContext, batch: Batch) -> Result<(), CoreError> {
         let mut attempt = 0usize;
         let mut elapsed = Duration::ZERO;
@@ -476,6 +491,11 @@ impl FallbackOutput {
 impl Output for FallbackOutput {
     fn output_type(&self) -> &'static str {
         "fallback"
+    }
+
+    /// Bento closes a composite output's children with it (a batched child flushes).
+    async fn close(&self) -> Result<(), CoreError> {
+        close_all(self.outputs.iter()).await
     }
 
     async fn write_batch(&self, ctx: &StreamContext, batch: Batch) -> Result<(), CoreError> {
@@ -606,6 +626,11 @@ impl Output for SwitchOutput {
         "switch"
     }
 
+    /// Bento closes a composite output's children with it (a batched child flushes).
+    async fn close(&self) -> Result<(), CoreError> {
+        close_all(self.cases.iter().map(|c| &c.output)).await
+    }
+
     async fn write_batch(&self, ctx: &StreamContext, mut batch: Batch) -> Result<(), CoreError> {
         for p in &mut batch {
             let _ = p.as_bytes();
@@ -718,6 +743,11 @@ impl BrokerOutput {
 impl Output for BrokerOutput {
     fn output_type(&self) -> &'static str {
         "broker"
+    }
+
+    /// Bento closes a composite output's children with it (a batched child flushes).
+    async fn close(&self) -> Result<(), CoreError> {
+        close_all(self.outputs.iter()).await
     }
 
     async fn write_batch(&self, ctx: &StreamContext, batch: Batch) -> Result<(), CoreError> {
@@ -837,4 +867,17 @@ impl Output for SyncResponseOutput {
         }
         Ok(())
     }
+}
+
+/// Closes every child, all of them even when one fails, and answers the first failure.
+async fn close_all<'a>(
+    children: impl Iterator<Item = &'a Arc<dyn Output>>,
+) -> Result<(), CoreError> {
+    let mut first = None;
+    for child in children {
+        if let Err(e) = child.close().await {
+            first.get_or_insert(e);
+        }
+    }
+    first.map_or(Ok(()), Err)
 }
