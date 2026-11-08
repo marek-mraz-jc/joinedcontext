@@ -36,7 +36,7 @@ its caller `file:line`, status in this run, and test coverage in `crates/shako/s
 | 27 | `POST /api/v1/repos/{owner}/{repo}/contents` (multi-file commit, stale sha -> `409`) | `portal:src/git/gitea.rs:1980,2011,2033,2052` | served | `s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup` |
 | 28 | `GET /api/v1/repos/{owner}/{repo}/commits?sha=&path=&limit=` | `portal:src/git/gitea.rs:2104`, `plat:forge.rs:223` | served | `s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup` |
 | 29 | `GET /api/v1/repos/{owner}/{repo}/pulls?state=&sort=recentupdate&page=&limit=` | `portal:src/git/gitea.rs:2174,2179`, `plat:forge.rs:223` | served | `s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup` |
-| 30 | `POST /api/v1/repos/{owner}/{repo}/pulls` | `portal:src/git/gitea.rs:2202`, `plat:forge.rs:213` | served | `s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup` |
+| 30 | `POST /api/v1/repos/{owner}/{repo}/pulls` (`409` when an open pull holds the same head and base) | `portal:src/git/gitea.rs:2202`, `plat:forge.rs:213` | served | `s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup` |
 | 31 | `GET /api/v1/repos/{owner}/{repo}/pulls/{n}/files?page=&limit=50` | `portal:src/git/gitea.rs:2228` | served | `s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup` |
 | 32 | `GET /api/v1/repos/{owner}/{repo}/archive/{ref}.bundle|.zip|.tar.gz` | `portal:src/git/gitea.rs:2257`, `remote.rs:269` | served | `s3_s4_git_client_matrix_v0_v2_and_portal_push_bundle` |
 | 33 | `GET /api/v1/repos/{owner}/{repo}/tags?page=&limit=50` | `portal:src/git/gitea.rs:2268` | served | `s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup` |
@@ -46,3 +46,9 @@ its caller `file:line`, status in this run, and test coverage in `crates/shako/s
 | 37 | `PATCH /api/v1/repos/{owner}/{repo}/pulls/{n}` (`{state:"closed"}`) | `portal:src/git/gitea.rs:2360` | served | `s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup` |
 | 38 | `POST /api/v1/repos/{owner}/{repo}/pulls/{n}/update?style=merge` (`200` when already up to date; `409` on conflict) | `portal:src/git/gitea.rs:2377` | served | `s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup` |
 | 39 | `POST /api/v1/repos/{owner}/{repo}/pulls/{n}/merge` (`405 behind the base branch`, `409` moved head/conflict) | `portal:src/git/gitea.rs:2391` | served | `s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup` |
+| 40 | `POST /api/v1/repos/{owner}/{repo}/hooks` (Gitea `{type: gitea, config: {url, content_type: json, secret}}`, or native `{url, secret_ref}`) | deployment bootstrap; `jc` first start | served | `crates/shako/server/tests/portal_contract.rs` |
+| 41 | `GET /{owner}/{repo}/archive/{ref}.zip|.tar.gz|.bundle` (page path) | `portal:src/sync/remote.rs:269` | served to signed-in callers (anonymous refused) | `crates/shako/server/tests/portal_contract.rs` |
+
+`crates/shako/PORTAL-CALLS.md` lists every call of `crates/portal/src` with its line in this
+monorepo, and `crates/shako/server/tests/portal_contract.rs` replays them with the Portal's own
+`GiteaClient`.

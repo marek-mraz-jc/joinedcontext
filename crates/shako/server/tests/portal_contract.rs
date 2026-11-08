@@ -14,7 +14,9 @@ use axum::middleware::{self, Next};
 use axum::response::Response;
 use jc_router::{JcRouterBuilder, Mount, MountSpec};
 use joinedcontext_portal::git::gitea::committed_text;
-use joinedcontext_portal::git::{Author, FileDelete, FileWrite, GitError, GiteaClient, MergeStyle, ReviewEvent};
+use joinedcontext_portal::git::{
+    Author, FileDelete, FileWrite, GitError, GiteaClient, MergeStyle, ReviewEvent,
+};
 use serde_json::{Value, json};
 use sha2::Digest as _;
 use shako_core::{
@@ -55,7 +57,12 @@ impl World {
         let tmp = tempfile::tempdir().expect("tempdir");
         let org = OrgId::from_u128(10);
         let apps_org = OrgId::from_u128(11);
-        let all = vec![Action::Admin, Action::Write, Action::Approve, Action::Publish];
+        let all = vec![
+            Action::Admin,
+            Action::Write,
+            Action::Approve,
+            Action::Publish,
+        ];
         let authz = Arc::new(LocalAuthorizer::new(vec![
             RoleBinding {
                 org_id: org,
@@ -122,26 +129,28 @@ impl World {
         let mut config = joinedcontext_portal::config::Config::for_tests();
         config.gitea_webhook_secret = Some(WEBHOOK_SECRET.into());
         let seen = deliveries.clone();
-        let portal = joinedcontext_portal::server::app(
-            joinedcontext_portal::state::AppState::new(config, None),
-        )
-        .layer(middleware::from_fn(move |req: Request<Body>, next: Next| {
-            let seen = seen.clone();
-            async move {
-                let event = req
-                    .headers()
-                    .get("x-gitea-event")
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or_default()
-                    .to_owned();
-                let hook = req.uri().path() == "/api/v1/webhooks/gitea";
-                let res: Response = next.run(req).await;
-                if hook {
-                    seen.lock().push((event, res.status().as_u16()));
+        let portal = joinedcontext_portal::server::app(joinedcontext_portal::state::AppState::new(
+            config, None,
+        ))
+        .layer(middleware::from_fn(
+            move |req: Request<Body>, next: Next| {
+                let seen = seen.clone();
+                async move {
+                    let event = req
+                        .headers()
+                        .get("x-gitea-event")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or_default()
+                        .to_owned();
+                    let hook = req.uri().path() == "/api/v1/webhooks/gitea";
+                    let res: Response = next.run(req).await;
+                    if hook {
+                        seen.lock().push((event, res.status().as_u16()));
+                    }
+                    res
                 }
-                res
-            }
-        }));
+            },
+        ));
         let portal_addr = serve(portal).await;
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -185,17 +194,15 @@ impl World {
     fn client(&self, repo: &str) -> GiteaClient {
         let base = self.base.clone();
         let repo = repo.to_owned();
-        GiteaClient::from_env(move |key| {
-            match key {
-                "JC_GITEA_URL" => Some(base.clone()),
-                "JC_GITEA_OWNER" => Some(OWNER.into()),
-                "JC_GITEA_REPO" => Some(repo.clone()),
-                "JC_GITEA_TOKEN" => Some(PORTAL_TOKEN.into()),
-                "JC_GITEA_APPS_OWNER" => Some(APPS_OWNER.into()),
-                "JC_GITEA_APPS_TOKEN" => Some(APPS_TOKEN.into()),
-                "JC_GITEA_READER" => Some(READER.into()),
-                _ => None,
-            }
+        GiteaClient::from_env(move |key| match key {
+            "JC_GITEA_URL" => Some(base.clone()),
+            "JC_GITEA_OWNER" => Some(OWNER.into()),
+            "JC_GITEA_REPO" => Some(repo.clone()),
+            "JC_GITEA_TOKEN" => Some(PORTAL_TOKEN.into()),
+            "JC_GITEA_APPS_OWNER" => Some(APPS_OWNER.into()),
+            "JC_GITEA_APPS_TOKEN" => Some(APPS_TOKEN.into()),
+            "JC_GITEA_READER" => Some(READER.into()),
+            _ => None,
         })
         .expect("config")
         .expect("forge configured")
@@ -212,7 +219,10 @@ impl World {
         let res = req.send().await.unwrap();
         let status = res.status().as_u16();
         let text = res.text().await.unwrap();
-        (status, serde_json::from_str(&text).unwrap_or(Value::String(text)))
+        (
+            status,
+            serde_json::from_str(&text).unwrap_or(Value::String(text)),
+        )
     }
 }
 
@@ -226,7 +236,9 @@ async fn serve(app: Router) -> SocketAddr {
 }
 
 fn manifest(name: &str) -> String {
-    format!("apiVersion: joinedcontext.com/v1\nkind: Endpoint\nmetadata:\n  name: {name}\nspec:\n  public: true\n")
+    format!(
+        "apiVersion: joinedcontext.com/v1\nkind: Endpoint\nmetadata:\n  name: {name}\nspec:\n  public: true\n"
+    )
 }
 
 /// Repository lifecycle, branches, contents, history and protection: what the reconciler's
@@ -267,7 +279,10 @@ async fn repository_branches_contents_and_history() {
         .await
         .unwrap()
         .expect("written file");
-    assert_eq!(file.content, committed_text("spaces/air/endpoints/air.yaml", &air));
+    assert_eq!(
+        file.content,
+        committed_text("spaces/air/endpoints/air.yaml", &air)
+    );
     assert!(forge.get_file("nope.yaml", ws).await.unwrap().is_none());
     let blobs = forge.list_tree_blobs(ws).await.unwrap();
     assert!(
@@ -303,7 +318,10 @@ async fn repository_branches_contents_and_history() {
             author: AUTHOR,
         })
         .await;
-    assert!(matches!(stale, Err(GitError::Conflict(_))), "a stale sha is a 409: {stale:?}");
+    assert!(
+        matches!(stale, Err(GitError::Conflict(_))),
+        "a stale sha is a 409: {stale:?}"
+    );
 
     // update_files refuses the whole commit when one blob moved.
     let head_before = forge.branch_head(ws).await.unwrap();
@@ -338,10 +356,20 @@ async fn repository_branches_contents_and_history() {
         .await
         .unwrap();
     assert!(forge.get_file("docs/notes.md", ws).await.unwrap().is_none());
-    assert!(forge.get_file("models/air.yaml", ws).await.unwrap().is_some());
+    assert!(
+        forge
+            .get_file("models/air.yaml", ws)
+            .await
+            .unwrap()
+            .is_some()
+    );
 
     // delete_file answers the commit it made.
-    let model = forge.get_file("models/air.yaml", ws).await.unwrap().unwrap();
+    let model = forge
+        .get_file("models/air.yaml", ws)
+        .await
+        .unwrap()
+        .unwrap();
     let c4 = forge
         .delete_file(&FileDelete {
             path: "models/air.yaml",
@@ -368,7 +396,13 @@ async fn repository_branches_contents_and_history() {
     assert!(!history[0].date.is_empty());
     let all = forge.list_commits(ws, "", 50).await.unwrap();
     assert!(all.len() >= 5, "{all:?}");
-    assert!(forge.commit_message(&c1).await.unwrap().starts_with("Add the air Endpoint"));
+    assert!(
+        forge
+            .commit_message(&c1)
+            .await
+            .unwrap()
+            .starts_with("Add the air Endpoint")
+    );
 
     // Branch protection: main takes no direct write once protected.
     forge.protect_branch("main").await.unwrap();
@@ -386,24 +420,38 @@ async fn repository_branches_contents_and_history() {
         matches!(direct, Err(GitError::Api { status: 403, .. })),
         "a protected branch refuses a write with 403: {direct:?}"
     );
-    let (st, rules) = w.raw("GET", "api/v1/repos/joinedcontext/config/branch_protections", None).await;
+    let (st, rules) = w
+        .raw(
+            "GET",
+            "api/v1/repos/joinedcontext/config/branch_protections",
+            None,
+        )
+        .await;
     assert_eq!(st, 200);
     assert_eq!(rules[0]["rule_name"], "main", "{rules}");
 
     // delete_branch: gone, and gone again is no error.
     forge.delete_branch(ws).await.unwrap();
     forge.delete_branch(ws).await.unwrap();
-    assert!(matches!(forge.branch_head(ws).await, Err(GitError::NotFound)));
+    assert!(matches!(
+        forge.branch_head(ws).await,
+        Err(GitError::NotFound)
+    ));
 
     // let_the_reader_in, archive and delete.
     forge.let_the_reader_in().await.unwrap();
     forge.archive_repository().await.unwrap();
-    let (st, repo) = w.raw("GET", "api/v1/repos/joinedcontext/config", None).await;
+    let (st, repo) = w
+        .raw("GET", "api/v1/repos/joinedcontext/config", None)
+        .await;
     assert_eq!(st, 200);
     assert_eq!(repo["archived"], true, "{repo}");
     forge.delete_repository().await.unwrap();
     forge.delete_repository().await.unwrap();
-    assert!(matches!(forge.default_branch().await, Err(GitError::NotFound)));
+    assert!(matches!(
+        forge.default_branch().await,
+        Err(GitError::NotFound)
+    ));
 }
 
 /// The change lane: open, read, review, update, merge and close merge requests, with the
@@ -436,7 +484,11 @@ async fn merge_requests_reviews_merge_and_webhooks() {
                 branch,
                 &format!("Propose {name}"),
                 AUTHOR,
-                &[(format!("spaces/s/endpoints/{name}.yaml"), manifest(name), None)],
+                &[(
+                    format!("spaces/s/endpoints/{name}.yaml"),
+                    manifest(name),
+                    None,
+                )],
             )
             .await
             .unwrap();
@@ -459,7 +511,11 @@ async fn merge_requests_reviews_merge_and_webhooks() {
     assert!(a.same_repository, "head and base repo_id must match");
     assert_eq!(a.author_login, "jc-portal");
     assert!(!a.created_at.is_empty());
-    assert!(a.url.ends_with(&format!("/pulls/{}", a.number)), "{}", a.url);
+    assert!(
+        a.url.ends_with(&format!("/pulls/{}", a.number)),
+        "{}",
+        a.url
+    );
     assert!(!a.merged);
 
     let open = forge.list_pull_requests("open").await.unwrap();
@@ -480,11 +536,19 @@ async fn merge_requests_reviews_merge_and_webhooks() {
         .review(a.number, ReviewEvent::Comment, "Looks right")
         .await
         .unwrap();
-    assert_eq!(forge.review_bodies(a.number).await.unwrap(), vec!["Looks right"]);
+    assert_eq!(
+        forge.review_bodies(a.number).await.unwrap(),
+        vec!["Looks right"]
+    );
 
     // Merge a, pinned to the head that was read.
     forge
-        .merge(a.number, MergeStyle::Merge, "Merge a\n\nApproved-by: alice", Some(&a.head_sha))
+        .merge(
+            a.number,
+            MergeStyle::Merge,
+            "Merge a\n\nApproved-by: alice",
+            Some(&a.head_sha),
+        )
         .await
         .unwrap();
     let merged = forge.pull_request(a.number).await.unwrap();
@@ -494,7 +558,10 @@ async fn merge_requests_reviews_merge_and_webhooks() {
     assert!(!merged.closed_at.is_empty());
     assert_eq!(merged.merge_base, main0);
     assert_eq!(merged.base_ref(), main0);
-    assert_eq!(forge.branch_head("main").await.unwrap(), merged.merge_commit_sha);
+    assert_eq!(
+        forge.branch_head("main").await.unwrap(),
+        merged.merge_commit_sha
+    );
     assert!(
         forge
             .commit_message(&merged.merge_commit_sha)
@@ -509,27 +576,56 @@ async fn merge_requests_reviews_merge_and_webhooks() {
     let stale = forge
         .merge(b.number, MergeStyle::Merge, "Merge b", Some(&main0))
         .await;
-    assert!(matches!(stale, Err(GitError::Conflict(_))), "a moved head is a 409: {stale:?}");
+    assert!(
+        matches!(stale, Err(GitError::Conflict(_))),
+        "a moved head is a 409: {stale:?}"
+    );
     forge.update_pull_request(b.number).await.unwrap();
     let b2 = forge.pull_request(b.number).await.unwrap();
     assert_ne!(b2.head_sha, b.head_sha);
     // Already up to date is no error for the Portal's caller either.
     let again = forge.update_pull_request(b.number).await;
-    assert!(again.is_ok() || matches!(again, Err(GitError::Api { status: 500, .. })), "{again:?}");
+    assert!(
+        again.is_ok() || matches!(again, Err(GitError::Api { status: 500, .. })),
+        "{again:?}"
+    );
     let c = forge
         .create_pull_request("portal/b", "main", "Duplicate", "")
         .await;
-    assert!(matches!(c, Err(GitError::Conflict(_))), "a second open request for one head is a 409: {c:?}");
+    assert!(
+        matches!(c, Err(GitError::Conflict(_))),
+        "a second open request for one head is a 409: {c:?}"
+    );
     // The approval page squashes (changes.rs approve).
     forge
-        .merge(b.number, MergeStyle::Squash, "Add b\n\nApproved-by: bob", Some(&b2.head_sha))
+        .merge(
+            b.number,
+            MergeStyle::Squash,
+            "Add b\n\nApproved-by: bob",
+            Some(&b2.head_sha),
+        )
         .await
         .unwrap();
     let squashed = forge.pull_request(b.number).await.unwrap();
     assert!(squashed.merged);
-    assert_eq!(forge.branch_head("main").await.unwrap(), squashed.merge_commit_sha);
-    assert!(forge.get_file("spaces/s/endpoints/b.yaml", "main").await.unwrap().is_some());
-    assert!(forge.get_file("spaces/s/endpoints/a.yaml", "main").await.unwrap().is_some());
+    assert_eq!(
+        forge.branch_head("main").await.unwrap(),
+        squashed.merge_commit_sha
+    );
+    assert!(
+        forge
+            .get_file("spaces/s/endpoints/b.yaml", "main")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        forge
+            .get_file("spaces/s/endpoints/a.yaml", "main")
+            .await
+            .unwrap()
+            .is_some()
+    );
     assert!(
         forge
             .commit_message(&squashed.merge_commit_sha)
@@ -541,7 +637,12 @@ async fn merge_requests_reviews_merge_and_webhooks() {
     // close_pull_request: closed, not merged, is a rejection.
     forge.create_branch("portal/c", "main").await.unwrap();
     forge
-        .write_files("portal/c", "Propose c", AUTHOR, &[("c.txt".into(), "c\n".into(), None)])
+        .write_files(
+            "portal/c",
+            "Propose c",
+            AUTHOR,
+            &[("c.txt".into(), "c\n".into(), None)],
+        )
         .await
         .unwrap();
     let c = forge
@@ -585,7 +686,12 @@ async fn a_webhook_signed_with_another_secret_is_refused_by_the_portal() {
         .await;
     assert_eq!(st, 201);
     forge
-        .write_files("main", "Direct", AUTHOR, &[("a.txt".into(), "a\n".into(), None)])
+        .write_files(
+            "main",
+            "Direct",
+            AUTHOR,
+            &[("a.txt".into(), "a\n".into(), None)],
+        )
         .await
         .unwrap();
     // One push, one delivery: a refusal is not retried.
@@ -608,7 +714,13 @@ async fn an_unsigned_hook_is_refused_and_a_lost_secret_delivers_nothing() {
         json!({ "type": "gitea", "config": { "url": w.portal_hook, "secret": "s" }, "branch_filter": "release/*" }),
         json!({ "url": w.portal_hook }),
     ] {
-        let (st, answer) = w.raw("POST", "api/v1/repos/joinedcontext/config/hooks", Some(body.clone())).await;
+        let (st, answer) = w
+            .raw(
+                "POST",
+                "api/v1/repos/joinedcontext/config/hooks",
+                Some(body.clone()),
+            )
+            .await;
         assert_eq!(st, 422, "{body} -> {answer}");
     }
     let (st, _) = w
@@ -620,7 +732,12 @@ async fn an_unsigned_hook_is_refused_and_a_lost_secret_delivers_nothing() {
         .await;
     assert_eq!(st, 201);
     forge
-        .write_files("main", "Direct", AUTHOR, &[("a.txt".into(), "a\n".into(), None)])
+        .write_files(
+            "main",
+            "Direct",
+            AUTHOR,
+            &[("a.txt".into(), "a\n".into(), None)],
+        )
         .await
         .unwrap();
     assert!(w.deliveries.lock().is_empty(), "{:?}", w.deliveries.lock());
@@ -634,7 +751,12 @@ async fn bundle_push_bundle_tags_and_migrate() {
     let origin = w.client("origin");
     assert!(origin.ensure_repository("Origin").await.unwrap());
     origin
-        .write_files("main", "Add a", AUTHOR, &[("a.yaml".into(), manifest("a"), None)])
+        .write_files(
+            "main",
+            "Add a",
+            AUTHOR,
+            &[("a.yaml".into(), manifest("a"), None)],
+        )
         .await
         .unwrap();
     let head = origin.branch_head("main").await.unwrap();
@@ -658,9 +780,16 @@ async fn bundle_push_bundle_tags_and_migrate() {
         .unwrap();
     assert!(refused.is_empty(), "{refused:?}");
     assert_eq!(copy.branch_head("main").await.unwrap(), head);
-    assert_eq!(copy.list_tags().await.unwrap(), vec![("v1".to_owned(), head.clone())]);
     assert_eq!(
-        copy.get_file("a.yaml", "main").await.unwrap().unwrap().content,
+        copy.list_tags().await.unwrap(),
+        vec![("v1".to_owned(), head.clone())]
+    );
+    assert_eq!(
+        copy.get_file("a.yaml", "main")
+            .await
+            .unwrap()
+            .unwrap()
+            .content,
         committed_text("a.yaml", &manifest("a"))
     );
 
@@ -687,9 +816,13 @@ async fn push_mirrors_teams_and_permissions() {
     let app = w.client("helsinki_bikes").for_application("helsinki_bikes");
     assert!(app.ensure_repository("App").await.unwrap());
     assert!(app.push_mirrors().await.unwrap().is_empty());
-    app.add_push_mirror("https://github.com/hel-apps/helsinki_bikes.git", "x-access-token", "gh-secret")
-        .await
-        .unwrap();
+    app.add_push_mirror(
+        "https://github.com/hel-apps/helsinki_bikes.git",
+        "x-access-token",
+        "gh-secret",
+    )
+    .await
+    .unwrap();
     let mirrors = app.push_mirrors().await.unwrap();
     assert_eq!(mirrors.len(), 1);
     assert_eq!(
@@ -699,10 +832,16 @@ async fn push_mirrors_teams_and_permissions() {
     assert!(!mirrors[0].remote_name.is_empty());
     app.sync_push_mirrors().await.unwrap();
     let (_, listed) = w
-        .raw("GET", "api/v1/repos/joinedcontext-apps/helsinki_bikes/push_mirrors", None)
+        .raw(
+            "GET",
+            "api/v1/repos/joinedcontext-apps/helsinki_bikes/push_mirrors",
+            None,
+        )
         .await;
     assert!(!listed.to_string().contains("gh-secret"), "{listed}");
-    app.delete_push_mirror(&mirrors[0].remote_name).await.unwrap();
+    app.delete_push_mirror(&mirrors[0].remote_name)
+        .await
+        .unwrap();
     assert!(app.push_mirrors().await.unwrap().is_empty());
 
     // Teams: the Portal reads ownership, lists, creates, links, unlinks and removes.
@@ -718,9 +857,15 @@ async fn push_mirrors_teams_and_permissions() {
         .unwrap();
     assert_eq!(team.name, "project-air-write");
     forge.org_teams().await.unwrap();
-    forge.set_team_repository(team.id, "config", true).await.unwrap();
+    forge
+        .set_team_repository(team.id, "config", true)
+        .await
+        .unwrap();
     forge.team_repositories(team.id).await.unwrap();
-    forge.set_team_repository(team.id, "config", false).await.unwrap();
+    forge
+        .set_team_repository(team.id, "config", false)
+        .await
+        .unwrap();
     forge.delete_team(team.id).await.unwrap();
     forge.delete_team(team.id).await.unwrap();
 }
@@ -739,12 +884,19 @@ async fn generic_packages_and_container_images() {
         .await;
     assert!(matches!(twice, Err(GitError::Conflict(_))), "{twice:?}");
     assert_eq!(
-        apps.get_generic_file("bikes", "1.0.0", "dist.zip", 1024).await.unwrap(),
+        apps.get_generic_file("bikes", "1.0.0", "dist.zip", 1024)
+            .await
+            .unwrap(),
         b"zip-bytes"
     );
-    assert!(apps.get_generic_file("bikes", "1.0.0", "dist.zip", 3).await.is_err());
+    assert!(
+        apps.get_generic_file("bikes", "1.0.0", "dist.zip", 3)
+            .await
+            .is_err()
+    );
     assert!(matches!(
-        apps.get_generic_file("bikes", "9.9.9", "dist.zip", 1024).await,
+        apps.get_generic_file("bikes", "9.9.9", "dist.zip", 1024)
+            .await,
         Err(GitError::NotFound)
     ));
 
@@ -801,16 +953,28 @@ async fn a_sync_source_origin_serves_the_advertisement_and_the_page_archive() {
     let forge = w.client("blueprints");
     assert!(forge.ensure_repository("Blueprints").await.unwrap());
     forge
-        .write_files("main", "Add", AUTHOR, &[("models/air.yaml".into(), "a: 1\n".into(), None)])
+        .write_files(
+            "main",
+            "Add",
+            AUTHOR,
+            &[("models/air.yaml".into(), "a: 1\n".into(), None)],
+        )
         .await
         .unwrap();
     let head = forge.branch_head("main").await.unwrap();
     let (st, _) = w
-        .raw("PATCH", "api/v1/repos/joinedcontext/blueprints", Some(json!({ "private": false })))
+        .raw(
+            "PATCH",
+            "api/v1/repos/joinedcontext/blueprints",
+            Some(json!({ "private": false })),
+        )
         .await;
     assert_eq!(st, 200);
 
-    let refs_url = format!("{}joinedcontext/blueprints.git/info/refs?service=git-upload-pack", w.base);
+    let refs_url = format!(
+        "{}joinedcontext/blueprints.git/info/refs?service=git-upload-pack",
+        w.base
+    );
     let zip_url = format!("{}joinedcontext/blueprints/archive/{head}.zip", w.base);
     let http = reqwest::Client::new();
     let signed = |url: &str| {
@@ -835,13 +999,19 @@ async fn a_sync_source_origin_serves_the_advertisement_and_the_page_archive() {
         .collect();
     // One root directory, which the Portal strips (`unpack`, strip_root).
     let root = names[0].split('/').next().unwrap().to_owned();
-    assert!(names.iter().all(|n| n.starts_with(&format!("{root}/"))), "{names:?}");
-    assert!(names.iter().any(|n| n.ends_with("/models/air.yaml")), "{names:?}");
+    assert!(
+        names.iter().all(|n| n.starts_with(&format!("{root}/"))),
+        "{names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n.ends_with("/models/air.yaml")),
+        "{names:?}"
+    );
 
     // Anonymous: refused, public or not.
     for url in [&refs_url, &zip_url] {
         let anon = http.get(url.as_str()).send().await.unwrap();
-        assert!(matches!(anon.status().as_u16(), 401 | 404), "{url}: {}", anon.status());
+        assert_eq!(anon.status().as_u16(), 401, "{url}");
     }
 }
 
@@ -857,12 +1027,21 @@ async fn actions_calls_answer_not_found_until_runners_land() {
         app.dispatch_workflow("build.yaml", "main").await,
         Err(GitError::NotFound)
     ));
-    assert!(matches!(app.applications().queued_jobs().await, Err(GitError::NotFound)));
+    assert!(matches!(
+        app.applications().queued_jobs().await,
+        Err(GitError::NotFound)
+    ));
     assert!(matches!(
         app.repository_registration_token().await,
         Err(GitError::NotFound)
     ));
-    assert!(matches!(app.artifacts_named("dist").await, Err(GitError::NotFound)));
-    assert!(matches!(app.download_artifact(1, 1024).await, Err(GitError::NotFound)));
+    assert!(matches!(
+        app.artifacts_named("dist").await,
+        Err(GitError::NotFound)
+    ));
+    assert!(matches!(
+        app.download_artifact(1, 1024).await,
+        Err(GitError::NotFound)
+    ));
     let _ = &w.state;
 }

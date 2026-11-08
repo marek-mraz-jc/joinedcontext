@@ -26,9 +26,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use shako_core::{
     ARCHIVE_OPERATION_WEIGHT_BYTES, Action, BranchProtectionRule, CommitStatusRecord,
-    MERGE_OPERATION_WEIGHT_BYTES, MergePolicyInput, ObjectTarget, ProtectionRuleRecord,
+    MERGE_OPERATION_WEIGHT_BYTES, MergePolicyInput, ObjectTarget, OrgId, ProtectionRuleRecord,
     PullRequestRecord, PushMirrorRecord, RefPolicy, RefUpdate, RepoId, RepoRecord, ReviewRecord,
-    OrgId, ReviewVerdict, ShakoError, ShakoResult, WebhookId, WebhookRecord, check_repo_count_quota,
+    ReviewVerdict, ShakoError, ShakoResult, WebhookId, WebhookRecord, check_repo_count_quota,
     validate_branch_name, validate_repo_or_owner_name, validate_tree_path,
 };
 use shako_git::{
@@ -2395,7 +2395,11 @@ async fn compat_create_pull(
         .list_pull_requests(repo.instance_id, repo.org_id, Some(repo.id), Some("open"))
         .await
     {
-        Ok(open) if open.iter().any(|pr| pr.head_ref == req.head && pr.base_ref == req.base) => {
+        Ok(open)
+            if open
+                .iter()
+                .any(|pr| pr.head_ref == req.head && pr.base_ref == req.base) =>
+        {
             return gitea_error_response(
                 &state,
                 &ShakoError::Conflict("pull request already exists for these targets".into()),
@@ -3211,8 +3215,15 @@ async fn compat_create_webhook(
             Ok(r) => r,
             Err(e) => return gitea_error_response(&state, &e),
         };
-    let hook_url = req.config.as_ref().map(|c| c.url.as_str()).or(req.url.as_deref());
-    if let Err(e) = state.outbound_guard.validate_url(hook_url.unwrap_or_default(), None) {
+    let hook_url = req
+        .config
+        .as_ref()
+        .map(|c| c.url.as_str())
+        .or(req.url.as_deref());
+    if let Err(e) = state
+        .outbound_guard
+        .validate_url(hook_url.unwrap_or_default(), None)
+    {
         return gitea_error_response(&state, &e);
     }
     let id = WebhookId::new();
