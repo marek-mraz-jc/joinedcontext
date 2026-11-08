@@ -521,23 +521,10 @@ pub(super) const UNIT: (&str, &[&str]) = (
     ],
 );
 /// `Prefix`.
-pub(super) const PREFIX: (&str, &[&str]) = (
-    "Prefix",
-    &[
-        "prefix_prefix",
-        "prefix_reference",
-    ],
-);
+pub(super) const PREFIX: (&str, &[&str]) = ("Prefix", &["prefix_prefix", "prefix_reference"]);
 /// `Annotation`.
-pub(super) const ANNOTATION: (&str, &[&str]) = (
-    "Annotation",
-    &[
-        "tag",
-        "value",
-        "extensions",
-        "annotations",
-    ],
-);
+pub(super) const ANNOTATION: (&str, &[&str]) =
+    ("Annotation", &["tag", "value", "extensions", "annotations"]);
 /// `AnonymousSlotExpression`.
 pub(super) const ANONYMOUS_SLOT_EXPRESSION: (&str, &[&str]) = (
     "AnonymousSlotExpression",

@@ -69,10 +69,7 @@ fn range(view: &View, name: &str, owner: &str) -> Result<String, String> {
         if !seen.insert(c) {
             break;
         }
-        current = declared
-            .get("typeof")
-            .filter(|v| !v.is_null())
-            .map(py_str);
+        current = declared.get("typeof").filter(|v| !v.is_null()).map(py_str);
     }
     match current {
         Some(c) if BUILTINS.contains(&c.as_str()) => Ok(c),
@@ -229,7 +226,10 @@ pub(super) fn broker_schema(view: &View) -> Result<Value, String> {
         if !annotations.is_empty() {
             entry.insert("annotations".to_owned(), Value::Object(annotations));
         }
-        if let Some(d) = cls.get("description").filter(|v| super::schema::truthy(Some(v))) {
+        if let Some(d) = cls
+            .get("description")
+            .filter(|v| super::schema::truthy(Some(v)))
+        {
             entry.insert("description".to_owned(), Value::String(py_str(d)));
         }
         classes.insert(name.clone(), Value::Object(entry));
@@ -261,7 +261,10 @@ pub(super) fn broker_schema(view: &View) -> Result<Value, String> {
         let mut entry = Map::new();
         entry.insert("name".to_owned(), Value::String(name.clone()));
         entry.insert("permissible_values".to_owned(), Value::Object(values));
-        if let Some(d) = e.get("description").filter(|v| super::schema::truthy(Some(v))) {
+        if let Some(d) = e
+            .get("description")
+            .filter(|v| super::schema::truthy(Some(v)))
+        {
             entry.insert("description".to_owned(), Value::String(py_str(d)));
         }
         enums.insert(name.clone(), Value::Object(entry));

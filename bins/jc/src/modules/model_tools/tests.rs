@@ -84,7 +84,10 @@ async fn healthz_answers_and_every_other_route_is_a_json_404() {
     ] {
         let (status, body) = call(method, path, Body::empty()).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}");
-        assert!(errors_of(&body)[0].contains("not a Model Tools route"), "{body}");
+        assert!(
+            errors_of(&body)[0].contains("not a Model Tools route"),
+            "{body}"
+        );
     }
 }
 
@@ -98,12 +101,18 @@ async fn a_model_compiles_to_a_broker_schema_the_broker_reads_and_a_context() {
     assert_eq!(schema["name"], "parking");
     assert_eq!(schema["classes"]["ParkingSpot"]["is_a"], "Entity");
     assert_eq!(schema["slots"]["capacity"]["range"], "integer");
-    assert_eq!(schema["enums"]["SpotStatus"]["permissible_values"]["free"]["text"], "free");
+    assert_eq!(
+        schema["enums"]["SpotStatus"]["permissible_values"]["free"]["text"],
+        "free"
+    );
     let context = &out["context"]["@context"];
     assert_eq!(context["ParkingSpot"]["@id"], "city:ParkingSpot");
     assert_eq!(context["capacity"]["@id"], "city:capacity");
     assert_eq!(out["generatorVersion"], generator_version());
-    assert!(out.get("jsonSchema").is_none(), "only the views' artifacts are filled");
+    assert!(
+        out.get("jsonSchema").is_none(),
+        "only the views' artifacts are filled"
+    );
 }
 
 #[tokio::test]
@@ -172,7 +181,9 @@ fn a_url_import_is_never_fetched_and_only_known_imports_resolve() {
         assert!(out.get("brokerSchema").is_none(), "{import}");
         let errors = errors_of(&out);
         assert!(
-            errors[0].contains(&format!("import '{import}' is not one Model Tools resolves")),
+            errors[0].contains(&format!(
+                "import '{import}' is not one Model Tools resolves"
+            )),
             "{import}: {errors:?}"
         );
     }
@@ -199,7 +210,10 @@ slots:
         "  - ngsi-ld-core\n",
         "  - ngsi-ld-core\n  - org.shared.v1\n",
     );
-    let model = model.replace("slots: [status, capacity]", "slots: [status, capacity, label]");
+    let model = model.replace(
+        "slots: [status, capacity]",
+        "slots: [status, capacity, label]",
+    );
     let mut body = source(&model);
     let (status, out) = generate(&body);
     assert_eq!(status, StatusCode::OK);
@@ -247,7 +261,9 @@ fn duplicate_keys_and_tags_are_refused_as_python_does() {
     let (_, out) = generate(&source("id: a\nname: m\nname: n\n"));
     assert_eq!(errors_of(&out), vec!["Duplicate key: \"name\"".to_owned()]);
     for tagged in ["!local m", "!local [m]", "!local {m: 1}"] {
-        let (_, out) = generate(&source(&format!("id: https://x.example/m\nname: {tagged}\n")));
+        let (_, out) = generate(&source(&format!(
+            "id: https://x.example/m\nname: {tagged}\n"
+        )));
         assert!(errors_of(&out)[0].contains("YAML tag"), "{tagged}: {out}");
     }
 }
@@ -258,8 +274,10 @@ fn duplicate_keys_and_tags_are_refused_as_python_does() {
 #[test]
 #[ignore = "parity harness, run by hand"]
 fn parity() {
-    let (Ok(input), Ok(output)) = (std::env::var("MT_PARITY_IN"), std::env::var("MT_PARITY_OUT"))
-    else {
+    let (Ok(input), Ok(output)) = (
+        std::env::var("MT_PARITY_IN"),
+        std::env::var("MT_PARITY_OUT"),
+    ) else {
         return;
     };
     let mut stack = vec![std::path::PathBuf::from(&input)];

@@ -5,8 +5,8 @@
 
 use super::checks::ngsi_ld_kind;
 use super::schema::{
-    Obj, View, annotation_value, attributes, camelcase, curie_for, mangled_attribute_name,
-    py_str, slot_usage_name, texts, truthy, underscore,
+    Obj, View, annotation_value, attributes, camelcase, curie_for, mangled_attribute_name, py_str,
+    slot_usage_name, texts, truthy, underscore,
 };
 use serde_json::{Map, Value, json};
 
@@ -152,8 +152,7 @@ impl Generator {
 
     /// The `@type` a LinkML type range coerces to: none for a string, `@id` for an IRI type.
     fn type_coercion(&self, view: &View, range: &str) -> Result<Option<String>, String> {
-        let uri = type_uri(view, range)
-            .ok_or_else(|| format!("KeyError: '{range}'"))?;
+        let uri = type_uri(view, range).ok_or_else(|| format!("KeyError: '{range}'"))?;
         let full = self.uri_for(&uri)?;
         Ok(if full == XSD_STRING {
             None
@@ -238,12 +237,22 @@ pub(super) fn context(view: &View, generator_version: &str) -> Result<Value, Str
     generator.vocab = vocab;
 
     // The slots SchemaLoader hands the generator, visited sorted by lower-cased name.
-    let default_range = schema.default_range.clone().unwrap_or_else(|| "string".to_owned());
+    let default_range = schema
+        .default_range
+        .clone()
+        .unwrap_or_else(|| "string".to_owned());
     let mut gen_slots: Vec<GenSlot<'_>> = Vec::new();
-    for (name, slot) in schema.slots.iter().filter_map(|(k, v)| v.as_object().map(|o| (k, o))) {
+    for (name, slot) in schema
+        .slots
+        .iter()
+        .filter_map(|(k, v)| v.as_object().map(|o| (k, o)))
+    {
         gen_slots.push(GenSlot {
             name: name.clone(),
-            alias: slot.get("alias").filter(|v| truthy(Some(v))).map_or_else(|| name.clone(), py_str),
+            alias: slot
+                .get("alias")
+                .filter(|v| truthy(Some(v)))
+                .map_or_else(|| name.clone(), py_str),
             element: slot,
             identifier: truthy(slot.get("identifier")),
             usage: false,
@@ -253,7 +262,10 @@ pub(super) fn context(view: &View, generator_version: &str) -> Result<Value, Str
         for (aname, attr) in attributes(cls) {
             gen_slots.push(GenSlot {
                 name: mangled_attribute_name(cname, aname),
-                alias: attr.get("alias").filter(|v| truthy(Some(v))).map_or_else(|| aname.clone(), py_str),
+                alias: attr
+                    .get("alias")
+                    .filter(|v| truthy(Some(v)))
+                    .map_or_else(|| aname.clone(), py_str),
                 element: attr,
                 identifier: truthy(attr.get("identifier")),
                 usage: false,
@@ -265,7 +277,9 @@ pub(super) fn context(view: &View, generator_version: &str) -> Result<Value, Str
             continue;
         };
         for (sname, usage) in usages {
-            let Some(usage) = usage.as_object() else { continue };
+            let Some(usage) = usage.as_object() else {
+                continue;
+            };
             let parent = schema.slots.get(sname).and_then(Value::as_object);
             let alias = parent
                 .and_then(|p| p.get("alias"))
@@ -337,7 +351,9 @@ pub(super) fn context(view: &View, generator_version: &str) -> Result<Value, Str
                     generator.emit.insert(p);
                 }
                 None => {
-                    generator.namespaces.push(("skos".to_owned(), SKOS.to_owned()));
+                    generator
+                        .namespaces
+                        .push(("skos".to_owned(), SKOS.to_owned()));
                     generator.emit.insert("skos".to_owned());
                 }
             }
@@ -407,7 +423,10 @@ pub(super) fn context(view: &View, generator_version: &str) -> Result<Value, Str
             Some(Value::Object(o)) => o.clone(),
             _ => Map::new(),
         };
-        entry.insert("@id".to_owned(), Value::String(term(view, false, &name, slot)));
+        entry.insert(
+            "@id".to_owned(),
+            Value::String(term(view, false, &name, slot)),
+        );
         match ngsi_ld_kind(&name, slot)?.as_str() {
             "Relationship" => {
                 entry.insert("@type".to_owned(), json!("@id"));
@@ -457,7 +476,10 @@ fn check_namespaces(view: &View) -> Result<(), String> {
     for (class, name, element) in classes.chain(slots) {
         let iri = view.get_uri(class, &name, element, true);
         if let Some(ns) = RESERVED_NAMESPACES.iter().find(|ns| iri.starts_with(*ns)) {
-            if annotation_value(element, "upstream_source").filter(|v| !v.is_empty()).is_none() {
+            if annotation_value(element, "upstream_source")
+                .filter(|v| !v.is_empty())
+                .is_none()
+            {
                 squatted.push(format!("'{name}' → {iri} (reserved: {ns})"));
             }
         }

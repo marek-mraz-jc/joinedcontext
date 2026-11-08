@@ -113,17 +113,25 @@ fn declared_range(view: &View, cls: &Obj, name: &str) -> Option<String> {
         .and_then(Value::as_object)
         .and_then(|u| u.get(name))
         .and_then(Value::as_object);
-    if let Some(range) = usage.and_then(|u| u.get("range")).filter(|r| truthy(Some(r))) {
+    if let Some(range) = usage
+        .and_then(|u| u.get("range"))
+        .filter(|r| truthy(Some(r)))
+    {
         return Some(py_str(range));
     }
     if let Some((_, attr)) = attributes(cls).find(|(n, _)| *n == name) {
         return attr.get("range").filter(|r| !r.is_null()).map(py_str);
     }
-    let slot = view.schema.slots.get(name).and_then(Value::as_object).or_else(|| {
-        view.classes()
-            .filter_map(|(_, c)| attributes(c).find(|(n, _)| *n == name).map(|(_, a)| a))
-            .last()
-    })?;
+    let slot = view
+        .schema
+        .slots
+        .get(name)
+        .and_then(Value::as_object)
+        .or_else(|| {
+            view.classes()
+                .filter_map(|(_, c)| attributes(c).find(|(n, _)| *n == name).map(|(_, a)| a))
+                .last()
+        })?;
     slot.get("range").filter(|r| !r.is_null()).map(py_str)
 }
 
@@ -185,7 +193,9 @@ fn relationships(view: &View) -> Result<Vec<String>, String> {
         let target = end.range.as_deref();
         let class_range = target.is_some_and(|t| view.is_class(t));
         if kind != "Relationship" {
-            if class_range && kind != "JsonProperty" && slot.get("inlined") != Some(&Value::Bool(true))
+            if class_range
+                && kind != "JsonProperty"
+                && slot.get("inlined") != Some(&Value::Bool(true))
             {
                 let target = target.unwrap_or_default();
                 problem(
@@ -369,9 +379,15 @@ fn has_unit(slot: &Obj) -> bool {
     let Some(unit) = slot.get("unit").and_then(Value::as_object) else {
         return false;
     };
-    ["ucum_code", "symbol", "descriptive_name", "exact_mappings", "has_quantity_kind"]
-        .iter()
-        .any(|k| truthy(unit.get(*k)))
+    [
+        "ucum_code",
+        "symbol",
+        "descriptive_name",
+        "exact_mappings",
+        "has_quantity_kind",
+    ]
+    .iter()
+    .any(|k| truthy(unit.get(*k)))
 }
 
 fn data_structures(view: &View) -> Result<(), String> {

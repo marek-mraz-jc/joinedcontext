@@ -163,7 +163,9 @@ async fn generate_route(state: State, body: Body) -> Response {
         }
         Ok(Err(e)) => errors(
             StatusCode::INTERNAL_SERVER_ERROR,
-            &[format!("the generator stopped before it answered ({e}); try again")],
+            &[format!(
+                "the generator stopped before it answered ({e}); try again"
+            )],
         ),
         Err(_) => errors(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -194,9 +196,8 @@ pub fn generate(body: &Map<String, Value>) -> (StatusCode, Value) {
         Some(Value::Object(m)) => Some(m),
         Some(_) => None,
     };
-    let imports: Option<BTreeMap<String, String>> = imports
-        .filter(|m| m.len() <= MAX_IMPORTS)
-        .and_then(|m| {
+    let imports: Option<BTreeMap<String, String>> =
+        imports.filter(|m| m.len() <= MAX_IMPORTS).and_then(|m| {
             m.iter()
                 .map(|(name, text)| match text.as_str() {
                     Some(t) if schema::is_model_import(name) && !t.trim().is_empty() => {
@@ -252,9 +253,7 @@ fn model_imports(text: &str) -> Vec<String> {
     entries
         .iter()
         .filter_map(Value::as_str)
-        .filter(|e| {
-            e.contains('.') && matches!(e.split('.').next(), Some("org" | "project"))
-        })
+        .filter(|e| e.contains('.') && matches!(e.split('.').next(), Some("org" | "project")))
         .map(str::to_owned)
         .collect()
 }
@@ -282,13 +281,17 @@ fn artifacts(source: &str, imports: &BTreeMap<String, String>) -> Value {
         }
     };
     let mut out = Map::new();
-    out.insert("generatorVersion".to_owned(), Value::String(version.clone()));
+    out.insert(
+        "generatorVersion".to_owned(),
+        Value::String(version.clone()),
+    );
     let mut failures: Vec<(String, Vec<&str>)> = Vec::new();
-    let mut fail = |field: &'static str, message: String| {
-        match failures.iter_mut().find(|(m, _)| *m == message) {
-            Some((_, fields)) => fields.push(field),
-            None => failures.push((message, vec![field])),
-        }
+    let mut fail = |field: &'static str, message: String| match failures
+        .iter_mut()
+        .find(|(m, _)| *m == message)
+    {
+        Some((_, fields)) => fields.push(field),
+        None => failures.push((message, vec![field])),
     };
     match context::context(&view, &version) {
         Ok(doc) => {

@@ -847,9 +847,11 @@ impl View {
             if !map.contains_key(name) {
                 let schema = match name {
                     "linkml:types" => Schema::linkml_types(),
-                    "ngsi-ld-core" => {
-                        Schema::from_document(&parse_yaml(NGSI_LD_CORE, imports.limits, &mut used)?)?
-                    }
+                    "ngsi-ld-core" => Schema::from_document(&parse_yaml(
+                        NGSI_LD_CORE,
+                        imports.limits,
+                        &mut used,
+                    )?)?,
                     other => match imports.models.get(other) {
                         Some(text) => {
                             Schema::from_document(&parse_yaml(text, imports.limits, &mut used)?)?
@@ -1196,11 +1198,7 @@ impl View {
                 format!("{pfx}:{local}")
             }
         });
-        if expand {
-            self.expand_curie(&uri)
-        } else {
-            uri
-        }
+        if expand { self.expand_curie(&uri) } else { uri }
     }
 
     /// `expand_curie`: a `prefix:local` whose prefix the view knows, else the text as it is.
@@ -1355,7 +1353,10 @@ mod tests {
         assert_eq!(underscore(" pm2-5 a,b  c "), "pm2_5_ab_c");
         assert_eq!(camelcase("air_quality observed"), "AirQualityObserved");
         assert_eq!(camelcase("AirQuality"), "AirQuality");
-        assert_eq!(mangled_attribute_name("Air_Quality", "pm-10"), "airQuality__pm_10");
+        assert_eq!(
+            mangled_attribute_name("Air_Quality", "pm-10"),
+            "airQuality__pm_10"
+        );
         assert_eq!(slot_usage_name("pm-10", "Air Quality"), "Air_Quality_pm_10");
     }
 
@@ -1364,7 +1365,14 @@ mod tests {
         for ok in ["org.air.v1", "project.a-b2.v0", "org.x.v10"] {
             assert!(is_model_import(ok), "{ok}");
         }
-        for bad in ["org.Air.v1", "org.-a.v1", "org.a.v01", "team.a.v1", "org.a", "org..v1"] {
+        for bad in [
+            "org.Air.v1",
+            "org.-a.v1",
+            "org.a.v01",
+            "team.a.v1",
+            "org.a",
+            "org..v1",
+        ] {
             assert!(!is_model_import(bad), "{bad}");
         }
     }
