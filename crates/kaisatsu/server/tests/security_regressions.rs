@@ -558,7 +558,7 @@ async fn browser_totp_enrolment_uses_a_fresh_secret_shown_on_the_page() {
     )
     .await;
     assert_eq!(st, StatusCode::OK);
-    assert!(html.contains("login-otp"), "{html}");
+    assert!(html.contains("login-config-totp"), "{html}");
     let marker = "enter the code it shows: ";
     let at = html.find(marker).expect("enrolment page shows the key") + marker.len();
     let secret: String = html[at..]
