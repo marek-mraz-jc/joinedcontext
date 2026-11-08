@@ -252,14 +252,15 @@ set (run both ways). `JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false` is a test-on
 - d, Antares: jc builds Antares without the `views` and `jc-policy` features, so `/broker/q/views` is not served.
   The Portal's Endpoint writes go through context-gateway, which is not a jc module.
 - e, Portal: the CKAN URL must be https (EP-67); a CkanInstance token comes only from a `CKAN_*` env var named by
-  `apiTokenRef` (no file). dataroom answers `help`/`uri` links with https on an http install.
+  `apiTokenRef` (no file). dataroom's `help`/`uri` links follow the configured public URL (http on an http
+  install) since jc-rest item 4.
 - f, jc: nothing runs provision.sh's per-project steps (`POST /dashboards/api/orgs`, `POST /api/folders`), so the
   Portal's `GET /dashboards/api/orgs/name/{project}` answers 404 `Organization not found` until they run.
 - shako: hooks take Gitea's body but shako refuses loopback targets, so the Portal polls (`JC_PORTAL_SYNC_INTERVAL`);
-  the webhook secret store has no API; the mergeRequest link points at `/git/user/oauth2/keycloak?redirect_to=...`,
-  which shako does not serve (owner: jc-shako-portal).
-- kaisatsu: a `PUT /admin/realms/jc/users/{id}` after `reset-password` made the new password fail at sign-in; PUT
-  first, then reset, works (unverified which side is wrong; owner: jc-kaisatsu-portal).
+  the webhook secret store has no API (owner: jc-rest item 3, waits for jc-shako-odata). The mergeRequest link
+  `/git/user/oauth2/keycloak?redirect_to=...` is served by shako-web (sign-in, then the redirect).
+- kaisatsu: `PUT /admin/realms/jc/users/{id}` after `reset-password` does not reproduce on jc-rest: kaisatsu keeps
+  the credential as Keycloak does (jc-rest item 2, kaisatsu-server `portal_contract::a_profile_write_after_a_password_reset_keeps_the_new_password`).
 - Audience-bound tokens: the Portal's admin calls use kaisatsu `client_credentials` tokens of `portal-admin`. shako,
   ekiben, daiya, dataroom and the Antares admin still take static credentials from setup files: none of them
   verifies kaisatsu tokens in jc yet.
