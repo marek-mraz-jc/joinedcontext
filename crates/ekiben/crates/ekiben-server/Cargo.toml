@@ -46,8 +46,11 @@ futures = { workspace = true }
 regex = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+jsonwebtoken = { workspace = true }
+reqwest = { workspace = true }
 
 [dev-dependencies]
+aws-lc-rs = { workspace = true }
 ekiben-testkit = { workspace = true }
 tempfile = { workspace = true }
 flate2 = { workspace = true }

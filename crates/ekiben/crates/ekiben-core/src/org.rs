@@ -158,6 +158,51 @@ impl Pacer {
     }
 }
 
+/// The one loopback listener a hosting process (`jc`) lets its streams reach: plain HTTP to
+/// exactly `addr` (a literal address, never a name), under one of `path_prefixes` (whole
+/// segments: `/broker` admits `/broker` and `/broker/...`, not `/brokerx`). Every other private
+/// or loopback target stays refused, other mounts of the same listener included. Set by the
+/// host, never by a stream or the API.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostTarget {
+    pub addr: std::net::SocketAddr,
+    pub path_prefixes: Vec<String>,
+}
+
+impl HostTarget {
+    /// Whether `url` is a request to this listener under an admitted prefix. A path holding an
+    /// encoded dot, slash or backslash is refused: the listener may decode it into another mount.
+    pub fn admits(&self, url: &url::Url) -> bool {
+        if url.scheme() != "http" || !url.username().is_empty() || url.password().is_some() {
+            return false;
+        }
+        let ip = match url.host() {
+            Some(url::Host::Ipv4(ip)) => std::net::IpAddr::V4(ip),
+            Some(url::Host::Ipv6(ip)) => std::net::IpAddr::V6(ip),
+            _ => return false,
+        };
+        if ip != self.addr.ip() || url.port_or_known_default() != Some(self.addr.port()) {
+            return false;
+        }
+        let path = url.path();
+        let lower = path.to_ascii_lowercase();
+        if ["%2e", "%2f", "%5c", "\\"]
+            .iter()
+            .any(|bad| lower.contains(bad))
+        {
+            return false;
+        }
+        self.path_prefixes.iter().any(|prefix| {
+            let prefix = prefix.trim_end_matches('/');
+            !prefix.is_empty()
+                && prefix.starts_with('/')
+                && path
+                    .strip_prefix(prefix)
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        })
+    }
+}
+
 /// Live runtime state and quota enforcement for a single organization.
 /// Uses per-org atomics and per-org spin-free locks so there is **no global lock on the hot path**;
 /// one organization hitting its limit stops cleanly without delaying any other organization.
@@ -171,10 +216,20 @@ pub struct OrgContext {
     msg_rate: std::sync::Mutex<Pacer>,
     http_rate: std::sync::Mutex<Pacer>,
     secrets: RwLock<HashMap<String, SecretString>>,
+    host_target: Option<Arc<HostTarget>>,
 }
 
 impl OrgContext {
     pub fn new(org_id: OrgId, quotas: OrgQuotas) -> Arc<Self> {
+        Self::with_host_target(org_id, quotas, None)
+    }
+
+    /// As [`Self::new`], for a host that lets its streams reach `host_target`.
+    pub fn with_host_target(
+        org_id: OrgId,
+        quotas: OrgQuotas,
+        host_target: Option<Arc<HostTarget>>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             org_id,
             project: None,
@@ -185,7 +240,13 @@ impl OrgContext {
             msg_rate: std::sync::Mutex::new(Pacer::new()),
             http_rate: std::sync::Mutex::new(Pacer::new()),
             secrets: RwLock::new(HashMap::new()),
+            host_target,
         })
+    }
+
+    /// The hosting process's own listener this organization's streams may reach, if any.
+    pub fn host_target(&self) -> Option<&HostTarget> {
+        self.host_target.as_deref()
     }
 
     /// Replaces the quotas; running streams pace by the new rates from their next admission on
@@ -428,11 +489,19 @@ pub struct ResourceManager {
     processors: OrgScoped<Arc<dyn Processor>>,
     inputs: OrgScoped<Arc<AsyncMutex<Box<dyn Input>>>>,
     outputs: OrgScoped<Arc<dyn Output>>,
+    host_target: Option<Arc<HostTarget>>,
 }
 
 impl ResourceManager {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Lets every organization's streams reach `target` (see [`HostTarget`]); call it before
+    /// any organization exists.
+    pub fn with_host_target(mut self, target: HostTarget) -> Self {
+        self.host_target = Some(Arc::new(target));
+        self
     }
 
     pub fn get_or_create_org(&self, org_id: &OrgId) -> Arc<OrgContext> {
@@ -442,7 +511,13 @@ impl ResourceManager {
         let mut guard = self.orgs.write().unwrap();
         guard
             .entry(org_id.clone())
-            .or_insert_with(|| OrgContext::new(org_id.clone(), OrgQuotas::default()))
+            .or_insert_with(|| {
+                OrgContext::with_host_target(
+                    org_id.clone(),
+                    OrgQuotas::default(),
+                    self.host_target.clone(),
+                )
+            })
             .clone()
     }
 

@@ -28,7 +28,7 @@ pub use message::{
 };
 pub use metrics::{MetricsRegistry, StreamMetrics, TimingStats};
 pub use observed::{ObservedInput, ObservedOutput};
-pub use org::{OrgContext, OrgId, OrgQuotas, ResourceManager};
+pub use org::{HostTarget, OrgContext, OrgId, OrgQuotas, ResourceManager};
 pub use pipeline::{
     execute_all, execute_catch_all, execute_try_all, Batcher, ObservedProcessor, PipelineWorkerPool,
 };

@@ -194,6 +194,120 @@ http:
     ));
 }
 
+/// A listener with two mounts, `/broker` and `/portal`, recording each path it is asked for;
+/// `/broker/hop` redirects into `/portal`.
+async fn two_mount_listener() -> (std::net::SocketAddr, Arc<std::sync::Mutex<Vec<String>>>) {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let app = Router::new().fallback(move |uri: axum::http::Uri| {
+        let log = log.clone();
+        async move {
+            log.lock().unwrap().push(uri.path().to_string());
+            if uri.path() == "/broker/hop" {
+                return (
+                    StatusCode::TEMPORARY_REDIRECT,
+                    [("location", "/portal/secret")],
+                    "",
+                );
+            }
+            (StatusCode::OK, [("content-type", "application/json")], "{}")
+        }
+    });
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (addr, seen)
+}
+
+fn host_target_contexts(target: Option<ekiben_core::HostTarget>) -> (Arc<Registry>, ProcContext) {
+    let (reg, mut pctx, _) = setup_contexts(false);
+    let resources = match target {
+        Some(t) => ResourceManager::new().with_host_target(t),
+        None => ResourceManager::new(),
+    };
+    pctx.org = resources.get_or_create_org(&OrgId::new("org-host"));
+    pctx.resources = resources;
+    (reg, pctx)
+}
+
+async fn get_once(reg: &Registry, pctx: &ProcContext, url: &str) -> Option<String> {
+    let conf = ComponentConfig::from_json_value(
+        &serde_json::json!({"http": {"url": url, "verb": "GET", "retries": 0}}),
+        "noop",
+        None,
+    )
+    .unwrap();
+    let proc = reg.build_processor(&conf, pctx, "0").unwrap();
+    let out = proc
+        .process_batch(pctx, vec![Part::from_str("{}")])
+        .await
+        .unwrap();
+    out[0][0].error_get().map(|e| e.to_string())
+}
+
+#[tokio::test]
+async fn a_stream_reaches_the_hosts_broker_mount_and_no_other_loopback_target() {
+    let (addr, seen) = two_mount_listener().await;
+    let (other, other_seen) = two_mount_listener().await;
+    let target = ekiben_core::HostTarget {
+        addr,
+        path_prefixes: vec!["/broker".into()],
+    };
+    let (reg, pctx) = host_target_contexts(Some(target));
+
+    let upsert = format!("http://{addr}/broker/ngsi-ld/v1/entityOperations/upsert");
+    assert_eq!(get_once(&reg, &pctx, &upsert).await, None);
+    assert_eq!(
+        get_once(&reg, &pctx, &format!("http://{addr}/broker")).await,
+        None
+    );
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec!["/broker/ngsi-ld/v1/entityOperations/upsert", "/broker"]
+    );
+    seen.lock().unwrap().clear();
+
+    let port = addr.port();
+    for refused in [
+        format!("http://{addr}/portal/api/v1/projects"),
+        format!("http://{addr}/"),
+        format!("http://{addr}/brokerx/y"),
+        format!("http://{addr}/broker/../portal/x"),
+        format!("http://{addr}/broker/%2e%2e/portal/x"),
+        format!("http://{addr}/broker%2F..%2Fportal/x"),
+        format!("http://{addr}/broker/%2E%2E%2Fportal"),
+        format!("http://localhost:{port}/broker/x"),
+        format!("http://[::ffff:127.0.0.1]:{port}/broker/x"),
+        format!("http://[::1]:{port}/broker/x"),
+        format!("https://{addr}/broker/x"),
+        format!("http://user:pw@{addr}/broker/x"),
+        format!("http://{other}/broker/x"),
+        "http://10.0.0.1/broker/x".to_string(),
+        "http://169.254.169.254/broker/x".to_string(),
+    ] {
+        let err = get_once(&reg, &pctx, &refused).await;
+        assert!(err.is_some(), "{refused} must be refused");
+    }
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "{:?}",
+        seen.lock().unwrap()
+    );
+    assert!(other_seen.lock().unwrap().is_empty());
+
+    // A redirect from the broker mount is not followed into another mount.
+    let err = get_once(&reg, &pctx, &format!("http://{addr}/broker/hop")).await;
+    assert!(err.is_some_and(|e| e.contains("307")));
+    assert_eq!(*seen.lock().unwrap(), vec!["/broker/hop"]);
+
+    // Without a host target the broker mount is as closed as any loopback address.
+    let (reg, pctx) = host_target_contexts(None);
+    assert!(get_once(&reg, &pctx, &upsert).await.is_some());
+    assert_eq!(*seen.lock().unwrap(), vec!["/broker/hop"]);
+}
+
 #[tokio::test]
 async fn http_processor_branch_oauth2_extract_headers_and_retries() {
     let (base_url, calls) = start_mock_server().await;

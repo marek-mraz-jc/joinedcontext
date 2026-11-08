@@ -331,6 +331,7 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
                 org_token_file,
                 // A standalone server keeps /ready open for its orchestrator's probe.
                 guard_probes: false,
+                oidc: None,
             };
             let state = ServerState::new(manager, auth);
             let app = build_router(state);
