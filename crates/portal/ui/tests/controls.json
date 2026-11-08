@@ -1418,10 +1418,11 @@
     },
     "src/pages/grafana/DashboardPage.tsx": {
       "controls": {
-        "Button": 1
+        "Button": 2
       },
       "tests": [
-        "dashboard_page.test.tsx"
+        "dashboard_page.test.tsx",
+        "dashboard_panels.test.tsx"
       ]
     },
     "src/components/panels/DashboardGrid.tsx": {

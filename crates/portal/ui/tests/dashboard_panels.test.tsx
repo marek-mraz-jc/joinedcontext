@@ -277,8 +277,8 @@ describe("a panel card", () => {
   it("names the range it read when empty and offers a longer one", async () => {
     const user = userEvent.setup();
     let widened = 0;
-    render(<PanelView panel={panel} data={{ frames: frames.empty }} asked="Last hour, Station: Kallio" onWiden={() => (widened += 1)} {...common} />);
-    expect(screen.getByText("Nothing for Last hour, Station: Kallio. Pick a longer range or other values.")).toBeInTheDocument();
+    render(<PanelView panel={panel} data={{ frames: frames.empty }} asked={{ range: "Last hour", vars: "Station Kallio" }} onWiden={() => (widened += 1)} {...common} />);
+    expect(screen.getByText("No readings in “Last hour” for Station Kallio. Show a longer range or pick other values.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Show a longer range" }));
     expect(widened).toBe(1);
   });

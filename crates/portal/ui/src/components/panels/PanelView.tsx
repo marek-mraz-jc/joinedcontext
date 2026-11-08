@@ -7,7 +7,7 @@
 import type { JSX, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
-import { Button, Card, Icon, Skeleton } from "../ui";
+import { Button, Card, Icon, InlineError, Skeleton } from "../ui";
 import type { IconName } from "../ui";
 import type { Frame } from "./frames";
 import { hasData } from "./frames";
@@ -54,8 +54,8 @@ export interface PanelViewProps {
   /** The height the panel's body gets, from its `gridPos.h`. */
   height: number;
   headingLevel?: "h2" | "h3";
-  /** The range and variables asked, in words, for an empty panel to name. */
-  asked?: string;
+  /** The range and the picked variables, in words, for an empty panel to name. */
+  asked?: { range: string; vars?: string };
   /** Ask a longer range: an empty panel's next step. */
   onWiden?: () => void;
   /** The page already says several panels failed: a failed panel shows its title line only. */
@@ -140,10 +140,7 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
     const reason = failure ?? data?.error ?? "";
     body = quiet ? (
       <div className="flex h-full min-h-12 items-center justify-center">
-        <p role="alert" className="flex items-center gap-1.5 text-caption text-danger">
-          <Icon name="error" className="size-3.5 shrink-0" />
-          {t("dashboardView.notRead")}
-        </p>
+        <InlineError>{t("dashboardView.notRead")}</InlineError>
       </div>
     ) : (
       <PanelState danger icon="error" title={t(failure ? "dashboardView.failedTitle" : "dashboardView.sourceFailedTitle")} description={t(failure ? "dashboardView.failed" : "dashboardView.sourceFailed")}>
@@ -166,7 +163,7 @@ export function PanelView({ panel, data, loading, failure, onRetry, from, to, lo
     body = <PanelState icon="lock" title={t("dashboardView.deniedTitle")} description={`${sentence(data.accessDenied)} ${t("dashboardView.askOwner")}`} />;
   } else if (!hasData(data.frames)) {
     body = (
-      <PanelState icon="dashboards" title={noValue ?? t("dashboardView.emptyTitle")} description={asked ? t("dashboardView.emptyIn", { asked }) : t("dashboardView.empty")}>
+      <PanelState icon="dashboards" title={noValue ?? t("dashboardView.emptyTitle")} description={asked ? t(asked.vars ? "dashboardView.emptyInFor" : "dashboardView.emptyIn", asked) : t("dashboardView.empty")}>
         {onWiden ? (
           <Button size="sm" variant="secondary" onClick={onWiden}>
             {t("dashboardView.widen")}

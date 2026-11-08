@@ -350,7 +350,7 @@ for (const width of [1440, 400]) {
         await settle(page);
         if (state === "empty") {
           await expect(page.getByText("No readings in this range").first()).toBeVisible();
-          await expect(card(page, "timeseries").getByText("Nothing for last 7 days.", { exact: false })).toBeVisible();
+          await expect(card(page, "timeseries").getByText("No readings in “Last 7 days”. Show a longer range.")).toBeVisible();
         } else {
           await expect(page.getByText("You cannot read this panel's data")).toBeVisible();
           await expect(card(page, "timeseries").getByRole("alert")).toContainText("The data source did not answer");

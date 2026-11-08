@@ -49,7 +49,7 @@ interface LivePanelProps {
   locale: string;
   at: number;
   /** The range and variables in words, for an empty panel. */
-  words: string;
+  words: { range: string; vars?: string };
   onWiden?: () => void;
   /** Tells the page whether this panel failed, so several failures make one notice. */
   onFailed: (id: number, failed: boolean) => void;
@@ -211,16 +211,14 @@ export function DashboardPage({ project, uid }: { project: string; uid: string }
   }
   const failed = Object.values(failing).filter(Boolean).length;
   const longer = RANGES.slice(RANGES.indexOf(asked.from as (typeof RANGES)[number]) + 1)[0];
-  const words = [
-    // Inside a sentence: "Nothing for last 7 days".
-    rangeLabel(asked.from, t).replace(/^\p{Lu}/u, (first) => first.toLowerCase()),
-    ...data.variables.map((variable) => {
+  const picked = data.variables
+    .map((variable) => {
       const value = asked.vars[variable.name];
-      return value ? `${variable.label || variable.name}: ${value === "$__all" ? t("dashboardView.all") : value}` : null;
-    }),
-  ]
+      return value ? `${variable.label || variable.name} ${value === "$__all" ? t("dashboardView.all") : value}` : null;
+    })
     .filter(Boolean)
     .join(", ");
+  const words = { range: rangeLabel(asked.from, t), ...(picked ? { vars: picked } : {}) };
   const ranges: string[] = RANGES.includes(asked.from as (typeof RANGES)[number]) ? [...RANGES] : [asked.from, ...RANGES];
   const panels = data.panels as unknown as PanelDefinition[];
   return (
