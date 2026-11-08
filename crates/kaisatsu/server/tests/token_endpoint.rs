@@ -668,3 +668,313 @@ async fn client_credentials_refusals_and_introspection_and_revocation() {
     .await;
     assert_eq!(err(&body), "unauthorized_client");
 }
+
+async fn realm_token(store: &MemoryStore, kek: &Kek, claims: Value) -> String {
+    let key = store
+        .list_signing_keys("dev")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|k| k.status == "ACTIVE")
+        .unwrap();
+    sign_jwt(&key, kek, Some("JWT"), &claims).unwrap()
+}
+
+#[tokio::test]
+async fn password_grant_refusals_and_totp() {
+    let (app, store, _) = app().await;
+    let gw = |extra: &[(&'static str, String)]| {
+        let mut f = vec![
+            ("grant_type", "password".to_owned()),
+            ("client_id", "apisix-gateway".to_owned()),
+            ("client_secret", "apisix-secret-123".to_owned()),
+        ];
+        f.extend_from_slice(extra);
+        f
+    };
+    let send = |form: Vec<(&'static str, String)>| {
+        let app = app.clone();
+        async move {
+            let pairs: Vec<(&str, &str)> = form.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            post_form(&app, TOKEN, &pairs, None).await
+        }
+    };
+    let (st, _, body) = send(gw(&[
+        ("username", "demo.orgmember@hel.fi".into()),
+        ("password", "MemberPass123!Valid".into()),
+    ]))
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    for (u, p) in [("nobody@hel.fi", "x"), ("demo.orgmember@hel.fi", "wrong")] {
+        let (_, _, body) = send(gw(&[("username", u.into()), ("password", p.into())])).await;
+        assert_eq!(err(&body), "invalid_grant", "{u}");
+    }
+    // The steward has TOTP: a missing, wrong or replayed code is refused.
+    let steward = [
+        ("username", "demo.steward@hel.fi".to_owned()),
+        ("password", "StewardPass123!Valid".to_owned()),
+    ];
+    let (_, _, body) = send(gw(&steward)).await;
+    assert_eq!(err(&body), "invalid_grant", "{body}");
+    let s = store
+        .get_user_by_username_or_email("dev", None, "demo.steward@hel.fi")
+        .await
+        .unwrap()
+        .unwrap();
+    let creds = store.list_credentials("dev", &s.id).await.unwrap();
+    let otp = creds.iter().find(|c| c.credential_type == "otp").unwrap();
+    let code =
+        generate_totp_code_for_credential(otp, chrono::Utc::now().timestamp() as u64).unwrap();
+    let mut with_code = steward.to_vec();
+    with_code.push(("totp", code));
+    let (st, _, body) = send(gw(&with_code)).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(
+        decode_jwt_payload(
+            serde_json::from_str::<Value>(&body).unwrap()["access_token"]
+                .as_str()
+                .unwrap()
+        )["acr"],
+        "mfa"
+    );
+    let (_, _, body) = send(gw(&with_code)).await;
+    assert_eq!(err(&body), "invalid_grant", "a replayed code: {body}");
+    // A client without direct access grants.
+    let (st, _, body) = send(vec![
+        ("grant_type", "password".into()),
+        ("client_id", "edge".into()),
+        ("client_secret", "edge-secret-123".into()),
+        ("username", "demo.orgmember@hel.fi".into()),
+        ("password", "MemberPass123!Valid".into()),
+    ])
+    .await;
+    assert_eq!(
+        (st, err(&body).as_str()),
+        (StatusCode::BAD_REQUEST, "unauthorized_client")
+    );
+}
+
+#[tokio::test]
+async fn token_exchange_refusals_and_delegation() {
+    let (app, store, _) = app().await;
+    let kek = store.kek().clone();
+    let mut gw = store
+        .get_client_by_client_id("dev", "apisix-gateway")
+        .await
+        .unwrap()
+        .unwrap();
+    gw.attributes
+        .insert("standard.token.exchange.enabled".into(), "true".into());
+    store.upsert_client(gw).await.unwrap();
+    let member = store
+        .get_user_by_username_or_email("dev", None, "demo.orgmember@hel.fi")
+        .await
+        .unwrap()
+        .unwrap();
+    let now = chrono::Utc::now().timestamp();
+    let subject = |extra: Value| {
+        let mut c = json!({"iss": ISSUER, "sub": member.id, "aud": "apisix-gateway", "typ": "Bearer",
+            "jti": uuid::Uuid::now_v7().to_string(), "iat": now, "exp": now + 300});
+        for (k, v) in extra.as_object().unwrap() {
+            if v.is_null() {
+                c.as_object_mut().unwrap().remove(k);
+            } else {
+                c[k] = v.clone();
+            }
+        }
+        c
+    };
+    let exchange = |token: String, extra: Vec<(&'static str, String)>| {
+        let app = app.clone();
+        async move {
+            let mut f = vec![
+                (
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:token-exchange".to_owned(),
+                ),
+                ("client_id", "apisix-gateway".to_owned()),
+                ("client_secret", "apisix-secret-123".to_owned()),
+                ("subject_token", token),
+            ];
+            f.extend(extra);
+            let pairs: Vec<(&str, &str)> = f.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            post_form(&app, TOKEN, &pairs, None).await
+        }
+    };
+    let ok = realm_token(&store, &kek, subject(json!({}))).await;
+    let actor = realm_token(&store, &kek, subject(json!({"sub": "robot-1"}))).await;
+    let (st, _, body) = exchange(ok.clone(), vec![("actor_token", actor)]).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let at = decode_jwt_payload(
+        serde_json::from_str::<Value>(&body).unwrap()["access_token"]
+            .as_str()
+            .unwrap(),
+    );
+    assert_eq!(at["sub"], member.id.as_str());
+    assert_eq!(at["act"]["sub"], "robot-1");
+
+    let mut disabled = member.clone();
+    disabled.enabled = false;
+    let cases = vec![
+        (String::new(), "missing"),
+        ("garbage".to_owned(), "not a JWT"),
+        (
+            realm_token(&store, &kek, subject(json!({"aud": null}))).await,
+            "no audience at all",
+        ),
+        (
+            realm_token(&store, &kek, subject(json!({"aud": "someone-else"}))).await,
+            "another audience",
+        ),
+        (
+            realm_token(&store, &kek, subject(json!({"typ": "ID"}))).await,
+            "an ID token",
+        ),
+        (
+            realm_token(&store, &kek, subject(json!({"sid": "ended-session"}))).await,
+            "an ended session",
+        ),
+        (
+            realm_token(&store, &kek, subject(json!({"sub": "nobody"}))).await,
+            "an unknown person",
+        ),
+        (
+            realm_token(&store, &kek, subject(json!({"sub": null}))).await,
+            "no subject",
+        ),
+    ];
+    for (token, why) in cases {
+        let (st, _, body) = exchange(token, vec![]).await;
+        assert_eq!(
+            (st, err(&body).as_str()),
+            (StatusCode::BAD_REQUEST, "invalid_request"),
+            "{why}: {body}"
+        );
+    }
+    let (_, _, body) = exchange(ok.clone(), vec![("actor_token", "garbage".into())]).await;
+    assert_eq!(err(&body), "invalid_request");
+    let (_, _, body) = exchange(ok.clone(), vec![("audience", "not-mapped".into())]).await;
+    assert_eq!(err(&body), "invalid_request");
+    // A revoked subject token.
+    let revoked_claims = subject(json!({}));
+    let revoked = realm_token(&store, &kek, revoked_claims.clone()).await;
+    store
+        .mark_token_revoked(RevokedTokenRecord {
+            jti_hash: sha256_hex(revoked_claims["jti"].as_str().unwrap()),
+            realm_id: "dev".into(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(5),
+        })
+        .await
+        .unwrap();
+    let (_, _, body) = exchange(revoked, vec![]).await;
+    assert_eq!(err(&body), "invalid_request");
+    store.update_user(disabled).await.unwrap();
+    let (_, _, body) = exchange(ok, vec![]).await;
+    assert_eq!(err(&body), "invalid_request", "a disabled person");
+    // A client without standard token exchange.
+    let (st, _, body) = post_form(
+        &app,
+        TOKEN,
+        &[
+            (
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:token-exchange",
+            ),
+            ("client_id", "edge"),
+            ("client_secret", "edge-secret-123"),
+            ("subject_token", "x"),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(
+        (st, err(&body).as_str()),
+        (StatusCode::BAD_REQUEST, "invalid_request")
+    );
+}
+
+#[tokio::test]
+async fn jwt_bearer_refusals() {
+    let (app, store, _) = app().await;
+    let kek = Kek::generate_for_tests();
+    let key = KeyManager::generate_es256("jb", &kek, 100, "ACTIVE").unwrap();
+    let jwk: Value = serde_json::from_str(&key.public_jwk_json).unwrap();
+    add_client(
+        &store,
+        "jb-ok",
+        "client-secret",
+        &[("jwks.string", json!({"keys":[jwk]}).to_string())],
+    )
+    .await;
+    add_client(&store, "jb-none", "client-secret", &[]).await;
+    add_client(
+        &store,
+        "jb-bad",
+        "client-secret",
+        &[("jwks.string", "[".into())],
+    )
+    .await;
+    add_client(
+        &store,
+        "jb-empty",
+        "client-secret",
+        &[("jwks.string", "{}".into())],
+    )
+    .await;
+    let now = chrono::Utc::now().timestamp();
+    let grant = |cid: &'static str, assertion: Option<String>| {
+        let app = app.clone();
+        async move {
+            let secret = format!("{cid}-secret");
+            let mut f = vec![
+                (
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:jwt-bearer".to_owned(),
+                ),
+                ("client_id", cid.to_owned()),
+                ("client_secret", secret),
+            ];
+            if let Some(a) = assertion {
+                f.push(("assertion", a));
+            }
+            let pairs: Vec<(&str, &str)> = f.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            post_form(&app, TOKEN, &pairs, None).await
+        }
+    };
+    let a = |claims: Value| sign_jwt(&key, &kek, None, &claims).unwrap();
+    let (_, _, body) = grant("jb-ok", None).await;
+    assert_eq!(err(&body), "invalid_request");
+    for cid in ["jb-none", "jb-bad", "jb-empty"] {
+        let (_, _, body) = grant(cid, Some("x.y.z".into())).await;
+        assert_eq!(err(&body), "invalid_grant", "{cid}");
+    }
+    // Claims without sub or jti, or without this server as audience.
+    for claims in [
+        json!({"iss":"jb-ok","aud":ISSUER,"jti":"2","exp":now+60}),
+        json!({"iss":"jb-ok","sub":"jb-ok","aud":ISSUER,"exp":now+60}),
+        json!({"iss":"jb-ok","sub":"jb-ok","exp":now+60,"jti":"3"}),
+    ] {
+        let (_, _, body) = grant("jb-ok", Some(a(claims.clone()))).await;
+        assert_eq!(err(&body), "invalid_grant", "{claims}");
+    }
+    let (st, _, body) = grant(
+        "jb-ok",
+        Some(a(
+            json!({"iss":"jb-ok","sub":"jb-ok","aud":ISSUER,"jti":"4","exp":now+60}),
+        )),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let (_, _, body) = post_form(
+        &app,
+        TOKEN,
+        &[
+            ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
+            ("client_id", "portal-ui"),
+            ("assertion", "x"),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(err(&body), "unauthorized_client");
+}
