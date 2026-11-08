@@ -33,5 +33,7 @@ runs:
         {
           echo RUSTC_WRAPPER=sccache
           echo SCCACHE_GHA_ENABLED=true
+          # never stop the server mid-build: one release crate can compile for longer than the 600 s default
+          echo SCCACHE_IDLE_TIMEOUT=0
           [ "$RELEASE_REF" = true ] || echo SCCACHE_GHA_RW_MODE=READ_ONLY
         } >> "$GITHUB_ENV"
