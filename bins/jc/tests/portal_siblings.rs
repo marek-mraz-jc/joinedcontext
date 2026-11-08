@@ -178,7 +178,7 @@ async fn start() -> Jc {
     let sink = log.clone();
     std::thread::spawn(move || {
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            if line.contains("jc listening") {
+            if line.contains("portal: ready") {
                 let _ = tx.send(Ok(()));
             } else if line.contains("Error:") || line.contains("ERROR") {
                 eprintln!("{line}");
@@ -562,6 +562,14 @@ async fn the_portal_runs_on_its_sibling_modules() {
     let st = kaisatsu_admin_write(
         &jc,
         &admin_token,
+        &format!("/users/{person_id}/reset-password"),
+        &json!({"type": "password", "value": approver_pw, "temporary": false}),
+    )
+    .await;
+    assert!(st.is_success(), "reset-password {st}");
+    let st = kaisatsu_admin_write(
+        &jc,
+        &admin_token,
         &format!("/users/{person_id}"),
         &json!({
             "username": "e2e.person@jc.invalid",
@@ -575,14 +583,6 @@ async fn the_portal_runs_on_its_sibling_modules() {
     )
     .await;
     assert!(st.is_success(), "user update {st}");
-    let st = kaisatsu_admin_write(
-        &jc,
-        &admin_token,
-        &format!("/users/{person_id}/reset-password"),
-        &json!({"type": "password", "value": approver_pw, "temporary": false}),
-    )
-    .await;
-    assert!(st.is_success(), "reset-password {st}");
     let (_, groups) = kaisatsu_admin(
         &jc,
         &admin_token,
