@@ -1,8 +1,8 @@
 //! The Portal inside `jc`: its own configuration (`JC_*` environment, as the standalone Portal
 //! reads it), its own state and auth, its background work, and its internal listener
-//! (`JC_INTERNAL_BIND`, default `0.0.0.0:9090`; it opens only when a realm is configured). Antares
-//! opens no listener inside `jc`, so its 9090 no longer meets this one; a clash with `jc`'s own
-//! listeners shows as a bind error at start.
+//! (`JC_INTERNAL_BIND`; it opens only when a realm is configured). Inside `jc` it defaults to a
+//! free loopback port (`127.0.0.1:0`) instead of the standalone `0.0.0.0:9090`, so it neither
+//! clashes with another listener nor opens on every interface; an explicit value wins.
 //!
 //! `JC_PORTAL_PUBLIC_URL` defaults to the mount's public base when unset, so the Portal's absolute
 //! URLs carry the slug or host it is mounted at. The settings that name a sibling module
@@ -26,6 +26,9 @@ fn err(e: impl std::fmt::Display) -> StartError {
 
 /// The Portal's configuration from `lookup`, with the public URL defaulting to the mount and the
 /// keys `lookup` leaves unset taken from `siblings` (also handed to the Portal's forge lookup).
+/// The Portal's internal listener inside `jc` unless `JC_INTERNAL_BIND` says otherwise.
+const INTERNAL_BIND: &str = "127.0.0.1:0";
+
 pub(crate) fn config(
     mount: &Mount,
     lookup: impl Fn(&str) -> Option<String>,
@@ -34,6 +37,7 @@ pub(crate) fn config(
     let public = format!("{}/", mount.public_base());
     let mut config = Config::from_vars(|key| match lookup(key) {
         None if key == "JC_PORTAL_PUBLIC_URL" => Some(public.clone()),
+        None if key == "JC_INTERNAL_BIND" => Some(INTERNAL_BIND.to_owned()),
         None => siblings.get(key).cloned(),
         other => other,
     })
@@ -90,6 +94,21 @@ mod tests {
             BTreeMap::new(),
         );
         assert!(bad.is_err());
+    }
+
+    #[test]
+    fn the_internal_listener_takes_a_free_loopback_port_unless_set() {
+        let mount = Mount::new("portal", "https", "city.example", "/portal").unwrap();
+        let cfg = config(&mount, |_| None, BTreeMap::new()).unwrap();
+        assert!(cfg.internal_bind.ip().is_loopback());
+        assert_eq!(cfg.internal_bind.port(), 0);
+        let cfg = config(
+            &mount,
+            |k| (k == "JC_INTERNAL_BIND").then(|| "0.0.0.0:9191".to_owned()),
+            BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(cfg.internal_bind.to_string(), "0.0.0.0:9191");
     }
 
     #[test]
