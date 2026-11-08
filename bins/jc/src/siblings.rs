@@ -253,7 +253,7 @@ mod tests {
     fn fixture(scheme: &str) -> (Siblings, Setup, tempfile::TempDir) {
         let siblings = Siblings::new(&plans(BTreeMap::new(), scheme), LISTEN.parse().unwrap());
         let dir = tempfile::tempdir().unwrap();
-        let setup = Setup::prepare(dir.path(), &Module::ALL).unwrap();
+        let setup = Setup::prepare(dir.path(), &Module::ALL, &BTreeMap::new()).unwrap();
         (siblings, setup, dir)
     }
 

@@ -22,13 +22,15 @@ pub async fn build(
 ) -> Result<Router, StartError> {
     let render = antares_broker::telemetry::init_hosted();
     let mut broker_cfg = antares_broker::config_from_env().map_err(err)?;
-    // The `/q` admin credential is mandatory in a shared process.
-    let token_file = cfg
-        .admin_token_file
-        .as_deref()
-        .or_else(|| setup.path(crate::setup::Secret::AntaresAdminToken))
-        .ok_or_else(|| err("no admin_token_file"))?;
-    broker_cfg.admin_token_file = Some(token_file.display().to_string());
+    // The `/q` admin credential is mandatory in a shared process: the operator's, else the one
+    // setup holds (a file while the Portal, which reads it from one, runs beside it; else made
+    // per boot in memory).
+    let _ = cfg;
+    let token = setup
+        .value(crate::setup::Secret::AntaresAdminToken)
+        .ok_or_else(|| err("no admin token"))?;
+    broker_cfg.admin_token_file = None;
+    broker_cfg.admin_token = Some(antares_broker::AdminToken(token.to_owned()));
     if broker_cfg.metrics_port.is_some() {
         tracing::warn!(
             "ANTARES_METRICS_PORT opens no listener inside jc; use the jc admin listener"

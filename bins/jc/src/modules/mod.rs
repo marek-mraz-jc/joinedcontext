@@ -33,6 +33,7 @@ pub mod shako;
 pub struct BuildCtx<'a> {
     pub setup: &'a Setup,
     pub siblings: &'a Siblings,
+    pub secrets: &'a crate::config::Secrets,
 }
 
 /// Builds the router of `module` mounted at `mount`.
@@ -55,14 +56,14 @@ pub async fn build(
             daiya::build(ctx.setup, mount).map_err(|e| StartError::module(Module::Daiya, e))
         }
         #[cfg(feature = "ekiben")]
-        Module::Ekiben => ekiben::build(&cfg.ekiben, ctx.setup),
+        Module::Ekiben => ekiben::build(&cfg.ekiben, ctx.setup, &ctx.secrets.ekiben_vars),
         #[cfg(feature = "antares")]
         Module::Antares => antares::build(&cfg.antares, ctx.setup).await,
         #[cfg(feature = "portal")]
         Module::Portal => portal::build(ctx, cfg.portal_siblings, mount, shutdown).await,
         #[cfg(feature = "shako")]
         Module::Shako => {
-            let state = shako::build_state(&cfg.shako, ctx.setup)?;
+            let state = shako::build_state(&cfg.shako, ctx.setup, ctx.secrets)?;
             Ok(shako::build(state, mount).0)
         }
         #[allow(unreachable_patterns)]

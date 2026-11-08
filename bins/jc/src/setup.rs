@@ -33,7 +33,7 @@ pub const FORGE_REPO: &str = "config";
 pub const DASHBOARDS_USER: &str = "portal";
 
 /// The kinds of secret `jc` generates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Secret {
     /// kaisatsu key-encryption key: 32 bytes as 64 hex characters.
     KaisatsuKek,
@@ -108,22 +108,43 @@ impl Secret {
             Secret::CatalogueToken => &[Module::Dataroom, Module::Portal],
         }
     }
-}
 
-/// One generated (or kept) secret: its file and its value. `Debug` never prints the value.
-#[derive(Clone)]
-pub struct Held {
-    pub path: PathBuf,
-    pub value: String,
-}
-
-impl std::fmt::Debug for Held {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Held")
-            .field("path", &self.path)
-            .field("value", &"<redacted>")
-            .finish()
+    /// Whether the secret lives in a 0600 file of the state directory, kept across restarts.
+    /// The service tokens between modules of one process (the Portal's calls to shako, ekiben,
+    /// daiya and dataroom) are made per boot and held in memory only; so is the Antares admin
+    /// token while no Portal runs beside it (the Portal reads that one from a file,
+    /// `JC_PORTAL_BROKER_ADMIN_TOKEN_FILE`). Keys, client secrets kaisatsu stores, the cookie
+    /// key and the webhook secret shako stores with its hooks must survive a restart.
+    #[must_use]
+    pub fn kept_on_disk(self, roles: &[Module]) -> bool {
+        match self {
+            Secret::ShakoToken
+            | Secret::EkibenToken
+            | Secret::DashboardsPassword
+            | Secret::CatalogueToken => false,
+            Secret::AntaresAdminToken => roles.contains(&Module::Portal),
+            _ => true,
+        }
     }
+}
+
+/// One secret setup holds: its value, where it came from and, when it lives in a file, the
+/// file. `Debug` never prints the value.
+#[derive(Debug, Clone)]
+pub struct Held {
+    pub path: Option<PathBuf>,
+    pub value: jc_secret::Secret,
+    pub source: jc_secret::Source,
+}
+
+/// A secret the operator gave (config file, `NAME` or `NAME_FILE`), which setup uses instead of
+/// generating one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Given {
+    pub secret: jc_secret::Secret,
+    pub source: jc_secret::Source,
+    /// The file it was read from, when it came from one.
+    pub path: Option<PathBuf>,
 }
 
 /// The state directory and the secrets held for the modules in the role set.
@@ -158,17 +179,11 @@ pub fn private_dir(dir: &Path) -> Result<(), StartError> {
     Ok(())
 }
 
-fn random_hex(bytes: usize) -> Result<String, StartError> {
-    let mut buf = vec![0u8; bytes];
-    getrandom::fill(&mut buf).map_err(|e| err(format!("no randomness: {e}")))?;
-    Ok(hex::encode(buf))
-}
-
 /// Reads the secret in `path`, or writes a fresh one there first (0600, created exclusively, so
 /// two starts never write two values).
-fn read_or_create(path: &Path, bytes: usize) -> Result<String, StartError> {
+fn read_or_create(path: &Path, bytes: usize) -> Result<jc_secret::Secret, StartError> {
     if !path.exists() {
-        let value = random_hex(bytes)?;
+        let value = jc_secret::Secret::generate(bytes).map_err(err)?;
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -178,7 +193,7 @@ fn read_or_create(path: &Path, bytes: usize) -> Result<String, StartError> {
         }
         match options.open(path) {
             Ok(mut file) => {
-                file.write_all(value.as_bytes())
+                file.write_all(value.expose().as_bytes())
                     .and_then(|()| file.sync_all())
                     .map_err(|e| err(format!("cannot write {}: {e}", path.display())))?;
                 return Ok(value);
@@ -187,22 +202,69 @@ fn read_or_create(path: &Path, bytes: usize) -> Result<String, StartError> {
             Err(e) => return Err(err(format!("cannot create {}: {e}", path.display()))),
         }
     }
-    crate::runtime::read_secret_file(path).map_err(err)
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+    jc_secret::read_file(name.as_deref().unwrap_or("secret"), path).map_err(err)
+}
+
+/// Removes a file an older `jc` wrote for a secret that is now held in memory only, so no stale
+/// credential stays on disk.
+fn remove_stale(path: &Path) -> Result<(), StartError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => {
+            tracing::info!(file = %path.display(), "removed a secret file that is now held in memory");
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(err(format!("cannot remove {}: {e}", path.display()))),
+    }
 }
 
 impl Setup {
-    /// Opens `dir` (0700) and holds every secret the modules in `roles` need, creating the
-    /// missing ones.
-    pub fn prepare(dir: &Path, roles: &[Module]) -> Result<Self, StartError> {
+    /// Opens `dir` (0700) and holds every secret the modules in `roles` need: the one the
+    /// operator gave (`given`), else the one in its state file (created on first start), else,
+    /// for a secret held in memory only, a fresh one per boot.
+    pub fn prepare(
+        dir: &Path,
+        roles: &[Module],
+        given: &BTreeMap<Secret, Given>,
+    ) -> Result<Self, StartError> {
         private_dir(dir)?;
         let mut held = BTreeMap::new();
         for secret in Secret::ALL {
+            let path = dir.join(secret.file_name());
+            let on_disk = secret.kept_on_disk(roles);
+            if !on_disk {
+                remove_stale(&path)?;
+            }
             if !secret.needs().iter().all(|m| roles.contains(m)) {
                 continue;
             }
-            let path = dir.join(secret.file_name());
-            let value = read_or_create(&path, secret.random_bytes())?;
-            held.insert(secret.file_name(), Held { path, value });
+            let entry = match given.get(&secret) {
+                Some(g) => {
+                    if secret == Secret::AntaresAdminToken && on_disk && g.path.is_none() {
+                        return Err(err(
+                            "the Portal reads the Antares admin token from a file: give it as \
+                             JCBIN_ANTARES_ADMIN_TOKEN_FILE, not JCBIN_ANTARES_ADMIN_TOKEN",
+                        ));
+                    }
+                    Held {
+                        path: g.path.clone(),
+                        value: g.secret.clone(),
+                        source: g.source,
+                    }
+                }
+                None if on_disk => Held {
+                    value: read_or_create(&path, secret.random_bytes())?,
+                    path: Some(path),
+                    source: jc_secret::Source::Generated,
+                },
+                None => Held {
+                    path: None,
+                    value: jc_secret::Secret::generate(secret.random_bytes()).map_err(err)?,
+                    source: jc_secret::Source::Generated,
+                },
+            };
+            held.insert(secret.file_name(), entry);
         }
         Ok(Self {
             dir: dir.to_path_buf(),
@@ -216,16 +278,21 @@ impl Setup {
         self.held.get(secret.file_name())
     }
 
-    /// The file of the secret, when its module is in the role set.
+    /// The file of the secret, when its module is in the role set and it lives in one.
     #[must_use]
     pub fn path(&self, secret: Secret) -> Option<&Path> {
-        self.get(secret).map(|h| h.path.as_path())
+        self.get(secret).and_then(|h| h.path.as_deref())
     }
 
     /// The value of the secret, when its module is in the role set.
     #[must_use]
     pub fn value(&self, secret: Secret) -> Option<&str> {
-        self.get(secret).map(|h| h.value.as_str())
+        self.get(secret).map(|h| h.value.expose())
+    }
+
+    /// Name and source of every secret held, for the start report.
+    pub fn report(&self) -> impl Iterator<Item = (&'static str, jc_secret::Source)> + '_ {
+        self.held.iter().map(|(name, h)| (*name, h.source))
     }
 }
 
@@ -293,41 +360,122 @@ mod tests {
         std::fs::metadata(path).unwrap().permissions().mode() & 0o777
     }
 
+    fn none() -> BTreeMap<Secret, Given> {
+        BTreeMap::new()
+    }
+
     #[test]
     fn secrets_are_private_files_in_a_private_dir_and_kept_across_restarts() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("state");
-        let first = Setup::prepare(&dir, &Module::ALL).unwrap();
+        let first = Setup::prepare(&dir, &Module::ALL, &none()).unwrap();
         #[cfg(unix)]
         assert_eq!(mode(&dir), 0o700);
         for secret in Secret::ALL {
             let held = first.get(secret).unwrap();
-            #[cfg(unix)]
-            assert_eq!(mode(&held.path), 0o600, "{}", secret.file_name());
-            assert_eq!(held.value.len(), secret.random_bytes() * 2);
+            assert_eq!(held.value.expose().len(), secret.random_bytes() * 2);
+            assert_eq!(held.source, jc_secret::Source::Generated);
+            if secret.kept_on_disk(&Module::ALL) {
+                #[cfg(unix)]
+                assert_eq!(
+                    mode(held.path.as_ref().unwrap()),
+                    0o600,
+                    "{}",
+                    secret.file_name()
+                );
+            }
         }
         assert_ne!(
             first.value(Secret::ShakoToken),
             first.value(Secret::EkibenToken)
         );
-        let again = Setup::prepare(&dir, &Module::ALL).unwrap();
+        let again = Setup::prepare(&dir, &Module::ALL, &none()).unwrap();
         for secret in Secret::ALL {
-            assert_eq!(first.value(secret), again.value(secret), "kept on restart");
+            if secret.kept_on_disk(&Module::ALL) {
+                assert_eq!(first.value(secret), again.value(secret), "kept on restart");
+            }
         }
         // Debug never shows a value.
         let shown = format!("{first:?}");
-        assert!(!shown.contains(first.value(Secret::ShakoToken).unwrap()));
+        for secret in Secret::ALL {
+            assert!(!shown.contains(first.value(secret).unwrap()), "{secret:?}");
+        }
+    }
+
+    #[test]
+    fn in_process_service_tokens_are_not_on_disk_and_change_per_boot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let in_memory = [
+            Secret::ShakoToken,
+            Secret::EkibenToken,
+            Secret::DashboardsPassword,
+            Secret::CatalogueToken,
+        ];
+        // A file an older jc wrote is removed, never read.
+        std::fs::write(tmp.path().join("shako-token"), "old-token-from-disk").unwrap();
+        let first = Setup::prepare(tmp.path(), &Module::ALL, &none()).unwrap();
+        let again = Setup::prepare(tmp.path(), &Module::ALL, &none()).unwrap();
+        for secret in in_memory {
+            assert!(first.path(secret).is_none(), "{secret:?}");
+            assert!(!tmp.path().join(secret.file_name()).exists(), "{secret:?}");
+            assert_ne!(
+                first.value(secret),
+                again.value(secret),
+                "{secret:?} per boot"
+            );
+        }
+        assert_ne!(first.value(Secret::ShakoToken), Some("old-token-from-disk"));
+        // With the Portal beside it the Antares admin token is its file; without, memory only.
+        assert!(first.path(Secret::AntaresAdminToken).is_some());
+        let alone = Setup::prepare(tmp.path(), &[Module::Antares], &none()).unwrap();
+        assert!(alone.path(Secret::AntaresAdminToken).is_none());
+        assert!(!tmp.path().join("antares-admin-token").exists());
+    }
+
+    #[test]
+    fn a_given_secret_is_used_and_never_generated() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut given = BTreeMap::new();
+        given.insert(
+            Secret::EkibenToken,
+            Given {
+                secret: jc_secret::Secret::new("operator-token".into()),
+                source: jc_secret::Source::Env,
+                path: None,
+            },
+        );
+        let setup = Setup::prepare(tmp.path(), &[Module::Ekiben], &given).unwrap();
+        assert_eq!(setup.value(Secret::EkibenToken), Some("operator-token"));
+        assert_eq!(
+            setup.report().collect::<Vec<_>>(),
+            vec![("ekiben-token", jc_secret::Source::Env)]
+        );
+        // The Portal reads the Antares admin token from a file: an env value is refused.
+        let mut given = BTreeMap::new();
+        given.insert(
+            Secret::AntaresAdminToken,
+            Given {
+                secret: jc_secret::Secret::new("q-token-0123456789abcdef0123".into()),
+                source: jc_secret::Source::Env,
+                path: None,
+            },
+        );
+        let e = Setup::prepare(tmp.path(), &[Module::Antares, Module::Portal], &given)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("JCBIN_ANTARES_ADMIN_TOKEN_FILE"), "{e}");
+        assert!(!e.contains("q-token"), "{e}");
     }
 
     #[test]
     fn only_the_modules_in_the_role_set_get_secrets() {
         let tmp = tempfile::tempdir().unwrap();
-        let setup = Setup::prepare(tmp.path(), &[Module::Daiya]).unwrap();
+        let setup = Setup::prepare(tmp.path(), &[Module::Daiya], &none()).unwrap();
         assert!(
             setup.get(Secret::DashboardsPassword).is_none(),
             "no Portal, no credential"
         );
-        let setup = Setup::prepare(tmp.path(), &[Module::Daiya, Module::Portal]).unwrap();
+        let setup = Setup::prepare(tmp.path(), &[Module::Daiya, Module::Portal], &none()).unwrap();
         assert!(setup.get(Secret::DashboardsPassword).is_some());
         assert!(setup.get(Secret::ShakoToken).is_none());
         assert!(!tmp.path().join("shako-token").exists());
@@ -339,18 +487,18 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().unwrap();
         std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
-        Setup::prepare(tmp.path(), &[]).unwrap();
+        Setup::prepare(tmp.path(), &[], &none()).unwrap();
         assert_eq!(mode(tmp.path()), 0o700);
     }
 
     #[test]
     fn an_unreadable_secret_names_the_file_not_a_value() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("ekiben-token"), "  \n").unwrap();
-        let e = Setup::prepare(tmp.path(), &[Module::Ekiben])
+        std::fs::write(tmp.path().join("kaisatsu-kek"), "  \n").unwrap();
+        let e = Setup::prepare(tmp.path(), &[Module::Kaisatsu], &none())
             .unwrap_err()
             .to_string();
-        assert!(e.contains("ekiben-token"), "{e}");
+        assert!(e.contains("kaisatsu-kek"), "{e}");
     }
 
     #[test]
@@ -380,7 +528,8 @@ mod tests {
             json!(["manage-users", "query-groups"])
         );
         let tmp = tempfile::tempdir().unwrap();
-        let setup = Setup::prepare(tmp.path(), &[Module::Kaisatsu, Module::Portal]).unwrap();
+        let setup =
+            Setup::prepare(tmp.path(), &[Module::Kaisatsu, Module::Portal], &none()).unwrap();
         let env = realm_env(&setup);
         assert_eq!(env.len(), 3);
         for name in env.keys() {

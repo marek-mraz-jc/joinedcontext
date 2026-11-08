@@ -237,7 +237,8 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
             let opts = ApplyOptions {
                 allow_literal_secrets,
                 ..Default::default()
-            };
+            }
+            .with_process_env();
             check_realm_value(&merged, &opts).map_err(fail(EXIT_INVALID_INPUT))?;
             Ok(EXIT_NO_CHANGE)
         }
@@ -255,7 +256,8 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
                 dry_run: true,
                 allow_literal_secrets: true,
                 ..Default::default()
-            };
+            }
+            .with_process_env();
             let plan = create_plan(&store, &files, &opts)
                 .await
                 .map_err(fail(EXIT_INVALID_INPUT))?;
@@ -280,7 +282,8 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
                 allow_literal_secrets,
                 secrets_dir,
                 ..Default::default()
-            };
+            }
+            .with_process_env();
             // A saved plan.json applies only onto the state it was computed against.
             if file.is_file()
                 && let Ok(raw) = std::fs::read_to_string(&file)
@@ -310,7 +313,8 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
                 dry_run: true,
                 allow_literal_secrets: true,
                 ..Default::default()
-            };
+            }
+            .with_process_env();
             let report = apply_realm_files(&store, &files, &opts)
                 .await
                 .map_err(fail(EXIT_INVALID_INPUT))?;
@@ -388,9 +392,13 @@ async fn run(cli: CommandsContainer) -> std::result::Result<i32, i32> {
                 // Applied at start like Keycloak's `--import-realm`; idempotent on a restart.
                 let files = load_realm_files_from_path(&dir).map_err(fail(EXIT_INVALID_INPUT))?;
                 for realm_files in group_by_realm(files) {
-                    apply_realm_files(&store, &realm_files, &ApplyOptions::default())
-                        .await
-                        .map_err(fail(EXIT_INVALID_INPUT))?;
+                    apply_realm_files(
+                        &store,
+                        &realm_files,
+                        &ApplyOptions::default().with_process_env(),
+                    )
+                    .await
+                    .map_err(fail(EXIT_INVALID_INPUT))?;
                 }
                 if let Some(watch_secs) = import_watch.filter(|&s| s > 0) {
                     let mut last_digest =

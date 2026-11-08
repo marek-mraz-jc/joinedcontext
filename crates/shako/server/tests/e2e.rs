@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! End-to-end integration and security tests for `shako` covering:
 //! - S1: Mount under `/git` (one-domain slug mode) and host root (`git.city.example`), plus `/v2/`
 //!   at the host root, and refusal of overlapping mounts.

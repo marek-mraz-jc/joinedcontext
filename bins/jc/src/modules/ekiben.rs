@@ -1,8 +1,9 @@
 //! ekiben (stream processor) inside `jc`, hardened for a shared process:
 //! - the API refuses every request without the configured bearer token (`require_auth`), even
 //!   the read-only endpoints; only `/ping` is open;
-//! - a posted config and Bloblang `env()` read only `EKIBEN_VAR_*` from the process environment,
-//!   never another module's secret (`EnvAccess::AllowListed`);
+//! - a posted config and Bloblang `env()` read no process environment (`EnvAccess::None`): `jc`'s
+//!   config loader reads the `EKIBEN_VAR_*` values and hands them over as the default
+//!   organization's variable map, so a stream never reads another module's secret;
 //! - `file` inputs and outputs are confined to one directory (`file_root`), so a stream cannot
 //!   read another module's key file or `/proc/self/environ`;
 //! - private and loopback HTTP targets stay refused (ekiben's default quotas), so a stream cannot
@@ -12,20 +13,15 @@ use crate::app::StartError;
 use crate::config::EkibenSection;
 use crate::module::Module;
 use axum::Router;
-use ekiben_core::{EnvAccess, ResourceManager};
+use ekiben_core::{EnvAccess, OrgId, ResourceManager};
 use ekiben_server::{
     ServerAuthConfig, ServerState, StreamManager, build_full_registry, build_router,
 };
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 fn err(e: impl std::fmt::Display) -> StartError {
     StartError::module(Module::Ekiben, e)
-}
-
-/// Reads the bearer token: the whole file, trimmed; an empty file is refused. The token is never
-/// logged or put into an error.
-fn read_token(path: &Path) -> Result<String, StartError> {
-    crate::runtime::read_secret_file(path).map_err(err)
 }
 
 /// The sandbox directory for `file` components: the configured one, or a private (0700)
@@ -48,20 +44,26 @@ fn file_root(configured: Option<&Path>) -> Result<PathBuf, StartError> {
     Ok(dir)
 }
 
-pub fn build(cfg: &EkibenSection, setup: &crate::setup::Setup) -> Result<Router, StartError> {
-    let token_file = cfg
-        .token_file
-        .as_deref()
-        .or_else(|| setup.path(crate::setup::Secret::EkibenToken))
-        .ok_or_else(|| err("no token_file"))?;
-    let token = read_token(token_file)?;
+pub fn build(
+    cfg: &EkibenSection,
+    setup: &crate::setup::Setup,
+    vars: &BTreeMap<String, jc_secret::Secret>,
+) -> Result<Router, StartError> {
+    let token = setup
+        .value(crate::setup::Secret::EkibenToken)
+        .ok_or_else(|| err("no API token"))?
+        .to_owned();
     let root = file_root(cfg.file_root.as_deref())?;
     tracing::info!(file_root = %root.display(), "ekiben file components confined");
+    let resources = ResourceManager::new();
+    resources
+        .get_or_create_org(&OrgId::default())
+        .replace_secrets(variables(vars));
     let manager = StreamManager::new(
         build_full_registry(),
-        ResourceManager::new(),
+        resources,
         Some(root),
-        EnvAccess::AllowListed,
+        EnvAccess::None,
     );
     let state = ServerState::new(
         manager,
@@ -76,23 +78,16 @@ pub fn build(cfg: &EkibenSection, setup: &crate::setup::Setup) -> Result<Router,
     Ok(build_router(state))
 }
 
+/// The default organization's variable map: what `jc` read from `EKIBEN_VAR_*`.
+fn variables(vars: &BTreeMap<String, jc_secret::Secret>) -> HashMap<String, String> {
+    vars.iter()
+        .map(|(k, v)| (k.clone(), v.expose().to_owned()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn token_file_must_exist_and_hold_a_token() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("missing");
-        assert!(read_token(&missing).is_err());
-        let empty = dir.path().join("empty");
-        std::fs::write(&empty, " \n").unwrap();
-        let e = read_token(&empty).unwrap_err().to_string();
-        assert!(e.contains("is empty"), "{e}");
-        let ok = dir.path().join("tok");
-        std::fs::write(&ok, "s3cret\n").unwrap();
-        assert_eq!(read_token(&ok).unwrap(), "s3cret");
-    }
 
     #[test]
     fn file_root_is_created_private() {

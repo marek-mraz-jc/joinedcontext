@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)] // These tests start the jc binary and read their database URL.
 //! The `jc` binary itself: configuration from a TOML file and `JCBIN_*`, a refused configuration
 //! exits 2, a started `jc` serves and stops cleanly on SIGTERM.
 

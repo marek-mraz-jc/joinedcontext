@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)] // These tests start the jc binary and read their database URL.
 //! End to end: the `jc` binary with `--role all` on a free port, the Portal wired to its sibling
 //! modules by `jc` (no external Keycloak, Gitea, Bento, CKAN or Grafana), driven only through the
 //! public mounts, each step asserted on the module it lands in.

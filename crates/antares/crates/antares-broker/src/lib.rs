@@ -382,6 +382,20 @@ pub struct BrokerConfig {
     /// ANTARES_ADMIN_TOKEN_FILE: the `/q` admin credential. A host may set
     /// it from its own configuration before [`build_state`].
     pub admin_token_file: Option<String>,
+    /// The `/q` admin credential itself, which a host that holds it in memory sets instead of
+    /// [`BrokerConfig::admin_token_file`] (it wins over the file). Never read from the
+    /// environment; `Debug` of the config never prints it.
+    pub admin_token: Option<AdminToken>,
+}
+
+/// A host-given `/q` admin token: `Debug` prints `<redacted>`.
+#[derive(Clone)]
+pub struct AdminToken(pub String);
+
+impl std::fmt::Debug for AdminToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<redacted>")
+    }
 }
 
 /// Reads and validates the broker's configuration from the environment.
@@ -476,6 +490,7 @@ pub fn config_from_env() -> Result<BrokerConfig, Box<dyn std::error::Error>> {
         drain_delay,
         drain_deadline,
         admin_token_file: std::env::var("ANTARES_ADMIN_TOKEN_FILE").ok(),
+        admin_token: None,
     })
 }
 
@@ -1271,10 +1286,21 @@ pub async fn build_state(
     }
     // The /q admin credential, before the router mounts the admin surface.
     // Unconfigured, /q serves as before and says so once, here.
-    match antares_api::admin_auth::AdminAuth::from_config(
-        cfg.admin_token_file.as_deref(),
-        std::env::var("ANTARES_ADMIN_METRICS").ok().as_deref(),
-    )? {
+    let admin_metrics = std::env::var("ANTARES_ADMIN_METRICS").ok();
+    let admin = match &cfg.admin_token {
+        Some(token) => {
+            antares_api::admin_auth::AdminAuth::from_config(None, admin_metrics.as_deref())
+                .and_then(|_| {
+                    let open = admin_metrics.as_deref().map(str::trim) == Some("open");
+                    antares_api::admin_auth::AdminAuth::new(&token.0, open).map(Some)
+                })?
+        }
+        None => antares_api::admin_auth::AdminAuth::from_config(
+            cfg.admin_token_file.as_deref(),
+            admin_metrics.as_deref(),
+        )?,
+    };
+    match admin {
         Some(auth) => {
             tracing::info!("/q admin routes require the admin token ({auth:?})");
             state = state.with_admin_auth(auth);

@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! Loading a Grafana provisioning directory (R2, §7.1, §7.3, `pkg/services/provisioning`):
 //! datasources with `deleteDatasources`, dashboard providers with `folder`, `folderUid` and
 //! `foldersFromFilesStructure`, organization 1 only, raw `secureJsonData` refused, paths and

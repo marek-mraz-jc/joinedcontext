@@ -20,7 +20,7 @@ fn err(e: impl std::fmt::Display) -> StartError {
 /// `auto_init`) when `jc` points the Portal at shako. Errors name the call and the status, never
 /// the token.
 pub async fn forge(siblings: &Siblings, setup: &Setup) -> Result<(), StartError> {
-    let vars = portal_vars(siblings, setup, |key| std::env::var(key).ok());
+    let vars = portal_vars(siblings, setup, crate::config::portal_env);
     let (Some(base), Some(token)) = (vars.get("JC_GITEA_URL"), setup.value(Secret::ShakoToken))
     else {
         return Ok(());

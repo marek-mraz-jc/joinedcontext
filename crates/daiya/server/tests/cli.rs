@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // Tests read their database URL and run the binaries they test; jc runs none of this.
 //! The `daiya` CLI subcommands as an operator runs them (R2, R10a): `check`, `import`,
 //! `export`, `plan`, `apply` and `allowed`, their json and markdown reports and their exit codes
 //! (0 clean, 1 refused or invalid input, 2 changes or warnings, 3 stale plan, 4 store or I/O).

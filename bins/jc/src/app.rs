@@ -171,7 +171,7 @@ pub async fn build_router(
         );
         #[cfg(feature = "shako")]
         if plan.module == Module::Shako {
-            let state = modules::shako::build_state(&cfg.shako, ctx.setup)?;
+            let state = modules::shako::build_state(&cfg.shako, ctx.setup, ctx.secrets)?;
             let (main_router, v2_router) = modules::shako::build(state, plan.mount.clone());
             builder = builder.mount(plan.spec.clone(), main_router);
             // S1: mount `/v2/` at the host root in both one-domain and host modes
@@ -199,20 +199,44 @@ pub async fn build_router(
 }
 
 /// Whether `headers` carry `Authorization: Bearer <expected>`.
-fn bearer_matches(headers: &HeaderMap, expected: &str) -> bool {
+fn bearer_matches(headers: &HeaderMap, expected: &jc_secret::Secret) -> bool {
     headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .is_some_and(|got| runtime::secret_eq(got.trim().as_bytes(), expected.as_bytes()))
+        .is_some_and(|got| expected.matches(got.trim().as_bytes()))
+}
+
+/// The start report: one line per secret with its name and where it came from (`env`, `file`,
+/// `generated`), never its value. With the production profile a secret given as an environment
+/// value is a warning: it shows in `docker inspect` and the pod spec.
+pub fn report_secrets(
+    profile: crate::config::Profile,
+    secrets: &crate::config::Secrets,
+    setup: &Setup,
+) -> Vec<(&'static str, jc_secret::Source)> {
+    let lines: Vec<_> = secrets.report().into_iter().chain(setup.report()).collect();
+    for (name, source) in &lines {
+        if *source == jc_secret::Source::Env && profile == crate::config::Profile::Production {
+            tracing::warn!(
+                secret = name,
+                source = source.as_str(),
+                "a secret comes from the environment: in production give it as a file \
+                 (NAME_FILE, a compose secret or a mounted Kubernetes Secret)"
+            );
+        } else {
+            tracing::info!(secret = name, source = source.as_str(), "secret");
+        }
+    }
+    lines
 }
 
 /// The internal admin router: Prometheus text of the one recorder behind the admin bearer token
 /// (it carries every module's series; Antares serves its own only behind its admin token), and
 /// open liveness.
-fn admin_router(token: String) -> Result<Router, StartError> {
+fn admin_router(token: jc_secret::Secret) -> Result<Router, StartError> {
     let handle = runtime::metrics_handle().map_err(StartError::Metrics)?;
-    let expected: Arc<str> = token.into();
+    let expected = Arc::new(token);
     let guard = move |req: Request, next: Next| {
         let expected = Arc::clone(&expected);
         async move {
@@ -306,18 +330,21 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     // The one recorder goes in before any module is built: a module that installs its own when
     // none is there (the Portal's `telemetry::install`) then falls back to recording into this one.
     runtime::metrics_handle().map_err(StartError::Metrics)?;
+    let secrets = crate::config::Secrets::load(cfg)?;
     let admin_token = match cfg.admin_listen {
-        Some(_) => {
-            let file = cfg
-                .admin_token_file
-                .as_deref()
-                .ok_or(crate::config::ConfigError::AdminToken)?;
-            Some(runtime::read_secret_file(file).map_err(StartError::Admin)?)
-        }
+        Some(_) => Some(
+            secrets
+                .admin_token
+                .as_ref()
+                .ok_or(crate::config::ConfigError::AdminToken)?
+                .secret
+                .clone(),
+        ),
         None => None,
     };
     let plans = plan_mounts(cfg)?;
-    let setup = Setup::prepare(&cfg.state_dir, &cfg.roles)?;
+    let setup = Setup::prepare(&cfg.state_dir, &cfg.roles, &secrets.module)?;
+    report_secrets(cfg.profile, &secrets, &setup);
     // Bound before the modules are built: the Portal's sibling addresses name this listener.
     let listener = bind(cfg.listen).await?;
     let addr = listener.local_addr().map_err(StartError::Serve)?;
@@ -325,6 +352,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     let ctx = modules::BuildCtx {
         setup: &setup,
         siblings: &siblings,
+        secrets: &secrets,
     };
     let tasks = TaskTracker::new();
     let built = build_router(cfg, ctx, plans, &shutdown, &tasks).await?;

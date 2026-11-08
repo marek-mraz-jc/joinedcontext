@@ -90,12 +90,11 @@ pub async fn build(
     mount: Mount,
 ) -> Result<Router, StartError> {
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
-    let kek_file = cfg
-        .kek_file
-        .as_deref()
-        .or_else(|| ctx.setup.path(setup::Secret::KaisatsuKek))
-        .ok_or_else(|| err(&"no kek_file"))?;
-    let kek = Kek::from_file(kek_file).map_err(|e| err(&e))?;
+    let kek = ctx
+        .setup
+        .value(setup::Secret::KaisatsuKek)
+        .ok_or_else(|| err(&"no key-encryption key"))?;
+    let kek = Kek::from_raw_bytes(kek.as_bytes()).map_err(|e| err(&e))?;
     let store = open_kaisatsu_store(cfg, kek.clone()).await?;
     if let Some(dir) = &cfg.import_dir {
         let files = load_realm_files_from_path(dir).map_err(|e| err(&e))?;
@@ -174,6 +173,7 @@ mod tests {
     /// URL is refused by the boot RLS check; the request role on a migrated database opens a
     /// `PgStore` whose writes persist across connections.
     #[tokio::test]
+    #[allow(clippy::disallowed_methods)] // The test database URL.
     async fn k16_postgres_store_runs_the_boot_rls_check_and_persists() {
         use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
         use std::str::FromStr;

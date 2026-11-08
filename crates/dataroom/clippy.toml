@@ -1,0 +1,11 @@
+# Secrets design (bins/jc/STATUS.md "Secrets"): inside `jc` only bins/jc's config loader reads the
+# environment, and only `jc_secret::spawn` starts a child process (cleared environment, allow-list).
+# A module crate gets its settings and secrets from its config section. A test or a standalone
+# binary's own reader takes `#[allow(clippy::disallowed_methods)]` with its reason beside it.
+disallowed-methods = [
+  { path = "std::env::var", reason = "jc's config loader reads the environment; take the value from your config section" },
+  { path = "std::env::var_os", reason = "jc's config loader reads the environment; take the value from your config section" },
+  { path = "std::env::vars", reason = "jc's config loader reads the environment; take the value from your config section" },
+  { path = "std::env::vars_os", reason = "jc's config loader reads the environment; take the value from your config section" },
+  { path = "std::process::Command::new", reason = "start children through jc_secret::spawn::command (cleared environment, allow-list)" },
+]

@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![allow(clippy::disallowed_methods)] // Tests check the process environment holds what they assume.
 //! Tests for `kaisatsu-import` (W1, W1b):
 //! - Loads the deployment's RI (`tests/fixtures/ri_dev.json`) and every `keycloak-clients.yaml` client,
 //!   verifying zero unknown fields and zero unknown mapper/authenticator kinds.
@@ -391,4 +392,37 @@ async fn unset_secret_variables_never_become_guessable_secrets() {
         .await
         .expect("an existing SMTP password is kept");
     assert_eq!(smtp_password().await, "the-real-secret");
+}
+
+/// Inside `jc` the importer reads only the values it is handed: a realm file naming another
+/// module's variable (`PATH` stands for one; every process has it) resolves to nothing, and only
+/// the standalone CLI's `with_process_env` reads the process environment.
+#[tokio::test]
+async fn a_realm_file_cannot_read_the_process_environment_unless_the_cli_asks() {
+    assert!(std::env::var("PATH").is_ok());
+    let doc = json!({
+        "realm": "envread",
+        "clients": [{
+            "clientId": "svc",
+            "publicClient": false,
+            "serviceAccountsEnabled": true,
+            "secret": "$(env:PATH)"
+        }]
+    });
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let err = apply_realm_files(
+        &store,
+        &[("a.json".into(), doc.clone())],
+        &ApplyOptions::default(),
+    )
+    .await
+    .expect_err("the process environment is not read");
+    assert!(err.to_string().contains("$.clients[0].secret"), "{err}");
+    apply_realm_files(
+        &store,
+        &[("a.json".into(), doc)],
+        &ApplyOptions::default().with_process_env(),
+    )
+    .await
+    .expect("the standalone CLI reads it");
 }
