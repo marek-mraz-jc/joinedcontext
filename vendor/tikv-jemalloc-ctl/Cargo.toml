@@ -15,6 +15,9 @@ publish = false
 libc = { version = "0.2", default-features = false }
 tikv-jemalloc-sys = "0.7.0"
 
+[dev-dependencies]
+tikv-jemallocator = "0.7.0"
+
 [features]
 default = []
 disable_initial_exec_tls = ["tikv-jemalloc-sys/disable_initial_exec_tls"]
