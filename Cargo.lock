@@ -1608,14 +1608,19 @@ dependencies = [
 name = "daiya-mcp"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "daiya-api",
  "daiya-import",
  "daiya-model",
  "daiya-query",
  "daiya-store-memory",
+ "http",
+ "http-body-util",
+ "jc-router",
  "serde",
  "serde_json",
  "tokio",
+ "tower",
 ]
 
 [[package]]
