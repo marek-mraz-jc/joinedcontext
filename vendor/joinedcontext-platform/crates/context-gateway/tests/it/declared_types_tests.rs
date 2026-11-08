@@ -68,6 +68,10 @@ fn both_types() -> PolicySpec {
 }
 
 fn endpoint(declared: Option<&[&str]>) -> Endpoint {
+    endpoint_with(declared, both_types())
+}
+
+fn endpoint_with(declared: Option<&[&str]>, policy: PolicySpec) -> Endpoint {
     Endpoint {
         declared_types: declared.map(|classes| {
             DeclaredTypes {
@@ -105,7 +109,7 @@ fn endpoint(declared: Option<&[&str]>) -> Endpoint {
         models: Vec::new(),
         policy_names: Vec::new(),
         manifest_name: String::new(),
-        policies: vec![both_types()],
+        policies: vec![policy],
     }
 }
 
@@ -338,4 +342,123 @@ async fn a_batch_with_one_undeclared_type_is_refused_whole() {
         .unwrap_or_default()
         .contains("`Device`"));
     assert!(asked.is_empty(), "the broker was asked: {asked:?}");
+}
+
+/// The public role reads; `ada` writes AirQualityObserved. Nobody else writes.
+fn reads_publicly_ada_writes() -> Vec<PolicySpec> {
+    let read = format!(
+        "contextSpaceRef: {SPACE}\n\
+         assigner: did:web:{DOMAIN}\n\
+         assignee: {{ kind: role, id: public }}\n\
+         operations: [queryEntity, retrieveEntity]\n\
+         information:\n\
+         \x20 - entities:\n\
+         \x20     - type: AirQualityObserved\n"
+    );
+    let write = format!(
+        "contextSpaceRef: {SPACE}\n\
+         assigner: did:web:{DOMAIN}\n\
+         assignee: {{ kind: user, id: ada }}\n\
+         operations: [createEntity, upsertBatch]\n\
+         information:\n\
+         \x20 - entities:\n\
+         \x20     - type: AirQualityObserved\n"
+    );
+    [read, write]
+        .iter()
+        .map(|text| serde_norway::from_str(text).expect("the policy spec parses"))
+        .collect()
+}
+
+/// A write as `who` (anonymous when `None`) on an Endpoint whose model declares only
+/// AirQualityObserved and whose Policies are [`reads_publicly_ada_writes`].
+async fn write_as(who: Option<&str>, uri: &str, body: Value) -> (StatusCode, Value, Vec<String>) {
+    let (upstream, hops) = broker().await;
+    let realm = common::Realm::new();
+    let mut endpoint = endpoint_with(Some(&["AirQualityObserved"]), both_types());
+    endpoint.policies = reads_publicly_ada_writes();
+    let gateway = Arc::new(
+        Gateway::new(Broker::new(upstream), Box::new(PolicyPdp), DOMAIN)
+            .serve([endpoint])
+            .authenticate(
+                Arc::new(realm.verifier()),
+                context_gateway::auth::accounts::ServiceAccounts::new(),
+                None,
+            ),
+    );
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/endpoint/{SLUG}/ngsi-ld/v1{uri}"))
+        .header("content-type", "application/ld+json");
+    if let Some(user) = who {
+        let token = realm.mint(&json!({
+            "iss": common::ISSUER,
+            "sub": user,
+            "aud": SLUG,
+            "preferred_username": user,
+            "realm_access": { "roles": ["public"] },
+            "exp": common::in_seconds(300),
+            "iat": common::in_seconds(-10),
+        }));
+        request = request.header("authorization", format!("Bearer {token}"));
+    }
+    let response = router(gateway)
+        .oneshot(
+            request
+                .body(Body::from(body.to_string()))
+                .expect("a request"),
+        )
+        .await
+        .expect("the gateway answers");
+    let status = response.status();
+    let challenge = response.headers().get("www-authenticate").cloned();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .expect("the body");
+    let mut problem: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    if let Some(challenge) = challenge {
+        problem["challenge"] = json!(challenge.to_str().unwrap_or_default());
+    }
+    let asked = hops.lock().expect("the hop log").clone();
+    (status, problem, asked)
+}
+
+/// jc-smoke-gate (smoke endpoints gap 3): who may not write learns that, not the space's model.
+#[tokio::test]
+async fn an_anonymous_write_without_a_grant_is_401_before_the_model_is_judged() {
+    for kind in ["SmokeOutsidePolicy", "AirQualityObserved"] {
+        let (status, problem, asked) = write_as(None, "/entities", entity(kind, "x")).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{kind}: {problem}");
+        assert_eq!(problem["challenge"], "Bearer", "{problem}");
+        assert!(!problem.to_string().contains("bb-air-quality"), "{problem}");
+        assert!(asked.is_empty(), "nothing reaches the broker: {asked:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_signed_in_reader_writing_an_undeclared_type_is_403_not_400() {
+    let (status, problem, asked) =
+        write_as(Some("bob"), "/entities", entity("SmokeOutsidePolicy", "x")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
+    assert!(!problem.to_string().contains("bb-air-quality"), "{problem}");
+    assert!(asked.is_empty(), "{asked:?}");
+}
+
+#[tokio::test]
+async fn a_writer_with_an_undeclared_type_still_learns_the_model() {
+    let (status, problem, asked) =
+        write_as(Some("ada"), "/entities", entity("SmokeOutsidePolicy", "x")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("bb-air-quality"),
+        "{problem}"
+    );
+    assert!(asked.is_empty(), "{asked:?}");
+    let (status, _, asked) =
+        write_as(Some("ada"), "/entities", entity("AirQualityObserved", "ok")).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(asked.len(), 1, "{asked:?}");
 }
