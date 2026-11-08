@@ -22,8 +22,6 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post, put};
 use axum::Json;
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
 use chrono::Utc;
 use jc_router::Mount;
 use parking_lot::RwLock;

@@ -18,7 +18,7 @@ use crate::state::{
 use axum::extract::{Extension, Path, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::{Json, Router};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -37,7 +37,7 @@ use shako_core::{
     validate_repo_or_owner_name, validate_tree_path,
 };
 use shako_git::{
-    CommitAuthor, FileChangeOp, FileOpKind, MergeStyle, check_mergeability, commit_file_changes,
+    CommitAuthor, FileChangeOp, MergeStyle, check_mergeability, commit_file_changes,
     compute_repo_size_bytes, create_branch, delete_branch, diff_refs_files, execute_pr_merge,
     init_bare_repo, list_branches, list_commits, list_tags, list_tree_entries, read_file_at_ref,
     update_pr_branch,
@@ -694,7 +694,10 @@ async fn apply_pr_expansions(
 // HTTP Handlers for `/odata` and `/odata/*`
 // =========================================================================
 
-async fn odata_service_doc(State(state): State<ShakoState>) -> Response {
+async fn odata_service_doc(State(state): State<ShakoState>, headers: HeaderMap) -> Response {
+    if let Err(e) = authenticate_request(&state, &headers, None, "shako") {
+        return odata_error_response(&e);
+    }
     let sets: Vec<Value> = state
         .registry
         .service
@@ -723,7 +726,10 @@ async fn odata_service_doc(State(state): State<ShakoState>) -> Response {
         .into_response()
 }
 
-async fn odata_metadata(State(state): State<ShakoState>) -> Response {
+async fn odata_metadata(State(state): State<ShakoState>, headers: HeaderMap) -> Response {
+    if let Err(e) = authenticate_request(&state, &headers, None, "shako") {
+        return odata_error_response(&e);
+    }
     match state.registry.csdl_xml() {
         Ok(xml) => (
             StatusCode::OK,

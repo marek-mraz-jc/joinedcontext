@@ -829,12 +829,13 @@ mod tests {
 
     #[test]
     fn markdown_escapes_raw_html_and_blocks_javascript_links() {
-        let md = "# Hello\n<script>alert(1)</script>\n<svg onload=alert(2)>\n[Click](javascript:alert(3))\n[Safe](https://city.example)";
+        // Blank lines end the HTML block, so the links below parse as links and reach the sanitizer.
+        let md = "# Hello\n<script>alert(1)</script>\n<svg onload=alert(2)>\n\n[Click](javascript:alert(3))\n\n[Safe](https://city.example)";
         let rendered = render_safe_markdown(md);
         assert!(!rendered.contains("<script>"));
         assert!(!rendered.contains("<svg"));
-        assert!(!rendered.contains("javascript:"));
+        assert!(!rendered.contains("javascript:"), "{rendered}");
         assert!(rendered.contains("&lt;script&gt;"));
-        assert!(rendered.contains("https://city.example"));
+        assert!(rendered.contains("href=\"https://city.example\""));
     }
 }

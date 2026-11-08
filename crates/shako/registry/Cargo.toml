@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+shako-api = { path = "../api" }
 shako-core = { path = "../core" }
 jc-router = { path = "../../shared/jc-router" }
 axum = { version = "0.8", features = ["json"] }

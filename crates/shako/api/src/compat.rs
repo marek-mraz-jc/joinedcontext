@@ -16,19 +16,19 @@ use crate::state::{
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, patch, post, put};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use chrono::Utc;
 use jc_router::Mount;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use shako_core::{
      ARCHIVE_OPERATION_WEIGHT_BYTES, Action, BranchProtectionRule, CommitStatusRecord,
     MERGE_OPERATION_WEIGHT_BYTES, MergePolicyInput, ObjectTarget, ProtectionRuleRecord,
     PullRequestRecord, PushMirrorRecord, RefPolicy, RepoId, RepoRecord, ReviewRecord,
-    ReviewVerdict, ShakoError, WebhookId, WebhookRecord, check_repo_count_quota, repo_disk_path,
+    ReviewVerdict, ShakoError, WebhookId, WebhookRecord, check_repo_count_quota,
     validate_branch_name, validate_repo_or_owner_name, validate_tree_path,
 };
 use shako_git::{
@@ -36,7 +36,7 @@ use shako_git::{
     commit_file_changes, compute_repo_size_bytes, copy_bare_repo, create_archive, create_branch,
     create_single_ref_bundle, delete_branch, diff_refs_files, execute_pr_merge, init_bare_repo,
     list_commits, list_tags, list_tree_entries, open_isolated, read_commit_info, read_file_at_ref,
-    resolve_commit_oid, set_ref_direct, update_pr_branch,
+    set_ref_direct, update_pr_branch,
 };
 
 fn default_main() -> String {
@@ -50,7 +50,15 @@ fn default_true() -> bool {
 // Version / Health probe
 // =========================================================================
 
-async fn api_version() -> Response {
+/// Liveness probe: no identity, no version, no data (probes carry no token).
+async fn api_healthz() -> Response {
+    (StatusCode::OK, Json(json!({ "status": "ok" }))).into_response()
+}
+
+async fn api_version(State(state): State<ShakoState>, headers: HeaderMap) -> Response {
+    if let Err(e) = authenticate_request(&state, &headers, None, "shako") {
+        return gitea_error_response(&state, &e);
+    }
     (
         StatusCode::OK,
         Json(json!({
@@ -65,7 +73,11 @@ async fn api_version() -> Response {
 // Rows 6-11: Actions (Out of scope in this run -> 404 with Gitea error JSON)
 // =========================================================================
 
-async fn actions_not_served_yet(State(state): State<ShakoState>) -> Response {
+async fn actions_not_served_yet(State(state): State<ShakoState>, headers: HeaderMap) -> Response {
+    // Deny by default: an unauthenticated caller learns nothing, not even that Actions are absent.
+    if let Err(e) = authenticate_request(&state, &headers, None, "shako") {
+        return gitea_error_response(&state, &e);
+    }
     let err = ShakoError::NotFound("actions are not served by this forge yet".into());
     gitea_error_response(&state, &err)
 }
@@ -3107,7 +3119,7 @@ async fn compat_redeliver_webhook(
 pub fn compat_and_native_rest_router() -> Router<ShakoState> {
     Router::new()
         .route("/api/v1/version", get(api_version))
-        .route("/api/healthz", get(api_version))
+        .route("/api/healthz", get(api_healthz))
         // Row 16: User & Org permissions
         .route("/api/v1/user", get(compat_get_current_user))
         .route(

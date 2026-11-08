@@ -353,10 +353,22 @@ async fn s1_mount_modes_and_overlap_refusal() {
     assert!(overlap.is_err());
 }
 
+/// A `git` client isolated from the developer's configuration: no system or global config and a
+/// working directory outside any enclosing repository, so no `http.extraheader` or credential
+/// helper of the surrounding checkout reaches the test server.
+fn git_cmd() -> std::process::Command {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(std::env::temp_dir())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0");
+    cmd
+}
+
 /// Contract S3 & S4: Real `git` binary clone, shallow fetch (`--depth 1`), partial clone
 /// (`--filter=blob:none`), mirror (`clone --mirror`), `ls-remote` (v0 and v2), push, and
 /// Portal `push_bundle` against a live served `shako` listener.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn s3_s4_git_client_matrix_v0_v2_and_portal_push_bundle() {
     let world = setup_world();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -389,7 +401,7 @@ async fn s3_s4_git_client_matrix_v0_v2_and_portal_push_bundle() {
 
     // 1. `git ls-remote` with protocol v0 and v2
     for proto in ["0", "2"] {
-        let out = std::process::Command::new("git")
+        let out = git_cmd()
             .args(["-c", &format!("protocol.version={proto}"), "ls-remote", &repo_url])
             .env("GIT_TERMINAL_PROMPT", "0")
             .output()
@@ -404,7 +416,7 @@ async fn s3_s4_git_client_matrix_v0_v2_and_portal_push_bundle() {
 
     // 2. Full clone (v2), commit, tag, and `git push`
     let clone_dir = work_dir.path().join("clone-v2");
-    let out = std::process::Command::new("git")
+    let out = git_cmd()
         .args(["clone", &repo_url, clone_dir.to_str().unwrap()])
         .env("GIT_TERMINAL_PROMPT", "0")
         .output()
@@ -425,7 +437,7 @@ async fn s3_s4_git_client_matrix_v0_v2_and_portal_push_bundle() {
         &["tag", "v1.0.0"][..],
         &["push", "origin", "main", "v1.0.0"][..],
     ] {
-        let st = std::process::Command::new("git")
+        let st = git_cmd()
             .current_dir(&clone_dir)
             .args(args)
             .env("GIT_TERMINAL_PROMPT", "0")
@@ -440,7 +452,7 @@ async fn s3_s4_git_client_matrix_v0_v2_and_portal_push_bundle() {
 
     // 3. Shallow clone (`--depth 1`, as git-sync uses) and partial clone (`--filter=blob:none`)
     let shallow_dir = work_dir.path().join("shallow");
-    let st = std::process::Command::new("git")
+    let st = git_cmd()
         .args([
             "clone",
             "--depth",
@@ -459,7 +471,7 @@ async fn s3_s4_git_client_matrix_v0_v2_and_portal_push_bundle() {
     assert!(shallow_dir.join("org.yaml").is_file());
 
     let mirror_dir = work_dir.path().join("mirror.git");
-    let st = std::process::Command::new("git")
+    let st = git_cmd()
         .args(["clone", "--mirror", &repo_url, mirror_dir.to_str().unwrap()])
         .env("GIT_TERMINAL_PROMPT", "0")
         .output()
@@ -488,7 +500,7 @@ async fn s3_s4_git_client_matrix_v0_v2_and_portal_push_bundle() {
     let bundle_file = work_dir.path().join("export.bundle");
     std::fs::write(&bundle_file, &bundle_bytes).unwrap();
 
-    let verify_out = std::process::Command::new("git")
+    let verify_out = git_cmd()
         .current_dir(&clone_dir)
         .args(["bundle", "verify", bundle_file.to_str().unwrap()])
         .output()
@@ -1221,4 +1233,39 @@ async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
     .unwrap();
     assert_eq!(cli_res, mcp_res["result"]);
     assert_eq!(list_mcp_tools(&world.state, &ctx).len(), world.state.registry.operations().len());
+}
+
+/// Deny by default (S12): discovery, version and the not-yet-served Actions rows answer 401
+/// without a token; only the liveness probe is open and carries no data.
+#[tokio::test]
+async fn deny_by_default_on_discovery_version_and_actions() {
+    let world = setup_world();
+    for uri in [
+        "/odata",
+        "/odata/",
+        "/odata/$metadata",
+        "/api/v1/version",
+        "/api/v1/repos/joinedcontext/helsinki/actions/runs",
+        "/api/v1/orgs/joinedcontext/actions/jobs",
+    ] {
+        let (st, _) = send_json(&world.app, "GET", uri, None, None).await;
+        assert_eq!(st, StatusCode::UNAUTHORIZED, "{uri} must require a token");
+        let (st, _) = send_json(&world.app, "GET", uri, Some("not-a-token"), None).await;
+        assert_eq!(st, StatusCode::UNAUTHORIZED, "{uri} must refuse a bad token");
+    }
+    let (st, _) = send_json(&world.app, "GET", "/odata/$metadata", Some("bob-token"), None).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, body) = send_json(
+        &world.app,
+        "GET",
+        "/api/v1/repos/joinedcontext/helsinki/actions/runs",
+        Some("bob-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    assert!(body["message"].as_str().unwrap_or_default().contains("actions"));
+    let (st, body) = send_json(&world.app, "GET", "/api/healthz", None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body, json!({ "status": "ok" }));
 }

@@ -33,14 +33,18 @@ struct DefaultMount(Mount);
 /// Per-response CSP nonce and security headers middleware (THINK-CHECKLIST 3, S18, S21).
 async fn security_and_mount_headers(
     Extension(default_mount): Extension<DefaultMount>,
-    req: Request<Body>,
+    mut req: Request<Body>,
     next: Next,
 ) -> Response {
-    let mount = req
-        .extensions()
-        .get::<Mount>()
-        .cloned()
-        .unwrap_or(default_mount.0);
+    // Handlers read `Extension<Mount>`: `jc-router` inserts it; a standalone router gets the
+    // mount it was built with, so links and redirects honour the configured prefix (S1).
+    let mount = match req.extensions().get::<Mount>() {
+        Some(m) => m.clone(),
+        None => {
+            req.extensions_mut().insert(default_mount.0.clone());
+            default_mount.0
+        }
+    };
     let public_base = mount.public_base();
     let cookie_name = mount.cookie_name("shako_session");
 
