@@ -760,8 +760,11 @@ fn query_within_repo(repo_id: RepoId, raw_q: Option<&str>) -> String {
         .map(|q| q.split('&').map(str::to_owned).collect())
         .unwrap_or_default();
     for part in &mut parts {
-        if let Some(user) = part.strip_prefix("$filter=") {
-            *part = format!("$filter={scope}%20and%20({user})");
+        // A client may send the name encoded (`%24filter`): it is the same option.
+        let (name, user) = part.split_once('=').unwrap_or((part.as_str(), ""));
+        if percent_encoding::percent_decode_str(name).decode_utf8_lossy() == "$filter" {
+            let scoped = format!("$filter={scope}%20and%20({user})");
+            *part = scoped;
             seen = true;
         }
     }
@@ -2124,4 +2127,31 @@ pub fn odata_router() -> Router<ShakoState> {
             get(odata_deep_get).post(odata_deep_post),
         )
         .layer(DefaultBodyLimit::max(MAX_ODATA_BODY_BYTES))
+}
+
+#[cfg(test)]
+mod query_within_repo_tests {
+    use super::*;
+
+    /// The scope is and-ed into the caller's filter however the option name is spelled, so a
+    /// navigated collection carries one `$filter` and never a second the parser refuses.
+    #[test]
+    fn an_encoded_filter_name_gets_the_scope_and_ed_in() {
+        let id = RepoId::new();
+        for q in [
+            "$filter=State%20eq%20'open'&$top=5",
+            "%24filter=State%20eq%20'open'&%24top=5",
+        ] {
+            let scoped = query_within_repo(id, Some(q));
+            assert_eq!(scoped.matches("filter=").count(), 1, "{scoped}");
+            assert!(
+                scoped.starts_with(&format!("$filter=RepoId%20eq%20'{id}'%20and%20(State")),
+                "{scoped}"
+            );
+        }
+        assert_eq!(
+            query_within_repo(id, Some("$top=5")),
+            format!("$top=5&$filter=RepoId%20eq%20'{id}'")
+        );
+    }
 }
