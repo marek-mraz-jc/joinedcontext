@@ -198,6 +198,12 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE portal"
+      # The Portal's lib test binary peaks above the runner's 7.9 GB beside a second rustc (measured
+      # 7889/7931 MB before the runner was shut down, run 42523032193): 8 GB of swap lets the peak
+      # spill instead of losing the runner.
+      - run: |
+          sudo fallocate -l 8G /swap-portal && sudo chmod 600 /swap-portal
+          sudo mkswap /swap-portal >/dev/null && sudo swapon /swap-portal && swapon --show
       - uses: ./.github/actions/rust
         with: { workspace: crates/portal, key: portal-test }
       # Memory and disk once a minute: a runner that runs out of either ends the step with 143 and
