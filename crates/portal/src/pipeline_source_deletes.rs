@@ -34,8 +34,12 @@ use crate::state::AppState;
 /// The most ids one delete stream carries; the rest stay doomed and go after the next complete
 /// run. ponytail: 5000 per run; page the stream when a source drops more at once.
 pub const MAX_PER_STREAM: usize = 5000;
-/// Ids per delete request: the gateway's batch limit.
-const CHUNK: usize = 100;
+/// Most ids one chunk's batch delete names: the gateway's `MAX_DELETE_IDS` (Antares'
+/// `ANTARES_MAX_BATCH_ITEMS`).
+const DELETE_IDS: usize = 1000;
+/// Most bytes of a chunk's ids joined by `,`: the broker refuses a Query whose id list passes
+/// `MAX_URI_BYTES` (antares-api bounds.rs, 8192) with 400.
+const QUERY_ID_BYTES: usize = 8192;
 /// How long a delete stream is left on the runner before it is removed.
 const STREAM_WINDOW: Duration = Duration::from_secs(120);
 /// The longest entity id the ledger keeps.
@@ -1295,7 +1299,32 @@ fn reason_header(cause: Cause, pipeline: &str, run: &str) -> String {
         .collect()
 }
 
-/// The delete stream: one message per `CHUNK` ids, each first read for its entities'
+/// Splits `ids` into chunks whose comma-joined ids fit [`QUERY_ID_BYTES`] and whose count fits
+/// [`DELETE_IDS`]; an id too long for the query alone is a chunk of its own (the ledger keeps
+/// none that long, `MAX_ID`).
+fn chunk_ends(ids: &[String]) -> Vec<usize> {
+    let mut ends = Vec::new();
+    let (mut count, mut bytes) = (0usize, 0usize);
+    for (i, id) in ids.iter().enumerate() {
+        let joined = if count == 0 {
+            id.len()
+        } else {
+            bytes + 1 + id.len()
+        };
+        if count > 0 && (count == DELETE_IDS || joined > QUERY_ID_BYTES) {
+            ends.push(i);
+            (count, bytes) = (1, id.len());
+        } else {
+            (count, bytes) = (count + 1, joined);
+        }
+    }
+    if count > 0 {
+        ends.push(ids.len());
+    }
+    ends
+}
+
+/// The delete stream: one message per chunk of ids ([`chunk_ends`]), each first read for its entities'
 /// `modifiedAt` by a batch query (queryBatch, the read admission demands beside deleteBatch), so one someone changed after the pipeline last wrote it (`wrote`, unix seconds,
 /// beside each id) is kept and reported as `edited` (PL-100); the rest is a batch delete on the
 /// Endpoint, its answer reduced to what went, what was gone already and what the gateway
@@ -1310,10 +1339,14 @@ pub fn render(
     report: &str,
 ) -> Value {
     use base64::Engine;
-    let chunks: Vec<Value> = ids
-        .chunks(CHUNK)
-        .zip(wrote.chunks(CHUNK))
-        .map(|(chunk, wrote)| json!({ "run": run, "ids": chunk, "wrote": wrote }))
+    let mut start = 0;
+    let chunks: Vec<Value> = chunk_ends(ids)
+        .into_iter()
+        .map(|end| {
+            let chunk = json!({ "run": run, "ids": &ids[start..end], "wrote": wrote.get(start..end).unwrap_or_default() });
+            start = end;
+            chunk
+        })
         .collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(Value::from(chunks).to_string());
     let oauth2 = crate::reconciler::streams::pipeline_oauth2(project);
@@ -1331,7 +1364,7 @@ pub fn render(
                 { "branch": {
                     "request_map": "root = {\"type\": \"Query\", \"entities\": [{\"type\": \"*\", \"id\": this.ids}]}",
                     "processors": [{ "http": {
-                        "url": format!("{entities}/entityOperations/query?options=sysAttrs,keyValues&limit={CHUNK}"),
+                        "url": format!("{entities}/entityOperations/query?options=sysAttrs,keyValues&limit={DELETE_IDS}"),
                         "verb": "POST",
                         "headers": { "Content-Type": "application/json", "Accept": "application/json" },
                         "oauth2": oauth2,
@@ -1660,6 +1693,94 @@ pub fn overview(
 mod tests {
     use super::*;
 
+    /// An id of `len` bytes, distinct per `n`.
+    fn id_of(len: usize, n: usize) -> String {
+        let head = format!("urn:ngsi-ld:Garden:{n}:");
+        format!("{head}{}", "x".repeat(len - head.len()))
+    }
+
+    /// The chunks render() puts in its stream, decoded from the generate mapping.
+    fn rendered_chunks(ids: &[String]) -> Vec<Value> {
+        use base64::Engine;
+        let wrote: Vec<i64> = (0..ids.len() as i64).collect();
+        let stream = render(
+            "p",
+            "pl",
+            "slug",
+            ("r1", Cause::Snapshot),
+            (ids, &wrote),
+            "http://report",
+        );
+        let mapping = stream["input"]["generate"]["mapping"].as_str().unwrap();
+        let encoded = mapping.split('"').nth(1).unwrap();
+        let raw = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        serde_json::from_slice::<Vec<Value>>(&raw).unwrap()
+    }
+
+    fn joined_bytes(chunk: &Value) -> usize {
+        let ids = chunk["ids"].as_array().unwrap();
+        ids.iter().map(|i| i.as_str().unwrap().len()).sum::<usize>() + ids.len().saturating_sub(1)
+    }
+
+    /// Every chunk's query fits the broker's 8192-byte id list and is as full as it can be; the
+    /// ids, in order, and their write times stay paired; a batch delete never passes 1000 ids.
+    #[test]
+    fn delete_chunks_fit_the_broker_id_cap_and_the_delete_limit() {
+        // The longest real id (dev and prod exports, 274 B): 29 fit, 100 were 27,499 B.
+        let long: Vec<String> = (0..100).map(|n| id_of(274, n)).collect();
+        // praha-mesto Garden, mean 93.6 B: 100 of them were 9,459 B.
+        let praha: Vec<String> = (0..500)
+            .map(|n| id_of(if n % 5 < 3 { 94 } else { 93 }, n))
+            .collect();
+        // Short ids: the delete limit, not the bytes, closes the chunk.
+        let short: Vec<String> = (0..2500).map(|n| format!("x{n:04}")).collect();
+        for (name, ids, first) in [
+            ("274 B", &long, 29),
+            ("praha", &praha, 86),
+            ("short", &short, 1000),
+        ] {
+            let chunks = rendered_chunks(ids);
+            assert_eq!(chunks[0]["ids"].as_array().unwrap().len(), first, "{name}");
+            let mut seen = Vec::new();
+            for (k, chunk) in chunks.iter().enumerate() {
+                let n = chunk["ids"].as_array().unwrap().len();
+                assert!(
+                    joined_bytes(chunk) <= QUERY_ID_BYTES,
+                    "{name} chunk {k}: {} B",
+                    joined_bytes(chunk)
+                );
+                assert!(n <= DELETE_IDS, "{name} chunk {k}: {n} ids");
+                if let Some(next) = chunks.get(k + 1) {
+                    let next_id = next["ids"][0].as_str().unwrap().len();
+                    assert!(
+                        n == DELETE_IDS || joined_bytes(chunk) + 1 + next_id > QUERY_ID_BYTES,
+                        "{name} chunk {k} closed early"
+                    );
+                }
+                let wrote: Vec<i64> = chunk["wrote"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|w| w.as_i64().unwrap())
+                    .collect();
+                for (i, id) in chunk["ids"].as_array().unwrap().iter().enumerate() {
+                    assert_eq!(
+                        wrote[i] as usize,
+                        seen.len(),
+                        "{name}: write time paired with its id"
+                    );
+                    seen.push(id.as_str().unwrap().to_owned());
+                }
+            }
+            assert_eq!(&seen, ids, "{name}: every id once, in order");
+        }
+        assert!(chunk_ends(&[]).is_empty());
+        // An id past the cap alone is a chunk of its own (the ledger keeps none: MAX_ID).
+        assert_eq!(chunk_ends(&[id_of(9000, 0), id_of(50, 1)]), [1, 2]);
+    }
+
     fn rule(misses: u8, max_share: u8) -> SourceDeletes {
         serde_json::from_value(
             json!({ "mode": "snapshot", "misses": misses, "maxShare": max_share }),
@@ -1795,8 +1916,8 @@ mod tests {
 
     #[test]
     fn the_delete_stream_goes_through_the_endpoint_with_the_reason_and_reports_back() {
-        let ids: Vec<String> = (0..250).map(|n| format!("urn:x:{n}")).collect();
-        let wrote: Vec<i64> = (0..250).collect();
+        let ids: Vec<String> = (0..2500).map(|n| format!("x{n:04}")).collect();
+        let wrote: Vec<i64> = (0..2500).collect();
         let stream = render(
             "helsinki",
             "registry",
@@ -1807,7 +1928,7 @@ mod tests {
         );
         let text = stream.to_string();
         // No id is in the config as text: Bento would read `${...}` in it.
-        assert!(!text.contains("urn:x:1"));
+        assert!(!text.contains("x0001"));
         let mapping = stream["input"]["generate"]["mapping"]
             .as_str()
             .expect("mapping");
@@ -1824,9 +1945,9 @@ mod tests {
         .expect("json");
         let chunks = chunks.as_array().expect("chunks");
         assert_eq!(chunks.len(), 3);
-        assert_eq!(chunks[2]["ids"].as_array().map(Vec::len), Some(50));
+        assert_eq!(chunks[2]["ids"].as_array().map(Vec::len), Some(500));
         assert_eq!(chunks[0]["run"], "2026-10-20T05:00:00Z");
-        assert_eq!(chunks[2]["wrote"][0], 200);
+        assert_eq!(chunks[2]["wrote"][0], 2000);
         // Each chunk first reads its entities' modifiedAt through the same Endpoint (PL-100).
         let read =
             &stream["pipeline"]["processors"][1]["try"][0]["branch"]["processors"][0]["http"];
@@ -1837,7 +1958,7 @@ mod tests {
         assert_eq!(read["verb"], "POST");
         assert_eq!(
             read["url"],
-            "${JC_GATEWAY_URL}/api/endpoint/ep-slug/ngsi-ld/v1/entityOperations/query?options=sysAttrs,keyValues&limit=100"
+            "${JC_GATEWAY_URL}/api/endpoint/ep-slug/ngsi-ld/v1/entityOperations/query?options=sysAttrs,keyValues&limit=1000"
         );
         assert_eq!(
             stream["pipeline"]["processors"][1]["try"][0]["branch"]["request_map"],
