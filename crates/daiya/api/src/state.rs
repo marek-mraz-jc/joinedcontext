@@ -478,6 +478,39 @@ impl TokenExchanger for PersonTokenExchanger {
     }
 }
 
+/// Whether `Authorization` carries a credential that names nobody: a bearer the host's
+/// [`SubjectResolver`] does not verify (a bad signature, another issuer or audience, an expired
+/// token) and no API credential matches, or a Basic pair that is not the server administrator's.
+/// Grafana answers such a request 401; it must never fall back to anonymous.
+#[must_use]
+pub fn credential_refused(state: &DaiyaState, headers: &HeaderMap) -> bool {
+    let present = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .is_some_and(|value| !value.as_bytes().iter().all(u8::is_ascii_whitespace));
+    present
+        && state.server_admin_for(headers).is_none()
+        && state
+            .subject_resolver
+            .as_ref()
+            .and_then(|resolve| resolve(headers))
+            .or_else(|| state.subject_for_credential(headers))
+            .is_none()
+}
+
+/// Answers 401 to a request whose `Authorization` names nobody ([`credential_refused`]), as
+/// Grafana does, before any handler reads the caller as anonymous.
+pub async fn refuse_unknown_credential(
+    axum::extract::State(state): axum::extract::State<DaiyaState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if credential_refused(&state, request.headers()) {
+        // The answer names no reason: which check failed would help a forger.
+        return error_response(&CrError::Unauthorized("invalid credential".into()));
+    }
+    next.run(request).await
+}
+
 /// Builds the [`RequestCtx`] of a request. The subject comes only from verified sources: the
 /// mounting host's [`SubjectResolver`], then an API credential in `Authorization` (hashed,
 /// constant-time). Anything else is anonymous: no organization, no role. Client headers never

@@ -727,6 +727,18 @@ async fn the_portal_runs_on_its_sibling_modules() {
         .await
         .unwrap();
     assert!(anon.status().is_client_error(), "anonymous writes refused");
+    // A forged bearer is refused 401, as Grafana refuses it, never read as anonymous.
+    let forged = Client::new()
+        .get(jc.url("/dashboards/api/folders"))
+        .bearer_auth("eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.forged")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        forged.status(),
+        reqwest::StatusCode::UNAUTHORIZED,
+        "a forged bearer at daiya"
+    );
     if !dash_status.is_success() {
         gaps.push(format!(
             "f daiya: GET /dashboards/api/datasources with the Portal Basic credential -> {dash_status}"

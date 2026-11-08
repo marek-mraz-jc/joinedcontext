@@ -41,5 +41,9 @@ pub fn api_router(state: DaiyaState, _mount: Mount) -> Router {
         .merge(page::page_router())
         .merge(compat::compat_router())
         .merge(public::public_router())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            state::refuse_unknown_credential,
+        ))
         .with_state(state)
 }

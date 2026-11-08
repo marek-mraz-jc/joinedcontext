@@ -417,12 +417,13 @@ async fn only_the_server_admin_credential_reaches_a_project_organization() {
     let grafana = Grafana::new(Arc::new(FlakyStore::default()), None);
     let helsinki = grafana.provision("helsinki").await;
 
-    // A wrong password is anonymous: no organization, no datasource, no write.
+    // A wrong password is refused 401, as Grafana refuses it: no organization, no datasource,
+    // no write, and never read as anonymous.
     let wrong = basic(USER, "not-the-password-at-all");
     let (status, _) = grafana
         .call("GET", "/orgs/name/helsinki", None, Some(&wrong), None)
         .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     let (status, _) = grafana
         .call(
             "POST",
@@ -432,14 +433,12 @@ async fn only_the_server_admin_credential_reaches_a_project_organization() {
             Some(json!({ "name": "evil" })),
         )
         .await;
-    assert!(status.is_client_error(), "{status}");
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     let (status, body) = grafana
         .call("GET", "/datasources", Some(helsinki), Some(&wrong), None)
         .await;
-    assert!(
-        status == StatusCode::NOT_FOUND || portal_datasources(&body).is_empty(),
-        "{status} {body}"
-    );
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert!(body.get("error").is_some(), "a refusal, no list: {body}");
 
     // A person of the main organization does not learn about or write into the project.
     let viewer = "Bearer viewer-token";
@@ -602,7 +601,8 @@ async fn a_host_check_can_name_the_server_admin() {
             None,
         )
         .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    // A token the host's check does not name is refused, never read as anonymous.
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     // The Basic credential set before still works beside it.
     let (status, _) = host.admin("GET", "/orgs/name/helsinki", None, None).await;
     assert_eq!(status, StatusCode::OK);
