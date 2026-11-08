@@ -17,6 +17,7 @@ use dataroom_core::{
 };
 use dataroom_store_memory::MemoryStore;
 use jc_core::kinds::ckan::CkanInstanceSpec;
+use jc_core::ngsi_catalog::Package;
 use jcctl::loader::RawManifest;
 use jcctl::publish::ckan::{
     publish, publish_views, withdraw, CkanApi, CkanError, Outcome, PublishError, Settings,
@@ -379,6 +380,29 @@ async fn the_portal_publisher_converges_and_withdraws_against_dataroom() {
     assert_eq!(held.expect("the token reads it")["private"], json!(true));
     swept.sort();
     assert_eq!(swept, [PUBLIC_DATASET, CLOSED_DATASET]);
+
+    // `reconciler/catalog.rs` `packages`: the catalog wave pages `package_search` anonymously,
+    // sorted by name, and folds each answer with jc-core `Package::from_ckan`.
+    let page = anonymous(
+        &base,
+        "package_search",
+        &[("rows", "1000"), ("start", "0"), ("sort", "name asc")],
+    )
+    .await
+    .expect("a package_search result");
+    assert_eq!(page["count"], json!(1), "only the public dataset: {page}");
+    let packages: Vec<Package> = page["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .filter_map(Package::from_ckan)
+        .collect();
+    assert_eq!(packages.len(), 1, "{page}");
+    assert_eq!(packages[0].name, PUBLIC_DATASET);
+    assert_eq!(
+        packages[0].organization.as_ref().map(|o| o.name.as_str()),
+        Some(ORGANIZATION)
+    );
 
     // An Endpoint that stops being public takes its dataset out of anonymous sight.
     let b = base.clone();
