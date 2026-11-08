@@ -1,13 +1,13 @@
-//! T-0190: Gitea REST API client integration tests with wiremock.
+//! T-0190: shako OData client integration tests with wiremock.
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use joinedcontext_portal::error::ApiError;
 use joinedcontext_portal::forge::{
-    Author, FileDelete, FileWrite, GitError, ShakoClient, MergeStyle, RepoFile, ReviewEvent,
+    Author, FileDelete, FileWrite, GitError, MergeStyle, RepoFile, ReviewEvent, ShakoClient,
 };
 use serde_json::json;
-use wiremock::matchers::{body_json, header, method, path, query_param};
+use wiremock::matchers::{body_json, body_string_contains, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
@@ -17,22 +17,24 @@ async fn default_branch_and_branch_head() {
     let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .and(header("authorization", "token secret-token"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .and(header("authorization", "Bearer secret-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
+            "DefaultBranch": "main"
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches/main"))
-        .and(header("authorization", "token secret-token"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
+        ))
+        .and(header("authorization", "Bearer secret-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "name": "main",
-            "commit": {
-                "id": "c0ffee1234567890abcdef"
-            }
+            "Name": "main",
+            "HeadSha": "c0ffee1234567890abcdef"
         })))
         .mount(&server)
         .await;
@@ -51,14 +53,16 @@ async fn create_branch_success_and_conflict() {
     let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
-        .and(header("authorization", "token secret-token"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
+        .and(header("authorization", "Bearer secret-token"))
         .and(body_json(json!({
-            "new_branch_name": "feature-1",
-            "old_branch_name": "main"
+            "NewBranchName": "feature-1",
+            "OldBranchName": "main"
         })))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "name": "feature-1"
+            "Name": "feature-1"
         })))
         .mount(&server)
         .await;
@@ -66,11 +70,13 @@ async fn create_branch_success_and_conflict() {
     client.create_branch("feature-1", "main").await.unwrap();
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
-        .and(header("authorization", "token secret-token"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
+        .and(header("authorization", "Bearer secret-token"))
         .and(body_json(json!({
-            "new_branch_name": "already-exists",
-            "old_branch_name": "main"
+            "NewBranchName": "already-exists",
+            "OldBranchName": "main"
         })))
         .respond_with(ResponseTemplate::new(409).set_body_string("branch already exists"))
         .mount(&server)
@@ -93,7 +99,7 @@ async fn get_file_decodes_base64_and_handles_404() {
     let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     let raw_text = "apiVersion: joinedcontext.com/v1alpha1\nkind: Dashboard\n";
-    // Gitea wraps the base64 payload, so the fixture is built with the line breaks in it
+    // A forge may wrap the base64 payload, so the fixture is built with the line breaks in it
     // rather than pasted — a hand-typed constant is one typo away from invalid padding.
     let encoded = base64::engine::Engine::encode(
         &base64::engine::general_purpose::STANDARD,
@@ -103,23 +109,25 @@ async fn get_file_decodes_base64_and_handles_404() {
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/dashboards/dash.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(header("authorization", "token secret-token"))
-        .and(query_param("ref", "main"))
+        .and(query_param("@p", "'dashboards/dash.yaml'"))
+        .and(header("authorization", "Bearer secret-token"))
+        .and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-file-123",
-            "content": b64_with_newlines.clone()
+            "Sha": "sha-file-123",
+            "Content": b64_with_newlines.clone()
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/missing.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(header("authorization", "token secret-token"))
-        .and(query_param("ref", "main"))
+        .and(query_param("@p", "'missing.yaml'"))
+        .and(header("authorization", "Bearer secret-token"))
+        .and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({
             "message": "not found"
         })))
@@ -149,20 +157,24 @@ async fn put_file_creates_and_replaces() {
     let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     // Create (sha is None -> omitted from JSON)
-    Mock::given(method("PUT"))
+    Mock::given(method("POST"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/dashboards/dash.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
         ))
-        .and(header("authorization", "token secret-token"))
+        .and(header("authorization", "Bearer secret-token"))
         .and(body_json(json!({
-            "content": "dGl0bGU6IGhlbGxvIHdvcmxkCg==",
-            "message": "create dashboard",
-            "branch": "feature-1",
-            "author": { "name": "Alice Developer", "email": "alice@example.com" },
-            "committer": { "name": "Alice Developer", "email": "alice@example.com" }
+            "Branch": "feature-1",
+            "Message": "create dashboard",
+            "Author": { "Name": "Alice Developer", "Email": "alice@example.com" },
+            "Committer": { "Name": "Alice Developer", "Email": "alice@example.com" },
+            "Files": [{
+                "operation": "upload",
+                "path": "dashboards/dash.yaml",
+                "content": "dGl0bGU6IGhlbGxvIHdvcmxkCg=="
+            }]
         })))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "commit": { "sha": "commit-sha-created" }
+            "Sha": "commit-sha-created"
         })))
         .mount(&server)
         .await;
@@ -182,21 +194,25 @@ async fn put_file_creates_and_replaces() {
     assert_eq!(sha_created, "commit-sha-created");
 
     // Replace (sha is Some -> present in JSON)
-    Mock::given(method("PUT"))
+    Mock::given(method("POST"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/dashboards/dash.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
         ))
-        .and(header("authorization", "token secret-token"))
+        .and(header("authorization", "Bearer secret-token"))
         .and(body_json(json!({
-            "content": "dGl0bGU6IGhlbGxvIHdvcmxkIHYyCg==",
-            "message": "update dashboard",
-            "branch": "feature-1",
-            "sha": "old-sha-111",
-            "author": { "name": "Alice Developer", "email": "alice@example.com" },
-            "committer": { "name": "Alice Developer", "email": "alice@example.com" }
+            "Branch": "feature-1",
+            "Message": "update dashboard",
+            "Author": { "Name": "Alice Developer", "Email": "alice@example.com" },
+            "Committer": { "Name": "Alice Developer", "Email": "alice@example.com" },
+            "Files": [{
+                "operation": "update",
+                "path": "dashboards/dash.yaml",
+                "content": "dGl0bGU6IGhlbGxvIHdvcmxkIHYyCg==",
+                "sha": "old-sha-111"
+            }]
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "commit": { "sha": "commit-sha-updated" }
+            "Sha": "commit-sha-updated"
         })))
         .mount(&server)
         .await;
@@ -222,20 +238,24 @@ async fn delete_file_sends_sha() {
     let base_url = server.uri().parse().unwrap();
     let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
-    Mock::given(method("DELETE"))
+    Mock::given(method("POST"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/dashboards/dash.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
         ))
-        .and(header("authorization", "token secret-token"))
+        .and(header("authorization", "Bearer secret-token"))
         .and(body_json(json!({
-            "message": "remove dashboard",
-            "branch": "feature-1",
-            "sha": "delete-sha-222",
-            "author": { "name": "Bob Admin", "email": "bob@example.com" },
-            "committer": { "name": "Bob Admin", "email": "bob@example.com" }
+            "Branch": "feature-1",
+            "Message": "remove dashboard",
+            "Author": { "Name": "Bob Admin", "Email": "bob@example.com" },
+            "Committer": { "Name": "Bob Admin", "Email": "bob@example.com" },
+            "Files": [{
+                "operation": "delete",
+                "path": "dashboards/dash.yaml",
+                "sha": "delete-sha-222"
+            }]
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "commit": { "sha": "commit-sha-deleted" }
+            "Sha": "commit-sha-deleted"
         })))
         .mount(&server)
         .await;
@@ -261,33 +281,37 @@ async fn create_and_get_pull_request() {
     let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
-        .and(header("authorization", "token secret-token"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
+        .and(header("authorization", "Bearer secret-token"))
         .and(body_json(json!({
-            "head": "feature-1",
-            "base": "main",
-            "title": "Add feature",
-            "body": "PR description"
+            "Head": "feature-1",
+            "Base": "main",
+            "Title": "Add feature",
+            "Body": "PR description"
         })))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 17,
-            "html_url": "https://shako.example.com/test-owner/test-repo/pulls/17",
-            "state": "open",
-            "mergeable": true,
-            "merged": false
+            "Number": 17,
+            "HtmlUrl": "https://shako.example.com/test-owner/test-repo/pulls/17",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/17"))
-        .and(header("authorization", "token secret-token"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(17)",
+        ))
+        .and(header("authorization", "Bearer secret-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": 17,
-            "html_url": "https://shako.example.com/test-owner/test-repo/pulls/17",
-            "state": "closed",
-            "mergeable": null,
-            "merged": true
+            "Number": 17,
+            "HtmlUrl": "https://shako.example.com/test-owner/test-repo/pulls/17",
+            "State": "closed",
+            "Mergeable": null,
+            "Merged": true
         })))
         .mount(&server)
         .await;
@@ -311,7 +335,7 @@ async fn create_and_get_pull_request() {
     assert_eq!(fetched.mergeable, None);
     assert!(fetched.merged);
 
-    // With a public forge the link a person opens is the public one, never Gitea's ROOT_URL
+    // With a public forge the link a person opens is the public one, never the forge's internal address
     // (AP-71), and it goes through the forge's own sign-in so a Portal session that has no
     // forge session meets the Keycloak button instead of a 404 (PF-81, T-0702).
     let mut public = client.clone();
@@ -329,11 +353,11 @@ async fn review_and_merge() {
     let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/17/reviews"))
-        .and(header("authorization", "token secret-token"))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(17)/Shako.Review"))
+        .and(header("authorization", "Bearer secret-token"))
         .and(body_json(json!({
-            "event": "APPROVED",
-            "body": "Approved by security steward"
+            "Event": "APPROVED",
+            "Body": "Approved by security steward"
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
@@ -345,12 +369,14 @@ async fn review_and_merge() {
         .unwrap();
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/17/merge"))
-        .and(header("authorization", "token secret-token"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(17)/Shako.Merge",
+        ))
+        .and(header("authorization", "Bearer secret-token"))
         .and(body_json(json!({
-            "Do": "merge",
-            "merge_message_field": "Merge PR #17",
-            "head_commit_id": "reviewed-commit"
+            "Style": "merge",
+            "Message": "Merge PR #17",
+            "HeadCommitId": "reviewed-commit"
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
@@ -370,7 +396,7 @@ async fn review_and_merge() {
 }
 
 /// T-1683: a merge with nothing to pin it to — a proposal this Portal wrote and merges in the
-/// same call — sends no `head_commit_id` at all, rather than an empty one the forge would refuse.
+/// same call — sends no `HeadCommitId` at all, rather than an empty one the forge would refuse.
 #[tokio::test]
 async fn merge_without_a_reviewed_commit_sends_no_head_commit_id() {
     let server = MockServer::start().await;
@@ -382,10 +408,12 @@ async fn merge_without_a_reviewed_commit_sends_no_head_commit_id() {
     )
     .unwrap();
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/18/merge"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(18)/Shako.Merge",
+        ))
         .and(body_json(json!({
-            "Do": "squash",
-            "merge_message_field": "Merge PR #18"
+            "Style": "squash",
+            "Message": "Merge PR #18"
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
@@ -399,7 +427,7 @@ async fn merge_without_a_reviewed_commit_sends_no_head_commit_id() {
 }
 
 #[test]
-fn gitea_client_redacts_token_in_debug() {
+fn shako_client_redacts_token_in_debug() {
     let url = "https://shako.example.com".parse().unwrap();
     let client = ShakoClient::new(url, "owner", "repo", "my-secret-token").unwrap();
     let debug = format!("{client:?}");
@@ -461,20 +489,18 @@ async fn list_tree_filters_blobs_and_detects_truncated() {
     let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/git/trees/main"))
-        .and(query_param("recursive", "true"))
-        .and(query_param("per_page", "1000"))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")).and(query_param("@r", "\'main\'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "tree-sha-1",
-            "truncated": false,
-            "tree": [
+            "Sha": "tree-sha-1",
+            "Truncated": false,
+            "Tree": [
                 {
-                    "path": "projects/ovzdusie/spaces/ovzdusie/space.yaml",
-                    "type": "blob"
+                    "Path": "projects/ovzdusie/spaces/ovzdusie/space.yaml",
+                    "Type": "blob"
                 },
                 {
-                    "path": "projects/ovzdusie",
-                    "type": "tree"
+                    "Path": "projects/ovzdusie",
+                    "Type": "tree"
                 }
             ]
         })))
@@ -486,14 +512,12 @@ async fn list_tree_filters_blobs_and_detects_truncated() {
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/git/trees/truncated-ref",
-        ))
-        .and(query_param("recursive", "true"))
-        .and(query_param("per_page", "1000"))
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+        )).and(query_param("@r", "\'truncated-ref\'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "tree-sha-2",
-            "truncated": true,
-            "tree": []
+            "Sha": "tree-sha-2",
+            "Truncated": true,
+            "Tree": []
         })))
         .mount(&server)
         .await;
@@ -505,8 +529,8 @@ async fn list_tree_filters_blobs_and_detects_truncated() {
     }
 }
 
-/// T-5047: Gitea hands a recursive tree out 1000 entries a page; a project of 1321 files read
-/// only page 1 and refused to stage. Every page is read now, and a tree whose sha changes
+/// T-5047: the forge hands a recursive tree out 1000 entries a page; a project of 1321 files
+/// read only page 1 and refused to stage. Every page is read now, and a tree whose sha changes
 /// between pages (a push in between) is refused rather than mixed.
 #[tokio::test]
 async fn list_tree_reads_every_page_of_a_large_tree() {
@@ -516,7 +540,7 @@ async fn list_tree_reads_every_page_of_a_large_tree() {
 
     let entries = |from: usize, to: usize| -> Vec<serde_json::Value> {
         (from..to)
-            .map(|i| json!({ "path": format!("seed/f{i}.yaml"), "type": "blob", "sha": format!("b{i}") }))
+            .map(|i| json!({ "Path": format!("seed/f{i}.yaml"), "Type": "blob", "Sha": format!("b{i}") }))
             .collect()
     };
     let page = |ref_: &'static str,
@@ -526,20 +550,19 @@ async fn list_tree_reads_every_page_of_a_large_tree() {
                 truncated: bool| {
         Mock::given(method("GET"))
             .and(path(format!(
-                "/api/v1/repos/test-owner/test-repo/git/trees/{ref_}"
-            )))
-            .and(query_param("recursive", "true"))
-            .and(query_param("per_page", "1000"))
-            .and(query_param("page", n))
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            ))).and(query_param("@r", format!("'{ref_}'")))
+            .and(query_param("@s", n))
+            .and(query_param("@t", "1000"))
             .respond_with(
                 ResponseTemplate::new(200)
-                    .set_body_json(json!({ "sha": sha, "truncated": truncated, "tree": tree })),
+                    .set_body_json(json!({ "Sha": sha, "Truncated": truncated, "Tree": tree })),
             )
     };
-    page("big", "1", "t1", entries(0, 1000), true)
+    page("big", "0", "t1", entries(0, 1000), true)
         .mount(&server)
         .await;
-    page("big", "2", "t1", entries(1000, 1321), false)
+    page("big", "1000", "t1", entries(1000, 1321), false)
         .mount(&server)
         .await;
     let blobs = client.list_tree_blobs("big").await.unwrap();
@@ -549,10 +572,10 @@ async fn list_tree_reads_every_page_of_a_large_tree() {
         ("seed/f1320.yaml".to_string(), "b1320".to_string())
     );
 
-    page("moving", "1", "t1", entries(0, 1000), true)
+    page("moving", "0", "t1", entries(0, 1000), true)
         .mount(&server)
         .await;
-    page("moving", "2", "t2", entries(1000, 1001), false)
+    page("moving", "1000", "t2", entries(1000, 1001), false)
         .mount(&server)
         .await;
     match client.list_tree_blobs("moving").await.unwrap_err() {
@@ -603,21 +626,23 @@ async fn change_files_uploads_and_deletes_in_one_commit() {
     )
     .unwrap();
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/contents"))
-        .and(header("authorization", "token secret-token"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+        ))
+        .and(header("authorization", "Bearer secret-token"))
         .and(body_json(json!({
-            "files": [
+            "Files": [
                 { "operation": "upload", "path": "apps/a/src/App.tsx", "content": "aGVsbG8=" },
                 { "operation": "upload", "path": "apps/a/package.json", "content": "e30=" },
                 { "operation": "delete", "path": "apps/a/src/Old.tsx", "sha": "blob-old" }
             ],
-            "message": "first run",
-            "branch": "agent/a",
-            "author": { "name": "Alice", "email": "alice@example.com" },
-            "committer": { "name": "Alice", "email": "alice@example.com" }
+            "Message": "first run",
+            "Branch": "agent/a",
+            "Author": { "Name": "Alice", "Email": "alice@example.com" },
+            "Committer": { "Name": "Alice", "Email": "alice@example.com" }
         })))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "files": [], "commit": { "sha": "commit-of-both" }
+            "Sha": "commit-of-both"
         })))
         .expect(1)
         .mount(&server)
@@ -643,28 +668,23 @@ async fn change_files_uploads_and_deletes_in_one_commit() {
 }
 
 #[tokio::test]
-async fn pull_request_files_lists_every_page_and_marks_deletions() {
+async fn pull_request_files_lists_every_file_and_marks_deletions() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().unwrap();
     let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
-    let page = |n: usize| -> Vec<serde_json::Value> {
-        (0..n)
-            .map(|i| json!({ "filename": format!("projects/p/pipelines/{i}/pipeline.yaml"), "status": "added" }))
-            .collect()
-    };
+    // The forge answers every file of a pull request in one collection, no server paging.
+    let mut rows: Vec<serde_json::Value> = (0..50)
+        .map(|i| json!({ "Filename": format!("projects/p/pipelines/{i}/pipeline.yaml"), "Status": "added" }))
+        .collect();
+    rows.push(json!({ "Filename": "users/assignments/gone.yaml", "Status": "deleted" }));
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/9/files"))
-        .and(query_param("page", "1"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(page(50)))
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/9/files"))
-        .and(query_param("page", "2"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            { "filename": "users/assignments/gone.yaml", "status": "deleted" }
-        ])))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(9)/Files",
+        ))
+        .and(header("authorization", "Bearer secret-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": rows })))
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -683,23 +703,30 @@ async fn delete_branch_drops_a_branch_and_ignores_one_already_gone() {
     let base_url = server.uri().parse().unwrap();
     let client = ShakoClient::new(base_url, "test-owner", "test-repo", "secret-token").unwrap();
 
-    Mock::given(method("DELETE"))
+    Mock::given(method("POST"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/branches/portal/delete-contextspace-x-1",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.DeleteBranch",
         ))
-        .and(header("authorization", "token secret-token"))
+        .and(body_string_contains(
+            r#""Branch":"portal/delete-contextspace-x-1""#,
+        ))
+        .and(header("authorization", "Bearer secret-token"))
         .respond_with(ResponseTemplate::new(204))
         .mount(&server)
         .await;
-    Mock::given(method("DELETE"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches/gone"))
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.DeleteBranch",
+        ))
+        .and(body_string_contains(r#""Branch":"gone""#))
         .respond_with(ResponseTemplate::new(404).set_body_string("branch does not exist"))
         .mount(&server)
         .await;
-    Mock::given(method("DELETE"))
+    Mock::given(method("POST"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/branches/protected",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.DeleteBranch",
         ))
+        .and(body_string_contains(r#""Branch":"protected""#))
         .respond_with(ResponseTemplate::new(403).set_body_string("branch is protected"))
         .mount(&server)
         .await;
@@ -713,11 +740,9 @@ async fn delete_branch_drops_a_branch_and_ignores_one_already_gone() {
     assert!(matches!(err, GitError::Api { status: 403, .. }), "{err:?}");
 }
 
-/// T-2266: a workspace branch is `workspace/{name}`, and Gitea's `git/trees/{ref}` answers 404 for
-/// a name with a slash — encoded or not. The client therefore resolves such a name to its head
-/// commit first and reads the tree by sha; the mock serves only what real Gitea serves, so a
-/// client that asked `git/trees/workspace/air-v2` fails this test as it failed on the cluster,
-/// where every read of a copy came back "not found" and the copy showed the project instead.
+/// T-2266: a workspace branch is `workspace/{name}`. The ref travels as the `@r` parameter
+/// value, so a name with a slash reads its tree directly, with no resolving round trip, and a
+/// branch that does not exist yet answers "not found".
 #[tokio::test]
 async fn a_branch_with_a_slash_is_resolved_before_its_tree_is_read() {
     let server = MockServer::start().await;
@@ -730,20 +755,11 @@ async fn a_branch_with_a_slash_is_resolved_before_its_tree_is_read() {
     .unwrap();
 
     Mock::given(method("GET"))
-        .and(path(
-            "/api/v1/repos/test-owner/test-repo/branches/workspace/air-v2",
-        ))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({ "name": "workspace/air-v2", "commit": { "id": "head99" } })),
-        )
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/git/trees/head99"))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"))
+        .and(query_param("@r", "'workspace/air-v2'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "tree": [{ "path": "projects/p/spaces/air/space.yaml", "type": "blob", "sha": "blob1" }],
-            "truncated": false,
+            "Tree": [{ "Path": "projects/p/spaces/air/space.yaml", "Type": "blob", "Sha": "blob1" }],
+            "Truncated": false
         })))
         .mount(&server)
         .await;
@@ -762,15 +778,26 @@ async fn a_branch_with_a_slash_is_resolved_before_its_tree_is_read() {
     let missing = client.list_tree_blobs("workspace/gone").await;
     assert!(matches!(missing, Err(GitError::NotFound)), "{missing:?}");
 
-    // A sha or a plain branch name is read directly, with no extra round trip.
+    // A plain branch name is read the same way, and no branch lookup ever happened.
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/git/trees/main"))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")).and(query_param("@r", "'main'"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "tree": [], "truncated": false })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Tree": [], "Truncated": false })),
         )
         .mount(&server)
         .await;
     assert!(client.list_tree_blobs("main").await.unwrap().is_empty());
+    let requests = server.received_requests().await.unwrap();
+    assert!(
+        requests
+            .iter()
+            .all(|r| r.url.path().contains("Shako.Tree(")),
+        "only tree reads: {:?}",
+        requests
+            .iter()
+            .map(|r| r.url.path().to_owned())
+            .collect::<Vec<_>>()
+    );
 }
 
 /// AP-75: an application's repository is created in the organization, private and initialised on
@@ -788,22 +815,25 @@ async fn a_missing_application_repository_is_created_private_on_main() {
     let repo = config.for_repository("helsinki_city-bikes");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/joinedcontext/helsinki_city-bikes"))
+        .and(path(
+            "/odata/Repositories(Owner='joinedcontext',Name='helsinki_city-bikes')",
+        ))
         .respond_with(ResponseTemplate::new(404))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/orgs/joinedcontext/repos"))
-        .and(header("authorization", "token secret-token"))
+        .and(path("/odata/CreateRepository"))
+        .and(header("authorization", "Bearer secret-token"))
         .and(body_json(json!({
-            "name": "helsinki_city-bikes",
-            "description": "the city bikes app",
-            "private": true,
-            "auto_init": true,
-            "default_branch": "main"
+            "Owner": "joinedcontext",
+            "Name": "helsinki_city-bikes",
+            "Description": "the city bikes app",
+            "Private": true,
+            "AutoInit": true,
+            "DefaultBranch": "main"
         })))
         .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "name": "helsinki_city-bikes" })),
+            ResponseTemplate::new(201).set_body_json(json!({ "Name": "helsinki_city-bikes" })),
         )
         .expect(1)
         .mount(&server)
@@ -826,23 +856,28 @@ async fn an_existing_application_repository_is_left_as_it_is() {
     .unwrap();
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/joinedcontext/helsinki_city-bikes"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='joinedcontext',Name='helsinki_city-bikes')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/joinedcontext/helsinki_raced"))
+        .and(path(
+            "/odata/Repositories(Owner='joinedcontext',Name='helsinki_raced')",
+        ))
         .respond_with(ResponseTemplate::new(404))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/orgs/joinedcontext/repos"))
+        .and(path("/odata/CreateRepository"))
         .and(body_json(json!({
-            "name": "helsinki_raced",
-            "description": "d",
-            "private": true,
-            "auto_init": true,
-            "default_branch": "main"
+            "Owner": "joinedcontext",
+            "Name": "helsinki_raced",
+            "Description": "d",
+            "Private": true,
+            "AutoInit": true,
+            "DefaultBranch": "main"
         })))
         .respond_with(ResponseTemplate::new(409).set_body_string("repository already exists"))
         .expect(1)
@@ -875,12 +910,14 @@ async fn a_refused_repository_creation_is_an_error() {
     .unwrap();
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/joinedcontext/helsinki_city-bikes"))
+        .and(path(
+            "/odata/Repositories(Owner='joinedcontext',Name='helsinki_city-bikes')",
+        ))
         .respond_with(ResponseTemplate::new(404))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/orgs/joinedcontext/repos"))
+        .and(path("/odata/CreateRepository"))
         .respond_with(
             ResponseTemplate::new(403).set_body_string("token does not have write:organization"),
         )
@@ -923,8 +960,9 @@ fn the_clone_address_is_the_public_forge() {
     );
 }
 
-/// T-4967: the forge answers errors as `{"message": …, "url": <its swagger page>}`; the error
-/// carries the message alone, so the activity feed and a 409 answer never show the raw body.
+/// T-4967: a forge error carries a message beside other members (`{"message": …, "url": …}`, or
+/// OData's `{"error": {"message": …}}`); the error carries the message alone, so the activity
+/// feed and a 409 answer never show the raw body.
 #[tokio::test]
 async fn a_forge_error_keeps_only_its_message() {
     let server = MockServer::start().await;
@@ -934,16 +972,20 @@ async fn a_forge_error_keeps_only_its_message() {
         "message": "invalid username, password or token",
         "url": "https://forge.example/api/swagger"
     });
-    Mock::given(method("DELETE"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches/refused"))
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.DeleteBranch",
+        ))
+        .and(body_string_contains(r#""Branch":"refused""#))
         .respond_with(ResponseTemplate::new(401).set_body_json(body.clone()))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(409).set_body_json(json!({
-            "message": "The branch already exists.",
-            "url": "https://forge.example/api/swagger"
+            "error": { "code": "Conflict", "message": "The branch already exists." }
         })))
         .mount(&server)
         .await;
@@ -971,19 +1013,23 @@ async fn put_file_commits_yaml_in_the_canonical_layout() {
     let tidy = jc_core::yaml_fmt::format(messy).expect("formats");
     assert_ne!(tidy, messy);
 
-    Mock::given(method("PUT"))
+    Mock::given(method("POST"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/policies/a.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
         ))
         .and(body_json(json!({
-            "content": STANDARD.encode(&tidy),
-            "message": "create policy",
-            "branch": "main",
-            "author": { "name": "Alice Developer", "email": "alice@example.com" },
-            "committer": { "name": "Alice Developer", "email": "alice@example.com" }
+            "Branch": "main",
+            "Message": "create policy",
+            "Author": { "Name": "Alice Developer", "Email": "alice@example.com" },
+            "Committer": { "Name": "Alice Developer", "Email": "alice@example.com" },
+            "Files": [{
+                "operation": "upload",
+                "path": "policies/a.yaml",
+                "content": STANDARD.encode(&tidy)
+            }]
         })))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "commit": { "sha": "commit-sha-tidy" }
+            "Sha": "commit-sha-tidy"
         })))
         .mount(&server)
         .await;
@@ -1018,28 +1064,29 @@ async fn a_call_over_mcp_signs_its_commit_and_its_merge_request() {
         "secret-token",
     )
     .unwrap();
-    Mock::given(method("PUT"))
-        .and(path("/api/v1/repos/test-owner/test-repo/contents/a.yaml"))
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+        ))
+        .and(body_string_contains(r#""path":"a.yaml""#))
         .and(body_partial_json(json!({
-            "message": "Update Endpoint a\n\nProposed-Via: mcp; client=mcp-mobile"
+            "Message": "Update Endpoint a\n\nProposed-Via: mcp; client=mcp-mobile"
         })))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
-        )
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
         .expect(1)
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest"))
         .and(body_partial_json(json!({
-            "body": "Proposed through an AI client over MCP (client `mcp-mobile`).\n\nPR description\n\nProposed-Via: mcp; client=mcp-mobile"
+            "Body": "Proposed through an AI client over MCP (client `mcp-mobile`).\n\nPR description\n\nProposed-Via: mcp; client=mcp-mobile"
         })))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 18,
-            "html_url": "https://shako.example.com/test-owner/test-repo/pulls/18",
-            "state": "open",
-            "body": "x\n\nProposed-Via: mcp; client=mcp-mobile",
-            "merged": false
+            "Number": 18,
+            "HtmlUrl": "https://shako.example.com/test-owner/test-repo/pulls/18",
+            "State": "open",
+            "Body": "x\n\nProposed-Via: mcp; client=mcp-mobile",
+            "Merged": false
         })))
         .expect(1)
         .mount(&server)

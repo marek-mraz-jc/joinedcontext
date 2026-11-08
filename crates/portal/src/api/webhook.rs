@@ -493,8 +493,9 @@ mod tests {
 
         // 1. PR closed but not merged
         let pr_unmerged = json!({
+            "event": "pull_request",
             "action": "closed",
-            "pull_request": { "merged": false }
+            "pullRequest": { "merged": false }
         });
         let body1 = serde_json::to_vec(&pr_unmerged).unwrap();
         let sig1 = compute_signature(secret, &body1);
@@ -516,7 +517,7 @@ mod tests {
         // 2. Push to non-default branch
         let push_feat = json!({
             "ref": "refs/heads/feature-abc",
-            "repository": { "default_branch": "main" }
+            "repository": { "defaultBranch": "main" }
         });
         let body2 = serde_json::to_vec(&push_feat).unwrap();
         let sig2 = compute_signature(secret, &body2);
@@ -538,7 +539,7 @@ mod tests {
         // 3. Tag push
         let push_tag = json!({
             "ref": "refs/tags/v1.0.0",
-            "repository": { "default_branch": "main" }
+            "repository": { "defaultBranch": "main" }
         });
         let body3 = serde_json::to_vec(&push_tag).unwrap();
         let sig3 = compute_signature(secret, &body3);
@@ -595,35 +596,37 @@ mod tests {
         let app = server::app(state);
 
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "default_branch": "main"
-            })))
-            .mount(&server)
-            .await;
-
-        Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo/branches/main"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "name": "main",
-                "commit": { "id": "rev-pr-merge" }
+                "DefaultBranch": "main"
             })))
             .mount(&server)
             .await;
 
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/test-owner/test-repo/git/trees/rev-pr-merge",
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
             ))
-            .and(query_param("recursive", "true"))
-            .and(query_param("per_page", "1000"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "tree-sha-1",
-                "truncated": false,
-                "tree": [
+                "Name": "main",
+                "HeadSha": "rev-pr-merge"
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            )).and(query_param("@r", "'rev-pr-merge'"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "tree-sha-1",
+                "Truncated": false,
+                "Tree": [
                     {
-                        "path": "projects/ovzdusie/spaces/mobility/space.yaml",
-                        "type": "blob"
+                        "Path": "projects/ovzdusie/spaces/mobility/space.yaml",
+                        "Type": "blob"
                     }
                 ]
             })))
@@ -638,19 +641,20 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
-            ))
-            .and(query_param("ref", "rev-pr-merge"))
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+            )).and(query_param("@p", "'projects/ovzdusie/spaces/mobility/space.yaml'"))
+            .and(query_param("@r", "'rev-pr-merge'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "blob-1",
-                "content": b64
+                "Sha": "blob-1",
+                "Content": b64
             })))
             .mount(&server)
             .await;
 
         let pr_merged = json!({
+            "event": "pull_request",
             "action": "closed",
-            "pull_request": {
+            "pullRequest": {
                 "merged": true
             }
         });
@@ -701,7 +705,9 @@ mod tests {
 
         // Forge returns 500, slower than the forge waits for a delivery.
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+            ))
             .respond_with(
                 ResponseTemplate::new(500)
                     .set_body_string("shako db down")
@@ -712,7 +718,7 @@ mod tests {
 
         let push_main = json!({
             "ref": "refs/heads/main",
-            "repository": { "default_branch": "main" }
+            "repository": { "defaultBranch": "main" }
         });
         let body = serde_json::to_vec(&push_main).unwrap();
         let sig = compute_signature(secret, &body);
@@ -731,7 +737,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Crucial requirement: must return 202 so Gitea does not retry merge webhook!
+        // Crucial requirement: must return 202 so the forge does not retry the merge webhook.
         assert_eq!(response.status(), StatusCode::ACCEPTED);
         // F-R2POR3-017: the answer does not wait for the sync.
         assert!(
@@ -742,6 +748,85 @@ mod tests {
 
         // Error is recorded in syncer status
         settled(&syncer, |status| status.last_error.is_some()).await;
+    }
+
+    /// A configured secret that is empty is no secret: an HMAC over an empty key is one anybody
+    /// computes, so the Portal treats it as unset and refuses everything.
+    #[tokio::test]
+    async fn an_empty_configured_secret_is_no_secret() {
+        let body = serde_json::to_vec(&json!({
+            "event": "push",
+            "ref": "refs/heads/main",
+            "repository": { "defaultBranch": "main" }
+        }))
+        .unwrap();
+        let mut config = Config::for_tests();
+        config.shako_webhook_secret = Some(String::new());
+        config.shako_webhook_secret_previous = Some(String::new());
+        let response = server::app(AppState::new(config, None))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/webhooks/shako")
+                    .header(SIGNATURE_HEADER, compute_signature("", &body))
+                    .header(EVENT_HEADER, "push")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// While the forge side rotates a hook's secret, shako signs with the new one in
+    /// `X-Shako-Signature` and with the old one in `X-Shako-Signature-Previous`: a Portal still
+    /// on the old secret accepts the delivery, and a stranger's two signatures are refused.
+    #[tokio::test]
+    async fn the_previous_signature_header_carries_a_forge_side_rotation() {
+        let portal_secret = "the-one-the-portal-has";
+        let body = serde_json::to_vec(&json!({
+            "event": "push",
+            "ref": "refs/heads/main",
+            "repository": { "defaultBranch": "main" }
+        }))
+        .unwrap();
+        let post = |current: String, previous: String| {
+            let body = body.clone();
+            async move {
+                let mut config = Config::for_tests();
+                config.shako_webhook_secret = Some(portal_secret.into());
+                server::app(AppState::new(config, None))
+                    .oneshot(
+                        Request::builder()
+                            .method("POST")
+                            .uri("/api/v1/webhooks/shako")
+                            .header(SIGNATURE_HEADER, current)
+                            .header(PREVIOUS_SIGNATURE_HEADER, previous)
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+                    .status()
+            }
+        };
+        // The event comes from the body's own `event` here: no X-Shako-Event header is sent.
+        assert_eq!(
+            post(
+                compute_signature("the-one-the-forge-moved-to", &body),
+                compute_signature(portal_secret, &body)
+            )
+            .await,
+            StatusCode::ACCEPTED
+        );
+        assert_eq!(
+            post(
+                compute_signature("a-stranger", &body),
+                compute_signature("another-stranger", &body)
+            )
+            .await,
+            StatusCode::UNAUTHORIZED
+        );
     }
 
     /// Waits up to ten seconds for the sync the webhook started to reach `done`.

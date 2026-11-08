@@ -17,7 +17,7 @@ use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use serde_json::json;
 use tower::ServiceExt;
-use wiremock::matchers::{method, path, path_regex, query_param};
+use wiremock::matchers::{body_string_contains, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const TEST_CSRF_TOKEN: &str = "test-csrf-token-12345";
@@ -61,33 +61,41 @@ fn session_and_csrf_cookies(config: &Config) -> String {
 }
 
 #[tokio::test]
-async fn delete_returns_202_with_change_and_commits_to_gitea() {
+async fn delete_returns_202_with_change_and_commits_to_the_forge() {
     let server = MockServer::start().await;
     let base_url = server.uri().parse().expect("valid mock server url");
     let client =
         ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
+            "DefaultBranch": "main"
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-space-123",
-            "content": "YXBpVmVyc2lvbjogeW91"
+            "Sha": "sha-space-123",
+            "Content": "YXBpVmVyc2lvbjogeW91"
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&server)
         .await;
@@ -95,13 +103,15 @@ async fn delete_returns_202_with_change_and_commits_to_gitea() {
     mount_tree_and_commit(&server, &["projects/ovzdusie/spaces/mobility/space.yaml"]).await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 55,
-            "html_url": "https://shako.example.sk/pulls/55",
-            "state": "open",
-            "mergeable": true,
-            "merged": false
+            "Number": 55,
+            "HtmlUrl": "https://shako.example.sk/pulls/55",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -164,37 +174,39 @@ async fn delete_returns_202_with_change_and_commits_to_gitea() {
         .iter()
         .find(|r| {
             r.method.as_str() == "POST"
-                && r.url.path() == "/api/v1/repos/test-owner/test-repo/branches"
+                && r.url.path()
+                    == "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch"
         })
         .expect("branch creation request");
     let branch_body: serde_json::Value =
         serde_json::from_slice(&branch_req.body).expect("branch request body");
-    assert!(branch_body["new_branch_name"]
+    assert!(branch_body["NewBranchName"]
         .as_str()
         .expect("new branch name")
         .starts_with("portal/delete-contextspace-mobility-"));
-    assert_eq!(branch_body["old_branch_name"], "main");
+    assert_eq!(branch_body["OldBranchName"], "main");
 
     let delete_req = requests
         .iter()
         .find(|r| {
             r.method.as_str() == "POST"
-                && r.url.path() == "/api/v1/repos/test-owner/test-repo/contents"
+                && r.url.path()
+                    == "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles"
         })
         .expect("the commit that removes the files");
     let delete_body: serde_json::Value =
         serde_json::from_slice(&delete_req.body).expect("commit request body");
-    assert_eq!(delete_body["author"]["name"], "Demo Steward");
+    assert_eq!(delete_body["Author"]["Name"], "Demo Steward");
     assert_eq!(
-        delete_body["author"]["email"],
+        delete_body["Author"]["Email"],
         "demo.steward@banskabystrica.sk"
     );
-    assert_eq!(delete_body["committer"]["name"], "Demo Steward");
+    assert_eq!(delete_body["Committer"]["Name"], "Demo Steward");
     assert_eq!(
-        delete_body["committer"]["email"],
+        delete_body["Committer"]["Email"],
         "demo.steward@banskabystrica.sk"
     );
-    let files = delete_body["files"].as_array().expect("the files removed");
+    let files = delete_body["Files"].as_array().expect("the files removed");
     assert_eq!(files.len(), 1, "the manifest alone: {files:?}");
     assert_eq!(files[0]["operation"], "delete");
     assert_eq!(
@@ -202,20 +214,20 @@ async fn delete_returns_202_with_change_and_commits_to_gitea() {
         "projects/ovzdusie/spaces/mobility/space.yaml"
     );
     assert_eq!(files[0]["sha"], "sha-space-123");
-    assert_eq!(delete_body["message"], "delete ContextSpace mobility");
+    assert_eq!(delete_body["Message"], "delete ContextSpace mobility");
 
     let pulls_req = requests
         .iter()
         .find(|r| {
             r.method.as_str() == "POST"
-                && r.url.path() == "/api/v1/repos/test-owner/test-repo/pulls"
+                && r.url.path() == "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest"
         })
         .expect("pull request creation request");
     let pulls_body: serde_json::Value =
         serde_json::from_slice(&pulls_req.body).expect("pull request body");
-    assert_eq!(pulls_body["title"], "delete ContextSpace mobility");
-    assert_eq!(pulls_body["base"], "main");
-    assert!(pulls_body["head"]
+    assert_eq!(pulls_body["Title"], "delete ContextSpace mobility");
+    assert_eq!(pulls_body["Base"], "main");
+    assert!(pulls_body["Head"]
         .as_str()
         .expect("head branch")
         .starts_with("portal/delete-contextspace-mobility-"));
@@ -570,22 +582,24 @@ fn space_state(client: ShakoClient) -> (Config, AppState) {
 async fn mount_tree_and_commit(server: &MockServer, tree: &[&str]) {
     let entries: Vec<serde_json::Value> = tree
         .iter()
-        .map(|path| json!({ "path": path, "type": "blob" }))
+        .map(|path| json!({ "Path": path, "Type": "blob" }))
         .collect();
     Mock::given(method("GET"))
-        .and(path_regex(
-            r"^/api/v1/repos/test-owner/test-repo/git/trees/.*$",
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
         ))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!({ "tree": entries, "truncated": false })),
+                .set_body_json(json!({ "Tree": entries, "Truncated": false })),
         )
         .mount(server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/contents"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "commit": { "sha": "commit-sha-deleted" }
+            "Sha": "commit-sha-deleted"
         })))
         .mount(server)
         .await;
@@ -593,18 +607,23 @@ async fn mount_tree_and_commit(server: &MockServer, tree: &[&str]) {
 
 async fn mount_repo_and_file(server: &MockServer) {
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(server)
         .await;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-sha",
-            "content": "YXBpVmVyc2lvbjogam9pbmVkY29udGV4dC5jb20vdjFhbHBoYTEK",
-            "encoding": "base64"
+            "Sha": "blob-sha",
+            "Content": "YXBpVmVyc2lvbjogam9pbmVkY29udGV4dC5jb20vdjFhbHBoYTEK"
         })))
         .mount(server)
         .await;
@@ -636,39 +655,48 @@ async fn a_stale_branch_is_recreated_from_main_before_the_removal_is_written() {
     mount_repo_and_file(&server).await;
     let branch = branch_name("ovzdusie", "ContextSpace", "mobility", Operation::Delete);
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+        ))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
         .mount(&server)
         .await;
     // The first creation finds the stale branch; after it is dropped the second one succeeds.
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(409).set_body_string("branch already exists"))
         .up_to_n_times(1)
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&server)
         .await;
-    Mock::given(method("DELETE"))
+    Mock::given(method("POST"))
         .and(path(format!(
-            "/api/v1/repos/test-owner/test-repo/branches/{branch}"
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.DeleteBranch"
         )))
+        .and(body_string_contains(format!(r#""Branch":"{branch}""#)))
         .respond_with(ResponseTemplate::new(204))
         .expect(1)
         .mount(&server)
         .await;
     mount_tree_and_commit(&server, &["projects/ovzdusie/spaces/mobility/space.yaml"]).await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 56,
-            "html_url": "https://shako.example.sk/pulls/56",
-            "state": "open",
-            "merged": false
+            "Number": 56,
+            "HtmlUrl": "https://shako.example.sk/pulls/56",
+            "State": "open",
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -679,9 +707,9 @@ async fn a_stale_branch_is_recreated_from_main_before_the_removal_is_written() {
     let requests = server.received_requests().await.expect("received requests");
     let names: Vec<String> = requests
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/branches"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.CreateBranch"))
         .map(|r| {
-            r.body_json::<serde_json::Value>().expect("branch body")["new_branch_name"]
+            r.body_json::<serde_json::Value>().expect("branch body")["NewBranchName"]
                 .as_str()
                 .expect("name")
                 .to_string()
@@ -695,9 +723,9 @@ async fn a_stale_branch_is_recreated_from_main_before_the_removal_is_written() {
     );
     let heads: Vec<String> = requests
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/pulls"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.OpenPullRequest"))
         .map(|r| {
-            r.body_json::<serde_json::Value>().expect("pull body")["head"]
+            r.body_json::<serde_json::Value>().expect("pull body")["Head"]
                 .as_str()
                 .expect("head")
                 .to_string()
@@ -720,16 +748,22 @@ async fn a_second_removal_while_one_is_open_names_the_open_change() {
     mount_repo_and_file(&server).await;
     let branch = branch_name("ovzdusie", "ContextSpace", "mobility", Operation::Delete);
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-            "number": 300,
-            "html_url": "https://shako.example.sk/pulls/300",
-            "state": "open",
-            "head": { "ref": branch },
-            "base": { "ref": "main" },
-            "merged": false
-        }])))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+        ))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Number": 300,
+                    "HtmlUrl": "https://shako.example.sk/pulls/300",
+                    "State": "open",
+                    "Head": branch,
+                    "Base": "main",
+                    "Merged": false
+                }
+            ]
+        })))
         .mount(&server)
         .await;
 
@@ -765,8 +799,10 @@ async fn deleting_a_datamodel_removes_its_source_and_its_artefacts_in_one_change
         ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     for (file, sha) in [
@@ -777,24 +813,27 @@ async fn deleting_a_datamodel_removes_its_source_and_its_artefacts_in_one_change
     ] {
         Mock::given(method("GET"))
             .and(path(format!(
-                "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/{file}"
-            )))
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
+            ))).and(query_param("@p", format!("'projects/ovzdusie/spaces/mobility/{file}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": sha,
-                "content": "YXBpVmVyc2lvbjogam9pbmVkY29udGV4dC5jb20vdjFhbHBoYTEK",
-                "encoding": "base64"
+                "Sha": sha,
+                "Content": "YXBpVmVyc2lvbjogam9pbmVkY29udGV4dC5jb20vdjFhbHBoYTEK"
             })))
             .mount(&server)
             .await;
     }
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+        ))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&server)
         .await;
@@ -811,12 +850,14 @@ async fn deleting_a_datamodel_removes_its_source_and_its_artefacts_in_one_change
     )
     .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 57,
-            "html_url": "https://shako.example.sk/pulls/57",
-            "state": "open",
-            "merged": false
+            "Number": 57,
+            "HtmlUrl": "https://shako.example.sk/pulls/57",
+            "State": "open",
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -855,12 +896,13 @@ async fn deleting_a_datamodel_removes_its_source_and_its_artefacts_in_one_change
         .iter()
         .find(|r| {
             r.method.as_str() == "POST"
-                && r.url.path() == "/api/v1/repos/test-owner/test-repo/contents"
+                && r.url.path()
+                    == "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles"
         })
         .expect("the commit that removes the files");
     let body: serde_json::Value =
         serde_json::from_slice(&commit.body).expect("commit request body");
-    let removed: Vec<&str> = body["files"]
+    let removed: Vec<&str> = body["Files"]
         .as_array()
         .expect("files")
         .iter()
@@ -876,7 +918,7 @@ async fn deleting_a_datamodel_removes_its_source_and_its_artefacts_in_one_change
             .any(|path| path.contains("shared") || path.ends_with("space.yaml")),
         "only the model's own files: {removed:?}"
     );
-    assert!(body["files"]
+    assert!(body["Files"]
         .as_array()
         .expect("files")
         .iter()
@@ -892,8 +934,10 @@ async fn a_source_another_manifest_still_names_survives_the_delete() {
         ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     for (file, sha) in [
@@ -902,24 +946,27 @@ async fn a_source_another_manifest_still_names_survives_the_delete() {
     ] {
         Mock::given(method("GET"))
             .and(path(format!(
-                "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/{file}"
-            )))
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
+            ))).and(query_param("@p", format!("'projects/ovzdusie/spaces/mobility/{file}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": sha,
-                "content": "YXBpVmVyc2lvbjogam9pbmVkY29udGV4dC5jb20vdjFhbHBoYTEK",
-                "encoding": "base64"
+                "Sha": sha,
+                "Content": "YXBpVmVyc2lvbjogam9pbmVkY29udGV4dC5jb20vdjFhbHBoYTEK"
             })))
             .mount(&server)
             .await;
     }
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+        ))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&server)
         .await;
@@ -932,12 +979,14 @@ async fn a_source_another_manifest_still_names_survives_the_delete() {
     )
     .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 58,
-            "html_url": "https://shako.example.sk/pulls/58",
-            "state": "open",
-            "merged": false
+            "Number": 58,
+            "HtmlUrl": "https://shako.example.sk/pulls/58",
+            "State": "open",
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -979,12 +1028,13 @@ async fn a_source_another_manifest_still_names_survives_the_delete() {
         .iter()
         .find(|r| {
             r.method.as_str() == "POST"
-                && r.url.path() == "/api/v1/repos/test-owner/test-repo/contents"
+                && r.url.path()
+                    == "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles"
         })
         .expect("the commit that removes the files");
     let body: serde_json::Value =
         serde_json::from_slice(&commit.body).expect("commit request body");
-    let removed: Vec<&str> = body["files"]
+    let removed: Vec<&str> = body["Files"]
         .as_array()
         .expect("files")
         .iter()
@@ -1394,7 +1444,7 @@ mod under_identity {
     /// dependent the copy removed no longer blocks, and one the copy added does.
     #[tokio::test]
     async fn a_workspace_branch_delete_reads_dependents_on_that_branch_not_main() {
-        const REPO: &str = "/api/v1/repos/test-owner/test-repo";
+        const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
         let air = "projects/ovzdusie/endpoints/air.yaml";
         let new = "projects/ovzdusie/pipelines/new-sync.yaml";
         let space = "projects/ovzdusie/spaces/mobility/space.yaml";
@@ -1402,31 +1452,35 @@ mod under_identity {
         let tree = |entries: Vec<(&str, &str)>| {
             let tree: Vec<Value> = entries
                 .iter()
-                .map(|(p, sha)| json!({ "path": p, "type": "blob", "sha": sha }))
+                .map(|(p, sha)| json!({ "Path": p, "Type": "blob", "Sha": sha }))
                 .collect();
-            ResponseTemplate::new(200).set_body_json(json!({ "tree": tree, "truncated": false }))
+            ResponseTemplate::new(200).set_body_json(json!({ "Tree": tree, "Truncated": false }))
         };
         let file = |content: String| {
             use base64::Engine;
             ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "x", "encoding": "base64",
-                "content": base64::engine::general_purpose::STANDARD.encode(content),
+                "Sha": "x",
+                "Content": base64::engine::general_purpose::STANDARD.encode(content),
             }))
         };
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/branches/workspace/mobility-v2")))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": "ws1" } })),
-            )
+            .and(path(format!("{REPO}/Branches('workspace%2Fmobility-v2')")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "ws1" })))
             .mount(&forge)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/git/trees/base1")))
+            .and(path(format!(
+                "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .and(query_param("@r", "'base1'"))
             .respond_with(tree(vec![(space, "s1"), (air, "a1")]))
             .mount(&forge)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/git/trees/ws1")))
+            .and(path(format!(
+                "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .and(query_param("@r", "'ws1'"))
             .respond_with(tree(vec![(space, "s1"), (new, "n1")]))
             .mount(&forge)
             .await;
@@ -1434,14 +1488,16 @@ mod under_identity {
             format!("apiVersion: joinedcontext.com/v1alpha1\nkind: {kind}\nmetadata:\n  name: {name}\n  namespace: ovzdusie\nspec:\n  contextSpaceRef:\n    kind: ContextSpace\n    name: mobility\n")
         };
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/contents/{air}")))
-            .and(query_param("ref", "base1"))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{air}'")))
+            .and(query_param("@r", "'base1'"))
             .respond_with(file(yaml("Endpoint", "air")))
             .mount(&forge)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/contents/{new}")))
-            .and(query_param("ref", "workspace/mobility-v2"))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{new}'")))
+            .and(query_param("@r", "'workspace/mobility-v2'"))
             .respond_with(file(yaml("Pipeline", "new-sync")))
             .mount(&forge)
             .await;

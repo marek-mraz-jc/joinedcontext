@@ -425,38 +425,43 @@ spec:
 /// plus `extra`; returns a probe that says whether the merge was asked for.
 async fn files_are_what_was_written(server: &MockServer, extra: &[&str]) {
     use std::sync::{Arc, Mutex};
-    use wiremock::matchers::{method, path_regex};
+    use wiremock::matchers::{method, path, path_regex};
     use wiremock::{Mock, Request, ResponseTemplate};
     let written = Arc::new(Mutex::new(Vec::<String>::new()));
     let record = Arc::clone(&written);
-    let prefix = format!("{}/contents/", common::REPO);
-    Mock::given(method("PUT"))
-        .and(path_regex(format!("^{}/contents/.+", common::REPO)))
+    Mock::given(method("POST"))
+        .and(path(format!("{}/Shako.CommitFiles", common::REPO)))
         .respond_with(move |request: &Request| {
-            if let Some(path) = request.url.path().strip_prefix(&prefix) {
-                record.lock().expect("paths").push(path.to_owned());
+            let commit: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
+            for file in commit["Files"].as_array().into_iter().flatten() {
+                if let Some(path) = file["path"].as_str() {
+                    record.lock().expect("paths").push(path.to_owned());
+                }
             }
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "commit-1" } }))
+            ResponseTemplate::new(201).set_body_json(json!({ "Sha": "commit-1" }))
         })
         .with_priority(1)
         .mount(server)
         .await;
     let extra: Vec<String> = extra.iter().map(|p| (*p).to_owned()).collect();
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{}/pulls/[0-9]+/files$", common::REPO)))
+        .and(path_regex(format!(
+            "^{}/PullRequests\\([0-9]+\\)/Files$",
+            regex::escape(&common::REPO)
+        )))
         .respond_with(move |_: &Request| {
             let mut files: Vec<Value> = written
                 .lock()
                 .expect("paths")
                 .iter()
-                .map(|path| json!({ "filename": path, "status": "added" }))
+                .map(|path| json!({ "Filename": path, "Status": "added" }))
                 .collect();
             files.extend(
                 extra
                     .iter()
-                    .map(|path| json!({ "filename": path, "status": "added" })),
+                    .map(|path| json!({ "Filename": path, "Status": "added" })),
             );
-            ResponseTemplate::new(200).set_body_json(files)
+            ResponseTemplate::new(200).set_body_json(json!({ "value": files }))
         })
         .mount(server)
         .await;
@@ -469,7 +474,7 @@ async fn merges(server: &MockServer) -> Vec<Value> {
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/merge"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.Merge"))
         .map(|r| serde_json::from_slice(&r.body).unwrap_or(Value::Null))
         .collect()
 }
@@ -497,9 +502,7 @@ async fn a_green_flow_is_merged_for_the_person_who_started_it() {
     );
     let merged = merges(&server).await;
     assert_eq!(1, merged.len(), "one merge: {merged:?}");
-    let message = merged[0]["merge_message_field"]
-        .as_str()
-        .unwrap_or_default();
+    let message = merged[0]["Message"].as_str().unwrap_or_default();
     assert!(
         message.contains(
             "Green lane: blueprint threshold-alert 1.2.0, started by jana@banskabystrica.sk"

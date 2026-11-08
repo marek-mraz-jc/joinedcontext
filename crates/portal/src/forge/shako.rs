@@ -926,7 +926,10 @@ impl ShakoClient {
             "AutoInit": auto_init,
             "DefaultBranch": "main",
         });
-        match self.act(self.odata_url(&["CreateRepository"])?, &params).await {
+        match self
+            .act(self.odata_url(&["CreateRepository"])?, &params)
+            .await
+        {
             Ok(_) => Ok(true),
             Err(GitError::Conflict(_)) => Ok(false),
             Err(err) => Err(err),
@@ -956,7 +959,10 @@ impl ShakoClient {
             "RepoName": self.repo,
             "Private": true,
         });
-        match self.act(self.odata_url(&["ImportRepository"])?, &params).await {
+        match self
+            .act(self.odata_url(&["ImportRepository"])?, &params)
+            .await
+        {
             Ok(_) => Ok(true),
             Err(GitError::Conflict(_)) => Ok(false),
             Err(err) => Err(err),
@@ -1085,9 +1091,7 @@ impl ShakoClient {
         struct Repository {
             default_branch: String,
         }
-        let repo: Repository = self
-            .get_json(self.repo_url(&[])?, "the repository")
-            .await?;
+        let repo: Repository = self.get_json(self.repo_url(&[])?, "the repository").await?;
         Ok(repo.default_branch)
     }
 
@@ -1559,7 +1563,11 @@ impl ShakoClient {
     /// given, else created or replaced whatever is there.
     pub async fn put_file(&self, req: &FileWrite<'_>) -> Result<String, GitError> {
         let change = FileChange {
-            operation: if req.sha.is_some() { "update" } else { "upload" },
+            operation: if req.sha.is_some() {
+                "update"
+            } else {
+                "upload"
+            },
             path: self.write_path(req.path)?,
             content: Some(STANDARD.encode(committed_text(req.path, req.content).as_bytes())),
             sha: req.sha.map(str::to_owned),
@@ -1840,8 +1848,8 @@ impl ShakoClient {
             .map(|at| &path[at..])
             .ok_or_else(|| GitError::Transport("the bundle link names no repository".into()))?;
         let full = format!("{}{api}", self.base.as_str().trim_end_matches('/'));
-        let here =
-            Url::parse(&full).map_err(|e| GitError::Config(format!("invalid url '{full}': {e}")))?;
+        let here = Url::parse(&full)
+            .map_err(|e| GitError::Config(format!("invalid url '{full}': {e}")))?;
         let res = Self::check_status(self.send(self.http.get(here)).await?).await?;
         res.bytes()
             .await
@@ -2267,10 +2275,19 @@ mod project_repository_tests {
             "projects/ovzdusie/spaces/../../../other/repo",
             "projects/ovzdusie/./x",
         ] {
-            assert!(client.get_file(climbing, "main").await.is_err(), "{climbing}");
+            assert!(
+                client.get_file(climbing, "main").await.is_err(),
+                "{climbing}"
+            );
             assert!(
                 client
-                    .change_files("portal/x", "m", author, &[(climbing.into(), "a".into())], &[])
+                    .change_files(
+                        "portal/x",
+                        "m",
+                        author,
+                        &[(climbing.into(), "a".into())],
+                        &[]
+                    )
                     .await
                     .is_err(),
                 "{climbing}"

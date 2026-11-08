@@ -149,9 +149,13 @@ async fn a_project_may_still_update_its_own_space_of_that_name() {
 async fn an_import_carrying_a_taken_segment_is_refused_the_same_way() {
     let shako = forge().await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{}/git/trees/.*", common::REPO)))
+        .and(path(format!(
+            "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            common::REPO
+        )))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "tree": [], "truncated": false,
+            "Tree": [],
+            "Truncated": false
         })))
         .mount(&shako)
         .await;

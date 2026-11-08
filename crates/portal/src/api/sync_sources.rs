@@ -301,7 +301,6 @@ pub(crate) async fn detach_for(
     Ok((pull, status))
 }
 
-
 /// The signature header of an outside Gitea origin, a product the SyncSource reads from and
 /// that is not the Portal's own forge.
 const OUTSIDE_GITEA_SIGNATURE: &str = "x-gitea-signature";
@@ -343,10 +342,13 @@ pub async fn webhook(
     // existence oracle over the sources of every project (PF-59, R20).
     // A shako origin signs in its own header; an outside Gitea origin in Gitea's. Both carry
     // the same hex HMAC-SHA256 of the body with this source's secret.
-    let presented: Vec<&str> = [crate::api::webhook::SIGNATURE_HEADER, OUTSIDE_GITEA_SIGNATURE]
-        .into_iter()
-        .filter_map(|header| headers.get(header).and_then(|value| value.to_str().ok()))
-        .collect();
+    let presented: Vec<&str> = [
+        crate::api::webhook::SIGNATURE_HEADER,
+        OUTSIDE_GITEA_SIGNATURE,
+    ]
+    .into_iter()
+    .filter_map(|header| headers.get(header).and_then(|value| value.to_str().ok()))
+    .collect();
     if !presented.iter().any(|signature| {
         state
             .webhook_secrets

@@ -19,14 +19,14 @@ use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const HEAD: &str = "2c245c6bb1efa7a20938c5b11b70379be6838eec";
 const APP_HEAD: &str = "b47f8079d2df9e7986d2babf4539cec802f4e68e";
 const TAGGED: &str = "3a386a2d5ff9fc1e18d3032677ae5bbf2ea5d4e7";
-const NEW: &str = "/api/v1/repos/test-owner/doprava";
-const NEW_APP: &str = "/api/v1/repos/test-owner/doprava_air-map";
+const NEW: &str = "/odata/Repositories(Owner='test-owner',Name='doprava')";
+const NEW_APP: &str = "/odata/Repositories(Owner='test-owner',Name='doprava_air-map')";
 
 const PROJECT: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  \
                        name: ovzdusie\n  namespace: org\nspec:\n  organizationRef: bb\n  \
@@ -145,7 +145,13 @@ fn archive_carrying(
 /// A new repository the import creates: absent until created, then `main` at `head`, the
 /// push taken, and writes and protection taken.
 async fn new_repository(server: &MockServer, base: &str, head: &str, files: &[(&str, &str)]) {
-    let git = base.replace("/api/v1/repos/", "/") + ".git/git-receive-pack";
+    // `/odata/Repositories(Owner='o',Name='r')` pushes at `/o/r.git/git-receive-pack`.
+    let (owner, name) = base
+        .trim_start_matches("/odata/Repositories(Owner='")
+        .trim_end_matches("')")
+        .split_once("',Name='")
+        .expect("a repository key");
+    let git = format!("/{owner}/{name}.git/git-receive-pack");
     Mock::given(method("GET"))
         .and(path(base))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
@@ -160,43 +166,47 @@ async fn new_repository(server: &MockServer, base: &str, head: &str, files: &[(&
         .mount(server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{base}/branches/main")))
+        .and(path(format!("{base}/Branches('main')")))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({ "name": "main", "commit": { "id": head } })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Name": "main", "HeadSha": head })),
         )
         .mount(server)
         .await;
     let tree: Vec<_> = files
         .iter()
-        .map(|(file, _)| json!({ "path": file, "type": "blob", "sha": format!("blob-{file}") }))
+        .map(|(file, _)| json!({ "Path": file, "Type": "blob", "Sha": format!("blob-{file}") }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!("{base}/git/trees/main")))
+        .and(path(format!(
+            "{base}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "tree", "truncated": false, "tree": tree
+            "Sha": format!("tree-{head}"),
+            "Truncated": false,
+            "Tree": tree
         })))
         .mount(server)
         .await;
     for (file, body) in files {
         Mock::given(method("GET"))
-            .and(path(format!("{base}/contents/{file}")))
+            .and(path(format!("{base}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{file}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": format!("blob-{file}"), "content": STANDARD.encode(body)
+                "Sha": format!("blob-{file}"),
+                "Content": STANDARD.encode(body)
             })))
             .mount(server)
             .await;
     }
     for (verb, route) in [
-        ("POST", format!("{base}/contents")),
-        ("POST", format!("{base}/branch_protections")),
+        ("POST", format!("{base}/Shako.CommitFiles")),
+        ("POST", format!("{base}/Shako.Protect")),
         ("DELETE", base.to_owned()),
     ] {
         Mock::given(method(verb))
             .and(path(route))
-            .respond_with(
-                ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "remount" } })),
-            )
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "remount" })))
             .mount(server)
             .await;
     }
@@ -212,13 +222,13 @@ async fn world() -> (MockServer, AppState) {
 async fn world_with(extra: &[(&str, &str)]) -> (MockServer, AppState) {
     let server = forge().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .and(path(format!("{REPO}/PullRequests")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/orgs/test-owner/repos"))
-        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "name": "created" })))
+        .and(path("/odata/CreateRepository"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Name": "created" })))
         .mount(&server)
         .await;
     let mut files = vec![
@@ -356,7 +366,7 @@ async fn sent(server: &MockServer, verb: &str, route: &str) -> Vec<Vec<u8>> {
 
 /// Nothing was created in the forge.
 async fn nothing_created(server: &MockServer) {
-    assert!(sent(server, "POST", "/api/v1/orgs/test-owner/repos")
+    assert!(sent(server, "POST", "/odata/CreateRepository")
         .await
         .is_empty());
 }
@@ -376,7 +386,7 @@ async fn an_export_imports_as_a_new_project() {
     .await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
 
-    let created: Vec<Value> = sent(&server, "POST", "/api/v1/orgs/test-owner/repos")
+    let created: Vec<Value> = sent(&server, "POST", "/odata/CreateRepository")
         .await
         .iter()
         .map(|body| serde_json::from_slice(body).expect("json"))
@@ -385,9 +395,9 @@ async fn an_export_imports_as_a_new_project() {
         .iter()
         .map(|body| {
             (
-                body["name"].as_str().unwrap_or_default(),
-                body["private"].as_bool().unwrap_or_default(),
-                body["auto_init"].as_bool().unwrap_or(true),
+                body["Name"].as_str().unwrap_or_default(),
+                body["Private"].as_bool().unwrap_or_default(),
+                body["AutoInit"].as_bool().unwrap_or(true),
             )
         })
         .collect();
@@ -412,10 +422,10 @@ async fn an_export_imports_as_a_new_project() {
         "the bundle's pack after the commands"
     );
 
-    let remount = sent(&server, "POST", &format!("{NEW}/contents")).await;
+    let remount = sent(&server, "POST", &format!("{NEW}/Shako.CommitFiles")).await;
     assert_eq!(remount.len(), 1, "one remount commit");
     let remount: Value = serde_json::from_slice(&remount[0]).expect("json");
-    let written: std::collections::BTreeMap<String, String> = remount["files"]
+    let written: std::collections::BTreeMap<String, String> = remount["Files"]
         .as_array()
         .expect("files")
         .iter()
@@ -441,7 +451,7 @@ async fn an_export_imports_as_a_new_project() {
     assert_eq!(written["CODEOWNERS"], "* @test-owner/doprava-writers\n");
     for repository in [NEW, NEW_APP] {
         assert_eq!(
-            sent(&server, "POST", &format!("{repository}/branch_protections"))
+            sent(&server, "POST", &format!("{repository}/Shako.Protect"))
                 .await
                 .len(),
             1,
@@ -518,7 +528,7 @@ async fn a_repository_that_is_there_is_not_adopted() {
     let (server, state) = world().await;
     Mock::given(method("GET"))
         .and(path(NEW_APP))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .with_priority(1)
         .mount(&server)
         .await;
@@ -535,10 +545,9 @@ async fn a_repository_that_is_there_is_not_adopted() {
 async fn a_head_that_is_not_the_bundles_removes_what_was_created() {
     let (server, state) = world().await;
     Mock::given(method("GET"))
-        .and(path(format!("{NEW_APP}/branches/main")))
+        .and(path(format!("{NEW_APP}/Branches('main')")))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({ "name": "main", "commit": { "id": TAGGED } })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Name": "main", "HeadSha": TAGGED })),
         )
         .with_priority(1)
         .mount(&server)
@@ -691,12 +700,14 @@ async fn carrying_world(held: &str) -> (MockServer, AppState) {
     ])
     .await;
     Mock::given(method("GET"))
-        .and(path(format!(
-            "{REPO}/contents/datamodels/stations/stations.linkml.yaml"
-        )))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param(
+            "@p",
+            "'datamodels/stations/stations.linkml.yaml'",
+        ))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!({ "sha": "blob-stations", "content": STANDARD.encode(held) })),
+                .set_body_json(json!({ "Sha": "blob-stations", "Content": STANDARD.encode(held) })),
         )
         .mount(&server)
         .await;
@@ -728,13 +739,24 @@ async fn planned(state: &AppState, file: &[u8]) -> Value {
 
 /// No request wrote the destination's organization repository (MF-50).
 async fn organization_untouched(server: &MockServer) {
+    // Each write names its files in the body of `Shako.CommitFiles`, so the paths are read there.
     let written: Vec<String> = server
         .received_requests()
         .await
         .expect("requests")
         .into_iter()
         .filter(|r| r.method.as_str() != "GET" && r.url.path().starts_with(REPO))
-        .map(|r| format!("{} {}", r.method, r.url.path()))
+        .flat_map(|r| {
+            let body: Value = serde_json::from_slice(&r.body).unwrap_or_default();
+            let files: Vec<String> = body["Files"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|file| file["path"].as_str().map(str::to_owned))
+                .collect();
+            std::iter::once(format!("{} {}", r.method, r.url.path())).chain(files)
+        })
         .collect();
     // The registry entry's Change is the organization's; no model is written there.
     assert!(
@@ -757,7 +779,7 @@ async fn a_carried_model_the_organization_holds_is_mapped() {
     assert!(answer.status.is_success(), "{}", answer.text);
     // The remount commit only.
     assert_eq!(
-        sent(&server, "POST", &format!("{NEW}/contents"))
+        sent(&server, "POST", &format!("{NEW}/Shako.CommitFiles"))
             .await
             .len(),
         1
@@ -778,10 +800,10 @@ async fn a_carried_model_that_differs_lands_in_the_project() {
     );
     let answer = checked_import(&state, &file, &[]).await;
     assert!(answer.status.is_success(), "{}", answer.text);
-    let commits = sent(&server, "POST", &format!("{NEW}/contents")).await;
+    let commits = sent(&server, "POST", &format!("{NEW}/Shako.CommitFiles")).await;
     assert_eq!(commits.len(), 2);
     let landing: Value = serde_json::from_slice(&commits[1]).expect("json");
-    let written: BTreeMap<String, String> = landing["files"]
+    let written: BTreeMap<String, String> = landing["Files"]
         .as_array()
         .expect("files")
         .iter()
@@ -833,20 +855,21 @@ async fn a_carried_model_the_project_holds_already_removes_what_was_created() {
     let (server, state) = carrying_world("id: https://bb.sk/stations\nname: stations\n").await;
     let file = archive_carrying(PROJECT, 0, Some(ORG_SOURCE), |_| {});
     Mock::given(method("GET"))
-        .and(path(format!("{NEW}/git/trees/main")))
+        .and(path(format!("{NEW}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")))
+        .and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "tree", "truncated": false,
-            "tree": [{ "path": "spaces/ovzdusie/datamodels/stations.yaml", "type": "blob", "sha": "blob-own" }],
+            "Sha": "tree",
+            "Truncated": false,
+            "Tree": [{ "Path": "spaces/ovzdusie/datamodels/stations.yaml", "Type": "blob", "Sha": "blob-own" }]
         })))
         .with_priority(1)
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!(
-            "{NEW}/contents/spaces/ovzdusie/datamodels/stations.yaml"
-        )))
+        .and(path(format!("{NEW}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", "'spaces/ovzdusie/datamodels/stations.yaml'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-own", "content": STANDARD.encode(PARKING.replace("name: parking", "name: stations")),
+            "Sha": "blob-own", "Content": STANDARD.encode(PARKING.replace("name: parking", "name: stations")),
         })))
         .mount(&server)
         .await;

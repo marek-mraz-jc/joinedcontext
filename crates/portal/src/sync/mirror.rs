@@ -406,17 +406,20 @@ mod tests {
     #[tokio::test]
     async fn a_second_run_with_the_same_models_proposes_nothing_and_a_changed_one_does() {
         use base64::Engine;
-        use wiremock::matchers::{method, path};
+        use wiremock::matchers::{method, path, query_param};
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
         // As a commit lays it out (T-5052): the fetch time shares a flow line with the sha.
         let stored =
             "spec:\n  source:\n    remote: { sha256: abc, fetchedAt: '2026-10-05T03:00:00Z' }\n";
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/o/r/contents/models/air.yaml"))
+            .and(path(
+                "/odata/Repositories(Owner='o',Name='r')/Shako.File(Path=@p,Ref=@r)",
+            ))
+            .and(query_param("@p", "'models/air.yaml'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "sha": "s1",
-                "content": base64::engine::general_purpose::STANDARD.encode(stored),
+                "Sha": "s1",
+                "Content": base64::engine::general_purpose::STANDARD.encode(stored)
             })))
             .mount(&server)
             .await;

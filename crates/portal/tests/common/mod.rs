@@ -33,7 +33,7 @@ pub mod routes;
 pub const CSRF: &str = "test-csrf-token-permissions";
 
 /// The mock forge's repository path.
-pub const REPO: &str = "/api/v1/repos/test-owner/test-repo";
+pub const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
 
 /// A person signed in as `{name}@hel.fi`, with no group or realm role.
 pub fn person(name: &str) -> Identity {
@@ -78,7 +78,7 @@ pub fn bind(mirror: &Mirror, who: &str, project: &str) {
     ));
 }
 
-/// A forge file's content as Gitea returns it.
+/// A forge file's content as shako returns it: base64.
 pub fn encode(text: &str) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(text)
@@ -307,62 +307,59 @@ pub async fn forge() -> MockServer {
 pub async fn mount_repository(shako: &MockServer, repo: &str) {
     Mock::given(method("GET"))
         .and(path(repo))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(shako)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!("{repo}/branches")))
+        .and(path(format!("{repo}/Shako.CreateBranch")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(shako)
         .await;
-    for verb in ["PUT", "POST", "DELETE"] {
-        Mock::given(method(verb))
-            .and(path_regex(format!("^{repo}/contents/.*")))
-            .respond_with(
-                ResponseTemplate::new(201)
-                    .set_body_json(json!({ "commit": { "sha": "commit-1" } })),
-            )
-            .mount(shako)
-            .await;
-    }
     Mock::given(method("POST"))
-        .and(path(format!("{repo}/pulls")))
+        .and(path(format!("{repo}/Shako.OpenPullRequest")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 9, "html_url": "https://shako.example/pulls/9", "state": "open",
-            "mergeable": true, "merged": false
+            "Number": 9,
+            "HtmlUrl": "https://shako.example/pulls/9",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(shako)
         .await;
-    Mock::given(path_regex(format!("^{repo}/pulls/[0-9]+/(merge|reviews)$")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
-        .mount(shako)
-        .await;
-    Mock::given(method("PATCH"))
-        .and(path_regex(format!("^{repo}/pulls/[0-9]+$")))
+    Mock::given(path_regex(format!(
+        "^{}/PullRequests\\([0-9]+\\)/(Shako\\.Merge|Shako\\.Review)$",
+        regex::escape(&repo)
+    )))
+    .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+    .mount(shako)
+    .await;
+    Mock::given(method("POST"))
+        .and(path_regex(format!(
+            "^{}/PullRequests\\([0-9]+\\)/Shako\\.Close$",
+            regex::escape(&repo)
+        )))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "state": "closed" })))
         .mount(shako)
         .await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{repo}/contents/.*")))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", repo)))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .with_priority(9)
         .mount(shako)
         .await;
-    // Every file of one change goes in one commit to `POST /contents`, which is the repository
-    // path itself and not a path under it, so the per-file mocks above never match it (T-0900).
+    // Every file of one change, a single-file write included, goes in one commit to
+    // `POST R/Shako.CommitFiles` (T-0900).
     Mock::given(method("POST"))
-        .and(path(format!("{repo}/contents")))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "commit-1" } })),
-        )
+        .and(path(format!("{repo}/Shako.CommitFiles")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "commit-1" })))
         .mount(shako)
         .await;
     // One open change per resource: a removal asks the forge for the open merge requests first
     // (CC-34, T-0883). This fixture has none open — at the fallback priority, so a suite that
     // mounts a forge with an open change of its own is answered its own, not this empty list.
     Mock::given(method("GET"))
-        .and(path(format!("{repo}/pulls")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .and(path(format!("{repo}/PullRequests")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
         .with_priority(9)
         .mount(shako)
         .await;
@@ -371,9 +368,12 @@ pub async fn mount_repository(shako: &MockServer, repo: &str) {
     // file; a suite with side files mounts a tree of its own, and this one stands at the fallback
     // priority so that tree is the one answered.
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{repo}/git/trees/.*")))
+        .and(path(format!(
+            "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            repo
+        )))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "tree": [], "truncated": false })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Tree": [], "Truncated": false })),
         )
         .with_priority(9)
         .mount(shako)
@@ -631,7 +631,7 @@ pub async fn stream_requests(runner: &MockServer) -> Vec<wiremock::Request> {
         .collect()
 }
 
-/// Every `(path, text)` the commits of `POST {repo}/contents` wrote, each commit in the order it
+/// Every `(path, text)` the commits of `POST {repo}/Shako.CommitFiles` wrote, each commit in the order it
 /// lists its files.
 pub async fn committed_files(shako: &wiremock::MockServer, repo: &str) -> Vec<(String, String)> {
     use base64::Engine;
@@ -640,9 +640,11 @@ pub async fn committed_files(shako: &wiremock::MockServer, repo: &str) -> Vec<(S
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path() == format!("{repo}/contents"))
+        .filter(|r| {
+            r.method.as_str() == "POST" && r.url.path() == format!("{repo}/Shako.CommitFiles")
+        })
         .filter_map(|r| serde_json::from_slice::<serde_json::Value>(&r.body).ok())
-        .flat_map(|commit| commit["files"].as_array().cloned().unwrap_or_default())
+        .flat_map(|commit| commit["Files"].as_array().cloned().unwrap_or_default())
         .filter_map(|file| {
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(file["content"].as_str()?)
@@ -655,16 +657,18 @@ pub async fn committed_files(shako: &wiremock::MockServer, repo: &str) -> Vec<(S
         .collect()
 }
 
-/// The paths a deletion removed in its one commit, `POST /contents` (F-R2POR3-019), sorted.
+/// The paths a deletion removed in its one commit, `POST Shako.CommitFiles` (F-R2POR3-019), sorted.
 pub async fn removed_in_one_commit(shako: &wiremock::MockServer) -> Vec<String> {
     let mut paths: Vec<String> = shako
         .received_requests()
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/contents"))
+        .filter(|r| {
+            r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/Shako.CommitFiles")
+        })
         .filter_map(|r| serde_json::from_slice::<serde_json::Value>(&r.body).ok())
-        .flat_map(|commit| commit["files"].as_array().cloned().unwrap_or_default())
+        .flat_map(|commit| commit["Files"].as_array().cloned().unwrap_or_default())
         .filter(|file| file["operation"] == "delete")
         .filter_map(|file| file["path"].as_str().map(str::to_owned))
         .collect();

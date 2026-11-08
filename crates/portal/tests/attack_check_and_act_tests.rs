@@ -49,53 +49,63 @@ async fn forge_at(merge_status: u16) -> MockServer {
     let shako = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path(common::REPO))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{}/pulls/13", common::REPO)))
+        .and(path(format!("{}/PullRequests(13)", common::REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": 13,
-            "html_url": "https://shako.example/pulls/13",
-            "state": "open",
-            "title": "update Pipeline aq",
-            "head": { "ref": BRANCH, "sha": REVIEWED },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-18T09:14:22Z",
-            "user": { "login": "someone.else", "full_name": "Someone Else", "email": "else@hel.fi" },
-            "mergeable": true,
-            "merged": false
+            "Number": 13,
+            "HtmlUrl": "https://shako.example/pulls/13",
+            "State": "open",
+            "Title": "update Pipeline aq",
+            "Head": BRANCH,
+            "HeadSha": REVIEWED,
+            "Base": "main",
+            "CreatedAt": "2026-09-18T09:14:22Z",
+            "Author": "someone.else",
+            "AuthorName": "Someone Else",
+            "AuthorEmail": "else@hel.fi",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{}/pulls/13/files", common::REPO)))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            { "filename": MANIFEST_PATH, "status": "modified" }
-        ])))
-        .mount(&shako)
-        .await;
-    Mock::given(method("GET"))
-        .and(path(format!("{}/contents/{MANIFEST_PATH}", common::REPO)))
-        .and(query_param("ref", REVIEWED))
+        .and(path(format!("{}/PullRequests(13)/Files", common::REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-reviewed",
-            "content": common::encode(&pipeline_yaml("  rate: 60\n")),
+            "value": [
+                { "Filename": MANIFEST_PATH, "Status": "modified" }
+            ]
         })))
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{}/contents/{MANIFEST_PATH}", common::REPO)))
-        .and(query_param("ref", "main"))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .and(query_param("@p", format!("'{MANIFEST_PATH}'")))
+        .and(query_param("@r", format!("'{}'", REVIEWED)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-base",
-            "content": common::encode(&pipeline_yaml("  rate: 30\n")),
+            "Sha": "blob-reviewed",
+            "Content": common::encode(&pipeline_yaml("  rate: 60\n"))
         })))
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{}/commits", common::REPO)))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .and(query_param("@p", format!("'{MANIFEST_PATH}'")))
+        .and(query_param("@r", "'main'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "blob-base",
+            "Content": common::encode(&pipeline_yaml("  rate: 30\n"))
+        })))
+        .mount(&shako)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{}/Shako.History(Ref=@r,Path=@p,Top=@n)",
+            common::REPO
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
         .mount(&shako)
         .await;
     let body = if merge_status == 409 {
@@ -104,7 +114,10 @@ async fn forge_at(merge_status: u16) -> MockServer {
         json!({})
     };
     Mock::given(method("POST"))
-        .and(path(format!("{}/pulls/13/merge", common::REPO)))
+        .and(path(format!(
+            "{}/PullRequests(13)/Shako.Merge",
+            common::REPO
+        )))
         .respond_with(ResponseTemplate::new(merge_status).set_body_json(body))
         .mount(&shako)
         .await;
@@ -153,7 +166,10 @@ async fn merge_payload(shako: &MockServer) -> Option<Value> {
         .into_iter()
         .find(|request| {
             request.method.to_string().eq_ignore_ascii_case("post")
-                && request.url.path().ends_with("/pulls/13/merge")
+                && request
+                    .url
+                    .path()
+                    .ends_with("/PullRequests(13)/Shako.Merge")
         })
         .and_then(|request| serde_json::from_slice(&request.body).ok())
 }
@@ -241,7 +257,10 @@ const UPDATED: &str = "1683ddddeeeeffff000011112222aaaabbbbcccc";
 async fn behind_forge(update_status: u16, manifest_after: &str) -> MockServer {
     let shako = forge_at(200).await;
     Mock::given(method("POST"))
-        .and(path(format!("{}/pulls/13/merge", common::REPO)))
+        .and(path(format!(
+            "{}/PullRequests(13)/Shako.Merge",
+            common::REPO
+        )))
         .respond_with(
             ResponseTemplate::new(405)
                 .set_body_json(json!({ "message": "The head branch is behind the base branch" })),
@@ -256,28 +275,26 @@ async fn behind_forge(update_status: u16, manifest_after: &str) -> MockServer {
         json!({})
     };
     Mock::given(method("POST"))
-        .and(path(format!("{}/pulls/13/update", common::REPO)))
-        .and(query_param("style", "merge"))
+        .and(path(format!(
+            "{}/PullRequests(13)/Shako.UpdateBranch",
+            common::REPO
+        )))
         .respond_with(ResponseTemplate::new(update_status).set_body_json(update))
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{}/branches/{BRANCH}", common::REPO)))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": UPDATED } })),
-        )
+        .and(path(format!("{}/Branches('{BRANCH}')", common::REPO)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&shako)
         .await;
     for (commit, blob) in [(REVIEWED, "blob-reviewed"), (UPDATED, manifest_after)] {
         Mock::given(method("GET"))
-            .and(path(format!("{}/git/trees/{commit}", common::REPO)))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "truncated": false,
-                "tree": [
-                    { "path": MANIFEST_PATH, "type": "blob", "sha": blob },
-                    { "path": "README.md", "type": "blob", "sha": format!("readme-{commit}") }
-                ]
-            })))
+            .and(path(format!(
+                "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+                common::REPO
+            )))
+            .and(query_param("@r", format!("'{commit}'")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
             .mount(&shako)
             .await;
     }
@@ -292,7 +309,10 @@ async fn merges_asked(shako: &MockServer) -> Vec<Value> {
         .into_iter()
         .filter(|request| {
             request.method.to_string().eq_ignore_ascii_case("post")
-                && request.url.path().ends_with("/pulls/13/merge")
+                && request
+                    .url
+                    .path()
+                    .ends_with("/PullRequests(13)/Shako.Merge")
         })
         .filter_map(|request| serde_json::from_slice(&request.body).ok())
         .collect()

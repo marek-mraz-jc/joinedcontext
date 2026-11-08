@@ -571,7 +571,7 @@ pub async fn delete_with_identity(
         }));
     }
 
-    // 5. Commit deletion to Git merge request via Gitea client
+    // 5. Commit deletion to Git merge request via the forge client
     let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
@@ -1118,58 +1118,66 @@ mod tests {
         });
 
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "default_branch": "main"
+                "DefaultBranch": "main"
             })))
             .mount(&server)
             .await;
 
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
-            ))
-            .and(query_param("ref", "main"))
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+            )).and(query_param("@p", "'projects/ovzdusie/spaces/mobility/space.yaml'"))
+            .and(query_param("@r", "'main'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "sha-space-123",
-                "content": "YXBpVmVyc2lvbjogeW91"
+                "Sha": "sha-space-123",
+                "Content": "YXBpVmVyc2lvbjogeW91"
             })))
             .mount(&server)
             .await;
 
         Mock::given(method("POST"))
-            .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+            ))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
             .mount(&server)
             .await;
 
         Mock::given(method("GET"))
-            .and(wiremock::matchers::path_regex(
-                r"^/api/v1/repos/test-owner/test-repo/git/trees/.*$",
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
             ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "tree": [{ "path": "projects/ovzdusie/spaces/mobility/space.yaml", "type": "blob" }],
-                "truncated": false
+                "Tree": [{ "Path": "projects/ovzdusie/spaces/mobility/space.yaml", "Type": "blob" }],
+                "Truncated": false
             })))
             .mount(&server)
             .await;
 
         Mock::given(method("POST"))
-            .and(path("/api/v1/repos/test-owner/test-repo/contents"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "commit": { "sha": "commit-sha-deleted" }
+                "Sha": "commit-sha-deleted"
             })))
             .mount(&server)
             .await;
 
         Mock::given(method("POST"))
-            .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+            ))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-                "number": 55,
-                "html_url": "https://shako.example.sk/pulls/55",
-                "state": "open",
-                "mergeable": true,
-                "merged": false
+                "Number": 55,
+                "HtmlUrl": "https://shako.example.sk/pulls/55",
+                "State": "open",
+                "Mergeable": true,
+                "Merged": false
             })))
             .mount(&server)
             .await;
@@ -1227,54 +1235,57 @@ mod tests {
             spec: json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "excel" } }),
             status: None,
         });
-        let repo = "/api/v1/repos/test-owner/test-repo";
+        let repo = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
         let filed = "projects/ovzdusie/spaces/excel/policies/excel-upload.yaml";
         let ok = |body: Value| ResponseTemplate::new(200).set_body_json(body);
         Mock::given(method("GET"))
             .and(path(repo))
-            .respond_with(ok(json!({ "default_branch": "main" })))
+            .respond_with(ok(json!({ "DefaultBranch": "main" })))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!(
-                "{repo}/contents/projects/ovzdusie/spaces/ovzdusie/policies/excel-upload.yaml"
-            )))
+            .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param(
+                "@p",
+                "'projects/ovzdusie/spaces/ovzdusie/policies/excel-upload.yaml'",
+            ))
             .respond_with(ResponseTemplate::new(404))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{repo}/contents/{filed}")))
-            .respond_with(ok(json!({ "sha": "sha-filed", "content": "YTogYg==" })))
+            .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{filed}'")))
+            .respond_with(ok(json!({ "Sha": "sha-filed", "Content": "YTogYg==" })))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{repo}/branches")))
+            .and(path(format!("{repo}/Shako.CreateBranch")))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(wiremock::matchers::path_regex(format!(
-                "^{repo}/git/trees/.*$"
+            .and(path(format!(
+                "{repo}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
             )))
-            .respond_with(ok(json!({ "tree": [], "truncated": false })))
+            .respond_with(ok(json!({ "Tree": [], "Truncated": false })))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{repo}/contents")))
+            .and(path(format!("{repo}/Shako.CommitFiles")))
             .and(wiremock::matchers::body_string_contains(filed))
             .and(wiremock::matchers::body_string_contains("sha-filed"))
-            .respond_with(ok(json!({ "commit": { "sha": "deleted" } })))
+            .respond_with(ok(json!({ "Sha": "deleted" })))
             .expect(1)
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{repo}/pulls")))
+            .and(path(format!("{repo}/Shako.OpenPullRequest")))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-                "number": 56,
-                "html_url": "https://shako.example.sk/pulls/56",
-                "state": "open",
-                "mergeable": true,
-                "merged": false
+                "Number": 56,
+                "HtmlUrl": "https://shako.example.sk/pulls/56",
+                "State": "open",
+                "Mergeable": true,
+                "Merged": false
             })))
             .mount(&server)
             .await;
@@ -1312,18 +1323,20 @@ mod tests {
         });
 
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "default_branch": "main"
+                "DefaultBranch": "main"
             })))
             .mount(&server)
             .await;
 
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
-            ))
-            .and(query_param("ref", "main"))
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+            )).and(query_param("@p", "'projects/ovzdusie/spaces/mobility/space.yaml'"))
+            .and(query_param("@r", "'main'"))
             .respond_with(ResponseTemplate::new(404).set_body_json(json!({
                 "message": "not found"
             })))

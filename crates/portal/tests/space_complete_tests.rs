@@ -1458,27 +1458,34 @@ async fn proposed_again(
         .mount(&model_tools)
         .await;
     let file = |text: &str| {
-        ResponseTemplate::new(200).set_body_json(json!({ "sha": "s", "content": base64::engine::general_purpose::STANDARD.encode(text) }))
+        ResponseTemplate::new(200).set_body_json(json!({ "Sha": "s", "Content": base64::engine::general_purpose::STANDARD.encode(text) }))
     };
-    let held = format!(
-        "{}/contents/projects/helsinki/spaces/room-bookings/datamodels/room-bookings.linkml.yaml",
-        common::REPO
-    );
+    let held = format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO);
+    let held_path = "'projects/helsinki/spaces/room-bookings/datamodels/room-bookings.linkml.yaml'";
     if let Some(text) = open {
         Mock::given(method("GET"))
-            .and(path(format!("{}/pulls", common::REPO)))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-                "number": 7, "html_url": "https://shako.example/pulls/7", "state": "open",
-                "head": { "ref": "portal/create-contextspace-room-bookings-0a1b2c3d", "sha": "h" },
-                "base": { "ref": "main", "sha": "b" }
-            }])))
+            .and(path(format!("{}/PullRequests", common::REPO)))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "value": [
+                    {
+                        "Number": 7,
+                        "HtmlUrl": "https://shako.example/pulls/7",
+                        "State": "open",
+                        "Head": "portal/create-contextspace-room-bookings-0a1b2c3d",
+                        "HeadSha": "h",
+                        "Base": "main",
+                        "BaseSha": "b"
+                    }
+                ]
+            })))
             .mount(&shako)
             .await;
         Mock::given(method("GET"))
             .and(path(held.clone()))
+            .and(wiremock::matchers::query_param("@p", held_path))
             .and(wiremock::matchers::query_param(
-                "ref",
-                "portal/create-contextspace-room-bookings-0a1b2c3d",
+                "@r",
+                "'portal/create-contextspace-room-bookings-0a1b2c3d'",
             ))
             .respond_with(file(text))
             .mount(&shako)
@@ -1487,7 +1494,8 @@ async fn proposed_again(
     if let Some(text) = main {
         Mock::given(method("GET"))
             .and(path(held.clone()))
-            .and(wiremock::matchers::query_param("ref", "main"))
+            .and(wiremock::matchers::query_param("@p", held_path))
+            .and(wiremock::matchers::query_param("@r", "'main'"))
             .respond_with(file(text))
             .mount(&shako)
             .await;
@@ -1553,7 +1561,7 @@ async fn proposed_again(
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/pulls"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.OpenPullRequest"))
         .count();
     (
         status,

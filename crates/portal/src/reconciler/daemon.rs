@@ -1,6 +1,6 @@
 //! The reconciler loop against the Git repository (T-0191, MF-04, CC-03, CC-08).
 //!
-//! Re-reads the declared manifests from Gitea at the default branch HEAD, loads them with
+//! Re-reads the declared manifests from the forge at the default branch HEAD, loads them with
 //! `jcctl`, compiles their live status and swaps them into the in-memory mirror atomically.
 //!
 //! The loading is `jcctl`'s, not the Portal's: the same code that validates a repository for
@@ -3580,23 +3580,23 @@ output_error{stream="kpi"} 6
         let server = MockServer::start().await;
         let tree: Vec<serde_json::Value> = files
             .iter()
-            .map(|(p, _)| json!({"path": p, "type": "blob"}))
+            .map(|(p, _)| json!({ "Path": p, "Type": "blob" }))
             .collect();
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo/git/trees/rev-1"))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")).and(query_param("@r", "'rev-1'"))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({"truncated": false, "tree": tree})),
+                ResponseTemplate::new(200).set_body_json(json!({ "Truncated": false, "Tree": tree })),
             )
             .mount(&server)
             .await;
         for (file, content) in files {
             Mock::given(method("GET"))
                 .and(path(format!(
-                    "/api/v1/repos/test-owner/test-repo/contents/{file}"
-                )))
+                    "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
+                ))).and(query_param("@p", format!("'{file}'")))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                    "sha": "blob-sha",
-                    "content": base64::engine::general_purpose::STANDARD.encode(content),
+                    "Sha": "blob-sha",
+                    "Content": base64::engine::general_purpose::STANDARD.encode(content)
                 })))
                 .mount(&server)
                 .await;
@@ -3923,7 +3923,9 @@ output_error{stream="kpi"} 6
 
         next_revision(&shared, &base, &[second_endpoint()]);
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+            ))
             .respond_with(ResponseTemplate::new(500))
             .with_priority(1)
             .up_to_n_times(1)
@@ -4181,50 +4183,56 @@ output_error{stream="kpi"} 6
                 .collect(),
         )));
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+            ))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({"default_branch": "main"})),
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
             )
             .mount(&server)
             .await;
         let head = Arc::clone(&shared);
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo/branches/main"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
+            ))
             .respond_with(move |_: &wiremock::Request| {
                 let rev = head.lock().expect("files").0;
                 ResponseTemplate::new(200)
-                    .set_body_json(json!({"name": "main", "commit": {"id": format!("rev-{rev}")}}))
+                    .set_body_json(json!({ "Name": "main", "HeadSha": format!("rev-{rev}") }))
             })
             .mount(&server)
             .await;
         let listed = Arc::clone(&shared);
         Mock::given(method("GET"))
-            .and(path_regex("^/api/v1/repos/test-owner/test-repo/git/trees/"))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"))
             .respond_with(move |_: &wiremock::Request| {
                 let tree: Vec<serde_json::Value> = listed
                     .lock()
                     .expect("files")
                     .1
                     .iter()
-                    .map(|(p, _)| json!({"path": p, "type": "blob"}))
+                    .map(|(p, _)| json!({ "Path": p, "Type": "blob" }))
                     .collect();
-                ResponseTemplate::new(200).set_body_json(json!({"truncated": false, "tree": tree}))
+                ResponseTemplate::new(200).set_body_json(json!({ "Truncated": false, "Tree": tree }))
             })
             .mount(&server)
             .await;
         let served = Arc::clone(&shared);
         Mock::given(method("GET"))
-            .and(path_regex("^/api/v1/repos/test-owner/test-repo/contents/"))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"))
             .respond_with(move |request: &wiremock::Request| {
                 let wanted = request
                     .url
-                    .path()
-                    .trim_start_matches("/api/v1/repos/test-owner/test-repo/contents/");
+                    .query_pairs()
+                    .find(|(key, _)| key == "@p")
+                    .map(|(_, value)| value.trim_matches('\'').to_owned())
+                    .unwrap_or_default();
                 let files = served.lock().expect("files");
-                match files.1.iter().find(|(p, _)| p == wanted) {
+                match files.1.iter().find(|(p, _)| *p == wanted) {
                     Some((_, text)) => ResponseTemplate::new(200).set_body_json(json!({
-                        "sha": "blob-sha",
-                        "content": base64::engine::general_purpose::STANDARD.encode(text),
+                        "Sha": "blob-sha",
+                        "Content": base64::engine::general_purpose::STANDARD.encode(text)
                     })),
                     None => ResponseTemplate::new(404),
                 }
@@ -4716,7 +4724,9 @@ output_error{stream="kpi"} 6
         // The forge goes away: the mirror keeps what it has and the feed says why.
         server.reset().await;
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+            ))
             .respond_with(ResponseTemplate::new(500))
             .mount(&server)
             .await;
@@ -4763,35 +4773,37 @@ output_error{stream="kpi"} 6
     /// The one-space repository both the success test and the activity tests read.
     async fn mount_repository(server: &MockServer) {
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "default_branch": "main"
-            })))
-            .mount(server)
-            .await;
-
-        Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo/branches/main"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "name": "main",
-                "commit": { "id": "commit-rev-123" }
+                "DefaultBranch": "main"
             })))
             .mount(server)
             .await;
 
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/test-owner/test-repo/git/trees/commit-rev-123",
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
             ))
-            .and(query_param("recursive", "true"))
-            .and(query_param("per_page", "1000"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "tree-sha-1",
-                "truncated": false,
-                "tree": [
+                "Name": "main",
+                "HeadSha": "commit-rev-123"
+            })))
+            .mount(server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            )).and(query_param("@r", "'commit-rev-123'"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "tree-sha-1",
+                "Truncated": false,
+                "Tree": [
                     {
-                        "path": "projects/ovzdusie/spaces/mobility/space.yaml",
-                        "type": "blob"
+                        "Path": "projects/ovzdusie/spaces/mobility/space.yaml",
+                        "Type": "blob"
                     }
                 ]
             })))
@@ -4806,12 +4818,12 @@ output_error{stream="kpi"} 6
 
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
-            ))
-            .and(query_param("ref", "commit-rev-123"))
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+            )).and(query_param("@p", "'projects/ovzdusie/spaces/mobility/space.yaml'"))
+            .and(query_param("@r", "'commit-rev-123'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "blob-sha-1",
-                "content": b64
+                "Sha": "blob-sha-1",
+                "Content": b64
             })))
             .mount(server)
             .await;
@@ -4873,15 +4885,15 @@ output_error{stream="kpi"} 6
         };
         let file = "projects/ovzdusie/spaces/mobility/space.yaml";
         let tree = |sha: Option<&str>, priority: u8| {
-            let mut entry = json!({ "path": file, "type": "blob" });
+            let mut entry = json!({ "Path": file, "Type": "blob" });
             if let Some(sha) = sha {
-                entry["sha"] = json!(sha);
+                entry["Sha"] = json!(sha);
             }
             Mock::given(method("GET"))
-                .and(path("/api/v1/repos/test-owner/test-repo/git/trees/rev-1"))
+                .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")).and(query_param("@r", "'rev-1'"))
                 .respond_with(
                     ResponseTemplate::new(200)
-                        .set_body_json(json!({ "truncated": false, "tree": [entry] })),
+                        .set_body_json(json!({ "Truncated": false, "Tree": [entry] })),
                 )
                 .with_priority(priority)
         };
@@ -4901,11 +4913,11 @@ output_error{stream="kpi"} 6
         tree(Some("t4481-blob-b"), 3).mount(&server).await;
         Mock::given(method("GET"))
             .and(path(format!(
-                "/api/v1/repos/test-owner/test-repo/contents/{file}"
-            )))
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
+            ))).and(query_param("@p", format!("'{file}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "t4481-blob-b",
-                "content": b64(&space(true)),
+                "Sha": "t4481-blob-b",
+                "Content": b64(&space(true))
             })))
             .with_priority(3)
             .mount(&server)
@@ -4934,12 +4946,12 @@ output_error{stream="kpi"} 6
     async fn mount_file(server: &MockServer, path: &str, git_ref: &str, sha: &str, text: &str) {
         Mock::given(method("GET"))
             .and(path_matcher(format!(
-                "/api/v1/repos/test-owner/test-repo/contents/{path}"
-            )))
-            .and(query_param("ref", git_ref))
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
+            ))).and(query_param("@p", format!("'{path}'")))
+            .and(query_param("@r", format!("'{}'", git_ref)))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": sha,
-                "content": b64(text)
+                "Sha": sha,
+                "Content": b64(text)
             })))
             .mount(server)
             .await;
@@ -4961,32 +4973,35 @@ output_error{stream="kpi"} 6
         let syncer = Arc::new(Syncer::new(Arc::clone(&client), Arc::clone(&mirror)));
 
         Mock::given(method("GET"))
-            .and(path_matcher("/api/v1/repos/test-owner/test-repo"))
+            .and(path_matcher(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+            ))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })),
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
             )
             .mount(&server)
             .await;
         Mock::given(method("GET"))
             .and(path_matcher(
-                "/api/v1/repos/test-owner/test-repo/branches/main",
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
             ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "name": "main", "commit": { "id": "rev-1" }
+                "Name": "main",
+                "HeadSha": "rev-1"
             })))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
             .and(path_matcher(
-                "/api/v1/repos/test-owner/test-repo/git/trees/rev-1",
-            ))
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            )).and(query_param("@r", "'rev-1'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "tree-1",
-                "truncated": false,
-                "tree": [
-                    { "path": "org.yaml", "type": "blob" },
-                    { "path": "users/roles/steward.yaml", "type": "blob" },
-                    { "path": "users/assignments/stewards.yaml", "type": "blob" }
+                "Sha": "tree-1",
+                "Truncated": false,
+                "Tree": [
+                    { "Path": "org.yaml", "Type": "blob" },
+                    { "Path": "users/roles/steward.yaml", "Type": "blob" },
+                    { "Path": "users/assignments/stewards.yaml", "Type": "blob" }
                 ]
             })))
             .mount(&server)
@@ -5033,43 +5048,58 @@ output_error{stream="kpi"} 6
         mount_file(&server, jcctl::roles::ROLES_REGO, "main", "b-rego", &rego).await;
         // A stale CODEOWNERS is replaced with its sha; the others do not exist yet.
         mount_file(&server, "CODEOWNERS", "main", "b-old", "* @nobody\n").await;
-        Mock::given(method("PUT"))
-            .and(path_regex("^/api/v1/repos/test-owner/test-repo/contents/"))
-            .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-                "commit": { "sha": "rev-2" }
-            })))
+        Mock::given(method("POST"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+            ))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "rev-2" })))
             .expect(4)
             .mount(&server)
             .await;
 
         syncer.sync_once().await.expect("sync should succeed");
 
-        let puts: Vec<_> = server
+        // Every write is one `POST R/Shako.CommitFiles`, the file it writes in its body.
+        let commits: Vec<serde_json::Value> = server
             .received_requests()
             .await
             .unwrap()
             .into_iter()
-            .filter(|r| r.method == "PUT")
+            .filter(|r| {
+                r.method == "POST"
+                    && r.url.path()
+                        == "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles"
+            })
+            .map(|r| serde_json::from_slice(&r.body).unwrap())
             .collect();
-        let codeowners = puts
-            .iter()
-            .find(|r| r.url.path().ends_with("/contents/CODEOWNERS"))
-            .expect("CODEOWNERS is written");
-        let body: serde_json::Value = serde_json::from_slice(&codeowners.body).unwrap();
-        assert_eq!(body["sha"], "b-old");
-        assert_eq!(body["branch"], "main");
+        let writes = |path: &str| {
+            commits
+                .iter()
+                .flat_map(|commit| {
+                    commit["Files"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(move |file| (commit.clone(), file))
+                })
+                .filter(|(_, file)| file["path"] == path)
+                .collect::<Vec<_>>()
+        };
+        let codeowners = writes("CODEOWNERS");
+        let (commit, file) = codeowners.first().expect("CODEOWNERS is written");
+        assert_eq!(file["sha"], "b-old");
+        assert_eq!(commit["Branch"], "main");
         let text = String::from_utf8(
             base64::engine::Engine::decode(
                 &base64::engine::general_purpose::STANDARD,
-                body["content"].as_str().unwrap(),
+                file["content"].as_str().unwrap(),
             )
             .unwrap(),
         )
         .unwrap();
         assert!(text.contains("@hel/stewards"), "{text}");
-        assert!(!puts
-            .iter()
-            .any(|r| r.url.path().ends_with("/contents/policies/roles.rego")));
+        assert!(writes("policies/roles.rego").is_empty());
     }
 
     #[tokio::test]
@@ -5096,33 +5126,35 @@ output_error{stream="kpi"} 6
         let syncer = Arc::new(Syncer::new(Arc::clone(&client), Arc::clone(&mirror)));
 
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "default_branch": "main"
+                "DefaultBranch": "main"
             })))
             .mount(&server)
             .await;
 
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo/branches/main"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "name": "main",
-                "commit": { "id": "bad-rev" }
+                "Name": "main",
+                "HeadSha": "bad-rev"
             })))
             .mount(&server)
             .await;
 
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo/git/trees/bad-rev"))
-            .and(query_param("recursive", "true"))
-            .and(query_param("per_page", "1000"))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")).and(query_param("@r", "'bad-rev'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "tree-sha-2",
-                "truncated": false,
-                "tree": [
+                "Sha": "tree-sha-2",
+                "Truncated": false,
+                "Tree": [
                     {
-                        "path": "projects/ovzdusie/spaces/invalid/space.yaml",
-                        "type": "blob"
+                        "Path": "projects/ovzdusie/spaces/invalid/space.yaml",
+                        "Type": "blob"
                     }
                 ]
             })))
@@ -5137,12 +5169,12 @@ output_error{stream="kpi"} 6
 
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/invalid/space.yaml",
-            ))
-            .and(query_param("ref", "bad-rev"))
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+            )).and(query_param("@p", "'projects/ovzdusie/spaces/invalid/space.yaml'"))
+            .and(query_param("@r", "'bad-rev'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "blob-sha-2",
-                "content": b64
+                "Sha": "blob-sha-2",
+                "Content": b64
             })))
             .mount(&server)
             .await;

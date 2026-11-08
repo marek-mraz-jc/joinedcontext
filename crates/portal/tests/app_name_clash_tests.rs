@@ -133,9 +133,13 @@ async fn the_dry_run_refuses_the_taken_app_name_and_passes_a_free_one() {
 async fn an_import_carrying_an_app_another_project_declares_is_refused_the_same_way() {
     let shako = forge().await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{}/git/trees/.*", common::REPO)))
+        .and(path(format!(
+            "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            common::REPO
+        )))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "tree": [], "truncated": false,
+            "Tree": [],
+            "Truncated": false
         })))
         .mount(&shako)
         .await;
@@ -168,9 +172,13 @@ async fn an_import_carrying_an_app_another_project_declares_is_refused_the_same_
 async fn a_new_app_whose_client_the_realm_holds_unmanaged_is_refused_at_every_door() {
     let shako = forge().await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{}/git/trees/.*", common::REPO)))
+        .and(path(format!(
+            "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            common::REPO
+        )))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "tree": [], "truncated": false,
+            "Tree": [],
+            "Truncated": false
         })))
         .mount(&shako)
         .await;

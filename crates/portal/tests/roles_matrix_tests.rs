@@ -216,13 +216,23 @@ async fn forge() -> MockServer {
     // Every existing resource has its file; a new one has none.
     for family in &FAMILIES {
         let file = serde_norway::to_string(&manifest(family, &existing(family))).expect("yaml");
+        // The resource's own file, `…/{name}.yaml` or `…/{name}/{file}.yaml`, by its `@p` path.
+        let own = regex::Regex::new(&format!(
+            r"^'.*/{}(/[a-z-]+)?\.yaml'$",
+            regex::escape(&existing(family))
+        ))
+        .expect("a pattern");
         Mock::given(method("GET"))
-            .and(path_regex(format!(
-                "^{REPO}/contents/.*/{}(/[a-z-]+)?\\.yaml$",
-                existing(family)
-            )))
+            .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
+            .and(move |request: &wiremock::Request| {
+                request
+                    .url
+                    .query_pairs()
+                    .any(|(key, value)| key == "@p" && own.is_match(&value))
+            })
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "sha-existing", "content": encode(&file)
+                "Sha": "sha-existing",
+                "Content": encode(&file)
             })))
             .with_priority(2)
             .mount(&shako)
@@ -239,35 +249,42 @@ async fn forge() -> MockServer {
                 None => ("someone".to_owned(), "someone@hel.fi".to_owned()),
             };
             Mock::given(method("GET"))
-                .and(path(format!("{REPO}/pulls/{number}")))
+                .and(path(format!("{REPO}/PullRequests({number})")))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                    "number": number,
-                    "html_url": format!("https://shako.example/pulls/{number}"),
-                    "state": "open",
-                    "title": format!("create {} proposed", family.kind),
-                    "head": { "ref": head },
-                    "base": { "ref": "main" },
-                    "created_at": "2026-09-14T09:00:00Z",
-                    "user": { "login": login, "full_name": login, "email": email },
-                    "mergeable": true,
-                    "merged": false
+                    "Number": number,
+                    "HtmlUrl": format!("https://shako.example/pulls/{number}"),
+                    "State": "open",
+                    "Title": format!("create {} proposed", family.kind),
+                    "Head": head,
+                    "Base": "main",
+                    "CreatedAt": "2026-09-14T09:00:00Z",
+                    "Author": login,
+                    "AuthorName": login,
+                    "AuthorEmail": email,
+                    "Mergeable": true,
+                    "Merged": false
                 })))
                 .mount(&shako)
                 .await;
             Mock::given(method("GET"))
-                .and(path(format!("{REPO}/pulls/{number}/files")))
-                .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-                    "filename": format!("projects/helsinki/{}/proposed.yaml", family.plural),
-                    "status": "added"
-                }])))
+                .and(path(format!("{REPO}/PullRequests({number})/Files")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "value": [
+                        {
+                            "Filename": format!("projects/helsinki/{}/proposed.yaml", family.plural),
+                            "Status": "added"
+                        }
+                    ]
+                })))
                 .mount(&shako)
                 .await;
             let file = serde_norway::to_string(&manifest(family, "proposed")).expect("yaml");
             Mock::given(method("GET"))
-                .and(path_regex(format!("^{REPO}/contents/.*")))
-                .and(query_param("ref", head.as_str()))
+                .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
+                .and(query_param("@r", format!("'{head}'")))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                    "sha": "sha-proposed", "content": encode(&file)
+                    "Sha": "sha-proposed",
+                    "Content": encode(&file)
                 })))
                 .with_priority(1)
                 .mount(&shako)

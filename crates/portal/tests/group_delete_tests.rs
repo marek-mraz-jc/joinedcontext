@@ -110,10 +110,10 @@ fn state_with(shako: &MockServer) -> AppState {
 /// Every manifest the forge holds reads back as a blob with a sha.
 async fn files_exist(shako: &MockServer) {
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{REPO}/contents/.+")))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": base64::engine::general_purpose::STANDARD.encode("kind: Group\n"),
+            "Sha": "blob-1",
+            "Content": base64::engine::general_purpose::STANDARD.encode("kind: Group\n")
         })))
         .with_priority(5)
         .mount(shako)
@@ -125,7 +125,9 @@ async fn committed(shako: &MockServer) -> Vec<(String, String, String)> {
     let requests = shako.received_requests().await.unwrap_or_default();
     let commits: Vec<Value> = requests
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/contents"))
+        .filter(|r| {
+            r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/Shako.CommitFiles")
+        })
         .filter_map(|r| serde_json::from_slice(&r.body).ok())
         .collect();
     assert_eq!(commits.len(), 1, "one commit for the whole removal");

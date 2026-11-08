@@ -63,40 +63,42 @@ fn zuzana() -> Identity {
 async fn world() -> (MockServer, AppState) {
     let server = forge().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/branches/main")))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": REVISION } })),
-        )
+        .and(path(format!("{REPO}/Branches('main')")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": REVISION })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{REPO}/git/trees/.*")))
+        .and(path(format!("{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)", REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "truncated": false,
-            "tree": FILES.iter().map(|(file, _)| json!({ "path": file, "type": "blob" })).collect::<Vec<_>>(),
+            "Truncated": false,
+            "Tree": FILES.iter().map(|(file, _)| json!({ "Path": file, "Type": "blob" })).collect::<Vec<_>>()
         })))
         .mount(&server)
         .await;
     for (file, content) in FILES {
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/contents/{file}")))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{file}'")))
             .respond_with(
                 ResponseTemplate::new(200)
-                    .set_body_json(json!({ "sha": "blob-1", "content": encode(content) })),
+                    .set_body_json(json!({ "Sha": "blob-1", "Content": encode(content) })),
             )
             .mount(&server)
             .await;
     }
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/commits")))
-        .and(query_param("path", "projects/ovzdusie"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-            "sha": REVISION,
-            "commit": {
-                "message": "Endpoint air-public: add csv",
-                "author": { "name": "Jana", "date": "2026-09-06T16:30:00Z" }
-            }
-        }])))
+        .and(path(format!("{REPO}/Shako.History(Ref=@r,Path=@p,Top=@n)")))
+        .and(query_param("@p", "'projects/ovzdusie'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Sha": REVISION,
+                    "Message": "Endpoint air-public: add csv",
+                    "Author": "Jana",
+                    "Date": "2026-09-06T16:30:00Z"
+                }
+            ]
+        })))
         .mount(&server)
         .await;
 

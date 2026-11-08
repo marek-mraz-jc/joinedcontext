@@ -168,50 +168,56 @@ fn files() -> Vec<(&'static str, &'static str)> {
 async fn forge() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/bb/org"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path("/odata/Repositories(Owner='bb',Name='org')"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/bb/org/branches/main"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": REVISION } })),
-        )
+        .and(path(
+            "/odata/Repositories(Owner='bb',Name='org')/Branches('main')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": REVISION })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("/api/v1/repos/bb/org/git/trees/{REVISION}")))
+        .and(path(format!("/odata/Repositories(Owner='bb',Name='org')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"))).and(query_param("@r", format!("'{REVISION}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "tree": files()
+            "Tree": files()
                 .iter()
-                .map(|(path, _)| json!({ "path": path, "type": "blob" }))
+                .map(|(path, _)| json!({ "Path": path, "Type": "blob" }))
                 .collect::<Vec<_>>(),
-            "truncated": false
+            "Truncated": false
         })))
         .mount(&server)
         .await;
     for (file_path, content) in files() {
         Mock::given(method("GET"))
-            .and(path(format!("/api/v1/repos/bb/org/contents/{file_path}")))
+            .and(path(format!(
+                "/odata/Repositories(Owner='bb',Name='org')/Shako.File(Path=@p,Ref=@r)"
+            )))
+            .and(query_param("@p", format!("'{file_path}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "b1ob",
-                "content": STANDARD.encode(content),
+                "Sha": "b1ob",
+                "Content": STANDARD.encode(content)
             })))
             .mount(&server)
             .await;
     }
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/bb/org/commits"))
-        .and(query_param("path", "projects/banskabystrica"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {
-                "sha": REVISION,
-                "commit": {
-                    "message": "Endpoint public-air: add csv\n\nlonger body",
-                    "author": { "name": "Jana Kováčová", "date": "2026-09-06T16:30:00Z" }
+        .and(path(
+            "/odata/Repositories(Owner='bb',Name='org')/Shako.History(Ref=@r,Path=@p,Top=@n)",
+        ))
+        .and(query_param("@p", "'projects/banskabystrica'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Sha": REVISION,
+                    "Message": "Endpoint public-air: add csv\n\nlonger body",
+                    "Author": "Jana Kováčová",
+                    "Date": "2026-09-06T16:30:00Z"
                 }
-            }
-        ])))
+            ]
+        })))
         .mount(&server)
         .await;
     server

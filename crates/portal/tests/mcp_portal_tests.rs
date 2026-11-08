@@ -31,38 +31,49 @@ const PORTAL_AUDIENCE: &str = "joinedcontext-portal";
 /// have something to answer with (T-0847).
 async fn forge_mocks(server: &MockServer) {
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(server)
         .await;
     let pull = json!({
-        "number": 1,
-        "html_url": "https://shako.example.sk/pulls/1",
-        "state": "open",
-        "title": "create ContextSpace mobility",
-        "head": { "ref": "portal/create-contextspace-mobility-11111111" },
-        "base": { "ref": "main" },
-        "created_at": "2026-09-06T09:14:22Z",
-        "user": { "login": "jana.kovacova", "full_name": "Jana Kováčová",
-                  "email": "jana.kovacova@banskabystrica.sk" },
-        "mergeable": true,
-        "merged": false
+        "Number": 1,
+        "HtmlUrl": "https://shako.example.sk/pulls/1",
+        "State": "open",
+        "Title": "create ContextSpace mobility",
+        "Head": "portal/create-contextspace-mobility-11111111",
+        "Base": "main",
+        "CreatedAt": "2026-09-06T09:14:22Z",
+        "Author": "jana.kovacova",
+        "AuthorName": "Jana Kováčová",
+        "AuthorEmail": "jana.kovacova@banskabystrica.sk",
+        "Mergeable": true,
+        "Merged": false
     });
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([pull.clone()])))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [pull.clone()] })))
         .mount(server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/1"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(1)",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(pull))
         .mount(server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/1/files"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            { "filename": "projects/ovzdusie/spaces/mobility/space.yaml", "status": "added" }
-        ])))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(1)/Files",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                { "Filename": "projects/ovzdusie/spaces/mobility/space.yaml", "Status": "added" }
+            ]
+        })))
         .mount(server)
         .await;
     let space_yaml = concat!(
@@ -76,12 +87,19 @@ async fn forge_mocks(server: &MockServer) {
     );
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "portal/create-contextspace-mobility-11111111"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
+        ))
+        .and(query_param(
+            "@r",
+            "'portal/create-contextspace-mobility-11111111'",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": base64_of(space_yaml)
+            "Sha": "blob-1",
+            "Content": base64_of(space_yaml)
         })))
         .mount(server)
         .await;
@@ -96,18 +114,22 @@ async fn forge_mocks(server: &MockServer) {
     );
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/ovzdusie/datamodels/air.linkml.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/ovzdusie/datamodels/air.linkml.yaml'",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-2",
-            "content": base64_of(linkml)
+            "Sha": "blob-2",
+            "Content": base64_of(linkml)
         })))
         .mount(server)
         .await;
     // Anything else on the forge is absent, which is what a create's base branch answers.
     Mock::given(method("GET"))
-        .and(wiremock::matchers::path_regex(
-            "^/api/v1/repos/test-owner/test-repo/contents/.*",
+        .and(wiremock::matchers::path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .with_priority(9)

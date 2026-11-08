@@ -23,9 +23,9 @@ const SECOND: &str = "7d9c2e80-1a4b-4c6d-9e3f-5b8a0c2d4e61";
 async fn forge() -> MockServer {
     let shako = common::forge().await;
     Mock::given(http_method("GET"))
-        .and(url_path(format!("{REPO}/pulls")))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .and(url_path(format!("{REPO}/PullRequests")))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
         .mount(&shako)
         .await;
     shako

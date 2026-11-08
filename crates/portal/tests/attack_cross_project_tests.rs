@@ -25,7 +25,7 @@ mod common;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
@@ -48,36 +48,39 @@ fn pipeline_yaml(project: &str, name: &str) -> String {
 async fn forge_with(files: &[(&str, String)]) -> MockServer {
     let shako = common::forge().await;
     Mock::given(method("GET"))
-        .and(path(format!("{}/pulls/12", common::REPO)))
+        .and(path(format!("{}/PullRequests(12)", common::REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": 12,
-            "html_url": "https://shako.example/pulls/12",
-            "state": "open",
-            "title": "update Pipeline aq",
-            "head": { "ref": BRANCH },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-18T09:14:22Z",
-            "user": { "login": "someone.else", "full_name": "Someone Else", "email": "else@hel.fi" },
-            "mergeable": true,
-            "merged": false
+            "Number": 12,
+            "HtmlUrl": "https://shako.example/pulls/12",
+            "State": "open",
+            "Title": "update Pipeline aq",
+            "Head": BRANCH,
+            "Base": "main",
+            "CreatedAt": "2026-09-18T09:14:22Z",
+            "Author": "someone.else",
+            "AuthorName": "Someone Else",
+            "AuthorEmail": "else@hel.fi",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&shako)
         .await;
     let listed: Vec<Value> = files
         .iter()
-        .map(|(path, _)| json!({ "filename": path, "status": "modified" }))
+        .map(|(path, _)| json!({ "Filename": path, "Status": "modified" }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!("{}/pulls/12/files", common::REPO)))
-        .respond_with(ResponseTemplate::new(200).set_body_json(listed))
+        .and(path(format!("{}/PullRequests(12)/Files", common::REPO)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": listed })))
         .mount(&shako)
         .await;
     for (repo_path, content) in files {
         Mock::given(method("GET"))
-            .and(path(format!("{}/contents/{repo_path}", common::REPO)))
+            .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+            .and(query_param("@p", format!("'{repo_path}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "blob-1",
-                "content": common::encode(content),
+                "Sha": "blob-1",
+                "Content": common::encode(content)
             })))
             .mount(&shako)
             .await;
@@ -198,7 +201,7 @@ async fn a_bundle_inside_the_project_is_approved_and_merged() {
         mutated(&shako)
             .await
             .iter()
-            .any(|call| call.ends_with("/pulls/12/merge")),
+            .any(|call| call.ends_with("/PullRequests(12)/Shako.Merge")),
         "nothing was merged: {:?}",
         mutated(&shako).await
     );

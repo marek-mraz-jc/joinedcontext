@@ -93,26 +93,30 @@ fn redaction_keeps_the_path_and_takes_both_values() {
 async fn forge_with_change() -> MockServer {
     let shako = common::forge().await;
     Mock::given(method("GET"))
-        .and(path(format!("{}/pulls/11", common::REPO)))
+        .and(path(format!("{}/PullRequests(11)", common::REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": 11,
-            "html_url": "https://shako.example/pulls/11",
-            "state": "open",
-            "title": "update ContextSpace mobility",
-            "head": { "ref": "portal/update-contextspace-mobility-1685aaaa" },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-18T09:14:22Z",
-            "user": { "login": "dev.user", "full_name": "Dev User", "email": "dev@hel.fi" },
-            "mergeable": true,
-            "merged": false
+            "Number": 11,
+            "HtmlUrl": "https://shako.example/pulls/11",
+            "State": "open",
+            "Title": "update ContextSpace mobility",
+            "Head": "portal/update-contextspace-mobility-1685aaaa",
+            "Base": "main",
+            "CreatedAt": "2026-09-18T09:14:22Z",
+            "Author": "dev.user",
+            "AuthorName": "Dev User",
+            "AuthorEmail": "dev@hel.fi",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{}/pulls/11/files", common::REPO)))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            { "filename": "projects/ovzdusie/spaces/mobility/space.yaml", "status": "modified" }
-        ])))
+        .and(path(format!("{}/PullRequests(11)/Files", common::REPO)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                { "Filename": "projects/ovzdusie/spaces/mobility/space.yaml", "Status": "modified" }
+            ]
+        })))
         .mount(&shako)
         .await;
     for (git_ref, age) in [
@@ -133,14 +137,15 @@ async fn forge_with_change() -> MockServer {
         });
         let yaml = serde_norway::to_string(&manifest).expect("yaml");
         Mock::given(method("GET"))
-            .and(path(format!(
-                "{}/contents/projects/ovzdusie/spaces/mobility/space.yaml",
-                common::REPO
-            )))
-            .and(query_param("ref", git_ref))
+            .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+            .and(query_param(
+                "@p",
+                "'projects/ovzdusie/spaces/mobility/space.yaml'",
+            ))
+            .and(query_param("@r", format!("'{}'", git_ref)))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": format!("blob-{age}"),
-                "content": common::encode(&yaml),
+                "Sha": format!("blob-{age}"),
+                "Content": common::encode(&yaml)
             })))
             .mount(&shako)
             .await;

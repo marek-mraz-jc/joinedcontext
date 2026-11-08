@@ -92,13 +92,13 @@ fn encode_b64(content: &str) -> String {
 async fn pr_files(server: &MockServer, number: u64, files: &[(&str, &str)]) {
     let listed: Vec<Value> = files
         .iter()
-        .map(|(filename, status)| json!({ "filename": filename, "status": status }))
+        .map(|(filename, status)| json!({ "Filename": filename, "Status": status }))
         .collect();
     Mock::given(method("GET"))
         .and(path(format!(
-            "/api/v1/repos/test-owner/test-repo/pulls/{number}/files"
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests({number})/Files"
         )))
-        .respond_with(ResponseTemplate::new(200).set_body_json(listed))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": listed })))
         .mount(server)
         .await;
 }
@@ -116,58 +116,56 @@ async fn list_changes_filters_portal_prefix_sorts_newest_first_with_metadata() {
 
     // Mock pull requests: PR 1 (portal/), PR 2 (feature/ non-portal), PR 3 (portal/)
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {
-                "number": 1,
-                "html_url": "https://shako.example.sk/pulls/1",
-                "state": "open",
-                "title": "create ContextSpace mobility",
-                "head": { "ref": "portal/create-contextspace-mobility-11111111" },
-                "base": { "ref": "main" },
-                "created_at": "2026-09-06T10:00:00Z",
-                "user": {
-                    "login": "jana.kovacova",
-                    "full_name": "Jana Kováčová",
-                    "email": "jana.kovacova@banskabystrica.sk"
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+        ))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Number": 1,
+                    "HtmlUrl": "https://shako.example.sk/pulls/1",
+                    "State": "open",
+                    "Title": "create ContextSpace mobility",
+                    "Head": "portal/create-contextspace-mobility-11111111",
+                    "Base": "main",
+                    "CreatedAt": "2026-09-06T10:00:00Z",
+                    "Author": "jana.kovacova",
+                    "AuthorName": "Jana Kováčová",
+                    "AuthorEmail": "jana.kovacova@banskabystrica.sk",
+                    "Mergeable": true,
+                    "Merged": false
                 },
-                "mergeable": true,
-                "merged": false
-            },
-            {
-                "number": 2,
-                "html_url": "https://shako.example.sk/pulls/2",
-                "state": "open",
-                "title": "manual feature branch",
-                "head": { "ref": "feature/custom-branch" },
-                "base": { "ref": "main" },
-                "created_at": "2026-09-06T11:00:00Z",
-                "user": {
-                    "login": "other.dev",
-                    "full_name": "Other Dev",
-                    "email": "other.dev@example.sk"
+                {
+                    "Number": 2,
+                    "HtmlUrl": "https://shako.example.sk/pulls/2",
+                    "State": "open",
+                    "Title": "manual feature branch",
+                    "Head": "feature/custom-branch",
+                    "Base": "main",
+                    "CreatedAt": "2026-09-06T11:00:00Z",
+                    "Author": "other.dev",
+                    "AuthorName": "Other Dev",
+                    "AuthorEmail": "other.dev@example.sk",
+                    "Mergeable": true,
+                    "Merged": false
                 },
-                "mergeable": true,
-                "merged": false
-            },
-            {
-                "number": 3,
-                "html_url": "https://shako.example.sk/pulls/3",
-                "state": "open",
-                "title": "delete ContextSpace traffic",
-                "head": { "ref": "portal/delete-contextspace-traffic-33333333" },
-                "base": { "ref": "main" },
-                "created_at": "2026-09-06T12:00:00Z",
-                "user": {
-                    "login": "city.steward",
-                    "full_name": "City Steward",
-                    "email": "steward@banskabystrica.sk"
-                },
-                "mergeable": true,
-                "merged": false
-            }
-        ])))
+                {
+                    "Number": 3,
+                    "HtmlUrl": "https://shako.example.sk/pulls/3",
+                    "State": "open",
+                    "Title": "delete ContextSpace traffic",
+                    "Head": "portal/delete-contextspace-traffic-33333333",
+                    "Base": "main",
+                    "CreatedAt": "2026-09-06T12:00:00Z",
+                    "Author": "city.steward",
+                    "AuthorName": "City Steward",
+                    "AuthorEmail": "steward@banskabystrica.sk",
+                    "Mergeable": true,
+                    "Merged": false
+                }
+            ]
+        })))
         .mount(&server)
         .await;
 
@@ -199,28 +197,37 @@ spec:
     // The head commit of PR 1 carries the human author; PR 3's branch answers nothing, so its
     // poster stands in.
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/commits"))
-        .and(query_param("sha", "portal/create-contextspace-mobility-11111111"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {
-                "sha": "0123456789abcdef",
-                "commit": {
-                    "message": "create ContextSpace mobility",
-                    "author": { "name": "Demo Steward", "email": "demo.steward@hel.fi", "date": "2026-09-06T10:00:00Z" }
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.History(Ref=@r,Path=@p,Top=@n)"))
+        .and(query_param("@r", "'portal/create-contextspace-mobility-11111111'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Sha": "0123456789abcdef",
+                    "Message": "create ContextSpace mobility",
+                    "Author": "Demo Steward",
+                    "Email": "demo.steward@hel.fi",
+                    "Date": "2026-09-06T10:00:00Z"
                 }
-            }
-        ])))
+            ]
+        })))
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "portal/create-contextspace-mobility-11111111"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
+        ))
+        .and(query_param(
+            "@r",
+            "'portal/create-contextspace-mobility-11111111'",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-sha-mobility",
-            "content": encode_b64(space_mobility)
+            "Sha": "blob-sha-mobility",
+            "Content": encode_b64(space_mobility)
         })))
         .mount(&server)
         .await;
@@ -235,12 +242,16 @@ spec:
 "#;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/traffic/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "main"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/traffic/space.yaml'",
+        ))
+        .and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-sha-traffic",
-            "content": encode_b64(space_traffic)
+            "Sha": "blob-sha-traffic",
+            "Content": encode_b64(space_traffic)
         })))
         .mount(&server)
         .await;
@@ -313,36 +324,43 @@ async fn open_changes_are_read_side_by_side_and_listed_newest_first() {
     let prs: Vec<Value> = (1..=4)
         .map(|n| {
             json!({
-                "number": n,
-                "html_url": format!("https://shako.example.sk/pulls/{n}"),
-                "state": "open",
-                "title": "delete ContextSpace traffic",
-                "head": { "ref": format!("portal/delete-contextspace-traffic-{n}{n}{n}{n}{n}{n}{n}{n}") },
-                "base": { "ref": "main" },
-                "created_at": format!("2026-09-06T1{n}:00:00Z"),
-                "user": { "login": "city.steward", "full_name": "City Steward" },
-                "mergeable": true,
-                "merged": false
+                "Number": n,
+                "HtmlUrl": format!("https://shako.example.sk/pulls/{n}"),
+                "State": "open",
+                "Title": "delete ContextSpace traffic",
+                "Head": format!("portal/delete-contextspace-traffic-{n}{n}{n}{n}{n}{n}{n}{n}"),
+                "Base": "main",
+                "CreatedAt": format!("2026-09-06T1{n}:00:00Z"),
+                "Author": "city.steward",
+                "AuthorName": "City Steward",
+                "Mergeable": true,
+                "Merged": false
             })
         })
         .collect();
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(prs))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+        ))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": prs })))
         .mount(&server)
         .await;
     for n in 1..=4u64 {
         Mock::given(method("GET"))
             .and(path(format!(
-                "/api/v1/repos/test-owner/test-repo/pulls/{n}/files"
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests({n})/Files"
             )))
             .respond_with(
                 ResponseTemplate::new(200)
-                    .set_body_json(json!([{
-                        "filename": "projects/ovzdusie/spaces/traffic/space.yaml",
-                        "status": "deleted"
-                    }]))
+                    .set_body_json(json!({
+                        "value": [
+                            {
+                                "Filename": "projects/ovzdusie/spaces/traffic/space.yaml",
+                                "Status": "deleted"
+                            }
+                        ]
+                    }))
                     .set_delay(std::time::Duration::from_millis(800)),
             )
             .mount(&server)
@@ -352,12 +370,16 @@ async fn open_changes_are_read_side_by_side_and_listed_newest_first() {
                          name: traffic\n  namespace: ovzdusie\nspec:\n  isSandbox: false\n";
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/traffic/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "main"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/traffic/space.yaml'",
+        ))
+        .and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-sha-traffic",
-            "content": encode_b64(space_traffic)
+            "Sha": "blob-sha-traffic",
+            "Content": encode_b64(space_traffic)
         })))
         .mount(&server)
         .await;
@@ -415,22 +437,22 @@ async fn get_change_returns_redacted_plan_diff() {
 
     // PR 10 in hex is chg-0000000a
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/10"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(10)",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": 10,
-            "html_url": "https://shako.example.sk/pulls/10",
-            "state": "open",
-            "title": "update ContextSpace mobility",
-            "head": { "ref": "portal/update-contextspace-mobility-12345678" },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-06T09:14:22Z",
-            "user": {
-                "login": "dev.user",
-                "full_name": "Dev User",
-                "email": "dev@example.sk"
-            },
-            "mergeable": true,
-            "merged": false
+            "Number": 10,
+            "HtmlUrl": "https://shako.example.sk/pulls/10",
+            "State": "open",
+            "Title": "update ContextSpace mobility",
+            "Head": "portal/update-contextspace-mobility-12345678",
+            "Base": "main",
+            "CreatedAt": "2026-09-06T09:14:22Z",
+            "Author": "dev.user",
+            "AuthorName": "Dev User",
+            "AuthorEmail": "dev@example.sk",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -451,12 +473,19 @@ spec:
 "#;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "portal/update-contextspace-mobility-12345678"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
+        ))
+        .and(query_param(
+            "@r",
+            "'portal/update-contextspace-mobility-12345678'",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-head-sha",
-            "content": encode_b64(head_yaml)
+            "Sha": "blob-head-sha",
+            "Content": encode_b64(head_yaml)
         })))
         .mount(&server)
         .await;
@@ -477,12 +506,16 @@ spec:
 "#;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "main"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
+        ))
+        .and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-base-sha",
-            "content": encode_b64(base_yaml)
+            "Sha": "blob-base-sha",
+            "Content": encode_b64(base_yaml)
         })))
         .mount(&server)
         .await;
@@ -698,22 +731,22 @@ async fn approve_self_approval_returns_403_and_makes_no_git_mutations() {
 
     // PR author is jana.kovacova@banskabystrica.sk
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/1"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(1)",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": 1,
-            "html_url": "https://shako.example.sk/pulls/1",
-            "state": "open",
-            "title": "create ContextSpace mobility",
-            "head": { "ref": "portal/create-contextspace-mobility-11111111" },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-06T09:14:22Z",
-            "user": {
-                "login": "jana.kovacova",
-                "full_name": "Jana Kováčová",
-                "email": "jana.kovacova@banskabystrica.sk"
-            },
-            "mergeable": true,
-            "merged": false
+            "Number": 1,
+            "HtmlUrl": "https://shako.example.sk/pulls/1",
+            "State": "open",
+            "Title": "create ContextSpace mobility",
+            "Head": "portal/create-contextspace-mobility-11111111",
+            "Base": "main",
+            "CreatedAt": "2026-09-06T09:14:22Z",
+            "Author": "jana.kovacova",
+            "AuthorName": "Jana Kováčová",
+            "AuthorEmail": "jana.kovacova@banskabystrica.sk",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -728,12 +761,19 @@ spec:
 "#;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "portal/create-contextspace-mobility-11111111"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
+        ))
+        .and(query_param(
+            "@r",
+            "'portal/create-contextspace-mobility-11111111'",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": encode_b64(space_yaml)
+            "Sha": "blob-1",
+            "Content": encode_b64(space_yaml)
         })))
         .mount(&server)
         .await;
@@ -794,8 +834,12 @@ spec:
 
     // Crucial: mock saw NO reviews and NO merges
     let requests = server.received_requests().await.expect("received requests");
-    assert!(!requests.iter().any(|r| r.url.path().ends_with("/reviews")));
-    assert!(!requests.iter().any(|r| r.url.path().ends_with("/merge")));
+    assert!(!requests
+        .iter()
+        .any(|r| r.url.path().ends_with("/Shako.Review")));
+    assert!(!requests
+        .iter()
+        .any(|r| r.url.path().ends_with("/Shako.Merge")));
 }
 
 #[tokio::test]
@@ -810,22 +854,22 @@ async fn reject_own_proposal_is_allowed() {
     let app = server::app(state);
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/1"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(1)",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": 1,
-            "html_url": "https://shako.example.sk/pulls/1",
-            "state": "open",
-            "title": "create ContextSpace mobility",
-            "head": { "ref": "portal/create-contextspace-mobility-11111111" },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-06T09:14:22Z",
-            "user": {
-                "login": "jana.kovacova",
-                "full_name": "Jana Kováčová",
-                "email": "jana.kovacova@banskabystrica.sk"
-            },
-            "mergeable": true,
-            "merged": false
+            "Number": 1,
+            "HtmlUrl": "https://shako.example.sk/pulls/1",
+            "State": "open",
+            "Title": "create ContextSpace mobility",
+            "Head": "portal/create-contextspace-mobility-11111111",
+            "Base": "main",
+            "CreatedAt": "2026-09-06T09:14:22Z",
+            "Author": "jana.kovacova",
+            "AuthorName": "Jana Kováčová",
+            "AuthorEmail": "jana.kovacova@banskabystrica.sk",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -840,23 +884,34 @@ spec:
 "#;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "portal/create-contextspace-mobility-11111111"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
+        ))
+        .and(query_param(
+            "@r",
+            "'portal/create-contextspace-mobility-11111111'",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": encode_b64(space_yaml)
+            "Sha": "blob-1",
+            "Content": encode_b64(space_yaml)
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/1/reviews"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(1)/Shako.Review",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
-    Mock::given(method("PATCH"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/1"))
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(1)/Shako.Close",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
@@ -901,20 +956,22 @@ spec:
     let requests = server.received_requests().await.expect("received requests");
     let reviews: Vec<_> = requests
         .iter()
-        .filter(|r| r.url.path().ends_with("/reviews"))
+        .filter(|r| r.url.path().ends_with("/Shako.Review"))
         .collect();
     assert_eq!(reviews.len(), 1);
     let review_body: serde_json::Value =
         serde_json::from_slice(&reviews[0].body).expect("review json body");
-    assert_eq!(review_body["event"], "COMMENT");
-    assert!(review_body["body"]
+    assert_eq!(review_body["Event"], "COMMENT");
+    assert!(review_body["Body"]
         .as_str()
         .unwrap_or_default()
         .contains("jana.kovacova@banskabystrica.sk"));
     assert!(requests
         .iter()
-        .any(|r| r.method == "PATCH" && r.url.path().ends_with("/pulls/1")));
-    assert!(!requests.iter().any(|r| r.url.path().ends_with("/merge")));
+        .any(|r| r.method == "POST" && r.url.path().ends_with("/PullRequests(1)/Shako.Close")));
+    assert!(!requests
+        .iter()
+        .any(|r| r.url.path().ends_with("/Shako.Merge")));
 }
 
 #[tokio::test]
@@ -930,22 +987,22 @@ async fn approve_red_lane_requires_confirm_and_records_git_actions() {
 
     // Red lane change: deletion of ContextSpace mobility
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/2"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(2)",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": 2,
-            "html_url": "https://shako.example.sk/pulls/2",
-            "state": "open",
-            "title": "delete ContextSpace mobility",
-            "head": { "ref": "portal/delete-contextspace-mobility-22222222" },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-06T09:14:22Z",
-            "user": {
-                "login": "different.user",
-                "full_name": "Different User",
-                "email": "different.user@banskabystrica.sk"
-            },
-            "mergeable": true,
-            "merged": false
+            "Number": 2,
+            "HtmlUrl": "https://shako.example.sk/pulls/2",
+            "State": "open",
+            "Title": "delete ContextSpace mobility",
+            "Head": "portal/delete-contextspace-mobility-22222222",
+            "Base": "main",
+            "CreatedAt": "2026-09-06T09:14:22Z",
+            "Author": "different.user",
+            "AuthorName": "Different User",
+            "AuthorEmail": "different.user@banskabystrica.sk",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -960,12 +1017,16 @@ spec:
 "#;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "main"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
+        ))
+        .and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": encode_b64(space_yaml)
+            "Sha": "blob-1",
+            "Content": encode_b64(space_yaml)
         })))
         .mount(&server)
         .await;
@@ -1014,10 +1075,10 @@ spec:
     let reqs_after_1 = server.received_requests().await.expect("received requests");
     assert!(!reqs_after_1
         .iter()
-        .any(|r| r.url.path().ends_with("/reviews")));
+        .any(|r| r.url.path().ends_with("/Shako.Review")));
     assert!(!reqs_after_1
         .iter()
-        .any(|r| r.url.path().ends_with("/merge")));
+        .any(|r| r.url.path().ends_with("/Shako.Merge")));
 
     // 2. Wrong confirm body -> 400 Bad Request
     let wrong_body = json!({ "confirm": "wrong-resource-name" });
@@ -1053,20 +1114,24 @@ spec:
     let reqs_after_2 = server.received_requests().await.expect("received requests");
     assert!(!reqs_after_2
         .iter()
-        .any(|r| r.url.path().ends_with("/reviews")));
+        .any(|r| r.url.path().ends_with("/Shako.Review")));
     assert!(!reqs_after_2
         .iter()
-        .any(|r| r.url.path().ends_with("/merge")));
+        .any(|r| r.url.path().ends_with("/Shako.Merge")));
 
     // 3. Right confirm body -> 202 Accepted and triggers review + merge
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/2/reviews"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(2)/Shako.Review",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/2/merge"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(2)/Shako.Merge",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
@@ -1102,11 +1167,11 @@ spec:
     let reqs_final = server.received_requests().await.expect("received requests");
     let reviews: Vec<_> = reqs_final
         .iter()
-        .filter(|r| r.url.path().ends_with("/reviews"))
+        .filter(|r| r.url.path().ends_with("/Shako.Review"))
         .collect();
     let merges: Vec<_> = reqs_final
         .iter()
-        .filter(|r| r.url.path().ends_with("/merge"))
+        .filter(|r| r.url.path().ends_with("/Shako.Merge"))
         .collect();
 
     // No forge review: the forge token authored the pull, so the approver is recorded in the
@@ -1115,11 +1180,11 @@ spec:
     assert_eq!(merges.len(), 1);
 
     let merge_body: serde_json::Value = serde_json::from_slice(&merges[0].body).unwrap();
-    assert!(merge_body["merge_message_field"]
+    assert!(merge_body["Message"]
         .as_str()
         .unwrap_or_default()
         .contains("Approved in the Portal by"));
-    assert_eq!(merge_body["Do"], "squash");
+    assert_eq!(merge_body["Style"], "squash");
 }
 
 #[tokio::test]
@@ -1141,22 +1206,22 @@ async fn successful_approve_answers_202_deploying() {
 
     // Green lane change proposal: create sandbox ContextSpace
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/3"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(3)",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": 3,
-            "html_url": "https://shako.example.sk/pulls/3",
-            "state": "open",
-            "title": "create ContextSpace sandbox-space",
-            "head": { "ref": "portal/create-contextspace-sandbox-space-33333333" },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-06T09:14:22Z",
-            "user": {
-                "login": "different.author",
-                "full_name": "Different Author",
-                "email": "author@banskabystrica.sk"
-            },
-            "mergeable": true,
-            "merged": false
+            "Number": 3,
+            "HtmlUrl": "https://shako.example.sk/pulls/3",
+            "State": "open",
+            "Title": "create ContextSpace sandbox-space",
+            "Head": "portal/create-contextspace-sandbox-space-33333333",
+            "Base": "main",
+            "CreatedAt": "2026-09-06T09:14:22Z",
+            "Author": "different.author",
+            "AuthorName": "Different Author",
+            "AuthorEmail": "author@banskabystrica.sk",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -1171,12 +1236,19 @@ spec:
 "#;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/sandbox-space/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "portal/create-contextspace-sandbox-space-33333333"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/sandbox-space/space.yaml'",
+        ))
+        .and(query_param(
+            "@r",
+            "'portal/create-contextspace-sandbox-space-33333333'",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": encode_b64(space_yaml)
+            "Sha": "blob-1",
+            "Content": encode_b64(space_yaml)
         })))
         .mount(&server)
         .await;
@@ -1188,45 +1260,60 @@ spec:
     .await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/3/reviews"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(3)/Shako.Review",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/3/merge"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(3)/Shako.Merge",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
     // `main` after the merge, as the sync reads it.
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"default_branch": "main"})))
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches/main"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({"name": "main", "commit": {"id": "merged0000000003"}})),
-        )
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/git/trees/merged0000000003"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"truncated": false, "tree": [
-            {"path": "projects/ovzdusie/spaces/sandbox-space/space.yaml", "type": "blob", "sha": "t4270-blob-sandbox"}
-        ]})))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/sandbox-space/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
         ))
-        .and(query_param("ref", "merged0000000003"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "Name": "main", "HeadSha": "merged0000000003" })),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")).and(query_param("@r", "'merged0000000003'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": encode_b64(space_yaml)
+            "Truncated": false,
+            "Tree": [
+                { "Path": "projects/ovzdusie/spaces/sandbox-space/space.yaml", "Type": "blob", "Sha": "t4270-blob-sandbox" }
+            ]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/sandbox-space/space.yaml'",
+        ))
+        .and(query_param("@r", "'merged0000000003'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "blob-1",
+            "Content": encode_b64(space_yaml)
         })))
         .mount(&server)
         .await;
@@ -1336,18 +1423,22 @@ async fn rejecting_an_applications_change_ends_the_run_that_proposed_it() {
     let app = server::app(state.clone());
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/4"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(4)",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": 4,
-            "html_url": "https://shako.example.sk/pulls/4",
-            "state": "open",
-            "title": "create App city-bikes",
-            "head": { "ref": "portal/create-app-city-bikes-44444444" },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-26T09:14:22Z",
-            "user": { "login": "portal", "full_name": "Portal", "email": "portal@example.sk" },
-            "mergeable": true,
-            "merged": false
+            "Number": 4,
+            "HtmlUrl": "https://shako.example.sk/pulls/4",
+            "State": "open",
+            "Title": "create App city-bikes",
+            "Head": "portal/create-app-city-bikes-44444444",
+            "Base": "main",
+            "CreatedAt": "2026-09-26T09:14:22Z",
+            "Author": "portal",
+            "AuthorName": "Portal",
+            "AuthorEmail": "portal@example.sk",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -1367,23 +1458,35 @@ spec:
         )
     };
     Mock::given(method("GET"))
-        .and(path_regex(
-            r"^/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/.*city-bikes.*",
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "portal/create-app-city-bikes-44444444"))
+        .and(|r: &wiremock::Request| {
+            r.url.query_pairs().any(|(k, v)| {
+                k == "@p"
+                    && regex::Regex::new(r"^'projects/ovzdusie/.*city-bikes.*")
+                        .expect("a pattern")
+                        .is_match(&v)
+            })
+        })
+        .and(query_param("@r", "'portal/create-app-city-bikes-44444444'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": encode_b64(&app_yaml("run-proposer"))
+            "Sha": "blob-1",
+            "Content": encode_b64(&app_yaml("run-proposer"))
         })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/4/reviews"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(4)/Shako.Review",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
-    Mock::given(method("PATCH"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/4"))
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(4)/Shako.Close",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
@@ -1437,22 +1540,22 @@ async fn reject_answers_202_rejected_and_requests_changes_without_merge() {
     let app = server::app(state.clone());
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/4"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(4)",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": 4,
-            "html_url": "https://shako.example.sk/pulls/4",
-            "state": "open",
-            "title": "create ContextSpace mobility",
-            "head": { "ref": "portal/create-contextspace-mobility-44444444" },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-06T09:14:22Z",
-            "user": {
-                "login": "author.dev",
-                "full_name": "Author Dev",
-                "email": "author@example.sk"
-            },
-            "mergeable": true,
-            "merged": false
+            "Number": 4,
+            "HtmlUrl": "https://shako.example.sk/pulls/4",
+            "State": "open",
+            "Title": "create ContextSpace mobility",
+            "Head": "portal/create-contextspace-mobility-44444444",
+            "Base": "main",
+            "CreatedAt": "2026-09-06T09:14:22Z",
+            "Author": "author.dev",
+            "AuthorName": "Author Dev",
+            "AuthorEmail": "author@example.sk",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -1467,23 +1570,34 @@ spec:
 "#;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
-        .and(query_param("ref", "portal/create-contextspace-mobility-44444444"))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
+        ))
+        .and(query_param(
+            "@r",
+            "'portal/create-contextspace-mobility-44444444'",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": encode_b64(space_yaml)
+            "Sha": "blob-1",
+            "Content": encode_b64(space_yaml)
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/4/reviews"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(4)/Shako.Review",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
-    Mock::given(method("PATCH"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/4"))
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(4)/Shako.Close",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
@@ -1519,20 +1633,22 @@ spec:
     let requests = server.received_requests().await.expect("received requests");
     let reviews: Vec<_> = requests
         .iter()
-        .filter(|r| r.url.path().ends_with("/reviews"))
+        .filter(|r| r.url.path().ends_with("/Shako.Review"))
         .collect();
     assert_eq!(reviews.len(), 1);
 
     let review_body: serde_json::Value = serde_json::from_slice(&reviews[0].body).unwrap();
-    assert_eq!(review_body["event"], "COMMENT");
-    assert!(review_body["body"]
+    assert_eq!(review_body["Event"], "COMMENT");
+    assert!(review_body["Body"]
         .as_str()
         .unwrap_or_default()
         .starts_with("Change proposal rejected in the Portal by "));
     assert!(requests
         .iter()
-        .any(|r| r.method == "PATCH" && r.url.path().ends_with("/pulls/4")));
-    assert!(!requests.iter().any(|r| r.url.path().ends_with("/merge")));
+        .any(|r| r.method == "POST" && r.url.path().ends_with("/PullRequests(4)/Shako.Close")));
+    assert!(!requests
+        .iter()
+        .any(|r| r.url.path().ends_with("/Shako.Merge")));
 
     // T-5613: the rejection is on the project's feed too, not only on the forge.
     let filter = joinedcontext_portal::activity::ActivityFilter {
@@ -1682,38 +1798,40 @@ async fn own_change_of(verbs: &[&str]) -> (MockServer, AppState) {
     ));
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/1"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(1)",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": 1,
-            "html_url": "https://shako.example.sk/pulls/1",
-            "state": "open",
-            "title": "create ContextSpace mobility",
-            "head": { "ref": "portal/create-contextspace-mobility-11111111" },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-06T09:14:22Z",
-            "user": {
-                "login": "jana.kovacova",
-                "full_name": "Jana Kováčová",
-                "email": "jana.kovacova@banskabystrica.sk"
-            },
-            "mergeable": true,
-            "merged": false
+            "Number": 1,
+            "HtmlUrl": "https://shako.example.sk/pulls/1",
+            "State": "open",
+            "Title": "create ContextSpace mobility",
+            "Head": "portal/create-contextspace-mobility-11111111",
+            "Base": "main",
+            "CreatedAt": "2026-09-06T09:14:22Z",
+            "Author": "jana.kovacova",
+            "AuthorName": "Jana Kováčová",
+            "AuthorEmail": "jana.kovacova@banskabystrica.sk",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
-        ))
-        .and(query_param("ref", "portal/create-contextspace-mobility-11111111"))
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        )).and(query_param("@p", "'projects/ovzdusie/spaces/mobility/space.yaml'"))
+        .and(query_param("@r", "'portal/create-contextspace-mobility-11111111'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": encode_b64("apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: mobility\n  namespace: ovzdusie\nspec:\n  isSandbox: true\n")
+            "Sha": "blob-1",
+            "Content": encode_b64("apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: mobility\n  namespace: ovzdusie\nspec:\n  isSandbox: true\n")
         })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/1/merge"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(1)/Shako.Merge",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
@@ -1760,7 +1878,7 @@ async fn an_administrator_of_the_kind_approves_their_own_change_and_the_merge_sa
     let requests = server.received_requests().await.expect("requests");
     let merge = requests
         .iter()
-        .find(|r| r.url.path().ends_with("/pulls/1/merge"))
+        .find(|r| r.url.path().ends_with("/PullRequests(1)/Shako.Merge"))
         .expect("the change was merged");
     let body = String::from_utf8_lossy(&merge.body);
     assert!(
@@ -1777,7 +1895,9 @@ async fn an_author_who_approves_but_may_not_delete_still_cannot_approve_their_ow
 
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     let requests = server.received_requests().await.expect("requests");
-    assert!(!requests.iter().any(|r| r.url.path().ends_with("/merge")));
+    assert!(!requests
+        .iter()
+        .any(|r| r.url.path().ends_with("/Shako.Merge")));
 }
 
 #[tokio::test]
@@ -1809,7 +1929,9 @@ async fn an_operation_never_approves_its_callers_own_change_even_for_an_administ
         Err(joinedcontext_portal::error::ApiError::SelfApproval(_))
     ));
     let requests = server.received_requests().await.expect("requests");
-    assert!(!requests.iter().any(|r| r.url.path().ends_with("/merge")));
+    assert!(!requests
+        .iter()
+        .any(|r| r.url.path().ends_with("/Shako.Merge")));
 }
 
 // --- a merge request is approved whole, not by its headline (T-0832, MF-21, CC-63) ----------
@@ -1880,18 +2002,22 @@ async fn bundle_on(
     ));
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/7"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(7)",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": 7,
-            "html_url": "https://shako.example.sk/pulls/7",
-            "state": "open",
-            "title": "import bundle",
-            "head": { "ref": branch },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-15T09:14:22Z",
-            "user": { "login": "someone", "full_name": "Someone Else", "email": "someone@banskabystrica.sk" },
-            "mergeable": true,
-            "merged": false
+            "Number": 7,
+            "HtmlUrl": "https://shako.example.sk/pulls/7",
+            "State": "open",
+            "Title": "import bundle",
+            "Head": branch,
+            "Base": "main",
+            "CreatedAt": "2026-09-15T09:14:22Z",
+            "Author": "someone",
+            "AuthorName": "Someone Else",
+            "AuthorEmail": "someone@banskabystrica.sk",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -1902,30 +2028,33 @@ async fn bundle_on(
     let extra_ref = if status == "deleted" { "main" } else { branch };
     Mock::given(method("GET"))
         .and(path(format!(
-            "/api/v1/repos/test-owner/test-repo/contents/{PIPELINE_PATH}"
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
         )))
-        .and(query_param("ref", branch))
+        .and(query_param("@p", format!("'{PIPELINE_PATH}'")))
+        .and(query_param("@r", format!("'{}'", branch)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-head",
-            "content": encode_b64(PIPELINE_YAML)
+            "Sha": "blob-head",
+            "Content": encode_b64(PIPELINE_YAML)
         })))
         .mount(&server)
         .await;
     for (file, content) in extra {
         Mock::given(method("GET"))
             .and(path(format!(
-                "/api/v1/repos/test-owner/test-repo/contents/{file}"
-            )))
-            .and(query_param("ref", extra_ref))
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
+            ))).and(query_param("@p", format!("'{file}'")))
+            .and(query_param("@r", format!("'{}'", extra_ref)))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": format!("blob-{}", file.len()),
-                "content": encode_b64(content)
+                "Sha": format!("blob-{}", file.len()),
+                "Content": encode_b64(content)
             })))
             .mount(&server)
             .await;
     }
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/7/merge"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(7)/Shako.Merge",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
@@ -1975,7 +2104,7 @@ async fn merged(server: &MockServer) -> bool {
         .await
         .unwrap_or_default()
         .iter()
-        .any(|r| r.url.path().ends_with("/pulls/7/merge"))
+        .any(|r| r.url.path().ends_with("/PullRequests(7)/Shako.Merge"))
 }
 
 const SMUGGLED_BINDING: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: RoleBinding\nmetadata:\n  name: mallory-admin\n  namespace: org\nspec:\n  subjects:\n    - user: mallory@banskabystrica.sk\n  role: org-admin\n  scope:\n    organization: bb\n";
@@ -2159,26 +2288,28 @@ async fn readable_changes_fixture(kinds: &[&str]) -> (MockServer, AppState) {
         status: None,
     });
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {
-                "number": 1,
-                "html_url": "https://shako.example.sk/pulls/1",
-                "state": "open",
-                "title": "create ContextSpace mobility",
-                "head": { "ref": "portal/create-contextspace-mobility-11111111" },
-                "base": { "ref": "main" },
-                "created_at": "2026-09-06T09:14:22Z",
-                "user": {
-                    "login": "jana.kovacova",
-                    "full_name": "Jana Kováčová",
-                    "email": "jana.kovacova@banskabystrica.sk"
-                },
-                "mergeable": true,
-                "merged": false
-            }
-        ])))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+        ))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Number": 1,
+                    "HtmlUrl": "https://shako.example.sk/pulls/1",
+                    "State": "open",
+                    "Title": "create ContextSpace mobility",
+                    "Head": "portal/create-contextspace-mobility-11111111",
+                    "Base": "main",
+                    "CreatedAt": "2026-09-06T09:14:22Z",
+                    "Author": "jana.kovacova",
+                    "AuthorName": "Jana Kováčová",
+                    "AuthorEmail": "jana.kovacova@banskabystrica.sk",
+                    "Mergeable": true,
+                    "Merged": false
+                }
+            ]
+        })))
         .mount(&server)
         .await;
     (server, state)
@@ -2370,34 +2501,42 @@ async fn change_of_file_by(
     ));
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/66"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(66)",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": 66,
-            "html_url": "https://shako.example.sk/pulls/66",
-            "state": "open",
-            "title": "share air quality",
-            "head": { "ref": branch },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-16T09:14:22Z",
-            "user": { "login": "someone", "full_name": "Someone Else", "email": author },
-            "mergeable": true,
-            "merged": false
+            "Number": 66,
+            "HtmlUrl": "https://shako.example.sk/pulls/66",
+            "State": "open",
+            "Title": "share air quality",
+            "Head": branch,
+            "Base": "main",
+            "CreatedAt": "2026-09-16T09:14:22Z",
+            "Author": "someone",
+            "AuthorName": "Someone Else",
+            "AuthorEmail": author,
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
     pr_files(&server, 66, &[(file, "added")]).await;
     Mock::given(method("GET"))
         .and(path(format!(
-            "/api/v1/repos/test-owner/test-repo/contents/{file}"
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
         )))
-        .and(query_param("ref", branch))
+        .and(query_param("@p", format!("'{file}'")))
+        .and(query_param("@r", format!("'{}'", branch)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-66", "content": encode_b64(content)
+            "Sha": "blob-66",
+            "Content": encode_b64(content)
         })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/66/merge"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(66)/Shako.Merge",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
@@ -2645,7 +2784,7 @@ async fn merged_66(server: &MockServer) -> bool {
         .await
         .unwrap_or_default()
         .iter()
-        .any(|r| r.url.path().ends_with("/pulls/66/merge"))
+        .any(|r| r.url.path().ends_with("/PullRequests(66)/Shako.Merge"))
 }
 
 /// EP-76: the operations registry and the assistant refuse it in the same words as the page,
@@ -3210,12 +3349,14 @@ async fn reject_66_as(
     who: &str,
 ) -> (StatusCode, String, bool) {
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/66/reviews"))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(66)/Shako.Review"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(server)
         .await;
-    Mock::given(method("PATCH"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls/66"))
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(66)/Shako.Close",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(server)
         .await;
@@ -3254,7 +3395,7 @@ async fn reject_66_as(
         .await
         .unwrap_or_default()
         .iter()
-        .any(|r| r.method == "PATCH" && r.url.path().ends_with("/pulls/66"));
+        .any(|r| r.method == "POST" && r.url.path().ends_with("/PullRequests(66)/Shako.Close"));
     (status, String::from_utf8_lossy(&bytes).into_owned(), closed)
 }
 

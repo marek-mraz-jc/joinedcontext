@@ -69,10 +69,8 @@ fn preview_uri(name: &str) -> String {
 async fn world() -> (MockServer, AppState) {
     let shako = forge().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/branches/main")))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": "base1" } })),
-        )
+        .and(path(format!("{REPO}/Branches('main')")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "base1" })))
         .mount(&shako)
         .await;
     let state = state_on(&shako);
@@ -120,7 +118,7 @@ async fn opened(state: &AppState, name: &str) {
 /// not there at all.
 #[tokio::test]
 async fn a_colleague_reads_a_preview_and_drives_neither_end_of_it() {
-    let (_gitea, state) = world().await;
+    let (_forge, state) = world().await;
     let uri = preview_uri(WS);
 
     // The viewer reads it: no preview yet, so the state is plain and there are no addresses.
@@ -178,7 +176,7 @@ async fn a_colleague_reads_a_preview_and_drives_neither_end_of_it() {
 /// store's surface can move the clock forward.)
 #[tokio::test]
 async fn the_preview_of_a_workspace_that_is_not_there_is_the_same_answer_on_all_three_routes() {
-    let (_gitea, state) = world().await;
+    let (_forge, state) = world().await;
 
     for name in ["nothing-at-all", "Air-V2", "%2e%2e", "air-v2%20"] {
         for verb in ["GET", "POST", "DELETE"] {
@@ -198,7 +196,7 @@ async fn the_preview_of_a_workspace_that_is_not_there_is_the_same_answer_on_all_
 /// stops is the same as after one, and a stop of a workspace whose render failed is still a stop.
 #[tokio::test]
 async fn stopping_a_preview_that_does_not_run_is_the_same_204_every_time() {
-    let (_gitea, state) = world().await;
+    let (_forge, state) = world().await;
     let uri = preview_uri(WS);
 
     // Never started.

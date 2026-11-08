@@ -643,9 +643,9 @@ async fn jc_project_create_follows_the_organizations_own_setting() {
 
     let shako = common::forge().await;
     Mock::given(http_method("GET"))
-        .and(url_path(format!("{}/pulls", common::REPO)))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .and(url_path(format!("{}/PullRequests", common::REPO)))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
         .mount(&shako)
         .await;
     let state = common::state_on(&shako);

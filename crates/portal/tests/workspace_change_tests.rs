@@ -25,41 +25,58 @@ fn approver() -> Identity {
 async fn a_workspace_brought_back_is_listed_and_read_with_its_name() {
     let server = forge().await;
     let pull = json!({
-        "number": 5, "html_url": "https://shako.example/pulls/5", "state": "open",
-        "title": "workspace air-v2: Air", "head": { "ref": "workspace/air-v2" }, "base": { "ref": "main" },
-        "created_at": "2026-09-18T10:00:00Z",
-        "user": { "login": "jana", "full_name": "Jana", "email": "jana@hel.fi" },
-        "mergeable": true, "merged": false
+        "Number": 5,
+        "HtmlUrl": "https://shako.example/pulls/5",
+        "State": "open",
+        "Title": "workspace air-v2: Air",
+        "Head": "workspace/air-v2",
+        "Base": "main",
+        "CreatedAt": "2026-09-18T10:00:00Z",
+        "Author": "jana",
+        "AuthorName": "Jana",
+        "AuthorEmail": "jana@hel.fi",
+        "Mergeable": true,
+        "Merged": false
     });
     let other = json!({
-        "number": 6, "html_url": "https://shako.example/pulls/6", "state": "open",
-        "title": "someone's branch", "head": { "ref": "feature/x" }, "base": { "ref": "main" },
-        "created_at": "2026-09-18T11:00:00Z", "user": { "login": "x" }, "mergeable": true, "merged": false
+        "Number": 6,
+        "HtmlUrl": "https://shako.example/pulls/6",
+        "State": "open",
+        "Title": "someone's branch",
+        "Head": "feature/x",
+        "Base": "main",
+        "CreatedAt": "2026-09-18T11:00:00Z",
+        "Author": "x",
+        "Mergeable": true,
+        "Merged": false
     });
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([pull.clone(), other])))
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/5")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(pull))
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/5/files")))
+        .and(path(format!("{REPO}/PullRequests")))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!([{ "filename": FILE, "status": "added" }])),
+            ResponseTemplate::new(200).set_body_json(json!({ "value": [pull.clone(), other] })),
         )
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/{FILE}")))
-        .and(query_param("ref", "workspace/air-v2"))
+        .and(path(format!("{REPO}/PullRequests(5)")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(pull))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/PullRequests(5)/Files")))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!({ "sha": "b", "content": encode(SPACE) })),
+                .set_body_json(json!({ "value": [{ "Filename": FILE, "Status": "added" }] })),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{FILE}'")))
+        .and(query_param("@r", "'workspace/air-v2'"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "Sha": "b", "Content": encode(SPACE) })),
         )
         .mount(&server)
         .await;

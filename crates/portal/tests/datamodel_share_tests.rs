@@ -54,17 +54,20 @@ const COMPILED: &str = r##"{
 async fn world() -> (MockServer, MockServer, AppState) {
     let shako = common::forge().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/{SOURCE_PATH}")))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{SOURCE_PATH}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-src", "content": encode(SOURCE)
+            "Sha": "sha-src",
+            "Content": encode(SOURCE)
         })))
         .with_priority(1)
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/branches/main")))
+        .and(path(format!("{REPO}/Branches('main')")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "name": "main", "commit": { "id": COMMIT }
+            "Name": "main",
+            "HeadSha": COMMIT
         })))
         .mount(&shako)
         .await;
@@ -148,10 +151,12 @@ async fn seed_organization_model(
         .mirror
         .upsert(envelope("DataModel", "air", ORG_NAMESPACE, spec));
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/{ORG_SOURCE_PATH}")))
-        .and(query_param("ref", "main"))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{ORG_SOURCE_PATH}'")))
+        .and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-org", "content": encode(source)
+            "Sha": "sha-org",
+            "Content": encode(source)
         })))
         .with_priority(1)
         .mount(shako)
@@ -162,8 +167,8 @@ fn same_origin() -> Value {
     json!({ "project": "helsinki", "space": "ilma", "name": "air", "version": "1.0.0", "commit": "abcdef1" })
 }
 
-/// Every file the forge was asked to write, by path, decoded: one per-file write or each file
-/// of a `POST /contents` commit.
+/// Every file the forge was asked to write, by path, decoded: each file of every
+/// `POST R/Shako.CommitFiles` commit, a single-file write included.
 async fn written(shako: &MockServer) -> Vec<(String, String)> {
     let decode = |content: &Value| {
         let bytes = STANDARD.decode(content.as_str()?).ok()?;
@@ -175,19 +180,12 @@ async fn written(shako: &MockServer) -> Vec<(String, String)> {
             continue;
         };
         let at = request.url.path();
-        if request.method.as_str() == "POST" && at == format!("{REPO}/contents") {
-            for file in body["files"].as_array().into_iter().flatten() {
+        if request.method.as_str() == "POST" && at == format!("{REPO}/Shako.CommitFiles") {
+            for file in body["Files"].as_array().into_iter().flatten() {
                 if let (Some(path), Some(text)) = (file["path"].as_str(), decode(&file["content"]))
                 {
                     files.push((path.to_owned(), text));
                 }
-            }
-        } else if request.method.as_str() == "PUT" {
-            if let (Some(path), Some(text)) = (
-                at.strip_prefix(&format!("{REPO}/contents/")),
-                decode(&body["content"]),
-            ) {
-                files.push((path.to_owned(), text));
             }
         }
     }
@@ -208,9 +206,9 @@ fn file<'a>(files: &'a [(String, String)], wanted: &str) -> &'a str {
 }
 
 fn opened_a_change(requests: &[wiremock::Request]) -> bool {
-    requests
-        .iter()
-        .any(|r| r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/pulls"))
+    requests.iter().any(|r| {
+        r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/Shako.OpenPullRequest")
+    })
 }
 
 #[tokio::test]
@@ -286,9 +284,11 @@ async fn a_draft_a_stranger_and_a_model_importing_a_project_model_are_refused_be
         "  - linkml:types\n  - project.stations.v1",
     );
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/{SOURCE_PATH}")))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{SOURCE_PATH}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-src", "content": encode(&importing)
+            "Sha": "sha-src",
+            "Content": encode(&importing)
         })))
         .with_priority(1)
         .mount(&shako)
@@ -401,26 +401,30 @@ const SHARED: u64 = 0x401;
 async fn share_pull(shako: &MockServer) {
     let branch = "portal/create-datamodel-air-00000401";
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/{SHARED}")))
+        .and(path(format!("{REPO}/PullRequests({SHARED})")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": SHARED,
-            "html_url": "https://shako.example/pulls/1025",
-            "state": "open",
-            "title": "share DataModel air with the organization",
-            "head": { "ref": branch },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-25T09:00:00Z",
-            "user": { "login": "portal", "full_name": "steward", "email": "steward@hel.fi" },
-            "mergeable": true,
-            "merged": false
+            "Number": SHARED,
+            "HtmlUrl": "https://shako.example/pulls/1025",
+            "State": "open",
+            "Title": "share DataModel air with the organization",
+            "Head": branch,
+            "Base": "main",
+            "CreatedAt": "2026-09-25T09:00:00Z",
+            "Author": "portal",
+            "AuthorName": "steward",
+            "AuthorEmail": "steward@hel.fi",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/{SHARED}/files")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            { "filename": "datamodels/air/air.yaml", "status": "added" }
-        ])))
+        .and(path(format!("{REPO}/PullRequests({SHARED})/Files")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                { "Filename": "datamodels/air/air.yaml", "Status": "added" }
+            ]
+        })))
         .mount(shako)
         .await;
     let manifest = json!({
@@ -436,11 +440,12 @@ async fn share_pull(shako: &MockServer) {
         }
     });
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/datamodels/air/air.yaml")))
-        .and(query_param("ref", branch))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", "'datamodels/air/air.yaml'"))
+        .and(query_param("@r", format!("'{}'", branch)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-share",
-            "content": encode(&serde_norway::to_string(&manifest).expect("yaml"))
+            "Sha": "sha-share",
+            "Content": encode(&serde_norway::to_string(&manifest).expect("yaml"))
         })))
         .with_priority(1)
         .mount(shako)
@@ -449,7 +454,8 @@ async fn share_pull(shako: &MockServer) {
 
 fn merged(requests: &[wiremock::Request]) -> bool {
     requests.iter().any(|r| {
-        r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/pulls/{SHARED}/merge")
+        r.method.as_str() == "POST"
+            && r.url.path() == format!("{REPO}/PullRequests({SHARED})/Shako.Merge")
     })
 }
 

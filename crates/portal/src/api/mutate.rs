@@ -1165,7 +1165,7 @@ async fn propose_engine(
         crate::ops::verdict_for_manifest(state, project, received).await?;
     }
 
-    // 8. Commit to Git merge request via Gitea client
+    // 8. Commit to Git merge request via the forge client
     let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
@@ -1308,7 +1308,7 @@ async fn propose_engine(
 
     let yaml_content = manifest_yaml(&envelope, build_write, published.as_ref())?;
 
-    // Gitea wants the blob sha of the file being replaced, which only `get_file` knows;
+    // The forge wants the blob sha of the file being replaced, which only `get_file` knows;
     // `status.observedRevision` is a commit id and would be rejected. Asking the branch (not the
     // mirror) also covers a manifest that exists in Git but has not been mirrored yet.
     let existing_sha = shako
@@ -3184,7 +3184,7 @@ mod tests {
     /// path `resolve_repo_path` gives wins when it holds the file, and no file leaves the path.
     #[tokio::test]
     async fn held_file_finds_a_policy_in_either_folder() {
-        use wiremock::matchers::{method, path};
+        use wiremock::matchers::{method, path, query_param};
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
         let shako =
@@ -3204,16 +3204,25 @@ mod tests {
         };
         let found = |sha: &str| {
             ResponseTemplate::new(200)
-                .set_body_json(serde_json::json!({ "sha": sha, "content": "YTogYg==" }))
+                .set_body_json(serde_json::json!({ "Sha": sha, "Content": "YTogYg==" }))
         };
-        let contents = "/api/v1/repos/o/r/contents/projects/helsinki/spaces";
+        let file = "/odata/Repositories(Owner='o',Name='r')/Shako.File(Path=@p,Ref=@r)";
+        let spaces = "projects/helsinki/spaces";
         Mock::given(method("GET"))
-            .and(path(format!("{contents}/excel/policies/grant.yaml")))
+            .and(path(file))
+            .and(query_param(
+                "@p",
+                format!("'{spaces}/excel/policies/grant.yaml'"),
+            ))
             .respond_with(found("in-space"))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{contents}/helsinki/policies/grant.yaml")))
+            .and(path(file))
+            .and(query_param(
+                "@p",
+                format!("'{spaces}/helsinki/policies/grant.yaml'"),
+            ))
             .respond_with(ResponseTemplate::new(404))
             .mount(&server)
             .await;
@@ -3302,14 +3311,17 @@ mod tests {
         let server = MockServer::start().await;
         let legacy = "apiVersion: joinedcontext.com/v1alpha1\nkind: Organization\nmetadata:\n  name: hel\nspec:\n  domain: hel.fi\n";
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/o/r/contents/org.yaml"))
-            .and(query_param("ref", "main"))
+            .and(path(
+                "/odata/Repositories(Owner='o',Name='r')/Shako.File(Path=@p,Ref=@r)",
+            ))
+            .and(query_param("@p", "'org.yaml'"))
+            .and(query_param("@r", "'main'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "b1",
-                "content": base64::engine::Engine::encode(
+                "Sha": "b1",
+                "Content": base64::engine::Engine::encode(
                     &base64::engine::general_purpose::STANDARD,
                     legacy.as_bytes()
-                ),
+                )
             })))
             .mount(&server)
             .await;
@@ -4015,7 +4027,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn propose_non_dry_run_without_gitea_answers_503() {
+    async fn propose_non_dry_run_without_a_forge_answers_503() {
         let state = AppState::new(Config::for_tests(), None);
         let user = dummy_user();
         let payload = json!({

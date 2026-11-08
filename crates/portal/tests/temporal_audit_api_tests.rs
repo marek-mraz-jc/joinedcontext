@@ -6,7 +6,7 @@ mod common;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path_regex};
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{envelope, person, send, REPO};
@@ -28,9 +28,15 @@ const FILE: &str = r#"pipeline:
 async fn world(file: ResponseTemplate) -> (AppState, MockServer) {
     let shako = common::forge().await;
     Mock::given(method("GET"))
-        .and(path_regex(format!(
-            "^{REPO}/contents/projects/helsinki/.*pipelines/vehicles/bento.yaml$"
-        )))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
+        .and(|r: &wiremock::Request| {
+            r.url.query_pairs().any(|(k, v)| {
+                k == "@p"
+                    && regex::Regex::new(r"^'projects/helsinki/.*pipelines/vehicles/bento.yaml'$")
+                        .expect("a pattern")
+                        .is_match(&v)
+            })
+        })
         .respond_with(file)
         .mount(&shako)
         .await;

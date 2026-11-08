@@ -28,7 +28,7 @@ use serde_json::Value;
 
 use super::proposal::{self, Proposal};
 use super::state::{States, Stored};
-use crate::forge::{ShakoClient, PullRequest};
+use crate::forge::{PullRequest, ShakoClient};
 use crate::reconciler::daemon::SyncError;
 use crate::reconciler::staging::{stage, Scratch};
 

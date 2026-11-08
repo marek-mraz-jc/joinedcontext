@@ -115,11 +115,36 @@ fn app(status: Option<Value>, annotation: Option<&str>) -> Value {
 }
 
 /// The App's own repository, `{project}_{app}` (AP-75), and the head of its default branch.
-const APP_REPO: &str = "/api/v1/repos/test-owner/ovzdusie_air-quality";
+const APP_REPO: &str = "/odata/Repositories(Owner='test-owner',Name='ovzdusie_air-quality')";
 const COMMIT: &str = "8c56954a1f0e3d2c1b0a99887766554433221100";
-const PACKAGE: &str = "/api/packages/test-owner/generic/app-air-quality";
+/// The App's generic package of the organization (AP-101).
+const PACKAGE: &str = "app-air-quality";
 const BUNDLE: &[u8] = b"the bundle the workflow built";
 const SBOM: &[u8] = b"{\"bomFormat\":\"CycloneDX\"}";
+
+/// `GET PackageFiles(…)/$value`: one file of `owner`'s package `PACKAGE`.
+fn package_file(owner: &str, version: &str, file: &str) -> String {
+    format!(
+        "/odata/PackageFiles(Owner='{owner}',Name='{PACKAGE}',Version='{version}',File='{file}')/$value"
+    )
+}
+
+/// The `POST PublishPackage` calls for `owner`'s package `PACKAGE`, each as `/{version}/{file}`.
+fn publications(requests: &[wiremock::Request], owner: &str) -> Vec<String> {
+    requests
+        .iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path() == "/odata/PublishPackage")
+        .filter_map(|r| serde_json::from_slice::<Value>(&r.body).ok())
+        .filter(|body| body["Owner"] == owner && body["Package"] == PACKAGE)
+        .map(|body| {
+            format!(
+                "/{}/{}",
+                body["Version"].as_str().unwrap_or_default(),
+                body["File"].as_str().unwrap_or_default()
+            )
+        })
+        .collect()
+}
 
 fn digest(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
@@ -134,8 +159,8 @@ fn version(digest: &str) -> String {
 }
 
 /// The forge after a run of `COMMIT` uploaded `bundle` and the SBOM as run 5's artifacts, and
-/// with the default branch at `head`. The artifact download redirects to the forge's public
-/// ROOT_URL, which the Portal cannot reach, as Gitea does.
+/// with the default branch at `head`. Each artifact's bytes are `R/Artifacts({id})/$value` on
+/// the API base the Portal dials.
 async fn built_on_forge(shako: &MockServer, head: &str, bundle: &[u8], size: Option<u64>) {
     built_on_forge_as(shako, head, "bundle", bundle, size).await;
 }
@@ -162,51 +187,40 @@ async fn built_on_forge_in(
 ) {
     Mock::given(method("GET"))
         .and(path(app_repo))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{app_repo}/branches/main")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": head } })))
+        .and(path(format!("{app_repo}/Branches('main')")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": head })))
         .mount(shako)
         .await;
     // Any other name: none, as the forge answers.
     Mock::given(method("GET"))
-        .and(path(format!("{app_repo}/actions/artifacts")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "artifacts": [] })))
+        .and(path(format!("{app_repo}/Artifacts")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
         .with_priority(10)
         .mount(shako)
         .await;
     for (id, name, bytes) in [(11, artifact, bundle), (12, "sbom", SBOM)] {
         let artifact = |id: u64, run: u64, sha: &str| {
             json!({
-                "id": id, "name": format!("{name}-{COMMIT}"),
-                "size_in_bytes": if name == artifact { size.unwrap_or(bytes.len() as u64) } else { bytes.len() as u64 },
-                "workflow_run": { "id": run, "head_sha": sha },
+                "Id": id, "Name": format!("{name}-{COMMIT}"),
+                "Size": if name == artifact { size.unwrap_or(bytes.len() as u64) } else { bytes.len() as u64 },
+                "RunId": run, "HeadSha": sha,
             })
         };
         Mock::given(method("GET"))
-            .and(path(format!("{app_repo}/actions/artifacts")))
-            .and(query_param("name", format!("{name}-{COMMIT}")))
+            .and(path(format!("{app_repo}/Artifacts")))
+            .and(query_param("$filter", format!("Name eq '{name}-{COMMIT}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 // An artifact of this name from a run of another commit never counts.
-                "artifacts": [artifact(id, 5, COMMIT), artifact(id + 90, 9, "0000000000000000000000000000000000000000")],
+                "value": [artifact(id, 5, COMMIT), artifact(id + 90, 9, "0000000000000000000000000000000000000000")],
             })))
             .mount(shako)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{app_repo}/actions/artifacts/{id}/zip")))
-            .respond_with(ResponseTemplate::new(302).insert_header(
-                "Location",
-                // The forge signs its public ROOT_URL, which carries a path on dev
-                // (`https://host/git/`); the Portal dials the API base, where no `/git` exists.
-                format!("https://forge.public.example/git{app_repo}/actions/artifacts/{id}/zip/raw?sig=s{id}&expires=9"),
-            ))
-            .mount(shako)
-            .await;
-        Mock::given(method("GET"))
-            .and(path(format!("{app_repo}/actions/artifacts/{id}/zip/raw")))
-            .and(query_param("sig", format!("s{id}")))
+            .and(path(format!("{app_repo}/Artifacts({id})/$value")))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(bytes.to_vec()))
             .mount(shako)
             .await;
@@ -215,19 +229,15 @@ async fn built_on_forge_in(
 
 /// The package files the Portal wrote, in order.
 async fn published(shako: &MockServer) -> Vec<String> {
-    shako
-        .received_requests()
-        .await
-        .unwrap_or_default()
-        .iter()
-        .filter(|r| r.method.as_str() == "PUT" && r.url.path().starts_with(PACKAGE))
-        .map(|r| r.url.path().trim_start_matches(PACKAGE).to_owned())
-        .collect()
+    publications(
+        &shako.received_requests().await.unwrap_or_default(),
+        "test-owner",
+    )
 }
 
 async fn package_takes(shako: &MockServer, status: u16) {
-    Mock::given(method("PUT"))
-        .and(wiremock::matchers::path_regex(format!("^{PACKAGE}/.*")))
+    Mock::given(method("POST"))
+        .and(path("/odata/PublishPackage"))
         .respond_with(ResponseTemplate::new(status))
         .mount(shako)
         .await;
@@ -256,10 +266,11 @@ async fn committed(shako: &MockServer) -> Vec<String> {
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "PUT" && r.url.path().contains("/contents/"))
-        .filter_map(|r| {
-            let body: Value = serde_json::from_slice(&r.body).ok()?;
-            let encoded = body.get("content")?.as_str()?;
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.CommitFiles"))
+        .filter_map(|r| serde_json::from_slice::<Value>(&r.body).ok())
+        .flat_map(|body| body["Files"].as_array().cloned().unwrap_or_default())
+        .filter_map(|file| {
+            let encoded = file.get("content")?.as_str()?;
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(encoded)
                 .ok()?;
@@ -312,7 +323,7 @@ async fn only_the_build_lane_writes_the_build_and_the_refusal_says_whose_field_i
         .await
         .unwrap_or_default()
         .into_iter()
-        .filter(|r| r.url.path().ends_with("/zip/raw"))
+        .filter(|r| r.url.path().contains("/Artifacts(") && r.url.path().ends_with("/$value"))
         .collect();
     assert_eq!(
         raw.len(),
@@ -320,8 +331,8 @@ async fn only_the_build_lane_writes_the_build_and_the_refusal_says_whose_field_i
         "both artifacts are fetched from the forge the Portal dials"
     );
     assert!(
-        raw.iter().all(|r| !r.headers.contains_key("authorization")),
-        "the signed address is the grant; the Portal's token never follows the redirect"
+        raw.iter().all(|r| r.url.path().starts_with(APP_REPO)),
+        "the artifacts are read from the App's own repository on the API base, never another address"
     );
 }
 
@@ -330,14 +341,14 @@ async fn only_the_build_lane_writes_the_build_and_the_refusal_says_whose_field_i
 /// token; the configuration's organization sees only the App's manifest, written with its own.
 #[tokio::test]
 async fn a_build_is_read_and_published_in_the_applications_organization() {
-    const APART: &str = "/api/v1/repos/test-owner-apps/ovzdusie_air-quality";
-    const PACKAGE_APART: &str = "/api/packages/test-owner-apps/generic/app-air-quality";
+    const APART: &str = "/odata/Repositories(Owner='test-owner-apps',Name='ovzdusie_air-quality')";
     let shako = forge().await;
     built_on_forge_in(&shako, APART, COMMIT, "bundle", BUNDLE, None).await;
-    Mock::given(method("PUT"))
-        .and(wiremock::matchers::path_regex(format!(
-            "^{PACKAGE_APART}/.*"
-        )))
+    Mock::given(method("POST"))
+        .and(path("/odata/PublishPackage"))
+        .and(wiremock::matchers::body_partial_json(
+            json!({ "Owner": "test-owner-apps" }),
+        ))
         .respond_with(ResponseTemplate::new(201))
         .mount(&shako)
         .await;
@@ -369,10 +380,18 @@ async fn a_build_is_read_and_published_in_the_applications_organization() {
             .unwrap_or_default()
             .to_owned()
     };
+    // The package calls name their organization in the body (`PublishPackage`) or in the key
+    // (`PackageFiles(Owner=…)`).
+    let owned_by = |r: &wiremock::Request, owner: &str| {
+        (r.url.path() == "/odata/PublishPackage"
+            && serde_json::from_slice::<Value>(&r.body).is_ok_and(|body| body["Owner"] == owner))
+            || r.url
+                .path()
+                .starts_with(&format!("/odata/PackageFiles(Owner='{owner}',"))
+    };
     let apart: Vec<_> = requests
         .iter()
-        .filter(|r| r.url.path().starts_with(APART) || r.url.path().starts_with(PACKAGE_APART))
-        .filter(|r| !r.url.path().ends_with("/zip/raw"))
+        .filter(|r| r.url.path().starts_with(APART) || owned_by(r, "test-owner-apps"))
         .collect();
     assert!(
         !apart.is_empty(),
@@ -381,16 +400,13 @@ async fn a_build_is_read_and_published_in_the_applications_organization() {
     for r in &apart {
         assert_eq!(
             token(r),
-            "token apps-token",
+            "Bearer apps-token",
             "{} {}",
             r.method,
             r.url.path()
         );
     }
-    let published: Vec<_> = requests
-        .iter()
-        .filter(|r| r.method.as_str() == "PUT" && r.url.path().starts_with(PACKAGE_APART))
-        .collect();
+    let published = publications(&requests, "test-owner-apps");
     assert_eq!(
         published.len(),
         2,
@@ -399,18 +415,21 @@ async fn a_build_is_read_and_published_in_the_applications_organization() {
     assert!(
         requests
             .iter()
-            .all(|r| !r.url.path().starts_with(APP_REPO) && !r.url.path().starts_with(PACKAGE)),
+            .all(|r| !r.url.path().starts_with(APP_REPO) && !owned_by(r, "test-owner")),
         "the build touched the configuration's organization"
     );
     let manifest: Vec<_> = requests
         .iter()
-        .filter(|r| r.method.as_str() == "PUT" && r.url.path().contains("/test-repo/contents/"))
+        .filter(|r| {
+            r.method.as_str() == "POST"
+                && r.url.path() == format!("{}/Shako.CommitFiles", common::REPO)
+        })
         .collect();
     assert!(!manifest.is_empty(), "the App's build was not written");
     for r in manifest {
         assert_eq!(
             token(r),
-            "token token-xyz",
+            "Bearer token-xyz",
             "the manifest is the configuration's to write"
         );
     }
@@ -489,12 +508,12 @@ async fn a_version_already_published_is_the_same_build_or_a_refusal() {
         package_takes(&shako, 409).await;
         let at = version(&digest(BUNDLE));
         Mock::given(method("GET"))
-            .and(path(format!("{PACKAGE}/{at}/bundle.tar.gz")))
+            .and(path(package_file("test-owner", &at, "bundle.tar.gz")))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(held.to_vec()))
             .mount(&shako)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{PACKAGE}/{at}/sbom.cdx.json")))
+            .and(path(package_file("test-owner", &at, "sbom.cdx.json")))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(SBOM.to_vec()))
             .mount(&shako)
             .await;
@@ -525,16 +544,20 @@ async fn a_rebuild_of_the_same_commit_with_other_bytes_is_a_version_of_its_own()
     let shako = forge().await;
     built_on_forge(&shako, COMMIT, BUNDLE, None).await;
     // The registry refuses a second file under the bare commit, where the old build sits.
-    Mock::given(method("PUT"))
-        .and(wiremock::matchers::path_regex(format!(
-            "^{PACKAGE}/{COMMIT}/.*"
-        )))
+    Mock::given(method("POST"))
+        .and(path("/odata/PublishPackage"))
+        .and(wiremock::matchers::body_partial_json(
+            json!({ "Version": COMMIT }),
+        ))
         .respond_with(ResponseTemplate::new(409))
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(wiremock::matchers::path_regex(format!(
-            "^{PACKAGE}/{COMMIT}/.*"
+            "^{}",
+            regex::escape(&format!(
+                "/odata/PackageFiles(Owner='test-owner',Name='{PACKAGE}',Version='{COMMIT}',"
+            ))
         )))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(b"the old build".to_vec()))
         .mount(&shako)
@@ -566,14 +589,22 @@ async fn a_build_judged_against_a_mirror_behind_main_is_refused_and_nothing_writ
     let mut pinned = app(None, None);
     pinned["spec"]["source"]["git"]["ref"] = json!("2222222222222222222222222222222222222222");
     Mock::given(method("GET"))
-        .and(wiremock::matchers::path_regex(format!(
-            "^{}/contents/.*air-quality.*",
+        .and(wiremock::matchers::path(format!(
+            "{}/Shako.File(Path=@p,Ref=@r)",
             common::REPO
         )))
-        .and(query_param("ref", "main"))
+        .and(|r: &wiremock::Request| {
+            r.url.query_pairs().any(|(k, v)| {
+                k == "@p"
+                    && regex::Regex::new(r"^'.*air-quality.*")
+                        .expect("a pattern")
+                        .is_match(&v)
+            })
+        })
+        .and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-on-main",
-            "content": common::encode(&serde_norway::to_string(&pinned).expect("yaml")),
+            "Sha": "blob-on-main",
+            "Content": common::encode(&serde_norway::to_string(&pinned).expect("yaml"))
         })))
         .with_priority(1)
         .mount(&shako)
@@ -662,10 +693,10 @@ fn manifest_path() -> String {
 async fn change_holds(shako: &MockServer, paths: &[&str]) {
     let files: Vec<Value> = paths
         .iter()
-        .map(|path| json!({ "filename": path, "status": "changed" }))
+        .map(|path| json!({ "Filename": path, "Status": "changed" }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!("{}/pulls/9/files", common::REPO)))
+        .and(path(format!("{}/PullRequests(9)/Files", common::REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!(files)))
         .mount(shako)
         .await;
@@ -678,7 +709,7 @@ async fn merges(shako: &MockServer) -> Vec<String> {
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/merge"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.Merge"))
         .filter_map(|r| {
             let body: Value = serde_json::from_slice(&r.body).ok()?;
             Some(body.get("merge_message_field")?.as_str()?.to_owned())
@@ -743,7 +774,10 @@ async fn a_build_change_the_forge_will_not_merge_waits_for_a_person() {
     package_takes(&shako, 201).await;
     change_holds(&shako, &[&manifest_path()]).await;
     Mock::given(method("POST"))
-        .and(path(format!("{}/pulls/9/merge", common::REPO)))
+        .and(path(format!(
+            "{}/PullRequests(9)/Shako.Merge",
+            common::REPO
+        )))
         .respond_with(ResponseTemplate::new(409).set_body_json(json!({ "message": "conflict" })))
         .with_priority(1)
         .mount(&shako)
@@ -987,7 +1021,7 @@ async fn the_lanes_rule_writes_the_build_of_an_app_on_main_and_nothing_else() {
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/contents"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.CommitFiles"))
         .filter_map(|r| serde_json::from_slice(&r.body).ok())
         .collect();
     assert!(
@@ -1039,24 +1073,28 @@ async fn migrations_on_forge(shako: &MockServer, files: &[(&str, &str)]) {
     use base64::Engine;
     let tree: Vec<Value> = files
         .iter()
-        .map(|(name, _)| json!({ "path": format!("migrations/{name}"), "type": "blob", "sha": format!("blob-{name}") }))
-        .chain([json!({ "path": "server/src/lib.rs", "type": "blob", "sha": "blob-lib" })])
+        .map(|(name, _)| json!({ "Path": format!("migrations/{name}"), "Type": "blob", "Sha": format!("blob-{name}") }))
+        .chain([json!({ "Path": "server/src/lib.rs", "Type": "blob", "Sha": "blob-lib" })])
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!("{APP_REPO}/git/trees/{COMMIT}")))
+        .and(path(format!(
+            "{APP_REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", format!("'{COMMIT}'")))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!({ "sha": COMMIT, "tree": tree, "truncated": false })),
+                .set_body_json(json!({ "Sha": COMMIT, "Truncated": false, "Tree": tree })),
         )
         .mount(shako)
         .await;
     for (name, sql) in files {
         Mock::given(method("GET"))
-            .and(path(format!("{APP_REPO}/contents/migrations/{name}")))
-            .and(query_param("ref", COMMIT))
+            .and(path(format!("{APP_REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'migrations/{name}'")))
+            .and(query_param("@r", format!("'{}'", COMMIT)))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": format!("blob-{name}"),
-                "content": base64::engine::general_purpose::STANDARD.encode(sql),
+                "Sha": format!("blob-{name}"),
+                "Content": base64::engine::general_purpose::STANDARD.encode(sql)
             })))
             .mount(shako)
             .await;

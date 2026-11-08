@@ -69,31 +69,38 @@ fn grant() -> String {
 async fn tree(server: &MockServer, git_ref: &str, entries: &[(&str, &str)]) {
     let tree: Vec<_> = entries
         .iter()
-        .map(|(path, sha)| json!({ "path": path, "type": "blob", "sha": sha }))
+        .map(|(path, sha)| json!({ "Path": path, "Type": "blob", "Sha": sha }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/git/trees/{git_ref}")))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", format!("'{git_ref}'")))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "tree": tree, "truncated": false })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Tree": tree, "Truncated": false })),
         )
         .mount(server)
         .await;
 }
 
 async fn branch(server: &MockServer, name: &str, head: &str) {
+    // A `/` inside the key stays inside its path segment, as `%2F`.
+    let key = name.replace('/', "%2F");
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/branches/{name}")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": head } })))
+        .and(path(format!("{REPO}/Branches('{key}')")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": head })))
         .mount(server)
         .await;
 }
 
 async fn file(server: &MockServer, git_ref: &str, at: &str, content: &str) {
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/{at}")))
-        .and(query_param("ref", git_ref))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{at}'")))
+        .and(query_param("@r", format!("'{}'", git_ref)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "path": at, "sha": "x", "encoding": "base64", "content": encode(content)
+            "Sha": "x",
+            "Content": encode(content)
         })))
         .mount(server)
         .await;
@@ -171,7 +178,7 @@ async fn pulls(server: &MockServer) -> Vec<Value> {
         .await
         .unwrap_or_default()
         .into_iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/pulls"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.OpenPullRequest"))
         .map(|r| serde_json::from_slice(&r.body).unwrap_or(Value::Null))
         .collect()
 }

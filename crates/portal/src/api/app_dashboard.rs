@@ -27,7 +27,7 @@ use crate::api::mutate::{propose_with_identity, ProposeOutcome};
 use crate::auth::CurrentUser;
 use crate::change::{Change, Operation};
 use crate::error::{ApiError, ProblemDetails};
-use crate::forge::{Author, GitError, ShakoClient, MergeStyle};
+use crate::forge::{Author, GitError, MergeStyle, ShakoClient};
 use crate::pipeline_validation::Attribute;
 use crate::state::AppState;
 

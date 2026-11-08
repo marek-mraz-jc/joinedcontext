@@ -32,7 +32,7 @@ mod common;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path, path_regex, query_param};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use joinedcontext_portal::api::changes::{approve_change_for, ApprovedBy};
@@ -104,46 +104,55 @@ async fn forge_with_workspace() -> MockServer {
     let branch_head = "ws-head-sha";
     Mock::given(method("GET"))
         .and(path(format!(
-            "{}/branches/workspace/{WORKSPACE}",
+            "{}/Branches('workspace%2F{WORKSPACE}')",
             common::REPO
         )))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "name": format!("workspace/{WORKSPACE}"),
-            "commit": { "id": branch_head },
+            "Name": format!("workspace/{WORKSPACE}"),
+            "HeadSha": branch_head
         })))
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{}/branches/main", common::REPO)))
+        .and(path(format!("{}/Branches('main')", common::REPO)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "name": "main",
-            "commit": { "id": "main-sha" },
+            "Name": "main",
+            "HeadSha": "main-sha"
         })))
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{}/git/trees/{branch_head}", common::REPO)))
+        .and(path(format!(
+            "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            common::REPO
+        )))
+        .and(query_param("@r", format!("'{branch_head}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "tree": [{ "path": BINDING_PATH, "type": "blob", "sha": "blob-binding" }],
-            "truncated": false,
+            "Tree": [{ "Path": BINDING_PATH, "Type": "blob", "Sha": "blob-binding" }],
+            "Truncated": false,
         })))
         .mount(&shako)
         .await;
     for git_ref in ["base-sha", "main-sha"] {
         Mock::given(method("GET"))
-            .and(path(format!("{}/git/trees/{git_ref}", common::REPO)))
+            .and(path(format!(
+                "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+                common::REPO
+            )))
+            .and(query_param("@r", format!("'{git_ref}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "tree": [], "truncated": false,
+                "Tree": [], "Truncated": false,
             })))
             .mount(&shako)
             .await;
     }
     Mock::given(method("GET"))
-        .and(path(format!("{}/contents/{BINDING_PATH}", common::REPO)))
-        .and(query_param("ref", format!("workspace/{WORKSPACE}")))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .and(query_param("@p", format!("'{BINDING_PATH}'")))
+        .and(query_param("@r", format!("'workspace/{WORKSPACE}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-binding",
-            "content": common::encode(&escalating_binding()),
+            "Sha": "blob-binding",
+            "Content": common::encode(&escalating_binding())
         })))
         .mount(&shako)
         .await;
@@ -195,7 +204,7 @@ async fn a_grant_above_the_proposers_rights_is_not_brought_back_from_a_workspace
         .into_iter()
         .filter(|request| {
             request.method.to_string().eq_ignore_ascii_case("post")
-                && request.url.path().ends_with("/pulls")
+                && request.url.path().ends_with("/Shako.OpenPullRequest")
         })
         .map(|request| request.url.path().to_owned())
         .collect();
@@ -211,9 +220,13 @@ async fn a_grant_above_the_proposers_rights_is_not_brought_back_from_a_workspace
 async fn a_grant_above_the_proposers_rights_is_refused_inside_an_import() {
     let shako = common::forge().await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{}/git/trees/.*", common::REPO)))
+        .and(path(format!(
+            "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            common::REPO
+        )))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "tree": [], "truncated": false,
+            "Tree": [],
+            "Truncated": false
         })))
         .mount(&shako)
         .await;
@@ -251,11 +264,12 @@ async fn a_grant_inside_the_proposers_own_rights_still_comes_back() {
                   everything-for-me\n  namespace: org\nspec:\n  subjects:\n  - group: \
                   stewards\n  role: edits-pipelines\n  scope:\n    project: ovzdusie\n";
     Mock::given(method("GET"))
-        .and(path(format!("{}/contents/{BINDING_PATH}", common::REPO)))
-        .and(query_param("ref", format!("workspace/{WORKSPACE}")))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .and(query_param("@p", format!("'{BINDING_PATH}'")))
+        .and(query_param("@r", format!("'workspace/{WORKSPACE}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-binding",
-            "content": common::encode(within),
+            "Sha": "blob-binding",
+            "Content": common::encode(within)
         })))
         .with_priority(1)
         .mount(&shako)
@@ -345,33 +359,38 @@ async fn self_grant(file: &str, yaml: &str) -> (MockServer, AppState) {
     let shako = common::forge().await;
     let ok = |body: Value| ResponseTemplate::new(200).set_body_json(body);
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{}/contents/", common::REPO)))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
         .respond_with(ok(
-            json!({ "sha": "blob-1", "content": common::encode(yaml) }),
+            json!({ "Sha": "blob-1", "Content": common::encode(yaml) }),
         ))
         .with_priority(1)
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{}/pulls/1", common::REPO)))
+        .and(path(format!("{}/PullRequests(1)", common::REPO)))
         .respond_with(ok(json!({
-            "number": 1,
-            "html_url": "https://shako.example.sk/pulls/1",
-            "state": "open",
-            "title": "create a grant",
-            "head": { "ref": format!("portal/create-{kind}-mine-11111111"), "sha": "head-1" },
-            "base": { "ref": "main" },
-            "created_at": "2026-10-25T09:14:22Z",
-            "user": { "login": "steward", "full_name": "steward", "email": AUTHOR },
-            "mergeable": true,
-            "merged": false
+            "Number": 1,
+            "HtmlUrl": "https://shako.example.sk/pulls/1",
+            "State": "open",
+            "Title": "create a grant",
+            "Head": format!("portal/create-{kind}-mine-11111111"),
+            "HeadSha": "head-1",
+            "Base": "main",
+            "CreatedAt": "2026-10-25T09:14:22Z",
+            "Author": "steward",
+            "AuthorName": "steward",
+            "AuthorEmail": AUTHOR,
+            "Mergeable": true,
+            "Merged": false
         })))
         .with_priority(1)
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{}/pulls/1/files", common::REPO)))
-        .respond_with(ok(json!([{ "filename": file, "status": "added" }])))
+        .and(path(format!("{}/PullRequests(1)/Files", common::REPO)))
+        .respond_with(ok(
+            json!({ "value": [{ "Filename": file, "Status": "added" }] }),
+        ))
         .with_priority(1)
         .mount(&shako)
         .await;
@@ -433,7 +452,9 @@ async fn merged(shako: &MockServer) -> bool {
         .await
         .expect("requests")
         .iter()
-        .any(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/pulls/1/merge"))
+        .any(|r| {
+            r.method.as_str() == "POST" && r.url.path().ends_with("/PullRequests(1)/Shako.Merge")
+        })
 }
 
 /// The author's own approval is refused with the rule's words, nothing merges, and a peer's

@@ -9,7 +9,7 @@ use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
-use wiremock::matchers::{method, path, path_regex};
+use wiremock::matchers::{method, path, path_regex, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
@@ -23,7 +23,7 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 
 const CSRF_TOKEN: &str = "test-csrf-token-resources";
-const REPO: &str = "/api/v1/repos/test-owner/test-repo";
+const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
 
 fn identity(username: &str, groups: &[&str]) -> Identity {
     Identity {
@@ -85,67 +85,60 @@ async fn forge(existing: &[&str]) -> MockServer {
     let shako = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path(REPO))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&shako)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!("{REPO}/branches")))
+        .and(path(format!("{REPO}/Shako.CreateBranch")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&shako)
         .await;
     for file in existing {
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/contents/{file}")))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{file}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "sha-existing",
-                "content": "YXBpVmVyc2lvbjogeW91"
+                "Sha": "sha-existing",
+                "Content": "YXBpVmVyc2lvbjogeW91"
             })))
             .mount(&shako)
             .await;
     }
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{REPO}/contents/.*")))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .mount(&shako)
         .await;
     // A deletion reads the tree to find the files the resource owns beside its manifest (T-0900).
     let tree: Vec<Value> = existing
         .iter()
-        .map(|path| json!({ "path": path, "type": "blob" }))
+        .map(|path| json!({ "Path": path, "Type": "blob" }))
         .collect();
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{REPO}/git/trees/.*")))
+        .and(path(format!(
+            "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            REPO
+        )))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "tree": tree, "truncated": false })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Tree": tree, "Truncated": false })),
         )
         .mount(&shako)
         .await;
-    // One commit for every file of a resource goes to `POST /contents` (T-0900).
+    // One commit for every file of a resource, a single-file write included, goes to
+    // `POST R/Shako.CommitFiles` (T-0900).
     Mock::given(method("POST"))
-        .and(path(format!("{REPO}/contents")))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "commit-1" } })),
-        )
+        .and(path(format!("{REPO}/Shako.CommitFiles")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "commit-1" })))
         .mount(&shako)
         .await;
-    for verb in ["PUT", "POST", "DELETE"] {
-        Mock::given(method(verb))
-            .and(path_regex(format!("^{REPO}/contents/.*")))
-            .respond_with(
-                ResponseTemplate::new(201)
-                    .set_body_json(json!({ "commit": { "sha": "commit-1" } })),
-            )
-            .mount(&shako)
-            .await;
-    }
     Mock::given(method("POST"))
-        .and(path(format!("{REPO}/pulls")))
+        .and(path(format!("{REPO}/Shako.OpenPullRequest")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 9,
-            "html_url": "https://shako.example.sk/pulls/9",
-            "state": "open",
-            "mergeable": true,
-            "merged": false
+            "Number": 9,
+            "HtmlUrl": "https://shako.example.sk/pulls/9",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&shako)
         .await;
@@ -288,18 +281,14 @@ async fn written(shako: &MockServer) -> Vec<String> {
         .iter()
         .filter(|request| request.method.as_str() != "GET")
         .flat_map(|request| {
-            let path = request.url.path();
-            // A one-file write names its path in the URL; a batch commit (`POST /contents`)
-            // names every file it touches in its body.
-            if let Some(one) = path.strip_prefix(&format!("{REPO}/contents/")) {
-                return vec![one.to_owned()];
-            }
-            if path != format!("{REPO}/contents") {
+            // Every write, a one-file one included, is one `POST R/Shako.CommitFiles` that names
+            // every file it touches in its body.
+            if request.url.path() != format!("{REPO}/Shako.CommitFiles") {
                 return Vec::new();
             }
             serde_json::from_slice::<Value>(&request.body)
                 .ok()
-                .and_then(|body| body["files"].as_array().cloned())
+                .and_then(|body| body["Files"].as_array().cloned())
                 .unwrap_or_default()
                 .iter()
                 .filter_map(|file| file["path"].as_str().map(str::to_owned))
@@ -568,7 +557,7 @@ async fn a_secret_typed_into_a_manifest_is_refused_before_a_branch_exists() {
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|request| request.url.path().ends_with("/branches"))
+        .filter(|request| request.url.path().ends_with("/Shako.CreateBranch"))
         .count();
     assert_eq!(branches, 0, "no branch for a manifest with a secret in it");
 }

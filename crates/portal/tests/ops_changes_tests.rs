@@ -23,34 +23,42 @@ const OTHER_FILE: &str = "projects/doprava/pipelines/buses.yaml";
 
 fn pull(number: u64, branch: &str) -> Value {
     json!({
-        "number": number, "html_url": format!("https://shako.example/pulls/{number}"),
-        "state": "open", "title": "a change", "head": { "ref": branch }, "base": { "ref": "main" },
-        "created_at": "2026-09-18T10:00:00Z",
-        "user": { "login": "jana", "full_name": "Jana", "email": "jana@banskabystrica.sk" },
-        "mergeable": true, "merged": false
+        "Number": number,
+        "HtmlUrl": format!("https://shako.example/pulls/{number}"),
+        "State": "open",
+        "Title": "a change",
+        "Head": branch,
+        "Base": "main",
+        "CreatedAt": "2026-09-18T10:00:00Z",
+        "Author": "jana",
+        "AuthorName": "Jana",
+        "AuthorEmail": "jana@banskabystrica.sk",
+        "Mergeable": true,
+        "Merged": false
     })
 }
 
 async fn mount_change(server: &MockServer, number: u64, branch: &str, file: &str, content: &str) {
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/{number}")))
+        .and(path(format!("{REPO}/PullRequests({number})")))
         .respond_with(ResponseTemplate::new(200).set_body_json(pull(number, branch)))
         .mount(server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/{number}/files")))
+        .and(path(format!("{REPO}/PullRequests({number})/Files")))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!([{ "filename": file, "status": "added" }])),
+                .set_body_json(json!({ "value": [{ "Filename": file, "Status": "added" }] })),
         )
         .mount(server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/{file}")))
-        .and(query_param("ref", branch))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{file}'")))
+        .and(query_param("@r", format!("'{}'", branch)))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!({ "sha": "b", "content": encode(content) })),
+                .set_body_json(json!({ "Sha": "b", "Content": encode(content) })),
         )
         .mount(server)
         .await;
@@ -161,7 +169,7 @@ async fn an_unknown_field_is_refused_before_the_forge_is_asked() {
     assert!(
         !asked
             .iter()
-            .any(|request| request.url.path().contains("/pulls/5")),
+            .any(|request| request.url.path().contains("/PullRequests(5)")),
         "the forge was asked for a change the input never validly named",
     );
 }

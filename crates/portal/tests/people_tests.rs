@@ -726,9 +726,9 @@ async fn deleting_a_person_proposes_the_change_and_deletes_them_only_after_the_m
         .expect("a clean row");
     let (kc, shako) = (realm(true).await, forge().await);
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{REPO}/contents/.+")))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "sha": "blob-1", "content": "" })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Sha": "blob-1", "Content": "" })),
         )
         .with_priority(5)
         .mount(&shako)
@@ -756,10 +756,12 @@ async fn deleting_a_person_proposes_the_change_and_deletes_them_only_after_the_m
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/contents"))
+        .filter(|r| {
+            r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/Shako.CommitFiles")
+        })
         .filter_map(|r| serde_json::from_slice(&r.body).ok())
         .collect();
-    let files = commits[0]["files"].as_array().expect("files").clone();
+    let files = commits[0]["Files"].as_array().expect("files").clone();
     let find = |suffix: &str| {
         files
             .iter()
@@ -800,16 +802,16 @@ async fn deleting_a_person_proposes_the_change_and_deletes_them_only_after_the_m
     .await;
     assert_eq!(again.status, StatusCode::CONFLICT, "{}", again.text);
 
-    let pull = |merged: bool, state: &str| json!({ "number": 9, "html_url": "https://shako.example/pulls/9", "state": state, "merged": merged });
+    let pull = |merged: bool, state: &str| json!({ "Number": 9, "HtmlUrl": "https://shako.example/pulls/9", "State": state, "Merged": merged });
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/9")))
+        .and(path(format!("{REPO}/PullRequests(9)")))
         .respond_with(ResponseTemplate::new(200).set_body_json(pull(false, "open")))
         .up_to_n_times(1)
         .with_priority(1)
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/9")))
+        .and(path(format!("{REPO}/PullRequests(9)")))
         .respond_with(ResponseTemplate::new(200).set_body_json(pull(true, "closed")))
         .with_priority(2)
         .mount(&shako)
@@ -1010,9 +1012,9 @@ async fn a_department_leaves_in_one_change_and_one_merge() {
     let (kc, shako) = (realm(true).await, forge().await);
     colleagues(&kc).await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{REPO}/contents/.+")))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "sha": "blob-1", "content": "" })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Sha": "blob-1", "Content": "" })),
         )
         .with_priority(5)
         .mount(&shako)
@@ -1045,10 +1047,14 @@ async fn a_department_leaves_in_one_change_and_one_merge() {
                 .collect::<Vec<_>>()
         }
     };
-    let commits = posted("/contents").await;
+    let commits = posted("/Shako.CommitFiles").await;
     assert_eq!(commits.len(), 1, "one commit");
-    assert_eq!(posted("/pulls").await.len(), 1, "one Change");
-    let files = commits[0]["files"].as_array().expect("files").clone();
+    assert_eq!(
+        posted("/Shako.OpenPullRequest").await.len(),
+        1,
+        "one Change"
+    );
+    let files = commits[0]["Files"].as_array().expect("files").clone();
     let operation = |suffix: &str| {
         files
             .iter()
@@ -1058,7 +1064,7 @@ async fn a_department_leaves_in_one_change_and_one_merge() {
     assert_eq!(operation("groups/stewards.yaml"), Some(json!("upload")));
     assert_eq!(operation("jana-alone.yaml"), Some(json!("delete")));
     assert_eq!(files.len(), 2, "{files:?}");
-    let pulls = posted("/pulls").await;
+    let pulls = posted("/Shako.OpenPullRequest").await;
     let text = pulls[0].to_string();
     assert!(text.contains("3 people"), "{text}");
     assert!(
@@ -1102,8 +1108,8 @@ async fn a_department_leaves_in_one_change_and_one_merge() {
     assert!(again.text.contains("eva-id"), "{}", again.text);
 
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/9")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "number": 9, "html_url": "https://shako.example/pulls/9", "state": "closed", "merged": true })))
+        .and(path(format!("{REPO}/PullRequests(9)")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "Number": 9, "HtmlUrl": "https://shako.example/pulls/9", "State": "closed", "Merged": true })))
         .mount(&shako)
         .await;
     let people = state.people.clone().expect("people");
@@ -1121,7 +1127,7 @@ async fn a_department_leaves_in_one_change_and_one_merge() {
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "GET" && r.url.path() == format!("{REPO}/pulls/9"))
+        .filter(|r| r.method.as_str() == "GET" && r.url.path() == format!("{REPO}/PullRequests(9)"))
         .count();
     assert_eq!(reads, 1, "the one Change is read once for all three");
 }

@@ -1707,7 +1707,7 @@ async fn a_code_run_previews_its_files_as_one_document() {
 async fn a_function_of_the_run_answers_through_jc_functions() {
     use joinedcontext_portal::agents::kit;
     use joinedcontext_portal::auth::oidc::OidcClient;
-    use wiremock::matchers::{body_partial_json, header as has_header, method, path};
+    use wiremock::matchers::{body_partial_json, header as has_header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     let realm = MockServer::start().await;
@@ -3669,9 +3669,10 @@ async fn a_static_run_links_its_github_copy_beside_the_forge() {
 async fn a_static_run_with_no_commit_is_not_published() {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path_regex(
-            "^/api/v1/repos/joinedcontext/helsinki_city-bikes/branches/.*$",
-        ))
+        .and(wiremock::matchers::path_regex(format!(
+            "^{}/Branches\\('",
+            regex::escape("/odata/Repositories(Owner='joinedcontext',Name='helsinki_city-bikes')")
+        )))
         .respond_with(wiremock::ResponseTemplate::new(404))
         .mount(&server)
         .await;
@@ -3717,31 +3718,30 @@ async fn a_static_run_whose_branch_holds_no_application_is_not_published() {
     use wiremock::{Mock, MockServer, ResponseTemplate};
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path_regex(
-            "^/api/v1/repos/joinedcontext/helsinki_city-bikes/branches/.*$",
-        ))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": "readmeonly" } })),
-        )
+        .and(path_regex(format!(
+            "^{}/Branches\\('",
+            regex::escape("/odata/Repositories(Owner='joinedcontext',Name='helsinki_city-bikes')")
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "readmeonly" })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/joinedcontext/helsinki_city-bikes/git/trees/readmeonly",
-        ))
+            "/odata/Repositories(Owner='joinedcontext',Name='helsinki_city-bikes')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+        )).and(query_param("@r", "'readmeonly'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "readmeonly",
-            "truncated": false,
-            "tree": [
-                { "path": "README.md", "type": "blob", "sha": "r" },
-                { "path": ".gitea/workflows/build.yml", "type": "blob", "sha": "w" },
-            ],
+            "Sha": "readmeonly",
+            "Truncated": false,
+            "Tree": [
+                { "Path": "README.md", "Type": "blob", "Sha": "r" },
+                { "Path": ".gitea/workflows/build.yml", "Type": "blob", "Sha": "w" }
+            ]
         })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
         .and(path(
-            "/api/v1/repos/joinedcontext/helsinki_city-bikes/pulls",
+            "/odata/Repositories(Owner='joinedcontext',Name='helsinki_city-bikes')/Shako.OpenPullRequest",
         ))
         .respond_with(ResponseTemplate::new(201))
         .expect(0)
@@ -3814,25 +3814,32 @@ async fn approving_the_change_merges_the_applications_repository_at_the_publishe
     }
     let pull = |number: u64, run: &AgentRun| {
         json!({
-            "number": number, "html_url": "h", "state": "open", "title": "t",
-            "head": { "ref": run.branch, "sha": "abc" }, "base": { "ref": "main", "sha": "b" }
+            "Number": number,
+            "HtmlUrl": "h",
+            "State": "open",
+            "Title": "t",
+            "Head": run.branch,
+            "HeadSha": "abc",
+            "Base": "main",
+            "BaseSha": "b"
         })
     };
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/joinedcontext/helsinki_city-bikes/pulls",
+            "/odata/Repositories(Owner='joinedcontext',Name='helsinki_city-bikes')/PullRequests",
         ))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!([pull(1, &merged), pull(2, &refused)])),
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "value": [pull(1, &merged), pull(2, &refused)] })),
         )
         .mount(&server)
         .await;
     Mock::given(method("POST"))
         .and(path(
-            "/api/v1/repos/joinedcontext/helsinki_city-bikes/pulls/1/merge",
+            "/odata/Repositories(Owner='joinedcontext',Name='helsinki_city-bikes')/PullRequests(1)/Shako.Merge",
         ))
         .and(body_partial_json(
-            json!({ "Do": "merge", "head_commit_id": "abc" }),
+            json!({ "Style": "merge", "HeadCommitId": "abc" }),
         ))
         .respond_with(ResponseTemplate::new(200))
         .expect(1)
@@ -3840,7 +3847,7 @@ async fn approving_the_change_merges_the_applications_repository_at_the_publishe
         .await;
     Mock::given(method("POST"))
         .and(path(
-            "/api/v1/repos/joinedcontext/helsinki_city-bikes/pulls/2/merge",
+            "/odata/Repositories(Owner='joinedcontext',Name='helsinki_city-bikes')/PullRequests(2)/Shako.Merge",
         ))
         .respond_with(ResponseTemplate::new(409).set_body_string("head out of date"))
         .mount(&server)
@@ -4000,9 +4007,15 @@ async fn a_change_closed_on_the_forge_ends_its_waiting_run() {
     let unreadable = waiting_on(&state, 9).await;
     let pull = |number: u64, state: &str, merged: bool, app: &str| {
         json!({
-            "number": number, "html_url": "h", "state": state, "merged": merged, "title": "t",
-            "head": { "ref": format!("portal/create-app-{app}-0000000{number}"), "sha": "abc" },
-            "base": { "ref": "main", "sha": "b" }
+            "Number": number,
+            "HtmlUrl": "h",
+            "State": state,
+            "Merged": merged,
+            "Title": "t",
+            "Head": format!("portal/create-app-{app}-0000000{number}"),
+            "HeadSha": "abc",
+            "Base": "main",
+            "BaseSha": "b"
         })
     };
     for (number, body) in [
@@ -4013,14 +4026,16 @@ async fn a_change_closed_on_the_forge_ends_its_waiting_run() {
     ] {
         Mock::given(method("GET"))
             .and(path(format!(
-                "/api/v1/repos/joinedcontext/configuration/pulls/{number}"
+                "/odata/Repositories(Owner='joinedcontext',Name='configuration')/PullRequests({number})"
             )))
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
             .mount(&server)
             .await;
     }
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/joinedcontext/configuration/pulls/9"))
+        .and(path(
+            "/odata/Repositories(Owner='joinedcontext',Name='configuration')/PullRequests(9)",
+        ))
         .respond_with(ResponseTemplate::new(503))
         .mount(&server)
         .await;

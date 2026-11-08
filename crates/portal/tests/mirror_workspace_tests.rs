@@ -13,7 +13,7 @@ use serde_json::json;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const REPO: &str = "/api/v1/repos/test-owner/test-repo";
+const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
 
 fn pipeline(name: &str, period: &str) -> String {
     format!(
@@ -34,32 +34,28 @@ fn envelope(name: &str, period: &str) -> ResourceEnvelope {
 async fn tree(server: &MockServer, git_ref: &str, entries: &[(&str, &str)]) {
     let tree: Vec<_> = entries
         .iter()
-        .map(|(p, sha)| json!({ "path": p, "type": "blob", "sha": sha }))
+        .map(|(p, sha)| json!({ "Path": p, "Type": "blob", "Sha": sha }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/git/trees/{git_ref}")))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", format!("'{git_ref}'")))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "tree": tree, "truncated": false })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Tree": tree, "Truncated": false })),
         )
-        .mount(server)
-        .await;
-}
-
-/// The head commit of a branch, as `GET /branches/{branch}` answers it.
-async fn branch(server: &MockServer, name: &str, head: &str) {
-    Mock::given(method("GET"))
-        .and(path(format!("{REPO}/branches/{name}")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": head } })))
         .mount(server)
         .await;
 }
 
 async fn file(server: &MockServer, git_ref: &str, file_path: &str, content: &str) {
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/{file_path}")))
-        .and(query_param("ref", git_ref))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{file_path}'")))
+        .and(query_param("@r", format!("'{}'", git_ref)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "path": file_path, "sha": "x", "encoding": "base64", "content": STANDARD.encode(content)
+            "Sha": "x",
+            "Content": STANDARD.encode(content)
         })))
         .mount(server)
         .await;
@@ -71,7 +67,7 @@ async fn world(open: bool, branch_exists: bool) -> (MockServer, AppState) {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path(REPO))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     let a = "projects/helsinki/pipelines/a/pipeline.yaml";
@@ -92,20 +88,21 @@ async fn world(open: bool, branch_exists: bool) -> (MockServer, AppState) {
         &[(a, "a1"), (b, "b1"), (gone, "g1"), ("README.md", "r1")],
     )
     .await;
-    // A branch whose name has a slash is read the way real Gitea serves it: the head commit from
-    // `branches/{branch}`, then the tree by that sha. Gitea answers 404 for
-    // `git/trees/workspace/bikes-v2`, so a stub on that path proves nothing (T-2266).
+    // A branch whose name has a slash travels as the `@r` parameter value of `Shako.Tree`, read
+    // directly with no branch lookup first (T-2266); a branch not there yet answers 404.
     if branch_exists {
-        branch(&server, "workspace/bikes-v2", "ws1").await;
         tree(
             &server,
-            "ws1",
+            "workspace/bikes-v2",
             &[(a, "a2"), (b, "b1"), (c, "c1"), ("README.md", "r2")],
         )
         .await;
     } else {
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/branches/workspace/bikes-v2")))
+            .and(path(format!(
+                "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .and(query_param("@r", "'workspace/bikes-v2'"))
             .respond_with(
                 ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })),
             )

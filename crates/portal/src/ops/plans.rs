@@ -2361,61 +2361,58 @@ mod tests {
     /// A forge that holds nothing yet and takes every write; `open` is the head branch of a
     /// change already open on it.
     async fn empty_forge(open: Option<String>) -> wiremock::MockServer {
-        use wiremock::matchers::{method, path, path_regex};
+        use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
-        let repo = "/api/v1/repos/o/r";
+        let repo = "/odata/Repositories(Owner='o',Name='r')";
         Mock::given(method("GET"))
             .and(path(repo))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })),
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
             )
             .mount(&server)
             .await;
         let pull = |number: u64, head: &str| {
             json!({
-                "number": number, "html_url": format!("https://forge.test/pulls/{number}"),
-                "state": "open", "title": "t", "body": "",
-                "head": { "ref": head }, "base": { "ref": "main" },
-                "created_at": "2026-11-01T20:00:00Z",
-                "user": { "login": "jana", "full_name": "Jana" },
-                "mergeable": true, "merged": false
+                "Number": number,
+                "HtmlUrl": format!("https://forge.test/pulls/{number}"),
+                "State": "open",
+                "Title": "t",
+                "Body": "",
+                "Head": head,
+                "Base": "main",
+                "CreatedAt": "2026-11-01T20:00:00Z",
+                "Author": "jana",
+                "AuthorName": "Jana",
+                "Mergeable": true,
+                "Merged": false
             })
         };
         let pulls: Vec<Value> = open.iter().map(|head| pull(175, head)).collect();
         Mock::given(method("GET"))
-            .and(path(format!("{repo}/pulls")))
-            .respond_with(ResponseTemplate::new(200).set_body_json(pulls))
+            .and(path(format!("{repo}/PullRequests")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": pulls })))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{repo}/pulls")))
+            .and(path(format!("{repo}/Shako.OpenPullRequest")))
             .respond_with(
                 ResponseTemplate::new(201).set_body_json(pull(176, "portal/import-plan-p1")),
             )
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{repo}/branches")))
+            .and(path(format!("{repo}/Shako.CreateBranch")))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{repo}/contents")))
-            .respond_with(
-                ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c0ffee" } })),
-            )
-            .mount(&server)
-            .await;
-        Mock::given(method("PUT"))
-            .and(path_regex(format!("^{repo}/contents/.*")))
-            .respond_with(
-                ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c0ffee" } })),
-            )
+            .and(path(format!("{repo}/Shako.CommitFiles")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c0ffee" })))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path_regex(format!("^{repo}/contents/.*")))
+            .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", repo)))
             .respond_with(
                 ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })),
             )
@@ -2477,8 +2474,9 @@ mod tests {
     }
 
     async fn on_forge(server: &wiremock::MockServer) -> AppState {
-        let forge = crate::forge::ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "t")
-            .expect("client");
+        let forge =
+            crate::forge::ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "t")
+                .expect("client");
         let state = AppState::new(crate::config::Config::for_tests(), None)
             .with_shako(std::sync::Arc::new(forge));
         let plan = model_and_space();
@@ -2527,18 +2525,16 @@ mod tests {
 
         let commits: Vec<Value> = requests
             .iter()
-            .filter(|r| {
-                matches!(r.method.as_str(), "POST" | "PUT") && r.url.path().contains("/contents")
-            })
+            .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.CommitFiles"))
             .map(|r| serde_json::from_slice(&r.body).expect("json"))
             .collect();
         assert_eq!(commits.len(), 2, "one commit per change");
         let model = commits
             .iter()
-            .find(|c| c["files"].as_array().is_some_and(|f| f.len() > 2))
+            .find(|c| c["Files"].as_array().is_some_and(|f| f.len() > 2))
             .expect("the model's commit");
-        assert_eq!(model["branch"], "portal/import-plan-p1");
-        let paths: Vec<&str> = model["files"]
+        assert_eq!(model["Branch"], "portal/import-plan-p1");
+        let paths: Vec<&str> = model["Files"]
             .as_array()
             .expect("files")
             .iter()
@@ -2558,16 +2554,18 @@ mod tests {
         assert!(
             commits
                 .iter()
-                .all(|c| c["branch"] == "portal/import-plan-p1"),
+                .all(|c| c["Branch"] == "portal/import-plan-p1"),
             "every write lands on the plan's branch"
         );
         let opened: Vec<Value> = requests
             .iter()
-            .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/pulls"))
+            .filter(|r| {
+                r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.OpenPullRequest")
+            })
             .map(|r| serde_json::from_slice(&r.body).expect("json"))
             .collect();
         assert_eq!(opened.len(), 1, "one merge request");
-        assert_eq!(opened[0]["head"], "portal/import-plan-p1");
+        assert_eq!(opened[0]["Head"], "portal/import-plan-p1");
     }
 
     /// CC-34 (JC2-10): a change already open on the model refuses the plan before a byte of it is

@@ -27,7 +27,7 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use serde_json::{json, Value};
 use tower::ServiceExt;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_string_contains, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const CSRF_TOKEN: &str = "test-csrf-token-12345";
@@ -347,39 +347,45 @@ async fn a_write_becomes_a_red_lane_merge_request_at_the_kinds_own_path() {
         ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&shako)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
         .and(path(format!(
-            "/api/v1/repos/test-owner/test-repo/contents/{MANIFEST_PATH}"
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
         )))
+        .and(query_param("@p", format!("'{MANIFEST_PATH}'")))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .mount(&shako)
         .await;
-    Mock::given(method("PUT"))
+    Mock::given(method("POST"))
         .and(path(format!(
-            "/api/v1/repos/test-owner/test-repo/contents/{MANIFEST_PATH}"
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles"
         )))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "commit-1" } })),
-        )
+        .and(body_string_contains(format!(r#""path":"{MANIFEST_PATH}""#)))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "commit-1" })))
         .mount(&shako)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 9,
-            "html_url": "https://shako.example.sk/pulls/9",
-            "state": "open",
-            "mergeable": true,
-            "merged": false
+            "Number": 9,
+            "HtmlUrl": "https://shako.example.sk/pulls/9",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&shako)
         .await;

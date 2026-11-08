@@ -395,17 +395,25 @@ mod tests {
     async fn forge(message: &str) -> (MockServer, ShakoClient) {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/o/r/commits"))
-            .and(query_param("path", "pipelines/route/pipeline.yaml"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-                { "sha": "abc", "commit": { "message": "first line" } }
-            ])))
+            .and(path(
+                "/odata/Repositories(Owner='o',Name='r')/Shako.History(Ref=@r,Path=@p,Top=@n)",
+            ))
+            .and(query_param("@p", "'pipelines/route/pipeline.yaml'"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "value": [
+                    { "Sha": "abc", "Message": "first line" }
+                ]
+            })))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/o/r/git/commits/abc"))
+            .and(path(
+                "/odata/Repositories(Owner='o',Name='r')/Commits('abc')",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                    "sha": "abc", "commit": { "message": message } })))
+                "Sha": "abc",
+                "Message": message
+            })))
             .mount(&server)
             .await;
         let client = stub_client(&server);

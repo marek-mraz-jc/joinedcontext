@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const PROJECT_REPO: &str = "/api/v1/repos/test-owner/ovzdusie";
+const PROJECT_REPO: &str = "/odata/Repositories(Owner='test-owner',Name='ovzdusie')";
 const ENTRY: &str = "projects/ovzdusie.yaml";
 const BRANCH: &str = "portal/update-project-ovzdusie-registry";
 
@@ -40,10 +40,12 @@ fn project_yaml(with_city: bool) -> String {
 
 async fn file(server: &MockServer, repo: &str, file: &str, git_ref: &str, body: &str) {
     Mock::given(method("GET"))
-        .and(path(format!("{repo}/contents/{file}")))
-        .and(query_param("ref", git_ref))
+        .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{file}'")))
+        .and(query_param("@r", format!("'{}'", git_ref)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": format!("blob-{git_ref}"), "content": encode(body)
+            "Sha": format!("blob-{git_ref}"),
+            "Content": encode(body)
         })))
         .with_priority(1)
         .mount(server)
@@ -74,17 +76,20 @@ async fn world() -> (MockServer, AppState) {
     )
     .await;
     Mock::given(method("GET"))
-        .and(path(format!("{PROJECT_REPO}/contents/project.yaml")))
+        .and(path(format!("{PROJECT_REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", "'project.yaml'"))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .with_priority(5)
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{PROJECT_REPO}/tags")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            { "name": "v0.2.0", "commit": { "sha": "c0ffee2" } },
-            { "name": "v0.1.0", "commit": { "sha": "c0ffee1" } }
-        ])))
+        .and(path(format!("{PROJECT_REPO}/Tags")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                { "Name": "v0.2.0", "TargetSha": "c0ffee2" },
+                { "Name": "v0.1.0", "TargetSha": "c0ffee1" }
+            ]
+        })))
         .mount(&server)
         .await;
 
@@ -151,19 +156,26 @@ async fn written_entries(server: &MockServer) -> Vec<(String, Value)> {
         .expect("requests")
         .into_iter()
         .filter(|r| {
-            r.method.as_str() == "PUT" && r.url.path() == format!("{REPO}/contents/{ENTRY}")
+            r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/Shako.CommitFiles")
         })
-        .map(|r| {
+        .flat_map(|r| {
             let body: Value = serde_json::from_slice(&r.body).expect("json body");
-            let content = STANDARD
-                .decode(body["content"].as_str().unwrap_or_default())
-                .expect("base64");
-            let manifest: Value =
-                serde_norway::from_slice(&content).expect("the written entry is yaml");
-            (
-                body["branch"].as_str().unwrap_or_default().to_owned(),
-                manifest,
-            )
+            let branch = body["Branch"].as_str().unwrap_or_default().to_owned();
+            body["Files"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|file| file["path"] == ENTRY)
+                .map(move |file| {
+                    let content = STANDARD
+                        .decode(file["content"].as_str().unwrap_or_default())
+                        .expect("base64");
+                    let manifest: Value =
+                        serde_norway::from_slice(&content).expect("the written entry is yaml");
+                    (branch.clone(), manifest)
+                })
+                .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -330,12 +342,22 @@ async fn layout_one_has_no_registry_entry() {
 async fn a_second_repoint_waits_for_the_open_one() {
     let (server, state) = world().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-            "number": 41, "html_url": "https://shako.example/pulls/41", "state": "open",
-            "title": "repoint project ovzdusie", "head": { "ref": BRANCH }, "base": { "ref": "main" },
-            "created_at": "2026-10-10T09:00:00Z", "mergeable": true, "merged": false
-        }])))
+        .and(path(format!("{REPO}/PullRequests")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Number": 41,
+                    "HtmlUrl": "https://shako.example/pulls/41",
+                    "State": "open",
+                    "Title": "repoint project ovzdusie",
+                    "Head": BRANCH,
+                    "Base": "main",
+                    "CreatedAt": "2026-10-10T09:00:00Z",
+                    "Mergeable": true,
+                    "Merged": false
+                }
+            ]
+        })))
         .with_priority(1)
         .mount(&server)
         .await;
@@ -391,22 +413,35 @@ async fn the_entry_is_read_with_its_declarations_and_the_tags() {
 async fn the_repoint_is_listed_among_the_organization_changes() {
     let (server, state) = world().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-            "number": 41, "html_url": "https://shako.example/pulls/41", "state": "open",
-            "title": "repoint project ovzdusie", "head": { "ref": BRANCH }, "base": { "ref": "main" },
-            "created_at": "2026-10-10T09:00:00Z",
-            "user": { "login": "vlasta", "full_name": "vlasta", "email": "vlasta@hel.fi" },
-            "mergeable": true, "merged": false
-        }])))
+        .and(path(format!("{REPO}/PullRequests")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Number": 41,
+                    "HtmlUrl": "https://shako.example/pulls/41",
+                    "State": "open",
+                    "Title": "repoint project ovzdusie",
+                    "Head": BRANCH,
+                    "Base": "main",
+                    "CreatedAt": "2026-10-10T09:00:00Z",
+                    "Author": "vlasta",
+                    "AuthorName": "vlasta",
+                    "AuthorEmail": "vlasta@hel.fi",
+                    "Mergeable": true,
+                    "Merged": false
+                }
+            ]
+        })))
         .with_priority(1)
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/41/files")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            { "filename": ENTRY, "status": "modified" }
-        ])))
+        .and(path(format!("{REPO}/PullRequests(41)/Files")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                { "Filename": ENTRY, "Status": "modified" }
+            ]
+        })))
         .mount(&server)
         .await;
     file(

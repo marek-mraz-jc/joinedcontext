@@ -14,10 +14,10 @@ use joinedcontext_portal::ops::workspaces::{Opening, Scope};
 use joinedcontext_portal::resource::API_VERSION;
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path, path_regex};
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const REPO: &str = "/api/v1/repos/test-owner/test-repo";
+const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
 
 fn steward() -> Identity {
     Identity {
@@ -36,29 +36,27 @@ async fn forge() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path(REPO))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!("{REPO}/branches")))
+        .and(path(format!("{REPO}/Shako.CreateBranch")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{REPO}/contents/.*")))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .mount(&server)
         .await;
-    Mock::given(method("PUT"))
-        .and(path_regex(format!("^{REPO}/contents/.*")))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
-        )
+    Mock::given(method("POST"))
+        .and(path(format!("{}/Shako.CommitFiles", REPO)))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .and(path(format!("{REPO}/PullRequests")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
         .mount(&server)
         .await;
     server
@@ -144,11 +142,14 @@ async fn propose_with_workspace_commits_to_workspace_branch() {
     let calls = calls(&server).await;
     let branch = calls
         .iter()
-        .find(|(m, p, _)| m == "POST" && p.ends_with("/branches"))
+        .find(|(m, p, _)| m == "POST" && p.ends_with("/Shako.CreateBranch"))
         .expect("branch");
-    assert_eq!(branch.2["new_branch_name"], "workspace/air-v2");
-    let put = calls.iter().find(|(m, _, _)| m == "PUT").expect("a commit");
-    assert_eq!(put.2["branch"], "workspace/air-v2");
+    assert_eq!(branch.2["NewBranchName"], "workspace/air-v2");
+    let put = calls
+        .iter()
+        .find(|(m, p, _)| m == "POST" && p.ends_with("/Shako.CommitFiles"))
+        .expect("a commit");
+    assert_eq!(put.2["Branch"], "workspace/air-v2");
 }
 
 #[tokio::test]
@@ -172,7 +173,7 @@ async fn propose_with_workspace_does_not_open_pr() {
         !calls(&server)
             .await
             .iter()
-            .any(|(m, p, _)| m == "POST" && p.ends_with("/pulls")),
+            .any(|(m, p, _)| m == "POST" && p.ends_with("/Shako.OpenPullRequest")),
         "no pull request: the workspace comes back as one Change (CC-79)"
     );
 }
@@ -226,7 +227,10 @@ async fn an_unknown_workspace_or_one_of_another_project_writes_nothing() {
         "{err}"
     );
     assert!(
-        !calls(&server).await.iter().any(|(m, _, _)| m == "PUT"),
+        !calls(&server)
+            .await
+            .iter()
+            .any(|(m, p, _)| m == "POST" && p.ends_with("/Shako.CommitFiles")),
         "nothing was written"
     );
 }
@@ -313,7 +317,10 @@ async fn a_viewer_is_refused_in_a_workspace_as_everywhere() {
         plain.to_string(),
         "a workspace grants nothing (PF-82)"
     );
-    assert!(!calls(&server).await.iter().any(|(m, _, _)| m == "PUT"));
+    assert!(!calls(&server)
+        .await
+        .iter()
+        .any(|(m, p, _)| m == "POST" && p.ends_with("/Shako.CommitFiles")));
 }
 
 // --- PF-82: a workspace grants nothing (T-1256) --------------------------------------------
@@ -380,7 +387,10 @@ async fn workspace_write_refused_when_quota_exceeded() {
     .unwrap_err();
     assert!(err.to_string().contains("residentPipelines"), "{err}");
     assert!(
-        !calls(&server).await.iter().any(|(m, _, _)| m == "PUT"),
+        !calls(&server)
+            .await
+            .iter()
+            .any(|(m, p, _)| m == "POST" && p.ends_with("/Shako.CommitFiles")),
         "nothing was written"
     );
 }
@@ -417,7 +427,10 @@ async fn workspace_write_refused_when_secret_pasted() {
         !said.contains("hunter2"),
         "the value is never echoed: {said}"
     );
-    assert!(!calls(&server).await.iter().any(|(m, _, _)| m == "PUT"));
+    assert!(!calls(&server)
+        .await
+        .iter()
+        .any(|(m, p, _)| m == "POST" && p.ends_with("/Shako.CommitFiles")));
 }
 
 #[tokio::test]
@@ -458,5 +471,8 @@ async fn workspace_write_refused_above_own_rights() {
     .await
     .unwrap_err();
     assert_eq!(into_ws.to_string(), plain.to_string());
-    assert!(!calls(&server).await.iter().any(|(m, _, _)| m == "PUT"));
+    assert!(!calls(&server)
+        .await
+        .iter()
+        .any(|(m, p, _)| m == "POST" && p.ends_with("/Shako.CommitFiles")));
 }

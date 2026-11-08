@@ -54,17 +54,19 @@ fn endpoint() -> Value {
 
 fn pull(number: u64, branch: &str, state: &str, merged: bool, body: &str) -> Value {
     json!({
-        "number": number,
-        "html_url": format!("https://shako.example/pulls/{number}"),
-        "state": state,
-        "title": format!("pull {number}"),
-        "body": body,
-        "head": { "ref": branch },
-        "base": { "ref": "main" },
-        "created_at": "2026-09-25T09:00:00Z",
-        "user": { "login": "author", "full_name": "Author", "email": "author@hel.fi" },
-        "mergeable": true,
-        "merged": merged
+        "Number": number,
+        "HtmlUrl": format!("https://shako.example/pulls/{number}"),
+        "State": state,
+        "Title": format!("pull {number}"),
+        "Body": body,
+        "Head": branch,
+        "Base": "main",
+        "CreatedAt": "2026-09-25T09:00:00Z",
+        "Author": "author",
+        "AuthorName": "Author",
+        "AuthorEmail": "author@hel.fi",
+        "Mergeable": true,
+        "Merged": merged
     })
 }
 
@@ -73,10 +75,11 @@ async fn forge_creating_air() -> (MockServer, AppState) {
     let shako = common::forge().await;
     let branch = branch_name(PROJECT, "ContextSpace", "air", Operation::Create);
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls")))
-        .and(query_param("state", "open"))
+        .and(path(format!("{REPO}/PullRequests")))
+        .and(query_param("$filter", "State eq 'open'"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!([pull(7, &branch, "open", false, "")])),
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "value": [pull(7, &branch, "open", false, "")] })),
         )
         .mount(&shako)
         .await;
@@ -129,11 +132,13 @@ async fn a_reference_to_a_resource_in_an_open_change_is_allowed_and_says_why() {
     let requests = shako.received_requests().await.expect("recorded");
     let opened = requests
         .iter()
-        .find(|r| r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/pulls"))
+        .find(|r| {
+            r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/Shako.OpenPullRequest")
+        })
         .expect("a merge request was opened");
     let body: Value = serde_json::from_slice(&opened.body).expect("json");
     assert!(
-        body["body"]
+        body["Body"]
             .as_str()
             .unwrap_or_default()
             .contains("Waits-On: #7 (chg-00000007)"),
@@ -145,7 +150,7 @@ async fn a_reference_to_a_resource_in_an_open_change_is_allowed_and_says_why() {
 /// naming the field.
 #[tokio::test]
 async fn a_reference_nothing_creates_is_refused_naming_the_field() {
-    let (_gitea, state) = forge_creating_air().await;
+    let (_forge, state) = forge_creating_air().await;
     let mut other = endpoint();
     other["spec"]["contextSpaceRef"] = json!("water");
     let checked = check(&state, other).await;
@@ -202,23 +207,23 @@ async fn waiting_change(awaited_state: &str, merged: bool) -> (MockServer, AppSt
     let branch = branch_name(PROJECT, "ContextSpace", "air", Operation::Create);
     let body = "Proposed create of ContextSpace `air`.\n\nWaits-On: #7 (chg-00000007)";
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/3")))
+        .and(path(format!("{REPO}/PullRequests(3)")))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(pull(3, &branch, "open", false, body)),
         )
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls")))
-        .and(query_param("state", "open"))
+        .and(path(format!("{REPO}/PullRequests")))
+        .and(query_param("$filter", "State eq 'open'"))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!([pull(3, &branch, "open", false, body)])),
+                .set_body_json(json!({ "value": [pull(3, &branch, "open", false, body)] })),
         )
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/7")))
+        .and(path(format!("{REPO}/PullRequests(7)")))
         .respond_with(ResponseTemplate::new(200).set_body_json(pull(
             7,
             "portal/create-datamodel-air-00000000",
@@ -236,22 +241,28 @@ async fn waiting_change(awaited_state: &str, merged: bool) -> (MockServer, AppSt
     });
     let manifest = serde_norway::to_string(&space).expect("yaml");
     Mock::given(method("GET"))
-        .and(path(format!(
-            "{REPO}/contents/projects/{PROJECT}/spaces/air/space.yaml"
-        )))
-        .and(query_param("ref", branch.as_str()))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param(
+            "@p",
+            format!("'projects/{PROJECT}/spaces/air/space.yaml'"),
+        ))
+        .and(query_param("@r", format!("'{}'", branch.as_str())))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1",
-            "content": STANDARD.encode(manifest.as_bytes())
+            "Sha": "blob-1",
+            "Content": STANDARD.encode(manifest.as_bytes())
         })))
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/3/files")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-            "filename": format!("projects/{PROJECT}/spaces/air/space.yaml"),
-            "status": "added"
-        }])))
+        .and(path(format!("{REPO}/PullRequests(3)/Files")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Filename": format!("projects/{PROJECT}/spaces/air/space.yaml"),
+                    "Status": "added"
+                }
+            ]
+        })))
         .mount(&shako)
         .await;
     let state = common::state_on(&shako);
@@ -291,7 +302,7 @@ async fn merged(shako: &MockServer) -> bool {
         .await
         .expect("recorded")
         .iter()
-        .any(|r| r.url.path() == format!("{REPO}/pulls/3/merge"))
+        .any(|r| r.url.path() == format!("{REPO}/PullRequests(3)/Shako.Merge"))
 }
 
 async fn detail(state: &AppState) -> Value {

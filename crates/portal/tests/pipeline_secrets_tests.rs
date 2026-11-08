@@ -65,43 +65,45 @@ spec:
 async fn forge(files: &[(&str, &str)]) -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"default_branch": "main"})))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches/main"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Branches('main')",
+        ))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!({"name": "main", "commit": {"id": REVISION}})),
+                .set_body_json(json!({ "Name": "main", "HeadSha": REVISION })),
         )
         .mount(&server)
         .await;
     let tree: Vec<Value> = files
         .iter()
-        .map(|(p, _)| json!({"path": p, "type": "blob"}))
+        .map(|(p, _)| json!({ "Path": p, "Type": "blob" }))
         .collect();
     Mock::given(method("GET"))
         .and(path(format!(
-            "/api/v1/repos/test-owner/test-repo/git/trees/{REVISION}"
-        )))
-        .and(query_param("recursive", "true"))
-        .and(query_param("per_page", "1000"))
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        ))).and(query_param("@r", format!("'{REVISION}'")))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!({"sha": "tree-sha", "truncated": false, "tree": tree})),
+                .set_body_json(json!({ "Sha": "tree-sha", "Truncated": false, "Tree": tree })),
         )
         .mount(&server)
         .await;
     for (file, content) in files {
         Mock::given(method("GET"))
             .and(path(format!(
-                "/api/v1/repos/test-owner/test-repo/contents/{file}"
-            )))
-            .and(query_param("ref", REVISION))
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
+            ))).and(query_param("@p", format!("'{file}'")))
+            .and(query_param("@r", format!("'{}'", REVISION)))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "blob-sha",
-                "content": STANDARD.encode(content.as_bytes()),
+                "Sha": "blob-sha",
+                "Content": STANDARD.encode(content.as_bytes())
             })))
             .mount(&server)
             .await;

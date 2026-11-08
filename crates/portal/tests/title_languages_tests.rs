@@ -19,7 +19,7 @@ use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const CSRF: &str = "test-csrf-token-12345";
@@ -109,40 +109,44 @@ async fn committed(metadata: Value) -> Value {
     )
     .expect("client");
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&shako)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&shako)
         .await;
-    let contents = format!("/api/v1/repos/test-owner/test-repo/contents/{MANIFEST_PATH}");
     Mock::given(method("GET"))
-        .and(path(contents.clone()))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param("@p", format!("'{MANIFEST_PATH}'")))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .mount(&shako)
         .await;
-    Mock::given(method("PUT"))
-        .and(path(contents.clone()))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
-        )
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
         .mount(&shako)
         .await;
     Mock::given(method("POST"))
-        .and(path(contents.clone()))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
-        )
-        .mount(&shako)
-        .await;
-    Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 7, "html_url": "https://shako.example.sk/pulls/7",
-            "state": "open", "mergeable": true, "merged": false
+            "Number": 7,
+            "HtmlUrl": "https://shako.example.sk/pulls/7",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&shako)
         .await;
@@ -178,11 +182,17 @@ async fn committed(metadata: Value) -> Value {
         .await
         .expect("recorded")
         .into_iter()
-        .find(|r| r.url.path() == contents && r.method.as_str() != "GET")
+        .filter(|r| {
+            r.method.as_str() == "POST"
+                && r.url.path()
+                    == "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles"
+        })
+        .filter_map(|r| serde_json::from_slice::<Value>(&r.body).ok())
+        .flat_map(|body| body["Files"].as_array().cloned().unwrap_or_default())
+        .find(|file| file["path"] == MANIFEST_PATH)
         .expect("the manifest was committed");
-    let body: Value = serde_json::from_slice(&written.body).expect("contents body");
     let yaml = base64::engine::general_purpose::STANDARD
-        .decode(body["content"].as_str().expect("content"))
+        .decode(written["content"].as_str().expect("content"))
         .expect("base64");
     serde_norway::from_slice(&yaml).expect("yaml")
 }

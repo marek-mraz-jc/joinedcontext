@@ -1654,13 +1654,13 @@ mod tests {
 mod repository_tests {
     use std::sync::Arc;
 
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
     use crate::forge::ShakoClient;
 
-    const REPO: &str = "/api/v1/repos/joinedcontext/helsinki_city-bikes";
+    const REPO: &str = "/odata/Repositories(Owner='joinedcontext',Name='helsinki_city-bikes')";
     const BRANCH: &str = "agent/app-city-bikes/run-1";
 
     fn driver(server: &MockServer) -> (AppState, Driver) {
@@ -1688,7 +1688,7 @@ mod repository_tests {
         ])
     }
 
-    /// The one `POST /contents` commit the forge received: `(operation, path, sha)` per file.
+    /// The one `POST R/Shako.CommitFiles` commit the forge received: `(operation, path, sha)` per file.
     async fn commit_of(server: &MockServer) -> Vec<(String, String, Option<String>)> {
         let commits: Vec<Value> = server
             .received_requests()
@@ -1697,12 +1697,12 @@ mod repository_tests {
             .iter()
             .filter(|request| {
                 request.method.as_str() == "POST"
-                    && request.url.path() == format!("{REPO}/contents")
+                    && request.url.path() == format!("{REPO}/Shako.CommitFiles")
             })
             .map(|request| serde_json::from_slice(&request.body).expect("json"))
             .collect();
         assert_eq!(commits.len(), 1, "one commit per pass");
-        let mut files: Vec<_> = commits[0]["files"]
+        let mut files: Vec<_> = commits[0]["Files"]
             .as_array()
             .expect("files")
             .iter()
@@ -1735,54 +1735,59 @@ mod repository_tests {
         Mock::given(method("GET"))
             .and(path(REPO))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })),
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
             )
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path("/api/v1/orgs/joinedcontext/repos"))
+            .and(path("/odata/CreateRepository"))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
             .expect(1)
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/branches/{BRANCH}")))
+            .and(path(format!(
+                "{REPO}/Branches('{}')",
+                BRANCH.replace('/', "%2F")
+            )))
             .respond_with(ResponseTemplate::new(404))
             .up_to_n_times(1)
             .with_priority(1)
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/branches/{BRANCH}")))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": "head1" } })),
-            )
+            .and(path(format!(
+                "{REPO}/Branches('{}')",
+                BRANCH.replace('/', "%2F")
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "head1" })))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{REPO}/branches")))
+            .and(path(format!("{REPO}/Shako.CreateBranch")))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
             .expect(1)
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/git/trees/head1")))
+            .and(path(format!(
+                "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .and(query_param("@r", format!("'{BRANCH}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "truncated": false,
-                "tree": [
-                    { "path": "README.md", "type": "blob", "sha": "r1" },
-                    { "path": "src/App.tsx", "type": "blob", "sha": "a1" },
-                    { "path": "src/Old.tsx", "type": "blob", "sha": "o1" },
-                    { "path": "src", "type": "tree", "sha": "t1" }
+                "Truncated": false,
+                "Tree": [
+                    { "Path": "README.md", "Type": "blob", "Sha": "r1" },
+                    { "Path": "src/App.tsx", "Type": "blob", "Sha": "a1" },
+                    { "Path": "src/Old.tsx", "Type": "blob", "Sha": "o1" },
+                    { "Path": "src", "Type": "tree", "Sha": "t1" }
                 ]
             })))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{REPO}/contents")))
-            .respond_with(
-                ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
-            )
+            .and(path(format!("{REPO}/Shako.CommitFiles")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
             .mount(&server)
             .await;
 
@@ -1835,35 +1840,35 @@ mod repository_tests {
         Mock::given(method("GET"))
             .and(path(REPO))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })),
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
             )
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path("/api/v1/orgs/joinedcontext/repos"))
+            .and(path("/odata/CreateRepository"))
             .respond_with(ResponseTemplate::new(201))
             .expect(0)
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/branches/{BRANCH}")))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": "head2" } })),
-            )
+            .and(path(format!(
+                "{REPO}/Branches('{}')",
+                BRANCH.replace('/', "%2F")
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "head2" })))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/contents/src/Gone.tsx")))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", "'src/Gone.tsx'"))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "sha": "g1", "content": "" })),
+                ResponseTemplate::new(200).set_body_json(json!({ "Sha": "g1", "Content": "" })),
             )
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{REPO}/contents")))
-            .respond_with(
-                ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c2" } })),
-            )
+            .and(path(format!("{REPO}/Shako.CommitFiles")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c2" })))
             .mount(&server)
             .await;
 
@@ -1890,7 +1895,7 @@ mod repository_tests {
         assert!(
             requests
                 .iter()
-                .all(|request| !request.url.path().contains("/git/trees")),
+                .all(|request| !request.url.path().contains("/Shako.Tree(")),
             "a later pass read the whole tree"
         );
     }
@@ -1901,7 +1906,7 @@ mod repository_tests {
     async fn a_pass_that_would_change_the_build_commits_nothing() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path(format!("{REPO}/contents")))
+            .and(path(format!("{REPO}/Shako.CommitFiles")))
             .respond_with(ResponseTemplate::new(201))
             .expect(0)
             .mount(&server)
@@ -1953,22 +1958,21 @@ mod repository_tests {
         Mock::given(method("GET"))
             .and(path(REPO))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })),
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
             )
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/branches/{BRANCH}")))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": "head2" } })),
-            )
+            .and(path(format!(
+                "{REPO}/Branches('{}')",
+                BRANCH.replace('/', "%2F")
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "head2" })))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{REPO}/contents")))
-            .respond_with(
-                ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c2" } })),
-            )
+            .and(path(format!("{REPO}/Shako.CommitFiles")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c2" })))
             .mount(&server)
             .await;
         server
@@ -1997,18 +2001,18 @@ mod repository_tests {
     async fn a_pass_sets_up_the_github_copy_after_its_commit_and_says_so() {
         let forge = a_forge_for_a_later_pass().await;
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/push_mirrors")))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .and(path(format!("{REPO}/PushMirrors")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
             .mount(&forge)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{REPO}/push_mirrors")))
+            .and(path(format!("{REPO}/Shako.AddPushMirror")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
             .expect(1)
             .mount(&forge)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{REPO}/push_mirrors-sync")))
+            .and(path(format!("{REPO}/Shako.SyncPushMirrors")))
             .respond_with(ResponseTemplate::new(200))
             .expect(1)
             .mount(&forge)

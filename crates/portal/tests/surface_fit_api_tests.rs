@@ -9,7 +9,7 @@ use axum::http::StatusCode;
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, ResponseTemplate};
 
 const PROJECT: &str = "ovzdusie";
@@ -28,13 +28,14 @@ fn admin() -> Identity {
 async fn portal(linkml: &str, lifecycle: &str) -> (AppState, wiremock::MockServer) {
     let shako = common::forge().await;
     Mock::given(method("GET"))
-        .and(path(format!(
-            "{}/contents/projects/{PROJECT}/spaces/air/datamodels/model.linkml.yaml",
-            common::REPO
-        )))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .and(query_param(
+            "@p",
+            format!("'projects/{PROJECT}/spaces/air/datamodels/model.linkml.yaml'"),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-linkml-1",
-            "content": common::encode(linkml)
+            "Sha": "sha-linkml-1",
+            "Content": common::encode(linkml)
         })))
         .mount(&shako)
         .await;

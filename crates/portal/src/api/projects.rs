@@ -952,7 +952,14 @@ async fn registered(
     state: &AppState,
     identity: &crate::auth::session::Identity,
     project: &str,
-) -> Result<(std::sync::Arc<crate::forge::ShakoClient>, String, Registered), ApiError> {
+) -> Result<
+    (
+        std::sync::Arc<crate::forge::ShakoClient>,
+        String,
+        Registered,
+    ),
+    ApiError,
+> {
     let missing = || ApiError::NotFound(format!("project '{project}' not found"));
     if !crate::permissions::for_request(state, identity, project).may_read_project() {
         return Err(missing());

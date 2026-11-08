@@ -1930,7 +1930,7 @@ mod new_dashboard_tests {
     use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
     use crate::state::AppState;
     use std::sync::Arc;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const LINKML: &str = "id: https://hel.fi/models/bikes\nname: bikes\nclasses:\n  BikeHireDockingStation:\n    slots: [id, name, availableBikeNumber]\nslots:\n  id: {}\n  name: { range: string }\n  availableBikeNumber: { range: integer }\n";
@@ -1954,17 +1954,17 @@ mod new_dashboard_tests {
     async fn world() -> (Driver, MockServer) {
         let forge = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/org/manifests/contents/projects/helsinki/spaces/helsinki/datamodels/bikes.linkml.yaml"))
+            .and(path("/odata/Repositories(Owner='org',Name='manifests')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", "'projects/helsinki/spaces/helsinki/datamodels/bikes.linkml.yaml'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "s",
-                "content": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, LINKML),
+                "Sha": "s",
+                "Content": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, LINKML)
             })))
             .mount(&forge)
             .await;
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/org/manifests"))
+            .and(path("/odata/Repositories(Owner='org',Name='manifests')"))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })),
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
             )
             .mount(&forge)
             .await;

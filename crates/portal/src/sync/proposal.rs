@@ -12,7 +12,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::forge::{Author, FileDelete, FileWrite, GitError, ShakoClient, MergeStyle, PullRequest};
+use crate::forge::{Author, FileDelete, FileWrite, GitError, MergeStyle, PullRequest, ShakoClient};
 
 /// Who the forge records as the author of an automatic proposal.
 ///
@@ -209,20 +209,20 @@ mod tests {
     /// digest-named days before it, and the branch already holds `files`.
     async fn forge(files: &[(&str, &str)]) -> (wiremock::MockServer, ShakoClient) {
         use base64::Engine;
-        use wiremock::matchers::{method, path, path_regex};
+        use wiremock::matchers::{method, path, path_regex, query_param};
         use wiremock::{Mock, ResponseTemplate};
         let server = wiremock::MockServer::start().await;
-        let repo = "/api/v1/repos/o/r";
+        let repo = "/odata/Repositories(Owner='o',Name='r')";
         Mock::given(method("GET"))
             .and(path(repo))
             .respond_with(
                 ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({ "default_branch": "main" })),
+                    .set_body_json(serde_json::json!({ "DefaultBranch": "main" })),
             )
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{repo}/branches")))
+            .and(path(format!("{repo}/Shako.CreateBranch")))
             .respond_with(
                 ResponseTemplate::new(409)
                     .set_body_json(serde_json::json!({ "message": "exists" })),
@@ -230,43 +230,55 @@ mod tests {
             .mount(&server)
             .await;
         let pr = |number: u64, head: &str| {
-            serde_json::json!({ "number": number, "html_url": format!("https://forge/pulls/{number}"), "state": "open",
-                "title": "mirror", "head": { "ref": head, "sha": "abc" }, "base": { "ref": "main" } })
+            serde_json::json!({
+                "Number": number,
+                "HtmlUrl": format!("https://forge/pulls/{number}"),
+                "State": "open",
+                "Title": "mirror",
+                "Head": head,
+                "HeadSha": "abc",
+                "Base": "main"
+            })
         };
         Mock::given(method("GET"))
-            .and(path(format!("{repo}/pulls")))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-                pr(7, "mirror/bb-peer"),
-                pr(5, "mirror/bb-peer-0a1b2c3d"),
-                pr(4, "mirror/other"),
-            ])))
+            .and(path(format!("{repo}/PullRequests")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "value": [
+                    pr(7, "mirror/bb-peer"),
+                    pr(5, "mirror/bb-peer-0a1b2c3d"),
+                    pr(4, "mirror/other")
+                ]
+            })))
             .mount(&server)
             .await;
         for (name, content) in files {
             Mock::given(method("GET"))
-                .and(path(format!("{repo}/contents/{name}")))
+                .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+                .and(query_param("@p", format!("'{name}'")))
                 .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "sha": "s1",
-                    "content": base64::engine::general_purpose::STANDARD.encode(content),
+                    "Sha": "s1",
+                    "Content": base64::engine::general_purpose::STANDARD.encode(content)
                 })))
                 .mount(&server)
                 .await;
         }
         Mock::given(method("GET"))
-            .and(path_regex(format!("^{repo}/contents/.*$")))
+            .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", repo)))
             .respond_with(ResponseTemplate::new(404))
             .mount(&server)
             .await;
-        Mock::given(method("PUT"))
-            .and(path_regex(format!("^{repo}/contents/.*$")))
+        Mock::given(method("POST"))
+            .and(path(format!("{}/Shako.CommitFiles", repo)))
             .respond_with(
-                ResponseTemplate::new(201)
-                    .set_body_json(serde_json::json!({ "commit": { "sha": "c2" } })),
+                ResponseTemplate::new(201).set_body_json(serde_json::json!({ "Sha": "c2" })),
             )
             .mount(&server)
             .await;
-        Mock::given(method("PATCH"))
-            .and(path_regex(format!("^{repo}/pulls/[0-9]+$")))
+        Mock::given(method("POST"))
+            .and(path_regex(format!(
+                "^{}/PullRequests\\([0-9]+\\)/Shako\\.Close$",
+                regex::escape(&repo)
+            )))
             .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({})))
             .mount(&server)
             .await;
@@ -315,17 +327,36 @@ mod tests {
             calls(&server, "POST")
                 .await
                 .iter()
-                .all(|p| !p.ends_with("/pulls")),
+                .all(|p| !p.ends_with("/Shako.OpenPullRequest")),
             "no second merge request"
         );
+        let written: Vec<String> = server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|request| {
+                request.method.as_str() == "POST"
+                    && request.url.path()
+                        == "/odata/Repositories(Owner='o',Name='r')/Shako.CommitFiles"
+            })
+            .filter_map(|request| serde_json::from_slice::<serde_json::Value>(&request.body).ok())
+            .flat_map(|commit| commit["Files"].as_array().cloned().unwrap_or_default())
+            .filter_map(|file| file["path"].as_str().map(str::to_owned))
+            .collect();
         assert_eq!(
-            calls(&server, "PUT").await,
-            ["/api/v1/repos/o/r/contents/models/air/schema.linkml.yaml"],
+            written,
+            ["models/air/schema.linkml.yaml"],
             "the unchanged file is not written again"
         );
+        let closed: Vec<String> = calls(&server, "POST")
+            .await
+            .into_iter()
+            .filter(|p| p.ends_with("/Shako.Close"))
+            .collect();
         assert_eq!(
-            calls(&server, "PATCH").await,
-            ["/api/v1/repos/o/r/pulls/5"],
+            closed,
+            ["/odata/Repositories(Owner='o',Name='r')/PullRequests(5)/Shako.Close"],
             "only the line's older day is closed"
         );
     }

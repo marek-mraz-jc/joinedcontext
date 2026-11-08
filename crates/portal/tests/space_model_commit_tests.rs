@@ -9,7 +9,6 @@
 mod common;
 
 use axum::http::StatusCode;
-use base64::Engine;
 use serde_json::{json, Value};
 
 use common::{checked_send as send, envelope, forge, person};
@@ -49,37 +48,10 @@ fn space(name: &str, spec: Value) -> Value {
     })
 }
 
-/// Every file the forge was asked to write, one request per file or several in one commit:
+/// Every file the forge was asked to write, in the commits of `Shako.CommitFiles`:
 /// `(path, content)`.
 async fn committed(shako: &wiremock::MockServer) -> Vec<(String, String)> {
-    let decode = |value: &Value| {
-        value
-            .as_str()
-            .and_then(|text| base64::engine::general_purpose::STANDARD.decode(text).ok())
-            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-            .unwrap_or_default()
-    };
-    let one = format!("{}/contents/", common::REPO);
-    let many = format!("{}/contents", common::REPO);
-    let mut files = Vec::new();
-    for request in shako.received_requests().await.unwrap_or_default() {
-        if !matches!(request.method.as_str(), "POST" | "PUT") {
-            continue;
-        }
-        let body: Value = serde_json::from_slice(&request.body).unwrap_or_default();
-        let path = request.url.path();
-        if let Some(file) = path.strip_prefix(&one) {
-            files.push((file.to_owned(), decode(&body["content"])));
-        } else if path == many {
-            for file in body["files"].as_array().into_iter().flatten() {
-                files.push((
-                    file["path"].as_str().unwrap_or_default().to_owned(),
-                    decode(&file["content"]),
-                ));
-            }
-        }
-    }
-    files
+    common::committed_files(shako, common::REPO).await
 }
 
 fn file<'a>(files: &'a [(String, String)], suffix: &str) -> Option<&'a str> {

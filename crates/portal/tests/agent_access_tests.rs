@@ -17,7 +17,7 @@ use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
-use wiremock::matchers::{method, path, path_regex};
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const CSRF: &str = "agent-access-csrf";
@@ -326,36 +326,51 @@ async fn an_administrator_may_revoke_but_not_a_moved_grant_nor_the_last_one() {
 #[tokio::test]
 async fn an_administrators_revoke_proposes_the_account_without_the_grant() {
     let forge = MockServer::start().await;
-    let repo = "/api/v1/repos/owner/config";
+    let repo = "/odata/Repositories(Owner='owner',Name='config')";
     Mock::given(method("GET"))
         .and(path(repo))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&forge)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!("{repo}/branches")))
+        .and(path(format!("{repo}/Shako.CreateBranch")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
-        .and(path_regex(r"/contents/.*vendor-ci"))
+        .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+        .and(|r: &wiremock::Request| {
+            r.url
+                .query_pairs()
+                .any(|(k, v)| k == "@p" && v.contains("vendor-ci"))
+        })
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "sha": "old", "content": "" })),
-        )
-        .mount(&forge)
-        .await;
-    Mock::given(method("PUT"))
-        .and(path_regex(r"/contents/.*vendor-ci"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "commit": { "sha": "new" } })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Sha": "old", "Content": "" })),
         )
         .mount(&forge)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!("{repo}/pulls")))
+        .and(path(format!("{repo}/Shako.CommitFiles")))
+        .and(|r: &wiremock::Request| {
+            serde_json::from_slice::<Value>(&r.body).is_ok_and(|body| {
+                body["Files"].as_array().is_some_and(|files| {
+                    files
+                        .iter()
+                        .any(|f| f["path"].as_str().is_some_and(|p| p.contains("vendor-ci")))
+                })
+            })
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "Sha": "new" })))
+        .mount(&forge)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{repo}/Shako.OpenPullRequest")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 7, "html_url": "https://shako.example.org/pulls/7",
-            "state": "open", "mergeable": true, "merged": false
+            "Number": 7,
+            "HtmlUrl": "https://shako.example.org/pulls/7",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&forge)
         .await;
@@ -389,10 +404,10 @@ async fn an_administrators_revoke_proposes_the_account_without_the_grant() {
         .await
         .unwrap_or_default()
         .into_iter()
-        .find(|r| r.method.as_str() == "PUT")
+        .find(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.CommitFiles"))
         .expect("the account was written");
     let sent: Value = serde_json::from_slice(&put.body).expect("json");
-    let content = sent["content"].as_str().expect("content");
+    let content = sent["Files"][0]["content"].as_str().expect("content");
     use base64::Engine;
     let yaml = String::from_utf8(
         base64::engine::general_purpose::STANDARD

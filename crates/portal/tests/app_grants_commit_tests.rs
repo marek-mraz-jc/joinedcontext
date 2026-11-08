@@ -108,17 +108,18 @@ fn generated(
     }
 }
 
-/// Every file of every multi-file commit the forge received: `(operation, path, yaml)`.
+/// Every file of every commit the forge received, `POST R/Shako.CommitFiles`:
+/// `(operation, path, yaml)`.
 async fn committed(shako: &MockServer) -> Vec<(String, String, String)> {
     let mut files = Vec::new();
     for request in shako.received_requests().await.unwrap_or_default() {
         if request.method.as_str() != "POST"
-            || request.url.path() != format!("{}/contents", common::REPO)
+            || request.url.path() != format!("{}/Shako.CommitFiles", common::REPO)
         {
             continue;
         }
         let body: Value = serde_json::from_slice(&request.body).unwrap_or_default();
-        for file in body["files"].as_array().into_iter().flatten() {
+        for file in body["Files"].as_array().into_iter().flatten() {
             let content = file["content"]
                 .as_str()
                 .and_then(|text| base64::engine::general_purpose::STANDARD.decode(text).ok())
@@ -233,9 +234,17 @@ async fn republishing_keeps_the_endpoints_slug() {
 async fn a_retired_app_removes_its_grants_and_leaves_another_apps_alone() {
     let shako = forge().await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{}/contents/.*\\.yaml$", common::REPO)))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .and(|r: &wiremock::Request| {
+            r.url.query_pairs().any(|(k, v)| {
+                k == "@p"
+                    && regex::Regex::new(r"^'.*\.yaml'$")
+                        .expect("a pattern")
+                        .is_match(&v)
+            })
+        })
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "sha": "blob-1", "content": "" })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Sha": "blob-1", "Content": "" })),
         )
         .mount(&shako)
         .await;
@@ -357,16 +366,27 @@ async fn an_apps_policies_name_the_projects_publisher_else_the_organization() {
 async fn deleting_an_app_removes_its_endpoint_and_policies_in_the_same_commit() {
     let shako = forge().await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{}/contents/.*\\.yaml$", common::REPO)))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .and(|r: &wiremock::Request| {
+            r.url.query_pairs().any(|(k, v)| {
+                k == "@p"
+                    && regex::Regex::new(r"^'.*\.yaml'$")
+                        .expect("a pattern")
+                        .is_match(&v)
+            })
+        })
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "sha": "blob-1", "content": "" })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Sha": "blob-1", "Content": "" })),
         )
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{}/git/trees/.*", common::REPO)))
+        .and(path(format!(
+            "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            common::REPO
+        )))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "tree": [], "truncated": false })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Tree": [], "Truncated": false })),
         )
         .mount(&shako)
         .await;
@@ -510,9 +530,17 @@ async fn every_role_of_a_proposed_app_commits_its_default_group() {
 async fn a_role_taken_away_removes_its_group_and_warns_about_its_members() {
     let shako = forge().await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{}/contents/.*\\.yaml$", common::REPO)))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .and(|r: &wiremock::Request| {
+            r.url.query_pairs().any(|(k, v)| {
+                k == "@p"
+                    && regex::Regex::new(r"^'.*\.yaml'$")
+                        .expect("a pattern")
+                        .is_match(&v)
+            })
+        })
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "sha": "blob-1", "content": "" })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Sha": "blob-1", "Content": "" })),
         )
         .mount(&shako)
         .await;
@@ -604,9 +632,13 @@ async fn a_default_group_named_like_the_organizations_group_is_refused() {
 async fn an_imported_app_brings_its_default_groups() {
     let shako = forge().await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{}/git/trees/.*", common::REPO)))
+        .and(path(format!(
+            "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            common::REPO
+        )))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "tree": [], "truncated": false,
+            "Tree": [],
+            "Truncated": false
         })))
         .mount(&shako)
         .await;

@@ -157,35 +157,39 @@ async fn forge() -> MockServer {
     let branch = "portal/create-pipeline-route-b-00004893";
     let file = format!("projects/{PROJECT}/pipelines/{FROM_B}/pipeline.yaml");
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/{CHANGE}")))
+        .and(path(format!("{REPO}/PullRequests({CHANGE})")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": CHANGE,
-            "html_url": format!("https://shako.example/pulls/{CHANGE}"),
-            "state": "open",
-            "title": branch,
-            "head": { "ref": branch },
-            "base": { "ref": "main" },
-            "created_at": "2026-10-20T09:00:00Z",
-            "user": { "login": "someone", "full_name": "someone", "email": "someone@hel.fi" },
-            "mergeable": true,
-            "merged": false
+            "Number": CHANGE,
+            "HtmlUrl": format!("https://shako.example/pulls/{CHANGE}"),
+            "State": "open",
+            "Title": branch,
+            "Head": branch,
+            "Base": "main",
+            "CreatedAt": "2026-10-20T09:00:00Z",
+            "Author": "someone",
+            "AuthorName": "someone",
+            "AuthorEmail": "someone@hel.fi",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/{CHANGE}/files")))
+        .and(path(format!("{REPO}/PullRequests({CHANGE})/Files")))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!([{ "filename": file, "status": "added" }])),
+                .set_body_json(json!({ "value": [{ "Filename": file, "Status": "added" }] })),
         )
         .mount(&shako)
         .await;
     let yaml = serde_norway::to_string(&pipeline(FROM_B, "ep-b")).expect("yaml");
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/{file}")))
-        .and(query_param("ref", branch))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{file}'")))
+        .and(query_param("@r", format!("'{}'", branch)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-4893", "content": encode(&yaml)
+            "Sha": "sha-4893",
+            "Content": encode(&yaml)
         })))
         .with_priority(1)
         .mount(&shako)
@@ -194,9 +198,9 @@ async fn forge() -> MockServer {
 }
 
 fn no_change_opened(requests: &[wiremock::Request]) -> bool {
-    !requests
-        .iter()
-        .any(|request| request.method.as_str() == "POST" && request.url.path().ends_with("/pulls"))
+    !requests.iter().any(|request| {
+        request.method.as_str() == "POST" && request.url.path().ends_with("/Shako.OpenPullRequest")
+    })
 }
 
 #[tokio::test]
@@ -289,7 +293,7 @@ async fn an_approver_who_cannot_read_the_source_cannot_approve_it() {
         .await
         .expect("requests")
         .iter()
-        .any(|request| request.url.path().ends_with("/merge"));
+        .any(|request| request.url.path().ends_with("/Shako.Merge"));
     assert!(!merged, "the refused approval merged");
 
     let answer = send(&state, person("lead"), "POST", &approve, Some(json!({}))).await;

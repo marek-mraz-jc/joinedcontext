@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 use serde_json::{json, Value};
 
 use crate::apps::kube::{KubeClient, KubeError};
-use crate::forge::shako::{ShakoClient, QueuedJob};
+use crate::forge::shako::{QueuedJob, ShakoClient};
 use crate::resource::ResourceEnvelope;
 use crate::store::{ListOptions, Mirror};
 

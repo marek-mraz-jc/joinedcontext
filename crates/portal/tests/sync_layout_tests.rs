@@ -25,24 +25,29 @@ const SPACE: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\
 
 /// One repository of the forge at `git_ref`: its tree and each file's contents.
 async fn repository(server: &MockServer, repo: &str, git_ref: &str, files: &[(&str, &str)]) {
-    let base = format!("/api/v1/repos/test-owner/{repo}");
+    let base = format!("/odata/Repositories(Owner='test-owner',Name='{repo}')");
     let tree: Vec<_> = files
         .iter()
-        .map(|(file, _)| json!({ "path": file, "type": "blob", "sha": format!("blob-{file}") }))
+        .map(|(file, _)| json!({ "Path": file, "Type": "blob", "Sha": format!("blob-{file}") }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!("{base}/git/trees/{git_ref}")))
+        .and(path(format!(
+            "{base}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", format!("'{git_ref}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "tree", "truncated": false, "tree": tree
+            "Sha": "tree", "Truncated": false, "Tree": tree
         })))
         .mount(server)
         .await;
     for (file, body) in files {
         Mock::given(method("GET"))
-            .and(path(format!("{base}/contents/{file}")))
-            .and(query_param("ref", git_ref))
+            .and(path(format!("{base}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{file}'")))
+            .and(query_param("@r", format!("'{}'", git_ref)))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": format!("blob-{file}"), "content": STANDARD.encode(body)
+                "Sha": format!("blob-{file}"),
+                "Content": STANDARD.encode(body)
             })))
             .mount(server)
             .await;
@@ -51,17 +56,18 @@ async fn repository(server: &MockServer, repo: &str, git_ref: &str, files: &[(&s
 
 /// The organization repository `test-repo` of layout 2 at `c0ffee`, registering `ovzdusie`.
 async fn organization(server: &MockServer) {
-    let base = "/api/v1/repos/test-owner/test-repo";
+    let base = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
     Mock::given(method("GET"))
         .and(path(base))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{base}/branches/main")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "name": "main", "commit": { "id": "c0ffee" }
-        })))
+        .and(path(format!("{base}/Branches('main')")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "Name": "main", "HeadSha": "c0ffee" })),
+        )
         .mount(server)
         .await;
     repository(
@@ -229,8 +235,10 @@ async fn a_project_taken_out_of_the_registry_has_its_repository_archived() {
         ],
     )
     .await;
-    Mock::given(method("PATCH"))
-        .and(path("/api/v1/repos/test-owner/ovzdusie"))
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='ovzdusie')/Shako.Archive",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "archived": true })))
         .mount(&server)
         .await;
@@ -238,22 +246,24 @@ async fn a_project_taken_out_of_the_registry_has_its_repository_archived() {
     syncer.sync_once().await.expect("the first sync");
 
     server.reset().await;
-    Mock::given(method("PATCH"))
-        .and(path("/api/v1/repos/test-owner/ovzdusie"))
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='ovzdusie')/Shako.Archive",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "archived": true })))
         .mount(&server)
         .await;
-    let base = "/api/v1/repos/test-owner/test-repo";
+    let base = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
     Mock::given(method("GET"))
         .and(path(base))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{base}/branches/main")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "name": "main", "commit": { "id": "d00d" }
-        })))
+        .and(path(format!("{base}/Branches('main')")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "Name": "main", "HeadSha": "d00d" })),
+        )
         .mount(&server)
         .await;
     repository(
@@ -268,15 +278,18 @@ async fn a_project_taken_out_of_the_registry_has_its_repository_archived() {
         .await
         .expect("the sync after the deletion");
 
-    let archived: Vec<serde_json::Value> = server
+    let archived: Vec<String> = server
         .received_requests()
         .await
         .expect("requests")
         .into_iter()
-        .filter(|r| r.method.as_str() == "PATCH")
-        .map(|r| serde_json::from_slice(&r.body).expect("json"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.Archive"))
+        .map(|r| r.url.path().to_owned())
         .collect();
-    assert_eq!(archived, [json!({ "archived": true })]);
+    assert_eq!(
+        archived,
+        ["/odata/Repositories(Owner='test-owner',Name='ovzdusie')/Shako.Archive"]
+    );
     assert!(mirror.repository_of("ovzdusie").is_none());
     assert!(
         server

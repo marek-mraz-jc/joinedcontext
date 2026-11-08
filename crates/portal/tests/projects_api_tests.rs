@@ -216,9 +216,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 async fn forge_with_no_open_projects() -> MockServer {
     let shako = common::forge().await;
     Mock::given(http_method("GET"))
-        .and(url_path(format!("{REPO}/pulls")))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .and(url_path(format!("{REPO}/PullRequests")))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
         .mount(&shako)
         .await;
     shako
@@ -258,7 +258,7 @@ async fn open(state: &AppState, who: Identity, body: Value) -> (StatusCode, Stri
     (status, String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// The files the merge request carries, by path: one `POST /contents` commit (T-6462).
+/// The files the merge request carries, by path: one `POST R/Shako.CommitFiles` commit (T-6462).
 async fn written(shako: &MockServer) -> Vec<String> {
     common::committed_files(shako, common::REPO)
         .await
@@ -391,20 +391,26 @@ async fn a_name_that_is_taken_or_not_a_label_is_refused_before_anything_is_writt
 async fn a_name_another_open_change_already_reserved_is_refused() {
     let shako = common::forge().await;
     Mock::given(http_method("GET"))
-        .and(url_path(format!("{REPO}/pulls")))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-            "number": 4,
-            "html_url": "https://shako.example/pulls/4",
-            "state": "open",
-            "title": "open project doprava",
-            "head": { "ref": "portal/create-project-doprava-0000000a" },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-16T09:00:00Z",
-            "user": { "login": "someone", "full_name": "Someone", "email": "someone@hel.fi" },
-            "mergeable": true,
-            "merged": false
-        }])))
+        .and(url_path(format!("{REPO}/PullRequests")))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Number": 4,
+                    "HtmlUrl": "https://shako.example/pulls/4",
+                    "State": "open",
+                    "Title": "open project doprava",
+                    "Head": "portal/create-project-doprava-0000000a",
+                    "Base": "main",
+                    "CreatedAt": "2026-09-16T09:00:00Z",
+                    "Author": "someone",
+                    "AuthorName": "Someone",
+                    "AuthorEmail": "someone@hel.fi",
+                    "Mergeable": true,
+                    "Merged": false
+                }
+            ]
+        })))
         .mount(&shako)
         .await;
     let state = common::state_on(&shako);
@@ -484,7 +490,7 @@ async fn anyone_plus_lax_merges_the_project_at_once_and_the_message_says_who_did
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.url.path().ends_with("/merge"))
+        .filter(|r| r.url.path().ends_with("/Shako.Merge"))
         .map(|r| String::from_utf8_lossy(&r.body).into_owned())
         .collect();
     assert_eq!(merges.len(), 1, "the platform merged it once: {merges:?}");
@@ -514,7 +520,7 @@ async fn anyone_on_a_strict_installation_waits_for_a_person() {
             .await
             .unwrap_or_default()
             .iter()
-            .any(|r| r.url.path().ends_with("/merge")),
+            .any(|r| r.url.path().ends_with("/Shako.Merge")),
         "strict waits for a person (PF-57)"
     );
 }
@@ -614,32 +620,34 @@ const TREE: &[&str] = &[
 async fn forge_with_a_tree(commits: Value) -> MockServer {
     let shako = forge_with_no_open_projects().await;
     Mock::given(http_method("GET"))
-        .and(url_path(format!("{REPO}/git/trees/main")))
+        .and(url_path(format!("{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"))).and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "truncated": false,
-            "tree": TREE.iter().map(|path| json!({ "path": path, "type": "blob" })).collect::<Vec<_>>(),
+            "Truncated": false,
+            "Tree": TREE.iter().map(|path| json!({ "Path": path, "Type": "blob" })).collect::<Vec<_>>(),
         })))
         .mount(&shako)
         .await;
     Mock::given(http_method("GET"))
-        .and(wiremock::matchers::path_regex(format!(
-            "^{REPO}/contents/.*"
+        .and(wiremock::matchers::path(format!(
+            "{}/Shako.File(Path=@p,Ref=@r)",
+            REPO
         )))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "blob-1", "content": "", "encoding": "base64"
+            "Sha": "blob-1",
+            "Content": ""
         })))
         .mount(&shako)
         .await;
     Mock::given(http_method("GET"))
-        .and(url_path(format!("{REPO}/commits")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(commits))
+        .and(url_path(format!(
+            "{REPO}/Shako.History(Ref=@r,Path=@p,Top=@n)"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": commits })))
         .mount(&shako)
         .await;
     Mock::given(http_method("POST"))
-        .and(url_path(format!("{REPO}/contents")))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
-        )
+        .and(url_path(format!("{REPO}/Shako.CommitFiles")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
         .mount(&shako)
         .await;
     shako
@@ -726,14 +734,16 @@ async fn removed(shako: &MockServer) -> Vec<String> {
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/contents"))
+        .filter(|r| {
+            r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/Shako.CommitFiles")
+        })
         .filter_map(|r| serde_json::from_slice(&r.body).ok())
         .collect();
     if commits.is_empty() {
         return Vec::new();
     }
     assert_eq!(commits.len(), 1, "one commit removes every file");
-    let mut paths: Vec<String> = commits[0]["files"]
+    let mut paths: Vec<String> = commits[0]["Files"]
         .as_array()
         .into_iter()
         .flatten()
@@ -848,8 +858,8 @@ async fn a_project_nobody_bound_the_caller_to_is_not_there_and_one_they_only_rea
 async fn the_name_of_a_deleted_project_is_refused_until_the_cooling_period_passes() {
     let day_ago = (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339();
     let shako = forge_with_a_tree(json!([{
-        "sha": "c0ffee", "commit": { "message": "delete project mobilita",
-        "author": { "name": "admin", "email": "admin@hel.fi", "date": day_ago } }
+        "Sha": "c0ffee", "Message": "delete project mobilita",
+        "Author": "admin", "Email": "admin@hel.fi", "Date": day_ago
     }]))
     .await;
     let state = common::state_on(&shako);
@@ -862,8 +872,8 @@ async fn the_name_of_a_deleted_project_is_refused_until_the_cooling_period_passe
     // The same name once the period has passed: a project again, nothing written before.
     let long_ago = (chrono::Utc::now() - chrono::Duration::days(60)).to_rfc3339();
     let shako = forge_with_a_tree(json!([{
-        "sha": "c0ffee", "commit": { "message": "delete project mobilita",
-        "author": { "name": "admin", "email": "admin@hel.fi", "date": long_ago } }
+        "Sha": "c0ffee", "Message": "delete project mobilita",
+        "Author": "admin", "Email": "admin@hel.fi", "Date": long_ago
     }]))
     .await;
     let state = common::state_on(&shako);
@@ -877,8 +887,8 @@ async fn the_name_of_a_deleted_project_is_refused_until_the_cooling_period_passe
 async fn an_organization_may_set_no_cooling_period_at_all() {
     let day_ago = (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339();
     let shako = forge_with_a_tree(json!([{
-        "sha": "c0ffee", "commit": { "message": "delete project mobilita",
-        "author": { "name": "admin", "email": "admin@hel.fi", "date": day_ago } }
+        "Sha": "c0ffee", "Message": "delete project mobilita",
+        "Author": "admin", "Email": "admin@hel.fi", "Date": day_ago
     }]))
     .await;
     let state = common::state_on(&shako);

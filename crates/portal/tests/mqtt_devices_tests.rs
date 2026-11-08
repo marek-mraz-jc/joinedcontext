@@ -156,9 +156,13 @@ async fn a_device_is_one_change_of_its_public_key_and_the_role_that_lists_it() {
         json!(["cam"]),
         "only the role picked"
     );
-    assert_eq!(requests_to(&shako, "/pulls").await, 1, "one merge request");
     assert_eq!(
-        requests_to(&shako, "/merge").await,
+        requests_to(&shako, "/Shako.OpenPullRequest").await,
+        1,
+        "one merge request"
+    );
+    assert_eq!(
+        requests_to(&shako, "/Shako.Merge").await,
         0,
         "never merged by its proposer"
     );
@@ -189,7 +193,7 @@ async fn a_private_key_member_is_refused_naming_it_and_nothing_reaches_the_forge
 
 #[tokio::test]
 async fn a_symmetric_or_malformed_key_set_is_refused_naming_jwks() {
-    let (state, _gitea) = state().await;
+    let (state, _forge) = state().await;
     for jwks in [
         json!({ "keys": [{ "kty": "oct", "kid": "s", "k": "c2VjcmV0" }] }),
         json!([public_key()]),
@@ -259,7 +263,7 @@ async fn a_topic_or_role_outside_the_broker_is_refused_naming_the_field() {
 
 #[tokio::test]
 async fn an_existing_account_name_is_a_conflict() {
-    let (state, _gitea) = state().await;
+    let (state, _forge) = state().await;
     let mut taken = device(json!({ "keys": [public_key()] }));
     taken["name"] = json!("cam");
     let answer = send(
@@ -296,7 +300,7 @@ async fn a_person_who_may_only_read_is_refused_and_offered_no_role() {
 
 #[tokio::test]
 async fn the_role_list_holds_this_brokers_roles_and_no_other_projects() {
-    let (state, _gitea) = state().await;
+    let (state, _forge) = state().await;
     let options = send(&state, person("steward"), "GET", &devices(PROJECT), None).await;
     assert_eq!(options.status, 200, "{}", options.text);
     let options: Value = serde_json::from_str(&options.text).expect("json");

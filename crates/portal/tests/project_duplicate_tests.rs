@@ -12,11 +12,11 @@ use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const ORIGIN: &str = "/api/v1/repos/test-owner/ovzdusie";
-const COPY: &str = "/api/v1/repos/test-owner/doprava";
+const ORIGIN: &str = "/odata/Repositories(Owner='test-owner',Name='ovzdusie')";
+const COPY: &str = "/odata/Repositories(Owner='test-owner',Name='doprava')";
 const SLUG: &str = "mluyob4nz52lok3ssk7pgn5vwt";
 
 const PROJECT: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  \
@@ -35,20 +35,25 @@ fn endpoint() -> String {
 async fn repository(server: &MockServer, base: &str, files: &[(&str, String)]) {
     let tree: Vec<_> = files
         .iter()
-        .map(|(file, _)| json!({ "path": file, "type": "blob", "sha": format!("blob-{file}") }))
+        .map(|(file, _)| json!({ "Path": file, "Type": "blob", "Sha": format!("blob-{file}") }))
         .collect();
     Mock::given(method("GET"))
-        .and(path(format!("{base}/git/trees/main")))
+        .and(path(format!(
+            "{base}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", "'main'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "tree", "truncated": false, "tree": tree
+            "Sha": "tree", "Truncated": false, "Tree": tree
         })))
         .mount(server)
         .await;
     for (file, body) in files {
         Mock::given(method("GET"))
-            .and(path(format!("{base}/contents/{file}")))
+            .and(path(format!("{base}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{file}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": format!("blob-{file}"), "content": STANDARD.encode(body)
+                "Sha": format!("blob-{file}"),
+                "Content": STANDARD.encode(body)
             })))
             .mount(server)
             .await;
@@ -61,34 +66,32 @@ async fn repository(server: &MockServer, base: &str, files: &[(&str, String)]) {
 async fn world(exists: bool) -> (MockServer, AppState) {
     let server = forge().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .and(path(format!("{REPO}/PullRequests")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
         .and(path(COPY))
         .respond_with(if exists {
-            ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" }))
+            ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" }))
         } else {
             ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" }))
         })
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/migrate"))
+        .and(path("/odata/ImportRepository"))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "name": "doprava" })))
         .mount(&server)
         .await;
     for (verb, route) in [
-        ("POST", format!("{COPY}/contents")),
-        ("POST", format!("{COPY}/branch_protections")),
+        ("POST", format!("{COPY}/Shako.CommitFiles")),
+        ("POST", format!("{COPY}/Shako.Protect")),
         ("DELETE", COPY.to_owned()),
     ] {
         Mock::given(method(verb))
             .and(path(route))
-            .respond_with(
-                ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })),
-            )
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
             .mount(&server)
             .await;
     }
@@ -193,26 +196,33 @@ async fn a_project_is_duplicated_into_a_repository_of_its_own() {
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{text}");
 
-    let migrated = received(&server, "POST", "/api/v1/repos/migrate").await;
+    let migrated = received(&server, "POST", "/odata/ImportRepository").await;
     assert_eq!(migrated.len(), 1);
-    let clone_addr = migrated[0]["clone_addr"].as_str().unwrap_or_default();
-    assert!(
-        clone_addr.ends_with("/test-owner/ovzdusie.git"),
-        "{clone_addr}"
-    );
     assert_eq!(
         (
-            migrated[0]["repo_name"].as_str(),
-            migrated[0]["private"].as_bool(),
-            migrated[0]["mirror"].as_bool(),
+            migrated[0]["SourceOwner"].as_str(),
+            migrated[0]["SourceName"].as_str(),
         ),
-        (Some("doprava"), Some(true), Some(false))
+        (Some("test-owner"), Some("ovzdusie")),
+        "{}",
+        migrated[0]
+    );
+    // A copy with its history, never a mirror of the origin: shako's ImportRepository has no
+    // mirror mode, so nothing asks for one.
+    assert_eq!(
+        (
+            migrated[0]["RepoOwner"].as_str(),
+            migrated[0]["RepoName"].as_str(),
+            migrated[0]["Private"].as_bool(),
+            migrated[0].get("Mirror"),
+        ),
+        (Some("test-owner"), Some("doprava"), Some(true), None)
     );
 
-    let commits = received(&server, "POST", &format!("{COPY}/contents")).await;
+    let commits = received(&server, "POST", &format!("{COPY}/Shako.CommitFiles")).await;
     assert_eq!(commits.len(), 1, "one remount commit");
-    assert_eq!(commits[0]["branch"], "main");
-    let files = commits[0]["files"].as_array().expect("files");
+    assert_eq!(commits[0]["Branch"], "main");
+    let files = commits[0]["Files"].as_array().expect("files");
     let deleted: Vec<&str> = files
         .iter()
         .filter(|file| file["operation"] == "delete")
@@ -255,7 +265,7 @@ async fn a_project_is_duplicated_into_a_repository_of_its_own() {
     assert_ne!(slug, SLUG, "the copy does not answer at the origin's URL");
     jc_core::kinds::EndpointSlug::new(slug).expect("an EP-02 slug");
     assert_eq!(
-        received(&server, "POST", &format!("{COPY}/branch_protections")).await[0]["rule_name"],
+        received(&server, "POST", &format!("{COPY}/Shako.Protect")).await[0]["Rule"]["rule_name"],
         "main"
     );
 
@@ -291,7 +301,7 @@ async fn an_undeclared_parameter_copies_nothing() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{text}");
     assert!(text.contains("colour"), "{text}");
-    assert!(received(&server, "POST", "/api/v1/repos/migrate")
+    assert!(received(&server, "POST", "/odata/ImportRepository")
         .await
         .is_empty());
 }
@@ -303,7 +313,7 @@ async fn a_repository_that_is_already_there_is_not_overwritten() {
     let (server, state) = world(true).await;
     let (status, text) = duplicate(&state, "nobody", json!({ "name": "doprava" })).await;
     assert_eq!(status, StatusCode::CONFLICT, "{text}");
-    assert!(received(&server, "POST", "/api/v1/repos/migrate")
+    assert!(received(&server, "POST", "/odata/ImportRepository")
         .await
         .is_empty());
     assert!(received(&server, "DELETE", COPY).await.is_empty());
@@ -314,7 +324,7 @@ async fn a_repository_that_is_already_there_is_not_overwritten() {
 async fn a_failed_registration_removes_the_copy() {
     let (server, state) = world(false).await;
     Mock::given(method("POST"))
-        .and(path(format!("{REPO}/pulls")))
+        .and(path(format!("{REPO}/Shako.OpenPullRequest")))
         .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "down" })))
         .with_priority(1)
         .mount(&server)
@@ -332,7 +342,7 @@ async fn a_project_the_caller_may_not_read_is_not_duplicated() {
     let (server, state) = world(false).await;
     let (status, text) = duplicate(&state, "stranger", json!({ "name": "doprava" })).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{text}");
-    assert!(received(&server, "POST", "/api/v1/repos/migrate")
+    assert!(received(&server, "POST", "/odata/ImportRepository")
         .await
         .is_empty());
 }
@@ -345,7 +355,7 @@ async fn layout_one_answers_with_the_import() {
     let (status, text) = duplicate(&state, "nobody", json!({ "name": "doprava" })).await;
     assert_eq!(status, StatusCode::CONFLICT, "{text}");
     assert!(text.contains("MF-45"), "{text}");
-    assert!(received(&server, "POST", "/api/v1/repos/migrate")
+    assert!(received(&server, "POST", "/odata/ImportRepository")
         .await
         .is_empty());
 }
@@ -356,7 +366,7 @@ async fn a_taken_name_is_refused() {
     let (server, state) = world(false).await;
     let (status, text) = duplicate(&state, "nobody", json!({ "name": "ovzdusie" })).await;
     assert_eq!(status, StatusCode::CONFLICT, "{text}");
-    assert!(received(&server, "POST", "/api/v1/repos/migrate")
+    assert!(received(&server, "POST", "/odata/ImportRepository")
         .await
         .is_empty());
 }

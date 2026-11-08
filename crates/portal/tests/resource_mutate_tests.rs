@@ -22,7 +22,7 @@ use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use serde_json::json;
 use tower::ServiceExt;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{body_string_contains, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const TEST_CSRF_TOKEN: &str = "test-csrf-token-12345";
@@ -69,22 +69,22 @@ fn session_and_csrf_cookies(config: &Config) -> String {
 /// the forge of a space create answers the model's manifest and its LinkML source, and each is
 /// written exactly once.
 async fn mount_space_model(server: &MockServer) {
+    const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
     for file in ["mobility.yaml", "mobility.linkml.yaml"] {
-        let model = format!(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/datamodels/{file}"
-        );
+        let model = format!("projects/ovzdusie/spaces/mobility/datamodels/{file}");
         Mock::given(method("GET"))
-            .and(path(model.as_str()))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{model}'")))
             .respond_with(
                 ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })),
             )
             .mount(server)
             .await;
-        Mock::given(method("PUT"))
-            .and(path(model.as_str()))
+        Mock::given(method("POST"))
+            .and(path(format!("{REPO}/Shako.CommitFiles")))
+            .and(body_string_contains(format!(r#""path":"{model}""#)))
             .respond_with(
-                ResponseTemplate::new(201)
-                    .set_body_json(json!({ "commit": { "sha": "commit-sha-model" } })),
+                ResponseTemplate::new(201).set_body_json(json!({ "Sha": "commit-sha-model" })),
             )
             .expect(1)
             .mount(server)
@@ -93,7 +93,7 @@ async fn mount_space_model(server: &MockServer) {
 }
 
 #[tokio::test]
-async fn create_returns_202_with_change_and_commits_to_gitea() {
+async fn create_returns_202_with_change_and_commits_to_the_forge() {
     let server = MockServer::start().await;
     mount_space_model(&server).await;
     let base_url = server.uri().parse().expect("valid mock server url");
@@ -101,22 +101,30 @@ async fn create_returns_202_with_change_and_commits_to_gitea() {
         ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
+            "DefaultBranch": "main"
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
         ))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({
             "message": "not found"
@@ -124,24 +132,29 @@ async fn create_returns_202_with_change_and_commits_to_gitea() {
         .mount(&server)
         .await;
 
-    Mock::given(method("PUT"))
+    Mock::given(method("POST"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+        ))
+        .and(body_string_contains(
+            r#""path":"projects/ovzdusie/spaces/mobility/space.yaml""#,
         ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "commit": { "sha": "commit-sha-created" }
+            "Sha": "commit-sha-created"
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 42,
-            "html_url": "https://shako.example.sk/pulls/42",
-            "state": "open",
-            "mergeable": true,
-            "merged": false
+            "Number": 42,
+            "HtmlUrl": "https://shako.example.sk/pulls/42",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -199,30 +212,32 @@ async fn create_returns_202_with_change_and_commits_to_gitea() {
         .iter()
         .find(|r| {
             r.method.as_str() == "POST"
-                && r.url.path() == "/api/v1/repos/test-owner/test-repo/branches"
+                && r.url.path()
+                    == "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch"
         })
         .expect("branch creation request");
     let branch_body: serde_json::Value =
         serde_json::from_slice(&branch_req.body).expect("branch request body");
-    assert!(branch_body["new_branch_name"]
+    assert!(branch_body["NewBranchName"]
         .as_str()
         .expect("new branch name")
         .starts_with("portal/create-contextspace-mobility-"));
 
-    let put_req = requests
+    let put_body: serde_json::Value = requests
         .iter()
-        .find(|r| {
-            r.method.as_str() == "PUT"
-                && r.url
-                    .path()
-                    .starts_with("/api/v1/repos/test-owner/test-repo/contents/")
+        .filter(|r| {
+            r.method.as_str() == "POST"
+                && r.url.path()
+                    == "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles"
         })
-        .expect("PUT contents request");
-    let put_body: serde_json::Value =
-        serde_json::from_slice(&put_req.body).expect("PUT request body");
-    assert_eq!(put_body["author"]["name"], "Demo Steward");
+        .filter_map(|r| serde_json::from_slice::<serde_json::Value>(&r.body).ok())
+        .find(|body| body["Files"][0]["path"] == "projects/ovzdusie/spaces/mobility/space.yaml")
+        .expect("the commit that writes the manifest");
+    assert_eq!(put_body["Author"]["Name"], "Demo Steward");
 
-    let content_b64 = put_body["content"].as_str().expect("base64 content");
+    let content_b64 = put_body["Files"][0]["content"]
+        .as_str()
+        .expect("base64 content");
     let decoded_bytes = STANDARD.decode(content_b64).expect("valid base64 content");
     let yaml_str = String::from_utf8(decoded_bytes).expect("valid UTF-8 YAML string");
     assert!(!yaml_str.contains("status:"));
@@ -234,7 +249,9 @@ async fn create_returns_202_with_change_and_commits_to_gitea() {
     assert!(yaml_str.starts_with("apiVersion: "), "{yaml_str}");
 
     assert!(requests.iter().any(|r| {
-        r.method.as_str() == "POST" && r.url.path() == "/api/v1/repos/test-owner/test-repo/pulls"
+        r.method.as_str() == "POST"
+            && r.url.path()
+                == "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest"
     }));
 }
 
@@ -654,48 +671,61 @@ async fn patch_merge_patch_json_changes_field_and_returns_202() {
         ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
+            "DefaultBranch": "main"
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-space-old",
-            "content": "YXBpVmVyc2lvbjogeW91"
-        })))
-        .mount(&server)
-        .await;
-
-    Mock::given(method("PUT"))
-        .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
-        ))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "commit": { "sha": "commit-sha-patched" }
+            "Sha": "sha-space-old",
+            "Content": "YXBpVmVyc2lvbjogeW91"
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+        ))
+        .and(body_string_contains(
+            r#""path":"projects/ovzdusie/spaces/mobility/space.yaml""#,
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "commit-sha-patched"
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 101,
-            "html_url": "https://shako.example.sk/pulls/101",
-            "state": "open",
-            "mergeable": true,
-            "merged": false
+            "Number": 101,
+            "HtmlUrl": "https://shako.example.sk/pulls/101",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -763,22 +793,30 @@ async fn lane_classification_public_endpoint_red_and_sandbox_space_green() {
         ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
+            "DefaultBranch": "main"
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&server)
         .await;
 
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/endpoints/public-air.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/endpoints/public-air.yaml'",
         ))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({
             "message": "not found"
@@ -786,24 +824,29 @@ async fn lane_classification_public_endpoint_red_and_sandbox_space_green() {
         .mount(&server)
         .await;
 
-    Mock::given(method("PUT"))
+    Mock::given(method("POST"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/endpoints/public-air.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+        ))
+        .and(body_string_contains(
+            r#""path":"projects/ovzdusie/spaces/mobility/endpoints/public-air.yaml""#,
         ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "commit": { "sha": "commit-sha-endpoint" }
+            "Sha": "commit-sha-endpoint"
         })))
         .mount(&server)
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 88,
-            "html_url": "https://shako.example.sk/pulls/88",
-            "state": "open",
-            "mergeable": true,
-            "merged": false
+            "Number": 88,
+            "HtmlUrl": "https://shako.example.sk/pulls/88",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -972,35 +1015,46 @@ async fn a_second_proposal_while_a_change_is_open_names_it_and_writes_nothing() 
         ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
         ))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .mount(&server)
         .await;
     let open_branch = branch_name("ovzdusie", "ContextSpace", "mobility", Operation::Create);
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {
-                "number": 175,
-                "html_url": "https://shako.example.sk/pulls/175",
-                "state": "open",
-                "title": "create ContextSpace mobility",
-                "head": { "ref": open_branch },
-                "base": { "ref": "main" },
-                "created_at": "2026-09-15T20:00:00Z",
-                "user": { "login": "jana.kovacova", "full_name": "Jana Kováčová" },
-                "mergeable": true,
-                "merged": false
-            }
-        ])))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+        ))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Number": 175,
+                    "HtmlUrl": "https://shako.example.sk/pulls/175",
+                    "State": "open",
+                    "Title": "create ContextSpace mobility",
+                    "Head": open_branch,
+                    "Base": "main",
+                    "CreatedAt": "2026-09-15T20:00:00Z",
+                    "Author": "jana.kovacova",
+                    "AuthorName": "Jana Kováčová",
+                    "Mergeable": true,
+                    "Merged": false
+                }
+            ]
+        })))
         .mount(&server)
         .await;
 
@@ -1060,13 +1114,19 @@ async fn an_open_change_on_a_suffixed_branch_still_blocks_a_proposal() {
     let client =
         ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
         ))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .mount(&server)
@@ -1076,22 +1136,27 @@ async fn an_open_change_on_a_suffixed_branch_still_blocks_a_proposal() {
         branch_name("ovzdusie", "ContextSpace", "mobility", Operation::Create)
     );
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {
-                "number": 176,
-                "html_url": "https://shako.example.sk/pulls/176",
-                "state": "open",
-                "title": "create ContextSpace mobility",
-                "head": { "ref": open_branch },
-                "base": { "ref": "main" },
-                "created_at": "2026-09-15T20:00:00Z",
-                "user": { "login": "jana.kovacova", "full_name": "Jana Kováčová" },
-                "mergeable": true,
-                "merged": false
-            }
-        ])))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+        ))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Number": 176,
+                    "HtmlUrl": "https://shako.example.sk/pulls/176",
+                    "State": "open",
+                    "Title": "create ContextSpace mobility",
+                    "Head": open_branch,
+                    "Base": "main",
+                    "CreatedAt": "2026-09-15T20:00:00Z",
+                    "Author": "jana.kovacova",
+                    "AuthorName": "Jana Kováčová",
+                    "Mergeable": true,
+                    "Merged": false
+                }
+            ]
+        })))
         .mount(&server)
         .await;
 
@@ -1147,51 +1212,68 @@ async fn an_open_change_elsewhere_does_not_block_a_proposal() {
         ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {
-                "number": 9,
-                "html_url": "https://shako.example.sk/pulls/9",
-                "state": "open",
-                "head": { "ref": branch_name("ovzdusie", "ContextSpace", "parking", Operation::Create) },
-                "base": { "ref": "main" },
-                "merged": false
-            }
-        ])))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+        ))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Number": 9,
+                    "HtmlUrl": "https://shako.example.sk/pulls/9",
+                    "State": "open",
+                    "Head": branch_name("ovzdusie", "ContextSpace", "parking", Operation::Create),
+                    "Base": "main",
+                    "Merged": false
+                }
+            ]
+        })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
         ))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .mount(&server)
         .await;
-    Mock::given(method("PUT"))
+    Mock::given(method("POST"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
         ))
-        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })))
+        .and(body_string_contains(
+            r#""path":"projects/ovzdusie/spaces/mobility/space.yaml""#,
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 43,
-            "html_url": "https://shako.example.sk/pulls/43",
-            "state": "open",
-            "merged": false
+            "Number": 43,
+            "HtmlUrl": "https://shako.example.sk/pulls/43",
+            "State": "open",
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -1233,57 +1315,75 @@ async fn a_stale_proposal_branch_is_recreated_from_main() {
     let client =
         ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
-        .and(query_param("state", "open"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+        ))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(409).set_body_string("branch already exists"))
         .up_to_n_times(1)
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&server)
         .await;
     let branch = branch_name("ovzdusie", "ContextSpace", "mobility", Operation::Create);
-    Mock::given(method("DELETE"))
+    Mock::given(method("POST"))
         .and(path(format!(
-            "/api/v1/repos/test-owner/test-repo/branches/{branch}"
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.DeleteBranch"
         )))
+        .and(body_string_contains(format!(r#""Branch":"{branch}""#)))
         .respond_with(ResponseTemplate::new(204))
         .expect(1)
         .mount(&server)
         .await;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
         ))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .mount(&server)
         .await;
-    Mock::given(method("PUT"))
+    Mock::given(method("POST"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
         ))
-        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "c1" } })))
+        .and(body_string_contains(
+            r#""path":"projects/ovzdusie/spaces/mobility/space.yaml""#,
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 44,
-            "html_url": "https://shako.example.sk/pulls/44",
-            "state": "open",
-            "merged": false
+            "Number": 44,
+            "HtmlUrl": "https://shako.example.sk/pulls/44",
+            "State": "open",
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -1315,9 +1415,9 @@ async fn a_stale_proposal_branch_is_recreated_from_main() {
     let requests = server.received_requests().await.expect("received requests");
     let names: Vec<String> = requests
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/branches"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.CreateBranch"))
         .map(|r| {
-            r.body_json::<serde_json::Value>().expect("branch body")["new_branch_name"]
+            r.body_json::<serde_json::Value>().expect("branch body")["NewBranchName"]
                 .as_str()
                 .expect("name")
                 .to_string()
@@ -1331,9 +1431,9 @@ async fn a_stale_proposal_branch_is_recreated_from_main() {
     );
     let heads: Vec<String> = requests
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/pulls"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.OpenPullRequest"))
         .map(|r| {
-            r.body_json::<serde_json::Value>().expect("pull body")["head"]
+            r.body_json::<serde_json::Value>().expect("pull body")["Head"]
                 .as_str()
                 .expect("head")
                 .to_string()
@@ -1400,41 +1500,49 @@ async fn a_subscription_is_proposed_into_the_space_it_watches() {
     let file = "projects/ovzdusie/spaces/air-quality/subscriptions/air-alerts.yaml";
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "default_branch": "main"
+            "DefaultBranch": "main"
         })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
         .and(path(format!(
-            "/api/v1/repos/test-owner/test-repo/contents/{file}"
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
         )))
+        .and(query_param("@p", format!("'{file}'")))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .mount(&server)
         .await;
-    Mock::given(method("PUT"))
+    Mock::given(method("POST"))
         .and(path(format!(
-            "/api/v1/repos/test-owner/test-repo/contents/{file}"
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles"
         )))
+        .and(body_string_contains(format!(r#""path":"{file}""#)))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "commit": { "sha": "commit-sha-created" }
+            "Sha": "commit-sha-created"
         })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 7,
-            "html_url": "https://shako.example.sk/pulls/7",
-            "state": "open",
-            "mergeable": true,
-            "merged": false
+            "Number": 7,
+            "HtmlUrl": "https://shako.example.sk/pulls/7",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -1481,7 +1589,11 @@ async fn a_subscription_is_proposed_into_the_space_it_watches() {
     assert!(
         requests
             .iter()
-            .any(|r| r.method.as_str() == "PUT" && r.url.path().ends_with(file)),
+            .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.CommitFiles"))
+            .filter_map(|r| serde_json::from_slice::<serde_json::Value>(&r.body).ok())
+            .any(|body| body["Files"]
+                .as_array()
+                .is_some_and(|files| files.iter().any(|f| f["path"] == file))),
         "the subscription is written to {file}"
     );
 }
@@ -1675,39 +1787,45 @@ async fn a_proposal_commits_the_files_its_manifest_names() {
         ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(wiremock::matchers::path_regex(
-            r"^/api/v1/repos/test-owner/test-repo/contents/.*",
+        .and(wiremock::matchers::path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
         ))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .mount(&server)
         .await;
-    Mock::given(method("PUT"))
-        .and(wiremock::matchers::path_regex(
-            r"^/api/v1/repos/test-owner/test-repo/contents/.*",
+    Mock::given(method("POST"))
+        .and(wiremock::matchers::path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
         ))
-        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "commit": { "sha": "commit-sha-created" }
-        })))
+        .respond_with(
+            ResponseTemplate::new(201).set_body_json(json!({ "Sha": "commit-sha-created" })),
+        )
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 51,
-            "html_url": "https://shako.example.sk/pulls/51",
-            "state": "open",
-            "mergeable": true,
-            "merged": false
+            "Number": 51,
+            "HtmlUrl": "https://shako.example.sk/pulls/51",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -1733,10 +1851,13 @@ async fn a_proposal_commits_the_files_its_manifest_names() {
     assert_eq!(response.status(), StatusCode::ACCEPTED);
 
     let requests = server.received_requests().await.expect("received requests");
+    // Every write is one `Shako.CommitFiles` call; the paths in the order they were committed.
     let written: Vec<String> = requests
         .iter()
-        .filter(|r| r.method.as_str() == "PUT")
-        .map(|r| r.url.path().to_owned())
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.CommitFiles"))
+        .filter_map(|r| serde_json::from_slice::<serde_json::Value>(&r.body).ok())
+        .flat_map(|body| body["Files"].as_array().cloned().unwrap_or_default())
+        .filter_map(|file| file["path"].as_str().map(str::to_owned))
         .collect();
     assert_eq!(written.len(), 3, "manifest and both documents: {written:?}");
     assert!(
@@ -1763,8 +1884,10 @@ async fn a_file_outside_the_manifests_folder_is_refused_and_writes_nothing() {
     let client =
         ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
 
@@ -1787,7 +1910,9 @@ async fn a_file_outside_the_manifests_folder_is_refused_and_writes_nothing() {
 
     let requests = server.received_requests().await.expect("received requests");
     assert!(
-        !requests.iter().any(|r| r.method.as_str() == "PUT"),
+        !requests.iter().any(|r| {
+            r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.CommitFiles")
+        }),
         "a refused proposal wrote a file"
     );
 }
@@ -1800,8 +1925,10 @@ async fn too_many_or_too_large_files_are_refused() {
     let client =
         ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").expect("client");
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
 
@@ -1855,8 +1982,7 @@ fn mapping_proposal(config: &Config, files: serde_json::Value) -> Request<Body> 
 
 // --- T-2855: a kind filed once per scope (DS-07) ---------------------------------------------
 
-const PARTICIPANT_PATH: &str =
-    "/api/v1/repos/test-owner/test-repo/contents/dataspace/participant.yaml";
+const PARTICIPANT_PATH: &str = "dataspace/participant.yaml";
 
 fn participant(name: &str, connector: &str) -> serde_json::Value {
     json!({
@@ -1876,45 +2002,62 @@ fn participant(name: &str, connector: &str) -> serde_json::Value {
 async fn participant_forge(branches: u64, on_main: Option<&serde_json::Value>) -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .expect(branches)
         .mount(&server)
         .await;
     let file = match on_main {
         Some(manifest) => ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-participant",
-            "content": STANDARD.encode(serde_norway::to_string(manifest).expect("yaml")),
+            "Sha": "sha-participant",
+            "Content": STANDARD.encode(serde_norway::to_string(manifest).expect("yaml")),
         })),
         None => ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })),
     };
     Mock::given(method("GET"))
-        .and(path(PARTICIPANT_PATH))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param("@p", format!("'{PARTICIPANT_PATH}'")))
         .respond_with(file)
         .mount(&server)
         .await;
-    Mock::given(method("PUT"))
-        .and(path(PARTICIPANT_PATH))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "commit": { "sha": "c1" } })),
-        )
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+        ))
+        .and(body_string_contains(format!(
+            r#""path":"{PARTICIPANT_PATH}""#
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "Sha": "c1" })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 7, "html_url": "https://shako.example.sk/pulls/7",
-            "state": "open", "mergeable": true, "merged": false
+            "Number": 7,
+            "HtmlUrl": "https://shako.example.sk/pulls/7",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -2226,20 +2369,21 @@ struct OpenPulls {
 impl wiremock::Respond for OpenPulls {
     fn respond(&self, _: &wiremock::Request) -> ResponseTemplate {
         if !self.opened.load(std::sync::atomic::Ordering::SeqCst) {
-            return ResponseTemplate::new(200).set_body_json(json!([]));
+            return ResponseTemplate::new(200).set_body_json(json!({ "value": [] }));
         }
-        ResponseTemplate::new(200).set_body_json(json!([{
-            "number": 44,
-            "html_url": "https://shako.example.sk/pulls/44",
-            "state": "open",
-            "title": "create ContextSpace mobility",
-            "head": { "ref": self.branch },
-            "base": { "ref": "main" },
-            "created_at": "2026-10-25T20:00:00Z",
-            "user": { "login": "jana.kovacova", "full_name": "Jana Kováčová" },
-            "mergeable": true,
-            "merged": false
-        }]))
+        ResponseTemplate::new(200).set_body_json(json!({ "value": [{
+            "Number": 44,
+            "HtmlUrl": "https://shako.example.sk/pulls/44",
+            "State": "open",
+            "Title": "create ContextSpace mobility",
+            "Head": self.branch,
+            "Base": "main",
+            "CreatedAt": "2026-10-25T20:00:00Z",
+            "Author": "jana.kovacova",
+            "AuthorName": "Jana Kováčová",
+            "Mergeable": true,
+            "Merged": false
+        }] }))
     }
 }
 
@@ -2249,10 +2393,10 @@ impl wiremock::Respond for OpenPull {
     fn respond(&self, _: &wiremock::Request) -> ResponseTemplate {
         self.0.store(true, std::sync::atomic::Ordering::SeqCst);
         ResponseTemplate::new(201).set_body_json(json!({
-            "number": 44,
-            "html_url": "https://shako.example.sk/pulls/44",
-            "state": "open",
-            "merged": false
+            "Number": 44,
+            "HtmlUrl": "https://shako.example.sk/pulls/44",
+            "State": "open",
+            "Merged": false
         }))
     }
 }
@@ -2270,13 +2414,17 @@ async fn two_proposals_of_one_resource_at_once_open_one_change_and_delete_no_bra
     let branch = branch_name("ovzdusie", "ContextSpace", "mobility", Operation::Create);
     let opened = Arc::new(std::sync::atomic::AtomicBool::new(false));
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
-        .and(query_param("state", "open"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+        ))
+        .and(query_param("$filter", "State eq 'open'"))
         .respond_with(OpenPulls {
             opened: opened.clone(),
             branch: branch.clone(),
@@ -2284,44 +2432,58 @@ async fn two_proposals_of_one_resource_at_once_open_one_change_and_delete_no_bra
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .up_to_n_times(1)
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(409).set_body_string("branch already exists"))
         .mount(&server)
         .await;
-    Mock::given(method("DELETE"))
+    Mock::given(method("POST"))
         .and(path(format!(
-            "/api/v1/repos/test-owner/test-repo/branches/{branch}"
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.DeleteBranch"
         )))
+        .and(body_string_contains(format!(r#""Branch":"{branch}""#)))
         .respond_with(ResponseTemplate::new(204))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'projects/ovzdusie/spaces/mobility/space.yaml'",
         ))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .mount(&server)
         .await;
     // The first proposal's write is slow, so the second arrives while it is under way.
-    Mock::given(method("PUT"))
+    Mock::given(method("POST"))
         .and(path(
-            "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/spaces/mobility/space.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+        ))
+        .and(body_string_contains(
+            r#""path":"projects/ovzdusie/spaces/mobility/space.yaml""#,
         ))
         .respond_with(
             ResponseTemplate::new(201)
-                .set_body_json(json!({ "commit": { "sha": "c1" } }))
+                .set_body_json(json!({ "Sha": "c1" }))
                 .set_delay(std::time::Duration::from_millis(300)),
         )
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(OpenPull(opened))
         .mount(&server)
         .await;
@@ -2360,7 +2522,7 @@ async fn two_proposals_of_one_resource_at_once_open_one_change_and_delete_no_bra
     assert_eq!(
         requests
             .iter()
-            .filter(|r| r.method.as_str() == "DELETE")
+            .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.DeleteBranch"))
             .count(),
         0,
         "no branch is deleted under a proposal still writing"
@@ -2368,7 +2530,9 @@ async fn two_proposals_of_one_resource_at_once_open_one_change_and_delete_no_bra
     assert_eq!(
         requests
             .iter()
-            .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/pulls"))
+            .filter(
+                |r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.OpenPullRequest")
+            )
             .count(),
         1,
         "one change opens"

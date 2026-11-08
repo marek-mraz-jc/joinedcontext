@@ -153,7 +153,7 @@ async fn delete_on_the_source_opens_the_detach_merge_request() {
         forge_writes(&shako)
             .await
             .iter()
-            .any(|w| w == &format!("POST {REPO}/pulls")),
+            .any(|w| w == &format!("POST {REPO}/Shako.OpenPullRequest")),
         "no merge request opened"
     );
 }

@@ -68,7 +68,9 @@ async fn setup_mock_gitea() -> (MockServer, ShakoClient) {
     let client = ShakoClient::new(base_url, "owner", "repo", "token").unwrap();
 
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/api/v1/repos/owner/repo"))
+        .and(wiremock::matchers::path(
+            "/odata/Repositories(Owner='owner',Name='repo')",
+        ))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({
             "default_branch": "main"
         })))
@@ -77,7 +79,7 @@ async fn setup_mock_gitea() -> (MockServer, ShakoClient) {
 
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path(
-            "/api/v1/repos/owner/repo/branches",
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.CreateBranch",
         ))
         .respond_with(wiremock::ResponseTemplate::new(201).set_body_json(json!({
             "name": "portal/create-datasource-feed-strict-12345678"
@@ -86,31 +88,34 @@ async fn setup_mock_gitea() -> (MockServer, ShakoClient) {
         .await;
 
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path_regex(
-            r"^/api/v1/repos/owner/repo/contents/.*",
+        .and(wiremock::matchers::path(
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.File(Path=@p,Ref=@r)",
         ))
         .respond_with(wiremock::ResponseTemplate::new(404))
         .mount(&server)
         .await;
 
-    wiremock::Mock::given(wiremock::matchers::method("PUT"))
-        .and(wiremock::matchers::path_regex(
-            r"^/api/v1/repos/owner/repo/contents/.*",
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path(
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.CommitFiles",
         ))
-        .respond_with(wiremock::ResponseTemplate::new(201).set_body_json(json!({
-            "commit": { "sha": "commit-sha-created" }
-        })))
+        .respond_with(
+            wiremock::ResponseTemplate::new(201)
+                .set_body_json(json!({ "Sha": "commit-sha-created" })),
+        )
         .mount(&server)
         .await;
 
     wiremock::Mock::given(wiremock::matchers::method("POST"))
-        .and(wiremock::matchers::path("/api/v1/repos/owner/repo/pulls"))
+        .and(wiremock::matchers::path(
+            "/odata/Repositories(Owner='owner',Name='repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(wiremock::ResponseTemplate::new(201).set_body_json(json!({
-            "number": 42,
-            "html_url": "https://git.example/pulls/42",
-            "state": "open",
-            "mergeable": true,
-            "merged": false
+            "Number": 42,
+            "HtmlUrl": "https://git.example/pulls/42",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&server)
         .await;
@@ -744,7 +749,7 @@ async fn branches_created(server: &MockServer) -> usize {
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/branches"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.CreateBranch"))
         .count()
 }
 

@@ -135,18 +135,20 @@ fn state_with(shako: &MockServer) -> AppState {
 /// `manifest` at `file`.
 async fn pull(shako: &MockServer, number: u64, branch: &str, file: &str, manifest: &Value) {
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/{number}")))
+        .and(path(format!("{REPO}/PullRequests({number})")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "number": number,
-            "html_url": format!("https://shako.example/pulls/{number}"),
-            "state": "open",
-            "title": branch,
-            "head": { "ref": branch },
-            "base": { "ref": "main" },
-            "created_at": "2026-09-15T09:00:00Z",
-            "user": { "login": "someone", "full_name": "someone", "email": "someone@hel.fi" },
-            "mergeable": true,
-            "merged": false
+            "Number": number,
+            "HtmlUrl": format!("https://shako.example/pulls/{number}"),
+            "State": "open",
+            "Title": branch,
+            "Head": branch,
+            "Base": "main",
+            "CreatedAt": "2026-09-15T09:00:00Z",
+            "Author": "someone",
+            "AuthorName": "someone",
+            "AuthorEmail": "someone@hel.fi",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(shako)
         .await;
@@ -161,18 +163,22 @@ async fn pull(shako: &MockServer, number: u64, branch: &str, file: &str, manifes
         "added"
     };
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/{number}/files")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            { "filename": file, "status": status }
-        ])))
+        .and(path(format!("{REPO}/PullRequests({number})/Files")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                { "Filename": file, "Status": status }
+            ]
+        })))
         .mount(shako)
         .await;
     let yaml = serde_norway::to_string(manifest).expect("yaml");
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/{file}")))
-        .and(query_param("ref", git_ref))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{file}'")))
+        .and(query_param("@r", format!("'{}'", git_ref)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": format!("sha-{number}"), "content": encode(&yaml)
+            "Sha": format!("sha-{number}"),
+            "Content": encode(&yaml)
         })))
         .with_priority(1)
         .mount(shako)
@@ -566,7 +572,7 @@ async fn an_approver_approves_a_grant_only_within_their_own_rights_and_a_removal
         .await
         .expect("requests")
         .iter()
-        .any(|request| request.url.path().ends_with("/merge")));
+        .any(|request| request.url.path().ends_with("/Shako.Merge")));
 }
 
 #[tokio::test]

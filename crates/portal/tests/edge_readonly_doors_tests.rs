@@ -195,20 +195,25 @@ async fn federation_graph(
 async fn a_history_is_a_read_of_one_project_and_of_as_many_commits_as_it_serves() {
     let forge = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo/commits"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-            "sha": "0f1e2d3c4b5a69788796a5b4c3d2e1f0a1b2c3d4",
-            "commit": {
-                "message": "add the bikes endpoint",
-                "author": { "name": "Jana", "email": "jana@hel.fi",
-                            "date": "2026-09-18T09:12:03Z" }
-            }
-        }])))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.History(Ref=@r,Path=@p,Top=@n)"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Sha": "0f1e2d3c4b5a69788796a5b4c3d2e1f0a1b2c3d4",
+                    "Message": "add the bikes endpoint",
+                    "Author": "Jana",
+                    "Email": "jana@hel.fi",
+                    "Date": "2026-09-18T09:12:03Z"
+                }
+            ]
+        })))
         .mount(&forge)
         .await;
     let client = ShakoClient::new(
@@ -265,7 +270,7 @@ async fn a_history_is_a_read_of_one_project_and_of_as_many_commits_as_it_serves(
         .await
         .unwrap_or_default()
         .into_iter()
-        .filter(|request| request.url.path().ends_with("/commits"))
+        .filter(|request| request.url.path().contains("/Shako.History("))
         .map(|request| request.url.query().unwrap_or_default().to_owned())
         .collect();
     assert_eq!(asked.len(), 1, "{asked:?}");

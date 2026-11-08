@@ -172,7 +172,7 @@ mod tests {
     use super::*;
     use base64::Engine as _;
     use serde_json::json;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const ENDPOINT: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: air\n  namespace: helsinki\nspec:\n  enabledRepresentations: [ngsi-ld, csv, xlsx, zip, geojson, ogc-features]\n  disabledRepresentations: [json, parquet, sta]\n";
@@ -257,15 +257,17 @@ mod tests {
     async fn a_file_that_moved_on_is_refused_by_the_forge_and_not_overwritten() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo/contents/a.yaml"))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", "'a.yaml'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "stale-sha",
-                "content": base64::engine::general_purpose::STANDARD.encode(ENDPOINT),
+                "Sha": "stale-sha",
+                "Content": base64::engine::general_purpose::STANDARD.encode(ENDPOINT)
             })))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path("/api/v1/repos/test-owner/test-repo/contents"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+            ))
             .respond_with(
                 ResponseTemplate::new(409).set_body_json(json!({"message": "sha does not match"})),
             )
@@ -387,20 +389,20 @@ mod tests {
         for (file, content) in [("a.yaml", ENDPOINT), ("b.yaml", clean)] {
             Mock::given(method("GET"))
                 .and(path(format!(
-                    "/api/v1/repos/test-owner/test-repo/contents/{file}"
-                )))
+                    "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"
+                ))).and(query_param("@p", format!("'{file}'")))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                    "sha": "blob-sha",
-                    "content": base64::engine::general_purpose::STANDARD.encode(content),
+                    "Sha": "blob-sha",
+                    "Content": base64::engine::general_purpose::STANDARD.encode(content)
                 })))
                 .mount(&server)
                 .await;
         }
         Mock::given(method("POST"))
-            .and(path("/api/v1/repos/test-owner/test-repo/contents"))
-            .respond_with(
-                ResponseTemplate::new(201).set_body_json(json!({"commit": {"sha": "c1"}})),
-            )
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+            ))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
             .expect(1)
             .mount(&server)
             .await;

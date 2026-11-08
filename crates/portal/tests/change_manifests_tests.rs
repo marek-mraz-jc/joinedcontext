@@ -22,15 +22,16 @@ const ENDPOINT_YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpo
 
 fn pull(number: u64, merged: bool) -> Value {
     json!({
-        "number": number,
-        "html_url": format!("https://shako.example/pulls/{number}"),
-        "state": if merged { "closed" } else { "open" },
-        "title": "update",
-        "head": { "ref": format!("portal/update-pipeline-air-ingest-{number:08x}"), "sha": format!("head-{number}") },
-        "base": { "ref": "main" },
-        "merged": merged,
-        "merge_base": "base-1",
-        "user": { "login": "jana" }
+        "Number": number,
+        "HtmlUrl": format!("https://shako.example/pulls/{number}"),
+        "State": if merged { "closed" } else { "open" },
+        "Title": "update",
+        "Head": format!("portal/update-pipeline-air-ingest-{number:08x}"),
+        "HeadSha": format!("head-{number}"),
+        "Base": "main",
+        "Merged": merged,
+        "MergeBase": "base-1",
+        "Author": "jana"
     })
 }
 
@@ -39,21 +40,23 @@ fn pull(number: u64, merged: bool) -> Value {
 async fn world() -> (MockServer, AppState) {
     let shako = forge().await;
     let files = json!([
-        { "filename": PIPELINE, "status": "modified" },
-        { "filename": NATIVE, "status": "modified" },
-        { "filename": ENDPOINT, "status": "added" },
-        { "filename": GONE, "status": "deleted" },
-        { "filename": "users/someone.yaml", "status": "modified" }
+        { "Filename": PIPELINE, "Status": "modified" },
+        { "Filename": NATIVE, "Status": "modified" },
+        { "Filename": ENDPOINT, "Status": "added" },
+        { "Filename": GONE, "Status": "deleted" },
+        { "Filename": "users/someone.yaml", "Status": "modified" }
     ]);
     for (number, merged) in [(6, true), (8, false)] {
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/pulls/{number}")))
+            .and(path(format!("{REPO}/PullRequests({number})")))
             .respond_with(ResponseTemplate::new(200).set_body_json(pull(number, merged)))
             .mount(&shako)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/pulls/{number}/files")))
-            .respond_with(ResponseTemplate::new(200).set_body_json(files.clone()))
+            .and(path(format!("{REPO}/PullRequests({number})/Files")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "value": files.clone() })),
+            )
             .mount(&shako)
             .await;
     }
@@ -63,11 +66,12 @@ async fn world() -> (MockServer, AppState) {
         (ENDPOINT, ENDPOINT_YAML),
     ] {
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/contents/{file}")))
-            .and(query_param("ref", "head-6"))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{file}'")))
+            .and(query_param("@r", "'head-6'"))
             .respond_with(
                 ResponseTemplate::new(200)
-                    .set_body_json(json!({ "sha": "blob", "content": encode(content) })),
+                    .set_body_json(json!({ "Sha": "blob", "Content": encode(content) })),
             )
             .mount(&shako)
             .await;
@@ -154,7 +158,7 @@ async fn a_merged_change_answers_the_manifests_it_wrote_at_its_last_commit() {
 
 #[tokio::test]
 async fn a_kind_the_caller_does_not_read_is_left_out() {
-    let (_gitea, state) = world().await;
+    let (_forge, state) = world().await;
     let (status, body) = manifests(&state, "pipelines", PROJECT, "chg-00000006").await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(names(&body), vec!["Pipeline/air-ingest"], "{body}");
@@ -162,7 +166,7 @@ async fn a_kind_the_caller_does_not_read_is_left_out() {
 
 #[tokio::test]
 async fn an_open_change_is_refused_in_words() {
-    let (_gitea, state) = world().await;
+    let (_forge, state) = world().await;
     let (status, body) = manifests(&state, "both", PROJECT, "chg-00000008").await;
     assert_eq!(status, 409, "{body}");
     assert!(
@@ -173,7 +177,7 @@ async fn an_open_change_is_refused_in_words() {
 
 #[tokio::test]
 async fn another_project_or_no_binding_is_not_found() {
-    let (_gitea, state) = world().await;
+    let (_forge, state) = world().await;
     let (status, _) = manifests(&state, "stranger", PROJECT, "chg-00000006").await;
     assert_eq!(status, 404);
     let (status, _) = manifests(&state, "both", "elsewhere", "chg-00000006").await;
@@ -186,7 +190,7 @@ async fn another_project_or_no_binding_is_not_found() {
 /// Endpoint the change wrote names no space, so a reader of space `water` is not handed it.
 #[tokio::test]
 async fn a_reader_of_one_space_is_not_handed_another_spaces_manifest() {
-    let (_gitea, state) = world().await;
+    let (_forge, state) = world().await;
     state
         .mirror
         .upsert(envelope("ContextSpace", "water", PROJECT, json!({})));

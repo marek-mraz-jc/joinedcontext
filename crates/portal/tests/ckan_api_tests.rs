@@ -23,13 +23,12 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use serde_json::{json, Value};
 use tower::ServiceExt;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_string_contains, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const CSRF_TOKEN: &str = "test-csrf-token-12345";
 const SLUG: &str = "zt4qm7ge2xdv6ksb3ncf5arw2y";
-const INSTANCE_PATH: &str =
-    "/api/v1/repos/test-owner/test-repo/contents/projects/ovzdusie/ckan/open-data.yaml";
+const INSTANCE_PATH: &str = "projects/ovzdusie/ckan/open-data.yaml";
 
 fn session_cookie(config: &Config) -> String {
     use axum::response::IntoResponse;
@@ -313,36 +312,47 @@ async fn a_catalogue_is_configured_through_the_resource_api_as_a_change_proposal
     .expect("client");
 
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/test-repo"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&forge)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
-        .and(path(INSTANCE_PATH))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param("@p", format!("'{INSTANCE_PATH}'")))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .mount(&forge)
         .await;
-    Mock::given(method("PUT"))
-        .and(path(INSTANCE_PATH))
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+        ))
+        .and(body_string_contains(format!(r#""path":"{INSTANCE_PATH}""#)))
         .respond_with(
-            ResponseTemplate::new(201)
-                .set_body_json(json!({ "commit": { "sha": "commit-sha-created" } })),
+            ResponseTemplate::new(201).set_body_json(json!({ "Sha": "commit-sha-created" })),
         )
         .mount(&forge)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/test-owner/test-repo/pulls"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
-            "number": 7,
-            "html_url": "https://shako.example.sk/pulls/7",
-            "state": "open",
-            "mergeable": true,
-            "merged": false
+            "Number": 7,
+            "HtmlUrl": "https://shako.example.sk/pulls/7",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
         })))
         .mount(&forge)
         .await;

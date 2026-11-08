@@ -294,7 +294,7 @@ async fn check(res: reqwest::Response) -> Result<reqwest::Response, GitError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{body_partial_json, header, method, path};
+    use wiremock::matchers::{body_partial_json, body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const TOKEN: &str = "ghp_test-token-never-printed";
@@ -406,19 +406,21 @@ mod tests {
             .await;
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/joinedcontext/helsinki_bikes/push_mirrors",
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/PushMirrors",
             ))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [] })),
+            )
             .mount(&shako)
             .await;
         Mock::given(method("POST"))
             .and(path(
-                "/api/v1/repos/joinedcontext/helsinki_bikes/push_mirrors",
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/Shako.AddPushMirror",
             ))
             .and(body_partial_json(serde_json::json!({
-                "remote_address": "https://github.com/hel-apps/helsinki_bikes.git",
-                "remote_password": TOKEN,
-                "sync_on_commit": true,
+                "RemoteAddress": "https://github.com/hel-apps/helsinki_bikes.git",
+                "Credential": TOKEN,
+                "SyncOnCommit": true
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
@@ -426,7 +428,7 @@ mod tests {
             .await;
         Mock::given(method("POST"))
             .and(path(
-                "/api/v1/repos/joinedcontext/helsinki_bikes/push_mirrors-sync",
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/Shako.SyncPushMirrors",
             ))
             .respond_with(ResponseTemplate::new(200))
             .expect(1)
@@ -451,15 +453,17 @@ mod tests {
             .await;
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/joinedcontext/helsinki_bikes/push_mirrors",
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/PushMirrors",
             ))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!([{
-                    "remote_name": "remote_mirror_x",
-                    "remote_address": "https://github.com/hel-apps/helsinki_bikes.git",
-                    "last_error": ""
-                }])),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "value": [
+                    {
+                        "Name": "remote_mirror_x",
+                        "RemoteAddress": "https://github.com/hel-apps/helsinki_bikes.git",
+                        "LastError": ""
+                    }
+                ]
+            })))
             .mount(&shako)
             .await;
         Mock::given(method("POST"))
@@ -486,28 +490,30 @@ mod tests {
             .await;
         Mock::given(method("GET"))
             .and(path(
-                "/api/v1/repos/joinedcontext/helsinki_bikes/push_mirrors",
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/PushMirrors",
             ))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!([{
-                    "remote_name": "remote_mirror_x",
-                    "remote_address": "https://github.com/hel-apps/helsinki_bikes.git",
-                    "last_error": "authentication failed"
-                }])),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "value": [
+                    {
+                        "Name": "remote_mirror_x",
+                        "RemoteAddress": "https://github.com/hel-apps/helsinki_bikes.git",
+                        "LastError": "authentication failed"
+                    }
+                ]
+            })))
             .mount(&shako)
             .await;
-        Mock::given(method("DELETE"))
+        Mock::given(method("POST"))
             .and(path(
-                "/api/v1/repos/joinedcontext/helsinki_bikes/push_mirrors/remote_mirror_x",
-            ))
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/Shako.RemovePushMirror",
+            )).and(body_string_contains(r#""Name":"remote_mirror_x""#))
             .respond_with(ResponseTemplate::new(204))
             .expect(1)
             .mount(&shako)
             .await;
         Mock::given(method("POST"))
             .and(path(
-                "/api/v1/repos/joinedcontext/helsinki_bikes/push_mirrors",
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/Shako.AddPushMirror",
             ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .expect(1)
@@ -515,7 +521,7 @@ mod tests {
             .await;
         Mock::given(method("POST"))
             .and(path(
-                "/api/v1/repos/joinedcontext/helsinki_bikes/push_mirrors-sync",
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/Shako.SyncPushMirrors",
             ))
             .respond_with(ResponseTemplate::new(200))
             .expect(1)

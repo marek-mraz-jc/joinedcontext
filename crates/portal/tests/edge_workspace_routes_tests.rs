@@ -68,10 +68,8 @@ fn stranger() -> Identity {
 async fn world() -> (MockServer, AppState) {
     let shako = forge().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/branches/main")))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": "base1" } })),
-        )
+        .and(path(format!("{REPO}/Branches('main')")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "base1" })))
         .mount(&shako)
         .await;
     let state = state_on(&shako);
@@ -183,7 +181,7 @@ async fn opening_hides_a_project_from_a_stranger_and_names_the_grant_to_a_viewer
 /// proved.
 #[tokio::test]
 async fn a_title_or_a_ttl_outside_its_bounds_is_refused_and_the_bound_itself_is_not() {
-    let (_gitea, state) = world().await;
+    let (_shako, state) = world().await;
     let max_days = MAX_TTL_HOURS / 24;
 
     let refused: Vec<(&str, Value)> = vec![
@@ -327,7 +325,7 @@ async fn a_name_the_store_refuses_is_read_from_the_forge_before_it_is_refused() 
     // The two reads that happened before each of those refusals, and no write.
     let calls = touched(&shako).await;
     assert!(
-        calls.iter().any(|call| call.ends_with("/branches/main")),
+        calls.iter().any(|call| call.ends_with("/Branches('main')")),
         "the forge was not read at all, so the order has changed: {calls:?}",
     );
     let writes: Vec<String> = calls
@@ -347,7 +345,7 @@ async fn a_name_the_store_refuses_is_read_from_the_forge_before_it_is_refused() 
 /// person has to pick another name, which is not a leak and is the thing they act on (T-2296).
 #[tokio::test]
 async fn a_name_held_out_of_sight_is_taken_without_being_named() {
-    let (_gitea, state) = world().await;
+    let (_shako, state) = world().await;
     opened(&state, ELSEWHERE, "air-v2", "peter@hel.fi").await;
 
     // The steward reads every project, so for them the conflict is the plain one: they can go and
@@ -420,7 +418,7 @@ async fn a_name_held_out_of_sight_is_taken_without_being_named() {
 /// walk upwards is a different project, which is to say none.
 #[tokio::test]
 async fn a_listing_of_a_project_nobody_bound_the_caller_to_is_not_an_empty_list() {
-    let (_gitea, state) = world().await;
+    let (_shako, state) = world().await;
     opened(&state, PROJECT, "air-v2", "jana@hel.fi").await;
 
     for (who, uri) in [
@@ -461,7 +459,7 @@ async fn a_listing_of_a_project_nobody_bound_the_caller_to_is_not_an_empty_list(
 /// now answers the second sentence for both misses (`src/ops/workspaces.rs:791`, T-2296).
 #[tokio::test]
 async fn reading_a_workspace_of_another_project_is_not_there_in_the_same_words_as_one_nobody_has() {
-    let (_gitea, state) = world().await;
+    let (_shako, state) = world().await;
     opened(&state, ELSEWHERE, "air-v2", "peter@hel.fi").await;
 
     for suffix in ["", "/compare"] {

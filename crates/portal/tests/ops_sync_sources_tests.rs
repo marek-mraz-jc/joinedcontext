@@ -23,7 +23,7 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::sync::driver::{Driver, Remote};
 use joinedcontext_portal::sync::state::States;
 use serde_json::{json, Value};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const HEAD: &str = "5e1f0c2a9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f";
@@ -53,26 +53,30 @@ impl SyncRemote for Silent {
 async fn world() -> (MockServer, AppState) {
     let server = forge().await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/branches/main")))
+        .and(path(format!("{REPO}/Branches('main')")))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({ "name": "main", "commit": { "id": HEAD } })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Name": "main", "HeadSha": HEAD })),
         )
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/git/trees/{HEAD}")))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", format!("'{HEAD}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "tree", "truncated": false,
-            "tree": [{ "path": SOURCE_FILE, "type": "blob" }],
+            "Sha": "tree",
+            "Truncated": false,
+            "Tree": [{ "Path": SOURCE_FILE, "Type": "blob" }]
         })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/contents/{SOURCE_FILE}")))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{SOURCE_FILE}'")))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!({ "sha": "blob", "content": encode(SOURCE) })),
+                .set_body_json(json!({ "Sha": "blob", "Content": encode(SOURCE) })),
         )
         .mount(&server)
         .await;

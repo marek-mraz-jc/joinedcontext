@@ -438,7 +438,7 @@ async fn two_approvals_at_once_open_one_change() {
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/pulls"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.OpenPullRequest"))
         .count();
     assert_eq!(opened, 1, "one approval, one Change");
 }
@@ -511,7 +511,7 @@ async fn two_revokes_at_once_open_one_change() {
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/pulls"))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.OpenPullRequest"))
         .count();
     assert_eq!(opened, 2, "one approval and one revoke, one Change each");
     let revoked =

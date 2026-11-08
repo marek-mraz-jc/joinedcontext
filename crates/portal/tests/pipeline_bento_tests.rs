@@ -20,9 +20,17 @@ async fn world(file: Option<ResponseTemplate>) -> (AppState, MockServer) {
     let shako = common::forge().await;
     if let Some(answer) = file {
         Mock::given(method("GET"))
-            .and(path_regex(format!(
-                "^{REPO}/contents/projects/helsinki/.*pipelines/stations/bento.yaml$"
-            )))
+            .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
+            .and(|r: &wiremock::Request| {
+                r.url.query_pairs().any(|(k, v)| {
+                    k == "@p"
+                        && regex::Regex::new(
+                            r"^'projects/helsinki/.*pipelines/stations/bento.yaml'$",
+                        )
+                        .expect("a pattern")
+                        .is_match(&v)
+                })
+            })
             .respond_with(answer)
             .mount(&shako)
             .await;
