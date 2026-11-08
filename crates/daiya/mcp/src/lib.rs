@@ -76,6 +76,24 @@ pub fn list_mcp_tools(state: &DaiyaState) -> Vec<McpToolSpec> {
     tools
 }
 
+/// A required string argument; a missing or non-string one is a 400, never an empty uid.
+fn required_str<'a>(args: &'a Value, name: &str) -> CrResult<&'a str> {
+    args.get(name)
+        .and_then(Value::as_str)
+        .ok_or_else(|| CrError::BadRequest(format!("missing required argument '{name}'")))
+}
+
+/// A required panel id: a non-negative integer that fits a Grafana panel id, refused (not
+/// truncated or defaulted to panel 1) otherwise.
+fn required_panel_id(args: &Value) -> CrResult<u32> {
+    let raw = args
+        .get("panelId")
+        .ok_or_else(|| CrError::BadRequest("missing required argument 'panelId'".into()))?;
+    raw.as_u64()
+        .and_then(|n| u32::try_from(n).ok())
+        .ok_or_else(|| CrError::BadRequest(format!("invalid panelId {raw}")))
+}
+
 /// Executes an MCP tool call under `ctx`, delegating to the exact same implementation and
 /// [`Authorizer`] decision as OData and CLI (R10, R10a).
 pub async fn call_mcp_tool(
@@ -133,16 +151,16 @@ pub async fn call_mcp_tool(
             exec_odata_datasource_query(state, ctx, None, body).await
         }
         "Datasource/Health" => {
-            let uid = args.get("uid").and_then(Value::as_str).unwrap_or("");
+            let uid = required_str(&args, "uid")?;
             exec_odata_datasource_health(state, ctx, uid).await
         }
         "Datasource/EditorSchema" => {
-            let uid = args.get("uid").and_then(Value::as_str).unwrap_or("");
+            let uid = required_str(&args, "uid")?;
             exec_odata_datasource_editor_schema(state, ctx, uid).await
         }
         "Datasource/Resource" => {
-            let uid = args.get("uid").and_then(Value::as_str).unwrap_or("");
-            let path = args.get("path").and_then(Value::as_str).unwrap_or("");
+            let uid = required_str(&args, "uid")?;
+            let path = required_str(&args, "path")?;
             let params: BTreeMap<String, String> = args
                 .get("params")
                 .cloned()
@@ -151,8 +169,8 @@ pub async fn call_mcp_tool(
             exec_odata_datasource_resource(state, ctx, uid, path, params).await
         }
         "Dashboard/RenderPanel" => {
-            let uid = args.get("uid").and_then(Value::as_str).unwrap_or("");
-            let panel_id = args.get("panelId").and_then(Value::as_u64).unwrap_or(1) as u32;
+            let uid = required_str(&args, "uid")?;
+            let panel_id = required_panel_id(&args)?;
             let range = PanelTimeRange {
                 from: args.get("from").and_then(Value::as_str).map(str::to_owned),
                 to: args.get("to").and_then(Value::as_str).map(str::to_owned),
@@ -162,7 +180,7 @@ pub async fn call_mcp_tool(
             Ok(serde_json::to_value(pv).unwrap_or(Value::Null))
         }
         "Dashboard/Export" => {
-            let uid = args.get("uid").and_then(Value::as_str).unwrap_or("");
+            let uid = required_str(&args, "uid")?;
             exec_odata_export(state, ctx, uid).await
         }
         "Import" => {
@@ -183,16 +201,13 @@ pub async fn call_mcp_tool(
             exec_odata_apply(state, ctx, plan).await
         }
         "PublicDashboard/Rotate" => {
-            let uid = args.get("uid").and_then(Value::as_str).unwrap_or("");
+            let uid = required_str(&args, "uid")?;
             let rec = rotate_public_dashboard_token(state, ctx, uid).await?;
             Ok(serde_json::to_value(rec).unwrap_or(Value::Null))
         }
         "PublicDashboard/Query" => {
-            let token = args
-                .get("accessToken")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let panel_id = args.get("panelId").and_then(Value::as_u64).unwrap_or(1) as u32;
+            let token = required_str(&args, "accessToken")?;
+            let panel_id = required_panel_id(&args)?;
             let sets = execute_public_dashboard_query(
                 state,
                 IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -204,10 +219,7 @@ pub async fn call_mcp_tool(
             Ok(json!({ "value": sets }))
         }
         "Allowed" => {
-            let op = args
-                .get("operation")
-                .and_then(Value::as_str)
-                .unwrap_or("read");
+            let op = required_str(&args, "operation")?;
             let obj = args.get("object").and_then(Value::as_str);
             let dec = state
                 .registry
