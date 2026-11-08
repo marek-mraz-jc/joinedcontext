@@ -151,6 +151,7 @@ pub async fn ensure_default_catalogue(
                 allowed_outbound_hosts: Vec::new(),
                 applicable_legislation: Vec::new(),
                 modified: Utc::now(),
+                public_base: None,
             })
             .await?;
     }
@@ -550,6 +551,7 @@ mod tests {
                 allowed_outbound_hosts: Vec::new(),
                 applicable_legislation: Vec::new(),
                 modified: Utc::now(),
+                public_base: None,
             })
             .await
             .unwrap();

@@ -525,13 +525,17 @@ pub async fn execute_public_dashboard_query(
     }
 
     // Cap range to organization's max_public_range_seconds (R7)
-    let max_range_ms = quotas.max_public_range_seconds.max(60) * 1_000;
-    if to_ms - from_ms > max_range_ms {
-        from_ms = to_ms - max_range_ms;
+    // Saturating: a `from` near i64::MIN must not wrap the span negative and skip the cap.
+    let max_range_ms = quotas
+        .max_public_range_seconds
+        .max(60)
+        .saturating_mul(1_000);
+    if to_ms.saturating_sub(from_ms) > max_range_ms {
+        from_ms = to_ms.saturating_sub(max_range_ms);
     }
 
     // Cap interval to organization's min_public_interval_ms and safe resolution 11000 (R7, `service.go:349`)
-    let safe_interval_ms = ((to_ms - from_ms) / 11_000).max(1_000);
+    let safe_interval_ms = (to_ms.saturating_sub(from_ms) / 11_000).max(1_000);
     let requested_interval = req.interval_ms.unwrap_or(quotas.min_public_interval_ms);
     if requested_interval <= 0 {
         return Err(CrError::BadRequest(

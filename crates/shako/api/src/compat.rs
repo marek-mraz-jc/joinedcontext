@@ -4,11 +4,8 @@
 //! Rows 6–11 (Actions) return 404 with Gitea error JSON `{"message":"actions are not served by this forge yet","url":...}`
 //! per `00-task.md` section 1.
 
-use crate::outbox::{
-    build_pr_webhook_payload, build_push_webhook_payload, deliver_webhook_with_retries,
-    emit_and_dispatch_event,
-};
-use crate::smart_http::sync_repo_mirrors_on_commit;
+use crate::outbox::emit_and_dispatch_event;
+use crate::service;
 use crate::state::{
     ShakoState, authenticate_request, gitea_error_response, repo_to_gitea_json,
     resolve_and_authorize_repo, stream_bytes_in_64k_chunks,
@@ -26,17 +23,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use shako_core::{
     ARCHIVE_OPERATION_WEIGHT_BYTES, Action, BranchProtectionRule, CommitStatusRecord,
-    MERGE_OPERATION_WEIGHT_BYTES, MergePolicyInput, ObjectTarget, OrgId, ProtectionRuleRecord,
-    PullRequestRecord, PushMirrorRecord, RefPolicy, RefUpdate, RepoId, RepoRecord, ReviewRecord,
-    ReviewVerdict, ShakoError, ShakoResult, WebhookId, WebhookRecord, check_repo_count_quota,
-    validate_branch_name, validate_repo_or_owner_name, validate_tree_path,
+    PullRequestRecord, RepoRecord, ReviewVerdict, ShakoError, ShakoResult, WebhookFormat,
+    WebhookId, validate_repo_or_owner_name, validate_tree_path,
 };
 use shako_git::{
-    ArchiveFormat, CommitAuthor, FileChangeOp, FileOpKind, MergeOptions, MergeStyle,
-    check_mergeability, commit_file_changes, compute_repo_size_bytes, copy_bare_repo,
-    create_archive, create_branch, create_single_ref_bundle, delete_branch, diff_refs_files,
-    execute_pr_merge, init_bare_repo, list_commits, list_tags, list_tree_entries, open_isolated,
-    read_commit_info, read_file_at_ref, set_ref_direct, update_pr_branch,
+    ArchiveFormat, CommitAuthor, FileOpKind, MergeStyle, create_archive, create_single_ref_bundle,
+    list_commits, list_tags, list_tree_entries, read_commit_info, read_file_at_ref,
 };
 
 fn default_main() -> String {
@@ -132,108 +124,25 @@ async fn compat_create_org_repo(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    if let Err(e) = validate_repo_or_owner_name(&owner, "owner") {
-        return gitea_error_response(&state, &e);
-    }
-    if let Err(e) = validate_repo_or_owner_name(&req.name, "repository") {
-        return gitea_error_response(&state, &e);
-    }
-    if let Err(e) = validate_branch_name(&req.default_branch) {
-        return gitea_error_response(&state, &e);
-    }
-
-    let org_target = ObjectTarget::Organization {
-        instance_id: ctx.instance_id,
-        org_id: ctx.org_id,
-        owner: owner.clone(),
-    };
-    if let Err(e) = state
-        .authorizer
-        .check(&ctx, Action::Write, &org_target)
-        .into_result("organization not found")
-    {
-        return gitea_error_response(&state, &e);
-    }
-
-    let instance = state.instance_for(ctx.instance_id, ctx.org_id).await;
-    let usage = match state
-        .store()
-        .get_quota_usage(ctx.instance_id, ctx.org_id)
-        .await
-    {
-        Ok(u) => u,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-    if let Err(e) = check_repo_count_quota(&instance, &usage) {
-        return gitea_error_response(&state, &e);
-    }
-
-    if let Ok(Some(_)) = state
-        .store()
-        .get_repo_by_name(ctx.instance_id, ctx.org_id, &owner, &req.name)
-        .await
-    {
-        return gitea_error_response(
-            &state,
-            &ShakoError::Conflict("repository already exists".into()),
-        );
-    }
-
-    let repo_id = RepoId::new();
-    let root = state.repo_root().to_path_buf();
-    let inst_id = ctx.instance_id;
-    let def_branch = req.default_branch.clone();
-    let auto_init = req.auto_init;
-    let desc = req.description.clone();
-
-    let disk_path = match tokio::task::spawn_blocking(move || {
-        init_bare_repo(&root, inst_id, repo_id, &def_branch, auto_init, &desc)
-    })
-    .await
-    {
-        Ok(Ok(p)) => p,
-        Ok(Err(e)) => return gitea_error_response(&state, &e),
-        Err(e) => return gitea_error_response(&state, &ShakoError::Internal(e.to_string())),
-    };
-
-    let size_bytes = compute_repo_size_bytes(&disk_path);
-    let now = Utc::now();
-    let rec = RepoRecord {
-        id: repo_id,
-        instance_id: ctx.instance_id,
-        org_id: ctx.org_id,
-        project_id: req.name.clone(),
-        owner: owner.clone(),
+    let new = service::NewRepository {
+        owner,
         name: req.name,
         description: req.description,
-        default_branch: req.default_branch,
         private: req.private,
-        archived: false,
-        size_bytes,
-        next_pr_number: 1,
-        created_at: now,
-        updated_at: now,
+        auto_init: req.auto_init,
+        default_branch: req.default_branch,
     };
-
-    let created = match state.store().create_repo(rec).await {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = std::fs::remove_dir_all(&disk_path);
-            return gitea_error_response(&state, &e);
+    match service::create_repository(&state, &ctx, new).await {
+        Ok(created) => {
+            let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
+            (
+                StatusCode::CREATED,
+                Json(repo_to_gitea_json(&created, &mount)),
+            )
+                .into_response()
         }
-    };
-    state.register_owner_org(&owner, ctx.org_id);
-    let _ = state
-        .store()
-        .adjust_quota_usage(ctx.instance_id, ctx.org_id, 1, size_bytes as i64, 0)
-        .await;
-
-    let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
-    (
-        StatusCode::CREATED,
-        Json(repo_to_gitea_json(&created, &mount)),
-    )
-        .into_response()
+        Err(e) => gitea_error_response(&state, &e),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -339,97 +248,22 @@ async fn compat_migrate_repo(
     let origin_owner = segs[segs.len() - 2];
     let origin_repo_name = segs[segs.len() - 1];
 
-    let (origin_repo, origin_disk) = match resolve_and_authorize_repo(
-        &state,
-        &ctx,
-        origin_owner,
-        origin_repo_name,
-        Action::Read,
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-
-    let org_target = ObjectTarget::Organization {
-        instance_id: ctx.instance_id,
-        org_id: ctx.org_id,
-        owner: req.repo_owner.clone(),
-    };
-    if let Err(e) = state
-        .authorizer
-        .check(&ctx, Action::Write, &org_target)
-        .into_result("organization not found")
-    {
-        return gitea_error_response(&state, &e);
-    }
-
-    if let Ok(Some(_)) = state
-        .store()
-        .get_repo_by_name(ctx.instance_id, ctx.org_id, &req.repo_owner, &req.repo_name)
-        .await
-    {
-        return gitea_error_response(
-            &state,
-            &ShakoError::Conflict("repository already exists".into()),
-        );
-    }
-
-    let new_repo_id = RepoId::new();
-    let root = state.repo_root().to_path_buf();
-    let inst_id = ctx.instance_id;
-    let def_branch = origin_repo.default_branch.clone();
-    let desc = req.description.clone().unwrap_or_default();
-
-    let dest_disk = match tokio::task::spawn_blocking(move || {
-        let dest = init_bare_repo(&root, inst_id, new_repo_id, &def_branch, false, &desc)?;
-        copy_bare_repo(&origin_disk, &dest, &def_branch)?;
-        Ok::<_, ShakoError>(dest)
-    })
-    .await
-    {
-        Ok(Ok(p)) => p,
-        Ok(Err(e)) => return gitea_error_response(&state, &e),
-        Err(e) => return gitea_error_response(&state, &ShakoError::Internal(e.to_string())),
-    };
-
-    let size_bytes = compute_repo_size_bytes(&dest_disk);
-    let now = Utc::now();
-    let rec = RepoRecord {
-        id: new_repo_id,
-        instance_id: ctx.instance_id,
-        org_id: ctx.org_id,
-        project_id: req.repo_name.clone(),
+    let copy = service::RepositoryCopy {
+        source_owner: origin_owner.to_owned(),
+        source_name: origin_repo_name.to_owned(),
         owner: req.repo_owner,
         name: req.repo_name,
-        description: req.description.unwrap_or_default(),
-        default_branch: origin_repo.default_branch,
+        description: req.description,
         private: req.private,
-        archived: false,
-        size_bytes,
-        next_pr_number: 1,
-        created_at: now,
-        updated_at: now,
     };
-
-    let created = match state.store().create_repo(rec).await {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = std::fs::remove_dir_all(&dest_disk);
-            return gitea_error_response(&state, &e);
-        }
-    };
-    let _ = state
-        .store()
-        .adjust_quota_usage(ctx.instance_id, ctx.org_id, 1, size_bytes as i64, 0)
-        .await;
-
-    (
-        StatusCode::CREATED,
-        Json(repo_to_gitea_json(&created, &mount)),
-    )
-        .into_response()
+    match service::import_repository(&state, &ctx, copy).await {
+        Ok(created) => (
+            StatusCode::CREATED,
+            Json(repo_to_gitea_json(&created, &mount)),
+        )
+            .into_response(),
+        Err(e) => gitea_error_response(&state, &e),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -458,35 +292,14 @@ async fn compat_patch_repo(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (mut repo, _) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Admin).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-
-    if let Some(arch) = req.archived {
-        repo.archived = arch;
-    }
-    if let Some(desc) = req.description {
-        repo.description = desc;
-    }
-    if let Some(def_b) = req.default_branch {
-        if let Err(e) = validate_branch_name(&def_b) {
-            return gitea_error_response(&state, &e);
-        }
-        repo.default_branch = def_b;
-    }
-    if let Some(priv_flag) = req.private {
-        repo.private = priv_flag;
-    }
-    if let Some(new_name) = req.name {
-        if let Err(e) = validate_repo_or_owner_name(&new_name, "repository") {
-            return gitea_error_response(&state, &e);
-        }
-        repo.name = new_name;
-    }
-
-    match state.store().update_repo(repo).await {
+    let patch = service::RepositoryPatch {
+        archived: req.archived,
+        description: req.description,
+        default_branch: req.default_branch,
+        private: req.private,
+        name: req.name,
+    };
+    match service::patch_repository(&state, &ctx, &owner, &repo_name, patch).await {
         Ok(updated) => {
             let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
             (StatusCode::OK, Json(repo_to_gitea_json(&updated, &mount))).into_response()
@@ -504,32 +317,10 @@ async fn compat_delete_repo(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, disk_path) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Admin).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-
-    let _guard = state.repo_locks.lock(repo.id).await;
-    if let Err(e) = state
-        .store()
-        .delete_repo(repo.instance_id, repo.org_id, repo.id)
-        .await
-    {
-        return gitea_error_response(&state, &e);
+    match service::delete_repository(&state, &ctx, &owner, &repo_name).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => gitea_error_response(&state, &e),
     }
-    let _ = std::fs::remove_dir_all(&disk_path);
-    let _ = state
-        .store()
-        .adjust_quota_usage(
-            repo.instance_id,
-            repo.org_id,
-            -1,
-            -(repo.size_bytes as i64),
-            0,
-        )
-        .await;
-    StatusCode::NO_CONTENT.into_response()
 }
 
 // =========================================================================
@@ -561,17 +352,8 @@ async fn compat_list_push_mirrors(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, _) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Admin).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    match state
-        .store()
-        .list_push_mirrors(repo.instance_id, repo.org_id, Some(repo.id))
-        .await
-    {
-        Ok(list) => {
+    match service::list_push_mirrors(&state, &ctx, &owner, &repo_name).await {
+        Ok((_, list)) => {
             let items: Vec<Value> = list
                 .into_iter()
                 .map(|m| {
@@ -601,42 +383,15 @@ async fn compat_add_push_mirror(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, _) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Admin).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-
-    if let Err(e) = state.outbound_guard.validate_url(&req.remote_address, None) {
-        return gitea_error_response(&state, &e);
-    }
-
-    let remote_name = format!("mirror-{}", &uuid::Uuid::now_v7().to_string()[..8]);
-    let secret_ref = req
-        .secret_ref
-        .unwrap_or_else(|| format!("mirror:{}:{}", repo.id, remote_name));
-    if let Some(pw) = &req.remote_password {
-        let user = req.remote_username.as_deref().unwrap_or("x-access-token");
-        state
-            .secret_store
-            .put_secret(repo.org_id, &secret_ref, &format!("{user}:{pw}"));
-    }
-
-    let rec = PushMirrorRecord {
-        id: uuid::Uuid::now_v7(),
-        instance_id: repo.instance_id,
-        org_id: repo.org_id,
-        repo_id: repo.id,
-        remote_name: remote_name.clone(),
+    let new = service::NewPushMirror {
         remote_address: req.remote_address,
-        credential_secret_ref: secret_ref,
-        interval: req.interval.unwrap_or_else(|| "8h0m0s".into()),
+        username: req.remote_username,
+        password: req.remote_password,
+        secret_ref: req.secret_ref,
+        interval: req.interval,
         sync_on_commit: req.sync_on_commit,
-        last_sync: None,
-        last_error: String::new(),
-        created_at: Utc::now(),
     };
-    match state.store().upsert_push_mirror(rec).await {
+    match service::add_push_mirror(&state, &ctx, &owner, &repo_name, new).await {
         Ok(saved) => (
             StatusCode::OK,
             Json(json!({
@@ -661,16 +416,10 @@ async fn compat_delete_push_mirror(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, _) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Admin).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let _ = state
-        .store()
-        .delete_push_mirror(repo.instance_id, repo.org_id, repo.id, &remote_name)
-        .await;
-    StatusCode::NO_CONTENT.into_response()
+    match service::remove_push_mirror(&state, &ctx, &owner, &repo_name, &remote_name).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => gitea_error_response(&state, &e),
+    }
 }
 
 async fn compat_sync_push_mirrors(
@@ -682,13 +431,10 @@ async fn compat_sync_push_mirrors(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, disk_path) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Admin).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    sync_repo_mirrors_on_commit(&state, &repo, &disk_path).await;
-    StatusCode::OK.into_response()
+    match service::sync_push_mirrors(&state, &ctx, &owner, &repo_name).await {
+        Ok(()) => StatusCode::OK.into_response(),
+        Err(e) => gitea_error_response(&state, &e),
+    }
 }
 
 // =========================================================================
@@ -948,32 +694,7 @@ async fn compat_create_branch_protection(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, _) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Admin).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    if let Err(e) = RefPolicy::validate_rule_for_repo(
-        &rule,
-        state.authorizer.as_ref(),
-        repo.instance_id,
-        repo.org_id,
-        &repo.owner,
-        &repo.name,
-    ) {
-        return gitea_error_response(&state, &e);
-    }
-    let now = Utc::now();
-    let rec = ProtectionRuleRecord {
-        id: uuid::Uuid::now_v7(),
-        instance_id: repo.instance_id,
-        org_id: repo.org_id,
-        repo_id: repo.id,
-        rule,
-        created_at: now,
-        updated_at: now,
-    };
-    match state.store().upsert_protection_rule(rec).await {
+    match service::protect_branch(&state, &ctx, &owner, &repo_name, rule).await {
         Ok(saved) => (StatusCode::CREATED, Json(saved.rule)).into_response(),
         Err(e) => gitea_error_response(&state, &e),
     }
@@ -1086,32 +807,7 @@ async fn compat_patch_branch_protection(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, _) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Admin).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    if let Err(e) = RefPolicy::validate_rule_for_repo(
-        &rule,
-        state.authorizer.as_ref(),
-        repo.instance_id,
-        repo.org_id,
-        &repo.owner,
-        &repo.name,
-    ) {
-        return gitea_error_response(&state, &e);
-    }
-    let now = Utc::now();
-    let rec = ProtectionRuleRecord {
-        id: uuid::Uuid::now_v7(),
-        instance_id: repo.instance_id,
-        org_id: repo.org_id,
-        repo_id: repo.id,
-        rule,
-        created_at: now,
-        updated_at: now,
-    };
-    match state.store().upsert_protection_rule(rec).await {
+    match service::protect_branch(&state, &ctx, &owner, &repo_name, rule).await {
         Ok(saved) => (StatusCode::OK, Json(saved.rule)).into_response(),
         Err(e) => gitea_error_response(&state, &e),
     }
@@ -1126,16 +822,10 @@ async fn compat_delete_branch_protection(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, _) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Admin).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let _ = state
-        .store()
-        .delete_protection_rule(repo.instance_id, repo.org_id, repo.id, &rule_name)
-        .await;
-    StatusCode::NO_CONTENT.into_response()
+    match service::unprotect_branch(&state, &ctx, &owner, &repo_name, &rule_name).await {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => gitea_error_response(&state, &e),
+    }
 }
 
 // =========================================================================
@@ -1215,41 +905,8 @@ async fn compat_get_branch(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, disk_path) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Read).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let policy = state
-        .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
-        .await
-        .unwrap_or_default();
-    let is_protected = policy.matching_branch_rule(&branch).is_some();
-
-    let branch_clone = branch.clone();
-    let res = tokio::task::spawn_blocking(move || {
-        let gix_repo = open_isolated(&disk_path)?;
-        let full_ref = format!("refs/heads/{branch_clone}");
-        let partial: &gix_ref::PartialNameRef = full_ref
-            .as_str()
-            .try_into()
-            .map_err(|_| ShakoError::NotFound("branch not found".into()))?;
-        let mut r = gix_repo
-            .try_find_reference(partial)
-            .map_err(|e| ShakoError::Git(e.to_string()))?
-            .ok_or_else(|| ShakoError::NotFound("branch not found".into()))?;
-        let commit_oid = r
-            .peel_to_id()
-            .map_err(|_| ShakoError::NotFound("branch not found".into()))?
-            .detach();
-        Ok::<_, ShakoError>(commit_oid.to_hex().to_string())
-    })
-    .await
-    .map_err(|e| ShakoError::Internal(e.to_string()))
-    .and_then(|r| r);
-
-    match res {
-        Ok(head_sha) => (
+    match service::branch_head(&state, &ctx, &owner, &repo_name, &branch).await {
+        Ok((head_sha, is_protected)) => (
             StatusCode::OK,
             Json(json!({
                 "name": branch,
@@ -1284,47 +941,9 @@ async fn compat_create_branch(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, disk_path) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Propose).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let policy = match state
-        .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
-        .await
+    let from = req.old_branch_name.or(req.old_ref_name);
+    match service::create_branch(&state, &ctx, &owner, &repo_name, &req.new_branch_name, from).await
     {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-    if let Err(e) = policy.check_ref_update(
-        &ctx,
-        state.authorizer.as_ref(),
-        &repo.owner,
-        &repo.name,
-        RefUpdate {
-            refname: &format!("refs/heads/{}", req.new_branch_name),
-            is_delete: false,
-            is_create: true,
-            is_fast_forward: true,
-            changed_paths: &[],
-        },
-    ) {
-        return gitea_error_response(&state, &e);
-    }
-
-    let _guard = state.repo_locks.lock(repo.id).await;
-    let from_ref = req
-        .old_branch_name
-        .or(req.old_ref_name)
-        .unwrap_or_else(|| repo.default_branch.clone());
-    let new_b = req.new_branch_name.clone();
-
-    let res = tokio::task::spawn_blocking(move || create_branch(&disk_path, &new_b, &from_ref))
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))
-        .and_then(|r| r);
-
-    match res {
         Ok(sha) => (
             StatusCode::CREATED,
             Json(json!({
@@ -1346,46 +965,8 @@ async fn compat_delete_branch(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, disk_path) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Propose).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let policy = match state
-        .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-    if let Err(e) = policy.check_ref_update(
-        &ctx,
-        state.authorizer.as_ref(),
-        &repo.owner,
-        &repo.name,
-        RefUpdate {
-            refname: &format!("refs/heads/{branch}"),
-            is_delete: true,
-            is_create: false,
-            is_fast_forward: true,
-            changed_paths: &[],
-        },
-    ) {
-        return gitea_error_response(&state, &e);
-    }
-
-    let _guard = state.repo_locks.lock(repo.id).await;
-    let res = tokio::task::spawn_blocking(move || delete_branch(&disk_path, &branch))
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))
-        .and_then(|r| r);
-
-    match res {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
-        Ok(false) => gitea_error_response(
-            &state,
-            &ShakoError::NotFound("branch does not exist".into()),
-        ),
+    match service::delete_branch(&state, &ctx, &owner, &repo_name, &branch).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => gitea_error_response(&state, &e),
     }
 }
@@ -1399,41 +980,19 @@ async fn compat_get_commit_status(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, _) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Read).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let statuses = match state
-        .store()
-        .list_commit_statuses(repo.instance_id, repo.org_id, repo.id, &sha)
-        .await
-    {
-        Ok(s) => s,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-    let combined_state = if statuses.is_empty() {
-        ""
-    } else if statuses.iter().any(|s| s.state == "error") {
-        "error"
-    } else if statuses.iter().any(|s| s.state == "failure") {
-        "failure"
-    } else if statuses.iter().any(|s| s.state == "pending") {
-        "pending"
-    } else {
-        "success"
-    };
-
-    (
-        StatusCode::OK,
-        Json(json!({
-            "state": combined_state,
-            "total_count": statuses.len(),
-            "statuses": statuses,
-            "sha": sha,
-        })),
-    )
-        .into_response()
+    match service::commit_status(&state, &ctx, &owner, &repo_name, &sha).await {
+        Ok((combined_state, statuses)) => (
+            StatusCode::OK,
+            Json(json!({
+                "state": combined_state,
+                "total_count": statuses.len(),
+                "statuses": statuses,
+                "sha": sha,
+            })),
+        )
+            .into_response(),
+        Err(e) => gitea_error_response(&state, &e),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1575,125 +1134,29 @@ async fn compat_put_contents(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (mut repo, disk_path) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Propose).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
     let clean_path = match validate_tree_path(&file_path) {
         Ok(p) => p,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let branch = req
-        .new_branch
-        .or(req.branch)
-        .unwrap_or_else(|| repo.default_branch.clone());
-
-    let policy = match state
-        .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-    if let Err(e) = policy.check_ref_update(
-        &ctx,
-        state.authorizer.as_ref(),
-        &repo.owner,
-        &repo.name,
-        RefUpdate {
-            refname: &format!("refs/heads/{branch}"),
-            is_delete: false,
-            is_create: false,
-            is_fast_forward: true,
-            changed_paths: std::slice::from_ref(&clean_path),
-        },
-    ) {
-        return gitea_error_response(&state, &e);
-    }
-
-    let decoded = match STANDARD.decode(
-        req.content
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect::<String>()
-            .as_bytes(),
-    ) {
-        Ok(b) => b,
-        Err(e) => {
-            return gitea_error_response(
-                &state,
-                &ShakoError::Unprocessable(format!("invalid base64 content: {e}")),
-            );
-        }
-    };
-
     let is_create = req.sha.as_deref().is_none_or(str::is_empty);
-    let author = req.author.map_or_else(
-        || CommitAuthor {
-            name: ctx.subject.full_name.clone(),
-            email: ctx
-                .subject
-                .email
-                .clone()
-                .unwrap_or_else(|| format!("{}@local", ctx.subject.username)),
-        },
-        |a| CommitAuthor {
-            name: a.name,
-            email: a.email,
-        },
-    );
-    let committer = req.committer.map_or_else(
-        || author.clone(),
-        |c| CommitAuthor {
-            name: c.name,
-            email: c.email,
-        },
-    );
-
-    let _guard = state.repo_locks.lock(repo.id).await;
-    let op = FileChangeOp {
-        operation: if is_create {
-            FileOpKind::Create
-        } else {
-            FileOpKind::Update
-        },
-        path: clean_path.clone(),
-        content: Some(decoded),
-        sha: req.sha,
+    let commit = service::CommitRequest {
+        branch: req.new_branch.or(req.branch),
+        message: req.message,
+        author: author_of(req.author),
+        committer: author_of(req.committer),
+        files: vec![service::FileChange {
+            operation: if is_create {
+                FileOpKind::Create
+            } else {
+                FileOpKind::Update
+            },
+            path: clean_path.clone(),
+            content: Some(req.content),
+            sha: req.sha,
+        }],
     };
-    let disk_clone = disk_path.clone();
-    let branch_clone = branch.clone();
-    let msg = req.message;
-
-    let res = tokio::task::spawn_blocking(move || {
-        commit_file_changes(&disk_clone, &branch_clone, &msg, &author, &committer, &[op])
-    })
-    .await
-    .map_err(|e| ShakoError::Internal(e.to_string()))
-    .and_then(|r| r);
-
-    match res {
+    match service::commit_files(&state, &ctx, &owner, &repo_name, commit).await {
         Ok(commit_sha) => {
-            repo.size_bytes = compute_repo_size_bytes(&disk_path);
-            let _ = state.store().update_repo(repo.clone()).await;
-            let payload = build_push_webhook_payload(
-                &repo,
-                &format!("refs/heads/{branch}"),
-                "",
-                &commit_sha,
-                &ctx.subject.username,
-            );
-            let _ = emit_and_dispatch_event(
-                &state,
-                repo.org_id,
-                Some(repo.id),
-                "push",
-                format!("push:{}:{branch}:{commit_sha}", repo.id),
-                payload,
-            )
-            .await;
-            sync_repo_mirrors_on_commit(&state, &repo, &disk_path).await;
             let status = if is_create {
                 StatusCode::CREATED
             } else {
@@ -1710,6 +1173,13 @@ async fn compat_put_contents(
         }
         Err(e) => gitea_error_response(&state, &e),
     }
+}
+
+fn author_of(dto: Option<AuthorDto>) -> Option<CommitAuthor> {
+    dto.map(|a| CommitAuthor {
+        name: a.name,
+        email: a.email,
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -1737,95 +1207,27 @@ async fn compat_delete_contents(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, disk_path) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Propose).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let clean_path = match validate_tree_path(&file_path) {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
+    let commit = service::CommitRequest {
+        branch: req.new_branch.or(req.branch),
+        message: req.message,
+        author: author_of(req.author),
+        committer: author_of(req.committer),
+        files: vec![service::FileChange {
+            operation: FileOpKind::Delete,
+            path: file_path,
+            content: None,
+            sha: Some(req.sha),
+        }],
     };
-    let branch = req
-        .new_branch
-        .or(req.branch)
-        .unwrap_or_else(|| repo.default_branch.clone());
-
-    let policy = match state
-        .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-    if let Err(e) = policy.check_ref_update(
-        &ctx,
-        state.authorizer.as_ref(),
-        &repo.owner,
-        &repo.name,
-        RefUpdate {
-            refname: &format!("refs/heads/{branch}"),
-            is_delete: false,
-            is_create: false,
-            is_fast_forward: true,
-            changed_paths: std::slice::from_ref(&clean_path),
-        },
-    ) {
-        return gitea_error_response(&state, &e);
-    }
-
-    let author = req.author.map_or_else(
-        || CommitAuthor {
-            name: ctx.subject.full_name.clone(),
-            email: ctx
-                .subject
-                .email
-                .clone()
-                .unwrap_or_else(|| format!("{}@local", ctx.subject.username)),
-        },
-        |a| CommitAuthor {
-            name: a.name,
-            email: a.email,
-        },
-    );
-    let committer = req.committer.map_or_else(
-        || author.clone(),
-        |c| CommitAuthor {
-            name: c.name,
-            email: c.email,
-        },
-    );
-
-    let _guard = state.repo_locks.lock(repo.id).await;
-    let op = FileChangeOp {
-        operation: FileOpKind::Delete,
-        path: clean_path,
-        content: None,
-        sha: Some(req.sha),
-    };
-    let disk_clone = disk_path.clone();
-    let branch_clone = branch.clone();
-    let msg = req.message;
-
-    let res = tokio::task::spawn_blocking(move || {
-        commit_file_changes(&disk_clone, &branch_clone, &msg, &author, &committer, &[op])
-    })
-    .await
-    .map_err(|e| ShakoError::Internal(e.to_string()))
-    .and_then(|r| r);
-
-    match res {
-        Ok(commit_sha) => {
-            sync_repo_mirrors_on_commit(&state, &repo, &disk_path).await;
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "content": Value::Null,
-                    "commit": { "sha": commit_sha },
-                })),
-            )
-                .into_response()
-        }
+    match service::commit_files(&state, &ctx, &owner, &repo_name, commit).await {
+        Ok(commit_sha) => (
+            StatusCode::OK,
+            Json(json!({
+                "content": Value::Null,
+                "commit": { "sha": commit_sha },
+            })),
+        )
+            .into_response(),
         Err(e) => gitea_error_response(&state, &e),
     }
 }
@@ -1866,136 +1268,31 @@ async fn compat_post_contents_multi(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (mut repo, disk_path) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Propose).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let branch = req
-        .new_branch
-        .or(req.branch)
-        .unwrap_or_else(|| repo.default_branch.clone());
-
-    let mut ops = Vec::with_capacity(req.files.len());
-    let mut changed_paths = Vec::with_capacity(req.files.len());
-    for item in req.files {
-        let clean = match validate_tree_path(&item.path) {
-            Ok(p) => p,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-        let bytes = match item.content {
-            Some(b64) => {
-                let stripped: String = b64.chars().filter(|c| !c.is_whitespace()).collect();
-                match STANDARD.decode(stripped.as_bytes()) {
-                    Ok(b) => Some(b),
-                    Err(e) => {
-                        return gitea_error_response(
-                            &state,
-                            &ShakoError::Unprocessable(format!(
-                                "invalid base64 for '{clean}': {e}"
-                            )),
-                        );
-                    }
-                }
-            }
-            None => None,
-        };
-        changed_paths.push(clean.clone());
-        ops.push(FileChangeOp {
-            operation: item.operation,
-            path: clean,
-            content: bytes,
-            sha: item.sha,
-        });
-    }
-
-    let policy = match state
-        .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
+    let commit = service::CommitRequest {
+        branch: req.new_branch.or(req.branch),
+        message: req.message,
+        author: author_of(req.author),
+        committer: author_of(req.committer),
+        files: req
+            .files
+            .into_iter()
+            .map(|f| service::FileChange {
+                operation: f.operation,
+                path: f.path,
+                content: f.content,
+                sha: f.sha,
+            })
+            .collect(),
     };
-    if let Err(e) = policy.check_ref_update(
-        &ctx,
-        state.authorizer.as_ref(),
-        &repo.owner,
-        &repo.name,
-        RefUpdate {
-            refname: &format!("refs/heads/{branch}"),
-            is_delete: false,
-            is_create: false,
-            is_fast_forward: true,
-            changed_paths: &changed_paths,
-        },
-    ) {
-        return gitea_error_response(&state, &e);
-    }
-
-    let author = req.author.map_or_else(
-        || CommitAuthor {
-            name: ctx.subject.full_name.clone(),
-            email: ctx
-                .subject
-                .email
-                .clone()
-                .unwrap_or_else(|| format!("{}@local", ctx.subject.username)),
-        },
-        |a| CommitAuthor {
-            name: a.name,
-            email: a.email,
-        },
-    );
-    let committer = req.committer.map_or_else(
-        || author.clone(),
-        |c| CommitAuthor {
-            name: c.name,
-            email: c.email,
-        },
-    );
-
-    let _guard = state.repo_locks.lock(repo.id).await;
-    let disk_clone = disk_path.clone();
-    let branch_clone = branch.clone();
-    let msg = req.message;
-
-    let res = tokio::task::spawn_blocking(move || {
-        commit_file_changes(&disk_clone, &branch_clone, &msg, &author, &committer, &ops)
-    })
-    .await
-    .map_err(|e| ShakoError::Internal(e.to_string()))
-    .and_then(|r| r);
-
-    match res {
-        Ok(commit_sha) => {
-            repo.size_bytes = compute_repo_size_bytes(&disk_path);
-            let _ = state.store().update_repo(repo.clone()).await;
-            let payload = build_push_webhook_payload(
-                &repo,
-                &format!("refs/heads/{branch}"),
-                "",
-                &commit_sha,
-                &ctx.subject.username,
-            );
-            let _ = emit_and_dispatch_event(
-                &state,
-                repo.org_id,
-                Some(repo.id),
-                "push",
-                format!("push:{}:{branch}:{commit_sha}", repo.id),
-                payload,
-            )
-            .await;
-            sync_repo_mirrors_on_commit(&state, &repo, &disk_path).await;
-            (
-                StatusCode::CREATED,
-                Json(json!({
-                    "files": [],
-                    "commit": { "sha": commit_sha },
-                })),
-            )
-                .into_response()
-        }
+    match service::commit_files(&state, &ctx, &owner, &repo_name, commit).await {
+        Ok(commit_sha) => (
+            StatusCode::CREATED,
+            Json(json!({
+                "files": [],
+                "commit": { "sha": commit_sha },
+            })),
+        )
+            .into_response(),
         Err(e) => gitea_error_response(&state, &e),
     }
 }
@@ -2382,113 +1679,23 @@ async fn compat_create_pull(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, disk_path) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Propose).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-
-    // Gitea keeps one open pull request per head and base: a second is a 409.
-    // ponytail: two concurrent creates can both pass this read; a store constraint closes it.
-    match state
-        .store()
-        .list_pull_requests(repo.instance_id, repo.org_id, Some(repo.id), Some("open"))
-        .await
-    {
-        Ok(open)
-            if open
-                .iter()
-                .any(|pr| pr.head_ref == req.head && pr.base_ref == req.base) =>
-        {
-            return gitea_error_response(
-                &state,
-                &ShakoError::Conflict("pull request already exists for these targets".into()),
-            );
-        }
-        Ok(_) => {}
-        Err(e) => return gitea_error_response(&state, &e),
-    }
-
-    let head = req.head.clone();
-    let base = req.base.clone();
-    let disk_clone = disk_path.clone();
-    let mergeability =
-        match tokio::task::spawn_blocking(move || check_mergeability(&disk_clone, &base, &head))
-            .await
-        {
-            Ok(Ok(m)) => m,
-            Ok(Err(e)) => return gitea_error_response(&state, &e),
-            Err(e) => return gitea_error_response(&state, &ShakoError::Internal(e.to_string())),
-        };
-
-    let number = match state
-        .store()
-        .allocate_pr_number(repo.instance_id, repo.org_id, repo.id)
-        .await
-    {
-        Ok(n) => n,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-
-    // Write `refs/pull/{number}/head` so it is fetchable by name (Contract S3)
-    let head_sha_clone = mergeability.head_sha.clone();
-    let disk_clone2 = disk_path.clone();
-    let _ = tokio::task::spawn_blocking(move || {
-        set_ref_direct(
-            &disk_clone2,
-            &format!("refs/pull/{number}/head"),
-            &head_sha_clone,
-        )
-    })
-    .await;
-
-    let now = Utc::now();
-    let pr = PullRequestRecord {
-        id: uuid::Uuid::now_v7(),
-        instance_id: repo.instance_id,
-        org_id: repo.org_id,
-        repo_id: repo.id,
-        number,
-        state: "open".into(),
+    let new = service::NewPullRequest {
+        head: req.head,
+        base: req.base,
         title: req.title,
         body: req.body,
-        head_ref: req.head,
-        head_sha: mergeability.head_sha,
-        base_ref: req.base,
-        base_sha: mergeability.base_sha,
-        merge_base: mergeability.merge_base,
-        mergeable: Some(mergeability.mergeable),
-        merged: false,
-        merge_commit_sha: String::new(),
-        author_login: ctx.subject.username.clone(),
-        author_name: ctx.subject.full_name.clone(),
-        author_email: ctx.subject.email.clone(),
-        created_at: now,
-        updated_at: now,
-        closed_at: None,
     };
-
-    let saved = match state.store().create_pull_request(pr).await {
-        Ok(s) => s,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-    let payload = build_pr_webhook_payload(&repo, &saved, "opened", &ctx.subject.username);
-    let _ = emit_and_dispatch_event(
-        &state,
-        repo.org_id,
-        Some(repo.id),
-        "pull_request",
-        format!("pr_open:{}:{}", repo.id, saved.number),
-        payload,
-    )
-    .await;
-
-    let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
-    (
-        StatusCode::CREATED,
-        Json(pr_to_gitea_json(&repo, &saved, &mount)),
-    )
-        .into_response()
+    match service::open_pull_request(&state, &ctx, &owner, &repo_name, new).await {
+        Ok((repo, saved)) => {
+            let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
+            (
+                StatusCode::CREATED,
+                Json(pr_to_gitea_json(&repo, &saved, &mount)),
+            )
+                .into_response()
+        }
+        Err(e) => gitea_error_response(&state, &e),
+    }
 }
 
 async fn compat_get_pull(
@@ -2501,44 +1708,13 @@ async fn compat_get_pull(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, disk_path) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Read).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let Some(mut pr) = (match state
-        .store()
-        .get_pull_request(repo.instance_id, repo.org_id, repo.id, number)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
-    }) else {
-        return gitea_error_response(
-            &state,
-            &ShakoError::NotFound("pull request not found".into()),
-        );
-    };
-
-    // Refresh mergeability if PR is still open
-    if pr.state == "open" {
-        let base_ref = pr.base_ref.clone();
-        let head_ref = pr.head_ref.clone();
-        if let Ok(Ok(m)) = tokio::task::spawn_blocking(move || {
-            check_mergeability(&disk_path, &base_ref, &head_ref)
-        })
-        .await
-        {
-            pr.head_sha = m.head_sha;
-            pr.base_sha = m.base_sha;
-            pr.merge_base = m.merge_base;
-            pr.mergeable = Some(m.mergeable);
-            let _ = state.store().update_pull_request(pr.clone()).await;
+    match service::get_pull_request(&state, &ctx, &owner, &repo_name, number).await {
+        Ok((repo, pr)) => {
+            let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
+            (StatusCode::OK, Json(pr_to_gitea_json(&repo, &pr, &mount))).into_response()
         }
+        Err(e) => gitea_error_response(&state, &e),
     }
-
-    let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
-    (StatusCode::OK, Json(pr_to_gitea_json(&repo, &pr, &mount))).into_response()
 }
 
 async fn compat_get_pull_files(
@@ -2551,41 +1727,9 @@ async fn compat_get_pull_files(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, disk_path) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Read).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let Some(pr) = (match state
-        .store()
-        .get_pull_request(repo.instance_id, repo.org_id, repo.id, number)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
-    }) else {
-        return gitea_error_response(
-            &state,
-            &ShakoError::NotFound("pull request not found".into()),
-        );
-    };
-
     let page = q.page.unwrap_or(1).max(1);
     let limit = q.limit.or(q.per_page).unwrap_or(50).clamp(1, 500);
-    let base_ref = if !pr.merge_base.is_empty() {
-        pr.merge_base.clone()
-    } else {
-        pr.base_sha.clone()
-    };
-    let head_ref = pr.head_sha.clone();
-
-    let res =
-        tokio::task::spawn_blocking(move || diff_refs_files(&disk_path, &base_ref, &head_ref))
-            .await
-            .map_err(|e| ShakoError::Internal(e.to_string()))
-            .and_then(|r| r);
-
-    match res {
+    match service::pull_request_files(&state, &ctx, &owner, &repo_name, number).await {
         Ok(all_files) => {
             let total = all_files.len();
             let start = (page - 1).saturating_mul(limit);
@@ -2620,34 +1764,26 @@ async fn compat_list_reviews(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, _) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Read).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let reviews = match state
-        .store()
-        .list_reviews(repo.instance_id, repo.org_id, Some(repo.id), Some(number))
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-    let items: Vec<Value> = reviews
-        .into_iter()
-        .enumerate()
-        .map(|(idx, r)| {
-            json!({
-                "id": (idx + 1) as u64,
-                "state": r.verdict.as_str(),
-                "body": r.body,
-                "commit_id": r.commit_id,
-                "user": { "login": r.author_login },
-                "submitted_at": r.created_at.to_rfc3339(),
-            })
-        })
-        .collect();
-    (StatusCode::OK, Json(items)).into_response()
+    match service::list_reviews(&state, &ctx, &owner, &repo_name, number).await {
+        Ok(reviews) => {
+            let items: Vec<Value> = reviews
+                .into_iter()
+                .enumerate()
+                .map(|(idx, r)| {
+                    json!({
+                        "id": (idx + 1) as u64,
+                        "state": r.verdict.as_str(),
+                        "body": r.body,
+                        "commit_id": r.commit_id,
+                        "user": { "login": r.author_login },
+                        "submitted_at": r.created_at.to_rfc3339(),
+                    })
+                })
+                .collect();
+            (StatusCode::OK, Json(items)).into_response()
+        }
+        Err(e) => gitea_error_response(&state, &e),
+    }
 }
 
 async fn compat_create_review(
@@ -2660,61 +1796,20 @@ async fn compat_create_review(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let needed = match req.event {
-        ReviewVerdict::Comment => Action::Propose,
-        ReviewVerdict::Approved | ReviewVerdict::RequestChanges => Action::Approve,
-    };
-    let (repo, _) = match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, needed).await
+    match service::create_review(
+        &state,
+        &ctx,
+        &owner,
+        &repo_name,
+        number,
+        service::NewReview {
+            verdict: req.event,
+            body: req.body,
+            commit_id: req.commit_id,
+        },
+    )
+    .await
     {
-        Ok(r) => r,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-    let Some(pr) = (match state
-        .store()
-        .get_pull_request(repo.instance_id, repo.org_id, repo.id, number)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
-    }) else {
-        return gitea_error_response(
-            &state,
-            &ShakoError::NotFound("pull request not found".into()),
-        );
-    };
-
-    // Contract S10: a subject may not approve its own PR when the protection rule requires approvals
-    if req.event == ReviewVerdict::Approved && ctx.subject.username == pr.author_login {
-        let policy = state
-            .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
-            .await
-            .unwrap_or_default();
-        if let Some(rule) = policy.matching_branch_rule(&pr.base_ref)
-            && rule.required_approvals > 0
-        {
-            return gitea_error_response(
-                &state,
-                &ShakoError::Unprocessable(
-                    "pull request author cannot approve their own pull request".into(),
-                ),
-            );
-        }
-    }
-
-    let rec = ReviewRecord {
-        id: uuid::Uuid::now_v7(),
-        instance_id: repo.instance_id,
-        org_id: repo.org_id,
-        repo_id: repo.id,
-        pr_number: number,
-        verdict: req.event,
-        body: req.body,
-        author_login: ctx.subject.username.clone(),
-        commit_id: req.commit_id.unwrap_or_else(|| pr.head_sha.clone()),
-        dismissed: false,
-        created_at: Utc::now(),
-    };
-    match state.store().create_review(rec).await {
         Ok(saved) => (
             StatusCode::OK,
             Json(json!({
@@ -2753,46 +1848,14 @@ async fn compat_patch_pull(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, _) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Propose).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let Some(mut pr) = (match state
-        .store()
-        .get_pull_request(repo.instance_id, repo.org_id, repo.id, number)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
-    }) else {
-        return gitea_error_response(
-            &state,
-            &ShakoError::NotFound("pull request not found".into()),
-        );
+    let patch = service::PullRequestPatch {
+        state: req.state,
+        title: req.title,
+        body: req.body,
+        base: req.base,
     };
-
-    if let Some(st) = req.state {
-        if st == "closed" && pr.state != "closed" {
-            pr.state = "closed".into();
-            pr.closed_at = Some(Utc::now());
-        } else if st == "open" && !pr.merged {
-            pr.state = "open".into();
-            pr.closed_at = None;
-        }
-    }
-    if let Some(t) = req.title {
-        pr.title = t;
-    }
-    if let Some(b) = req.body {
-        pr.body = b;
-    }
-    if let Some(base) = req.base {
-        pr.base_ref = base;
-    }
-
-    match state.store().update_pull_request(pr).await {
-        Ok(saved) => {
+    match service::patch_pull_request(&state, &ctx, &owner, &repo_name, number, patch).await {
+        Ok((repo, saved)) => {
             let mount = mount_ext.map_or_else(Mount::default, |Extension(m)| m);
             (
                 StatusCode::OK,
@@ -2829,66 +1892,8 @@ async fn compat_update_pull_branch(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, disk_path) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Propose).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let Some(mut pr) = (match state
-        .store()
-        .get_pull_request(repo.instance_id, repo.org_id, repo.id, number)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
-    }) else {
-        return gitea_error_response(
-            &state,
-            &ShakoError::NotFound("pull request not found".into()),
-        );
-    };
-
-    let permit = match state
-        .memory_budget
-        .acquire(MERGE_OPERATION_WEIGHT_BYTES)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-
-    let _guard = state.repo_locks.lock(repo.id).await;
-    let base_ref = pr.base_ref.clone();
-    let head_ref = pr.head_ref.clone();
-    let author = CommitAuthor {
-        name: ctx.subject.full_name.clone(),
-        email: ctx
-            .subject
-            .email
-            .clone()
-            .unwrap_or_else(|| format!("{}@local", ctx.subject.username)),
-    };
-    let disk_clone = disk_path.clone();
-
-    let res = tokio::task::spawn_blocking(move || {
-        let _hold = permit;
-        let new_head = update_pr_branch(&disk_clone, &base_ref, &head_ref, &author)?;
-        let m = check_mergeability(&disk_clone, &base_ref, &head_ref)?;
-        Ok::<_, ShakoError>((new_head, m))
-    })
-    .await
-    .map_err(|e| ShakoError::Internal(e.to_string()))
-    .and_then(|r| r);
-
-    match res {
-        Ok((new_head, m)) => {
-            pr.head_sha = new_head;
-            pr.base_sha = m.base_sha;
-            pr.merge_base = m.merge_base;
-            pr.mergeable = Some(m.mergeable);
-            let _ = state.store().update_pull_request(pr).await;
-            (StatusCode::OK, Json(json!({ "status": "ok" }))).into_response()
-        }
+    match service::update_pull_branch(&state, &ctx, &owner, &repo_name, number).await {
+        Ok(_) => (StatusCode::OK, Json(json!({ "status": "ok" }))).into_response(),
         Err(e) => gitea_error_response(&state, &e),
     }
 }
@@ -2922,177 +1927,14 @@ async fn compat_merge_pull(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (mut repo, disk_path) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Write).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let Some(mut pr) = (match state
-        .store()
-        .get_pull_request(repo.instance_id, repo.org_id, repo.id, number)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
-    }) else {
-        return gitea_error_response(
-            &state,
-            &ShakoError::NotFound("pull request not found".into()),
-        );
+    let merge = service::MergeRequest {
+        style,
+        message: req.merge_message_field.or(req.merge_title_field),
+        head_commit_id: req.head_commit_id,
+        delete_branch_after_merge: req.delete_branch_after_merge == Some(true),
     };
-
-    if pr.merged || pr.state == "closed" {
-        return gitea_error_response(
-            &state,
-            &ShakoError::Conflict("pull request is already closed or merged".into()),
-        );
-    }
-
-    let permit = match state
-        .memory_budget
-        .acquire(MERGE_OPERATION_WEIGHT_BYTES)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-
-    let _guard = state.repo_locks.lock(repo.id).await;
-    let base_ref = pr.base_ref.clone();
-    let head_ref = pr.head_ref.clone();
-    let disk_clone = disk_path.clone();
-
-    let mergeability = match tokio::task::spawn_blocking(move || {
-        check_mergeability(&disk_clone, &base_ref, &head_ref)
-    })
-    .await
-    {
-        Ok(Ok(m)) => m,
-        Ok(Err(e)) => return gitea_error_response(&state, &e),
-        Err(e) => return gitea_error_response(&state, &ShakoError::Internal(e.to_string())),
-    };
-
-    // Check `head_commit_id` precondition BEFORE ref policy so a moved head returns 409 (Contract S7, S10, T10)
-    if let Some(expected) = req.head_commit_id.as_deref().filter(|s| !s.is_empty())
-        && expected != mergeability.head_sha
-    {
-        return gitea_error_response(
-            &state,
-            &ShakoError::Conflict("head commit has moved since review".into()),
-        );
-    }
-
-    let policy = match state
-        .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-    let reviews = state
-        .store()
-        .list_reviews(repo.instance_id, repo.org_id, Some(repo.id), Some(number))
-        .await
-        .unwrap_or_default();
-    let statuses = state
-        .store()
-        .list_commit_statuses(
-            repo.instance_id,
-            repo.org_id,
-            repo.id,
-            &mergeability.head_sha,
-        )
-        .await
-        .unwrap_or_default();
-
-    if let Err(e) = policy.check_pr_merge(
-        &ctx,
-        state.authorizer.as_ref(),
-        &repo.owner,
-        &repo.name,
-        &pr.base_ref,
-        &MergePolicyInput {
-            pr_author_login: &pr.author_login,
-            head_sha: &mergeability.head_sha,
-            is_behind_base: mergeability.is_behind_base,
-            reviews: &reviews,
-            statuses: &statuses,
-        },
-    ) {
-        return gitea_error_response(&state, &e);
-    }
-
-    let message = req
-        .merge_message_field
-        .or(req.merge_title_field)
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| format!("Merge pull request #{number}: {}", pr.title));
-    let author = CommitAuthor {
-        name: ctx.subject.full_name.clone(),
-        email: ctx
-            .subject
-            .email
-            .clone()
-            .unwrap_or_else(|| format!("{}@local", ctx.subject.username)),
-    };
-    let base_ref2 = pr.base_ref.clone();
-    let head_ref2 = pr.head_ref.clone();
-    let expected_head = req.head_commit_id.clone();
-    let disk_clone2 = disk_path.clone();
-
-    let merge_res = tokio::task::spawn_blocking(move || {
-        let _hold = permit;
-        execute_pr_merge(
-            &disk_clone2,
-            &base_ref2,
-            &head_ref2,
-            &MergeOptions {
-                expected_head_sha: expected_head.as_deref(),
-                style,
-                message: &message,
-                author: &author,
-                committer: &author,
-            },
-        )
-    })
-    .await
-    .map_err(|e| ShakoError::Internal(e.to_string()))
-    .and_then(|r| r);
-
-    match merge_res {
+    match service::merge_pull_request(&state, &ctx, &owner, &repo_name, number, merge).await {
         Ok(merge_commit_sha) => {
-            if req.delete_branch_after_merge == Some(true) {
-                let d_path = disk_path.clone();
-                let h_ref = pr.head_ref.clone();
-                let _ = tokio::task::spawn_blocking(move || delete_branch(&d_path, &h_ref)).await;
-            }
-            pr.state = "closed".into();
-            pr.merged = true;
-            pr.mergeable = None;
-            pr.head_sha = mergeability.head_sha;
-            pr.base_sha = mergeability.base_sha;
-            pr.merge_base = mergeability.merge_base;
-            pr.merge_commit_sha = merge_commit_sha.clone();
-            pr.closed_at = Some(Utc::now());
-            let saved = match state.store().update_pull_request(pr).await {
-                Ok(s) => s,
-                Err(e) => return gitea_error_response(&state, &e),
-            };
-            repo.size_bytes = compute_repo_size_bytes(&disk_path);
-            let _ = state.store().update_repo(repo.clone()).await;
-
-            let payload = build_pr_webhook_payload(&repo, &saved, "closed", &ctx.subject.username);
-            let _ = emit_and_dispatch_event(
-                &state,
-                repo.org_id,
-                Some(repo.id),
-                "pull_request",
-                format!("pr_merge:{}:{}", repo.id, saved.number),
-                payload,
-            )
-            .await;
-            sync_repo_mirrors_on_commit(&state, &repo, &disk_path).await;
-
             (StatusCode::OK, Json(json!({ "sha": merge_commit_sha }))).into_response()
         }
         Err(e) => gitea_error_response(&state, &e),
@@ -3140,15 +1982,12 @@ pub struct GiteaHookConfig {
     pub http_method: Option<String>,
 }
 
-/// The hook's URL and the reference its secret is kept under, or why the request is refused.
-/// A Gitea-shaped hook's inline secret goes into the secret store under `webhook-{id}`; an
-/// unsigned hook is refused, because every receiver this forge serves checks the signature.
+/// The hook's URL, where its secret comes from and the event shape it delivers, or why the
+/// request is refused. A Gitea-shaped hook gets Gitea deliveries; the native shape names a secret
+/// already in the secret store and gets shako's own (`PORTAL-ODATA.md` section 8).
 fn webhook_target(
-    state: &ShakoState,
-    org_id: OrgId,
-    id: WebhookId,
     req: &CreateWebhookReq,
-) -> ShakoResult<(String, String)> {
+) -> ShakoResult<(String, service::HookSecret, WebhookFormat)> {
     // Every push is delivered; a filter this forge would drop silently is refused instead.
     if req
         .branch_filter
@@ -3180,20 +2019,17 @@ fn webhook_target(
                     "only http_method post is served".into(),
                 ));
             }
-            let secret = config
-                .secret
-                .as_deref()
-                .filter(|s| !s.trim().is_empty())
-                .ok_or_else(|| {
-                    ShakoError::Unprocessable("a hook needs a secret to sign its deliveries".into())
-                })?;
-            let secret_ref = format!("webhook-{id}");
-            state.secret_store.put_secret(org_id, &secret_ref, secret);
-            Ok((config.url.clone(), secret_ref))
+            Ok((
+                config.url.clone(),
+                service::HookSecret::Inline(config.secret.clone().unwrap_or_default()),
+                WebhookFormat::Gitea,
+            ))
         }
-        (None, Some(url), Some(secret_ref)) if req.hook_type.is_none() => {
-            Ok((url.clone(), secret_ref.clone()))
-        }
+        (None, Some(url), Some(secret_ref)) if req.hook_type.is_none() => Ok((
+            url.clone(),
+            service::HookSecret::Ref(secret_ref.clone()),
+            WebhookFormat::Shako,
+        )),
         _ => Err(ShakoError::Unprocessable(
             "a hook is either {type, config: {url, secret}} or {url, secret_ref}".into(),
         )),
@@ -3210,46 +2046,20 @@ async fn compat_create_webhook(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, _) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Admin).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let hook_url = req
-        .config
-        .as_ref()
-        .map(|c| c.url.as_str())
-        .or(req.url.as_deref());
-    if let Err(e) = state
-        .outbound_guard
-        .validate_url(hook_url.unwrap_or_default(), None)
-    {
-        return gitea_error_response(&state, &e);
-    }
-    let id = WebhookId::new();
-    let (url, secret_ref) = match webhook_target(&state, repo.org_id, id, &req) {
+    let (url, secret, format) = match webhook_target(&req) {
         Ok(t) => t,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let gitea_shape = req.config.is_some();
-    let hook = WebhookRecord {
-        id,
-        instance_id: repo.instance_id,
-        org_id: repo.org_id,
-        repo_id: repo.id,
+    let new = service::NewWebhook {
         url,
-        events: if req.events.is_empty() {
-            vec!["push".into(), "pull_request".into()]
-        } else {
-            req.events
-        },
-        active: req.active,
-        secret_ref,
+        secret,
         previous_secret_ref: req.previous_secret_ref,
-        created_at: Utc::now(),
+        events: req.events,
+        active: req.active,
+        format,
     };
-    match state.store().create_webhook(hook).await {
-        Ok(saved) if gitea_shape => (
+    match service::add_webhook(&state, &ctx, &owner, &repo_name, new).await {
+        Ok(saved) if saved.format == WebhookFormat::Gitea => (
             StatusCode::CREATED,
             Json(json!({
                 "id": saved.id,
@@ -3286,24 +2096,7 @@ async fn compat_redeliver_webhook(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let (repo, _) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Admin).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let Some(hook) = (match state
-        .store()
-        .get_webhook(repo.instance_id, repo.org_id, hook_id)
-        .await
-    {
-        Ok(h) => h,
-        Err(e) => return gitea_error_response(&state, &e),
-    }) else {
-        return gitea_error_response(&state, &ShakoError::NotFound("webhook not found".into()));
-    };
-    let payload =
-        build_push_webhook_payload(&repo, "refs/heads/main", "", "", &ctx.subject.username);
-    match deliver_webhook_with_retries(&state, &hook, "push", &payload).await {
+    match service::redeliver_webhook(&state, &ctx, &owner, &repo_name, hook_id).await {
         Ok(del) => (StatusCode::OK, Json(del)).into_response(),
         Err(e) => gitea_error_response(&state, &e),
     }

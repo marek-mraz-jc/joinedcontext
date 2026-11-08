@@ -35,7 +35,11 @@ pub struct NatsKvProcessor {
 
 impl NatsKvProcessor {
     pub fn from_config(conf: &ComponentConfig, ctx: &ProcContext) -> Result<Self, CoreError> {
-        let conn_details = NatsConnectionDetails::from_json(&conf.config)?;
+        let conn_details = NatsConnectionDetails::from_json(
+            &conf.config,
+            ctx.org.clone(),
+            ctx.file_root.as_deref(),
+        )?;
         let obj = conf.config.as_object().unwrap();
 
         let bucket = obj
@@ -251,7 +255,11 @@ pub struct NatsKvOutput {
 
 impl NatsKvOutput {
     pub fn from_config(conf: &ComponentConfig, ctx: &StreamContext) -> Result<Self, CoreError> {
-        let conn_details = NatsConnectionDetails::from_json(&conf.config)?;
+        let conn_details = NatsConnectionDetails::from_json(
+            &conf.config,
+            ctx.org.clone(),
+            ctx.file_root.as_deref(),
+        )?;
         let obj = conf.config.as_object().unwrap();
         let bucket = obj
             .get("bucket")

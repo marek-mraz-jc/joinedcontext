@@ -324,8 +324,8 @@ fn not_one_of_them_is_offered_to_an_agent_run() {
 /// is a mock with nothing mounted: any request the Portal made against it would be recorded here.
 #[tokio::test]
 async fn a_refused_call_reaches_no_forge_and_echoes_nothing_of_its_input() {
-    let gitea = MockServer::start().await;
-    let state = common::state_on(&gitea).with_mirror(Arc::new(Mirror::new()));
+    let shako = MockServer::start().await;
+    let state = common::state_on(&shako).with_mirror(Arc::new(Mirror::new()));
     let run = Caller::for_run(steward(), profile_naming_everything());
     let over_mcp = Caller::new(steward(), Via::Mcp);
 
@@ -357,7 +357,7 @@ async fn a_refused_call_reaches_no_forge_and_echoes_nothing_of_its_input() {
             );
         }
     }
-    let seen = gitea.received_requests().await.unwrap_or_default();
+    let seen = shako.received_requests().await.unwrap_or_default();
     assert!(
         seen.is_empty(),
         "a refused call reached the forge: {:?}",
@@ -467,9 +467,9 @@ fn the_refusal_reaches_every_door_as_a_forbidden_with_its_reason() {
 /// people administrator of the organization, so what refuses the token is never a missing grant.
 const HOLDER: &str = "jana";
 
-/// The Portal verifying bearer tokens of the test realm, on the forge `gitea`, with [`HOLDER`]
+/// The Portal verifying bearer tokens of the test realm, on the forge `shako`, with [`HOLDER`]
 /// bound to approve Changes in [`PROJECT`] and to administer people.
-fn state_for_tokens(gitea: &MockServer) -> AppState {
+fn state_for_tokens(shako: &MockServer) -> AppState {
     let config = Config::from_vars(|key| {
         match key {
             "JC_OIDC_ISSUER" => Some(common::REALM.issuer.as_str()),
@@ -483,8 +483,8 @@ fn state_for_tokens(gitea: &MockServer) -> AppState {
         .map(str::to_owned)
     })
     .expect("config");
-    let forge = joinedcontext_portal::git::GiteaClient::new(
-        gitea.uri().parse().expect("mock url"),
+    let forge = joinedcontext_portal::forge::ShakoClient::new(
+        shako.uri().parse().expect("mock url"),
         "test-owner",
         "test-repo",
         "token-xyz",
@@ -492,7 +492,7 @@ fn state_for_tokens(gitea: &MockServer) -> AppState {
     .expect("client");
     let state = AppState::new(config, None)
         .with_mirror(Arc::new(Mirror::new()))
-        .with_gitea(Arc::new(forge));
+        .with_shako(Arc::new(forge));
     state.mirror.upsert(org(
         "Role",
         "decider",
@@ -570,8 +570,8 @@ fn tokens() -> Vec<(&'static str, String)> {
 /// refuse it too, so no later door that reaches them with a token decides either.
 #[tokio::test]
 async fn a_bearer_token_never_approves_or_rejects_through_the_ops_route() {
-    let gitea = MockServer::start().await;
-    let state = state_for_tokens(&gitea);
+    let shako = MockServer::start().await;
+    let state = state_for_tokens(&shako);
     for (who, token) in tokens() {
         for (name, body) in [
             ("jc_change_approve", json!({ "id": "chg-00000001" })),
@@ -614,7 +614,7 @@ async fn a_bearer_token_never_approves_or_rejects_through_the_ops_route() {
     .await
     .expect_err("a token rejected");
     assert_eq!(StatusCode::FORBIDDEN, rejected.into_response().status());
-    let seen = gitea.received_requests().await.unwrap_or_default();
+    let seen = shako.received_requests().await.unwrap_or_default();
     assert!(
         seen.is_empty(),
         "a refused decision reached the forge: {:?}",
@@ -625,8 +625,8 @@ async fn a_bearer_token_never_approves_or_rejects_through_the_ops_route() {
 /// AG-133: declining closes an access request for good, so a token never declines one.
 #[tokio::test]
 async fn a_bearer_token_never_declines_an_access_request() {
-    let gitea = MockServer::start().await;
-    let state = state_for_tokens(&gitea);
+    let shako = MockServer::start().await;
+    let state = state_for_tokens(&shako);
     let uri = format!("/api/v1/projects/{PROJECT}/access-requests/ar-0123456789ab/decline");
     for (who, token) in tokens() {
         let reason = json!({ "reason": "the KPI project ended" });
@@ -640,8 +640,8 @@ async fn a_bearer_token_never_declines_an_access_request() {
 /// no service account's or agent's token files one for itself.
 #[tokio::test]
 async fn a_bearer_token_never_asks_for_access_to_an_endpoint() {
-    let gitea = MockServer::start().await;
-    let state = state_for_tokens(&gitea);
+    let shako = MockServer::start().await;
+    let state = state_for_tokens(&shako);
     let uri = format!("/api/v1/projects/{PROJECT}/endpoints/air/access-requests");
     for (who, token) in tokens() {
         let body = json!({ "types": ["AirQualityObserved"], "reason": "weekly report" });
@@ -656,8 +656,8 @@ async fn a_bearer_token_never_asks_for_access_to_an_endpoint() {
 /// token is refused before the realm is asked.
 #[tokio::test]
 async fn a_bearer_token_never_deletes_a_person_or_removes_their_second_factor() {
-    let gitea = MockServer::start().await;
-    let state = state_for_tokens(&gitea);
+    let shako = MockServer::start().await;
+    let state = state_for_tokens(&shako);
     let person = "/api/v1/organization/people/0b6f0e4c-1d2e-4f00-9a7b-3c4d5e6f7a8b";
     let doors = [
         ("DELETE", person.to_owned()),

@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use super::run::AgentRun;
-use crate::git::{GitError, GiteaClient, MergeStyle, PullRequest};
+use crate::forge::{GitError, MergeStyle, PullRequest, ShakoClient};
 
 /// The longest repository name the forge accepts.
 pub const MAX_NAME: usize = 100;
@@ -134,7 +134,7 @@ pub fn readme(project: &str, app: &str, title: Option<&str>, clone_url: &str) ->
 /// The open merge request from the run's branch into the repository's default branch, or a new
 /// one when none is open (AP-77).
 pub async fn open_merge_request(
-    repo: &GiteaClient,
+    repo: &ShakoClient,
     run: &AgentRun,
 ) -> Result<PullRequest, GitError> {
     let base = repo.default_branch().await?;
@@ -163,7 +163,7 @@ pub async fn open_merge_request(
 /// nor the build folder (AP-77). A run that never committed a version has a branch that is `main`
 /// as the repository was created, and merging it would leave `main` with the README alone, which
 /// is how a published application once served nothing (T-2603).
-pub async fn holds_application(repo: &GiteaClient, sha: &str) -> Result<bool, GitError> {
+pub async fn holds_application(repo: &ShakoClient, sha: &str) -> Result<bool, GitError> {
     Ok(repo
         .list_tree(sha)
         .await?
@@ -175,7 +175,7 @@ pub async fn holds_application(repo: &GiteaClient, sha: &str) -> Result<bool, Gi
 /// the approved manifest names: a branch that moved after publish is refused, never merged
 /// unread (AP-77, PF-57). A merge commit keeps `sha` in `main`'s history.
 pub async fn merge_published(
-    repo: &GiteaClient,
+    repo: &ShakoClient,
     run: &AgentRun,
     sha: &str,
     approver: &str,
@@ -190,7 +190,7 @@ pub async fn merge_published(
         "Publish {} from run {}\n\nApproved in the Portal by {approver}",
         run.app_name, run.id
     );
-    // Gitea answers 405 until it has checked a fresh pull's mergeability; the approval that
+    // The forge answers 405 until it has checked a fresh pull's mergeability; the approval that
     // follows a publish within seconds waits that out, as `approve_change` does.
     let mut attempt = 0;
     loop {
@@ -384,18 +384,20 @@ mod tests {
 
     fn pull(number: u64, head: &str, sha: &str) -> serde_json::Value {
         serde_json::json!({
-            "number": number,
-            "html_url": format!("http://forge/pulls/{number}"),
-            "state": "open",
-            "title": "t",
-            "head": { "ref": head, "sha": sha },
-            "base": { "ref": "main", "sha": "base" },
+            "Number": number,
+            "HtmlUrl": format!("http://forge/pulls/{number}"),
+            "State": "open",
+            "Title": "t",
+            "Head": head,
+            "HeadSha": sha,
+            "Base": "main",
+            "BaseSha": "base"
         })
     }
 
-    async fn forge() -> (wiremock::MockServer, GiteaClient) {
+    async fn forge() -> (wiremock::MockServer, ShakoClient) {
         let server = wiremock::MockServer::start().await;
-        let config = GiteaClient::new(
+        let config = ShakoClient::new(
             server.uri().parse().expect("a url"),
             "joinedcontext",
             "configuration",
@@ -405,7 +407,7 @@ mod tests {
         (server, config.for_repository("helsinki_city-bikes"))
     }
 
-    const REPO: &str = "/api/v1/repos/joinedcontext/helsinki_city-bikes";
+    const REPO: &str = "/odata/Repositories(Owner='joinedcontext',Name='helsinki_city-bikes')";
 
     /// AP-76: a run in its own repository writes there and nowhere else.
     #[test]
@@ -429,20 +431,22 @@ mod tests {
             .and(path(REPO))
             .respond_with(
                 ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({ "default_branch": "main" })),
+                    .set_body_json(serde_json::json!({ "DefaultBranch": "main" })),
             )
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/pulls")))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-                pull(3, "agent/app-city-bikes/other", "x"),
-                pull(7, "agent/app-city-bikes/run-1", "abc"),
-            ])))
+            .and(path(format!("{REPO}/PullRequests")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "value": [
+                    pull(3, "agent/app-city-bikes/other", "x"),
+                    pull(7, "agent/app-city-bikes/run-1", "abc")
+                ]
+            })))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{REPO}/pulls")))
+            .and(path(format!("{REPO}/Shako.OpenPullRequest")))
             .respond_with(ResponseTemplate::new(201).set_body_json(pull(9, "x", "y")))
             .expect(0)
             .mount(&server)
@@ -461,21 +465,23 @@ mod tests {
             .and(path(REPO))
             .respond_with(
                 ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({ "default_branch": "main" })),
+                    .set_body_json(serde_json::json!({ "DefaultBranch": "main" })),
             )
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/pulls")))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .and(path(format!("{REPO}/PullRequests")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [] })),
+            )
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{REPO}/pulls")))
+            .and(path(format!("{REPO}/Shako.OpenPullRequest")))
             .and(body_partial_json(serde_json::json!({
-                "head": "agent/app-city-bikes/run-1",
-                "base": "main",
-                "title": "Publish City bikes",
+                "Head": "agent/app-city-bikes/run-1",
+                "Base": "main",
+                "Title": "Publish City bikes"
             })))
             .respond_with(ResponseTemplate::new(201).set_body_json(pull(
                 4,
@@ -497,22 +503,24 @@ mod tests {
         use wiremock::{Mock, ResponseTemplate};
         let (server, repo) = forge().await;
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/pulls")))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!([pull(
-                    7,
-                    "agent/app-city-bikes/run-1",
-                    "abc"
-                )])),
+            .and(path(format!("{REPO}/PullRequests")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "value": [
+                    pull(
+                7,
+                "agent/app-city-bikes/run-1",
+                "abc"
             )
+                ]
+            })))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path(format!("{REPO}/pulls/7/merge")))
+            .and(path(format!("{REPO}/PullRequests(7)/Shako.Merge")))
             .and(body_json(serde_json::json!({
-                "Do": "merge",
-                "merge_message_field": "Publish city-bikes from run run-1\n\nApproved in the Portal by approver@hel.fi",
-                "head_commit_id": "abc",
+                "Style": "merge",
+                "Message": "Publish city-bikes from run run-1\n\nApproved in the Portal by approver@hel.fi",
+                "HeadCommitId": "abc",
             })))
             .respond_with(ResponseTemplate::new(200))
             .expect(1)
@@ -532,9 +540,9 @@ mod tests {
 
     fn tree_of(paths: &[&str]) -> serde_json::Value {
         serde_json::json!({
-            "sha": "abc",
-            "truncated": false,
-            "tree": paths.iter().map(|p| serde_json::json!({ "path": p, "type": "blob", "sha": "b" })).collect::<Vec<_>>(),
+            "Sha": "abc",
+            "Truncated": false,
+            "Tree": paths.iter().map(|p| serde_json::json!({ "Path": p, "Type": "blob", "Sha": "b" })).collect::<Vec<_>>()
         })
     }
 
@@ -542,16 +550,22 @@ mod tests {
     /// so publishing it would leave `main` README-only; one file of its own is enough.
     #[tokio::test]
     async fn a_branch_with_only_the_readme_and_the_workflow_holds_no_application() {
-        use wiremock::matchers::{method, path};
+        use wiremock::matchers::{method, path, query_param};
         use wiremock::{Mock, ResponseTemplate};
         let (server, repo) = forge().await;
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/git/trees/empty")))
+            .and(path(format!(
+                "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .and(query_param("@r", "'empty'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(tree_of(&[README, WORKFLOW])))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("{REPO}/git/trees/built")))
+            .and(path(format!(
+                "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .and(query_param("@r", "'built'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(tree_of(&[
                 README,
                 WORKFLOW,

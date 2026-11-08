@@ -14,7 +14,7 @@ use crate::auth::oidc::OidcClient;
 use crate::auth::session::Session;
 use crate::branding::Branding;
 use crate::config::Config;
-use crate::git::GiteaClient;
+use crate::forge::ShakoClient;
 use crate::ops::drafts::{DraftHub, DraftStore};
 use crate::reconciler::{Leadership, StreamDeployer, Syncer};
 use crate::store::Mirror;
@@ -39,10 +39,10 @@ pub struct AppState {
     pub mirror: Arc<Mirror>,
     /// `None` when no forge is configured: every write answers 503. A Portal that cannot
     /// open a merge request must not fall back to a local write (CC-03).
-    pub gitea: Option<Arc<GiteaClient>>,
+    pub shako: Option<Arc<ShakoClient>>,
     /// Where application repositories are copied to on GitHub (AP-79). `None` when the
     /// installation keeps them on its forge alone.
-    pub github_mirror: Option<Arc<crate::git::github_mirror::GithubMirror>>,
+    pub github_mirror: Option<Arc<crate::forge::github_mirror::GithubMirror>>,
     pub syncer: Option<Arc<Syncer>>,
     /// The `SyncSource` loop (MF-27…MF-32). `None` without a forge, or when the outbound HTTP
     /// client could not be built: the sync routes answer 503 and nothing syncs, rather than a
@@ -183,8 +183,8 @@ impl AppState {
     /// The forge client for `project`'s own files (CC-87): in layout 2 its own repository,
     /// spoken to in render paths (`projects/{project}/…`); the organization repository
     /// otherwise. `None` when no forge is configured.
-    pub fn forge_for(&self, project: &str) -> Option<Arc<GiteaClient>> {
-        let organization = self.gitea.as_ref()?;
+    pub fn forge_for(&self, project: &str) -> Option<Arc<ShakoClient>> {
+        let organization = self.shako.as_ref()?;
         Some(match self.mirror.repository_of(project) {
             Some(repository) => Arc::new(organization.for_project(repository, project)),
             None => Arc::clone(organization),
@@ -225,7 +225,7 @@ impl AppState {
             config: Arc::new(config),
             oidc: oidc.map(Arc::new),
             mirror: Arc::new(Mirror::new()),
-            gitea: None,
+            shako: None,
             github_mirror: None,
             syncer: None,
             sync: None,
@@ -299,14 +299,14 @@ impl AppState {
         self
     }
 
-    pub fn with_gitea(mut self, gitea: Arc<GiteaClient>) -> Self {
-        self.gitea = Some(gitea);
+    pub fn with_shako(mut self, shako: Arc<ShakoClient>) -> Self {
+        self.shako = Some(shako);
         self
     }
 
     pub fn with_github_mirror(
         mut self,
-        mirror: Arc<crate::git::github_mirror::GithubMirror>,
+        mirror: Arc<crate::forge::github_mirror::GithubMirror>,
     ) -> Self {
         self.github_mirror = Some(mirror);
         self
@@ -337,11 +337,11 @@ impl AppState {
         };
         // A half-configured forge is a configuration error, not a reason to run without one:
         // `from_env` answers `Ok(None)` only when all four variables are absent.
-        let gitea = GiteaClient::from_env(|key| config.forge_var(key))?;
+        let shako = ShakoClient::from_env(|key| config.forge_var(key))?;
         // The same rule for the GitHub copy of application repositories (AP-79): off when both
         // of its variables are absent, a startup error when only one is.
         let github_mirror =
-            crate::git::github_mirror::GithubMirror::from_env(|key| std::env::var(key).ok())?;
+            crate::forge::github_mirror::GithubMirror::from_env(|key| std::env::var(key).ok())?;
         // A configured database that cannot be reached or migrated is fatal, like a half-configured
         // forge: better one clear startup error than a Portal that silently forgets preferences.
         let db = match config.database_url.as_deref() {
@@ -394,7 +394,7 @@ impl AppState {
                 tracing::warn!(error = %err, "JWKS not loaded at startup");
             }
         }
-        if let Some(client) = gitea {
+        if let Some(client) = shako {
             let client = Arc::new(client);
             let mut syncer = Syncer::new(Arc::clone(&client), Arc::clone(&state.mirror))
                 .with_webhook_secrets(Arc::clone(&state.webhook_secrets))
@@ -474,11 +474,11 @@ impl AppState {
                     tracing::warn!(error = %err, "no HTTP client for sync origins; sync sources do not run")
                 }
             }
-            state.gitea = Some(client);
+            state.shako = Some(client);
             state.syncer = Some(Arc::new(syncer));
         }
         // A copy has nothing to copy without the forge it mirrors.
-        match (github_mirror, state.gitea.is_some()) {
+        match (github_mirror, state.shako.is_some()) {
             (Some(mirror), true) => state.github_mirror = Some(Arc::new(mirror)),
             (Some(_), false) => tracing::warn!(
                 "JC_APP_MIRROR_GITHUB_OWNER is set but no forge is configured: application \
@@ -1417,8 +1417,8 @@ mod tests {
     async fn a_follower_replica_leads_no_background_loop() {
         let alone = AppState::new(Config::for_tests(), None);
         assert!(alone.leads());
-        let gitea = Arc::new(
-            GiteaClient::new(
+        let shako = Arc::new(
+            ShakoClient::new(
                 "http://localhost:3000".parse().expect("a url"),
                 "test-owner",
                 "test-repo",
@@ -1429,7 +1429,7 @@ mod tests {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://follower@localhost/none")
             .expect("a lazy pool");
-        let follower = Syncer::new(gitea, Arc::new(Mirror::new()))
+        let follower = Syncer::new(shako, Arc::new(Mirror::new()))
             .with_leadership(Arc::new(Leadership::reconciler(pool)));
         let state = AppState::new(Config::for_tests(), None).with_syncer(Arc::new(follower));
         assert!(!state.leads());
@@ -1473,7 +1473,7 @@ mod tests {
     }
 
     fn forge() -> Syncer {
-        let client = GiteaClient::new("http://127.0.0.1:9".parse().expect("url"), "o", "r", "t")
+        let client = ShakoClient::new("http://127.0.0.1:9".parse().expect("url"), "o", "r", "t")
             .expect("client");
         Syncer::new(Arc::new(client), Arc::new(Mirror::default()))
     }

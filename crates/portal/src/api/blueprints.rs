@@ -25,7 +25,7 @@ use crate::api::resources::{ListMeta, ResourceList};
 use crate::auth::session::{CurrentUser, Identity};
 use crate::change::{self, Change, ChangePhase, ChangeStatus, Lane, Operation, PlanSummary};
 use crate::error::{ApiError, ProblemDetails};
-use crate::git::{Author, FileWrite};
+use crate::forge::{Author, FileWrite};
 use crate::plan;
 use crate::resource::{self, ResourceEnvelope, API_VERSION};
 use crate::state::AppState;
@@ -239,20 +239,20 @@ pub async fn start_flow(
     let forge = state
         .forge_for(&project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let gitea = forge.as_ref();
-    let default_branch = gitea.default_branch().await?;
+    let shako = forge.as_ref();
+    let default_branch = shako.default_branch().await?;
     let branch = flow_branch(
         &project,
         &request.blueprint,
         &request.version,
         &request.parameters,
     );
-    let held = crate::api::mutate::turn(gitea, &branch).await;
-    let branch = create_or_reuse_branch(gitea, &held, &default_branch).await?;
+    let held = crate::api::mutate::turn(shako, &branch).await;
+    let branch = create_or_reuse_branch(shako, &held, &default_branch).await?;
 
     let (author_name, author_email) = author_credentials(identity, &project);
     for (repo_path, yaml) in &planned.files {
-        let existing_sha = gitea
+        let existing_sha = shako
             .get_file(repo_path, &branch)
             .await
             .ok()
@@ -262,7 +262,7 @@ pub async fn start_flow(
             "run blueprint {} {} in {project}",
             request.blueprint, request.version
         );
-        gitea
+        shako
             .put_file(&FileWrite {
                 path: repo_path,
                 branch: &branch,
@@ -287,12 +287,12 @@ pub async fn start_flow(
         request.version,
         planned.files.len()
     );
-    let pr = gitea
+    let pr = shako
         .create_pull_request(&branch, &default_branch, &title, &body)
         .await?;
 
     let change = Change::new(
-        crate::api::changes::change_meta(&state, gitea, pr.number, &project),
+        crate::api::changes::change_meta(&state, shako, pr.number, &project),
         ChangeStatus::new(planned.lane, ChangePhase::PendingApproval, planned.summary)
             .in_repository(&pr.repository)
             .proposed_through(&pr.body)
@@ -314,7 +314,7 @@ pub async fn start_flow(
              (CC-63, CC-65, AG-14)",
             change.metadata.name, pr.title, request.blueprint, request.version
         );
-        crate::api::changes::merge_if_only(&state, gitea, &pr, &paths, &message, change).await
+        crate::api::changes::merge_if_only(&state, shako, &pr, &paths, &message, change).await
     } else {
         change
     };

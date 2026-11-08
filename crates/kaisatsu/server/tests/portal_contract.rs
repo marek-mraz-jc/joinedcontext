@@ -273,6 +273,16 @@ fn payload(jwt: &str) -> Value {
 /// The browser's part of an authorization request: the realm's login form for Ana, submitted.
 /// Answers the redirect back to the client and the SSO cookie.
 async fn sign_in(app: &Router, authorize: &str) -> (String, String) {
+    let done = submit_login(app, authorize, ANA, ANA_PASSWORD).await;
+    assert_eq!(done.status, StatusCode::SEE_OTHER, "{}", done.text);
+    (
+        done.location(),
+        done.cookie("__Host-wk_sso=").expect("sso cookie"),
+    )
+}
+
+/// The realm's login form for `username`, submitted with `password`: the form's answer.
+async fn submit_login(app: &Router, authorize: &str, username: &str, password: &str) -> Answer {
     let first = get_page(app, authorize, None).await;
     assert_eq!(first.status, StatusCode::SEE_OTHER, "{}", first.text);
     let auth_cookie = first
@@ -281,23 +291,18 @@ async fn sign_in(app: &Router, authorize: &str) -> (String, String) {
     let login = first.location();
     let page = get_page(app, &login, Some(&auth_cookie)).await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.text);
-    let done = post_form(
+    post_form(
         app,
         &login,
         &[
             ("csrf_token", &hidden(&page.text, "csrf_token")),
             ("session_code", &hidden(&page.text, "session_code")),
-            ("username", ANA),
-            ("password", ANA_PASSWORD),
+            ("username", username),
+            ("password", password),
         ],
         Some(&auth_cookie),
     )
-    .await;
-    assert_eq!(done.status, StatusCode::SEE_OTHER, "{}", done.text);
-    (
-        done.location(),
-        done.cookie("__Host-wk_sso=").expect("sso cookie"),
-    )
+    .await
 }
 
 /// A client-credentials token as `Admin::token` (reconciler/app_clients.rs:493) and
@@ -2601,6 +2606,82 @@ async fn the_client_waves_converge_as_portal_api() {
     )
     .await;
     assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.text);
+}
+
+/// Keycloak keeps credentials apart from the user representation: a `PUT /users/{id}` writes the
+/// profile and leaves the password `reset-password` set. A person whose profile is written after
+/// their password reset signs in with the new password, in either order.
+#[tokio::test]
+async fn a_profile_write_after_a_password_reset_keeps_the_new_password() {
+    let realm = realm().await;
+    let app = &realm.app;
+    let token = reconciler(app).await;
+    let metadata = discover(app).await;
+    for (n, reset_first) in [(1, true), (2, false)] {
+        let email = format!("order{n}@hel.example");
+        let password = format!("Second-admin-pw-{n}-0123456789");
+        let made = admin(
+            app,
+            &token,
+            Method::POST,
+            "/users",
+            Some(json!({
+                "username": email, "email": email, "firstName": "Ada", "lastName": "Example",
+                "enabled": true, "emailVerified": false,
+                "requiredActions": ["VERIFY_EMAIL", "UPDATE_PASSWORD"],
+            })),
+        )
+        .await;
+        assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
+        let id = made.location().rsplit('/').next().unwrap().to_owned();
+        let profile = json!({
+            "username": email, "email": email, "firstName": "Ada", "lastName": "Example",
+            "requiredActions": [], "emailVerified": true, "enabled": true
+        });
+        let reset = json!({"type": "password", "value": password, "temporary": false});
+        let steps = if reset_first {
+            [("reset-password", reset), ("", profile)]
+        } else {
+            [("", profile), ("reset-password", reset)]
+        };
+        for (sub, body) in steps {
+            let path = if sub.is_empty() {
+                format!("/users/{id}")
+            } else {
+                format!("/users/{id}/{sub}")
+            };
+            let answer = admin(app, &token, Method::PUT, &path, Some(body)).await;
+            assert_eq!(
+                answer.status,
+                StatusCode::NO_CONTENT,
+                "{path}: {}",
+                answer.text
+            );
+        }
+        let (challenge, _) = pkce();
+        let mut authorize = url::Url::parse(&metadata.authorization_endpoint).unwrap();
+        authorize
+            .query_pairs_mut()
+            .append_pair("response_type", "code")
+            .append_pair("client_id", "portal-api")
+            .append_pair("state", &random_text())
+            .append_pair("code_challenge", &challenge)
+            .append_pair("code_challenge_method", "S256")
+            .append_pair("redirect_uri", &format!("{PORTAL}/api/v1/auth/callback"))
+            .append_pair("scope", "openid profile email");
+        let done = submit_login(app, authorize.as_str(), &email, &password).await;
+        assert_eq!(
+            done.status,
+            StatusCode::SEE_OTHER,
+            "reset first: {reset_first}: {}",
+            done.text
+        );
+        assert!(
+            param(&done.location(), "code").is_some(),
+            "reset first: {reset_first}: {}",
+            done.location()
+        );
+    }
 }
 
 /// The Portal asks the gateway's `access/simulate` (api/access_simulate.rs) with its own

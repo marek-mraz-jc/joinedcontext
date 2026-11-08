@@ -27,7 +27,7 @@ use crate::agents::{
     change, data_query, fields, grant, kpi, kpi_pipeline, model_change, share, verification,
 };
 use crate::auth::session::Identity;
-use crate::git::gitea::{Author, GitError};
+use crate::forge::shako::{Author, GitError};
 use crate::state::AppState;
 use jc_core::kinds::Verb;
 

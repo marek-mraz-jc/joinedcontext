@@ -38,6 +38,7 @@ use daiya_store_pg::{PgPoolConfig, PgStore};
 use ipnet::IpNet;
 use jc_router::{ClientAddr, Mount};
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -70,6 +71,10 @@ pub struct DaiyaConfig {
     /// Grafana provisioning root (`datasources/`, `dashboards/`), loaded at start.
     #[serde(default)]
     pub provisioning_dir: Option<PathBuf>,
+    /// `$NAME` values of the provisioning files: never read from the file, the binary fills it
+    /// from its `DAIYA_VAR_*` environment variables ([`provisioning_vars_from`]).
+    #[serde(skip)]
+    pub provisioning_vars: BTreeMap<String, String>,
     #[serde(default)]
     pub outbound: OutboundConfig,
     /// Grafana's local administrator (`provision.sh`, the Portal's `JC_PORTAL_GRAFANA_USER`):
@@ -96,6 +101,7 @@ impl Default for DaiyaConfig {
             tokens_file: None,
             secrets_dir: None,
             provisioning_dir: None,
+            provisioning_vars: BTreeMap::new(),
             outbound: OutboundConfig::default(),
             server_admin: None,
         }
@@ -319,6 +325,17 @@ pub struct Built {
     pub provisioning: Option<ProvisioningLoadReport>,
 }
 
+/// The provisioning variables among `vars` (the process environment, handed in by the binary):
+/// `DAIYA_VAR_NAME` becomes `NAME`; every other variable is left out.
+pub fn provisioning_vars_from(
+    vars: impl IntoIterator<Item = (String, String)>,
+) -> BTreeMap<String, String> {
+    vars.into_iter()
+        .filter_map(|(k, v)| k.strip_prefix("DAIYA_VAR_").map(|n| (n.to_owned(), v)))
+        .filter(|(n, _)| !n.is_empty())
+        .collect()
+}
+
 /// Builds the state of a standalone instance from `cfg`: store, API tokens and their roles,
 /// the CLI actor (admin of the organization), datasource secrets, the outbound policy, and
 /// the provisioning directory loaded into the store.
@@ -386,25 +403,36 @@ pub async fn build_state(cfg: &DaiyaConfig) -> CrResult<Built> {
         }
     }
     let provisioning = match &cfg.provisioning_dir {
-        Some(dir) => Some(
-            load_provisioning_dir(
-                state.store.as_ref(),
-                ProvisioningTarget {
-                    installation_id: state.installation_id,
-                    org_id: org,
-                    instance_id: state.default_instance_id,
-                },
-                dir,
-                &state.limits,
-            )
-            .await?,
-        ),
+        Some(dir) => Some(provision(&state, dir, &cfg.provisioning_vars).await?),
         None => None,
     };
     Ok(Built {
         state,
         provisioning,
     })
+}
+
+/// Loads the provisioning directory `dir` into the default organization of `state` and lets
+/// the datasources it wrote reach [`DaiyaState::own_addresses`] (`DaiyaState::trust_provisioned`).
+pub async fn provision(
+    state: &DaiyaState,
+    dir: &Path,
+    vars: &BTreeMap<String, String>,
+) -> CrResult<ProvisioningLoadReport> {
+    let report = load_provisioning_dir(
+        state.store.as_ref(),
+        ProvisioningTarget {
+            installation_id: state.installation_id,
+            org_id: state.default_org_id,
+            instance_id: state.default_instance_id,
+        },
+        dir,
+        &state.limits,
+        vars,
+    )
+    .await?;
+    state.trust_provisioned(&report.datasources);
+    Ok(report)
 }
 
 /// The request context of the CLI subcommands: the operator, admin of the organization.

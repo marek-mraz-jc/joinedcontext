@@ -143,6 +143,7 @@ async fn slug_mode_reaches_every_module_and_404s_unknown_slugs() {
     let running = jc::start(&cfg, CancellationToken::new())
         .await
         .expect("start");
+    running.portal_ready().await;
     let addr = running.addr;
     for &module in &cfg.roles {
         let (path, needle) = probe(module);
@@ -251,6 +252,7 @@ async fn host_mode_reaches_every_module_and_404s_unknown_hosts() {
     let running = jc::start(&cfg, CancellationToken::new())
         .await
         .expect("start");
+    running.portal_ready().await;
     let addr = running.addr;
     for &module in &cfg.roles {
         let (path, needle) = probe(module);
@@ -306,6 +308,7 @@ async fn explicit_mounts_mix_hosts_and_slugs() {
     let running = jc::start(&cfg, CancellationToken::new())
         .await
         .expect("start");
+    running.portal_ready().await;
     let addr = running.addr;
     let (status, body) = get(
         addr,
@@ -333,6 +336,7 @@ async fn a_forwarded_host_from_an_untrusted_peer_is_ignored() {
     let running = jc::start(&cfg, CancellationToken::new())
         .await
         .expect("start");
+    running.portal_ready().await;
     let resp = reqwest::Client::new()
         .get(format!("http://{}/api/health", running.addr))
         .header("host", "nope.city.test")
@@ -439,6 +443,7 @@ async fn an_invalid_prefix_or_a_bad_module_setting_refuses_to_start() {
     let running = jc::start(&cfg, CancellationToken::new())
         .await
         .expect("starts with a generated secret");
+    running.portal_ready().await;
     running.stop().await.expect("stop");
     let generated = cfg.state_dir.join("kaisatsu-kek");
     assert!(generated.is_file(), "{}", generated.display());
@@ -517,6 +522,7 @@ async fn a_bad_antares_environment_refuses_to_start() {
     let running = jc::start(&cfg, CancellationToken::new())
         .await
         .expect("starts with a generated secret");
+    running.portal_ready().await;
     running.stop().await.expect("stop");
     let generated = cfg.state_dir.join("antares-admin-token");
     assert!(generated.is_file(), "{}", generated.display());
@@ -596,6 +602,7 @@ async fn running_exposes_its_shutdown_token() {
     let running = jc::start(&cfg, CancellationToken::new())
         .await
         .expect("start");
+    running.portal_ready().await;
     let addr = running.addr;
     running.shutdown_token().cancel();
     running.wait().await.expect("clean stop");
@@ -621,6 +628,7 @@ async fn another_modules_secret_is_not_readable_through_an_ekiben_stream() {
     let running = jc::start(&cfg, CancellationToken::new())
         .await
         .expect("start");
+    running.portal_ready().await;
     let base = format!("http://{}/streams", running.addr);
     let client = reqwest::Client::new();
 

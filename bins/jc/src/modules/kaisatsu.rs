@@ -21,12 +21,27 @@ use std::sync::Arc;
 /// Opens the configured `Store` for kaisatsu inside `jc` (K16):
 /// - When `database_url_file` is set, reads the URL from the file, refuses any URL containing an
 ///   inline password, connects `PgStore` with `verify_boot_rls`, and spawns the change listener.
-/// - When `database_url_file` is absent, logs a `WARN` once and falls back to `MemoryStore`.
+/// - `[kaisatsu.database]` does the same from the shared section, migrating first as the
+///   migration role when one is set (sqlx's migrator holds an advisory lock).
+/// - When neither is set, logs a `WARN` once and falls back to `MemoryStore`.
 pub async fn open_kaisatsu_store(
     cfg: &KaisatsuSection,
     kek: Kek,
 ) -> Result<Arc<dyn Store>, StartError> {
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
+    if let Some(db) = &cfg.database {
+        if let Some(opts) = db.migrate_options().map_err(|e| err(&e))? {
+            let pool = crate::pg::connect(opts, 1).await.map_err(|e| err(&e))?;
+            PgStore::run_migrations(&pool).await.map_err(|e| err(&e))?;
+            pool.close().await;
+        }
+        let opts = db.app_options().map_err(|e| err(&e))?;
+        let pg = PgStore::connect_with(opts, db.max_connections(), kek)
+            .await
+            .map_err(|e| err(&e))?;
+        pg.spawn_change_listener();
+        return Ok(Arc::new(pg));
+    }
     if let Some(url_file) = &cfg.database_url_file {
         let raw_url = std::fs::read_to_string(url_file).map_err(|e| {
             err(&format!(
@@ -200,6 +215,7 @@ mod tests {
             database_url_file: None,
             db_password_file: None,
             db_max_connections: None,
+            database: None,
         };
         let store = open_kaisatsu_store(&mem_section, kek).await.unwrap();
         assert!(store.list_realms().await.unwrap().is_empty());
@@ -238,6 +254,7 @@ mod tests {
                 database_url_file: Some(url_file),
                 db_password_file: Some(pw_file),
                 db_max_connections: Some(2),
+                database: None,
             }
         };
 

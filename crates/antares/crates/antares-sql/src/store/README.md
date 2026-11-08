@@ -13,7 +13,7 @@ have to live here: the two driver traits are the whole contract, and
 To add one here: copy `mem/`, implement `CurrentStateDriver` and
 `TemporalDriver` (`crates/antares-store/src/lib.rs`), add an `AnyStore` arm
 (`any.rs`), a `StoreMode` value (`crates/antares-store/src/lib.rs`) and the
-`build_builtin` arm in `crates/antares-broker/src/main.rs`; if the backend
+`build_builtin` arm in `crates/antares-broker/src/lib.rs`; if the backend
 needs background jobs, an arm next to the sweep or the maintenance job in
 the same file. Hold it to `antares_store::contract` (the `test-kit`
 feature) and finish with a cell in the ETSI matrix

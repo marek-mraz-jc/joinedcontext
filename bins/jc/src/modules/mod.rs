@@ -22,6 +22,8 @@ mod daiya;
 mod dataroom;
 #[cfg(feature = "ekiben")]
 mod ekiben;
+#[cfg(feature = "ekiben")]
+mod ekiben_pg;
 #[cfg(feature = "gateway")]
 pub mod gateway;
 #[cfg(feature = "kaisatsu")]
@@ -78,11 +80,11 @@ pub async fn build(
         #[cfg(feature = "dataroom")]
         Module::Dataroom => dataroom::build(&cfg.dataroom, ctx.setup, mount).await,
         #[cfg(feature = "daiya")]
-        Module::Daiya => daiya::build(&cfg.daiya, ctx.setup, mount)
+        Module::Daiya => daiya::build(&cfg.daiya, ctx.setup, ctx.siblings.listener, mount)
             .await
             .map_err(|e| StartError::module(Module::Daiya, e)),
         #[cfg(feature = "ekiben")]
-        Module::Ekiben => ekiben::build(&cfg.ekiben, ctx.setup),
+        Module::Ekiben => ekiben::build(&cfg.ekiben, ctx.setup).await,
         #[cfg(feature = "antares")]
         Module::Antares => antares::build(&cfg.antares, ctx.setup, None, shutdown)
             .await

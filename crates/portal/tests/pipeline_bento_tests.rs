@@ -6,7 +6,7 @@ mod common;
 
 use axum::http::StatusCode;
 use serde_json::json;
-use wiremock::matchers::{method, path_regex};
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{envelope, person, send, REPO};
@@ -17,17 +17,25 @@ const BENTO: &str = "/api/v1/projects/helsinki/pipelines/stations/bento";
 const FILE: &str = "pipeline:\n  processors:\n    - mapping: |\n        root.type = \"AirQualityObserved\"\n        root.token = \"${FEED_TOKEN}\"\n";
 
 async fn world(file: Option<ResponseTemplate>) -> (AppState, MockServer) {
-    let gitea = common::forge().await;
+    let shako = common::forge().await;
     if let Some(answer) = file {
         Mock::given(method("GET"))
-            .and(path_regex(format!(
-                "^{REPO}/contents/projects/helsinki/.*pipelines/stations/bento.yaml$"
-            )))
+            .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
+            .and(|r: &wiremock::Request| {
+                r.url.query_pairs().any(|(k, v)| {
+                    k == "@p"
+                        && regex::Regex::new(
+                            r"^'projects/helsinki/.*pipelines/stations/bento.yaml'$",
+                        )
+                        .expect("a pattern")
+                        .is_match(&v)
+                })
+            })
             .respond_with(answer)
-            .mount(&gitea)
+            .mount(&shako)
             .await;
     }
-    let state = common::state_on(&gitea);
+    let state = common::state_on(&shako);
     state.mirror.upsert(envelope(
         "Role",
         "pipeline-reader",
@@ -52,14 +60,14 @@ async fn world(file: Option<ResponseTemplate>) -> (AppState, MockServer) {
             json!({ "class": "auto", "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:bikes" }),
         ));
     }
-    (state, gitea)
+    (state, shako)
 }
 
 fn file_answer() -> ResponseTemplate {
     use base64::Engine as _;
     ResponseTemplate::new(200).set_body_json(json!({
-        "sha": "sha-bento-1",
-        "content": base64::engine::general_purpose::STANDARD.encode(FILE),
+        "Sha": "sha-bento-1",
+        "Content": base64::engine::general_purpose::STANDARD.encode(FILE),
     }))
 }
 
@@ -94,7 +102,7 @@ async fn a_forge_that_fails_is_not_an_empty_mapping() {
 
 #[tokio::test]
 async fn another_projects_file_and_a_caller_without_read_are_refused_before_the_forge() {
-    let (state, gitea) = world(Some(file_answer())).await;
+    let (state, shako) = world(Some(file_answer())).await;
     let other = send(
         &state,
         person("jana"),
@@ -106,7 +114,7 @@ async fn another_projects_file_and_a_caller_without_read_are_refused_before_the_
     assert_eq!(other.status, StatusCode::NOT_FOUND, "{}", other.text);
     let refused = send(&state, person("mikko"), "GET", BENTO, None).await;
     assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.text);
-    let asked = gitea.received_requests().await.unwrap_or_default();
+    let asked = shako.received_requests().await.unwrap_or_default();
     assert!(
         !asked.iter().any(|r| r.url.path().ends_with("bento.yaml")),
         "the forge was asked for the file"

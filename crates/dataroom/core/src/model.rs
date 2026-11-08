@@ -263,6 +263,11 @@ pub struct Catalogue {
     #[serde(default)]
     pub applicable_legislation: Vec<String>,
     pub modified: DateTime<Utc>,
+    /// The public URL this catalogue is served at (scheme, host and mount prefix), when the
+    /// installation configures one; never stored. [`Catalogue::base_url`] prefers it, so an
+    /// http install or a catalogue under a path prefix answers links that reach it.
+    #[serde(skip)]
+    pub public_base: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -270,8 +275,11 @@ fn default_true() -> bool {
 }
 
 impl Catalogue {
-    /// Base URL for this catalogue (`https://{host}`).
+    /// Base URL for this catalogue: the configured public URL, else `https://{host}`.
     pub fn base_url(&self) -> String {
+        if let Some(base) = &self.public_base {
+            return base.trim_end_matches('/').to_owned();
+        }
         if self.host.starts_with("http://") || self.host.starts_with("https://") {
             self.host.trim_end_matches('/').to_owned()
         } else {

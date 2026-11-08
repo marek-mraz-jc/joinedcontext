@@ -14,6 +14,24 @@ use tokio::sync::RwLock;
 
 use crate::runner::{spawn_stream, RunningStreamHandle};
 
+/// Where a hosting process keeps stream definitions across restarts (`jc` puts them in
+/// Postgres). The manager calls it for every continuous stream it creates or removes, with the
+/// config as posted (before `${VAR}` interpolation, so no filled-in secret is stored). Run-once
+/// streams are not kept: replaying one at the next start would run it a second time.
+pub trait StreamPersistence: Send + Sync {
+    fn saved<'a>(
+        &'a self,
+        org: &'a OrgId,
+        id: &'a str,
+        posted: &'a JsonValue,
+    ) -> futures::future::BoxFuture<'a, Result<(), String>>;
+    fn deleted<'a>(
+        &'a self,
+        org: &'a OrgId,
+        id: &'a str,
+    ) -> futures::future::BoxFuture<'a, Result<(), String>>;
+}
+
 /// Status of a managed stream in streams mode (`internal/stream/manager/type.go:StreamStatus`).
 pub struct ManagedStream {
     pub id: String,
@@ -112,6 +130,8 @@ pub struct StreamManager {
     /// Which process variables configs and `env()` read (E1); `true`/`false` convert as the old
     /// `allow_host_env` flag did.
     pub env_access: EnvAccess,
+    /// Keeps definitions across restarts when set ([`Self::with_persistence`]).
+    persistence: Option<Arc<dyn StreamPersistence>>,
 }
 
 impl StreamManager {
@@ -128,7 +148,36 @@ impl StreamManager {
             metrics_registry: MetricsRegistry::new(),
             file_root,
             env_access: env_access.into(),
+            persistence: None,
         }
+    }
+
+    /// Saves every created continuous stream and every removal through `persistence`. A write
+    /// it refuses fails the API call and leaves the running set as it was.
+    pub fn with_persistence(mut self, persistence: Arc<dyn StreamPersistence>) -> Self {
+        self.persistence = Some(persistence);
+        self
+    }
+
+    /// Starts a stream kept by the persistence before a restart: `posted` is interpolated and
+    /// parsed as the API does, in organization `org`, and is not saved again.
+    pub async fn restore(
+        &self,
+        org: OrgId,
+        id: String,
+        posted: JsonValue,
+    ) -> Result<(), CoreError> {
+        let text = serde_json::to_string(&posted).map_err(|e| CoreError::other(e.to_string()))?;
+        let filled = self
+            .interpolate(&org, &text)
+            .map_err(|e| CoreError::config(format!("missing variables {:?}", e.missing)))?;
+        let raw: JsonValue =
+            serde_json::from_str(&filled).map_err(|e| CoreError::other(e.to_string()))?;
+        let mut conf = StreamConfig::from_json_value(&raw)?;
+        conf.org = org;
+        self.create_inner(id, conf, Some(posted), false)
+            .await
+            .map(|_| ())
     }
 
     /// Uses `metrics_registry` (built from the `metrics:` section) instead of the defaults.
@@ -213,6 +262,16 @@ impl StreamManager {
         conf: StreamConfig,
         posted: Option<JsonValue>,
     ) -> Result<Option<RunSummary>, CoreError> {
+        self.create_inner(id, conf, posted, true).await
+    }
+
+    async fn create_inner(
+        &self,
+        id: String,
+        conf: StreamConfig,
+        posted: Option<JsonValue>,
+        persist: bool,
+    ) -> Result<Option<RunSummary>, CoreError> {
         let key: StreamKey = (conf.org.clone(), id.clone());
         if self.streams.read().await.contains_key(&key) {
             return Err(CoreError::KeyAlreadyExists(format!(
@@ -262,6 +321,16 @@ impl StreamManager {
             return Ok(Some(summary));
         }
 
+        let saved = match (&self.persistence, &posted) {
+            (Some(p), Some(posted)) if persist => p.saved(&conf.org, &id, posted).await,
+            _ => Ok(()),
+        };
+        if let Err(e) = saved {
+            let _ = handle.stop(Duration::from_secs(5)).await;
+            return Err(CoreError::other(format!(
+                "stream '{id}' was not saved: {e}"
+            )));
+        }
         let managed = ManagedStream {
             id: id.clone(),
             org: conf.org.clone(),
@@ -399,12 +468,18 @@ impl StreamManager {
     /// in `/metrics` (and continue if the id is created again); its timings go.
     pub async fn delete(&self, id: &str, caller_org: Option<&OrgId>) -> Result<(), CoreError> {
         let key = stream_key(caller_org, id);
-        let removed = self
-            .streams
-            .write()
-            .await
-            .remove(&key)
-            .ok_or_else(|| not_found(id))?;
+        let removed = {
+            let mut guard = self.streams.write().await;
+            if !guard.contains_key(&key) {
+                return Err(not_found(id));
+            }
+            if let Some(p) = &self.persistence {
+                p.deleted(&key.0, id)
+                    .await
+                    .map_err(|e| CoreError::other(format!("stream '{id}' was not removed: {e}")))?;
+            }
+            guard.remove(&key).ok_or_else(|| not_found(id))?
+        };
 
         if let Some(handle) = removed.handle {
             let _ = handle.stop(Duration::from_secs(5)).await;

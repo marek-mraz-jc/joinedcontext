@@ -306,11 +306,11 @@ pub fn spawn_background(state: &AppState) {
         // The foreign-model mirror runs beside it, on the same replica (DM-48, DM-49). A
         // Portal whose peers cannot be reached still serves; the mirror says so in its log and
         // the reference stands with whatever the repository already pinned.
-        if let Some(gitea) = state.gitea.as_ref() {
+        if let Some(shako) = state.shako.as_ref() {
             match crate::sync::schema_api::PeerSchemaApi::new() {
                 Ok(peers) => {
                     crate::sync::mirror::spawn_periodic(
-                        gitea.clone(),
+                        shako.clone(),
                         syncer.clone(),
                         state.config.public_base_url.to_string(),
                         std::sync::Arc::new(peers),
@@ -324,13 +324,13 @@ pub fn spawn_background(state: &AppState) {
     }
 
     // A build pod per queued App build (AP-130), on the replica that holds the lease.
-    if let (Some(syncer), Some(gitea), Some(settings)) = (
+    if let (Some(syncer), Some(shako), Some(settings)) = (
         state.syncer.as_ref(),
-        state.gitea.as_ref(),
+        state.shako.as_ref(),
         state.config.build_pods.clone(),
     ) {
         crate::apps::build_pods::spawn_periodic(
-            gitea.clone(),
+            shako.clone(),
             syncer.clone(),
             state.mirror.clone(),
             settings,
@@ -347,8 +347,8 @@ pub fn spawn_background(state: &AppState) {
     crate::answers::spawn_periodic(state.clone());
     // What a restart of Grafana took, put back from the Portal's rows (T-6509).
     crate::grafana::spawn_periodic(state.clone());
-    // Each project's Grafana organization and folder, made once it is opened.
-    crate::grafana::spawn_organizations(state.clone());
+    // Each project's organization and folder in daiya, which Grafana gets from provision.sh.
+    crate::grafana::spawn_provisioning(state.clone());
 }
 
 /// The internal listener runs beside the public one, on the same replica, whenever this Portal

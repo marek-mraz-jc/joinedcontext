@@ -95,7 +95,7 @@ fn origin(url: &str) -> String {
 /// | Portal setting | sibling |
 /// |---|---|
 /// | `JC_OIDC_ISSUER`, `JC_OIDC_CLIENT_*`, `JC_KEYCLOAK_ADMIN_URL`, `JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_*`, `JC_PORTAL_COOKIE_KEY` | kaisatsu |
-/// | `JC_GITEA_URL`, `_PUBLIC_URL`, `_OWNER`, `_REPO`, `_TOKEN`, `_APPS_OWNER`, `_APPS_TOKEN`, `_WEBHOOK_SECRET` | shako |
+/// | `JC_SHAKO_URL`, `_PUBLIC_URL`, `_OWNER`, `_REPO`, `_TOKEN`, `_APPS_OWNER`, `_APPS_TOKEN`, `_WEBHOOK_SECRET` | shako |
 /// | `JC_PORTAL_PIPELINE_RUNNER_URL` | ekiben |
 /// | `JC_PORTAL_CKAN_URL`, `JC_PORTAL_CKAN_API_URL` (https, EP-67; http only with `JC_PORTAL_CKAN_ALLOW_HTTP=true`) | dataroom |
 /// | `JC_PORTAL_GRAFANA_URL`, `_PUBLIC_URL`, `_USER`, `_PASSWORD` | daiya |
@@ -153,20 +153,20 @@ pub fn portal_vars(
     }
     if let Some(git) = siblings.get(Module::Shako) {
         group(
-            "JC_GITEA_URL",
+            "JC_SHAKO_URL",
             vec![
-                ("JC_GITEA_URL", Some(git.internal.clone())),
-                ("JC_GITEA_PUBLIC_URL", Some(git.public.clone())),
-                ("JC_GITEA_OWNER", Some(setup::FORGE_OWNER.to_owned())),
-                ("JC_GITEA_REPO", Some(setup::FORGE_REPO.to_owned())),
-                ("JC_GITEA_TOKEN", secret(Secret::ShakoToken)),
+                ("JC_SHAKO_URL", Some(git.internal.clone())),
+                ("JC_SHAKO_PUBLIC_URL", Some(git.public.clone())),
+                ("JC_SHAKO_OWNER", Some(setup::FORGE_OWNER.to_owned())),
+                ("JC_SHAKO_REPO", Some(setup::FORGE_REPO.to_owned())),
+                ("JC_SHAKO_TOKEN", secret(Secret::ShakoToken)),
                 (
-                    "JC_GITEA_APPS_OWNER",
+                    "JC_SHAKO_APPS_OWNER",
                     Some(setup::FORGE_APPS_OWNER.to_owned()),
                 ),
-                ("JC_GITEA_APPS_TOKEN", secret(Secret::ShakoToken)),
+                ("JC_SHAKO_APPS_TOKEN", secret(Secret::ShakoToken)),
                 (
-                    "JC_GITEA_WEBHOOK_SECRET",
+                    "JC_SHAKO_WEBHOOK_SECRET",
                     secret(Secret::ForgeWebhookSecret),
                 ),
             ],
@@ -366,7 +366,7 @@ mod tests {
     fn module_of(url_key: &str) -> Module {
         match url_key {
             "JC_OIDC_ISSUER" => Module::Kaisatsu,
-            "JC_GITEA_URL" => Module::Shako,
+            "JC_SHAKO_URL" => Module::Shako,
             "JC_PORTAL_PIPELINE_RUNNER_URL" => Module::Ekiben,
             "JC_PORTAL_CKAN_URL" => Module::Dataroom,
             "JC_PORTAL_GRAFANA_URL" => Module::Daiya,
@@ -414,21 +414,21 @@ mod tests {
     #[test]
     fn shako_row() {
         let v = row(
-            "JC_GITEA_URL",
+            "JC_SHAKO_URL",
             &[
-                "JC_GITEA_URL",
-                "JC_GITEA_PUBLIC_URL",
-                "JC_GITEA_OWNER",
-                "JC_GITEA_REPO",
-                "JC_GITEA_TOKEN",
-                "JC_GITEA_APPS_OWNER",
-                "JC_GITEA_APPS_TOKEN",
-                "JC_GITEA_WEBHOOK_SECRET",
+                "JC_SHAKO_URL",
+                "JC_SHAKO_PUBLIC_URL",
+                "JC_SHAKO_OWNER",
+                "JC_SHAKO_REPO",
+                "JC_SHAKO_TOKEN",
+                "JC_SHAKO_APPS_OWNER",
+                "JC_SHAKO_APPS_TOKEN",
+                "JC_SHAKO_WEBHOOK_SECRET",
             ],
             "https",
         );
-        assert_eq!(v["JC_GITEA_URL"], "http://127.0.0.1:8443/git");
-        assert_eq!(v["JC_GITEA_OWNER"], "jc");
+        assert_eq!(v["JC_SHAKO_URL"], "http://127.0.0.1:8443/git");
+        assert_eq!(v["JC_SHAKO_OWNER"], "jc");
     }
 
     #[test]
@@ -512,7 +512,7 @@ mod tests {
     fn a_row_without_its_secret_is_not_filled() {
         let (siblings, _, _d) = fixture("https");
         let v = portal_vars(&siblings, &Setup::default(), none);
-        assert!(!v.contains_key("JC_GITEA_URL"));
+        assert!(!v.contains_key("JC_SHAKO_URL"));
         assert!(!v.contains_key("JC_OIDC_ISSUER"));
         assert!(v.contains_key("JC_PORTAL_PIPELINE_RUNNER_URL"));
     }

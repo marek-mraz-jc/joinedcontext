@@ -370,11 +370,13 @@ async fn add_datasource(
     ctx: &RequestCtx,
     req: UpsertDatasourceReq,
 ) -> CrResult<Value> {
+    // A datasource names a URL and the secrets sent to it: as Grafana's `datasources:write`,
+    // only an organization Admin writes one, or an Editor could send a stored secret anywhere.
     state
         .authorizer
         .check(
             ctx,
-            Action::Propose,
+            Action::Admin,
             &ObjectTarget::Organization { org_id: ctx.org_id },
         )
         .into_result("Organization not found")?;
@@ -439,6 +441,14 @@ async fn update_datasource(
                 org_id: ctx.org_id,
                 datasource_uid: uid.clone(),
             },
+        )
+        .into_result("Data source not found")?;
+    state
+        .authorizer
+        .check(
+            ctx,
+            Action::Admin,
+            &ObjectTarget::Organization { org_id: ctx.org_id },
         )
         .into_result("Data source not found")?;
     refuse_raw_secrets(req.secure_json_data.as_ref())?;
@@ -955,26 +965,37 @@ async fn compat_ds_query(
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct RenderQueryParams {
-    panel: Option<u32>,
-    from: Option<String>,
-    to: Option<String>,
+/// The panel answer of `GET /api/dashboards/{uid}/render`: `panel`, `from`, `to`, `intervalMs`,
+/// `maxDataPoints` and Grafana's `var-<name>` template variables, which the saved panel's queries
+/// take in place of the dashboard's current values.
+fn render_range(params: Vec<(String, String)>) -> (u32, PanelTimeRange) {
+    let mut panel_id = 1;
+    let mut range = PanelTimeRange::default();
+    for (key, value) in params {
+        match key.as_str() {
+            "panel" => panel_id = value.parse().unwrap_or(1),
+            "from" => range.from = Some(value),
+            "to" => range.to = Some(value),
+            "intervalMs" => range.interval_ms = value.parse().ok(),
+            "maxDataPoints" => range.max_data_points = value.parse().ok(),
+            other => {
+                if let Some(name) = other.strip_prefix("var-") {
+                    range.variables.insert(name.to_owned(), value);
+                }
+            }
+        }
+    }
+    (panel_id, range)
 }
 
 async fn compat_render_dashboard_panel(
     State(state): State<DaiyaState>,
     headers: HeaderMap,
     Path(uid): Path<String>,
-    AxumQuery(params): AxumQuery<RenderQueryParams>,
+    AxumQuery(params): AxumQuery<Vec<(String, String)>>,
 ) -> Response {
     let ctx = resolve_request_ctx(&state, &headers);
-    let panel_id = params.panel.unwrap_or(1);
-    let range = PanelTimeRange {
-        from: params.from,
-        to: params.to,
-        ..PanelTimeRange::default()
-    };
+    let (panel_id, range) = render_range(params);
     match panel_view(&state, &ctx.subject, ctx.org_id, &uid, panel_id, range).await {
         Ok(pv) => (
             StatusCode::OK,

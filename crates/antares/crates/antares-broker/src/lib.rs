@@ -18,6 +18,8 @@ mod wiring;
 #[cfg(feature = "ws")]
 mod ws_relay;
 
+/// The secret wrapper a host passes [`BrokerConfig::database_url`] in.
+pub use antares_api::secret::Secret;
 use antares_api::AppState;
 
 // ANTARES_DATABASE_URL: accepted — the ETSI compose wires one DB per broker —
@@ -388,6 +390,15 @@ pub struct BrokerConfig {
     /// `ANTARES_API_SURFACES`, `ANTARES_POLICY`, `ANTARES_PROVENANCE_FROM`,
     /// `ANTARES_POLICY_SUBJECT_FROM` and `ANTARES_POLICY_SUBJECT_HEADERS`.
     pub defaults: std::collections::BTreeMap<String, String>,
+    /// The Postgres URL, password included, a host gives in place of
+    /// ANTARES_DATABASE_URL (that variable is read when this is `None`).
+    pub database_url: Option<Secret>,
+    /// ANTARES_REQUIRE_RLS: a database role that bypasses row-level
+    /// security refuses the boot instead of a warning. A host may force it.
+    pub require_rls: bool,
+    /// The pool size a host gives in place of ANTARES_PG_POOL (that
+    /// variable is read when this is `None`).
+    pub pg_pool: Option<u32>,
 }
 
 impl BrokerConfig {
@@ -492,7 +503,19 @@ pub fn config_from_env() -> Result<BrokerConfig, Box<dyn std::error::Error>> {
         drain_deadline,
         admin_token_file: std::env::var("ANTARES_ADMIN_TOKEN_FILE").ok(),
         defaults: std::collections::BTreeMap::new(),
+        database_url: None,
+        require_rls: std::env::var("ANTARES_REQUIRE_RLS").is_ok_and(|v| !is_off(&v)),
+        pg_pool: None,
     })
+}
+
+/// What the store builders take from [`BrokerConfig`] instead of the
+/// environment.
+#[derive(Debug, Clone, Default)]
+struct PgSettings {
+    url: Option<Secret>,
+    require_rls: bool,
+    pool: Option<u32>,
 }
 
 /// ANTARES_PG_STATEMENT_TIMEOUT_MS → the per-session `statement_timeout`
@@ -785,8 +808,11 @@ fn policy_engine(raw: Option<&str>) -> Result<(&'static str, PolicyCtor), String
 /// OperationNotSupported 422, Table 6.3.2-1; the recorder produces
 /// nothing), and a different backend name builds a second store used only
 /// through its temporal half.
-async fn build_drivers(store_name: &str) -> Result<Drivers, Box<dyn std::error::Error>> {
-    let built = build_store(store_name, false).await?;
+async fn build_drivers(
+    store_name: &str,
+    pg: &PgSettings,
+) -> Result<Drivers, Box<dyn std::error::Error>> {
+    let built = build_store(store_name, false, pg).await?;
     // Every pg half gets the maintenance job: partitions, retention and the
     // 4.22 reap belong to whichever database holds the history.
     let mut maintenance = Vec::from_iter(built.maintenance);
@@ -802,7 +828,7 @@ async fn build_drivers(store_name: &str) -> Result<Drivers, Box<dyn std::error::
             None,
         ),
         TemporalChoice::Second(name) => {
-            let second = build_store(&name, true).await?;
+            let second = build_store(&name, true, pg).await?;
             maintenance.extend(second.maintenance);
             (second.temporal, Some(name))
         }
@@ -842,7 +868,11 @@ struct Built {
 /// One backend by name. `temporal_only` builds an instance whose
 /// current-state half is never served — the second store of a split
 /// `ANTARES_TEMPORAL`. An unknown name is an error naming the shelf.
-async fn build_store(name: &str, temporal_only: bool) -> Result<Built, Box<dyn std::error::Error>> {
+async fn build_store(
+    name: &str,
+    temporal_only: bool,
+    pg: &PgSettings,
+) -> Result<Built, Box<dyn std::error::Error>> {
     #[cfg(feature = "plugin-example")]
     if name == antares_plugin_example::NAME {
         // A driver from outside `crates/` mounts through exactly the two
@@ -862,7 +892,7 @@ async fn build_store(name: &str, temporal_only: bool) -> Result<Built, Box<dyn s
             store_shelf().join("|")
         )
     })?;
-    let (store, backend) = build_builtin(mode).await?;
+    let (store, backend) = build_builtin(mode, pg).await?;
     let store = if temporal_only {
         store.temporal_only()
     } else {
@@ -888,6 +918,7 @@ async fn build_store(name: &str, temporal_only: bool) -> Result<Built, Box<dyn s
 /// migrations at start and serve from the Pg backend.
 async fn build_builtin(
     mode: antares_sql::StoreMode,
+    pg: &PgSettings,
 ) -> Result<
     (
         antares_sql::store::any::AnyStore,
@@ -913,10 +944,16 @@ async fn build_builtin(
         StoreMode::Postgres | StoreMode::Timescale => {
             // The URL carries the database password: held as a Secret so no
             // error or log line below can print it (T-3915).
-            let url = std::env::var("ANTARES_DATABASE_URL")
-                .map(antares_api::secret::Secret::new)
-                .map_err(|_| format!("ANTARES_STORE={mode} requires ANTARES_DATABASE_URL"))?;
-            let pool_size = parse_pg_pool(std::env::var("ANTARES_PG_POOL").ok().as_deref())?;
+            let url = match &pg.url {
+                Some(url) => url.clone(),
+                None => std::env::var("ANTARES_DATABASE_URL")
+                    .map(Secret::new)
+                    .map_err(|_| format!("ANTARES_STORE={mode} requires ANTARES_DATABASE_URL"))?,
+            };
+            let pool_size = match pg.pool {
+                Some(n) => n.max(1),
+                None => parse_pg_pool(std::env::var("ANTARES_PG_POOL").ok().as_deref())?,
+            };
             let write_reserve = parse_pg_write_reserve(
                 std::env::var("ANTARES_PG_WRITE_RESERVE").ok().as_deref(),
                 pool_size,
@@ -990,9 +1027,7 @@ async fn build_builtin(
                             // believes RLS is enforced and the broker serves
                             // with a BYPASSRLS role. Anything but an explicit
                             // off value turns it on.
-                            let strict =
-                                std::env::var("ANTARES_REQUIRE_RLS").is_ok_and(|v| !is_off(&v));
-                            if strict {
+                            if pg.require_rls {
                                 return Err(
                                     "ANTARES_REQUIRE_RLS=1 but the database role bypasses \
                                      row-level security (superuser or BYPASSRLS) — connect as a \
@@ -1154,7 +1189,15 @@ pub async fn build_state(
         antares_api::policy::default_subject_headers(names);
     }
     let subject_from = subject_from(cfg.var("ANTARES_POLICY_SUBJECT_FROM"))?;
-    let drivers = build_drivers(&cfg.store_name).await?;
+    let drivers = build_drivers(
+        &cfg.store_name,
+        &PgSettings {
+            url: cfg.database_url.clone(),
+            require_rls: cfg.require_rls,
+            pool: cfg.pg_pool,
+        },
+    )
+    .await?;
     let store = drivers.store;
     let temporal = drivers.temporal;
     let temporal_name = drivers.temporal_name;
@@ -2242,7 +2285,7 @@ mod driver_registry_tests {
             temporal_choice(name, None).expect("ok"),
             TemporalChoice::SameAsStore
         );
-        let drivers = super::build_drivers(name)
+        let drivers = super::build_drivers(name, &super::PgSettings::default())
             .await
             .expect("the plugin driver builds");
         assert_eq!(drivers.temporal_name.as_deref(), Some(name));

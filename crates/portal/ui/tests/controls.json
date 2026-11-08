@@ -1412,7 +1412,41 @@
         "Button": 4
       },
       "tests": [
+        "dashboard_page.test.tsx",
         "grafana_page.test.tsx"
+      ]
+    },
+    "src/pages/grafana/DashboardPage.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "dashboard_page.test.tsx",
+        "dashboard_panels.test.tsx"
+      ]
+    },
+    "src/components/panels/DashboardGrid.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "dashboard_panels.test.tsx"
+      ]
+    },
+    "src/components/panels/PanelView.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "dashboard_panels.test.tsx"
+      ]
+    },
+    "src/components/panels/TimeSeriesPanel.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "dashboard_panels.test.tsx"
       ]
     },
     "src/pages/endpoints/VisualizationsSection.tsx": {

@@ -31,7 +31,7 @@ use axum_extra::extract::cookie::PrivateCookieJar;
 use joinedcontext_portal::auth::csrf::{self, CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use tower::ServiceExt;
@@ -109,7 +109,7 @@ fn no_portal_cookie_reaches_the_apex_the_apps_run_on() {
 #[tokio::test]
 async fn an_app_sending_the_viewers_session_to_the_portal_api_writes_nothing() {
     let forge = MockServer::start().await;
-    let client = GiteaClient::new(
+    let client = ShakoClient::new(
         forge.uri().parse().expect("mock url"),
         "owner",
         "config",
@@ -121,7 +121,7 @@ async fn an_app_sending_the_viewers_session_to_the_portal_api_writes_nothing() {
         ..Config::for_tests()
     };
     let (_, cookies, token) = portal_cookies(&config);
-    let app = server::app(AppState::new(config, None).with_gitea(Arc::new(client)));
+    let app = server::app(AppState::new(config, None).with_shako(Arc::new(client)));
 
     let body = serde_json::json!({
         "apiVersion": "joinedcontext.com/v1alpha1",

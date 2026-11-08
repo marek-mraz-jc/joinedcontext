@@ -16,7 +16,7 @@ use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const HEAD: &str = "2c245c6bb1efa7a20938c5b11b70379be6838eec";
@@ -46,45 +46,66 @@ async fn repository(
     files: &[(&str, &str)],
     tags: Value,
 ) {
-    let base = format!("/api/v1/repos/test-owner/{name}");
+    let base = format!("/odata/Repositories(Owner='test-owner',Name='{name}')");
     let json_at = |route: String, body: Value| {
         Mock::given(method("GET"))
             .and(path(route))
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
     };
-    json_at(base.clone(), json!({ "default_branch": "main" }))
+    json_at(base.clone(), json!({ "DefaultBranch": "main" }))
         .mount(server)
         .await;
     json_at(
-        format!("{base}/branches/main"),
-        json!({ "name": "main", "commit": { "id": head } }),
+        format!("{base}/Branches('main')"),
+        json!({ "Name": "main", "HeadSha": head }),
     )
     .mount(server)
     .await;
     let tree: Vec<_> = files
         .iter()
-        .map(|(file, _)| json!({ "path": file, "type": "blob", "sha": format!("blob-{file}") }))
+        .map(|(file, _)| json!({ "Path": file, "Type": "blob", "Sha": format!("blob-{file}") }))
         .collect();
-    json_at(
-        format!("{base}/git/trees/{head}"),
-        json!({ "sha": "tree", "truncated": false, "tree": tree }),
-    )
-    .mount(server)
-    .await;
-    for (file, body) in files {
-        json_at(
-            format!("{base}/contents/{file}"),
-            json!({ "sha": format!("blob-{file}"), "content": STANDARD.encode(body) }),
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{base}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", format!("'{head}'")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "Sha": "tree", "Truncated": false, "Tree": tree })),
         )
         .mount(server)
         .await;
+    for (file, body) in files {
+        Mock::given(method("GET"))
+            .and(path(format!("{base}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{file}'")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                json!({ "Sha": format!("blob-{file}"), "Content": STANDARD.encode(body) }),
+            ))
+            .mount(server)
+            .await;
     }
+    // The bundle: `Shako.BundleLink` names the download, which the client fetches from the
+    // base it dials.
+    let download = format!("/api/v1/repos/test-owner/{name}/archive/main.bundle");
     Mock::given(method("GET"))
-        .and(path(format!("{base}/archive/main.bundle")))
+        .and(path(format!("{base}/Shako.BundleLink(Ref=@r)")))
+        .and(query_param("@r", "'main'"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "value": format!("https://forge.example{download}") })),
+        )
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(download))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(bundle(bundled)))
         .mount(server)
         .await;
-    json_at(format!("{base}/tags"), tags).mount(server).await;
+    json_at(format!("{base}/Tags"), json!({ "value": tags }))
+        .mount(server)
+        .await;
 }
 
 /// A layout 2 organization: `ovzdusie` in its own repository with two spaces and a tag, and
@@ -101,7 +122,7 @@ async fn world(bundled: &str) -> (MockServer, AppState) {
             ("spaces/ovzdusie/space.yaml", SPACE),
             ("spaces/hluk/space.yaml", OTHER_SPACE),
         ],
-        json!([{ "name": "v1.0.0", "commit": { "sha": TAGGED } }]),
+        json!([{ "Name": "v1.0.0", "TargetSha": TAGGED }]),
     )
     .await;
     repository(
@@ -336,11 +357,17 @@ async fn a_git_export_is_whole_and_of_layout_two() {
 async fn the_revisions_are_the_project_repository_history() {
     let (server, state) = world(HEAD).await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/test-owner/ovzdusie/commits"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-            "sha": HEAD,
-            "commit": { "message": "open", "author": { "name": "jana", "date": "2026-09-22T10:00:00Z" } }
-        }])))
+        .and(path("/odata/Repositories(Owner='test-owner',Name='ovzdusie')/Shako.History(Ref=@r,Path=@p,Top=@n)"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Sha": HEAD,
+                    "Message": "open",
+                    "Author": "jana",
+                    "Date": "2026-09-22T10:00:00Z"
+                }
+            ]
+        })))
         .mount(&server)
         .await;
     let answer = common::send(
@@ -358,10 +385,16 @@ async fn the_revisions_are_the_project_repository_history() {
         .await
         .expect("requests")
         .into_iter()
-        .find(|r| r.url.path().ends_with("/ovzdusie/commits"))
+        .find(|r| {
+            r.url.path()
+                == "/odata/Repositories(Owner='test-owner',Name='ovzdusie')/Shako.History(Ref=@r,Path=@p,Top=@n)"
+        })
         .expect("the project repository's history was read");
     assert!(
-        !asked.url.query_pairs().any(|(key, _)| key == "path"),
+        asked
+            .url
+            .query_pairs()
+            .any(|(key, value)| key == "@p" && value == "''"),
         "{}",
         asked.url
     );
@@ -377,10 +410,14 @@ const PARKING_SOURCE: &str =
 async fn importing(server: &MockServer, state: &AppState, version: &str) {
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/test-owner/ovzdusie/contents/spaces/ovzdusie/datamodels/parking.linkml.yaml",
+            "/odata/Repositories(Owner='test-owner',Name='ovzdusie')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            "'spaces/ovzdusie/datamodels/parking.linkml.yaml'",
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(
-            json!({ "sha": "blob-parking", "content": STANDARD.encode(PARKING_SOURCE) }),
+            json!({ "Sha": "blob-parking", "Content": STANDARD.encode(PARKING_SOURCE) }),
         ))
         .with_priority(1)
         .mount(server)
@@ -390,12 +427,10 @@ async fn importing(server: &MockServer, state: &AppState, version: &str) {
         ("stations.linkml.yaml", ORG_SOURCE),
     ] {
         Mock::given(method("GET"))
-            .and(path(format!(
-                "{}/contents/datamodels/stations/{file}",
-                common::REPO
-            )))
+            .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+            .and(query_param("@p", format!("'datamodels/stations/{file}'")))
             .respond_with(ResponseTemplate::new(200).set_body_json(
-                json!({ "sha": format!("blob-{file}"), "content": STANDARD.encode(text) }),
+                json!({ "Sha": format!("blob-{file}"), "Content": STANDARD.encode(text) }),
             ))
             .with_priority(1)
             .mount(server)

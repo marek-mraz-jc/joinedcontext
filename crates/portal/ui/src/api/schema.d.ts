@@ -2906,6 +2906,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/grafana/dashboards": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Project Dashboards
+         * @description The dashboards of the project's organization in the dashboards service, to draw in the Portal. Changes no data.
+         */
+        get: operations["list_dashboards"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/grafana/dashboards/{uid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Project Dashboard
+         * @description One dashboard's layout, panels and variables, without its queries. Changes no data.
+         */
+        get: operations["get_dashboard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/grafana/dashboards/{uid}/panels/{panel}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Dashboard Panel Data
+         * @description Runs one panel's saved queries and transformations for the time range and variables asked (`from`, `to`, `maxDataPoints`, `var-<name>`) and answers its frames. Changes no data.
+         */
+        get: operations["panel_data"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/grafana/dashboards/{uid}/variables/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Dashboard Variable Values
+         * @description The values a variable offers now: a custom variable's own, a query variable's asked of its datasource with the saved query. Changes no data.
+         */
+        get: operations["variable_values"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/grafana/options": {
         parameters: {
             query?: never;
@@ -7026,7 +7106,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/webhooks/gitea": {
+    "/api/v1/webhooks/shako": {
         parameters: {
             query?: never;
             header?: never;
@@ -7039,7 +7119,7 @@ export interface paths {
          * Forge Webhook
          * @description Called by the forge on a push: a signed payload makes the mirror synchronize. An unsigned or wrongly signed call is refused with 401.
          */
-        post: operations["gitea_webhook"];
+        post: operations["shako_webhook"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8903,6 +8983,13 @@ export interface components {
             /** @description `true` answers the file before and after and writes nothing. */
             dryRun?: boolean;
         };
+        /** @description The dashboards of a project. */
+        DashboardList: {
+            items: components["schemas"]["DashboardSummary"][];
+            /** @description The dashboards service answers and holds this project's organization. */
+            ready: boolean;
+            reason?: string | null;
+        };
         /** @description What an edit proposes: the file before and after, and the Change once it is proposed. */
         DashboardProposal: {
             after: string;
@@ -8910,6 +8997,29 @@ export interface components {
             change?: null | components["schemas"]["Change"];
             /** @description The App repository's merge request the approval merges; absent on a dry run. */
             pullRequestUrl?: string | null;
+        };
+        /** @description One dashboard in the list. */
+        DashboardSummary: {
+            tags: string[];
+            title: string;
+            uid: string;
+        };
+        /** @description One dashboard: what the page lays out. Panel queries stay on the server. */
+        DashboardView: {
+            description?: string | null;
+            /** @description The saved time range, Grafana's words (`now-6h`, `now`). */
+            from: string;
+            /**
+             * @description Each panel's `id`, `type`, `title`, `description`, `gridPos`, `fieldConfig`, `options`,
+             *     and for a row `collapsed` and its `panels`.
+             */
+            panels: Record<string, never>[];
+            /** @description The saved refresh interval (`30s`, `5m`), if any. */
+            refresh?: string | null;
+            title: string;
+            to: string;
+            uid: string;
+            variables: components["schemas"]["VariableView"][];
         };
         DataAccess: {
             columns: components["schemas"]["AccessColumn"][];
@@ -10463,6 +10573,18 @@ export interface components {
              * @description When the pairing ends with the session, unless the person disconnects before.
              */
             until: string;
+        };
+        /** @description One panel's data. */
+        PanelData: {
+            /** @description Why the caller sees no data: a source they may not read. */
+            accessDenied?: string | null;
+            /** @description Why the panel has no data: its datasource refused or did not answer. */
+            error?: string | null;
+            /**
+             * @description daiya's frames, each with its `refId`: `{name, refId, fields: [{name, type, unit,
+             *     displayName, labels, values}], meta}`.
+             */
+            frames: Record<string, never>[];
         };
         /** @enum {string} */
         Part: "freshness" | "completeness" | "validity" | "links";
@@ -12301,6 +12423,31 @@ export interface components {
         Validation: "strict" | "lax";
         ValidationHealth: {
             checks: components["schemas"]["CheckHealth"][];
+        };
+        /** @description One value a variable offers. */
+        VariableOption: {
+            text: string;
+            value: string;
+        };
+        /** @description The values a variable offers now. */
+        VariableValues: {
+            options: components["schemas"]["VariableOption"][];
+        };
+        /** @description One template variable. */
+        VariableView: {
+            /** @description The saved selection. */
+            current: string[];
+            includeAll: boolean;
+            /** @description `custom`, `query`, `textbox`, `constant` or `interval`. */
+            kind: string;
+            label: string;
+            multi: boolean;
+            name: string;
+            /**
+             * @description The values a `custom` or `interval` variable offers; a `query` variable's come from its
+             *     own route.
+             */
+            options: components["schemas"]["VariableOption"][];
         };
         Verdict: {
             /** Format: date-time */
@@ -21734,6 +21881,198 @@ export interface operations {
             };
             /** @description Grafana or the database did not answer */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    list_dashboards: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The dashboards */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardList"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project the caller has a part in */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    get_dashboard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Dashboard uid */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The dashboard */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardView"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project or dashboard */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No dashboards service or organization */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    panel_data: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Dashboard uid */
+                uid: string;
+                /** @description Panel id */
+                panel: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The panel's frames, or why it has none */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PanelData"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project, dashboard or panel */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A time or variable the dashboard does not take */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    variable_values: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Dashboard uid */
+                uid: string;
+                /** @description Variable name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The values */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VariableValues"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project, dashboard or variable */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -39425,28 +39764,36 @@ export interface operations {
             };
         };
     };
-    gitea_webhook: {
+    shako_webhook: {
         parameters: {
             query?: never;
             header: {
                 /** @description HMAC-SHA256 signature of request body */
-                "x-gitea-signature": string;
-                /** @description Gitea event type (e.g. push, pull_request) */
-                "x-gitea-event"?: string | null;
+                "x-shako-signature": string;
+                /** @description HMAC-SHA256 signature with the hook's previous secret, while the forge rotates it */
+                "x-shako-signature-previous"?: string | null;
+                /** @description Forge event type (push, pull_request) */
+                "x-shako-event"?: string | null;
             };
             path?: never;
             cookie?: never;
         };
-        /** @description Gitea webhook event payload */
+        /** @description The forge's native event body */
         requestBody: {
             content: {
                 /**
                  * @example {
                  *       "after": "4f2a9c1d0e8b7a6f5e4d3c2b1a0f9e8d7c6b5a49",
+                 *       "before": "",
+                 *       "event": "push",
                  *       "ref": "refs/heads/main",
                  *       "repository": {
-                 *         "full_name": "hel/config"
-                 *       }
+                 *         "defaultBranch": "main",
+                 *         "name": "config",
+                 *         "owner": "hel",
+                 *         "private": true
+                 *       },
+                 *       "sender": "jc-portal"
                  *     }
                  */
                 "application/json": Record<string, never>;
@@ -39499,9 +39846,11 @@ export interface operations {
     webhook: {
         parameters: {
             query?: never;
-            header: {
-                /** @description HMAC-SHA256 of the request body */
-                "x-gitea-signature": string;
+            header?: {
+                /** @description HMAC-SHA256 of the request body, from a shako origin */
+                "x-shako-signature"?: string | null;
+                /** @description HMAC-SHA256 of the request body, from an outside Gitea origin */
+                "x-gitea-signature"?: string | null;
             };
             path: {
                 /** @description Project name */

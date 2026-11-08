@@ -40,8 +40,8 @@ async fn realm(people: usize) -> MockServer {
 }
 
 /// ada is the Organization Administrator; jana reads pipelines and nothing else.
-fn state_with(kc: &MockServer, gitea: &MockServer, said: SetupStatements) -> AppState {
-    let mut state = common::state_on(gitea);
+fn state_with(kc: &MockServer, shako: &MockServer, said: SetupStatements) -> AppState {
+    let mut state = common::state_on(shako);
     let mut config = (*state.config).clone();
     config.setup = said;
     state.config = Arc::new(config);
@@ -94,8 +94,8 @@ fn done(answer: &Value, list: &str) -> Vec<(String, bool)> {
 
 #[tokio::test]
 async fn an_empty_organization_lacks_every_step_and_says_nothing_it_was_not_told() {
-    let (kc, gitea) = (realm(1).await, forge().await);
-    let state = state_with(&kc, &gitea, SetupStatements::default());
+    let (kc, shako) = (realm(1).await, forge().await);
+    let state = state_with(&kc, &shako, SetupStatements::default());
 
     let answer = send(&state, person("ada"), "GET", SETUP, None).await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
@@ -121,13 +121,13 @@ async fn an_empty_organization_lacks_every_step_and_says_nothing_it_was_not_told
 
 #[tokio::test]
 async fn each_step_is_done_by_what_the_portal_holds() {
-    let (kc, gitea) = (realm(2).await, forge().await);
+    let (kc, shako) = (realm(2).await, forge().await);
     let said = SetupStatements {
         login_theme: Some("joinedcontext".into()),
         smtp: true,
         backups: true,
     };
-    let state = state_with(&kc, &gitea, said);
+    let state = state_with(&kc, &shako, said);
     let mut organization = envelope(
         "Organization",
         "hel",
@@ -174,8 +174,8 @@ async fn each_step_is_done_by_what_the_portal_holds() {
 
 #[tokio::test]
 async fn a_space_without_a_model_is_not_a_first_project() {
-    let (kc, gitea) = (realm(2).await, forge().await);
-    let state = state_with(&kc, &gitea, SetupStatements::default());
+    let (kc, shako) = (realm(2).await, forge().await);
+    let state = state_with(&kc, &shako, SetupStatements::default());
     state
         .mirror
         .upsert(envelope("ContextSpace", "empty", "helsinki", json!({})));
@@ -193,8 +193,8 @@ async fn a_space_without_a_model_is_not_a_first_project() {
 
 #[tokio::test]
 async fn only_an_organization_administrator_reads_it() {
-    let (kc, gitea) = (realm(1).await, forge().await);
-    let state = state_with(&kc, &gitea, SetupStatements::default());
+    let (kc, shako) = (realm(1).await, forge().await);
+    let state = state_with(&kc, &shako, SetupStatements::default());
     let answer = send(&state, person("jana"), "GET", SETUP, None).await;
     assert_eq!(answer.status, StatusCode::FORBIDDEN, "{}", answer.text);
 }

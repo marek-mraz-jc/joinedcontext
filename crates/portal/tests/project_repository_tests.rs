@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const PROJECT_REPO: &str = "/api/v1/repos/test-owner/ovzdusie";
+const PROJECT_REPO: &str = "/odata/Repositories(Owner='test-owner',Name='ovzdusie')";
 
 fn steward() -> Identity {
     Identity {
@@ -30,10 +30,8 @@ async fn world() -> (MockServer, AppState) {
     mount_repository(&server, PROJECT_REPO).await;
     for repo in [REPO, PROJECT_REPO] {
         Mock::given(method("GET"))
-            .and(path(format!("{repo}/branches/main")))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": "base1" } })),
-            )
+            .and(path(format!("{repo}/Branches('main')")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "base1" })))
             .mount(&server)
             .await;
     }
@@ -102,9 +100,14 @@ async fn a_project_kind_lands_in_the_project_repository() {
         "the Change names its repository"
     );
 
-    let branches = requests(&server, "POST", &format!("{PROJECT_REPO}/branches")).await;
+    let branches = requests(
+        &server,
+        "POST",
+        &format!("{PROJECT_REPO}/Shako.CreateBranch"),
+    )
+    .await;
     assert_eq!(branches.len(), 1, "one branch, in the project repository");
-    let written: Vec<String> = requests(&server, "PUT", &format!("{PROJECT_REPO}/contents/"))
+    let written: Vec<String> = common::committed_files(&server, PROJECT_REPO)
         .await
         .into_iter()
         .map(|(path, _)| path)
@@ -114,16 +117,20 @@ async fn a_project_kind_lands_in_the_project_repository() {
     assert_eq!(
         written,
         [
-            format!("{PROJECT_REPO}/contents/spaces/mobility/datamodels/mobility.yaml"),
-            format!("{PROJECT_REPO}/contents/spaces/mobility/datamodels/mobility.linkml.yaml"),
-            format!("{PROJECT_REPO}/contents/spaces/mobility/space.yaml"),
+            "spaces/mobility/datamodels/mobility.yaml",
+            "spaces/mobility/datamodels/mobility.linkml.yaml",
+            "spaces/mobility/space.yaml",
         ],
         "the paths inside the project repository, without projects/ovzdusie/"
     );
     assert_eq!(
-        requests(&server, "POST", &format!("{PROJECT_REPO}/pulls"))
-            .await
-            .len(),
+        requests(
+            &server,
+            "POST",
+            &format!("{PROJECT_REPO}/Shako.OpenPullRequest")
+        )
+        .await
+        .len(),
         1
     );
     organization_untouched(&server).await;
@@ -142,10 +149,12 @@ async fn a_projects_changes_are_read_from_its_repository() {
     )
     .await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
-    assert!(!requests(&server, "GET", &format!("{PROJECT_REPO}/pulls"))
-        .await
-        .is_empty());
-    assert!(requests(&server, "GET", &format!("{REPO}/pulls"))
+    assert!(
+        !requests(&server, "GET", &format!("{PROJECT_REPO}/PullRequests"))
+            .await
+            .is_empty()
+    );
+    assert!(requests(&server, "GET", &format!("{REPO}/PullRequests"))
         .await
         .is_empty());
 }
@@ -163,8 +172,13 @@ async fn a_workspace_is_a_branch_of_the_project_repository() {
     )
     .await;
     assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.text);
-    let branches = requests(&server, "POST", &format!("{PROJECT_REPO}/branches")).await;
+    let branches = requests(
+        &server,
+        "POST",
+        &format!("{PROJECT_REPO}/Shako.CreateBranch"),
+    )
+    .await;
     assert_eq!(branches.len(), 1);
-    assert_eq!(branches[0].1["new_branch_name"], "workspace/air-v2");
+    assert_eq!(branches[0].1["NewBranchName"], "workspace/air-v2");
     organization_untouched(&server).await;
 }

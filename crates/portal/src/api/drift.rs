@@ -228,12 +228,12 @@ pub async fn adopt_drift(
             entity.source
         )));
     }
-    let gitea = state
+    let shako = state
         .forge_for(&project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let gitea: &crate::git::GiteaClient = &gitea;
-    let default_branch = gitea.default_branch().await?;
-    let file = gitea
+    let shako: &crate::forge::ShakoClient = &shako;
+    let default_branch = shako.default_branch().await?;
+    let file = shako
         .get_file(&entity.source, &default_branch)
         .await?
         .ok_or_else(|| {
@@ -247,23 +247,23 @@ pub async fn adopt_drift(
         .ok_or_else(|| ApiError::Internal("the adopted seed file is no JSON".to_owned()))?;
 
     // Held until the merge request is open, so a second adoption finds it (F-POR2-011).
-    let held = crate::api::mutate::turn(gitea, &adopt_branch(&project, &space, &id)).await;
-    let branch = crate::api::mutate::create_or_reuse_branch(gitea, &held, &default_branch).await?;
+    let held = crate::api::mutate::turn(shako, &adopt_branch(&project, &space, &id)).await;
+    let branch = crate::api::mutate::create_or_reuse_branch(shako, &held, &default_branch).await?;
     let (author_name, author_email) =
         crate::api::mutate::author_credentials(&user.0.identity, &project);
     let what = format!("adopt the live '{id}'");
-    gitea
+    shako
         .update_files(
             &branch,
             &what,
-            crate::git::gitea::Author {
+            crate::forge::shako::Author {
                 name: &author_name,
                 email: &author_email,
             },
             &[(entity.source.clone(), content, file.sha)],
         )
         .await?;
-    let opened = gitea
+    let opened = shako
         .create_pull_request(
             &branch,
             &default_branch,
@@ -286,7 +286,7 @@ pub async fn adopt_drift(
     Ok((
         StatusCode::ACCEPTED,
         Json(Change::new(
-            crate::api::changes::change_meta(&state, gitea, opened.number, &project),
+            crate::api::changes::change_meta(&state, shako, opened.number, &project),
             status,
         )),
     ))

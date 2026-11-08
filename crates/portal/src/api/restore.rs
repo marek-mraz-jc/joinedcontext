@@ -17,7 +17,7 @@ use crate::auth::session::Identity;
 use crate::auth::CurrentUser;
 use crate::change::{self, Change, ChangePhase, ChangeStatus, Lane, Operation, PlanSummary};
 use crate::error::{ApiError, ProblemDetails};
-use crate::git::gitea::Author;
+use crate::forge::shako::Author;
 use crate::resource::{ResourceEnvelope, API_VERSION};
 use crate::state::AppState;
 
@@ -63,9 +63,9 @@ async fn merged_change(
 ) -> Result<
     (
         crate::permissions::Effective,
-        std::sync::Arc<crate::git::GiteaClient>,
+        std::sync::Arc<crate::forge::ShakoClient>,
         u64,
-        crate::git::PullRequest,
+        crate::forge::PullRequest,
     ),
     ApiError,
 > {
@@ -75,8 +75,8 @@ async fn merged_change(
         return Err(missing());
     }
     parse_change_id(id)?;
-    let (gitea, number) = resolve_change(state, project, id)?;
-    let pr = gitea.pull_request(number).await?;
+    let (shako, number) = resolve_change(state, project, id)?;
+    let pr = shako.pull_request(number).await?;
     let branch = pr
         .head_branch
         .strip_prefix("refs/heads/")
@@ -89,7 +89,7 @@ async fn merged_change(
             "change {id} is not merged, so {unmerged}"
         )));
     }
-    Ok((effective, gitea, number, pr))
+    Ok((effective, shako, number, pr))
 }
 
 /// Restores what the merged change `id` removed, as `identity` (T-3247).
@@ -107,9 +107,9 @@ pub async fn restore_change_for(
         "it removed nothing yet; reject it instead",
     )
     .await?;
-    let gitea: &crate::git::GiteaClient = &forge;
+    let shako: &crate::forge::ShakoClient = &forge;
     let home = format!("projects/{project}/");
-    let removed: Vec<String> = gitea
+    let removed: Vec<String> = shako
         .pull_request_files(number)
         .await?
         .into_iter()
@@ -127,16 +127,16 @@ pub async fn restore_change_for(
         )));
     }
 
-    let default_branch = gitea.default_branch().await?;
+    let default_branch = shako.default_branch().await?;
     let mut uploads = Vec::with_capacity(removed.len());
     let mut restored: Vec<ResourceEnvelope> = Vec::new();
     for path in &removed {
-        if gitea.get_file(path, &default_branch).await?.is_some() {
+        if shako.get_file(path, &default_branch).await?.is_some() {
             return Err(ApiError::Conflict(format!(
                 "'{path}' is in the project again, so change {id} has nothing left to restore"
             )));
         }
-        let file = gitea.get_file(path, &pr.merge_base).await?.ok_or_else(|| {
+        let file = shako.get_file(path, &pr.merge_base).await?.ok_or_else(|| {
             ApiError::Conflict(format!(
                 "'{path}' is not in the commit change {id} was cut from; it cannot be restored"
             ))
@@ -178,12 +178,12 @@ pub async fn restore_change_for(
         )));
     };
 
-    let held = crate::api::mutate::turn(gitea, &format!("portal/restore-{number:08x}")).await;
+    let held = crate::api::mutate::turn(shako, &format!("portal/restore-{number:08x}")).await;
     let restore_branch =
-        crate::api::mutate::create_or_reuse_branch(gitea, &held, &default_branch).await?;
+        crate::api::mutate::create_or_reuse_branch(shako, &held, &default_branch).await?;
     let (author_name, author_email) = crate::api::mutate::author_credentials(identity, project);
     let what = format!("{} {}", headline.kind, headline.metadata.name);
-    gitea
+    shako
         .change_files(
             &restore_branch,
             &format!("restore {what}, removed by {id}"),
@@ -195,7 +195,7 @@ pub async fn restore_change_for(
             &[],
         )
         .await?;
-    let opened = gitea
+    let opened = shako
         .create_pull_request(
             &restore_branch,
             &default_branch,
@@ -219,7 +219,7 @@ pub async fn restore_change_for(
     .proposed_through(&opened.body)
     .with_merge_request(opened.url);
     Ok(Change::new(
-        change_meta(state, gitea, opened.number, project),
+        change_meta(state, shako, opened.number, project),
         status,
     ))
 }
@@ -269,9 +269,9 @@ pub async fn undo_change_for(
         "it altered nothing yet; reject it instead",
     )
     .await?;
-    let gitea: &crate::git::GiteaClient = &forge;
+    let shako: &crate::forge::ShakoClient = &forge;
     let home = format!("projects/{project}/");
-    let modified: Vec<String> = gitea
+    let modified: Vec<String> = shako
         .pull_request_files(number)
         .await?
         .into_iter()
@@ -289,18 +289,18 @@ pub async fn undo_change_for(
         )));
     }
 
-    let default_branch = gitea.default_branch().await?;
+    let default_branch = shako.default_branch().await?;
     let mut uploads = Vec::with_capacity(modified.len());
     let mut put_back: Vec<ResourceEnvelope> = Vec::new();
     for path in &modified {
-        let now = gitea.get_file(path, &default_branch).await?;
-        let made = gitea.get_file(path, &pr.head_sha).await?;
+        let now = shako.get_file(path, &default_branch).await?;
+        let made = shako.get_file(path, &pr.head_sha).await?;
         if now.as_ref().map(|f| &f.content) != made.as_ref().map(|f| &f.content) {
             return Err(ApiError::Conflict(format!(
                 "'{path}' changed again after change {id}; undo the later change first"
             )));
         }
-        let before = gitea.get_file(path, &pr.merge_base).await?.ok_or_else(|| {
+        let before = shako.get_file(path, &pr.merge_base).await?.ok_or_else(|| {
             ApiError::Conflict(format!(
                 "'{path}' is not in the commit change {id} was cut from; it cannot be undone"
             ))
@@ -339,12 +339,12 @@ pub async fn undo_change_for(
         )));
     };
 
-    let held = crate::api::mutate::turn(gitea, &format!("portal/undo-{number:08x}")).await;
+    let held = crate::api::mutate::turn(shako, &format!("portal/undo-{number:08x}")).await;
     let undo_branch =
-        crate::api::mutate::create_or_reuse_branch(gitea, &held, &default_branch).await?;
+        crate::api::mutate::create_or_reuse_branch(shako, &held, &default_branch).await?;
     let (author_name, author_email) = crate::api::mutate::author_credentials(identity, project);
     let what = format!("{} {}", headline.kind, headline.metadata.name);
-    gitea
+    shako
         .change_files(
             &undo_branch,
             &format!("undo {id} on {what}"),
@@ -356,7 +356,7 @@ pub async fn undo_change_for(
             &[],
         )
         .await?;
-    let opened = gitea
+    let opened = shako
         .create_pull_request(
             &undo_branch,
             &default_branch,
@@ -379,7 +379,7 @@ pub async fn undo_change_for(
     .proposed_through(&opened.body)
     .with_merge_request(opened.url);
     Ok(Change::new(
-        change_meta(state, gitea, opened.number, project),
+        change_meta(state, shako, opened.number, project),
         status,
     ))
 }
@@ -429,7 +429,7 @@ pub async fn change_manifests_for(
         "what it proposed never was a version",
     )
     .await?;
-    let gitea: &crate::git::GiteaClient = &forge;
+    let shako: &crate::forge::ShakoClient = &forge;
     if pr.head_sha.is_empty() {
         return Err(ApiError::Unavailable(format!(
             "the forge did not say which commit change {id} ended on; try again"
@@ -437,11 +437,11 @@ pub async fn change_manifests_for(
     }
     let home = format!("projects/{project}/");
     let mut items = Vec::new();
-    for file in gitea.pull_request_files(number).await? {
+    for file in shako.pull_request_files(number).await? {
         if file.deleted || !file.path.starts_with(&home) {
             continue;
         }
-        let Some(read) = gitea.get_file(&file.path, &pr.head_sha).await? else {
+        let Some(read) = shako.get_file(&file.path, &pr.head_sha).await? else {
             continue;
         };
         // A native file (a LinkML source, a bento.yaml) is no manifest and is left out.

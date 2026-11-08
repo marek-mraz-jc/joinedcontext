@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 
 use serde_norway::Value;
 
-use crate::git::{Author, GitError, GiteaClient};
+use crate::forge::{Author, GitError, ShakoClient};
 
 /// The representations an Endpoint manifest may no longer name.
 pub const RETIRED: [&str; 5] = ["xlsx", "parquet", "json", "zip", "geojson"];
@@ -135,13 +135,13 @@ pub fn owner(layout: u32, path: &str) -> (String, String) {
 /// Rewrites `paths` of the repository on `branch` without the retired representations, in one
 /// commit. Answers how many files the commit changed; none changed is no commit.
 pub async fn migrate(
-    gitea: &GiteaClient,
+    shako: &ShakoClient,
     branch: &str,
     paths: &BTreeSet<String>,
 ) -> Result<usize, GitError> {
     let mut uploads = Vec::new();
     for path in paths {
-        let Some(file) = gitea.get_file(path, branch).await? else {
+        let Some(file) = shako.get_file(path, branch).await? else {
             continue;
         };
         if let Some(content) = strip(&file.content) {
@@ -153,7 +153,7 @@ pub async fn migrate(
     if uploads.is_empty() {
         return Ok(0);
     }
-    gitea
+    shako
         .update_files(
             branch,
             "endpoints and apps: CSV is the one file an Endpoint offers (T-4600)",
@@ -172,7 +172,7 @@ mod tests {
     use super::*;
     use base64::Engine as _;
     use serde_json::json;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const ENDPOINT: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: air\n  namespace: helsinki\nspec:\n  enabledRepresentations: [ngsi-ld, csv, xlsx, zip, geojson, ogc-features]\n  disabledRepresentations: [json, parquet, sta]\n";
@@ -257,22 +257,24 @@ mod tests {
     async fn a_file_that_moved_on_is_refused_by_the_forge_and_not_overwritten() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/v1/repos/test-owner/test-repo/contents/a.yaml"))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", "'a.yaml'"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "sha": "stale-sha",
-                "content": base64::engine::general_purpose::STANDARD.encode(ENDPOINT),
+                "Sha": "stale-sha",
+                "Content": base64::engine::general_purpose::STANDARD.encode(ENDPOINT)
             })))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path("/api/v1/repos/test-owner/test-repo/contents"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+            ))
             .respond_with(
                 ResponseTemplate::new(409).set_body_json(json!({"message": "sha does not match"})),
             )
             .expect(1)
             .mount(&server)
             .await;
-        let gitea = GiteaClient::new(
+        let shako = ShakoClient::new(
             server.uri().parse().expect("forge url"),
             "test-owner",
             "test-repo",
@@ -281,7 +283,7 @@ mod tests {
         .expect("client");
 
         let paths = BTreeSet::from(["a.yaml".to_owned()]);
-        assert!(migrate(&gitea, "main", &paths).await.is_err());
+        assert!(migrate(&shako, "main", &paths).await.is_err());
     }
 
     const APP: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: App\nmetadata:\n  name: air-quality\n  namespace: helsinki\nspec:\n  dataNeeds:\n  - contextSpaceRef: air\n    types: [AirQualityObserved]\n    operations: [queryEntities]\n    representations: [ngsi-ld, geojson]\n  - contextSpaceRef: air\n    types: [WeatherObserved]\n    operations: [queryEntities]\n    representations: [xlsx]\n  - contextSpaceRef: air\n    types: [Device]\n    operations: [queryEntities]\n";
@@ -386,25 +388,23 @@ mod tests {
             "kind: Endpoint\nmetadata:\n  name: bikes\nspec:\n  enabledRepresentations: [csv]\n";
         for (file, content) in [("a.yaml", ENDPOINT), ("b.yaml", clean)] {
             Mock::given(method("GET"))
-                .and(path(format!(
-                    "/api/v1/repos/test-owner/test-repo/contents/{file}"
-                )))
+                .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", format!("'{file}'")))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                    "sha": "blob-sha",
-                    "content": base64::engine::general_purpose::STANDARD.encode(content),
+                    "Sha": "blob-sha",
+                    "Content": base64::engine::general_purpose::STANDARD.encode(content)
                 })))
                 .mount(&server)
                 .await;
         }
         Mock::given(method("POST"))
-            .and(path("/api/v1/repos/test-owner/test-repo/contents"))
-            .respond_with(
-                ResponseTemplate::new(201).set_body_json(json!({"commit": {"sha": "c1"}})),
-            )
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CommitFiles",
+            ))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
             .expect(1)
             .mount(&server)
             .await;
-        let gitea = GiteaClient::new(
+        let shako = ShakoClient::new(
             server.uri().parse().expect("forge url"),
             "test-owner",
             "test-repo",
@@ -413,7 +413,7 @@ mod tests {
         .expect("client");
 
         let paths = BTreeSet::from(["a.yaml".to_owned(), "b.yaml".to_owned()]);
-        assert_eq!(migrate(&gitea, "main", &paths).await.expect("migrates"), 1);
+        assert_eq!(migrate(&shako, "main", &paths).await.expect("migrates"), 1);
 
         let requests = server.received_requests().await.expect("recorded");
         let commit = requests
@@ -421,7 +421,7 @@ mod tests {
             .find(|r| r.method.as_str() == "POST")
             .expect("one commit");
         let body: serde_json::Value = serde_json::from_slice(&commit.body).expect("json");
-        let files = body["files"].as_array().expect("files");
+        let files = body["Files"].as_array().expect("files");
         assert_eq!(files.len(), 1, "the clean file is not in the commit");
         assert_eq!(files[0]["path"], "a.yaml");
         assert_eq!(
@@ -431,6 +431,6 @@ mod tests {
         assert_eq!(files[0]["sha"], "blob-sha", "the blob this run read");
 
         let only_clean = BTreeSet::from(["b.yaml".to_owned()]);
-        assert_eq!(migrate(&gitea, "main", &only_clean).await.expect("ok"), 0);
+        assert_eq!(migrate(&shako, "main", &only_clean).await.expect("ok"), 0);
     }
 }

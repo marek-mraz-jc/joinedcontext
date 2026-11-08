@@ -30,7 +30,7 @@ use crate::apps::reconciler::generate_slug;
 use crate::auth::CurrentUser;
 use crate::change::{self, Change, ChangePhase, ChangeStatus, Lane, Operation};
 use crate::error::{ApiError, ProblemDetails};
-use crate::git::Author;
+use crate::forge::Author;
 use crate::resource::{self, ResourceEnvelope};
 use crate::state::AppState;
 
@@ -1546,16 +1546,16 @@ pub async fn propose_files(
         lane,
         summary,
     } = proposal;
-    let gitea = state
+    let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let gitea: &crate::git::GiteaClient = &gitea;
-    let default_branch = gitea.default_branch().await?;
-    let held = crate::api::mutate::turn(gitea, &branch).await;
-    let branch = create_or_reuse_branch(gitea, &held, &default_branch).await?;
+    let shako: &crate::forge::ShakoClient = &shako;
+    let default_branch = shako.default_branch().await?;
+    let held = crate::api::mutate::turn(shako, &branch).await;
+    let branch = create_or_reuse_branch(shako, &held, &default_branch).await?;
 
     let (author_name, author_email) = author_credentials(identity, project);
-    gitea
+    shako
         .change_files(
             &branch,
             &title,
@@ -1568,23 +1568,23 @@ pub async fn propose_files(
         )
         .await?;
 
-    let pull = gitea
+    let pull = shako
         .create_pull_request(&branch, &default_branch, &title, &body)
         .await?;
-    Ok(waiting_change(state, gitea, project, lane, summary, pull))
+    Ok(waiting_change(state, shako, project, lane, summary, pull))
 }
 
 /// The open merge request `pull` as the Change a person follows.
 pub(crate) fn waiting_change(
     state: &AppState,
-    gitea: &crate::git::GiteaClient,
+    shako: &crate::forge::ShakoClient,
     project: &str,
     lane: Lane,
     summary: crate::change::PlanSummary,
-    pull: crate::git::PullRequest,
+    pull: crate::forge::PullRequest,
 ) -> Change {
     Change::new(
-        crate::api::changes::change_meta(state, gitea, pull.number, project),
+        crate::api::changes::change_meta(state, shako, pull.number, project),
         ChangeStatus::new(lane, ChangePhase::PendingApproval, summary)
             .in_repository(&pull.repository)
             .proposed_through(&pull.body)

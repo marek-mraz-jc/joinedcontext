@@ -18,14 +18,16 @@ use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use serde_json::{json, Value};
 use tower::ServiceExt;
-use wiremock::matchers::{header_regex, method, path, path_regex, query_param};
+use wiremock::matchers::{
+    body_string_contains, header_regex, method, path, path_regex, query_param,
+};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// The LinkML source of the `bikes` model, served by the forge (DM-56).
@@ -230,39 +232,43 @@ async fn forge() -> MockServer {
     let forge = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path(
-            "/api/v1/repos/org/manifests/contents/projects/helsinki/spaces/helsinki/datamodels/bikes.linkml.yaml",
-        ))
+            "/odata/Repositories(Owner='org',Name='manifests')/Shako.File(Path=@p,Ref=@r)",
+        )).and(query_param("@p", "'projects/helsinki/spaces/helsinki/datamodels/bikes.linkml.yaml'"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "sha": "sha-bikes-linkml",
-            "content": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, BIKES_LINKML)
+            "Sha": "sha-bikes-linkml",
+            "Content": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, BIKES_LINKML)
         })))
         .with_priority(1)
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/repos/org/manifests"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .and(path("/odata/Repositories(Owner='org',Name='manifests')"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
-        .and(path_regex(
-            "^/api/v1/repos/org/manifests/(branches|contents)/",
-        ))
+        .and(path_regex(format!(
+            r"^{}/(Branches\(|Shako\.File\()",
+            regex::escape("/odata/Repositories(Owner='org',Name='manifests')")
+        )))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .mount(&forge)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/org/manifests/branches"))
+        .and(path(
+            "/odata/Repositories(Owner='org',Name='manifests')/Shako.CreateBranch",
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&forge)
         .await;
-    Mock::given(method("PUT"))
+    Mock::given(method("POST"))
         .and(path(
-            "/api/v1/repos/org/manifests/contents/projects/helsinki/apps/city-bikes-overview/src/spec.json",
+            "/odata/Repositories(Owner='org',Name='manifests')/Shako.CommitFiles",
         ))
-        .respond_with(
-            ResponseTemplate::new(201).set_body_json(json!({ "commit": { "sha": "abc123def456" } })),
-        )
+        .and(body_string_contains(
+            r#""path":"projects/helsinki/apps/city-bikes-overview/src/spec.json""#,
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "abc123def456" })))
         .mount(&forge)
         .await;
     forge
@@ -338,9 +344,9 @@ async fn portal_state_with(
     let config = config(&proxy.uri());
     let mut state = AppState::new(config.clone(), None).with_mirror(mirror(provider));
     if let Some(forge) = forge {
-        let client = GiteaClient::new(forge.uri().parse().expect("url"), "org", "manifests", "t")
+        let client = ShakoClient::new(forge.uri().parse().expect("url"), "org", "manifests", "t")
             .expect("a forge client");
-        state = state.with_gitea(Arc::new(client));
+        state = state.with_shako(Arc::new(client));
     }
     let app = server::app(state.clone());
     let cookie = session_cookie(&config, STEWARD);
@@ -916,56 +922,59 @@ fn template_file(path: &str) -> String {
 /// A forge that takes one commit of many files (SDK-17).
 /// The application's own repository (AP-75), already created: the run's branch is cut from
 /// `main` on the first pass, which then reads its tree once.
-const APP_REPO: &str = "/api/v1/repos/org/helsinki_city-bikes-overview";
+const APP_REPO: &str = "/odata/Repositories(Owner='org',Name='helsinki_city-bikes-overview')";
 
 async fn code_forge() -> MockServer {
     let forge = forge().await;
     Mock::given(method("POST"))
-        .and(path("/api/v1/repos/org/manifests/contents"))
-        .respond_with(
-            ResponseTemplate::new(201)
-                .set_body_json(json!({ "files": [], "commit": { "sha": "c0de" } })),
-        )
+        .and(path(
+            "/odata/Repositories(Owner='org',Name='manifests')/Shako.CommitFiles",
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c0de" })))
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
         .and(path(APP_REPO))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{APP_REPO}/branches/")))
+        .and(path_regex(format!(
+            "^{}/Branches\\('",
+            regex::escape(APP_REPO)
+        )))
         .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
         .up_to_n_times(1)
         .with_priority(1)
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{APP_REPO}/branches/")))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "commit": { "id": "head" } })),
-        )
+        .and(path_regex(format!(
+            "^{}/Branches\\('",
+            regex::escape(APP_REPO)
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "head" })))
         .mount(&forge)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!("{APP_REPO}/branches")))
+        .and(path(format!("{APP_REPO}/Shako.CreateBranch")))
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
         .mount(&forge)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{APP_REPO}/git/trees/head")))
+        // The tree is read at the run's branch itself, no branch lookup first.
+        .and(path(format!(
+            "{APP_REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "truncated": false,
-            "tree": [{ "path": "README.md", "type": "blob", "sha": "r" }]
+            "Truncated": false,
+            "Tree": [{ "Path": "README.md", "Type": "blob", "Sha": "r" }]
         })))
         .mount(&forge)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!("{APP_REPO}/contents")))
-        .respond_with(
-            ResponseTemplate::new(201)
-                .set_body_json(json!({ "files": [], "commit": { "sha": "c0de" } })),
-        )
+        .and(path(format!("{APP_REPO}/Shako.CommitFiles")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c0de" })))
         .mount(&forge)
         .await;
     forge
@@ -1435,7 +1444,7 @@ async fn a_dashboard_is_code_on_the_sdk_and_only_reads() {
         .expect("recorded")
         .into_iter()
         .filter(|request| {
-            request.method.as_str() == "POST" && request.url.path().ends_with("/contents")
+            request.method.as_str() == "POST" && request.url.path().ends_with("/Shako.CommitFiles")
         })
         .map(|request| String::from_utf8_lossy(&request.body).into_owned())
         .collect();
@@ -1643,11 +1652,13 @@ async fn an_application_is_written_in_one_call_and_the_template_never_reaches_th
         .await
         .unwrap_or_default()
         .into_iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path() == format!("{APP_REPO}/contents"))
+        .filter(|r| {
+            r.method.as_str() == "POST" && r.url.path() == format!("{APP_REPO}/Shako.CommitFiles")
+        })
         .map(|r| serde_json::from_slice(&r.body).unwrap_or(Value::Null))
         .collect();
     assert_eq!(commits.len(), 1, "{commits:?}");
-    let paths: Vec<&str> = commits[0]["files"]
+    let paths: Vec<&str> = commits[0]["Files"]
         .as_array()
         .into_iter()
         .flatten()
@@ -2453,11 +2464,11 @@ async fn preview_errors_and_call_function_answer_the_model_as_tool_results() {
         .mount(&proxy)
         .await;
     mount_types(&proxy).await;
-    let client = GiteaClient::new(forge.uri().parse().expect("url"), "org", "manifests", "t")
+    let client = ShakoClient::new(forge.uri().parse().expect("url"), "org", "manifests", "t")
         .expect("a forge client");
     let state = AppState::new(config.clone(), Some(oidc))
         .with_mirror(mirror("anthropic"))
-        .with_gitea(Arc::new(client));
+        .with_shako(Arc::new(client));
     let app = server::app(state.clone());
     let cookie = session_cookie(&config, STEWARD);
 
@@ -2608,12 +2619,13 @@ async fn a_wasm_run_writes_the_server_half_and_commits_the_crate_with_its_workfl
 
     let mut committed = std::collections::BTreeMap::new();
     for request in forge.received_requests().await.unwrap_or_default() {
-        if request.method.as_str() != "POST" || request.url.path() != format!("{APP_REPO}/contents")
+        if request.method.as_str() != "POST"
+            || request.url.path() != format!("{APP_REPO}/Shako.CommitFiles")
         {
             continue;
         }
         let body: Value = serde_json::from_slice(&request.body).expect("a JSON commit");
-        for file in body["files"].as_array().into_iter().flatten() {
+        for file in body["Files"].as_array().into_iter().flatten() {
             let text = file["content"].as_str().map(|content| {
                 String::from_utf8(
                     base64::Engine::decode(&base64::engine::general_purpose::STANDARD, content)

@@ -7,7 +7,7 @@
 
 use joinedcontext_portal::apps::build_pods::{dispatch_once, Settings};
 use joinedcontext_portal::apps::kube::KubeClient;
-use joinedcontext_portal::git::GiteaClient;
+use joinedcontext_portal::forge::ShakoClient;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::store::Mirror;
 use serde_json::{json, Value};
@@ -20,7 +20,7 @@ const REGISTRATION: &str = "repository-scoped-registration-token";
 fn settings() -> Settings {
     Settings {
         namespace: NS.into(),
-        forge: "http://gitea-http.dev.svc.cluster.local:3000".into(),
+        forge: "http://shako-http.dev.svc.cluster.local:3000".into(),
         node_image: "r.example.org/builder@sha256:aa".into(),
         rust_image: "r.example.org/builder-rust@sha256:bb".into(),
         cache_size: "1Gi".into(),
@@ -41,9 +41,9 @@ fn mirror(apps: &[(&str, &str)]) -> Mirror {
     mirror
 }
 
-fn clients(server: &MockServer) -> (KubeClient, GiteaClient) {
+fn clients(server: &MockServer) -> (KubeClient, ShakoClient) {
     let kube = KubeClient::with_token(&server.uri(), "portal-sa-token").expect("a kube client");
-    let forge = GiteaClient::new(
+    let forge = ShakoClient::new(
         server.uri().parse().expect("a url"),
         "joinedcontext",
         "configuration",
@@ -53,16 +53,19 @@ fn clients(server: &MockServer) -> (KubeClient, GiteaClient) {
     (kube, forge)
 }
 
+/// The `$filter` of the queue read: the organization's own jobs that wait for a runner, so
+/// another organization's are never in the answer.
+const QUEUE: &str = "Owner eq 'joinedcontext' and Status eq 'queued'";
+
 fn queued(jobs: Value) -> ResponseTemplate {
-    ResponseTemplate::new(200).set_body_json(json!({ "total_count": 1, "jobs": jobs }))
+    ResponseTemplate::new(200).set_body_json(json!({ "value": jobs }))
 }
 
 fn job(id: u64, repo: &str, label: &str) -> Value {
     json!({
-        "id": id,
-        "labels": [label],
-        "status": "queued",
-        "url": format!("http://gitea-http.dev.svc.cluster.local:3000/api/v1/repos/joinedcontext/{repo}/actions/jobs/{id}"),
+        "Id": id,
+        "Labels": [label],
+        "Repository": repo,
     })
 }
 
@@ -97,8 +100,8 @@ fn body(request: &Request) -> Value {
 async fn a_queued_app_build_gets_one_pod_its_own_cache_and_its_repositorys_token() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/orgs/joinedcontext/actions/jobs"))
-        .and(query_param("status", "queued"))
+        .and(path("/odata/Jobs"))
+        .and(query_param("$filter", QUEUE))
         .respond_with(queued(json!([job(42, "helsinki_bikes", "app-build-node")])))
         .mount(&server)
         .await;
@@ -124,9 +127,9 @@ async fn a_queued_app_build_gets_one_pod_its_own_cache_and_its_repositorys_token
         .await;
     Mock::given(method("POST"))
         .and(path(
-            "/api/v1/repos/joinedcontext/helsinki_bikes/actions/runners/registration-token",
+            "/odata/Repositories(Owner='joinedcontext',Name='helsinki_bikes')/Shako.RunnerRegistrationToken",
         ))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "token": REGISTRATION })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "Token": REGISTRATION })))
         .expect(1)
         .mount(&server)
         .await;
@@ -193,14 +196,16 @@ async fn a_queued_app_build_gets_one_pod_its_own_cache_and_its_repositorys_token
 async fn a_job_that_is_not_an_apps_build_gets_nothing() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/orgs/joinedcontext/actions/jobs"))
+        .and(path("/odata/Jobs"))
+        .and(query_param("$filter", QUEUE))
         .respond_with(queued(json!([
             // The propose job stays on the shared runner.
             job(1, "helsinki_bikes", "node-22"),
             // A repository that looks like an App's and is none.
             job(2, "helsinki_ghost", "app-build-node"),
-            // Another organization's repository.
-            json!({ "id": 3, "labels": ["app-build-node"], "url": "http://f/api/v1/repos/other/helsinki_bikes/actions/jobs/3" }),
+            // A job the forge names no repository for (another organization's is never asked
+            // for: `QUEUE` names the owner).
+            json!({ "Id": 3, "Labels": ["app-build-node"], "Repository": "" }),
         ])))
         .mount(&server)
         .await;
@@ -228,7 +233,8 @@ async fn a_job_that_is_not_an_apps_build_gets_nothing() {
 async fn a_job_left_without_its_token_is_removed_with_its_pods_for_the_next_pass() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/orgs/joinedcontext/actions/jobs"))
+        .and(path("/odata/Jobs"))
+        .and(query_param("$filter", QUEUE))
         .respond_with(queued(json!([job(42, "helsinki_bikes", "app-build-rust")])))
         .mount(&server)
         .await;
@@ -274,7 +280,8 @@ async fn a_job_left_without_its_token_is_removed_with_its_pods_for_the_next_pass
 async fn a_job_marked_with_its_token_is_left_alone_and_no_secret_is_read() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/orgs/joinedcontext/actions/jobs"))
+        .and(path("/odata/Jobs"))
+        .and(query_param("$filter", QUEUE))
         .respond_with(queued(json!([job(42, "helsinki_bikes", "app-build-rust")])))
         .mount(&server)
         .await;
@@ -324,7 +331,8 @@ async fn no_secret_read(server: &MockServer) {
 async fn a_retired_apps_cache_goes_and_a_live_apps_stays() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/orgs/joinedcontext/actions/jobs"))
+        .and(path("/odata/Jobs"))
+        .and(query_param("$filter", QUEUE))
         .respond_with(queued(json!([])))
         .mount(&server)
         .await;
@@ -384,7 +392,8 @@ async fn a_retired_apps_cache_goes_and_a_live_apps_stays() {
     // A mirror that holds no App yet deletes nothing: a restart never empties the caches.
     let empty = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/api/v1/orgs/joinedcontext/actions/jobs"))
+        .and(path("/odata/Jobs"))
+        .and(query_param("$filter", QUEUE))
         .respond_with(queued(json!([])))
         .mount(&empty)
         .await;
@@ -412,7 +421,8 @@ async fn five_queued(server: &MockServer) -> Vec<(&'static str, u64)> {
         .map(|(app, id)| job(*id, &format!("helsinki_{app}"), "app-build-rust"))
         .collect();
     Mock::given(method("GET"))
-        .and(path("/api/v1/orgs/joinedcontext/actions/jobs"))
+        .and(path("/odata/Jobs"))
+        .and(query_param("$filter", QUEUE))
         .respond_with(queued(Value::Array(jobs)))
         .mount(server)
         .await;
@@ -433,10 +443,10 @@ async fn five_queued(server: &MockServer) -> Vec<(&'static str, u64)> {
             .await;
         Mock::given(method("POST"))
             .and(path(format!(
-                "/api/v1/repos/joinedcontext/helsinki_{app}/actions/runners/registration-token"
+                "/odata/Repositories(Owner='joinedcontext',Name='helsinki_{app}')/Shako.RunnerRegistrationToken"
             )))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "token": REGISTRATION })),
+                ResponseTemplate::new(200).set_body_json(json!({ "Token": REGISTRATION })),
             )
             .mount(server)
             .await;
@@ -457,7 +467,9 @@ fn five_apps(builds: &[(&str, u64)]) -> Mirror {
 fn minted(requests: &[Request]) -> usize {
     requests
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/registration-token"))
+        .filter(|r| {
+            r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.RunnerRegistrationToken")
+        })
         .count()
 }
 

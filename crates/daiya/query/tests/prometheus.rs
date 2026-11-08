@@ -291,12 +291,14 @@ async fn a_range_query_asks_query_range_on_the_aligned_grid_and_names_series() {
 async fn step_takes_the_largest_of_interval_scrape_safe_step_and_min_step() {
     let m = mock(vec![("/api/v1/query_range", matrix(json!([])))]).await;
     let d = driver(&m.base);
-    // 30 days at 11000 points: the safe step (range / 11000, in ms) wins over the 15s interval.
+    // 30 days asked at 20 000 points: the safe step (range / 11000 = 235.6 s) wins and is
+    // rounded up Grafana's ladder to 5m, as promlib does.
     let mut c = ctx(Subject::anonymous());
     c.from_ms = 0;
     c.to_ms = 30 * 86_400_000;
+    c.max_data_points = 20_000;
     d.query(&c, &q(json!({ "expr": "up" }))).await.unwrap();
-    assert_eq!(param(&m.target(0), "step").unwrap(), "235.636");
+    assert_eq!(param(&m.target(0), "step").unwrap(), "300.000");
 
     // The target's min step (legacy `>` form too) and intervalFactor raise it.
     let c = ctx(Subject::anonymous());
@@ -322,6 +324,36 @@ async fn step_takes_the_largest_of_interval_scrape_safe_step_and_min_step() {
     slow.scrape_interval_ms = 120_000;
     slow.query(&c, &q(json!({ "expr": "up" }))).await.unwrap();
     assert_eq!(param(&m.target(4), "step").unwrap(), "120.000");
+
+    // 30 days at 1000 points: range / points = 2592 s rounds to 30m.
+    let mut c = ctx(Subject::anonymous());
+    c.from_ms = 0;
+    c.to_ms = 30 * 86_400_000;
+    c.max_data_points = 1_000;
+    d.query(&c, &q(json!({ "expr": "up" }))).await.unwrap();
+    assert_eq!(param(&m.target(5), "step").unwrap(), "1800.000");
+}
+
+#[test]
+fn steps_round_like_grafana() {
+    use daiya_query::prometheus::{prometheus_step_ms, round_interval_ms};
+    for (ms, step) in [
+        (10, 1),
+        (11, 10),
+        (1_500, 1_000),
+        (1_501, 2_000),
+        (235_636, 300_000),
+        (2_592_000, 1_800_000),
+        (604_800_000, 86_400_000),
+        (3_628_799_999, 2_592_000_000),
+        (3_628_800_000, 31_536_000_000),
+    ] {
+        assert_eq!(round_interval_ms(ms), step, "{ms}");
+    }
+    // Below the minimum the minimum is kept as is, unrounded (Grafana `Calculate`).
+    assert_eq!(prometheus_step_ms(3_600_000, 1_000, 17_000), 17_000);
+    // maxDataPoints 0 means Grafana's default resolution 1500: 1 day / 1500 = 57.6 s -> 1m.
+    assert_eq!(prometheus_step_ms(86_400_000, 0, 15_000), 60_000);
 }
 
 #[tokio::test]

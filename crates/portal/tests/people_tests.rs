@@ -125,8 +125,8 @@ async fn realm(smtp: bool) -> MockServer {
     kc
 }
 
-fn state_with(kc: &MockServer, gitea: &MockServer) -> AppState {
-    let mut state = common::state_on(gitea);
+fn state_with(kc: &MockServer, shako: &MockServer) -> AppState {
+    let mut state = common::state_on(shako);
     state.people = People::new(
         &format!("{}/realms/hel", kc.uri()),
         "portal".into(),
@@ -223,8 +223,8 @@ impl Write for Log {
 /// PF-92: creating a person sends the realm's execute-actions e-mail and answers no password.
 #[tokio::test]
 async fn creating_a_person_sends_the_realms_actions_email() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
     let body = json!({ "email": " New@Example.org ", "firstName": "Nora", "lastName": "Nová", "locale": "sk" });
 
     let created = send(&state, person("pia"), "POST", PEOPLE, Some(body)).await;
@@ -247,7 +247,7 @@ async fn creating_a_person_sends_the_realms_actions_email() {
 /// the installation's Organization, found by its exact path, so they sign in as its member.
 #[tokio::test]
 async fn an_invited_person_joins_the_organizations_members_group() {
-    let (kc, gitea) = (realm(true).await, forge().await);
+    let (kc, shako) = (realm(true).await, forge().await);
     Mock::given(method("GET"))
         .and(path(format!("{ADMIN}/groups")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
@@ -262,7 +262,7 @@ async fn an_invited_person_joins_the_organizations_members_group() {
         .respond_with(ResponseTemplate::new(204))
         .mount(&kc)
         .await;
-    let state = state_with(&kc, &gitea);
+    let state = state_with(&kc, &shako);
     state.mirror.upsert(envelope(
         "Organization",
         "hel",
@@ -289,8 +289,8 @@ async fn an_invited_person_joins_the_organizations_members_group() {
 /// PF-92: without SMTP the creator gets a temporary password once; it never reaches the log.
 #[tokio::test]
 async fn without_smtp_a_temporary_password_is_answered_once_and_never_logged() {
-    let (kc, gitea) = (realm(false).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(false).await, forge().await);
+    let state = state_with(&kc, &shako);
     let log = Log::default();
     let writer = log.clone();
     let _guard = tracing::subscriber::set_default(
@@ -350,8 +350,8 @@ async fn without_smtp_a_temporary_password_is_answered_once_and_never_logged() {
 /// PF-93: disabling ends every session; the person is written back whole, `enabled: false`.
 #[tokio::test]
 async fn disabling_a_person_ends_their_sessions() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
 
     let answer = send(
         &state,
@@ -380,8 +380,8 @@ async fn disabling_a_person_ends_their_sessions() {
 /// administrator's password, or anyone's who holds a right they lack; no password is set or sent.
 #[tokio::test]
 async fn a_people_admin_cannot_act_on_a_person_holding_a_right_they_lack() {
-    let (kc, gitea) = (realm(false).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(false).await, forge().await);
+    let state = state_with(&kc, &shako);
 
     for target in ["ada-id", "jana-id"] {
         let refused = send(
@@ -431,8 +431,8 @@ async fn a_people_admin_cannot_act_on_a_person_holding_a_right_they_lack() {
 /// PF-93, PF-03: nobody disables or deletes themselves, or the last Organization Administrator.
 #[tokio::test]
 async fn the_last_administrator_is_not_disabled_or_deleted() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
 
     for (verb, route) in [
         ("POST", format!("{PEOPLE}/ada-id/disable")),
@@ -471,8 +471,8 @@ async fn the_last_administrator_is_not_disabled_or_deleted() {
 /// refused, though none of them is the last one alone; the realm hears nothing.
 #[tokio::test]
 async fn a_bulk_removal_never_takes_every_administrator() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
     state.mirror.upsert(envelope(
         "RoleBinding",
         "admins-two",
@@ -502,8 +502,8 @@ async fn a_bulk_removal_never_takes_every_administrator() {
 /// PF-91: every route refuses a caller whose role grants nothing on Person, with 403.
 #[tokio::test]
 async fn a_caller_without_people_admin_is_refused_on_every_route() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
     let routes = [
         ("GET", PEOPLE.to_owned(), None),
         (
@@ -586,8 +586,8 @@ async fn a_page_of_people_asks_for_their_sessions_a_few_at_a_time() {
         )
         .mount(&kc)
         .await;
-    let gitea = forge().await;
-    let state = state_with(&kc, &gitea);
+    let shako = forge().await;
+    let state = state_with(&kc, &shako);
 
     let started = std::time::Instant::now();
     let listed = send(&state, person("ada"), "GET", PEOPLE, None).await;
@@ -611,7 +611,7 @@ async fn a_page_of_people_asks_for_their_sessions_a_few_at_a_time() {
 /// PF-92: an e-mail another person has is a 409 naming it; bad input is a 400 in RFC 7807.
 #[tokio::test]
 async fn a_taken_email_is_a_conflict_and_bad_input_a_bad_request() {
-    let (kc, gitea) = (realm(true).await, forge().await);
+    let (kc, shako) = (realm(true).await, forge().await);
     Mock::given(method("POST"))
         .and(path(format!("{ADMIN}/users")))
         .respond_with(
@@ -621,7 +621,7 @@ async fn a_taken_email_is_a_conflict_and_bad_input_a_bad_request() {
         .with_priority(1)
         .mount(&kc)
         .await;
-    let state = state_with(&kc, &gitea);
+    let state = state_with(&kc, &shako);
 
     let taken = send(
         &state,
@@ -667,8 +667,8 @@ async fn a_taken_email_is_a_conflict_and_bad_input_a_bad_request() {
 /// PF-94: a person's page lists their groups, platform roles with scope and way, and app roles.
 #[tokio::test]
 async fn a_persons_page_names_their_groups_and_roles() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
     state.mirror.upsert(envelope(
         "App",
         "alerts",
@@ -724,16 +724,16 @@ async fn deleting_a_person_proposes_the_change_and_deletes_them_only_after_the_m
     joinedcontext_portal::db::remove_person_deletion(&pool, "jana-id")
         .await
         .expect("a clean row");
-    let (kc, gitea) = (realm(true).await, forge().await);
+    let (kc, shako) = (realm(true).await, forge().await);
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{REPO}/contents/.+")))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "sha": "blob-1", "content": "" })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Sha": "blob-1", "Content": "" })),
         )
         .with_priority(5)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let mut state = state_with(&kc, &gitea).with_db(pool.clone());
+    let mut state = state_with(&kc, &shako).with_db(pool.clone());
     state.people = People::new(
         &format!("{}/realms/hel", kc.uri()),
         "portal".into(),
@@ -751,15 +751,17 @@ async fn deleting_a_person_proposes_the_change_and_deletes_them_only_after_the_m
     .await;
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
 
-    let commits: Vec<Value> = gitea
+    let commits: Vec<Value> = shako
         .received_requests()
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/contents"))
+        .filter(|r| {
+            r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/Shako.CommitFiles")
+        })
         .filter_map(|r| serde_json::from_slice(&r.body).ok())
         .collect();
-    let files = commits[0]["files"].as_array().expect("files").clone();
+    let files = commits[0]["Files"].as_array().expect("files").clone();
     let find = |suffix: &str| {
         files
             .iter()
@@ -800,19 +802,19 @@ async fn deleting_a_person_proposes_the_change_and_deletes_them_only_after_the_m
     .await;
     assert_eq!(again.status, StatusCode::CONFLICT, "{}", again.text);
 
-    let pull = |merged: bool, state: &str| json!({ "number": 9, "html_url": "https://gitea.example/pulls/9", "state": state, "merged": merged });
+    let pull = |merged: bool, state: &str| json!({ "Number": 9, "HtmlUrl": "https://shako.example/pulls/9", "State": state, "Merged": merged });
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/9")))
+        .and(path(format!("{REPO}/PullRequests(9)")))
         .respond_with(ResponseTemplate::new(200).set_body_json(pull(false, "open")))
         .up_to_n_times(1)
         .with_priority(1)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/9")))
+        .and(path(format!("{REPO}/PullRequests(9)")))
         .respond_with(ResponseTemplate::new(200).set_body_json(pull(true, "closed")))
         .with_priority(2)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
     let people = state.people.clone().expect("people");
     let forge_client = state.forge_for(ORG_NAMESPACE).expect("forge");
@@ -836,8 +838,8 @@ async fn deleting_a_person_proposes_the_change_and_deletes_them_only_after_the_m
 /// A person nothing in the repository names is deleted at once.
 #[tokio::test]
 async fn a_person_nothing_names_is_deleted_at_once() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
 
     let answer = send(
         &state,
@@ -903,9 +905,9 @@ fn person_changes(
 /// written: the bound, the caller in the list, a right the caller lacks, an unknown id.
 #[tokio::test]
 async fn a_bulk_removal_holds_each_person_to_the_single_routes_rules() {
-    let (kc, gitea) = (realm(true).await, forge().await);
+    let (kc, shako) = (realm(true).await, forge().await);
     colleagues(&kc).await;
-    let state = state_with(&kc, &gitea);
+    let state = state_with(&kc, &shako);
     let remove = |who: &'static str, ids: Value| {
         let state = state.clone();
         async move {
@@ -962,9 +964,9 @@ async fn a_bulk_removal_holds_each_person_to_the_single_routes_rules() {
 /// each naming the actor, and an id sent twice is one person.
 #[tokio::test]
 async fn people_nothing_names_are_removed_at_once_each_on_the_feed() {
-    let (kc, gitea) = (realm(true).await, forge().await);
+    let (kc, shako) = (realm(true).await, forge().await);
     colleagues(&kc).await;
-    let state = state_with(&kc, &gitea);
+    let state = state_with(&kc, &shako);
     let mut feed = state.activity_events.subscribe(ORG_NAMESPACE).await;
 
     let answer = send(
@@ -1007,17 +1009,17 @@ async fn a_department_leaves_in_one_change_and_one_merge() {
             .await
             .expect("a clean row");
     }
-    let (kc, gitea) = (realm(true).await, forge().await);
+    let (kc, shako) = (realm(true).await, forge().await);
     colleagues(&kc).await;
     Mock::given(method("GET"))
-        .and(path_regex(format!("^{REPO}/contents/.+")))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", REPO)))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "sha": "blob-1", "content": "" })),
+            ResponseTemplate::new(200).set_body_json(json!({ "Sha": "blob-1", "Content": "" })),
         )
         .with_priority(5)
-        .mount(&gitea)
+        .mount(&shako)
         .await;
-    let state = state_with(&kc, &gitea).with_db(pool.clone());
+    let state = state_with(&kc, &shako).with_db(pool.clone());
     let mut feed = state.activity_events.subscribe(ORG_NAMESPACE).await;
 
     let answer = send(
@@ -1031,9 +1033,9 @@ async fn a_department_leaves_in_one_change_and_one_merge() {
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
 
     let posted = |suffix: &'static str| {
-        let gitea = &gitea;
+        let shako = &shako;
         async move {
-            gitea
+            shako
                 .received_requests()
                 .await
                 .unwrap_or_default()
@@ -1045,10 +1047,14 @@ async fn a_department_leaves_in_one_change_and_one_merge() {
                 .collect::<Vec<_>>()
         }
     };
-    let commits = posted("/contents").await;
+    let commits = posted("/Shako.CommitFiles").await;
     assert_eq!(commits.len(), 1, "one commit");
-    assert_eq!(posted("/pulls").await.len(), 1, "one Change");
-    let files = commits[0]["files"].as_array().expect("files").clone();
+    assert_eq!(
+        posted("/Shako.OpenPullRequest").await.len(),
+        1,
+        "one Change"
+    );
+    let files = commits[0]["Files"].as_array().expect("files").clone();
     let operation = |suffix: &str| {
         files
             .iter()
@@ -1058,7 +1064,7 @@ async fn a_department_leaves_in_one_change_and_one_merge() {
     assert_eq!(operation("groups/stewards.yaml"), Some(json!("upload")));
     assert_eq!(operation("jana-alone.yaml"), Some(json!("delete")));
     assert_eq!(files.len(), 2, "{files:?}");
-    let pulls = posted("/pulls").await;
+    let pulls = posted("/Shako.OpenPullRequest").await;
     let text = pulls[0].to_string();
     assert!(text.contains("3 people"), "{text}");
     assert!(
@@ -1102,9 +1108,9 @@ async fn a_department_leaves_in_one_change_and_one_merge() {
     assert!(again.text.contains("eva-id"), "{}", again.text);
 
     Mock::given(method("GET"))
-        .and(path(format!("{REPO}/pulls/9")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "number": 9, "html_url": "https://gitea.example/pulls/9", "state": "closed", "merged": true })))
-        .mount(&gitea)
+        .and(path(format!("{REPO}/PullRequests(9)")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "Number": 9, "HtmlUrl": "https://shako.example/pulls/9", "State": "closed", "Merged": true })))
+        .mount(&shako)
         .await;
     let people = state.people.clone().expect("people");
     let forge_client = state.forge_for(ORG_NAMESPACE).expect("forge");
@@ -1116,12 +1122,12 @@ async fn a_department_leaves_in_one_change_and_one_merge() {
             "{id}"
         );
     }
-    let reads = gitea
+    let reads = shako
         .received_requests()
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "GET" && r.url.path() == format!("{REPO}/pulls/9"))
+        .filter(|r| r.method.as_str() == "GET" && r.url.path() == format!("{REPO}/PullRequests(9)"))
         .count();
     assert_eq!(reads, 1, "the one Change is read once for all three");
 }
@@ -1141,8 +1147,8 @@ async fn op(state: &AppState, who: &str, name: &str, input: Value) -> common::An
 /// T-2732, AG-77: every person operation calls its route, so it answers as the page's call does.
 #[tokio::test]
 async fn the_person_operations_do_what_the_routes_do() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
 
     let listed = op(
         &state,
@@ -1207,8 +1213,8 @@ async fn the_person_operations_do_what_the_routes_do() {
 /// operation's answer reaches a model, so it never carries one and says who hands one over.
 #[tokio::test]
 async fn creating_a_person_through_an_operation_never_answers_the_password() {
-    let (kc, gitea) = (realm(false).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(false).await, forge().await);
+    let state = state_with(&kc, &shako);
 
     let created = op(
         &state,
@@ -1240,8 +1246,8 @@ async fn creating_a_person_through_an_operation_never_answers_the_password() {
 /// Person, and a people-admin acting on an administrator — and the realm hears nothing.
 #[tokio::test]
 async fn the_person_operations_refuse_whom_the_routes_refuse() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
 
     for (name, input) in [
         ("jc_person_list", json!({})),
@@ -1311,8 +1317,8 @@ fn organization_with_invitation_hours(state: &AppState, hours: u32) {
 /// the realm's own admin action-token lifespan, so nothing changes for it.
 #[tokio::test]
 async fn an_invitation_link_lives_twelve_hours_when_the_organization_sets_nothing() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
     assert_eq!(
         invitation_lifespan(&state, &kc).await.as_deref(),
         Some("43200")
@@ -1322,8 +1328,8 @@ async fn an_invitation_link_lives_twelve_hours_when_the_organization_sets_nothin
 /// ADR-N-035, T-2892: `spec.limits.people.invitationHours` reaches the realm's e-mail.
 #[tokio::test]
 async fn an_invitation_link_lives_the_organizations_invitation_hours() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
     organization_with_invitation_hours(&state, 48);
     assert_eq!(
         invitation_lifespan(&state, &kc).await.as_deref(),
@@ -1334,8 +1340,8 @@ async fn an_invitation_link_lives_the_organizations_invitation_hours() {
 /// ADR-N-035 §2: a bound the operator lowered after the change was approved still holds.
 #[tokio::test]
 async fn an_invitation_link_never_outlives_the_operators_bound() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let mut state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let mut state = state_with(&kc, &shako);
     let mut config = (*state.config).clone();
     config.organization_bounds = serde_json::from_value(json!({
         "spec.limits.people.invitationHours": { "max": 24 },
@@ -1378,8 +1384,8 @@ async fn returns_to(kc: &MockServer, id: &str) -> Option<(String, String)> {
 /// and nobody is created. With a database the person's expiry is the organization's lifespan.
 #[tokio::test]
 async fn an_invitation_into_a_project_links_to_its_home_and_says_when_it_expires() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let mut state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let mut state = state_with(&kc, &shako);
     with_invitation_client(&mut state);
 
     let unknown = json!({ "email": "new@example.org", "firstName": "N", "lastName": "N", "project": "nowhere" });
@@ -1471,8 +1477,8 @@ async fn pending_person(kc: &MockServer) -> &'static str {
 /// `409` and sends nothing; a caller without `create` on Person is refused.
 #[tokio::test]
 async fn a_pending_invitation_is_sent_again_and_an_accepted_one_is_not() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
     let waiting = pending_person(&kc).await;
 
     let resent = send(
@@ -1537,8 +1543,8 @@ async fn me_with(state: &AppState, cookie: &str) -> StatusCode {
 /// out does the same; a sign-in after the mark is admitted again.
 #[tokio::test]
 async fn a_disabled_person_is_refused_before_their_token_expires() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
     let jana = common::cookie(
         &state.config,
         joinedcontext_portal::auth::session::Identity {
@@ -1601,8 +1607,8 @@ async fn a_disabled_person_is_refused_before_their_token_expires() {
 /// the feed names how many; enabling them again revives none.
 #[tokio::test]
 async fn disabling_a_person_revokes_their_connectors_on_the_feed() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
     let mut feed = state.activity_events.subscribe(ORG_NAMESPACE).await;
     let new = |name: &str| -> joinedcontext_portal::connectors::NewConnector {
         serde_json::from_value(json!({
@@ -1670,13 +1676,13 @@ const JANA_ID: &str = "00000000-0000-4000-8000-00000000000a";
 /// to nobody else; an id that is not one is refused naming the field.
 #[tokio::test]
 async fn names_behind_ids_are_read_by_a_people_admin_or_a_group_approver_alone() {
-    let (kc, gitea) = (realm(true).await, forge().await);
+    let (kc, shako) = (realm(true).await, forge().await);
     Mock::given(method("GET"))
         .and(path(format!("{ADMIN}/users/{JANA_ID}")))
         .respond_with(ResponseTemplate::new(200).set_body_json(user(JANA_ID, "jana@hel.fi")))
         .mount(&kc)
         .await;
-    let state = state_with(&kc, &gitea);
+    let state = state_with(&kc, &shako);
     let names = format!("{PEOPLE}/names?ids={JANA_ID}");
 
     for who in ["pia", "ada"] {
@@ -1706,8 +1712,8 @@ async fn names_behind_ids_are_read_by_a_people_admin_or_a_group_approver_alone()
 /// people administrator runs it.
 #[tokio::test]
 async fn the_migration_dry_run_plans_the_rewrite_and_proposes_nothing() {
-    let (kc, gitea) = (realm(true).await, forge().await);
-    let state = state_with(&kc, &gitea);
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
     let mut pia = person("pia");
     pia.second_factor = true;
     let answer = send(
@@ -1739,7 +1745,7 @@ async fn the_migration_dry_run_plans_the_rewrite_and_proposes_nothing() {
     }
     // eva is in the group and nobody in the realm carries her address.
     assert_eq!(plan["unresolved"], json!(["eva@hel.fi"]));
-    let proposed = gitea
+    let proposed = shako
         .received_requests()
         .await
         .unwrap_or_default()

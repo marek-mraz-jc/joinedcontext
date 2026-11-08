@@ -6,7 +6,9 @@ pub mod loader;
 pub mod provisioning;
 pub mod yaml;
 
-pub use loader::{ProvisioningLoadReport, ProvisioningTarget, load_provisioning_dir};
+pub use loader::{
+    ProvisioningLoadReport, ProvisioningTarget, expand_variables, load_provisioning_dir,
+};
 
 pub use provisioning::{
     DashboardProviderConfig, DatasourceProvisioningOutcome, parse_dashboard_providers_yaml,

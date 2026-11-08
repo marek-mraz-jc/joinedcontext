@@ -14,7 +14,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::error::ApiError;
-use crate::git::GiteaClient;
+use crate::forge::ShakoClient;
 use crate::state::AppState;
 
 /// The archive and the head commit of the project repository it was taken at.
@@ -44,7 +44,7 @@ pub fn bundle_head(bundle: &[u8]) -> Option<String> {
 /// that left it out would import an application with no source (MF-45).
 pub(crate) fn application_repository(
     app: &crate::resource::ResourceEnvelope,
-    forge: &GiteaClient,
+    forge: &ShakoClient,
 ) -> Result<Option<String>, ApiError> {
     let Some(url) = app.spec.pointer("/source/git/url").and_then(Value::as_str) else {
         return Ok(None);
@@ -70,7 +70,7 @@ pub(crate) fn application_repository(
 fn application_repositories(
     state: &AppState,
     project: &str,
-    forge: &GiteaClient,
+    forge: &ShakoClient,
 ) -> Result<Vec<(String, String)>, ApiError> {
     let apps = state
         .mirror
@@ -90,7 +90,7 @@ fn application_repositories(
 /// elsewhere than the head read before it is refused: the branch moved (MF-46).
 pub(crate) async fn take(
     name: &str,
-    repository: &GiteaClient,
+    repository: &ShakoClient,
 ) -> Result<(Vec<u8>, String, String), ApiError> {
     let branch = repository.default_branch().await?;
     let head = repository.branch_head(&branch).await?;
@@ -154,7 +154,7 @@ fn within_import(total: usize, more: usize) -> Result<usize, ApiError> {
 /// The export of `project`, whose own repository `forge` speaks to (MF-45).
 pub async fn archive(
     state: &AppState,
-    forge: &GiteaClient,
+    forge: &ShakoClient,
     project: &str,
     exported_by: &str,
 ) -> Result<Archive, ApiError> {

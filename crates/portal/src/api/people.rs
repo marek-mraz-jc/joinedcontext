@@ -28,7 +28,7 @@ use crate::auth::session::Identity;
 use crate::auth::CurrentUser;
 use crate::change::{Change, ChangePhase, ChangeStatus, Lane, PlanSummary};
 use crate::error::{ApiError, ProblemDetails};
-use crate::git::Author;
+use crate::forge::Author;
 use crate::people::{Admin, KcUser, NewPerson, People};
 use crate::permissions::ORG_NAMESPACE;
 use crate::resource::ResourceEnvelope;
@@ -1512,12 +1512,12 @@ async fn remove(
         .collect();
     crate::permissions::keeps_an_administrator_after(&state.mirror, &changes)?;
 
-    let gitea = state
+    let shako = state
         .forge_for(ORG_NAMESPACE)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let default_branch = gitea.default_branch().await?;
-    let held = crate::api::mutate::turn(&gitea, &removal_branch(people)).await;
-    let branch = crate::api::mutate::create_or_reuse_branch(&gitea, &held, &default_branch).await?;
+    let default_branch = shako.default_branch().await?;
+    let held = crate::api::mutate::turn(&shako, &removal_branch(people)).await;
+    let branch = crate::api::mutate::create_or_reuse_branch(&shako, &held, &default_branch).await?;
     let path_of = |envelope: &ResourceEnvelope| -> Result<String, ApiError> {
         let info = crate::resource::by_kind(&envelope.kind).ok_or_else(|| {
             ApiError::Internal(format!("no catalogue entry for {}", envelope.kind))
@@ -1538,7 +1538,7 @@ async fn remove(
     let mut deletes = Vec::new();
     for envelope in &removal.removed {
         let path = path_of(envelope)?;
-        if let Some(file) = gitea.get_file(&path, &default_branch).await? {
+        if let Some(file) = shako.get_file(&path, &default_branch).await? {
             deletes.push((path, file.sha));
         }
     }
@@ -1556,7 +1556,7 @@ async fn remove(
             format!("{} people ({})", many.len(), many.join(", ")),
         ),
     };
-    gitea
+    shako
         .change_files(
             &branch,
             &title,
@@ -1575,10 +1575,10 @@ async fn remove(
         removal.edited.len(),
         removal.removed.len()
     );
-    let pr = gitea
+    let pr = shako
         .create_pull_request(&branch, &default_branch, &title, &body)
         .await?;
-    let meta = crate::api::changes::change_meta(state, &gitea, pr.number, ORG_NAMESPACE);
+    let meta = crate::api::changes::change_meta(state, &shako, pr.number, ORG_NAMESPACE);
     let change = Change::new(
         meta,
         ChangeStatus::new(
@@ -1624,7 +1624,7 @@ fn db_error(err: sqlx::Error) -> ApiError {
 pub async fn finish_deletions(
     people: &People,
     pool: &sqlx::PgPool,
-    gitea: &crate::git::GiteaClient,
+    shako: &crate::forge::ShakoClient,
 ) {
     let rows = match crate::db::person_deletions(pool).await {
         Ok(rows) if rows.is_empty() => return,
@@ -1650,7 +1650,7 @@ pub async fn finish_deletions(
         };
         let (merged, closed) = match read.get(&number) {
             Some(known) => *known,
-            None => match gitea.pull_request(number).await {
+            None => match shako.pull_request(number).await {
                 Ok(pr) => *read
                     .entry(number)
                     .or_insert((pr.merged, pr.state == "closed")),

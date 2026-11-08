@@ -449,6 +449,24 @@ async fn dataset_shown(
             .allowed)
 }
 
+/// The catalogue as `req_ctx` may read it: the publish gate's hidden datasets (names and
+/// reasons) and the outbound host allow-list go only to callers who may propose the catalogue.
+fn public_catalogue(op_ctx: &OpContext, req_ctx: &RequestCtx, mut cat: Catalogue) -> Catalogue {
+    let target = ObjectTarget::Catalogue {
+        org_id: cat.org_id,
+        catalogue_id: cat.id,
+    };
+    if !op_ctx
+        .authorizer
+        .check(req_ctx, Action::Propose, &target)
+        .allowed
+    {
+        cat.hidden_datasets.clear();
+        cat.allowed_outbound_hosts.clear();
+    }
+    cat
+}
+
 /// Authorizes saving `proposed` (C16). An update is decided on the stored record, never on the
 /// grants the caller sends along; creating a publisher needs Propose without any editor grant;
 /// and changing who may edit a publisher (its editor grants) needs Admin on it.
@@ -539,6 +557,10 @@ pub async fn execute_operation(
                         .allowed
                 })
                 .collect();
+            let visible: Vec<Catalogue> = visible
+                .into_iter()
+                .map(|c| public_catalogue(op_ctx, req_ctx, c))
+                .collect();
             Ok(json!({ "catalogues": visible }))
         }
         "catalogue.get" => {
@@ -552,7 +574,7 @@ pub async fn execute_operation(
                 .get_catalogue(req_ctx.org_id, req_ctx.catalogue_id)
                 .await?
                 .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
-            Ok(serde_json::to_value(cat).unwrap_or(Value::Null))
+            Ok(serde_json::to_value(public_catalogue(op_ctx, req_ctx, cat)).unwrap_or(Value::Null))
         }
         "catalogue.propose" => {
             let target = ObjectTarget::Catalogue {
@@ -607,6 +629,12 @@ pub async fn execute_operation(
             let format_filter = input.get("format").and_then(Value::as_str);
             let licence_filter = input.get("licence").and_then(Value::as_str);
 
+            let hidden = op_ctx
+                .store
+                .get_catalogue(req_ctx.org_id, req_ctx.catalogue_id)
+                .await?
+                .map(|c| c.hidden_datasets)
+                .unwrap_or_default();
             let mut visible_ids = Vec::new();
             for ds in &all_ds {
                 if ds.state != RecordState::Active {
@@ -621,6 +649,15 @@ pub async fn execute_operation(
                     .authorizer
                     .check(req_ctx, Action::Read, &target)
                     .allowed
+                {
+                    continue;
+                }
+                // The publish gate's hidden datasets stay with their editors (`jc_hide`).
+                if hidden.contains_key(&ds.name)
+                    && !op_ctx
+                        .authorizer
+                        .check(req_ctx, Action::Propose, &target)
+                        .allowed
                 {
                     continue;
                 }
@@ -689,7 +726,7 @@ pub async fn execute_operation(
                 .max(1);
             let options = QueryOptions {
                 top: Some(20),
-                skip: Some((page - 1) * 20),
+                skip: Some((page - 1).saturating_mul(20)),
                 count: Some(true),
                 ..QueryOptions::default()
             };

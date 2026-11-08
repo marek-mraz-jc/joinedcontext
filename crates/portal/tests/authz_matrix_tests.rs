@@ -310,7 +310,7 @@ fn url(path: &str, row: &Row) -> (bool, String) {
 
 /// A route's placeholders, filled with what the fixture holds.
 fn fill(path: &str) -> String {
-    let values: [(&str, &str); 25] = [
+    let values: [(&str, &str); 27] = [
         ("{project}", PROJECT),
         ("{plural}", "endpoints"),
         ("{name}", EXISTING),
@@ -336,6 +336,8 @@ fn fill(path: &str) -> String {
         ("{deployment}", EXISTING),
         ("{type}", "Station"),
         ("{turn}", "1"),
+        ("{uid}", "board"),
+        ("{panel}", "1"),
     ];
     values
         .iter()
@@ -355,7 +357,7 @@ async fn fixture() -> AppState {
             "JC_PORTAL_AGENT_PROXY_CLIENT_ID" => Some(common::AGENT_PROXY_CLIENT),
             "JC_PORTAL_PIPELINE_RUNNER_CLIENT_ID" => Some(common::PIPELINE_RUNNER_CLIENT),
             "JC_PORTAL_GATEWAY_CLIENT_ID" => Some("context-gateway"),
-            "JC_GITEA_WEBHOOK_SECRET" => Some("webhook-secret-of-the-fixture"),
+            "JC_SHAKO_WEBHOOK_SECRET" => Some("webhook-secret-of-the-fixture"),
             "JC_AGENTS_NAMESPACE" => Some("agents"),
             "JC_AGENT_PROXY_BASE" => Some("http://jc-agent-proxy.agents.svc.cluster.local:8080"),
             _ => None,
@@ -365,14 +367,14 @@ async fn fixture() -> AppState {
     .expect("config");
     // A forge that takes every write, so a route gets past "no forge" to the caller's check.
     let forge = common::forge().await;
-    let client = joinedcontext_portal::git::GiteaClient::new(
+    let client = joinedcontext_portal::forge::ShakoClient::new(
         forge.uri().parse().expect("mock url"),
         "test-owner",
         "test-repo",
         "token-xyz",
     )
     .expect("client");
-    let state = AppState::new(config, None).with_gitea(std::sync::Arc::new(client));
+    let state = AppState::new(config, None).with_shako(std::sync::Arc::new(client));
     // The mock forge answers for as long as the test binary runs.
     std::mem::forget(forge);
     if let Some(bearer) = &state.bearer {
@@ -749,4 +751,67 @@ async fn a_ckan_instance_is_changed_by_the_administrator_and_its_own_role_alone(
         }
     }
     assert!(misses.is_empty(), "{}", misses.join("\n"));
+}
+
+/// The other member is steward of `praha` alone. `praha` is a project of the organization (its
+/// `Project` manifest registers it, PF-05, CC-85), so the organization's agent pages answer it
+/// 200 (API/01 §48, §49: 403 only for a caller who reads no agent kind and no project), and
+/// they hold nothing of `helsinki`, where it reads nothing: neither the ServiceAccount nor a run,
+/// not even one it started itself. The viewer and the approver of `helsinki` see them, so the
+/// fixture holds what is withheld.
+#[tokio::test]
+async fn the_other_member_sees_no_agent_and_no_run_of_a_project_it_does_not_read() {
+    let state = fixture().await;
+    let run: joinedcontext_portal::agents::run::AgentRun = serde_json::from_value(json!({
+        "id": "r-helsinki", "project": PROJECT, "appName": "air", "endpointName": "air",
+        "endpointSlug": "air", "endpoints": [], "profile": "analyst", "kind": "data",
+        "unattended": false, "appClass": "ui", "visibility": "project", "prompt": "p",
+        "promptDigest": "sha256:p", "dataNeeds": [], "allowsWrite": false, "branch": "b",
+        "pathPrefix": "p/", "status": "building", "ticketHash": "x", "files": {},
+        "steps": 0, "tokensUsed": 0, "createdBy": "other-member", "origin": "person",
+        "starter": null, "createdAt": chrono::Utc::now().to_rfc3339(),
+        "expiresAt": "2099-01-01T00:00:00Z",
+    }))
+    .expect("a run");
+    state.agents.create_run(&run).await.expect("stored");
+    let read = |route: &str| -> Row {
+        serde_json::from_value(json!({ "route": route, "rule": "signed-in", "expect": [] }))
+            .expect("a row")
+    };
+    let answer = |role: &'static str, path: &'static str| {
+        let state = state.clone();
+        let row = read(&format!("GET {path}"));
+        async move {
+            let response = send(&state, role, true, "GET", path, &row).await;
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("body");
+            (
+                status,
+                serde_json::from_slice::<Value>(&bytes).expect("json"),
+            )
+        }
+    };
+    let of_helsinki = |items: &Value| {
+        items
+            .as_array()
+            .expect("a list")
+            .iter()
+            .filter(|item| item["project"] == PROJECT)
+            .count()
+    };
+
+    let (status, agents) = answer("other-member", "/organization/agents").await;
+    assert_eq!(status, StatusCode::OK, "{agents}");
+    assert_eq!(of_helsinki(&agents["items"]), 0, "{agents}");
+    let (status, activity) = answer("other-member", "/organization/agents/activity").await;
+    assert_eq!(status, StatusCode::OK, "{activity}");
+    assert_eq!(of_helsinki(&activity["runs"]), 0, "{activity}");
+    assert!(!activity.to_string().contains("r-helsinki"), "{activity}");
+
+    let (_, agents) = answer("viewer", "/organization/agents").await;
+    assert!(of_helsinki(&agents["items"]) > 0, "{agents}");
+    let (_, activity) = answer("approver", "/organization/agents/activity").await;
+    assert!(activity.to_string().contains("r-helsinki"), "{activity}");
 }

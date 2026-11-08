@@ -182,6 +182,33 @@ async fn datasource_crud_answers_as_grafana() {
         )
         .await;
     assert_eq!(st, StatusCode::FORBIDDEN);
+    // An Editor writes no datasource (Grafana `datasources:write` is Admin): it could point
+    // one at its own host with a stored secret's name and receive the secret.
+    let (st, _) = w
+        .call(
+            "POST",
+            "/api/datasources",
+            Some("editor"),
+            Some(json!({
+                "name": "E", "type": "prometheus", "url": "https://elsewhere.example",
+                "secretRefs": { "token": "prom-pass" }
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _) = w
+        .call(
+            "PUT",
+            "/api/datasources/uid/prom",
+            Some("editor"),
+            Some(
+                json!({ "name": "Prom", "type": "prometheus", "url": "https://elsewhere.example" }),
+            ),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let got = w.ok("GET", "/api/datasources/uid/prom", None).await;
+    assert_eq!(got["url"], url.as_str());
 
     // Delete.
     let (st, _) = w
@@ -762,4 +789,37 @@ async fn a_failing_export_is_an_error() {
         .await;
     w.store.heal();
     assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+}
+
+/// The render route takes Grafana's `var-<name>` in place of the dashboard's current value, so
+/// the Portal's variable picker reaches the saved query; the value stays inside its literal.
+#[tokio::test]
+async fn render_takes_template_variables_from_the_address() {
+    let w = world();
+    let (url, seen) = prometheus().await;
+    w.add_prometheus("prom", &url).await;
+    let mut board = dashboard("vars", "prom");
+    board["templating"] = json!({ "list": [
+        { "name": "job", "type": "custom", "current": { "value": "api" } }
+    ]});
+    board["panels"][0]["targets"][0]["expr"] = json!("up{job=\"$job\"}");
+    w.add_dashboard(board, None).await;
+
+    w.ok("GET", "/api/dashboards/vars/render?panel=1", None)
+        .await;
+    w.ok(
+        "GET",
+        "/api/dashboards/vars/render?panel=1&var-job=edge%22%7D&maxDataPoints=50",
+        None,
+    )
+    .await;
+    let seen = seen.lock().clone();
+    let queries: Vec<&String> = seen.iter().filter(|q| q.contains("query_range")).collect();
+    assert_eq!(queries.len(), 2, "{seen:?}");
+    assert!(queries[0].contains("api"), "{}", queries[0]);
+    assert!(
+        queries[1].contains("edge%5C%22%7D") || queries[1].contains("edge\\\"}"),
+        "the quote is escaped inside its literal: {}",
+        queries[1]
+    );
 }
