@@ -800,12 +800,7 @@ async fn authorize_get(
                         "second_factor_passed": sso.acr == "mfa",
                     })
                 };
-                (
-                    step.to_string(),
-                    Some(sso.user_id),
-                    sso.amr,
-                    sso.acr,
-                )
+                (step.to_string(), Some(sso.user_id), sso.amr, sso.acr)
             }
             None => {
                 if login_hint.is_none() {

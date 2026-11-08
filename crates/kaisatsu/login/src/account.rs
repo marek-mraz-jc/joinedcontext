@@ -17,6 +17,7 @@
 use crate::handlers::second_factor_required;
 use crate::i18n::{Bundle, negotiate_locale};
 use axum::extract::{OriginalUri, Path, Query, State};
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get};
@@ -137,8 +138,14 @@ async fn caller(
     {
         return Err(inactive());
     }
-    let sub = claims.get("sub").and_then(Value::as_str).ok_or_else(inactive)?;
-    let sid = claims.get("sid").and_then(Value::as_str).ok_or_else(inactive)?;
+    let sub = claims
+        .get("sub")
+        .and_then(Value::as_str)
+        .ok_or_else(inactive)?;
+    let sid = claims
+        .get("sid")
+        .and_then(Value::as_str)
+        .ok_or_else(inactive)?;
     let sso = state
         .store
         .get_sso_session(&realm.id, sid)
@@ -232,28 +239,25 @@ fn with_cors(mut resp: Response, origin: Option<HeaderValue>) -> Response {
 async fn rest<F, Fut>(
     state: OidcState,
     realm_name: String,
-    method: Method,
-    uri: http::Uri,
-    headers: HeaderMap,
-    mount_ext: Option<Extension<Mount>>,
+    parts: Parts,
     f: F,
 ) -> Response
 where
     F: FnOnce(OidcState, Caller) -> Fut,
     Fut: std::future::Future<Output = Result<Response>>,
 {
-    let origin = match allowed_origin(&state, &realm_name, &headers).await {
+    let headers = &parts.headers;
+    let method = &parts.method;
+    let uri = parts
+        .extensions
+        .get::<OriginalUri>()
+        .map_or_else(|| parts.uri.clone(), |o| o.0.clone());
+    let mount_ext = parts.extensions.get::<Mount>();
+    let origin = match allowed_origin(&state, &realm_name, headers).await {
         Ok(o) => o,
         Err(e) => return with_cors(e.into_response(), None),
     };
-    let answer = match caller(
-        &state,
-        &realm_name,
-        &method,
-        &uri,
-        &headers,
-        mount_ext.as_ref().map(|e| &e.0),
-    )
+    let answer = match caller(&state, &realm_name, method, &uri, headers, mount_ext)
     .await
     {
         Ok(c) => f(state, c).await,
@@ -310,11 +314,7 @@ async fn preflight(
 
 /// A refused account change: which field, and the message key the console shows for it.
 fn field_error(status: StatusCode, field: &str, key: &str) -> Response {
-    (
-        status,
-        Json(json!({ "field": field, "errorMessage": key })),
-    )
-        .into_response()
+    (status, Json(json!({ "field": field, "errorMessage": key }))).into_response()
 }
 
 async fn audit(state: &OidcState, c: &Caller, kind: &str, ip: &ClientIp, details: &[(&str, &str)]) {
@@ -347,22 +347,23 @@ async fn account_get(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
     Query(page): Query<PageQuery>,
-    method: Method,
-    OriginalUri(uri): OriginalUri,
-    headers: HeaderMap,
-    mount_ext: Option<Extension<Mount>>,
+    parts: Parts,
 ) -> Response {
-    if !headers.contains_key(header::AUTHORIZATION) {
-        return console_page(State(state), Path(realm_name), Query(page), headers, mount_ext)
-            .await;
+    if !parts.headers.contains_key(header::AUTHORIZATION) {
+        let mount_ext = parts.extensions.get::<Mount>().cloned().map(Extension);
+        return console_page(
+            State(state),
+            Path(realm_name),
+            Query(page),
+            parts.headers,
+            mount_ext,
+        )
+        .await;
     }
     rest(
         state,
         realm_name,
-        method,
-        uri,
-        headers,
-        mount_ext,
+        parts,
         |_, c| async move { Ok(Json(personal_info(&c.user)).into_response()) },
     )
     .await
@@ -446,20 +447,14 @@ fn plausible_email(v: &str) -> bool {
 async fn personal_info_post(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
-    method: Method,
-    OriginalUri(uri): OriginalUri,
-    headers: HeaderMap,
-    mount_ext: Option<Extension<Mount>>,
+    parts: Parts,
     ip: ClientIp,
     body: axum::body::Bytes,
 ) -> Response {
     rest(
         state,
         realm_name,
-        method,
-        uri,
-        headers,
-        mount_ext,
+        parts,
         |state, c| async move { update_personal_info(&state, c, &ip, &body).await },
     )
     .await
@@ -472,18 +467,30 @@ async fn update_personal_info(
     body: &[u8],
 ) -> Result<Response> {
     let Ok(req) = serde_json::from_slice::<PersonalInfoUpdate>(body) else {
-        return Ok(field_error(StatusCode::BAD_REQUEST, "", "accountInvalidRequest"));
+        return Ok(field_error(
+            StatusCode::BAD_REQUEST,
+            "",
+            "accountInvalidRequest",
+        ));
     };
     let mut user = c.user.clone();
     if req.id.as_ref().is_some_and(|id| *id != user.id) {
-        return Ok(field_error(StatusCode::BAD_REQUEST, "id", "accountFieldReadOnly"));
+        return Ok(field_error(
+            StatusCode::BAD_REQUEST,
+            "id",
+            "accountFieldReadOnly",
+        ));
     }
     if req
         .username
         .as_ref()
         .is_some_and(|u| u.trim() != user.username)
     {
-        return Ok(field_error(StatusCode::BAD_REQUEST, "username", "accountFieldReadOnly"));
+        return Ok(field_error(
+            StatusCode::BAD_REQUEST,
+            "username",
+            "accountFieldReadOnly",
+        ));
     }
     if req.email_verified.is_some_and(|v| v != user.email_verified) {
         return Ok(field_error(
@@ -507,8 +514,20 @@ async fn update_personal_info(
     if let Some(raw) = &req.email {
         let new_email = match clean_text(raw, MAX_EMAIL) {
             Ok(Some(v)) if plausible_email(&v) => v,
-            Ok(None) => return Ok(field_error(StatusCode::BAD_REQUEST, "email", "accountEmailRequired")),
-            Ok(Some(_)) => return Ok(field_error(StatusCode::BAD_REQUEST, "email", "accountEmailInvalid")),
+            Ok(None) => {
+                return Ok(field_error(
+                    StatusCode::BAD_REQUEST,
+                    "email",
+                    "accountEmailRequired",
+                ));
+            }
+            Ok(Some(_)) => {
+                return Ok(field_error(
+                    StatusCode::BAD_REQUEST,
+                    "email",
+                    "accountEmailInvalid",
+                ));
+            }
             Err(key) => return Ok(field_error(StatusCode::BAD_REQUEST, "email", key)),
         };
         if !user
@@ -523,7 +542,11 @@ async fn update_personal_info(
                     .await?
                     .is_some_and(|other| other.id != user.id)
             {
-                return Ok(field_error(StatusCode::CONFLICT, "email", "accountEmailInUse"));
+                return Ok(field_error(
+                    StatusCode::CONFLICT,
+                    "email",
+                    "accountEmailInUse",
+                ));
             }
             user.email = Some(new_email);
             // A new address is not verified until its owner confirms it.
@@ -543,14 +566,22 @@ async fn update_personal_info(
             let editable = SELF_EDITABLE_ATTRIBUTES.contains(&key.as_str())
                 && !claim_bearing.iter().any(|a| a == key);
             if !editable {
-                return Ok(field_error(StatusCode::BAD_REQUEST, key, "accountAttributeReadOnly"));
+                return Ok(field_error(
+                    StatusCode::BAD_REQUEST,
+                    key,
+                    "accountAttributeReadOnly",
+                ));
             }
             if key == "locale"
                 && !(values.is_empty()
                     || (values.len() == 1
                         && crate::i18n::SUPPORTED_LOCALES.contains(&values[0].as_str())))
             {
-                return Ok(field_error(StatusCode::BAD_REQUEST, key, "accountFieldInvalid"));
+                return Ok(field_error(
+                    StatusCode::BAD_REQUEST,
+                    key,
+                    "accountFieldInvalid",
+                ));
             }
             if values.is_empty() {
                 user.attributes.remove(key);
@@ -572,18 +603,12 @@ async fn update_personal_info(
 async fn credentials_get(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
-    method: Method,
-    OriginalUri(uri): OriginalUri,
-    headers: HeaderMap,
-    mount_ext: Option<Extension<Mount>>,
+    parts: Parts,
 ) -> Response {
     rest(
         state,
         realm_name,
-        method,
-        uri,
-        headers,
-        mount_ext,
+        parts,
         |state, c| async move { Ok(Json(credential_groups(&state, &c).await?).into_response()) },
     )
     .await
@@ -652,25 +677,24 @@ async fn credential_groups(state: &OidcState, c: &Caller) -> Result<Value> {
 async fn credential_delete(
     State(state): State<OidcState>,
     Path((realm_name, id)): Path<(String, String)>,
-    method: Method,
-    OriginalUri(uri): OriginalUri,
-    headers: HeaderMap,
-    mount_ext: Option<Extension<Mount>>,
+    parts: Parts,
     ip: ClientIp,
 ) -> Response {
     rest(
         state,
         realm_name,
-        method,
-        uri,
-        headers,
-        mount_ext,
+        parts,
         |state, c| async move { remove_credential(&state, c, &id, &ip).await },
     )
     .await
 }
 
-async fn remove_credential(state: &OidcState, c: Caller, id: &str, ip: &ClientIp) -> Result<Response> {
+async fn remove_credential(
+    state: &OidcState,
+    c: Caller,
+    id: &str,
+    ip: &ClientIp,
+) -> Result<Response> {
     let creds = state
         .store
         .list_credentials(&c.realm.id, &c.user.id)
@@ -683,7 +707,11 @@ async fn remove_credential(state: &OidcState, c: Caller, id: &str, ip: &ClientIp
                     .filter(|cr| cr.credential_type == "otp" && cr.id != id)
                     .count();
                 if others == 0 && second_factor_required(&state.store, &c.realm, &c.user).await? {
-                    return Ok(field_error(StatusCode::CONFLICT, "otp", "accountOtpRequired"));
+                    return Ok(field_error(
+                        StatusCode::CONFLICT,
+                        "otp",
+                        "accountOtpRequired",
+                    ));
                 }
             }
             _ => {
@@ -724,18 +752,12 @@ async fn remove_credential(state: &OidcState, c: Caller, id: &str, ip: &ClientIp
 async fn sessions_get(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
-    method: Method,
-    OriginalUri(uri): OriginalUri,
-    headers: HeaderMap,
-    mount_ext: Option<Extension<Mount>>,
+    parts: Parts,
 ) -> Response {
     rest(
         state,
         realm_name,
-        method,
-        uri,
-        headers,
-        mount_ext,
+        parts,
         |state, c| async move {
             let mut out = Vec::new();
             for s in state
@@ -778,8 +800,7 @@ struct AllSessionsQuery {
 
 async fn end_session(state: &OidcState, c: &Caller, sso: &SsoSession) -> Result<()> {
     if let Some(ended) = state.store.delete_sso_session(&c.realm.id, &sso.id).await? {
-        let _ =
-            kaisatsu_oidc::dispatch_backchannel_logout(state, &c.mount, &c.realm, &ended).await;
+        let _ = kaisatsu_oidc::dispatch_backchannel_logout(state, &c.mount, &c.realm, &ended).await;
     }
     Ok(())
 }
@@ -790,19 +811,13 @@ async fn sessions_delete(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
     Query(q): Query<AllSessionsQuery>,
-    method: Method,
-    OriginalUri(uri): OriginalUri,
-    headers: HeaderMap,
-    mount_ext: Option<Extension<Mount>>,
+    parts: Parts,
     ip: ClientIp,
 ) -> Response {
     rest(
         state,
         realm_name,
-        method,
-        uri,
-        headers,
-        mount_ext,
+        parts,
         |state, c| async move {
             for s in state
                 .store
@@ -813,7 +828,14 @@ async fn sessions_delete(
                     end_session(&state, &c, &s).await?;
                 }
             }
-            audit(&state, &c, "LOGOUT", &ip, &[("scope", if q.current { "all" } else { "others" })]).await;
+            audit(
+                &state,
+                &c,
+                "LOGOUT",
+                &ip,
+                &[("scope", if q.current { "all" } else { "others" })],
+            )
+            .await;
             Ok(StatusCode::NO_CONTENT.into_response())
         },
     )
@@ -824,19 +846,13 @@ async fn sessions_delete(
 async fn session_delete(
     State(state): State<OidcState>,
     Path((realm_name, id)): Path<(String, String)>,
-    method: Method,
-    OriginalUri(uri): OriginalUri,
-    headers: HeaderMap,
-    mount_ext: Option<Extension<Mount>>,
+    parts: Parts,
     ip: ClientIp,
 ) -> Response {
     rest(
         state,
         realm_name,
-        method,
-        uri,
-        headers,
-        mount_ext,
+        parts,
         |state, c| async move {
             let Some(sso) = state
                 .store
@@ -944,7 +960,10 @@ async fn render_console(
     let nonce = random_handle_256()[..22].to_owned();
     let html = CONSOLE_HTML
         .replace("__LANG__", locale)
-        .replace("__TITLE__", &html_escape(&format!("{} · {display}", bundle.get("accountTitle"))))
+        .replace(
+            "__TITLE__",
+            &html_escape(&format!("{} · {display}", bundle.get("accountTitle"))),
+        )
         .replace("__REALM__", &html_escape(&display))
         .replace("__BRANDING_CSS__", &branding.css_variables())
         .replace("__CONFIG__", &script_json(&cfg))

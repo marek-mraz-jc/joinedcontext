@@ -11,9 +11,9 @@ use jc_router::Mount;
 use kaisatsu_admin::{AdminState, admin_router, odata_router, scim_router};
 use kaisatsu_core::{Authorizer, LocalAuthorizer, Result, Store};
 use kaisatsu_crypto::Kek;
-use kaisatsu_login::login_router;
 /// The account console's client and audience, for a host that provisions the console client.
 pub use kaisatsu_login::account::{ACCOUNT_AUDIENCE, ACCOUNT_CONSOLE_CLIENT};
+use kaisatsu_login::login_router;
 use kaisatsu_mcp::mcp_router;
 use kaisatsu_oidc::{OidcState, OutboundGuard, oidc_router};
 use kaisatsu_store_memory::MemoryStore;

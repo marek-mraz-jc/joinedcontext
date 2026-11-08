@@ -612,7 +612,13 @@ async fn render_state_page(
                 .await?
                 .map(|u| u.username)
                 .unwrap_or_default();
-            totp_qr_svg(realm, &org_display, &account, secret, bundle.get("otpScanHint"))
+            totp_qr_svg(
+                realm,
+                &org_display,
+                &account,
+                secret,
+                bundle.get("otpScanHint"),
+            )
         }
         _ => String::new(),
     };
@@ -635,7 +641,7 @@ async fn render_state_page(
         submit_label,
         secondary_link_url: sec_url,
         secondary_link_label: sec_label,
-        qr_svg: qr_svg,
+        qr_svg,
         qr_hint: bundle.get("otpScanHint").to_owned(),
     };
 
@@ -721,7 +727,11 @@ fn logout_sessions_field(bundle: &Bundle, checked: bool) -> FormField {
 
 /// The cancel link of an application-initiated action page: back to the client's registered
 /// `redirect_uri` with `kc_action_status=cancelled`, nothing changed. Empty outside an action.
-fn cancel_link(auth_session: &AuthSession, bundle: &Bundle, on_action_page: bool) -> (String, String) {
+fn cancel_link(
+    auth_session: &AuthSession,
+    bundle: &Bundle,
+    on_action_page: bool,
+) -> (String, String) {
     if !on_action_page || auth_session.kc_action.is_none() || auth_session.kc_action_done {
         return (String::new(), String::new());
     }
@@ -746,7 +756,11 @@ async fn sign_out_other_sessions(
     headers: &HeaderMap,
 ) -> Result<()> {
     let current = read_cookie(headers, &mount.cookie_name("sso")).map(|raw| sha256_hex(&raw));
-    for sso in state.store.list_user_sso_sessions(&realm.id, user_id).await? {
+    for sso in state
+        .store
+        .list_user_sso_sessions(&realm.id, user_id)
+        .await?
+    {
         if current.as_deref() == Some(sso.handle_hash.as_str()) {
             continue;
         }

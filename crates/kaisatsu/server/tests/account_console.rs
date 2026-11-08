@@ -156,7 +156,7 @@ async fn authorize(
     app: &Router,
     extra: &str,
     sso: Option<&str>,
-) -> std::result::Result<Page, (StatusCode, HeaderMap, String)> {
+) -> std::result::Result<Page, Box<(StatusCode, HeaderMap, String)>> {
     let uri = format!(
         "{AUTH}?client_id=account-console&redirect_uri={}&response_type=code&scope=openid&state=st&code_challenge={}&code_challenge_method=S256{extra}",
         url::form_urlencoded::byte_serialize(CONSOLE_REDIRECT.as_bytes()).collect::<String>(),
@@ -165,7 +165,7 @@ async fn authorize(
     let hdrs: Vec<(&str, &str)> = sso.map(|c| vec![("cookie", c)]).unwrap_or_default();
     let (st, h, body) = call(app, Method::GET, &uri, &hdrs, None).await;
     if st != StatusCode::SEE_OTHER || !location(&h).contains("login-actions/authenticate") {
-        return Err((st, h, body));
+        return Err(Box::new((st, h, body)));
     }
     let url = location(&h);
     let auth = cookie_named(&h, "__Host-wk_auth").expect("auth cookie");
@@ -242,10 +242,8 @@ async fn finish(app: &Router, h: &HeaderMap, sso_before: Option<&str>) -> Signed
 }
 
 async fn sign_in(app: &Router, store: &MemoryStore, who: &str, pw: &str) -> Signed {
-    let page = authorize(app, "", None).await.ok().expect("login page");
-    let (st, h, html) = page
-        .post(app, &[("username", who), ("password", pw)])
-        .await;
+    let page = authorize(app, "", None).await.ok().unwrap();
+    let (st, h, html) = page.post(app, &[("username", who), ("password", pw)]).await;
     if st == StatusCode::SEE_OTHER {
         return finish(app, &h, None).await;
     }
@@ -289,7 +287,8 @@ async fn the_console_page_is_one_locked_down_document_for_every_console_path() {
         format!("{ACCOUNT}/account-security/signing-in"),
         format!("{ACCOUNT}/account-security/device-activity"),
     ] {
-        let (st, h, html) = call(&app, Method::GET, &path, &[("accept-language", "sk")], None).await;
+        let (st, h, html) =
+            call(&app, Method::GET, &path, &[("accept-language", "sk")], None).await;
         assert_eq!(st, StatusCode::OK, "{path}");
         let csp = h[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
         assert!(csp.contains("frame-ancestors 'none'") && csp.contains("script-src 'nonce-"));
@@ -308,9 +307,11 @@ async fn the_rest_takes_only_live_audience_account_tokens_of_this_realm() {
     let me = sign_in(&app, &store, MEMBER, MEMBER_PW).await;
     let claims = decode_jwt_payload(&me.token);
     assert!(
-        claims["aud"].as_array().map_or(claims["aud"] == "account", |a| a
-            .iter()
-            .any(|v| v == "account")),
+        claims["aud"]
+            .as_array()
+            .map_or(claims["aud"] == "account", |a| a
+                .iter()
+                .any(|v| v == "account")),
         "{claims}"
     );
     let (st, info) = rest(&app, Method::GET, "/", &me.token, None).await;
@@ -322,7 +323,7 @@ async fn the_rest_takes_only_live_audience_account_tokens_of_this_realm() {
     // client's access token): 401 on every REST path.
     let id_token = {
         let page = authorize(&app, "", Some(&me.sso)).await;
-        let (_, h, _) = page.err().expect("SSO answers with a code");
+        let (_, h, _) = *page.err().expect("SSO answers with a code");
         exchange(&app, &param(&location(&h), "code").unwrap()).await["id_token"]
             .as_str()
             .unwrap()
@@ -330,7 +331,14 @@ async fn the_rest_takes_only_live_audience_account_tokens_of_this_realm() {
     };
     let (_, _, _, edge_token) = edge_access_token(&app).await;
     for path in ["/", "/credentials", "/sessions"] {
-        let (st, h, _) = call(&app, Method::GET, &format!("{ACCOUNT}{path}"), &[("authorization", "Bearer x.y.z")], None).await;
+        let (st, h, _) = call(
+            &app,
+            Method::GET,
+            &format!("{ACCOUNT}{path}"),
+            &[("authorization", "Bearer x.y.z")],
+            None,
+        )
+        .await;
         assert_eq!(st, StatusCode::UNAUTHORIZED, "{path}");
         assert!(h.contains_key(header::WWW_AUTHENTICATE));
         for wrong in [&id_token, &edge_token] {
@@ -338,7 +346,10 @@ async fn the_rest_takes_only_live_audience_account_tokens_of_this_realm() {
             assert_eq!(st, StatusCode::UNAUTHORIZED, "{path}");
         }
         let (st, _, _) = call(&app, Method::DELETE, &format!("{ACCOUNT}{path}"), &[], None).await;
-        assert!(st == StatusCode::UNAUTHORIZED || st == StatusCode::METHOD_NOT_ALLOWED, "{path} {st}");
+        assert!(
+            st == StatusCode::UNAUTHORIZED || st == StatusCode::METHOD_NOT_ALLOWED,
+            "{path} {st}"
+        );
     }
 
     // Another realm refuses this realm's token (issuer and keys differ), and never reaches
@@ -355,13 +366,22 @@ async fn the_rest_takes_only_live_audience_account_tokens_of_this_realm() {
     for (m, path) in [
         (Method::GET, "/realms/other/account/".to_owned()),
         (Method::GET, "/realms/other/account/sessions".to_owned()),
-        (Method::DELETE, format!("/realms/other/account/sessions/{}", me.sid)),
+        (
+            Method::DELETE,
+            format!("/realms/other/account/sessions/{}", me.sid),
+        ),
     ] {
         let auth = bearer(&me.token);
         let (st, _, _) = call(&app, m, &path, &[("authorization", &auth)], None).await;
         assert_eq!(st, StatusCode::UNAUTHORIZED, "{path}");
     }
-    assert!(store.get_sso_session("dev", &me.sid).await.unwrap().is_some());
+    assert!(
+        store
+            .get_sso_session("dev", &me.sid)
+            .await
+            .unwrap()
+            .is_some()
+    );
 
     // A token whose session ended is dead at once (logout, sign-out elsewhere).
     store.delete_sso_session("dev", &me.sid).await.unwrap();
@@ -383,7 +403,10 @@ async fn edge_access_token(app: &Router) -> (StatusCode, HeaderMap, String, Stri
     )
     .await;
     let tok: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
-    let at = tok["access_token"].as_str().unwrap_or("none.none.none").to_owned();
+    let at = tok["access_token"]
+        .as_str()
+        .unwrap_or("none.none.none")
+        .to_owned();
     (st, h, body, at)
 }
 
@@ -416,7 +439,14 @@ async fn cors_answers_only_the_console_origin() {
     assert!(!h.contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
 
     let auth = bearer(&me.token);
-    let (st, h, _) = call(&app, Method::GET, &format!("{ACCOUNT}/"), &[("authorization", &auth), ("origin", ISSUER_ORIGIN)], None).await;
+    let (st, h, _) = call(
+        &app,
+        Method::GET,
+        &format!("{ACCOUNT}/"),
+        &[("authorization", &auth), ("origin", ISSUER_ORIGIN)],
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(h[header::ACCESS_CONTROL_ALLOW_ORIGIN], ISSUER_ORIGIN);
     // A page of another origin neither reads nor changes the account, token or not.
@@ -424,13 +454,19 @@ async fn cors_answers_only_the_console_origin() {
         &app,
         Method::POST,
         &format!("{ACCOUNT}/"),
-        &[("authorization", &auth), ("origin", "https://portal.dev.example.test")],
+        &[
+            ("authorization", &auth),
+            ("origin", "https://portal.dev.example.test"),
+        ],
         Some(json!({"firstName": "Mallory"}).to_string()),
     )
     .await;
     assert_eq!(st, StatusCode::FORBIDDEN);
     assert!(!h.contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
-    assert_ne!(user(&store, MEMBER).await.first_name.as_deref(), Some("Mallory"));
+    assert_ne!(
+        user(&store, MEMBER).await.first_name.as_deref(),
+        Some("Mallory")
+    );
 }
 
 #[tokio::test]
@@ -439,7 +475,9 @@ async fn personal_info_changes_only_what_a_person_may_change() {
     let me = sign_in(&app, &store, MEMBER, MEMBER_PW).await;
     let mut before = user(&store, MEMBER).await;
     before.email_verified = true;
-    before.attributes.insert("jc_org".into(), vec!["helsinki".into()]);
+    before
+        .attributes
+        .insert("jc_org".into(), vec!["helsinki".into()]);
     store.update_user(before.clone()).await.unwrap();
 
     // Names change; the console sends back what it read and that is fine.
@@ -452,23 +490,66 @@ async fn personal_info_changes_only_what_a_person_may_change() {
     let (st, info) = rest(&app, Method::POST, "/", &me.token, Some(edit)).await;
     assert_eq!(st, StatusCode::OK, "{info}");
     assert_eq!(info["firstName"], "Anna");
-    assert!(user(&store, MEMBER).await.email_verified, "unchanged e-mail stays verified");
+    assert!(
+        user(&store, MEMBER).await.email_verified,
+        "unchanged e-mail stays verified"
+    );
 
     // Refused: username, id, emailVerified, admin-only attributes, claim-bearing attributes
     // (jc_org reaches tokens through a mapper), unknown members, bad e-mail, a taken e-mail.
     for (body, field, status) in [
-        (json!({"username": "root"}), "username", StatusCode::BAD_REQUEST),
+        (
+            json!({"username": "root"}),
+            "username",
+            StatusCode::BAD_REQUEST,
+        ),
         (json!({"id": "someone-else"}), "id", StatusCode::BAD_REQUEST),
-        (json!({"emailVerified": false}), "emailVerified", StatusCode::BAD_REQUEST),
-        (json!({"attributes": {"jc_org": ["praha"]}}), "jc_org", StatusCode::BAD_REQUEST),
-        (json!({"attributes": {"jc_groups": ["/platform-admins"]}}), "jc_groups", StatusCode::BAD_REQUEST),
-        (json!({"attributes": {"department": ["x"]}}), "department", StatusCode::BAD_REQUEST),
-        (json!({"attributes": {"locale": ["xx"]}}), "locale", StatusCode::BAD_REQUEST),
-        (json!({"realmRoles": ["platform-admin"]}), "", StatusCode::BAD_REQUEST),
-        (json!({"email": "not-an-address"}), "email", StatusCode::BAD_REQUEST),
+        (
+            json!({"emailVerified": false}),
+            "emailVerified",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            json!({"attributes": {"jc_org": ["praha"]}}),
+            "jc_org",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            json!({"attributes": {"jc_groups": ["/platform-admins"]}}),
+            "jc_groups",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            json!({"attributes": {"department": ["x"]}}),
+            "department",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            json!({"attributes": {"locale": ["xx"]}}),
+            "locale",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            json!({"realmRoles": ["platform-admin"]}),
+            "",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            json!({"email": "not-an-address"}),
+            "email",
+            StatusCode::BAD_REQUEST,
+        ),
         (json!({"email": ""}), "email", StatusCode::BAD_REQUEST),
-        (json!({"firstName": "x".repeat(256)}), "firstName", StatusCode::BAD_REQUEST),
-        (json!({"lastName": "a\u{0007}b"}), "lastName", StatusCode::BAD_REQUEST),
+        (
+            json!({"firstName": "x".repeat(256)}),
+            "firstName",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            json!({"lastName": "a\u{0007}b"}),
+            "lastName",
+            StatusCode::BAD_REQUEST,
+        ),
         (json!({"email": ANALYST}), "email", StatusCode::CONFLICT),
     ] {
         let (st, err) = rest(&app, Method::POST, "/", &me.token, Some(body.clone())).await;
@@ -476,18 +557,35 @@ async fn personal_info_changes_only_what_a_person_may_change() {
         assert_eq!(err["field"], field, "{body} {err}");
     }
     let after = user(&store, MEMBER).await;
-    assert_eq!(after.attributes.get("jc_org"), Some(&vec!["helsinki".to_owned()]));
+    assert_eq!(
+        after.attributes.get("jc_org"),
+        Some(&vec!["helsinki".to_owned()])
+    );
     assert!(!after.attributes.contains_key("department"));
     assert_eq!(after.username, MEMBER);
     assert!(after.email_verified);
 
     // The locale attribute is the person's own.
-    let (st, info) = rest(&app, Method::POST, "/", &me.token, Some(json!({"attributes": {"locale": ["sk"]}}))).await;
+    let (st, info) = rest(
+        &app,
+        Method::POST,
+        "/",
+        &me.token,
+        Some(json!({"attributes": {"locale": ["sk"]}})),
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(info["attributes"]["locale"], json!(["sk"]));
 
     // A new e-mail address is unverified.
-    let (st, info) = rest(&app, Method::POST, "/", &me.token, Some(json!({"email": "anna.new@hel.fi"}))).await;
+    let (st, info) = rest(
+        &app,
+        Method::POST,
+        "/",
+        &me.token,
+        Some(json!({"email": "anna.new@hel.fi"})),
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(info["emailVerified"], false);
     let after = user(&store, MEMBER).await;
@@ -518,7 +616,14 @@ async fn a_mapper_on_an_editable_attribute_makes_it_read_only() {
         ..Default::default()
     });
     store.upsert_client(console).await.unwrap();
-    let (st, err) = rest(&app, Method::POST, "/", &me.token, Some(json!({"attributes": {"locale": ["de"]}}))).await;
+    let (st, err) = rest(
+        &app,
+        Method::POST,
+        "/",
+        &me.token,
+        Some(json!({"attributes": {"locale": ["de"]}})),
+    )
+    .await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
     assert_eq!(err["errorMessage"], "accountAttributeReadOnly");
 }
@@ -547,21 +652,54 @@ async fn credentials_list_metadata_and_keep_the_required_authenticator() {
     let (st, groups) = rest(&app, Method::GET, "/credentials", &steward.token, None).await;
     assert_eq!(st, StatusCode::OK);
     let text = groups.to_string();
-    assert!(!text.contains("secretData") && !text.contains(&otp.secret_data) && !text.contains("argon2"));
-    let otp_group = groups.as_array().unwrap().iter().find(|g| g["type"] == "otp").unwrap();
+    assert!(
+        !text.contains("secretData")
+            && !text.contains(&otp.secret_data)
+            && !text.contains("argon2")
+    );
+    let otp_group = groups
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["type"] == "otp")
+        .unwrap();
     assert_eq!(otp_group["required"], true);
-    assert_eq!(otp_group["userCredentialMetadatas"][0]["credential"]["id"], otp.id);
+    assert_eq!(
+        otp_group["userCredentialMetadatas"][0]["credential"]["id"],
+        otp.id
+    );
 
     // The member cannot touch the steward's credentials: 404, both stay.
     for id in [&otp.id, &pw.id] {
-        let (st, _) = rest(&app, Method::DELETE, &format!("/credentials/{id}"), &member.token, None).await;
+        let (st, _) = rest(
+            &app,
+            Method::DELETE,
+            &format!("/credentials/{id}"),
+            &member.token,
+            None,
+        )
+        .await;
         assert_eq!(st, StatusCode::NOT_FOUND);
     }
     // The password cannot be removed; the steward's only authenticator neither (portal-approver
     // holds mfa-required).
-    let (st, err) = rest(&app, Method::DELETE, &format!("/credentials/{}", pw.id), &steward.token, None).await;
+    let (st, err) = rest(
+        &app,
+        Method::DELETE,
+        &format!("/credentials/{}", pw.id),
+        &steward.token,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::BAD_REQUEST, "{err}");
-    let (st, err) = rest(&app, Method::DELETE, &format!("/credentials/{}", otp.id), &steward.token, None).await;
+    let (st, err) = rest(
+        &app,
+        Method::DELETE,
+        &format!("/credentials/{}", otp.id),
+        &steward.token,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::CONFLICT);
     assert_eq!(err["errorMessage"], "accountOtpRequired");
     assert_eq!(store.list_credentials("dev", &s.id).await.unwrap().len(), 2);
@@ -570,9 +708,23 @@ async fn credentials_list_metadata_and_keep_the_required_authenticator() {
     let mut second = otp.clone();
     second.id = "otp-second".into();
     store.upsert_credential(second).await.unwrap();
-    let (st, _) = rest(&app, Method::DELETE, &format!("/credentials/{}", otp.id), &steward.token, None).await;
+    let (st, _) = rest(
+        &app,
+        Method::DELETE,
+        &format!("/credentials/{}", otp.id),
+        &steward.token,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
-    let (st, _) = rest(&app, Method::DELETE, "/credentials/otp-second", &steward.token, None).await;
+    let (st, _) = rest(
+        &app,
+        Method::DELETE,
+        "/credentials/otp-second",
+        &steward.token,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::CONFLICT);
 
     // A person the realm does not hold to a second factor removes their last authenticator.
@@ -587,9 +739,23 @@ async fn credentials_list_metadata_and_keep_the_required_authenticator() {
         })
         .await
         .unwrap();
-    let (st, _) = rest(&app, Method::DELETE, "/credentials/member-otp", &member.token, None).await;
+    let (st, _) = rest(
+        &app,
+        Method::DELETE,
+        "/credentials/member-otp",
+        &member.token,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
-    let (st, _) = rest(&app, Method::DELETE, "/credentials/member-otp", &member.token, None).await;
+    let (st, _) = rest(
+        &app,
+        Method::DELETE,
+        "/credentials/member-otp",
+        &member.token,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 }
 
@@ -622,14 +788,41 @@ async fn passkeys_are_removed_only_by_their_owner() {
         })
         .await
         .unwrap();
-    let (st, _) = rest(&app, Method::DELETE, &format!("/credentials/{}", pk.id), &member.token, None).await;
+    let (st, _) = rest(
+        &app,
+        Method::DELETE,
+        &format!("/credentials/{}", pk.id),
+        &member.token,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
-    assert_eq!(store.list_webauthn_credentials("dev", &s.id).await.unwrap().len(), 1);
+    assert_eq!(
+        store
+            .list_webauthn_credentials("dev", &s.id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
     let (_, groups) = rest(&app, Method::GET, "/credentials", &steward.token, None).await;
     assert!(groups.to_string().contains("Laptop"));
-    let (st, _) = rest(&app, Method::DELETE, &format!("/credentials/{}", pk.id), &steward.token, None).await;
+    let (st, _) = rest(
+        &app,
+        Method::DELETE,
+        &format!("/credentials/{}", pk.id),
+        &steward.token,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
-    assert!(store.list_webauthn_credentials("dev", &s.id).await.unwrap().is_empty());
+    assert!(
+        store
+            .list_webauthn_credentials("dev", &s.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -651,29 +844,96 @@ async fn sessions_sign_out_one_others_or_all_and_never_another_persons() {
     assert_eq!(current[0]["clients"][0]["clientId"], "account-console");
 
     // Another person's session id: 404, it stays alive.
-    let (st, _) = rest(&app, Method::DELETE, &format!("/sessions/{}", steward.sid), &a.token, None).await;
+    let (st, _) = rest(
+        &app,
+        Method::DELETE,
+        &format!("/sessions/{}", steward.sid),
+        &a.token,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
-    assert!(store.get_sso_session("dev", &steward.sid).await.unwrap().is_some());
+    assert!(
+        store
+            .get_sso_session("dev", &steward.sid)
+            .await
+            .unwrap()
+            .is_some()
+    );
 
     // One of my own.
-    let (st, _) = rest(&app, Method::DELETE, &format!("/sessions/{}", b.sid), &a.token, None).await;
+    let (st, _) = rest(
+        &app,
+        Method::DELETE,
+        &format!("/sessions/{}", b.sid),
+        &a.token,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
-    assert!(store.get_sso_session("dev", &b.sid).await.unwrap().is_none());
+    assert!(
+        store
+            .get_sso_session("dev", &b.sid)
+            .await
+            .unwrap()
+            .is_none()
+    );
     let (st, _) = rest(&app, Method::GET, "/", &b.token, None).await;
-    assert_eq!(st, StatusCode::UNAUTHORIZED, "the signed-out device's token is dead");
+    assert_eq!(
+        st,
+        StatusCode::UNAUTHORIZED,
+        "the signed-out device's token is dead"
+    );
 
     // All others: this one stays.
     let (st, _) = rest(&app, Method::DELETE, "/sessions", &a.token, None).await;
     assert_eq!(st, StatusCode::NO_CONTENT);
-    assert!(store.get_sso_session("dev", &c.sid).await.unwrap().is_none());
-    assert!(store.get_sso_session("dev", &a.sid).await.unwrap().is_some());
-    assert!(store.get_sso_session("dev", &steward.sid).await.unwrap().is_some());
+    assert!(
+        store
+            .get_sso_session("dev", &c.sid)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .get_sso_session("dev", &a.sid)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        store
+            .get_sso_session("dev", &steward.sid)
+            .await
+            .unwrap()
+            .is_some()
+    );
 
     // All, this one included.
-    let (st, _) = rest(&app, Method::DELETE, "/sessions?current=true", &a.token, None).await;
+    let (st, _) = rest(
+        &app,
+        Method::DELETE,
+        "/sessions?current=true",
+        &a.token,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
-    assert!(store.get_sso_session("dev", &a.sid).await.unwrap().is_none());
-    assert!(store.get_sso_session("dev", &steward.sid).await.unwrap().is_some());
+    assert!(
+        store
+            .get_sso_session("dev", &a.sid)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .get_sso_session("dev", &steward.sid)
+            .await
+            .unwrap()
+            .is_some()
+    );
 }
 
 #[tokio::test]
@@ -684,18 +944,30 @@ async fn update_password_is_an_application_initiated_action_with_reauthenticatio
 
     // An unknown action is refused before anything starts.
     let refused = authorize(&app, "&kc_action=delete_account", Some(&me.sso)).await;
-    let (st, _, _) = refused.err().unwrap();
+    let (st, _, _) = *refused.err().unwrap();
     assert_eq!(st, StatusCode::BAD_REQUEST);
 
     // Within five minutes of signing in the action page comes straight away.
-    let page = authorize(&app, "&kc_action=UPDATE_PASSWORD", Some(&me.sso)).await.ok().unwrap();
+    let page = authorize(&app, "&kc_action=UPDATE_PASSWORD", Some(&me.sso))
+        .await
+        .ok()
+        .unwrap();
     assert_eq!(page_id(&page.html), "update-password", "{}", page.html);
     assert!(page.html.contains("name=\"password_confirm\""));
     assert!(page.html.contains("name=\"logout-sessions\""));
-    assert!(page.html.contains("kc_action_status=cancelled"), "cancel goes back unchanged");
+    assert!(
+        page.html.contains("kc_action_status=cancelled"),
+        "cancel goes back unchanged"
+    );
 
     let (_, _, html) = page
-        .post(&app, &[("new_password", "BrandNewPass123!x"), ("password_confirm", "Different123!xx")])
+        .post(
+            &app,
+            &[
+                ("new_password", "BrandNewPass123!x"),
+                ("password_confirm", "Different123!xx"),
+            ],
+        )
         .await;
     assert_eq!(page_id(&html), "update-password");
     assert!(html.contains("role=\"alert\""));
@@ -711,31 +983,72 @@ async fn update_password_is_an_application_initiated_action_with_reauthenticatio
         )
         .await;
     assert_eq!(st, StatusCode::SEE_OTHER, "{html}");
-    assert_eq!(param(&location(&h), "kc_action_status").as_deref(), Some("success"));
+    assert_eq!(
+        param(&location(&h), "kc_action_status").as_deref(),
+        Some("success")
+    );
     // Other devices are signed out; this browser's session stays.
-    assert!(store.get_sso_session("dev", &other.sid).await.unwrap().is_none());
-    assert!(store.get_sso_session("dev", &me.sid).await.unwrap().is_some());
+    assert!(
+        store
+            .get_sso_session("dev", &other.sid)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .get_sso_session("dev", &me.sid)
+            .await
+            .unwrap()
+            .is_some()
+    );
     let page = authorize(&app, "", None).await.ok().unwrap();
-    let (_, _, html) = page.post(&app, &[("username", MEMBER), ("password", MEMBER_PW)]).await;
+    let (_, _, html) = page
+        .post(&app, &[("username", MEMBER), ("password", MEMBER_PW)])
+        .await;
     assert_eq!(page_id(&html), "login", "the old password no longer works");
     let page = authorize(&app, "", None).await.ok().unwrap();
-    let (st, _, _) = page.post(&app, &[("username", MEMBER), ("password", "BrandNewPass123!x")]).await;
+    let (st, _, _) = page
+        .post(
+            &app,
+            &[("username", MEMBER), ("password", "BrandNewPass123!x")],
+        )
+        .await;
     assert_eq!(st, StatusCode::SEE_OTHER);
 
     // An older session signs in again first, the person's name filled in.
-    let mut sso = store.get_sso_session("dev", &me.sid).await.unwrap().unwrap();
+    let mut sso = store
+        .get_sso_session("dev", &me.sid)
+        .await
+        .unwrap()
+        .unwrap();
     sso.auth_time -= 600;
     store.upsert_sso_session(sso).await.unwrap();
-    let page = authorize(&app, "&kc_action=UPDATE_PASSWORD", Some(&me.sso)).await.ok().unwrap();
+    let page = authorize(&app, "&kc_action=UPDATE_PASSWORD", Some(&me.sso))
+        .await
+        .ok()
+        .unwrap();
     assert_eq!(page_id(&page.html), "login", "{}", page.html);
     assert!(page.html.contains(&format!("value=\"{MEMBER}\"")));
-    let (_, _, html) = page.post(&app, &[("username", MEMBER), ("password", "BrandNewPass123!x")]).await;
+    let (_, _, html) = page
+        .post(
+            &app,
+            &[("username", MEMBER), ("password", "BrandNewPass123!x")],
+        )
+        .await;
     assert_eq!(page_id(&html), "update-password", "{html}");
     // max_age=0 forces the sign-in too.
-    let mut sso = store.get_sso_session("dev", &me.sid).await.unwrap().unwrap();
+    let mut sso = store
+        .get_sso_session("dev", &me.sid)
+        .await
+        .unwrap()
+        .unwrap();
     sso.auth_time = chrono::Utc::now().timestamp();
     store.upsert_sso_session(sso).await.unwrap();
-    let page = authorize(&app, "&kc_action=UPDATE_PASSWORD&max_age=0", Some(&me.sso)).await.ok().unwrap();
+    let page = authorize(&app, "&kc_action=UPDATE_PASSWORD&max_age=0", Some(&me.sso))
+        .await
+        .ok()
+        .unwrap();
     assert_eq!(page_id(&page.html), "login");
 }
 
@@ -744,7 +1057,10 @@ async fn configure_totp_adds_a_named_authenticator_and_reports_success() {
     let (app, store) = app().await;
     let me = sign_in(&app, &store, MEMBER, MEMBER_PW).await;
     let other = sign_in(&app, &store, MEMBER, MEMBER_PW).await;
-    let page = authorize(&app, "&kc_action=CONFIGURE_TOTP", Some(&me.sso)).await.ok().unwrap();
+    let page = authorize(&app, "&kc_action=CONFIGURE_TOTP", Some(&me.sso))
+        .await
+        .ok()
+        .unwrap();
     assert_eq!(page_id(&page.html), "config-totp", "{}", page.html);
     assert!(page.html.contains("name=\"userLabel\""));
     assert!(page.html.contains("id=\"kc-totp-qr\"") && page.html.contains("<svg"));
@@ -757,24 +1073,49 @@ async fn configure_totp_adds_a_named_authenticator_and_reports_success() {
         .unwrap();
     let cred = CredentialRecord {
         secret_data: json!({ "value": secret }).to_string(),
-        credential_data: r#"{"digits":6,"period":30,"algorithm":"HmacSHA256","secretEncoding":"BASE32"}"#.into(),
+        credential_data:
+            r#"{"digits":6,"period":30,"algorithm":"HmacSHA256","secretEncoding":"BASE32"}"#.into(),
         ..Default::default()
     };
-    let code = generate_totp_code_for_credential(&cred, chrono::Utc::now().timestamp() as u64).unwrap();
+    let code =
+        generate_totp_code_for_credential(&cred, chrono::Utc::now().timestamp() as u64).unwrap();
     let (st, h, html) = page
-        .post(&app, &[("otp", &code), ("userLabel", " Work phone\u{0007} ")])
+        .post(
+            &app,
+            &[("otp", &code), ("userLabel", " Work phone\u{0007} ")],
+        )
         .await;
     assert_eq!(st, StatusCode::SEE_OTHER, "{html}");
-    assert_eq!(param(&location(&h), "kc_action_status").as_deref(), Some("success"));
+    assert_eq!(
+        param(&location(&h), "kc_action_status").as_deref(),
+        Some("success")
+    );
     let fresh = finish(&app, &h, Some(&me.sso)).await;
     assert_eq!(decode_jwt_payload(&fresh.token)["acr"], "mfa");
     // Without the box, other devices stay signed in.
-    assert!(store.get_sso_session("dev", &other.sid).await.unwrap().is_some());
+    assert!(
+        store
+            .get_sso_session("dev", &other.sid)
+            .await
+            .unwrap()
+            .is_some()
+    );
     let (_, groups) = rest(&app, Method::GET, "/credentials", &fresh.token, None).await;
-    let otp = groups.as_array().unwrap().iter().find(|g| g["type"] == "otp").unwrap();
-    assert_eq!(otp["userCredentialMetadatas"][0]["credential"]["userLabel"], "Work phone");
+    let otp = groups
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["type"] == "otp")
+        .unwrap();
+    assert_eq!(
+        otp["userCredentialMetadatas"][0]["credential"]["userLabel"],
+        "Work phone"
+    );
 
     // A person who already has one adds another (Keycloak allows several).
-    let page = authorize(&app, "&kc_action=CONFIGURE_TOTP", Some(&fresh.sso)).await.ok().unwrap();
+    let page = authorize(&app, "&kc_action=CONFIGURE_TOTP", Some(&fresh.sso))
+        .await
+        .ok()
+        .unwrap();
     assert_eq!(page_id(&page.html), "config-totp");
 }
