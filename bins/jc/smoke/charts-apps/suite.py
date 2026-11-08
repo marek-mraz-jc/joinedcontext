@@ -204,6 +204,7 @@ def main(argv=None) -> int:
                       f"200 with {len(d.panels)} panels ({src})", f"{st}, {n_held} panels", st == 200 and n_held == len(d.panels))
             held = model
         dsx = daiya.datasources(org) if org else {}
+        no_prom = 0
         for pn in d.panels:
             counts["panels"] += 1
             ptgt = f"{tgt}#{pn.id} {pn.title[:50]}"
@@ -213,6 +214,7 @@ def main(argv=None) -> int:
             dsrc = dsx.get(pn.ds_uid) or {}
             is_prom = pn.ds_type == inv.PROMETHEUS or dsrc.get("type") == inv.PROMETHEUS or pn.ds_uid == inv.PROMETHEUS
             if is_prom and not any(x.get("type") == inv.PROMETHEUS for x in dsx.values()):
+                no_prom += 1
                 for check_id in ("daiya.panel", "portal.panel"):
                     res.skip(check_id, ptgt, "-", "frames with data",
                              f"no Prometheus in the rehearsal (datasource {pn.ds_uid!r}; daiya org {org} holds none)")
@@ -262,15 +264,22 @@ def main(argv=None) -> int:
             if browser is None:
                 from shots import Browser
                 browser = Browser(a.base_url, s.jar)
+            queried = sum(1 for pn in d.panels if not pn.query_free())
             for row in browser.dashboard(d.project, d.uid, shots_dir):
                 bad = [x for x in row.get("panelAnswers", []) if x >= 400]
-                ok = (row.get("status") == 200 and not row.get("error") and not row.get("alerts") and not bad
-                      and d.title.split(" ")[0].lower() in (row.get("h1") or "").lower())
-                res.check(f"shot.{row['width']}", tgt, f"browser {row['url']} at {row['width']} px",
-                          f"the page draws '{d.title}', no alert, no failed panel read",
-                          f"{row.get('status')}, h1 {row.get('h1')!r}, alerts {row.get('alerts')}, panel reads "
+                drawn = (row.get("status") == 200 and not row.get("error")
+                         and d.title.split(" ")[0].lower() in (row.get("h1") or "").lower())
+                actual = (f"{row.get('status')}, h1 {row.get('h1')!r}, alerts {row.get('alerts')}, panel reads "
                           f"{len(row.get('panelAnswers', []))} ({len(bad)} failed){', ' + row['error'] if row.get('error') else ''}; "
-                          f"shot {Path(row['shot']).relative_to(out) if row.get('shot') else '-'}", ok)
+                          f"shot {Path(row['shot']).relative_to(out) if row.get('shot') else '-'}")
+                call = f"browser {row['url']} at {row['width']} px"
+                want = f"the page draws '{d.title}', no alert, no failed panel read"
+                if drawn and queried and no_prom == queried:
+                    # every panel waits on a Prometheus the rehearsal does not run: the page is drawn, its data cannot be
+                    res.add(f"shot.{row['width']}", tgt, call, want, actual, SKIP,
+                            f"page drawn; all {queried} panels query Prometheus, which the rehearsal does not run")
+                    continue
+                res.check(f"shot.{row['width']}", tgt, call, want, actual, drawn and not row.get("alerts") and not bad)
 
     # ---- Apps
     if a.apps:
