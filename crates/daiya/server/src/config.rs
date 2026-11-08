@@ -448,20 +448,22 @@ pub async fn provision(
     dir: &Path,
     vars: &BTreeMap<String, String>,
 ) -> CrResult<ProvisioningLoadReport> {
+    // The registry's read guard ends here, before the load awaits.
+    let organizations = state
+        .org_registry
+        .read()
+        .by_num
+        .iter()
+        .filter(|(num, _)| **num != 1)
+        .map(|(num, (_, org))| (*num, *org))
+        .collect();
     let report = load_provisioning_dir(
         state.store.as_ref(),
         ProvisioningTarget {
             installation_id: state.installation_id,
             org_id: state.default_org_id,
             instance_id: state.default_instance_id,
-            organizations: state
-                .org_registry
-                .read()
-                .by_num
-                .iter()
-                .filter(|(num, _)| **num != 1)
-                .map(|(num, (_, org))| (*num, *org))
-                .collect(),
+            organizations,
         },
         dir,
         &state.limits,
