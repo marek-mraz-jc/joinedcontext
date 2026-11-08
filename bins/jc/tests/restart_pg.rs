@@ -79,6 +79,31 @@ fn password() -> String {
 /// Prepares the database as the superuser and writes jc's config: one `[<module>.database]`
 /// section per module, every password in its own 0600-style file. `memory` names modules left
 /// on their memory store (the red proof).
+/// The tests share one database name and the cluster-wide roles (each run resets their
+/// passwords): one at a time.
+static PG_SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn database_name() -> String {
+    format!("jc_restart_{:x}", std::process::id())
+}
+
+/// Connections each role holds on the test database now, for STATUS's Postgres budget.
+async fn connections_per_role(admin_url: &str) -> Vec<(String, i64)> {
+    let admin = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(PgConnectOptions::from_str(admin_url).unwrap())
+        .await
+        .unwrap();
+    sqlx::query_as(
+        "SELECT usename::text, count(*) FROM pg_stat_activity
+         WHERE datname = $1 AND usename IS NOT NULL GROUP BY usename ORDER BY usename",
+    )
+    .bind(database_name())
+    .fetch_all(&admin)
+    .await
+    .unwrap()
+}
+
 async fn prepare(dir: &Path, admin_url: &str, memory: &[&str]) -> PathBuf {
     let base = PgConnectOptions::from_str(admin_url).unwrap();
     let admin = PgPoolOptions::new()
@@ -86,7 +111,7 @@ async fn prepare(dir: &Path, admin_url: &str, memory: &[&str]) -> PathBuf {
         .connect_with(base.clone())
         .await
         .expect("JC_PG_TEST_DATABASE_URL is set but unreachable");
-    let db = format!("jc_restart_{:x}", std::process::id());
+    let db = database_name();
     for statement in [
         format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
         format!("CREATE DATABASE {db}"),
@@ -120,7 +145,9 @@ async fn prepare(dir: &Path, admin_url: &str, memory: &[&str]) -> PathBuf {
                 None => format!(
                     "[{module}.database]\nurl = \"{url}\"\npassword_file = {file:?}\nmax_connections = 3\n"
                 ),
-                Some(s) => format!("{s}migrate_url = \"{url}\"\nmigrate_password_file = {file:?}\n"),
+                Some(s) => {
+                    format!("{s}migrate_url = \"{url}\"\nmigrate_password_file = {file:?}\n")
+                }
             });
         }
         if !memory.contains(module) {
@@ -347,7 +374,10 @@ async fn read_everything(jc: &Jc) {
             .header("authorization", &shako),
     )
     .await;
-    assert_eq!(file["content"].as_str().map(str::trim), Some("a2VwdDogdHJ1ZQo="));
+    assert_eq!(
+        file["content"].as_str().map(str::trim),
+        Some("a2VwdDogdHJ1ZQo=")
+    );
     let repo = ok(
         "shako repository after the restart",
         http.get(jc.url("/git/api/v1/repos/jc/restart"))
@@ -410,6 +440,7 @@ async fn every_module_keeps_its_writes_across_a_restart_on_postgres() {
         println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
         return;
     };
+    let _serial = PG_SERIAL.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let config = prepare(dir.path(), &admin_url, &[]).await;
     let state = dir.path().join("state");
@@ -417,6 +448,17 @@ async fn every_module_keeps_its_writes_across_a_restart_on_postgres() {
 
     let first = start(&config, &state, port);
     write_everything(&first).await;
+    // Every pool is capped at `max_connections = 3`; kaisatsu adds one LISTEN connection.
+    let held = connections_per_role(&admin_url).await;
+    println!("connections per role after the writes: {held:?}");
+    for (role, count) in &held {
+        let cap = if role == "kaisatsu_app" { 4 } else { 3 };
+        assert!(
+            *count <= cap,
+            "{role} holds {count} connections, over {cap}"
+        );
+    }
+    assert!(held.iter().any(|(r, _)| r == "antares_app"), "{held:?}");
     let log = first.log.lock().unwrap().join("\n");
     for module in ["shako", "ekiben", "kaisatsu"] {
         assert!(
@@ -439,6 +481,7 @@ async fn a_module_whose_database_refuses_it_stops_jc() {
         println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
         return;
     };
+    let _serial = PG_SERIAL.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("jc.toml");
     let pw = dir.path().join("pw");
@@ -465,6 +508,12 @@ async fn a_module_whose_database_refuses_it_stops_jc() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{stderr}");
     assert!(stderr.contains("daiya"), "{stderr}");
+    // Refused for the password, not by a later check (a server trusting loopback would
+    // admit the role and fail only at the boot check).
+    assert!(
+        stderr.contains("password authentication failed"),
+        "{stderr}"
+    );
     assert!(!stderr.contains("wrong-password"), "{stderr}");
     assert!(!stderr.contains("jc listening"), "{stderr}");
 }
@@ -506,6 +555,7 @@ async fn a_superuser_request_role_is_refused_by_every_module() {
         println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
         return;
     };
+    let _serial = PG_SERIAL.lock().await;
     let base = PgConnectOptions::from_str(&admin_url).unwrap();
     let admin = PgPoolOptions::new()
         .max_connections(1)
@@ -536,7 +586,9 @@ async fn a_superuser_request_role_is_refused_by_every_module() {
         base.get_host(),
         base.get_port()
     );
-    for module in ["kaisatsu", "shako", "daiya", "dataroom", "ekiben", "antares"] {
+    for module in [
+        "kaisatsu", "shako", "daiya", "dataroom", "ekiben", "antares",
+    ] {
         let config = dir.path().join(format!("{module}.toml"));
         std::fs::write(
             &config,

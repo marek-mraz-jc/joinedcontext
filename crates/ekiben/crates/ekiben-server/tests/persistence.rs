@@ -88,7 +88,11 @@ async fn created_streams_are_saved_as_posted_and_removed_on_delete() {
 
     // A run-once stream is not kept.
     post(&m, "once", ONCE).await.unwrap();
-    assert!(!rec.rows.lock().unwrap().contains_key(&("city-a".into(), "once".into())));
+    assert!(!rec
+        .rows
+        .lock()
+        .unwrap()
+        .contains_key(&("city-a".into(), "once".into())));
 
     // A restart: a fresh manager restores the saved stream without saving it again.
     let saves = *rec.saves.lock().unwrap();
@@ -118,8 +122,5 @@ async fn a_refused_save_refuses_the_create() {
     let m = manager(&rec);
     let err = post(&m, "live", STREAM).await.unwrap_err().to_string();
     assert!(err.contains("was not saved"), "{err}");
-    assert!(m
-        .read("live", Some(&OrgId("city-a".into())))
-        .await
-        .is_err());
+    assert!(m.read("live", Some(&OrgId("city-a".into()))).await.is_err());
 }

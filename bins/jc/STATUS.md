@@ -280,8 +280,76 @@ uses `dataroom_api::portal_publisher` and `DaiyaState::with_server_admin` from t
 ### Not verified
 
 - Host mode with the Portal on its own host.
-- Postgres for modules other than kaisatsu.
+- Postgres for modules other than kaisatsu: done in Stage 8.
 - Disk: the sandbox had ~14 GB free; builds ran with debuginfo off.
+
+## Stage 8: every module on Postgres (jc-pg)
+
+Each module takes an optional `[<module>.database]` section (`src/pg.rs`). Without it the module keeps its memory
+store (the default); with it the module never falls back to memory: a failed connection, a failed migration or a
+failed boot RLS check stops `jc` with exit 1.
+
+```toml
+[shako.database]                 # also kaisatsu, daiya, dataroom, ekiben, antares
+url = "postgres://shako_app@db:5432/jc"            # request role; a password in the URL is refused
+password_file = "/run/secrets/shako-app-password"
+max_connections = 5              # optional, default 5
+migrate_url = "postgres://shako_migrate@db:5432/jc"  # optional: migrate at start as this owning role
+migrate_password_file = "/run/secrets/shako-migrate-password"
+```
+
+- Migrations run as `migrate_url`'s role under the module's advisory lock (sqlx `Migrator` for shako, ekiben,
+  kaisatsu; daiya's and dataroom's own `pg_advisory_lock`), then grant the request role. Without `migrate_url` the schema must be
+  migrated already; the boot check refuses a missing table. Antares migrates itself as its request role (its
+  design) and refuses a `migrate_url`.
+- Boot checks run inside jc as standalone: the request role must be neither SUPERUSER nor BYPASSRLS, own no table
+  of the module's schema, and every table there has forced RLS and a policy. Antares runs with `require_rls`
+  forced whenever it has a database.
+- shako keeps every record (repos, PRs, issues, counters...) through an op log `shako.store_log` (forced RLS)
+  replayed into its mirror at start; its repositories live under `<state_dir>/shako`, no longer a temp dir.
+- ekiben saves continuous stream definitions as posted (before `${VAR}` interpolation, so no filled secret is
+  stored) in schema `ekiben` through `ekiben_server::StreamPersistence`, and starts them again at boot. A refused
+  save refuses the create; a refused delete keeps the stream.
+- Antares on `[antares.database]` switches `ANTARES_STORE=memory` to postgres and refuses `ANTARES_BUS=local`
+  unless `ANTARES_ALLOW_SHARED_LOCAL=1` (one jc process).
+- kaisatsu keeps its legacy flat keys (`database_url_file`); a section together with them is refused.
+
+### Postgres connection budget (pool max per module)
+
+| Module | Connections jc opens | Notes |
+|---|---|---|
+| kaisatsu | `max_connections` (default 5, clamped 1..=50) + 1 | the +1 is the LISTEN connection of its change listener |
+| shako | `max_connections` (default 5, clamped 1..=20) | outbox listener not spawned in jc |
+| daiya | `max_connections` (default 5) | |
+| dataroom | `max_connections` (default 5) | |
+| ekiben | `max_connections` (default 5) | |
+| antares | `max_connections` if set, else `ANTARES_PG_POOL` (default 20) | `ANTARES_PG_WRITE_RESERVE` is carved out of the pool, not added |
+| at start | +1 per module with `migrate_url` | closed after the migration |
+
+With every default: 5+1 + 5 + 5 + 5 + 5 + 20 = 46 connections per jc process, plus up to 5 transient migration
+connections at start. The e2e measures it per role from `pg_stat_activity` at `max_connections = 3`.
+
+### Operator preparation (not done by jc)
+
+- One login role per module for requests (`NOSUPERUSER NOBYPASSRLS`) and, for migrations, an owning role with
+  `CREATE` on the database. daiya's and Antares' migrating roles create tables in `public`: on Postgres 15+ grant
+  them `CREATE ON SCHEMA public`.
+- Antares needs the extensions `postgis`, `btree_gin` and `unaccent`, created by a superuser.
+
+### End-to-end (`tests/restart_pg.rs`, `JC_PG_TEST_DATABASE_URL` = a superuser URL; prints SKIP without it)
+
+On postgis/postgis:17-3.5: `jc --role all` writes a shako repo + commit, a daiya dashboard, a dataroom dataset, an
+ekiben stream, a kaisatsu user and an Antares entity through the public mounts, stops, starts again and reads all
+six back. Red proof: each module switched to memory in turn fails the read-back. Also: a wrong password stops jc
+(exit 1), and a SUPERUSER request role is refused by every module (red proofs: Antares without `require_rls`,
+ekiben without its boot check).
+
+### Gaps
+
+- shako webhook secrets stay in a memory secret store and are lost on restart (re-enter them); the signing key is
+  generated per start unless configured.
+- ekiben run-once streams, org quotas and resources are not persisted.
+- shako's op log grows without compaction; replay sets `updated_at` to the replay time.
 
 ## Release binary
 
@@ -335,8 +403,7 @@ Read once over `daiya-argon-1..HEAD`, excluding the squashed imports and `vendor
 
 ## Not verified
 
-- Postgres paths of every module: no Postgres here (dind is broken). `jc` wires memory stores only; the Portal
-  connects to whatever `JC_*` names, untested.
+- The Portal's own Postgres (`JC_*`): untested inside jc. The other modules run on Postgres since Stage 8.
 - A realm between modules (the Portal or Antares verifying kaisatsu tokens), and the Portal UI under `/portal/`.
 - Antares under the ETSI suite while hosted (axum writer, no own connection cap or drain); `nest_service` is replaced
   by `fallback_service` (axum 0.8 refuses `nest_service("/")`).

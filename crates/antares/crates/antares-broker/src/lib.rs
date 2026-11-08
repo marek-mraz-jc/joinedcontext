@@ -18,9 +18,9 @@ mod wiring;
 #[cfg(feature = "ws")]
 mod ws_relay;
 
-use antares_api::AppState;
 /// The secret wrapper a host passes [`BrokerConfig::database_url`] in.
 pub use antares_api::secret::Secret;
+use antares_api::AppState;
 
 // ANTARES_DATABASE_URL: accepted — the ETSI compose wires one DB per broker —
 // consumed by the postgres/timescale store modes.
@@ -390,6 +390,9 @@ pub struct BrokerConfig {
     /// ANTARES_REQUIRE_RLS: a database role that bypasses row-level
     /// security refuses the boot instead of a warning. A host may force it.
     pub require_rls: bool,
+    /// The pool size a host gives in place of ANTARES_PG_POOL (that
+    /// variable is read when this is `None`).
+    pub pg_pool: Option<u32>,
 }
 
 /// Reads and validates the broker's configuration from the environment.
@@ -486,6 +489,7 @@ pub fn config_from_env() -> Result<BrokerConfig, Box<dyn std::error::Error>> {
         admin_token_file: std::env::var("ANTARES_ADMIN_TOKEN_FILE").ok(),
         database_url: None,
         require_rls: std::env::var("ANTARES_REQUIRE_RLS").is_ok_and(|v| !is_off(&v)),
+        pg_pool: None,
     })
 }
 
@@ -495,6 +499,7 @@ pub fn config_from_env() -> Result<BrokerConfig, Box<dyn std::error::Error>> {
 struct PgSettings {
     url: Option<Secret>,
     require_rls: bool,
+    pool: Option<u32>,
 }
 
 /// ANTARES_PG_STATEMENT_TIMEOUT_MS → the per-session `statement_timeout`
@@ -929,7 +934,10 @@ async fn build_builtin(
                     .map(Secret::new)
                     .map_err(|_| format!("ANTARES_STORE={mode} requires ANTARES_DATABASE_URL"))?,
             };
-            let pool_size = parse_pg_pool(std::env::var("ANTARES_PG_POOL").ok().as_deref())?;
+            let pool_size = match pg.pool {
+                Some(n) => n.max(1),
+                None => parse_pg_pool(std::env::var("ANTARES_PG_POOL").ok().as_deref())?,
+            };
             let write_reserve = parse_pg_write_reserve(
                 std::env::var("ANTARES_PG_WRITE_RESERVE").ok().as_deref(),
                 pool_size,
@@ -1155,6 +1163,7 @@ pub async fn build_state(
         &PgSettings {
             url: cfg.database_url.clone(),
             require_rls: cfg.require_rls,
+            pool: cfg.pg_pool,
         },
     )
     .await?;

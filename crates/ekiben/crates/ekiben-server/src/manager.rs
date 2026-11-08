@@ -161,15 +161,23 @@ impl StreamManager {
 
     /// Starts a stream kept by the persistence before a restart: `posted` is interpolated and
     /// parsed as the API does, in organization `org`, and is not saved again.
-    pub async fn restore(&self, org: OrgId, id: String, posted: JsonValue) -> Result<(), CoreError> {
+    pub async fn restore(
+        &self,
+        org: OrgId,
+        id: String,
+        posted: JsonValue,
+    ) -> Result<(), CoreError> {
         let text = serde_json::to_string(&posted).map_err(|e| CoreError::other(e.to_string()))?;
         let filled = self
             .interpolate(&org, &text)
             .map_err(|e| CoreError::config(format!("missing variables {:?}", e.missing)))?;
-        let raw: JsonValue = serde_json::from_str(&filled).map_err(|e| CoreError::other(e.to_string()))?;
+        let raw: JsonValue =
+            serde_json::from_str(&filled).map_err(|e| CoreError::other(e.to_string()))?;
         let mut conf = StreamConfig::from_json_value(&raw)?;
         conf.org = org;
-        self.create_inner(id, conf, Some(posted), false).await.map(|_| ())
+        self.create_inner(id, conf, Some(posted), false)
+            .await
+            .map(|_| ())
     }
 
     /// Uses `metrics_registry` (built from the `metrics:` section) instead of the defaults.
@@ -283,7 +291,9 @@ impl StreamManager {
         };
         if let Err(e) = saved {
             let _ = handle.stop(Duration::from_secs(5)).await;
-            return Err(CoreError::other(format!("stream '{id}' was not saved: {e}")));
+            return Err(CoreError::other(format!(
+                "stream '{id}' was not saved: {e}"
+            )));
         }
         let managed = ManagedStream {
             id: id.clone(),
@@ -428,9 +438,9 @@ impl StreamManager {
                 return Err(not_found(id));
             }
             if let Some(p) = &self.persistence {
-                p.deleted(&key.0, id).await.map_err(|e| {
-                    CoreError::other(format!("stream '{id}' was not removed: {e}"))
-                })?;
+                p.deleted(&key.0, id)
+                    .await
+                    .map_err(|e| CoreError::other(format!("stream '{id}' was not removed: {e}")))?;
             }
             guard.remove(&key).ok_or_else(|| not_found(id))?
         };

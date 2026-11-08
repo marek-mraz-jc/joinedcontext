@@ -58,6 +58,8 @@ pub async fn build(
         }
         let url = db.app_url_with_password().map_err(err)?;
         broker_cfg.database_url = Some(antares_broker::Secret::new(url));
+        // Unset: ANTARES_PG_POOL (default 20), as standalone.
+        broker_cfg.pg_pool = db.max_connections;
     }
     if broker_cfg.database_url.is_some() || broker_cfg.store_name != "memory" {
         broker_cfg.require_rls = true;

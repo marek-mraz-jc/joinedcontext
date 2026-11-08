@@ -51,10 +51,7 @@ fn file_root(configured: Option<&Path>) -> Result<PathBuf, StartError> {
     Ok(dir)
 }
 
-pub async fn build(
-    cfg: &EkibenSection,
-    setup: &crate::setup::Setup,
-) -> Result<Router, StartError> {
+pub async fn build(cfg: &EkibenSection, setup: &crate::setup::Setup) -> Result<Router, StartError> {
     let token_file = cfg
         .token_file
         .as_deref()
@@ -80,11 +77,8 @@ pub async fn build(
         let pool = crate::pg::connect(db.app_options().map_err(err)?, db.max_connections())
             .await
             .map_err(err)?;
-        let streams = std::sync::Arc::new(
-            super::ekiben_pg::PgStreams::open(pool)
-                .await
-                .map_err(err)?,
-        );
+        let streams =
+            std::sync::Arc::new(super::ekiben_pg::PgStreams::open(pool).await.map_err(err)?);
         manager = manager.with_persistence(streams.clone());
         let started = streams.restore(&manager).await.map_err(err)?;
         tracing::info!(started, "ekiben: saved streams started");

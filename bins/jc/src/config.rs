@@ -399,8 +399,7 @@ impl Config {
             if module == Module::Antares && db.migrate_url.is_some() {
                 return Err(ConfigError::Database {
                     module,
-                    message: "Antares migrates as its own role at start; set no migrate_url"
-                        .into(),
+                    message: "Antares migrates as its own role at start; set no migrate_url".into(),
                 });
             }
         }
@@ -814,7 +813,10 @@ password_file = "/run/secrets/kaisatsu"
         let err = refused(
             "[daiya.database]\nurl = \"postgres://daiya_app:leaked@db/jc\"\npassword_file = \"/p\"\n",
         );
-        assert!(err.contains("[daiya.database]") && err.contains("password"), "{err}");
+        assert!(
+            err.contains("[daiya.database]") && err.contains("password"),
+            "{err}"
+        );
         assert!(!err.contains("leaked"), "{err}");
         let err = refused(
             "[antares.database]\nurl = \"postgres://a@db/jc\"\npassword_file = \"/p\"\nmigrate_url = \"postgres://m@db/jc\"\nmigrate_password_file = \"/m\"\n",
