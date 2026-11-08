@@ -616,16 +616,48 @@ fn sanitize_actor_field(s: &str, fallback: &str) -> String {
     }
 }
 
+/// Deepest tree nesting a walk follows (Git's own `core.maxTreeDepth` defaults to 2048 and real
+/// repositories stay far below 100).
+pub(crate) const MAX_TREE_DEPTH: usize = 256;
+/// Most tree entries one walk visits: a tree naming one subtree many times grows the path count
+/// exponentially from a pack of a few KB.
+pub(crate) const MAX_TREE_ENTRIES: usize = 500_000;
+
+/// Collects every blob path under `tree`, refusing a tree past [`MAX_TREE_DEPTH`] or
+/// [`MAX_TREE_ENTRIES`] with [`ShakoError::Unprocessable`].
 pub(crate) fn collect_tree_blobs(
     repo: &gix::Repository,
     tree: &gix::Tree<'_>,
     prefix: &str,
     out: &mut BTreeMap<String, (EntryKind, ObjectId)>,
 ) -> ShakoResult<()> {
+    let mut visited = 0;
+    walk_tree(repo, tree, prefix, 0, &mut visited, out)
+}
+
+fn walk_tree(
+    repo: &gix::Repository,
+    tree: &gix::Tree<'_>,
+    prefix: &str,
+    depth: usize,
+    visited: &mut usize,
+    out: &mut BTreeMap<String, (EntryKind, ObjectId)>,
+) -> ShakoResult<()> {
+    if depth > MAX_TREE_DEPTH {
+        return Err(ShakoError::Unprocessable(format!(
+            "tree nesting deeper than {MAX_TREE_DEPTH} levels"
+        )));
+    }
     let decoded = tree
         .decode()
         .map_err(|e| ShakoError::Git(format!("decode tree: {e}")))?;
     for entry in decoded.entries {
+        *visited += 1;
+        if *visited > MAX_TREE_ENTRIES {
+            return Err(ShakoError::Unprocessable(format!(
+                "tree holds more than {MAX_TREE_ENTRIES} entries"
+            )));
+        }
         let name = entry.filename.to_str_lossy();
         let full = if prefix.is_empty() {
             name.into_owned()
@@ -636,7 +668,7 @@ pub(crate) fn collect_tree_blobs(
             let sub = repo
                 .find_tree(entry.oid)
                 .map_err(|e| ShakoError::Git(format!("find subtree: {e}")))?;
-            collect_tree_blobs(repo, &sub, &full, out)?;
+            walk_tree(repo, &sub, &full, depth + 1, visited, out)?;
         } else {
             let kind = if entry.mode.is_executable() {
                 EntryKind::BlobExecutable
@@ -1162,5 +1194,73 @@ pub fn is_ancestor(repo: &gix::Repository, ancestor: ObjectId, descendant: Objec
     match repo.merge_base(ancestor, descendant) {
         Ok(Some(base)) => base.detach() == ancestor,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tree_of(repo: &gix::Repository, entries: &[(&str, EntryKind, ObjectId)]) -> ObjectId {
+        let tree = gix_object::Tree {
+            entries: entries
+                .iter()
+                .map(|(name, kind, oid)| gix_object::tree::Entry {
+                    mode: (*kind).into(),
+                    filename: (*name).into(),
+                    oid: *oid,
+                })
+                .collect(),
+        };
+        repo.write_object(&tree).expect("write tree").detach()
+    }
+
+    #[test]
+    fn a_tree_bomb_is_refused_before_it_fills_memory_or_the_stack() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = gix::init_bare(tmp.path()).expect("init");
+        let blob = repo.write_blob(b"x").expect("blob").detach();
+
+        // Fan-out: each level names the level below twice, 2^40 paths from 41 small trees.
+        let mut level = tree_of(&repo, &[("f", EntryKind::Blob, blob)]);
+        for _ in 0..40 {
+            level = tree_of(
+                &repo,
+                &[("a", EntryKind::Tree, level), ("b", EntryKind::Tree, level)],
+            );
+        }
+        let mut out = BTreeMap::new();
+        let err = collect_tree_blobs(&repo, &repo.find_tree(level).unwrap(), "", &mut out)
+            .expect_err("fan-out bomb");
+        assert!(
+            matches!(err, ShakoError::Unprocessable(ref m) if m.contains("entries")),
+            "{err}"
+        );
+
+        // Depth: one long chain of nested trees.
+        let mut chain = tree_of(&repo, &[("f", EntryKind::Blob, blob)]);
+        for _ in 0..=MAX_TREE_DEPTH {
+            chain = tree_of(&repo, &[("d", EntryKind::Tree, chain)]);
+        }
+        let mut out = BTreeMap::new();
+        let err = collect_tree_blobs(&repo, &repo.find_tree(chain).unwrap(), "", &mut out)
+            .expect_err("deep chain");
+        assert!(
+            matches!(err, ShakoError::Unprocessable(ref m) if m.contains("deeper")),
+            "{err}"
+        );
+
+        // An ordinary tree still walks.
+        let ok = tree_of(
+            &repo,
+            &[(
+                "d",
+                EntryKind::Tree,
+                tree_of(&repo, &[("f", EntryKind::Blob, blob)]),
+            )],
+        );
+        let mut out = BTreeMap::new();
+        collect_tree_blobs(&repo, &repo.find_tree(ok).unwrap(), "", &mut out).expect("plain tree");
+        assert_eq!(out.keys().collect::<Vec<_>>(), ["d/f"]);
     }
 }

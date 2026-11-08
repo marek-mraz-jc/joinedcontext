@@ -564,8 +564,10 @@ fn verify_tip_connectivity_and_tree(
         .map_err(|_| "missing necessary objects".to_owned())?;
 
     let mut new_blobs = BTreeMap::new();
-    collect_tree_blobs(repo, &tree, "", &mut new_blobs)
-        .map_err(|_| "missing necessary objects".to_owned())?;
+    collect_tree_blobs(repo, &tree, "", &mut new_blobs).map_err(|e| match e {
+        ShakoError::Unprocessable(why) => why,
+        _ => "missing necessary objects".to_owned(),
+    })?;
 
     let mut old_blobs = BTreeMap::new();
     if let Some(old) = old_oid
