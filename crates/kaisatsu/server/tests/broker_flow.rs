@@ -31,7 +31,6 @@ use common::*;
 
 #[derive(Clone)]
 struct FakeUpstreamState {
-    issuer: String,
     key: SigningKeyRecord,
     kek: Kek,
     next_claims: Arc<Mutex<Value>>,
@@ -45,7 +44,6 @@ async fn start_fake_upstream() -> (String, FakeUpstreamState) {
     let kek = Kek::generate_for_tests();
     let key = KeyManager::generate_es256("upstream", &kek, 100, "ACTIVE").unwrap();
     let st = FakeUpstreamState {
-        issuer: issuer.clone(),
         key,
         kek,
         next_claims: Arc::new(Mutex::new(json!({}))),

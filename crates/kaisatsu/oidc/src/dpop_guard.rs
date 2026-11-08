@@ -50,6 +50,7 @@ pub fn parse_authz_header(headers: &HeaderMap) -> Result<(bool, &str)> {
 
 /// Enforces DPoP token binding (`cnf.jkt`), proof verification (`htm`, `htu`, `ath`, `jkt`),
 /// single-use `jti` replay protection, and optional resource-server DPoP nonce (RFC 9449 §7.1 & §9).
+#[allow(clippy::too_many_arguments)]
 pub async fn verify_resource_dpop(
     state: &OidcState,
     realm_id: &str,

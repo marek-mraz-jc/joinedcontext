@@ -116,6 +116,7 @@ pub async fn build_creation_options(
 }
 
 /// Verifies a registration ceremony response and stores the `WebAuthnCredentialRecord` (W3C WebAuthn L3 §7.1, K11).
+#[allow(clippy::too_many_arguments)]
 pub async fn complete_passkey_registration(
     store: &Arc<dyn Store>,
     mount: &Mount,

@@ -215,7 +215,7 @@ pub fn compute_import_dir_digest(dir: &std::path::Path) -> Result<String> {
     for (name, bytes) in files {
         hasher.update(name.as_bytes());
         hasher.update(b"\0");
-        hasher.update(&(bytes.len() as u64).to_be_bytes());
+        hasher.update((bytes.len() as u64).to_be_bytes());
         hasher.update(&bytes);
     }
     let digest = hasher.finalize();

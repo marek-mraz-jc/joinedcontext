@@ -298,6 +298,8 @@ struct ScimGroupMember {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+// `schemas`, `externalId` and `meta` are accepted as RFC 7643 §4.2 allows and not stored.
+#[allow(dead_code)]
 struct ScimGroupPayload {
     #[serde(default)]
     pub schemas: Vec<String>,
@@ -350,6 +352,7 @@ fn scim_error_response(status: StatusCode, scim_type: Option<&str>, detail: &str
         .into_response()
 }
 
+#[allow(clippy::result_large_err)] // the error is the finished SCIM answer
 fn parse_scim_body<T: serde::de::DeserializeOwned>(
     bytes: &Bytes,
 ) -> std::result::Result<T, Response> {
@@ -393,6 +396,7 @@ fn group_etag(g: &GroupRepresentation, members: &[UserRepresentation]) -> String
     format!("W/\"{}\"", &sha256_hex(&material)[..16])
 }
 
+#[allow(clippy::result_large_err)] // the error is the finished SCIM answer
 fn check_if_match(headers: &HeaderMap, current_etag: &str) -> std::result::Result<(), Response> {
     if let Some(if_match) = headers.get(header::IF_MATCH).and_then(|v| v.to_str().ok()) {
         let trimmed = if_match.trim();
@@ -791,6 +795,7 @@ async fn scim_patch_user(
     ))
 }
 
+#[allow(clippy::result_large_err)] // the error is the finished SCIM answer
 fn apply_user_patch_op(
     user: &mut UserRepresentation,
     op: &ScimPatchOp,

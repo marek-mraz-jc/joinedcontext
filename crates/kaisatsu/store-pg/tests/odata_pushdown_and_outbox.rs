@@ -171,7 +171,7 @@ async fn assert_outbox_and_webauthn_contract(store: Arc<dyn Store>) {
     let mut claimed_ids: Vec<String> = b1
         .unwrap()
         .into_iter()
-        .chain(b2.unwrap().into_iter())
+        .chain(b2.unwrap())
         .map(|r| r.id)
         .collect();
     claimed_ids.sort();
