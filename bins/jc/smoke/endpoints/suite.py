@@ -152,7 +152,7 @@ class Suite:
             return
         want, narrowed = ex.expected_types(e, grants, tenant)
         self.reads(e, None, grants, want, narrowed, tenant, "anon")
-        self.write_refused(e, None, (401, 403), "anon")
+        self.write_refused(e, None, (401, 403), "anon", sorted(want))
 
     def closed(self, e: ex.Endpoint):
         path = f"/api/endpoint/{e.slug}/ngsi-ld/v1/types"
@@ -168,7 +168,7 @@ class Suite:
             self.r.check("person.other-audience", e.slug, f"GET {path} (person token)",
                          "401: the token does not name this Endpoint", f"{st}", st == 401)
             return
-        grants = [g for g in e.grants if g.reads() and p.holds(g)]
+        grants = [g for g in e.grants if g.reads() and (p.holds(g) or e.own_role(g))]
         if not grants:
             st, _, raw = self.get(path, p.token)
             names = listed_types(as_json(raw)) if st == 200 else []
@@ -179,14 +179,21 @@ class Suite:
         tenant = self.index["tenants"].get(e.tenant, {})
         want, narrowed = ex.expected_types(e, grants, tenant)
         self.reads(e, p.token, grants, want, narrowed, tenant, "person")
-        self.write_refused(e, p.token, (403,), "person")
+        held = [g for g in e.grants if g.writes() and (p.holds(g) or e.own_role(g))]
+        if held:
+            self.r.skip("person.write-outside", e.slug, "", "403",
+                        f"the person holds a write grant ({held[0].name}): no write is outside it by type alone")
+        else:
+            self.write_refused(e, p.token, (403,), "person", sorted(want))
 
     def reads(self, e, token, grants, want: dict, narrowed: str, tenant: dict, who: str):
         base = f"/api/endpoint/{e.slug}"
         body = self.ok_json(f"{who}.types", e.slug, f"{base}/ngsi-ld/v1/types", token)
         if body is not None:
             got = set(listed_types(body) or [])
-            missing, extra = sorted(set(want) - got), sorted(got - set(want))
+            # A type whose entities all expire (expiresAt) may be gone by now: not missing.
+            missing = sorted(t for t in set(want) - got if not tenant[t].get("expires"))
+            extra = sorted(got - set(want))
             self.r.check(f"{who}.types.match", e.slug, f"GET {base}/ngsi-ld/v1/types",
                          f"exactly {sorted(want)}", f"missing {missing}, extra {extra}",
                          not missing and not extra,
@@ -200,7 +207,6 @@ class Suite:
     def one_type(self, e, token, who, t, count, narrowed, slot, temporal):
         base = f"/api/endpoint/{e.slug}/ngsi-ld/v1"
         target = f"{e.slug} {t}"
-        self.ok_json(f"{who}.type-details", target, f"{base}/types/{q(t)}", token)
         path = f"{base}/entities?type={q(t)}&count=true&limit=0"
         st, h, raw = self.get(path, token)
         actual = h.get("ngsild-results-count")
@@ -214,6 +220,11 @@ class Suite:
         else:
             ok = st == 200 and actual is not None and int(actual) == count
             self.r.check(f"{who}.count", target, f"GET {path}", f"{count}", f"{st} count={actual} {short(raw, 80) if st != 200 else ''}", ok)
+        if slot.get("expires") and st == 200 and actual is not None and int(actual) == 0:
+            self.r.skip(f"{who}.type-details", target, f"GET {base}/types/{q(t)}", "200", "every entity of the type expired since the export")
+            self.r.skip(f"{who}.by-id", target, "", "", "every entity of the type expired since the export")
+            return
+        self.ok_json(f"{who}.type-details", target, f"{base}/types/{q(t)}", token)
         sample = slot["sample"]
         sel = [s for s in self.selectors_for(e, t) if s.pattern]
         if count is None:
@@ -301,7 +312,7 @@ class Suite:
             self.r.check(f"{who}.odata.metadata", e.slug, f"GET {base}/odata/v4/$metadata", "200 CSDL with EntitySets",
                          f"{st} {h.get('content-type', '')} {short(raw, 80) if not ok else ''}", ok)
             sets = set(re.findall(rb'<EntitySet Name="([^"]+)"', raw)) if ok else set()
-            for t, count in sorted(want.items()):
+            for t, count in sorted(want.items()) if ok else ():
                 if t.encode() not in sets:
                     self.r.check(f"{who}.odata.set", f"{e.slug} {t}", f"GET {base}/odata/v4/$metadata",
                                  f"EntitySet {t}", "absent", False)
@@ -334,21 +345,30 @@ class Suite:
     def expires(self, e, t) -> bool:
         return bool(((self.index["tenants"].get(e.tenant) or {}).get(t) or {}).get("expires"))
 
-    def write_refused(self, e, token, expect: tuple, who: str):
-        """A Create Entity of a type no Policy of the space names: refused, never written."""
+    def write_refused(self, e, token, expect: tuple, who: str, types: list):
+        """Writes the caller holds no grant for: a Create Entity of a type the Endpoint serves, and
+        one of a type no Policy names. Both refused before anything is read or written."""
         path = f"/api/endpoint/{e.slug}/ngsi-ld/v1/entities"
-        if not self.a.writes:
-            self.r.skip(f"{who}.write-outside", e.slug, f"POST {path}", " or ".join(map(str, expect)), "--no-writes")
-            return
-        eid = f"urn:ngsi-ld:{OUTSIDE}:smoke-{secrets.token_hex(6)}"
-        st, _, raw = self.http.call("POST", path, token=token, headers={"Content-Type": LD},
-                                    body=json.dumps({"id": eid, "type": OUTSIDE,
-                                                     "@context": "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"}).encode())
-        ok = st in expect
-        if st in (200, 201, 204):
-            self.http.call("DELETE", f"{path}/{q(eid)}", token=token)
-        self.r.check(f"{who}.write-outside", e.slug, f"POST {path} type {OUTSIDE}", " or ".join(map(str, expect)),
-                     f"{st} {short(raw, 100)}", ok, "a write the Policy does not grant was accepted" if st < 300 and st else "")
+        # An Endpoint no bound Policy grants a write serves no write operation: its view answers
+        # 405 for every caller, which refuses as surely as 401/403.
+        if not any(g.writes() for g in e.grants):
+            expect = (*expect, 405)
+        want = " or ".join(map(str, expect))
+        for id, t in ((f"{who}.write-outside", types[0] if types else OUTSIDE),
+                      (f"{who}.write-unknown-type", OUTSIDE)):
+            if not self.a.writes:
+                self.r.skip(id, e.slug, f"POST {path}", want, "--no-writes")
+                continue
+            eid = f"urn:ngsi-ld:{t}:smoke-{secrets.token_hex(6)}"
+            st, _, raw = self.http.call("POST", path, token=token, headers={"Content-Type": "application/json"},
+                                        body={"id": eid, "type": t})
+            if st in (200, 201, 204):
+                self.http.call("DELETE", f"{path}/{q(eid)}", token=token)
+            self.r.check(id, e.slug, f"POST {path} type {t}", want, f"{st} {short(raw, 120)}", st in expect,
+                         "a write no Policy grants was accepted" if 200 <= st < 300 else
+                         "answered before the caller was refused (it reads the body first)" if st == 400 else "")
+            if t == OUTSIDE:
+                break
 
     def catalogue(self, e: ex.Endpoint):
         if not e.datasets:
